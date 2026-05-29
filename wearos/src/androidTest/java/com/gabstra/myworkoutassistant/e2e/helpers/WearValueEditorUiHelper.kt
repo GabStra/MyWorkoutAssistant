@@ -96,7 +96,7 @@ object WearValueEditorUiHelper {
         var ancestor = runCatching { target.parent }.getOrNull()
         repeat(3) {
             if (ancestor != null) {
-                val currentAncestor = ancestor ?: return@repeat
+                val currentAncestor = ancestor
                 candidates += currentAncestor
                 ancestor = runCatching { currentAncestor.parent }.getOrNull()
             }

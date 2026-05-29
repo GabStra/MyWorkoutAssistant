@@ -1528,21 +1528,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                     )
                                                 }
 
-                                                is OutOfMemoryError -> {
-                                                    Log.e(
-                                                        "DataLayerSync",
-                                                        "Out of memory error - backup may be too large for device"
-                                                    )
-                                                    Log.e(
-                                                        "DataLayerSync",
-                                                        "Available memory info: maxMemory=${
-                                                            Runtime.getRuntime().maxMemory()
-                                                        }, freeMemory=${
-                                                            Runtime.getRuntime().freeMemory()
-                                                        }"
-                                                    )
-                                                }
-
                                                 is java.util.zip.DataFormatException -> {
                                                     Log.e(
                                                         "DataLayerSync",

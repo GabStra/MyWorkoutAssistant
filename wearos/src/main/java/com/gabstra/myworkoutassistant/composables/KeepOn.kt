@@ -49,6 +49,7 @@ private fun readSystemBrightnessAsWindowOverride(context: Context): Float {
 
 @Composable
 @SuppressLint("WakelockTimeout")
+@Suppress("DEPRECATION")
 fun KeepOn(
     appViewModel: AppViewModel,
     keepInteractive: Boolean = true,
@@ -77,8 +78,10 @@ fun KeepOn(
     val updatedKeepInteractive by rememberUpdatedState(keepInteractive)
 
     fun setScreenBrightness(brightness: Float) {
-        window?.attributes = window?.attributes?.apply {
-            screenBrightness = brightness
+        window?.let { currentWindow ->
+            currentWindow.attributes = currentWindow.attributes.apply {
+                screenBrightness = brightness
+            }
         }
     }
 

@@ -648,7 +648,7 @@ class WearWorkoutDriver(
                 if (!nodeText.isNullOrBlank()) return nodeText
                 runCatching { node.children }.getOrDefault(emptyList()).forEach { queue.addLast(it) }
             }
-            val desc = target.contentDescription?.toString()?.trim()
+            val desc = target.contentDescription?.trim()
             if (!desc.isNullOrBlank()) {
                 val parts = desc.split(":", limit = 2)
                 if (parts.size == 2) {

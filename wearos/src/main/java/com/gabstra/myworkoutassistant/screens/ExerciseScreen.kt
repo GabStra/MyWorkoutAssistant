@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION", "UNCHECKED_CAST")
+
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.BorderStroke

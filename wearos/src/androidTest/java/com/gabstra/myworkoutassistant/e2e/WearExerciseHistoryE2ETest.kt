@@ -1,3 +1,5 @@
+@file:Suppress("RedundantCallOfConversionMethod", "REDUNDANT_ELSE_IN_WHEN", "KotlinConstantConditions")
+
 package com.gabstra.myworkoutassistant.e2e
 
 import android.content.Context

@@ -172,7 +172,6 @@ class WorkoutAlarmActivity : ComponentActivity() {
             Toast.makeText(this, "Reminder dismissed.", Toast.LENGTH_SHORT).show()
         }
         finishAndRemoveTask()
-        overridePendingTransition(0, 0)
     }
 
     // ---- helpers ----

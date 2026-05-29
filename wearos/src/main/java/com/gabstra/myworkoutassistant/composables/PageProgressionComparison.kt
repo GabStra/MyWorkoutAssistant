@@ -107,15 +107,6 @@ fun PlaceholderSetRow(
                     Spacer(modifier = Modifier.width(18.dp))
                 }
 
-                else -> {
-                    ScalableText(
-                        modifier = Modifier.weight(1f),
-                        text = "-",
-                        style = itemStyle,
-                        color = textColor
-                    )
-                    Spacer(modifier = Modifier.width(18.dp))
-                }
             }
         }
     }
