@@ -160,6 +160,7 @@ class ExerciseHistoryRowsTest {
                     primaryValue = "12.0 kg",
                     secondaryValue = "10",
                 ),
+                SetTableRowUiModel.Rest("REST 00:05"),
                 SetTableRowUiModel.Data(
                     identifier = "2-R",
                     primaryValue = "12.0 kg",
@@ -171,7 +172,7 @@ class ExerciseHistoryRowsTest {
     }
 
     @Test
-    fun `buildExerciseHistoryRows keeps warmup single row and duplicates work set`() {
+    fun `buildExerciseHistoryRows groups warmup and work sets with the exercise intra set rest`() {
         val exerciseId = UUID.randomUUID()
         val warmupSetId = UUID.randomUUID()
         val workSetId = UUID.randomUUID()
@@ -224,7 +225,13 @@ class ExerciseHistoryRowsTest {
         assertEquals(
             listOf(
                 SetTableRowUiModel.Data(
-                    identifier = "W1",
+                    identifier = "W1-L",
+                    primaryValue = "12.0 kg",
+                    secondaryValue = "10",
+                ),
+                SetTableRowUiModel.Rest("REST 00:05"),
+                SetTableRowUiModel.Data(
+                    identifier = "W1-R",
                     primaryValue = "12.0 kg",
                     secondaryValue = "10",
                 ),
@@ -233,6 +240,7 @@ class ExerciseHistoryRowsTest {
                     primaryValue = "12.0 kg",
                     secondaryValue = "10",
                 ),
+                SetTableRowUiModel.Rest("REST 00:05"),
                 SetTableRowUiModel.Data(
                     identifier = "1-R",
                     primaryValue = "12.0 kg",
@@ -282,7 +290,13 @@ class ExerciseHistoryRowsTest {
         assertEquals(
             listOf(
                 SetTableRowUiModel.Data(
-                    identifier = "W1",
+                    identifier = "W1-L",
+                    primaryValue = "10.0 kg",
+                    secondaryValue = "8",
+                ),
+                SetTableRowUiModel.Rest("REST 00:05"),
+                SetTableRowUiModel.Data(
+                    identifier = "W1-R",
                     primaryValue = "10.0 kg",
                     secondaryValue = "8",
                 ),
@@ -408,7 +422,7 @@ class ExerciseHistoryRowsTest {
     }
 
     @Test
-    fun `buildExerciseTemplatePreviewItems keeps unilateral warmup as one row`() {
+    fun `buildExerciseTemplatePreviewItems groups unilateral warmup with rest row`() {
         val setId = UUID.randomUUID()
         val exercise = buildTemplateExercise(intraSetRestInSeconds = 5)
 
@@ -431,11 +445,19 @@ class ExerciseHistoryRowsTest {
                     setId = setId,
                     rows = listOf(
                         SetTableRowUiModel.Data(
-                            identifier = "W1",
+                            identifier = "W1-L",
+                            primaryValue = "10.0 kg",
+                            secondaryValue = "8",
+                        ),
+                        SetTableRowUiModel.Rest("REST 00:05"),
+                        SetTableRowUiModel.Data(
+                            identifier = "W1-R",
                             primaryValue = "10.0 kg",
                             secondaryValue = "8",
                         )
                     ),
+                    usesDashedContainer = true,
+                    isGroupedUnilateral = true,
                 )
             ),
             previewItems

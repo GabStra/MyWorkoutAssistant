@@ -342,10 +342,13 @@ internal fun appendHistoricalDataRows(
 
     val leftBadge = buildUnilateralSideLabel(sideIndex = 1u, intraSetTotal = 2u).orEmpty()
     val rightBadge = buildUnilateralSideLabel(sideIndex = 2u, intraSetTotal = 2u).orEmpty()
+    val betweenSidesRestText = followingRestText ?: exercise.intraSetRestInSeconds
+        ?.takeIf { it > 0 }
+        ?.let { "REST ${formatTime(it)}" }
 
     rows += row.copy(identifier = row.identifier + leftBadge)
-    if (followingRestText != null) {
-        rows += SetTableRowUiModel.Rest(followingRestText)
+    if (betweenSidesRestText != null) {
+        rows += SetTableRowUiModel.Rest(betweenSidesRestText)
     }
     rows += row.copy(identifier = row.identifier + rightBadge)
 }
