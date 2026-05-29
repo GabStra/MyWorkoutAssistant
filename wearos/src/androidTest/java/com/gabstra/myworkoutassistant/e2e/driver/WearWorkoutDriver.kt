@@ -714,6 +714,92 @@ class WearWorkoutDriver(
         longPressByDesc("Done", timeoutMs)
     }
 
+    fun skipExercise(timeoutMs: Long = 5_000) {
+        val skipActionSelectors = arrayOf(
+            By.desc("Skip exercise action"),
+            By.text("Skip exercise"),
+            By.desc("Skip exercise")
+        )
+        val buttonsPageAnchors = arrayOf(
+            By.text("Keep screen on"),
+            By.textContains("Screen can dim"),
+            By.textContains("This exercise keeps the screen on"),
+            By.text("Back"),
+            By.text("Go Home"),
+            By.desc("Go Home")
+        )
+
+        fun findSkipExerciseAction(waitMs: Long = 400): UiObject2? {
+            return device.wait(Until.findObject(By.desc("Skip exercise action")), waitMs)
+                ?: device.wait(Until.findObject(By.text("Skip exercise")), waitMs)
+                ?: device.wait(Until.findObject(By.desc("Skip exercise")), waitMs)
+        }
+
+        fun isOnButtonsPage(): Boolean {
+            return buttonsPageAnchors.any(device::hasObject) || skipActionSelectors.any(device::hasObject)
+        }
+
+        fun scrollButtonsPageDownUntilSkipVisible(): UiObject2? {
+            findSkipExerciseAction()?.let { return it }
+
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                skipActionSelectors.forEach { selector ->
+                    runCatching {
+                        scrollable.scrollUntil(Direction.DOWN, Until.findObject(selector))
+                    }.getOrNull()?.let { return it }
+                }
+            }
+
+            repeat(6) {
+                verticalSwipe(Direction.DOWN)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findSkipExerciseAction()?.let { return it }
+            }
+
+            return null
+        }
+
+        fun openSkipExerciseDialog() {
+            val action = scrollButtonsPageDownUntilSkipVisible()
+            require(action != null) { "Could not find 'Skip exercise' after scrolling the buttons page." }
+            clickObjectOrAncestorInternal(action)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+
+            val dialogAppeared = waitForAnyObject(
+                timeoutMs = timeoutMs,
+                selectors = arrayOf(
+                    By.text("Skip exercise"),
+                    By.text("Skip all remaining sets for this exercise?")
+                )
+            )
+            require(dialogAppeared) { "Skip exercise dialog did not appear" }
+        }
+
+        if (!isOnButtonsPage()) {
+            repeat(3) {
+                navigateToPagerPage(Direction.RIGHT)
+                if (isOnButtonsPage()) {
+                    return@repeat
+                }
+            }
+        }
+
+        if (!isOnButtonsPage()) {
+            repeat(3) {
+                navigateToPagerPage(Direction.LEFT)
+                if (isOnButtonsPage()) {
+                    return@repeat
+                }
+            }
+        }
+
+        require(isOnButtonsPage()) { "Could not navigate to the buttons page before attempting to skip the exercise." }
+        openSkipExerciseDialog()
+        longPressByDesc("Done", timeoutMs)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
     fun waitForWorkoutCompletion(timeoutMs: Long = 10_000) {
         val deadline = System.currentTimeMillis() + timeoutMs
         var completedVisible = false

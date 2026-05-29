@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.BodyWeightSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.ComprehensiveHistoryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.ExerciseToExerciseRestWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WarmupSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WeightSetWorkoutStoreFixture
@@ -416,6 +417,63 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         require(setHistory.skipped) {
             "Expected skipped=true for set ${set.id}, got skipped=${setHistory.skipped}"
+        }
+    }
+
+    @Test
+    fun skipExercise_advancesToNextExerciseAndPersistsSkippedHistory() = runBlocking {
+        ExerciseToExerciseRestWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+
+        val workoutName = ExerciseToExerciseRestWorkoutStoreFixture.getWorkoutName()
+        startWorkout(workoutName)
+
+        val setScreenVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
+            10_000
+        )
+        require(setScreenVisible) { "Weight set screen did not appear" }
+
+        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStore = workoutStoreRepository.getWorkoutStore()
+        val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
+            ?: error("Workout not found: $workoutName")
+        val exercises = workout.workoutComponents
+            .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
+        require(exercises.size >= 2) { "Expected at least two exercises in $workoutName" }
+        val firstExercise = exercises[0]
+        val secondExercise = exercises[1]
+        val skippedSet = firstExercise.sets.firstOrNull()
+            ?: error("Expected first exercise to contain a set")
+        val nextExerciseFirstSet = secondExercise.sets.firstOrNull()
+            ?: error("Expected second exercise to contain a set")
+
+        workoutDriver.skipExercise()
+
+        val nextSetInfo = waitForCurrentSetInfo(workoutName, timeoutMs = 10_000)
+            ?: error("Expected the next exercise to become active after skipping")
+        require(nextSetInfo.exerciseId == secondExercise.id) {
+            "Expected next active exercise ${secondExercise.id}, got ${nextSetInfo.exerciseId}"
+        }
+        require(nextSetInfo.set.id == nextExerciseFirstSet.id) {
+            "Expected next active set ${nextExerciseFirstSet.id}, got ${nextSetInfo.set.id}"
+        }
+
+        val activeWorkoutHistory = waitForLatestWorkoutHistory(
+            workoutId = workout.id,
+            isDone = false,
+            timeoutMs = 10_000
+        )
+        val skippedSetHistory = waitForSetHistory(activeWorkoutHistory.id, skippedSet.id)
+        require(skippedSetHistory.skipped) {
+            "Expected skipped=true for set ${skippedSet.id}, got skipped=${skippedSetHistory.skipped}"
+        }
+
+        val restHistories = AppDatabase.getDatabase(context)
+            .restHistoryDao()
+            .getByWorkoutHistoryId(activeWorkoutHistory.id)
+        require(restHistories.isEmpty()) {
+            "Expected no persisted rest history when skipping directly to the next exercise, found ${restHistories.size}"
         }
     }
 
@@ -1977,17 +2035,25 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         workoutId: UUID,
         timeoutMs: Long = 10_000
     ): WorkoutHistory {
+        return waitForLatestWorkoutHistory(workoutId = workoutId, isDone = true, timeoutMs = timeoutMs)
+    }
+
+    private suspend fun waitForLatestWorkoutHistory(
+        workoutId: UUID,
+        isDone: Boolean,
+        timeoutMs: Long = 10_000
+    ): WorkoutHistory {
         val workoutHistoryDao = AppDatabase.getDatabase(context).workoutHistoryDao()
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workoutId, isDone = true)
-            if (workoutHistory != null && workoutHistory.isDone) {
+            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workoutId, isDone = isDone)
+            if (workoutHistory != null && workoutHistory.isDone == isDone) {
                 return workoutHistory
             }
             delay(250)
         }
 
-        error("WorkoutHistory not found for completed workoutId=$workoutId within ${timeoutMs}ms")
+        error("WorkoutHistory not found for workoutId=$workoutId isDone=$isDone within ${timeoutMs}ms")
     }
 
     private suspend fun waitForSetHistory(
