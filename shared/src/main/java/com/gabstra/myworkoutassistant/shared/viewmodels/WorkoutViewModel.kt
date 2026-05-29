@@ -203,6 +203,8 @@ open class WorkoutViewModel(
     private var storeSetDataJob: Job? = null
     private val workoutRecordMutex = Mutex()
     private val activeSessionHydrationTrigger = AtomicReference<SessionHydrationTrigger?>(null)
+    private val _isSessionHydrationInFlight = MutableStateFlow(false)
+    val isSessionHydrationInFlightFlow = _isSessionHydrationInFlight.asStateFlow()
     private val workoutPersistenceCoordinator by lazy {
         WorkoutPersistenceCoordinator(
             executedSetStore = executedSetStore,
@@ -421,6 +423,16 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    open fun finishPreparedResume() {
+        if (isSessionHydrationInFlight()) return
+        if (stateMachine != null) {
+            updateStateFlowsFromMachine()
+            return
+        }
+        enterResumingPhase()
+        resumeWorkout()
+    }
+
     /**
      * Guards delayed UI actions from stale Preparing compositions. Recovery can replace the
      * active screen state before an outgoing Preparing screen finishes its timers/animations.
@@ -497,6 +509,7 @@ open class WorkoutViewModel(
             currentWorkoutHistory == null &&
             hadActiveSession &&
             !isSessionHydrationInFlight() &&
+            _sessionPhase.value != WorkoutSessionPhase.ACTIVE &&
             recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
     }
 
@@ -907,7 +920,7 @@ open class WorkoutViewModel(
         _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
     }
 
-    protected fun isSessionHydrationInFlight(): Boolean =
+    fun isSessionHydrationInFlight(): Boolean =
         activeSessionHydrationTrigger.get() != null
 
     protected fun launchSessionHydration(
@@ -922,11 +935,13 @@ open class WorkoutViewModel(
             return
         }
 
+        _isSessionHydrationInFlight.value = true
         launchMain {
             try {
                 block()
             } finally {
                 activeSessionHydrationTrigger.compareAndSet(trigger, null)
+                _isSessionHydrationInFlight.value = false
             }
         }
     }
@@ -1804,10 +1819,14 @@ open class WorkoutViewModel(
      * [resumeWorkoutFromRecord] when the session is ready (e.g. after Preparing screen).
      */
     fun resumeLastState() {
+        if (isSessionHydrationInFlight()) {
+            return
+        }
+
         val executedSetHistories = executedSetStore.executedSets.value
 
         if (_workoutRecord == null) {
-            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING && stateMachine != null) {
+            if (stateMachine != null) {
                 updateStateFlowsFromMachine()
             }
             return
@@ -1827,7 +1846,9 @@ open class WorkoutViewModel(
         val currentState = _workoutState.value
         if (isTargetResumeState(currentState) && currentState is WorkoutState.Set) {
             workoutTimerRestoreService.restoreTimerForTimeSet(currentState, executedSetHistories, TAG)
-            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING ||
+                _sessionPhase.value == WorkoutSessionPhase.READY
+            ) {
                 updateStateFlowsFromMachine()
             }
             return
@@ -1847,7 +1868,9 @@ open class WorkoutViewModel(
                     )
                 ) {
                     Log.d(TAG, "Resume on Rest after set matching record: staying on Rest")
-                    if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+                    if (_sessionPhase.value == WorkoutSessionPhase.RESUMING ||
+                        _sessionPhase.value == WorkoutSessionPhase.READY
+                    ) {
                         updateStateFlowsFromMachine()
                     }
                     return
@@ -1878,9 +1901,12 @@ open class WorkoutViewModel(
                     goToNextState()
                 }
             } finally {
-                if (_sessionPhase.value == WorkoutSessionPhase.RESUMING && stateMachine != null) {
+                if (stateMachine != null) {
                     updateStateFlowsFromMachine()
-                } else if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+                } else if (
+                    _sessionPhase.value == WorkoutSessionPhase.RESUMING &&
+                    !isSessionHydrationInFlight()
+                ) {
                     markPreparingDataLoaded()
                     rebuildScreenState()
                 } else {

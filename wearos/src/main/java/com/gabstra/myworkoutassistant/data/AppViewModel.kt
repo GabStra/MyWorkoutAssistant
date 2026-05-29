@@ -282,11 +282,6 @@ open class AppViewModel : WorkoutViewModel() {
         prepareResumeWorkout(incompleteWorkout.workoutId, incompleteWorkout.workoutHistory.id)
     }
 
-    fun finishPreparedResume() {
-        enterResumingPhase()
-        resumeWorkout()
-    }
-
     private fun clearRecoveryPromptState() {
         clearRecoveryPromptUiState()
         pendingRecoveryCheckpoint = null

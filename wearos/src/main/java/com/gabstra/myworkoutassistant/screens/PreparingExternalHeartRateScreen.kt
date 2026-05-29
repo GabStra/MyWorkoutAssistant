@@ -66,6 +66,7 @@ fun PreparingExternalHeartRateScreen(
 
     val selectedWorkout by viewModel.selectedWorkout
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val isSessionHydrationInFlight by viewModel.isSessionHydrationInFlightFlow.collectAsState()
     val connectionState by externalHeartRateController.connectionState.collectAsState()
     val source = selectedWorkout.heartRateSource
     val scope = rememberWearCoroutineScope()
@@ -75,7 +76,11 @@ fun PreparingExternalHeartRateScreen(
     var canSkip by remember { mutableStateOf(false) }
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
-    LaunchedEffect(source) {
+    LaunchedEffect(source, isSessionHydrationInFlight) {
+        if (isSessionHydrationInFlight) {
+            return@LaunchedEffect
+        }
+        currentMillis = 0
         val config = viewModel.getExternalHeartRateConfig(source)
         externalHeartRateController.initialize(context, config)
         externalHeartRateController.connectToDevice()
@@ -92,8 +97,15 @@ fun PreparingExternalHeartRateScreen(
         }
     }
 
-    LaunchedEffect(connectionState, state.dataLoaded, currentMillis, hasWorkoutRecord, hasTriggeredNextState) {
-        if (hasTriggeredNextState) return@LaunchedEffect
+    LaunchedEffect(
+        connectionState,
+        state.dataLoaded,
+        currentMillis,
+        hasWorkoutRecord,
+        hasTriggeredNextState,
+        isSessionHydrationInFlight
+    ) {
+        if (hasTriggeredNextState || isSessionHydrationInFlight) return@LaunchedEffect
 
         val isReady = connectionState.isReady && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
@@ -218,7 +230,9 @@ fun PreparingExternalHeartRateScreen(
                         transformation = SurfaceTransformation(spec),
                         text = "Skip",
                         onClick = {
-                            if (hasTriggeredNextState) return@WearPrimaryButton
+                            if (hasTriggeredNextState || isSessionHydrationInFlight) {
+                                return@WearPrimaryButton
+                            }
                             hasTriggeredNextState = true
                             externalHeartRateController.skipConnectionForSession()
                             hapticsViewModel.doGentleVibration()

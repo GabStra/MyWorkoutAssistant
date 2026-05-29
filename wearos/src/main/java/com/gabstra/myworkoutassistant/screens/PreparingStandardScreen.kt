@@ -53,9 +53,14 @@ fun PreparingStandardScreen(
     var currentMillis by remember { mutableIntStateOf(0) }
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val isSessionHydrationInFlight by viewModel.isSessionHydrationInFlightFlow.collectAsState()
     var hasTriggeredNextState by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit){
+    LaunchedEffect(isSessionHydrationInFlight) {
+        if (isSessionHydrationInFlight) {
+            return@LaunchedEffect
+        }
+        currentMillis = 0
         scope.launch {
             while (true) {
                 delay(1000)
@@ -63,8 +68,8 @@ fun PreparingStandardScreen(
             }
         }
     }
-    LaunchedEffect(state.dataLoaded,hasWorkoutRecord, currentMillis) {
-        if(hasTriggeredNextState){
+    LaunchedEffect(state.dataLoaded, hasWorkoutRecord, currentMillis, isSessionHydrationInFlight) {
+        if (hasTriggeredNextState || isSessionHydrationInFlight) {
             return@LaunchedEffect
         }
 

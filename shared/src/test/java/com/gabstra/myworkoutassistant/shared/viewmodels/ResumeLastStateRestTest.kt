@@ -190,6 +190,32 @@ class ResumeLastStateRestTest {
     }
 
     @Test
+    fun resumeLastState_whenSessionHydrationInFlight_isNoOp() = runTest {
+        val hydrationTriggerField =
+            WorkoutViewModel::class.java.getDeclaredField("activeSessionHydrationTrigger")
+        hydrationTriggerField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val hydrationTrigger =
+            hydrationTriggerField.get(viewModel) as java.util.concurrent.atomic.AtomicReference<Any?>
+        val triggerClass = Class.forName(
+            "com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel\$SessionHydrationTrigger"
+        )
+        hydrationTrigger.set(requireNotNull(triggerClass.enumConstants).first())
+
+        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
+            WorkoutSessionPhase.ACTIVE
+
+        viewModel.resumeLastState()
+        advanceUntilIdle()
+
+        assertEquals(
+            "resumeLastState must not regress session phase while hydration is still running.",
+            WorkoutSessionPhase.ACTIVE,
+            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+        )
+    }
+
+    @Test
     fun resumeLastState_whenResumingAbortsWithoutStateMachine_doesNotStayInResuming() = runTest {
         val record = WorkoutRecord(
             id = UUID.randomUUID(),

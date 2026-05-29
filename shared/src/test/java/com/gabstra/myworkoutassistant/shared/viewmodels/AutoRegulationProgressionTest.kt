@@ -594,7 +594,7 @@ class AutoRegulationProgressionTest {
             machine!!.currentState is WorkoutState.AutoRegulationRIRSelection
         )
         assertTrue(
-            "Should advance after completing set. Actual: ${machine.currentState?.javaClass?.simpleName}",
+            "Should advance after completing set. Actual: ${machine.currentState.javaClass.simpleName}",
             machine.currentState is WorkoutState.Rest || machine.currentState is WorkoutState.Set
         )
 
@@ -1018,7 +1018,7 @@ class AutoRegulationProgressionTest {
             machine!!.currentState is WorkoutState.AutoRegulationRIRSelection
         )
         assertTrue(
-            "Should advance to Rest after completing set. Actual: ${machine.currentState?.javaClass?.simpleName}",
+            "Should advance to Rest after completing set. Actual: ${machine.currentState.javaClass.simpleName}",
             machine.currentState is WorkoutState.Rest
         )
 
@@ -1175,7 +1175,7 @@ class AutoRegulationProgressionTest {
             machine!!.currentState is WorkoutState.AutoRegulationRIRSelection
         )
         assertTrue(
-            "Should advance to Rest after completing set. Actual: ${machine.currentState?.javaClass?.simpleName}",
+            "Should advance to Rest after completing set. Actual: ${machine.currentState.javaClass.simpleName}",
             machine.currentState is WorkoutState.Rest
         )
 
