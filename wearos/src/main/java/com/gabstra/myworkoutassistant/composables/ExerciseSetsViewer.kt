@@ -1237,7 +1237,8 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val borderColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
-                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1245,7 +1246,7 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val backgroundColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.background
             ProgressState.CURRENT -> when {
-                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.background
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.background
@@ -1253,7 +1254,8 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val textColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
-                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.onPrimary
+                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh

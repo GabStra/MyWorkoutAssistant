@@ -338,7 +338,8 @@ fun ExerciseSetsViewer(
         } else {
             Green.copy(alpha = 0.35f)
         }
-        val backgroundColor = if (rowIndex == setIndex) {
+        val isViewingCurrentExercise = customMarkAsDone == null
+        val backgroundColor = if (isViewingCurrentExercise && rowIndex == setIndex) {
             MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.surfaceVariant
