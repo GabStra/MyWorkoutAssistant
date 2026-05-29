@@ -294,7 +294,7 @@ private fun WorkoutDataExportRangeDialog(
                 )
             },
             dismissButton = {
-                DialogOutlinedButton(
+                DialogDismissButton(
                     text = "Cancel",
                     onClick = { showCustomRangePickerDialog = false }
                 )

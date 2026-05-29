@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -134,6 +135,11 @@ fun <T> StandardFilterDropdown(
                         ) {
                             items.forEachIndexed { index, item ->
                                 val selected = isItemSelected(item.value)
+                                val itemColor = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
 
                                 Row(
                                     modifier = Modifier
@@ -151,12 +157,15 @@ fun <T> StandardFilterDropdown(
                                             .weight(1f)
                                             .basicMarquee(iterations = Int.MAX_VALUE),
                                         text = item.label,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = itemColor,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     if (selected) {
                                         Icon(
                                             imageVector = Icons.Default.Check,
-                                            contentDescription = null
+                                            contentDescription = null,
+                                            tint = itemColor
                                         )
                                     }
                                 }

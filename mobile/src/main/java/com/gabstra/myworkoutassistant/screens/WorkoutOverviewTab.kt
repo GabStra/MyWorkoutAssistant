@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.screens
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,8 +45,9 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
+import com.gabstra.myworkoutassistant.composables.AppDestructiveButton
+import com.gabstra.myworkoutassistant.composables.AppFilledTonalButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
-import com.gabstra.myworkoutassistant.composables.AppDeleteButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -485,27 +485,22 @@ private fun WorkoutSessionActionCard(
                         text = primaryActionText,
                         onClick = onResumeWorkout
                     )
-                    AppPrimaryOutlinedButton(
+                    AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = "Start over",
                         onClick = onRequestStartWorkout
                     )
-                    AppDeleteButton(
+                    AppDestructiveButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = IncompleteWorkoutStrings.DISCARD_BUTTON,
                         onClick = onRequestDeleteIncompleteWorkout
                     )
-                    Box(
+                    AppPrimaryOutlinedButton(
                         modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
-                            modifier = Modifier.clickable(onClick = onRequestClearAllIncompleteSessions),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                        text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
+                        onClick = onRequestClearAllIncompleteSessions,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

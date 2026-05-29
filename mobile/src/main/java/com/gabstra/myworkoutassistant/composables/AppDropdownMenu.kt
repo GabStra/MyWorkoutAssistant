@@ -66,7 +66,7 @@ fun MenuSurface(
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, appMenuBorderColor()),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,

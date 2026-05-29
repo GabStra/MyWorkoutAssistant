@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -101,6 +102,7 @@ private fun Day(
     val isToday = remember(day) { day.date == currentDate }
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
+    val onBackgroundColor = MaterialTheme.colorScheme.onBackground
 
     val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
     val isAfterToday = remember(day) { day.date > currentDate }
@@ -111,6 +113,7 @@ private fun Day(
     }
     val isClickEnabled = !isAfterToday || isFutureInCurrentWeek
 
+    val isExternalOnly = activityKind == WorkoutCalendarActivityKind.EXTERNAL_ONLY
     val shouldHighlight = activityKind != WorkoutCalendarActivityKind.NONE
     Box(
         Modifier
@@ -180,8 +183,6 @@ private fun Day(
         ) {
 
             val highlightBackgroundColor = when {
-                activityKind == WorkoutCalendarActivityKind.EXTERNAL_ONLY ->
-                    MaterialTheme.colorScheme.tertiary
                 isOutOfBounds && isInCompletedWeek -> Yellow.copy(0.5f)
                 isOutOfBounds -> MaterialTheme.colorScheme.primary.copy(0.5f)
                 isInCompletedWeek -> Yellow
@@ -189,10 +190,8 @@ private fun Day(
             }
 
             val textColor = when {
-//                shouldHighlight && isOutOfBounds && isInCompletedWeek -> Yellow.copy(0.25f)
-//                shouldHighlight && isOutOfBounds -> MaterialTheme.colorScheme.primary.copy(0.25f)
-//                shouldHighlight && isInCompletedWeek -> Yellow.copy(0.5f)
-//                shouldHighlight -> MaterialTheme.colorScheme.primary.copy(0.5f)
+                isExternalOnly && isOutOfBounds -> onBackgroundColor.copy(alpha = 0.5f)
+                isExternalOnly -> onBackgroundColor
                 shouldHighlight -> MaterialTheme.colorScheme.background
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
@@ -207,9 +206,15 @@ private fun Day(
                     .optionalClip(shape)
                     .size(30.dp)
                     .then(
-                        if (shouldHighlight && shape != null) {
+                        if (shouldHighlight && shape != null && !isExternalOnly) {
                             Modifier.background(
                                 color = highlightBackgroundColor,
+                                shape = shape
+                            )
+                        } else if (isExternalOnly && shape != null) {
+                            Modifier.border(
+                                width = 1.dp,
+                                color = textColor,
                                 shape = shape
                             )
                         } else {
