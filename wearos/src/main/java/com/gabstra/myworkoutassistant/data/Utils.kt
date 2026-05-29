@@ -388,7 +388,7 @@ fun Modifier.verticalLazyColumnScrollbar(
 
         val componentWidth = size.width
         val componentHeight = size.height
-        val viewportHeight = componentHeight.toFloat()
+        val viewportHeight = componentHeight
 
         // Calculate scroll position and total content height
         val firstVisibleItem = visibleItemsInfo.firstOrNull()
@@ -542,7 +542,6 @@ fun Modifier.verticalLazyColumnScrollbar(
 @OptIn(DelicateCoroutinesApi::class)
 fun VibrateAndBeep(context: Context) {
     val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
 
     GlobalScope.launch(Dispatchers.Default) {
         val vibratorJob = launch(start = CoroutineStart.LAZY){
@@ -550,7 +549,7 @@ fun VibrateAndBeep(context: Context) {
         }
 
         val toneJob= launch(start = CoroutineStart.LAZY){
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
+            HapticsHelper(context).playBeep()
         }
         joinAll(toneJob,vibratorJob)
     }

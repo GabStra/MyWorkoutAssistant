@@ -1,20 +1,22 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import com.gabstra.myworkoutassistant.MyApplication
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import kotlin.coroutines.EmptyCoroutineContext
+import com.gabstra.myworkoutassistant.MyApplication
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.coroutines.EmptyCoroutineContext
+
 class HapticsHelper(context: Context) {
     private val appContext = context.applicationContext
 
-    // Modern vibrator on API 31+; fallback otherwise
     private val vibrator: Vibrator? = try {
         (appContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
             .defaultVibrator
@@ -24,17 +26,11 @@ class HapticsHelper(context: Context) {
 
     private val hasAmp: Boolean = vibrator?.hasAmplitudeControl() == true
 
-    // Use reflection to avoid loading ToneGenerator class in preview mode
-    private val tone: Any? = try {
-        val toneGeneratorClass = Class.forName("android.media.ToneGenerator")
-        val constructor = toneGeneratorClass.getConstructor(
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType
-        )
-        // AudioManager.STREAM_NOTIFICATION = 5, ToneGenerator.MAX_VOLUME = 100
-        constructor.newInstance(5, 100)
+    // STREAM_ALARM is audible on Wear; STREAM_NOTIFICATION often is not.
+    private val tone: ToneGenerator? = try {
+        ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
     } catch (e: Exception) {
-        null // Preview mode or Android API not available
+        null
     }
 
     private fun vibrate(durationMs: Int, amplitude: Int) {
@@ -60,7 +56,6 @@ class HapticsHelper(context: Context) {
         }
     }
 
-    // fire sound + vibration together
     fun vibrateHardAndBeep() {
         vibrateHard()
         playBeep()
@@ -68,15 +63,7 @@ class HapticsHelper(context: Context) {
 
     fun playBeep() {
         try {
-            tone?.let {
-                val startToneMethod = it.javaClass.getMethod(
-                    "startTone",
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType
-                )
-                // ToneGenerator.TONE_PROP_BEEP = 24
-                startToneMethod.invoke(it, 24, 100)
-            }
+            tone?.startTone(ToneGenerator.TONE_PROP_ACK, 150)
         } catch (e: Exception) {
             // Preview mode - ignore
         }
@@ -84,10 +71,7 @@ class HapticsHelper(context: Context) {
 
     fun release() {
         try {
-            tone?.let {
-                val releaseMethod = it.javaClass.getMethod("release")
-                releaseMethod.invoke(it)
-            }
+            tone?.release()
         } catch (e: Exception) {
             // Preview mode - ignore
         }

@@ -125,6 +125,7 @@ fun showTimerCompletedNotification(
     ).apply {
         description = "Notifications when workout timers complete"
         enableVibration(true)
+        setSound(null, null)
     }
     val notificationManager: NotificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
