@@ -391,15 +391,15 @@ fun HeartRateChartContent(
 
     val lines = if (effectiveLineZoneIndices != null) {
         effectiveLineZoneIndices.map { zoneIndex ->
-            LineCartesianLayer.rememberLine(
-                fill = LineCartesianLayer.LineFill.single(
-                    Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])
-                ),
-                areaFill = null,
-                pointProvider = null,
-                pointConnector = LineCartesianLayer.PointConnector.Sharp,
-            )
-        }
+                LineCartesianLayer.rememberLine(
+                    fill = LineCartesianLayer.LineFill.single(
+                        Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])
+                    ),
+                    areaFill = null,
+                    pointProvider = null,
+                    interpolator = LineCartesianLayer.Interpolator.Sharp,
+                )
+            }
     } else {
         listOf(
             LineCartesianLayer.rememberLine(
@@ -408,7 +408,7 @@ fun HeartRateChartContent(
                 ),
                 areaFill = null,
                 pointProvider = null,
-                pointConnector = LineCartesianLayer.PointConnector.cubic(),
+                interpolator = LineCartesianLayer.Interpolator.cubic(),
             )
         )
     }

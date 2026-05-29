@@ -499,7 +499,7 @@ fun StandardChart(
                                 listOf(
                                     LineCartesianLayer.rememberLine(
                                         fill = LineCartesianLayer.LineFill.single(Fill(Color(0xFFff6700))),
-                                        pointConnector =  LineCartesianLayer.PointConnector.cubic(),
+                                        interpolator = LineCartesianLayer.Interpolator.cubic(),
                                         areaFill = null,
                                         pointProvider = null,
                                     )
