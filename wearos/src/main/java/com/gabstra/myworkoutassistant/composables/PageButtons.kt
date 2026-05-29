@@ -20,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -46,7 +48,9 @@ import com.gabstra.myworkoutassistant.shared.DarkOrange
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -72,6 +76,8 @@ fun PageButtons(
     val scope = rememberWearCoroutineScope()
 
     var showGoBackDialog by remember { mutableStateOf(false) }
+    var showSkipExerciseDialog by remember { mutableStateOf(false) }
+    var shouldResumeTimerAfterSkipDialog by remember { mutableStateOf(false) }
 
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
@@ -80,11 +86,17 @@ fun PageButtons(
     val isLastSet = setIndex == exerciseSets.size - 1
 
     val isMovementSet = updatedState.set is WeightSet || updatedState.set is BodyWeightSet
+    val isActiveSetPage =
+        currentWorkoutState is WorkoutState.Set &&
+            currentWorkoutState.exerciseId == updatedState.exerciseId &&
+            currentWorkoutState.set.id == updatedState.set.id
     val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
     val scrollState = rememberScrollState()
 
     LaunchedEffect(updatedState) {
         showGoBackDialog = false
+        showSkipExerciseDialog = false
+        shouldResumeTimerAfterSkipDialog = false
         scrollState.scrollTo(0)
     }
 
@@ -125,6 +137,7 @@ fun PageButtons(
                 item {
                     ButtonWithText(
                         modifier = Modifier
+                            .semantics { contentDescription = "Skip exercise action" }
                             .fillMaxWidth()
                             .then(
                                 if (isInspectionMode) Modifier else Modifier.transformedHeight(
@@ -323,6 +336,26 @@ fun PageButtons(
                     )
                 }
             }
+            if (isActiveSetPage) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Skip exercise",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            showSkipExerciseDialog = true
+                        }
+                    )
+                }
+            }
             /*            item{
                             ButtonWithText(
                                 modifier = Modifier
@@ -397,6 +430,53 @@ fun PageButtons(
             if (isVisible) {
                 viewModel.setDimming(false)
             } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showSkipExerciseDialog,
+        title = "Skip exercise",
+        message = "Skip all remaining sets for this exercise?",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            showSkipExerciseDialog = false
+            viewModel.skipCurrentExerciseWear(context)
+            viewModel.lightScreenUp()
+        },
+        handleNoClick = {
+            showSkipExerciseDialog = false
+            shouldResumeTimerAfterSkipDialog = false
+            hapticsViewModel.doGentleVibration()
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showSkipExerciseDialog = false
+            shouldResumeTimerAfterSkipDialog = false
+        },
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                val currentSetState = currentWorkoutState as? WorkoutState.Set
+                shouldResumeTimerAfterSkipDialog =
+                    currentSetState != null &&
+                        (currentSetState.set is TimedDurationSet || currentSetState.set is EnduranceSet) &&
+                        viewModel.workoutTimerService.isTimerRegistered(currentSetState.set.id)
+
+                if (shouldResumeTimerAfterSkipDialog) {
+                    viewModel.workoutTimerService.pauseTimer(updatedState.set.id)
+                }
+                viewModel.setDimming(false)
+            } else {
+                if (
+                    shouldResumeTimerAfterSkipDialog &&
+                    currentWorkoutState is WorkoutState.Set &&
+                    (currentWorkoutState.set is TimedDurationSet || currentWorkoutState.set is EnduranceSet) &&
+                    viewModel.workoutTimerService.isTimerRegistered(updatedState.set.id)
+                ) {
+                    viewModel.workoutTimerService.resumeTimer(updatedState.set.id)
+                }
+                shouldResumeTimerAfterSkipDialog = false
                 viewModel.reEvaluateDimmingForCurrentState()
             }
         }

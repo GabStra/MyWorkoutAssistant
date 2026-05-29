@@ -1266,6 +1266,15 @@ open class AppViewModel : WorkoutViewModel() {
         reEvaluateDimmingForCurrentState()
     }
 
+    fun skipCurrentExerciseWear(context: Context? = null, onEnd: suspend () -> Unit = {}) {
+        stopActiveTimerForCurrentState()
+        skipCurrentExercise(context) {
+            restartCurrentRestStateForManualNavigation()
+            reEvaluateDimmingForCurrentState()
+            onEnd()
+        }
+    }
+
     private fun stopActiveTimerForCurrentState() {
         when (val currentState = workoutState.value) {
             is WorkoutState.Set -> {

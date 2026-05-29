@@ -47,7 +47,8 @@ fun ExerciseMetadataStrip(
     ) {
         FlowRow(
             modifier = clickableModifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
+            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.Center
         ) {
             exerciseLabel?.let {
                 Text(
