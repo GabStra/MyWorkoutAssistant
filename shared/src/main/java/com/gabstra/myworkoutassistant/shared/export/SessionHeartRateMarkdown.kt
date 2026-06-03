@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -154,9 +155,9 @@ private fun formatDurationForSessionHr(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
     }
 }
 

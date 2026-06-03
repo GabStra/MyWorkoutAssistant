@@ -356,7 +356,8 @@ private fun appendExerciseDetails(
     } else {
         markdown.append("  - **Sets**:\n")
         var workSetNumber = 0
-        val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+        val intraSetRestInSeconds = exercise.intraSetRestInSeconds
+        val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
         
         exercise.sets.forEachIndexed { index, set ->
             if (set !is RestSet) {
@@ -422,7 +423,8 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
                     workoutStore.equipments.find { it.id == equipmentId }
                 }
                 val setStr = formatSetInline(set, equipment)
-                val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+                val intraSetRestInSeconds = exercise.intraSetRestInSeconds
+                val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
                 
                 if (hasIntraSetRest) {
                     markdown.append("    ${exercise.name} (Side A): $setStr\n")

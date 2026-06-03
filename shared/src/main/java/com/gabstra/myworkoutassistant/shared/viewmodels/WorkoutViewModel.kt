@@ -2,6 +2,8 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -449,7 +451,7 @@ open class WorkoutViewModel(
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
-    private var _bodyWeight = mutableStateOf(0.0)
+    private var _bodyWeight = mutableDoubleStateOf(0.0)
     val bodyWeight: State<Double> = _bodyWeight
 
     // Plate recalculation debouncer and state
@@ -458,7 +460,7 @@ open class WorkoutViewModel(
     private val _isPlateRecalculationInProgress = MutableStateFlow(false)
     val isPlateRecalculationInProgress = _isPlateRecalculationInProgress.asStateFlow()
 
-    private var _backupProgress = mutableStateOf(0f)
+    private var _backupProgress = mutableFloatStateOf(0f)
     val backupProgress: State<Float> = _backupProgress
 
     private var _selectedWorkoutId = mutableStateOf<UUID?>(null)
@@ -466,7 +468,7 @@ open class WorkoutViewModel(
 
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
-        _backupProgress.value = progress
+        _backupProgress.floatValue = progress
     }
 
     val allWorkoutStates: List<WorkoutState>
@@ -496,7 +498,7 @@ open class WorkoutViewModel(
         _workouts.value = newWorkoutStore.workouts.filter { it.enabled && it.isActive }
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue = currentYear - newWorkoutStore.birthDateYear
-        _bodyWeight.value = newWorkoutStore.weightKg.toDouble()
+        _bodyWeight.doubleValue = newWorkoutStore.weightKg
         rebuildScreenState()
     }
 
@@ -574,6 +576,7 @@ open class WorkoutViewModel(
             if (previousMachine != null && refreshRequest != null) {
                 val currentSetState = previousState as? WorkoutState.Set
                 val preservedSetData = currentSetState?.currentSetData?.let(::copySetData)
+                val preservedPreviousSetData = currentSetState?.previousSetData?.let(::copySetData)
                 val preservedStartTime = currentSetState?.startTime
                 val preservedSkipped = currentSetState?.skipped
 
@@ -605,10 +608,14 @@ open class WorkoutViewModel(
                     rebuiltCurrentSet.exerciseId == currentSetState.exerciseId &&
                     rebuiltCurrentSet.set.id == currentSetState.set.id
                 ) {
-                    rebuiltCurrentSet.currentSetData = preservedSetData ?: rebuiltCurrentSet.currentSetData
-                    rebuiltCurrentSet.startTime = preservedStartTime
-                    rebuiltCurrentSet.skipped = preservedSkipped ?: rebuiltCurrentSet.skipped
-                    rebuiltMachine = rebuiltMachine.updateCurrentState(rebuiltCurrentSet)
+                    val refreshedCurrentSet = rebuiltCurrentSet.copy(
+                        previousSetData = preservedPreviousSetData ?: rebuiltCurrentSet.previousSetData
+                    )
+                    refreshedCurrentSet.currentSetData =
+                        preservedSetData ?: refreshedCurrentSet.currentSetData
+                    refreshedCurrentSet.startTime = preservedStartTime
+                    refreshedCurrentSet.skipped = preservedSkipped ?: refreshedCurrentSet.skipped
+                    rebuiltMachine = rebuiltMachine.updateCurrentState(refreshedCurrentSet)
                 }
 
                 stateMachine = rebuiltMachine
@@ -1247,7 +1254,7 @@ open class WorkoutViewModel(
                                 }
                             }
                         },
-                        lastActiveSyncAt = updatedRecord?.lastActiveSyncAt,
+                        lastActiveSyncAt = updatedRecord.lastActiveSyncAt,
                     )
                 }
                 rebuildScreenState()

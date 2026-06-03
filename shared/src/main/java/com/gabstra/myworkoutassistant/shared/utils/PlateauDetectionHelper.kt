@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 
@@ -742,7 +743,7 @@ object PlateauDetectionHelper {
             } else if (bestWeight % 1.0 == 0.0) {
                 "${bestWeight.toInt()}kg"
             } else {
-                String.format("%.2f", bestWeight).trimEnd('0').trimEnd('.') + "kg"
+                String.format(Locale.US, "%.2f", bestWeight).trimEnd('0').trimEnd('.') + "kg"
             }
             
             sessionDetails.add("• Session $sessionNumber: $weightStr × $bestReps reps")

@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.workout.history
 
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import java.util.Locale
 
 /**
  * Formats rest duration for Markdown export, aligned with [formatRestIntervalForDisplay] in mobile
@@ -32,8 +33,8 @@ fun formatDurationSecondsForMarkdown(seconds: Int): String {
     val minutes = (s % 3600) / 60
     val remainingSeconds = s % 60
     return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%d:%02d", minutes, remainingSeconds)
     }
 }

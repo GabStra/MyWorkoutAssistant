@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.equipments
 
+import com.gabstra.myworkoutassistant.shared.formatWeight
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,7 +35,7 @@ class BarbellTest {
         // Find the bar-only entry (total = barWeight, plateWeight = 0)
         val barOnly = labels.find { it.first == barWeight }
         assertTrue("Should have bar-only entry", barOnly != null)
-        assertEquals("20", barOnly!!.second)
+        assertEquals(formatWeight(barWeight), barOnly!!.second)
 
         // Find an entry with plates (e.g., bar + 40kg plates = 60kg total)
         // With 2x20kg plates, we get 40kg total plates (20kg per side * 2)
@@ -42,7 +43,7 @@ class BarbellTest {
         if (withPlates != null) {
             assertTrue(
                 "Label should show total weight",
-                withPlates.second == "60"
+                withPlates.second == formatWeight(60.0)
             )
         }
     }
@@ -86,8 +87,6 @@ class BarbellTest {
         val barOnly = labels.find { it.first == barWeight }
 
         assertTrue("Should have bar-only entry", barOnly != null)
-        // Should just show the weight when there are no plates (formatWeight gives integer string)
-        assertEquals("20", barOnly!!.second)
+        assertEquals(formatWeight(barWeight), barOnly!!.second)
     }
 }
-

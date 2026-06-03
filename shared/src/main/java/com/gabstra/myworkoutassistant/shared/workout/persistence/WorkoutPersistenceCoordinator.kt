@@ -99,29 +99,23 @@ internal class WorkoutPersistenceCoordinator(
         supersetIdByExerciseId: Map<UUID, UUID>,
         exercisesBySupersetId: Map<UUID, List<Exercise>>
     ): SetHistorySnapshot? {
+        if (currentState !is WorkoutState.Set) return null
         val historyIdentity = WorkoutStateQueries.stateHistoryIdentity(currentState) ?: return null
         if (WorkoutSetHistoryOps.shouldSkipPersistingState(currentState, exercisesById)) return null
 
-        val setData = when (currentState) {
-            is WorkoutState.Set -> currentState.currentSetData
-            else -> return null
-        }
+        val setData = currentState.currentSetData
         val setDataSnapshot = copySetData(setData)
-        val startTime = when (currentState) {
-            is WorkoutState.Set -> currentState.startTime ?: LocalDateTime.now()
-            else -> return null
-        }
+        val startTime = currentState.startTime ?: LocalDateTime.now()
 
-        if (currentState is WorkoutState.Set && (setData is TimedDurationSetData || setData is EnduranceSetData)) {
+        if (setData is TimedDurationSetData || setData is EnduranceSetData) {
             val timerInfo = when (setData) {
                 is TimedDurationSetData -> "TimedDurationSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
                 is EnduranceSetData -> "EnduranceSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
-                else -> ""
             }
             Log.d(tag, "Storing timer state: $timerInfo")
         }
 
-        val skipped = (currentState as? WorkoutState.Set)?.skipped ?: false
+        val skipped = currentState.skipped
         val supersetMetadata = resolveSupersetMetadata(
             exerciseId = historyIdentity.exerciseId,
             order = historyIdentity.order,
@@ -133,7 +127,7 @@ internal class WorkoutPersistenceCoordinator(
         // Resolve equipment snapshot at record time so later equipment edits do not
         // change how this historical set is labeled or interpreted.
         val exercise = historyIdentity.exerciseId?.let { exercisesById[it] }
-        val equipmentIdFromState = (currentState as? WorkoutState.Set)?.equipmentId ?: exercise?.equipmentId
+        val equipmentIdFromState = currentState.equipmentId ?: exercise?.equipmentId
         val workoutStore = workoutStoreRepository().getWorkoutStore()
         val equipmentSnapshot = equipmentIdFromState?.let { equipmentId ->
             workoutStore.equipments.find { it.id == equipmentId }
@@ -324,7 +318,7 @@ internal class WorkoutPersistenceCoordinator(
                 version = currentWorkoutHistorySnapshot.version.inc()
             )
         }
-        val workoutHistoryForThisPush = currentWorkoutHistorySnapshot ?: error("WorkoutHistory snapshot is null")
+        val workoutHistoryForThisPush = currentWorkoutHistorySnapshot
 
         val newExecutedSetsHistory = snapshot.executedSetsHistory
             .asSequence()

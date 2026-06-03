@@ -63,6 +63,24 @@ class ResumeLastStateRestTest {
     private val setId = UUID.randomUUID()
     private val restSetId = UUID.randomUUID()
 
+    private fun setPrivateStateFlow(field: java.lang.reflect.Field, value: Any) {
+        val stateFlow = requireNotNull(field.get(viewModel))
+        require(stateFlow is MutableStateFlow<*>) {
+            "Expected ${field.name} to hold a MutableStateFlow, found ${stateFlow::class.java.name}"
+        }
+        @Suppress("UNCHECKED_CAST")
+        (stateFlow as MutableStateFlow<Any?>).value = value
+    }
+
+    private fun setPrivateMutableState(field: java.lang.reflect.Field, value: Any?) {
+        val state = requireNotNull(field.get(viewModel))
+        require(state is MutableState<*>) {
+            "Expected ${field.name} to hold a MutableState, found ${state::class.java.name}"
+        }
+        @Suppress("UNCHECKED_CAST")
+        (state as MutableState<Any?>).value = value
+    }
+
     private fun createSetState(exerciseId: UUID, setId: UUID, setIndex: UInt): WorkoutState.Set {
         return WorkoutState.Set(
             exerciseId = exerciseId,
@@ -159,7 +177,7 @@ class ResumeLastStateRestTest {
         val sequence = listOf(WorkoutStateSequenceItem.Container(container))
         val machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1)
         stateMachineField.set(viewModel, machine)
-        (workoutStateField.get(viewModel) as MutableStateFlow<WorkoutState>).value = restState
+        setPrivateStateFlow(workoutStateField, restState)
 
         val record = WorkoutRecord(
             id = UUID.randomUUID(),
@@ -168,9 +186,8 @@ class ResumeLastStateRestTest {
             setIndex = 0u,
             exerciseId = exerciseId
         )
-        (workoutRecordField.get(viewModel) as MutableState<WorkoutRecord?>).value = record
-        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
-            WorkoutSessionPhase.RESUMING
+        setPrivateMutableState(workoutRecordField, record)
+        setPrivateStateFlow(sessionPhaseField, WorkoutSessionPhase.RESUMING)
 
         viewModel.resumeLastState()
         advanceUntilIdle()
@@ -185,7 +202,7 @@ class ResumeLastStateRestTest {
         assertEquals(
             "A successful resume should leave the dedicated resume phase and reactivate the workout state machine.",
             WorkoutSessionPhase.ACTIVE,
-            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+            viewModel.sessionPhase.value
         )
     }
 
@@ -194,16 +211,19 @@ class ResumeLastStateRestTest {
         val hydrationTriggerField =
             WorkoutViewModel::class.java.getDeclaredField("activeSessionHydrationTrigger")
         hydrationTriggerField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val hydrationTrigger =
-            hydrationTriggerField.get(viewModel) as java.util.concurrent.atomic.AtomicReference<Any?>
+        val hydrationTrigger = requireNotNull(hydrationTriggerField.get(viewModel))
         val triggerClass = Class.forName(
             "com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel\$SessionHydrationTrigger"
         )
-        hydrationTrigger.set(requireNotNull(triggerClass.enumConstants).first())
+        require(hydrationTrigger is java.util.concurrent.atomic.AtomicReference<*>) {
+            "Expected activeSessionHydrationTrigger to be an AtomicReference, found ${hydrationTrigger::class.java.name}"
+        }
+        @Suppress("UNCHECKED_CAST")
+        (hydrationTrigger as java.util.concurrent.atomic.AtomicReference<Any?>).set(
+            requireNotNull(triggerClass.enumConstants).first()
+        )
 
-        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
-            WorkoutSessionPhase.ACTIVE
+        setPrivateStateFlow(sessionPhaseField, WorkoutSessionPhase.ACTIVE)
 
         viewModel.resumeLastState()
         advanceUntilIdle()
@@ -211,7 +231,7 @@ class ResumeLastStateRestTest {
         assertEquals(
             "resumeLastState must not regress session phase while hydration is still running.",
             WorkoutSessionPhase.ACTIVE,
-            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+            viewModel.sessionPhase.value
         )
     }
 
@@ -224,16 +244,15 @@ class ResumeLastStateRestTest {
             setIndex = 0u,
             exerciseId = exerciseId
         )
-        (workoutRecordField.get(viewModel) as MutableState<WorkoutRecord?>).value = record
-        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
-            WorkoutSessionPhase.PREPARING
+        setPrivateMutableState(workoutRecordField, record)
+        setPrivateStateFlow(sessionPhaseField, WorkoutSessionPhase.PREPARING)
 
         viewModel.resumeLastState()
 
         assertEquals(
             "Resume should enter the dedicated RESUMING phase before asynchronous state reconstruction proceeds.",
             WorkoutSessionPhase.RESUMING,
-            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+            viewModel.sessionPhase.value
         )
 
         advanceUntilIdle()
@@ -241,7 +260,7 @@ class ResumeLastStateRestTest {
         assertEquals(
             "An aborted resume should fall back to a non-loading phase instead of leaving the screen stuck on RESUMING.",
             WorkoutSessionPhase.PREPARING,
-            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+            viewModel.sessionPhase.value
         )
     }
 }

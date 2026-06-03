@@ -91,8 +91,9 @@ object ScheduleConflictChecker {
         val specificDateSchedule = if (schedule1.specificDate != null) schedule1 else schedule2
         val daysOfWeekSchedule = if (schedule1.specificDate != null) schedule2 else schedule1
         
-        if (specificDateSchedule.specificDate != null && daysOfWeekSchedule.daysOfWeek > 0) {
-            val dayOfWeek = specificDateSchedule.specificDate!!.dayOfWeek
+        val specificDate = specificDateSchedule.specificDate
+        if (specificDate != null && daysOfWeekSchedule.daysOfWeek > 0) {
+            val dayOfWeek = specificDate.dayOfWeek
             val dayBit = dayOfWeekToBit(dayOfWeek)
             return (daysOfWeekSchedule.daysOfWeek and dayBit) != 0
         }

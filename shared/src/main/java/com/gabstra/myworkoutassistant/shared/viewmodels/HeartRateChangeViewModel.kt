@@ -68,7 +68,7 @@ class HeartRateChangeViewModel : ViewModel() {
             if (regressionResult != null) {
                 // Update state flows with regression results
                 // Slope is BPM/second, round for display/consistency if desired
-                val currentRate = (Math.round(regressionResult.slope * 1000) / 1000f).toFloat()
+                val currentRate = Math.round(regressionResult.slope * 1000) / 1000f
                 _confidenceLevel.value = regressionResult.rSquared.toFloat()
 
                 // Update trend direction using the calculated rate and hysteresis logic

@@ -32,7 +32,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             is Exercise -> "Exercise"
             is Rest -> "Rest"
             is Superset -> "Superset"
-            else -> throw RuntimeException("Unsupported workout component type")
         }
 
         jsonObject.addProperty("id", src.id.toString())

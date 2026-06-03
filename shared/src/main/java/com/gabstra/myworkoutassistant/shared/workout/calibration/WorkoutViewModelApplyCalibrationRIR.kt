@@ -52,13 +52,13 @@ private fun WorkoutViewModel.updateCalibrationSetPreviousData(
     return when {
         updatedSetData is WeightSetData && 
         state.previousSetData is WeightSetData -> {
-            val prevData = state.previousSetData as WeightSetData
+            val prevData = state.previousSetData
             val newPrevData = prevData.copy(actualWeight = updatedSetData.actualWeight)
             newPrevData.copy(volume = newPrevData.calculateVolume())
         }
         updatedSetData is BodyWeightSetData && 
         state.previousSetData is BodyWeightSetData -> {
-            val prevData = state.previousSetData as BodyWeightSetData
+            val prevData = state.previousSetData
             val newPrevData = prevData.copy(additionalWeight = updatedSetData.additionalWeight)
             newPrevData.copy(volume = newPrevData.calculateVolume())
         }
@@ -316,4 +316,3 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         }
     }
 }
-
