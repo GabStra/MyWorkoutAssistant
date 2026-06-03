@@ -8,11 +8,13 @@ from pathlib import Path
 
 from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
 from exercise_motion_pkg.gvhmr import normalize_gvhmr_output
+from exercise_motion_pkg.gvhmr_retarget_source import export_gvhmr_retarget_source
 from exercise_motion_pkg.gvhmr_runner import run_gvhmr_locally
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.paths import PipelinePaths
 from exercise_motion_pkg.preview import write_preview_html
+from exercise_motion_pkg.retarget_contract import build_target_rig_contract
 from exercise_motion_pkg.youtube import download_youtube
 
 
@@ -41,6 +43,8 @@ class GenerateResult:
     raw_preview_html_path: Path
     cleaned_motion_json_path: Path
     raw_motion_json_path: Path
+    target_rig_contract_path: Path
+    gvhmr_retarget_source_path: Path | None
     copied_input_video_path: Path
     cleanup_stats: CleanupStats
     ground_metadata_path: Path | None
@@ -50,6 +54,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     paths = PipelinePaths.create(request.workspace, request.exercise_slug)
     input_video_path = prepare_input_video(request, paths)
     raw_motion_json_path = paths.raw_dir / "motion.raw.json"
+    gvhmr_retarget_source_path: Path | None = None
     if request.normalized_motion_json is not None:
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
     else:
@@ -80,6 +85,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             output_json=raw_motion_json_path,
             coordinate_space=request.gvhmr_coordinate_space,
         )
+        gvhmr_retarget_source_path = export_gvhmr_retarget_source(
+            gvhmr_results_pt=gvhmr_results_pt,
+            output_json=paths.retarget_dir / "gvhmr.retarget_source.json",
+            coordinate_space=request.gvhmr_coordinate_space,
+        )
 
     raw_clip = load_motion_json(raw_motion_json_path)
     raw_preview_html_path = paths.preview_dir / "motion_preview.raw.html"
@@ -108,6 +118,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
 
     preview_html_path = paths.preview_dir / "motion_preview.html"
     write_preview_html(preview_html_path, cleaned_clip, title=request.exercise_slug)
+    target_rig_contract_path = paths.retarget_dir / "target_rig.contract.json"
+    target_rig_contract_path.write_text(
+        json.dumps(build_target_rig_contract(), indent=2),
+        encoding="utf-8",
+    )
 
     manifest_path = paths.root / "manifest.json"
     manifest_payload = {
@@ -118,6 +133,8 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         "rawPreviewHtmlPath": str(raw_preview_html_path),
         "previewHtmlPath": str(preview_html_path),
         "groundMetadataPath": str(ground_metadata_path),
+        "targetRigContractPath": str(target_rig_contract_path),
+        "gvhmrRetargetSourcePath": str(gvhmr_retarget_source_path) if gvhmr_retarget_source_path is not None else None,
         "cleanupStats": {
             "inputFrames": cleanup_stats.input_frames,
             "outputFrames": cleanup_stats.output_frames,
@@ -128,8 +145,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         },
         "groundMetadata": ground_metadata.to_dict(),
         "nextStage": {
-            "status": "pending_rig_retarget",
-            "description": "Retarget the cleaned motion clip to the production humanoid rig, then export glb/glTF for Wear.",
+            "status": "pending_offline_retarget",
+            "description": "Retarget offline from the GVHMR SMPL source and cleaned motion review clip to the fixed humanoid rig, then export glb/glTF for Wear.",
+            "cleanedMotionJsonPath": str(cleaned_motion_json_path),
+            "gvhmrRetargetSourcePath": str(gvhmr_retarget_source_path) if gvhmr_retarget_source_path is not None else None,
+            "targetRigContractPath": str(target_rig_contract_path),
         },
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2), encoding="utf-8")
@@ -139,6 +159,8 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         raw_preview_html_path=raw_preview_html_path,
         cleaned_motion_json_path=cleaned_motion_json_path,
         raw_motion_json_path=raw_motion_json_path,
+        target_rig_contract_path=target_rig_contract_path,
+        gvhmr_retarget_source_path=gvhmr_retarget_source_path,
         copied_input_video_path=input_video_path,
         cleanup_stats=cleanup_stats,
         ground_metadata_path=ground_metadata_path,

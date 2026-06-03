@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import base64
 import json
 import math
-from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 
@@ -74,7 +72,6 @@ YAW_ALIGNMENT_PAIRS = (
     ("left_hand", "right_hand"),
     ("left_wrist", "right_wrist"),
 )
-PREVIEW_MANNEQUIN_GLB = Path(__file__).with_name("assets") / "mannequin" / "Mannequin_Man.glb"
 
 
 def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_path: Path | None = None) -> None:
@@ -108,7 +105,6 @@ def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_p
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
         "defaultAutoWorldAlignment": False,
-        "mannequinAssetDataUri": _load_preview_mannequin_data_uri(),
         "defaultAutoAlignment": default_auto_alignment,
         "loopable": bool(detected_loops),
         "detectedLoops": detected_loops,
@@ -125,13 +121,6 @@ def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_p
     }
     html = _build_html(payload)
     path.write_text(html, encoding="utf-8")
-
-
-def _load_preview_mannequin_data_uri() -> str | None:
-    if not PREVIEW_MANNEQUIN_GLB.exists():
-        return None
-    encoded = base64.b64encode(PREVIEW_MANNEQUIN_GLB.read_bytes()).decode("ascii")
-    return f"data:model/gltf-binary;base64,{encoded}"
 
 
 def write_preview_debug_json(path: Path, clip: MotionClip) -> None:
@@ -1654,7 +1643,7 @@ def _build_html(payload: dict[str, object]) -> str:
         <div class="stat">Current frame: <span id="frameIndex">0</span></div>
       </div>
       <ul>
-        <li>Expected next stage: retarget this cleaned motion to the low-poly humanoid rig.</li>
+        <li>This preview is the motion review gate before offline humanoid retargeting.</li>
         <li>If wrists, feet, or loop boundaries still look wrong, reject and re-run with a better source clip.</li>
       </ul>
     </aside>
@@ -1672,7 +1661,6 @@ def _build_html(payload: dict[str, object]) -> str:
     </script>
     <script type="module">
     import * as THREE from "three";
-    import {{ GLTFLoader }} from "three/addons/loaders/GLTFLoader.js";
 
     const payload = {payload_json};
     const viewport = document.getElementById("viewport");
@@ -1855,38 +1843,6 @@ def _build_html(payload: dict[str, object]) -> str:
 
     const headMesh = new THREE.Mesh(headGeometry, headMaterial);
     scene.add(headMesh);
-
-    const MANNEQUIN_BONE_MAP = {{
-      "root.x": ["pelvis", "spine1"],
-      "spine_01.x": ["pelvis", "spine1"],
-      "spine_02.x": ["spine1", "spine2"],
-      "spine_03.x": ["spine2", "neck"],
-      "neck.x": ["neck", "head"],
-      "head.x": ["neck", "head"],
-      "shoulder.l": ["neck", "left_shoulder"],
-      "arm_stretch.l": ["left_shoulder", "left_elbow"],
-      "forearm_stretch.l": ["left_elbow", "left_wrist"],
-      "hand.l": ["left_wrist", "left_hand"],
-      "shoulder.r": ["neck", "right_shoulder"],
-      "arm_stretch.r": ["right_shoulder", "right_elbow"],
-      "forearm_stretch.r": ["right_elbow", "right_wrist"],
-      "hand.r": ["right_wrist", "right_hand"],
-      "thigh_stretch.l": ["left_hip", "left_knee"],
-      "leg_stretch.l": ["left_knee", "left_ankle"],
-      "foot.l": ["left_ankle", "left_foot"],
-      "thigh_stretch.r": ["right_hip", "right_knee"],
-      "leg_stretch.r": ["right_knee", "right_ankle"],
-      "foot.r": ["right_ankle", "right_foot"],
-    }};
-    let mannequinRoot = null;
-    let mannequinBones = new Map();
-    let mannequinBoneStates = new Map();
-    let mannequinSkinnedMeshes = [];
-    let mannequinReady = false;
-    let mannequinFailed = false;
-    let mannequinScale = 1.0;
-    let mannequinBasePelvis = null;
-    let mannequinBaseRoot = null;
 
     function computeBaseSceneBounds(currentFixedRoot) {{
       const frames = playbackState.boundsFrames;
@@ -2497,230 +2453,6 @@ def _build_html(payload: dict[str, object]) -> str:
         return point ? toWorldPoint(point, frameTranslation, fixedRoot) : null;
       }}
 
-      function findMannequinReferenceFrame() {{
-        for (const frame of payload.frames) {{
-          if (frame.joints.pelvis && frame.joints.neck && frame.joints.left_hip && frame.joints.right_hip) {{
-            return frame;
-          }}
-        }}
-        return payload.frames[0] ?? null;
-      }}
-
-      function initializeMannequinRig(gltf) {{
-        mannequinRoot = gltf.scene;
-        mannequinRoot.traverse((node) => {{
-          if (node.name) {{
-            mannequinBones.set(node.name, node);
-          }}
-          if (node.isSkinnedMesh) {{
-            mannequinSkinnedMeshes.push(node);
-            node.material = torsoMaterial.clone();
-            node.material.flatShading = true;
-            node.material.needsUpdate = true;
-          }}
-        }});
-        if (mannequinBones.size === 0) {{
-          return false;
-        }}
-        scene.add(mannequinRoot);
-        mannequinRoot.updateMatrixWorld(true);
-        const referenceFrame = findMannequinReferenceFrame();
-        if (!referenceFrame) {{
-          return false;
-        }}
-        const referenceTranslation = getFrameTranslation(referenceFrame);
-        const pelvisRef = getFrameJointWorld(referenceFrame, referenceTranslation, "pelvis");
-        const neckRef = getFrameJointWorld(referenceFrame, referenceTranslation, "neck");
-        const leftHipRef = getFrameJointWorld(referenceFrame, referenceTranslation, "left_hip");
-        const rightHipRef = getFrameJointWorld(referenceFrame, referenceTranslation, "right_hip");
-        const mannequinPelvisBone = mannequinBones.get("root.x") ?? mannequinBones.get("spine_01.x") ?? mannequinBones.get("c_traj");
-        const mannequinNeckBone = mannequinBones.get("neck.x");
-        const mannequinLeftHipBone = mannequinBones.get("thigh_stretch.l");
-        const mannequinRightHipBone = mannequinBones.get("thigh_stretch.r");
-        if (!mannequinPelvisBone) {{
-          return false;
-        }}
-        const restPelvis = new THREE.Vector3();
-        const restNeck = new THREE.Vector3();
-        const restLeftHip = new THREE.Vector3();
-        const restRightHip = new THREE.Vector3();
-        mannequinPelvisBone.getWorldPosition(restPelvis);
-        let scaleCandidates = [];
-        if (pelvisRef && neckRef && mannequinNeckBone) {{
-          mannequinNeckBone.getWorldPosition(restNeck);
-          const sourceHeight = pelvisRef.distanceTo(neckRef);
-          const restHeight = restPelvis.distanceTo(restNeck);
-          if (sourceHeight > 1e-6 && restHeight > 1e-6) {{
-            scaleCandidates.push(sourceHeight / restHeight);
-          }}
-        }}
-        if (leftHipRef && rightHipRef && mannequinLeftHipBone && mannequinRightHipBone) {{
-          mannequinLeftHipBone.getWorldPosition(restLeftHip);
-          mannequinRightHipBone.getWorldPosition(restRightHip);
-          const sourceHipSpan = leftHipRef.distanceTo(rightHipRef);
-          const restHipSpan = restLeftHip.distanceTo(restRightHip);
-          if (sourceHipSpan > 1e-6 && restHipSpan > 1e-6) {{
-            scaleCandidates.push(sourceHipSpan / restHipSpan);
-          }}
-        }}
-        mannequinScale = scaleCandidates.length > 0
-          ? scaleCandidates.reduce((sum, value) => sum + value, 0) / scaleCandidates.length
-          : 1.0;
-        mannequinRoot.scale.setScalar(mannequinScale);
-        mannequinRoot.updateMatrixWorld(true);
-        mannequinPelvisBone.getWorldPosition(restPelvis);
-        mannequinBasePelvis = restPelvis.clone();
-        mannequinBaseRoot = mannequinRoot.position.clone();
-        for (const [boneName, pair] of Object.entries(MANNEQUIN_BONE_MAP)) {{
-          const bone = mannequinBones.get(boneName);
-          if (!bone) {{
-            continue;
-          }}
-          const startWorld = new THREE.Vector3();
-          bone.getWorldPosition(startWorld);
-          let endWorld = null;
-            if (bone.children && bone.children.length > 0) {{
-              const childBone = bone.children.find((child) => child.name) ?? bone.children[0];
-            endWorld = new THREE.Vector3();
-            childBone.getWorldPosition(endWorld);
-          }}
-          if (!endWorld) {{
-            const jointEnd = getFrameJointWorld(referenceFrame, referenceTranslation, pair[1]) ?? getFrameJointWorld(referenceFrame, referenceTranslation, pair[0]);
-            if (!jointEnd) {{
-              continue;
-            }}
-            endWorld = jointEnd.clone();
-          }}
-          const restDirection = endWorld.clone().sub(startWorld);
-          if (restDirection.lengthSq() <= 1e-8) {{
-            continue;
-          }}
-          const parentQuat = new THREE.Quaternion();
-          if (bone.parent) {{
-            bone.parent.getWorldQuaternion(parentQuat);
-          }} else {{
-            parentQuat.identity();
-          }}
-          const worldQuat = new THREE.Quaternion();
-          bone.getWorldQuaternion(worldQuat);
-          mannequinBoneStates.set(boneName, {{
-            restDirection: restDirection.normalize(),
-            restWorldQuaternion: worldQuat.clone(),
-            parentWorldQuaternion: parentQuat.clone(),
-          }});
-        }}
-        mannequinReady = true;
-        return mannequinReady;
-      }}
-
-      async function tryLoadMannequin() {{
-        if (!payload.mannequinAssetDataUri) {{
-          mannequinFailed = true;
-          return;
-        }}
-        try {{
-          const loader = new GLTFLoader();
-          const gltf = await loader.loadAsync(payload.mannequinAssetDataUri);
-          if (initializeMannequinRig(gltf)) {{
-            mannequinFailed = false;
-            hideProceduralBody();
-            draw();
-          }} else {{
-            mannequinFailed = true;
-            console.warn("Mannequin rig initialization rejected the loaded asset");
-          }}
-        }} catch (error) {{
-          mannequinFailed = true;
-          console.warn("Failed to load mannequin asset", error);
-        }}
-      }}
-
-      function updateMannequinForFrame(frame, frameTranslation) {{
-        if (!mannequinReady || !mannequinRoot || !mannequinBasePelvis) {{
-          return false;
-        }}
-        const pelvisWorld = getFrameJointWorld(frame, frameTranslation, "pelvis");
-        if (!pelvisWorld) {{
-          mannequinRoot.visible = false;
-          return false;
-        }}
-        mannequinRoot.visible = true;
-        mannequinRoot.position.copy(mannequinBaseRoot.clone().add(pelvisWorld.clone().sub(mannequinBasePelvis)));
-        mannequinRoot.updateMatrixWorld(true);
-        const leftHipWorld = getFrameJointWorld(frame, frameTranslation, "left_hip");
-        const rightHipWorld = getFrameJointWorld(frame, frameTranslation, "right_hip");
-        const spine1World = getFrameJointWorld(frame, frameTranslation, "spine1");
-        const spine3World = getFrameJointWorld(frame, frameTranslation, "spine3");
-        const neckWorld = getFrameJointWorld(frame, frameTranslation, "neck");
-        for (const [boneName, pair] of Object.entries(MANNEQUIN_BONE_MAP)) {{
-          const bone = mannequinBones.get(boneName);
-          const state = mannequinBoneStates.get(boneName);
-          if (!bone || !state) {{
-            continue;
-          }}
-          if (boneName === "root.x" && leftHipWorld && rightHipWorld && spine1World) {{
-            const hipAxis = rightHipWorld.clone().sub(leftHipWorld);
-            const hipCenter = leftHipWorld.clone().add(rightHipWorld).multiplyScalar(0.5);
-            const upAxis = spine1World.clone().sub(hipCenter);
-            const desiredWorld = quaternionFromBodyAxes(hipAxis, upAxis);
-            if (desiredWorld) {{
-              const parentWorld = new THREE.Quaternion();
-              if (bone.parent) {{
-                bone.parent.getWorldQuaternion(parentWorld);
-              }} else {{
-                parentWorld.identity();
-              }}
-              bone.quaternion.copy(parentWorld.clone().invert().multiply(desiredWorld));
-              bone.updateMatrixWorld(true);
-            }}
-            continue;
-          }}
-          if ((boneName === "spine_03.x" || boneName === "spine_02.x") && leftHipWorld && rightHipWorld && neckWorld && spine3World) {{
-            const shoulderLeft = getFrameJointWorld(frame, frameTranslation, "left_shoulder");
-            const shoulderRight = getFrameJointWorld(frame, frameTranslation, "right_shoulder");
-            if (shoulderLeft && shoulderRight) {{
-              const shoulderAxis = shoulderRight.clone().sub(shoulderLeft);
-              const upAxis = neckWorld.clone().sub(spine3World);
-              const desiredWorld = quaternionFromBodyAxes(shoulderAxis, upAxis);
-              if (desiredWorld) {{
-                const parentWorld = new THREE.Quaternion();
-                if (bone.parent) {{
-                  bone.parent.getWorldQuaternion(parentWorld);
-                }} else {{
-                  parentWorld.identity();
-                }}
-                bone.quaternion.copy(parentWorld.clone().invert().multiply(desiredWorld));
-                bone.updateMatrixWorld(true);
-              }}
-              continue;
-            }}
-          }}
-          const startWorld = getFrameJointWorld(frame, frameTranslation, pair[0]);
-          const endWorld = getFrameJointWorld(frame, frameTranslation, pair[1]);
-          if (!startWorld || !endWorld) {{
-            continue;
-          }}
-          const targetDirection = endWorld.clone().sub(startWorld);
-          if (targetDirection.lengthSq() <= 1e-8) {{
-            continue;
-          }}
-          targetDirection.normalize();
-          const delta = new THREE.Quaternion().setFromUnitVectors(state.restDirection, targetDirection);
-          const desiredWorld = delta.multiply(state.restWorldQuaternion.clone());
-          const parentWorld = new THREE.Quaternion();
-          if (bone.parent) {{
-            bone.parent.getWorldQuaternion(parentWorld);
-          }} else {{
-            parentWorld.identity();
-          }}
-          const localQuat = parentWorld.clone().invert().multiply(desiredWorld);
-          bone.quaternion.copy(localQuat);
-          bone.updateMatrixWorld(true);
-        }}
-        mannequinRoot.updateMatrixWorld(true);
-        return true;
-      }}
-
     function updateCamera() {{
       const distance = 1200 / Math.max(120, zoom);
       const horizontalDistance = Math.cos(pitch) * distance;
@@ -2791,15 +2523,6 @@ def _build_html(payload: dict[str, object]) -> str:
 
       function updateSceneForFrame(frame) {{
         const frameTranslation = getFrameTranslation(frame);
-        if (mannequinReady) {{
-          hideProceduralBody();
-          updateMannequinForFrame(frame, frameTranslation);
-          return;
-        }}
-        if (payload.mannequinAssetDataUri && !mannequinFailed) {{
-          hideProceduralBody();
-          return;
-        }}
         const pelvisJoint = frame.joints.pelvis ? toWorldPoint(frame.joints.pelvis, frameTranslation, fixedRoot) : null;
       const spine1Joint = frame.joints.spine1 ? toWorldPoint(frame.joints.spine1, frameTranslation, fixedRoot) : null;
       const spine2Joint = frame.joints.spine2 ? toWorldPoint(frame.joints.spine2, frameTranslation, fixedRoot) : null;
@@ -3077,7 +2800,6 @@ def _build_html(payload: dict[str, object]) -> str:
       refreshSceneFrame();
       resize();
       draw();
-      tryLoadMannequin();
       requestAnimationFrame(animate);
     </script>
 </body>

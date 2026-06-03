@@ -801,9 +801,12 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert Path(manifest["previewHtmlPath"]).exists()
     assert Path(manifest["cleanedMotionJsonPath"]).exists()
     assert Path(manifest["groundMetadataPath"]).exists()
+    assert Path(manifest["targetRigContractPath"]).exists()
+    assert manifest["gvhmrRetargetSourcePath"] is None
     assert manifest["groundMetadata"]["renderGroundPlane"]["space"] == "motion"
     assert manifest["groundMetadata"]["renderGroundOrigin"]["space"] == "motion"
-    assert manifest["nextStage"]["status"] == "pending_rig_retarget"
+    assert manifest["nextStage"]["status"] == "pending_offline_retarget"
+    assert manifest["nextStage"]["gvhmrRetargetSourcePath"] is None
 
     cleaned_clip = load_motion_json(result.cleaned_motion_json_path)
     assert cleaned_clip.metadata["ground"]["renderGroundPlane"]["space"] == "motion"

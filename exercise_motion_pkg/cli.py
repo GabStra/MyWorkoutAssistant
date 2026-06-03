@@ -158,6 +158,9 @@ def main() -> None:
         print(f"Preview HTML: {result.preview_html_path}")
         print(f"Raw preview HTML: {result.raw_preview_html_path}")
         print(f"Cleaned motion JSON: {result.cleaned_motion_json_path}")
+        print(f"Target rig contract JSON: {result.target_rig_contract_path}")
+        if result.gvhmr_retarget_source_path is not None:
+            print(f"GVHMR retarget source JSON: {result.gvhmr_retarget_source_path}")
         if result.ground_metadata_path is not None:
             print(f"Ground metadata JSON: {result.ground_metadata_path}")
         return

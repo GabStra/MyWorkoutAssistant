@@ -6,16 +6,18 @@ Current scope:
 
 - accepts a YouTube URL or local video file
 - runs GVHMR from a prepared local checkout, or consumes an existing `hmr4d_results.pt`
-- reconstructs joints from GVHMR `smpl_params_global`
+- reconstructs joints from GVHMR `smpl_params_incam` or `smpl_params_global`
 - performs cleanup: trim idle frames, estimate support ground, stabilize drift, smooth jitter
 - writes `ground.metadata.json` plus embedded `metadata.ground`
 - writes a standalone HTML/WebGL preview
-- can emit a deterministic kinematic refinement bundle and refined motion preview
+- writes an offline retarget handoff:
+  - fixed target rig contract
+  - GVHMR SMPL retarget source JSON when `hmr4d_results.pt` is available
 
 Not in scope:
 
+- browser-side live rig retargeting
 - `.glb` export
-- Blender rig retargeting
 - direct Wear integration
 - physics-based humanoid simulation
 
@@ -91,6 +93,8 @@ Main artifacts:
 - `raw/gvhmr/<video-stem>/hmr4d_results.pt`
 - `cleaned/motion.cleaned.json`
 - `cleaned/ground.metadata.json`
+- `retarget/target_rig.contract.json`
+- `retarget/gvhmr.retarget_source.json` when the pipeline ran from GVHMR output
 - `preview/motion_preview.html`
 
 ## Local LLM Segment Detection
