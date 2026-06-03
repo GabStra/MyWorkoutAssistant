@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Define a new custom theme inheriting from the system default -->
     <style name="MyCustomWearTheme" parent="@android:style/Theme.DeviceDefault">
 
-        <!-- Disable the system-level swipe to dismiss -->
-        <item name="android:windowSwipeToDismiss">false</item>
+        <!-- Workout pages use custom full-screen gesture handling, so system swipe-dismiss is intentionally disabled here. -->
+        <item
+            name="android:windowSwipeToDismiss"
+            tools:ignore="WearBackNavigation">false</item>
         <item name="android:windowIsTranslucent">false</item>
     </style>
 </resources>
