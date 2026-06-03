@@ -41,6 +41,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
+import com.gabstra.myworkoutassistant.composables.ExerciseAnimationPage
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOption
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOverlay
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
@@ -94,6 +95,7 @@ private enum class ExerciseHorizontalPage {
     BUTTONS,
     PLATES,
     EXERCISE_DETAIL,
+    ANIMATION,
     TITLED_LINES,
     MUSCLES,
     PROGRESSION_COMPARISON,
@@ -199,6 +201,7 @@ fun ExerciseScreen(
             if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
+            add(ExerciseHorizontalPage.ANIMATION)
             //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
@@ -373,6 +376,15 @@ fun ExerciseScreen(
                                 exerciseTitleComposable = exerciseTitleComposable,
                                 onEditModeEnabled = { isEditModeEnabled = true },
                                 onEditModeDisabled = { isEditModeEnabled = false }
+                            )
+                        }
+                    }
+
+                    ExerciseHorizontalPage.ANIMATION -> {
+                        Box(modifier = pageModifier) {
+                            ExerciseAnimationPage(
+                                exercise = exercise,
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
@@ -1079,7 +1091,24 @@ private fun ExerciseScreenPreviewTitledLinesPage() {
             setType = ExercisePreviewSetType.WEIGHT,
             includeBarbellPage = true,
             includeTitledLinesPage = true,
-            openPageIndex = 3
+            openPageIndex = 1
+        )
+    )
+}
+
+@Preview(
+    name = "Animation Page",
+    group = "ExerciseScreen/Pages",
+    device = WearDevices.SMALL_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewAnimationPage() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "animation_page",
+            setType = ExercisePreviewSetType.WEIGHT,
+            openPageIndex = 2
         )
     )
 }

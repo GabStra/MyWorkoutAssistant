@@ -544,3 +544,4 @@ scripts/ingest_specstory_to_pieces_mcp.py
 pytest_tmp*/
 pytest-cache-files-*/
 *.egg-info/
+wearos/src/debug/assets/exercise_motion/
