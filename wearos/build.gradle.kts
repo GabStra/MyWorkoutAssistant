@@ -23,6 +23,9 @@ val e2eTestBuildType = providers.gradleProperty("e2eTestBuildType").orElse("debu
 val isReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true)
 }
+val isCiBuild = providers.environmentVariable("CI").orElse("false").get().equals("true", ignoreCase = true)
+val shouldRunReleaseLint = isReleaseBuild || isCiBuild
+val shouldRunReleaseOptimizations = isReleaseBuild || isCiBuild
 if (isReleaseBuild && !hasReleaseSigning) {
     throw GradleException(
         "Missing release signing configuration. Provide keystore.properties or MWA_* env vars."
@@ -47,7 +50,7 @@ android {
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -58,7 +61,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled = shouldRunReleaseOptimizations
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -81,6 +84,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = false
+    }
+    lint {
+        checkReleaseBuilds = shouldRunReleaseLint
     }
     packaging {
         resources {
@@ -173,7 +179,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.9")
+    testImplementation("io.mockk:mockk:1.14.11")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.google.truth:truth:1.4.5")
@@ -183,4 +189,5 @@ dependencies {
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
+    androidTestImplementation(kotlin("stdlib"))
 }

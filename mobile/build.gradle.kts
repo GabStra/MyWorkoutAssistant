@@ -28,6 +28,9 @@ val e2eTestBuildType = providers.gradleProperty("e2eTestBuildType").orElse("debu
 val isReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true)
 }
+val isCiBuild = providers.environmentVariable("CI").orElse("false").get().equals("true", ignoreCase = true)
+val shouldRunReleaseLint = isReleaseBuild || isCiBuild
+val shouldRunReleaseOptimizations = isReleaseBuild || isCiBuild
 if (isReleaseBuild && !hasReleaseSigning) {
     throw GradleException(
         "Missing release signing configuration. Provide keystore.properties or MWA_* env vars."
@@ -53,7 +56,7 @@ android {
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -64,7 +67,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled = shouldRunReleaseOptimizations
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -89,6 +92,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = false
+    }
+    lint {
+        checkReleaseBuilds = shouldRunReleaseLint
     }
     packaging {
         resources {
@@ -144,6 +150,8 @@ dependencies {
     // AndroidX core
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.concurrent:concurrent-futures:1.3.0")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
 
     // Lifecycle
@@ -163,7 +171,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
-    implementation("com.openai:openai-java:4.35.0")
+    implementation("com.openai:openai-java:4.37.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
@@ -178,6 +186,8 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
+    androidTestImplementation("androidx.concurrent:concurrent-futures:1.3.0")
+    androidTestImplementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
