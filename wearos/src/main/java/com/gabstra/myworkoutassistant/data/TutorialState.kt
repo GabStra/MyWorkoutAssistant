@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import androidx.core.content.edit
 
 /**
  * Simple container for tutorial / onboarding progress on Wear OS.
@@ -53,14 +54,13 @@ object TutorialPreferences {
     ): TutorialState {
         val updated = transform(current)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putBoolean(KEY_HAS_SEEN_WORKOUT_SELECTION, updated.hasSeenWorkoutSelectionTutorial)
-            .putBoolean(KEY_HAS_SEEN_WORKOUT_HEART_RATE, updated.hasSeenWorkoutHeartRateTutorial)
-            .putBoolean(KEY_HAS_SEEN_SET_SCREEN, updated.hasSeenSetScreenTutorial)
-            .putBoolean(KEY_HAS_SEEN_REST_SCREEN, updated.hasSeenRestScreenTutorial)
-            .putBoolean(KEY_HAS_SEEN_COACHMARK, updated.hasSeenCoachmarkTutorial)
-            .apply()
+        prefs.edit {
+            putBoolean(KEY_HAS_SEEN_WORKOUT_SELECTION, updated.hasSeenWorkoutSelectionTutorial)
+            putBoolean(KEY_HAS_SEEN_WORKOUT_HEART_RATE, updated.hasSeenWorkoutHeartRateTutorial)
+            putBoolean(KEY_HAS_SEEN_SET_SCREEN, updated.hasSeenSetScreenTutorial)
+            putBoolean(KEY_HAS_SEEN_REST_SCREEN, updated.hasSeenRestScreenTutorial)
+            putBoolean(KEY_HAS_SEEN_COACHMARK, updated.hasSeenCoachmarkTutorial)
+        }
         return updated
     }
 }
-

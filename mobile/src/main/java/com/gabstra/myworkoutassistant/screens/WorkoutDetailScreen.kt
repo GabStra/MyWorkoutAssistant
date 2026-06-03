@@ -558,10 +558,6 @@ fun WorkoutDetailScreen(
                 }
                 val density = LocalDensity.current
                 
-                LaunchedEffect(scrollState.value) {
-                    // Trigger recomposition when scroll state changes
-                }
-                
                 Box(modifier = Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier

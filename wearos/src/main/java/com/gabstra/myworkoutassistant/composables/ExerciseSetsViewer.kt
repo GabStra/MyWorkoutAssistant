@@ -863,10 +863,10 @@ private fun FastFittedFadingTextCell(
 @Composable
 private fun FastFittedTextCellContent(
     fittedText: PageExercisesFittedTextCell,
-    enableFadingText: Boolean = false,
     color: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
+    enableFadingText: Boolean = false,
     fadeOverflow: Boolean,
 ) {
     if (fadeOverflow && fittedText.overflows && enableFadingText) {

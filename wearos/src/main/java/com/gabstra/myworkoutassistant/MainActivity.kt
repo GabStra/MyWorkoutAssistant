@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.edit
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -160,7 +161,6 @@ class MainActivity : ComponentActivity() {
             this.startActivity(
                 Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
                     .setData("package:${this.packageName}".toUri())
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
 
@@ -294,7 +294,6 @@ fun WearApp(
         var initialized by remember { mutableStateOf(false) }
 
         var startDestination by remember { mutableStateOf<String?>(null) }
-
         var tutorialState by remember { mutableStateOf(TutorialState()) }
 
         var showWorkoutSelectionTutorial by remember { mutableStateOf(false) }
@@ -623,9 +622,9 @@ fun WearApp(
                         "workout_state",
                         Context.MODE_PRIVATE
                     )
-                    prefs.edit()
-                        .putBoolean("isWorkoutInProgress", true)
-                        .apply()
+                    prefs.edit {
+                        putBoolean("isWorkoutInProgress", true)
+                    }
                     // Navigate before hydration: resumeWorkoutFromRecord does heavy IO first; showing
                     // WorkoutScreen immediately avoids a dead air gap after the recovery dialog closes.
                     navController.navigate(Screen.Workout.route) {

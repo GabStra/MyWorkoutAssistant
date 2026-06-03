@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.receivers
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -65,13 +66,10 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
                 withContext(Dispatchers.Main) {
                     val notificationHelper = WorkoutNotificationHelper(context)
                     notificationHelper.showNotification(schedule, workout)
+                    @SuppressLint("WearRecents")
                     context.startActivity(
                         notificationHelper.createAlarmActivityIntent(schedule).apply {
-                            addFlags(
-                                Intent.FLAG_ACTIVITY_NEW_TASK or
-                                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            )
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                     )
                 }

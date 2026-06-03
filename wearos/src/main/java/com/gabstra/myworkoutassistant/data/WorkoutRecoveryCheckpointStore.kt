@@ -10,21 +10,17 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(checkpoint: WorkoutRecoveryCheckpoint, synchronous: Boolean = false) {
-        val editor = prefs.edit()
-        editor.putString(KEY_WORKOUT_ID, checkpoint.workoutId.toString())
-        editor.putString(KEY_WORKOUT_HISTORY_ID, checkpoint.workoutHistoryId?.toString())
-        editor.putString(KEY_STATE_TYPE, checkpoint.stateType.name)
-        editor.putBoolean(KEY_IS_CALIBRATION_SET_EXECUTION, checkpoint.isCalibrationSetExecution)
-        editor.putString(KEY_EXERCISE_ID, checkpoint.exerciseId?.toString())
-        editor.putString(KEY_SET_ID, checkpoint.setId?.toString())
-        editor.putInt(KEY_SET_INDEX, checkpoint.setIndex?.toInt() ?: -1)
-        editor.putInt(KEY_REST_ORDER, checkpoint.restOrder?.toInt() ?: -1)
-        editor.putLong(KEY_SET_START_EPOCH_MS, checkpoint.setStartEpochMs ?: -1L)
-        editor.putLong(KEY_UPDATED_AT, checkpoint.updatedAtEpochMs)
-        if (synchronous) {
-            editor.commit()
-        } else {
-            editor.apply()
+        prefs.edit(commit = synchronous) {
+            putString(KEY_WORKOUT_ID, checkpoint.workoutId.toString())
+            putString(KEY_WORKOUT_HISTORY_ID, checkpoint.workoutHistoryId?.toString())
+            putString(KEY_STATE_TYPE, checkpoint.stateType.name)
+            putBoolean(KEY_IS_CALIBRATION_SET_EXECUTION, checkpoint.isCalibrationSetExecution)
+            putString(KEY_EXERCISE_ID, checkpoint.exerciseId?.toString())
+            putString(KEY_SET_ID, checkpoint.setId?.toString())
+            putInt(KEY_SET_INDEX, checkpoint.setIndex?.toInt() ?: -1)
+            putInt(KEY_REST_ORDER, checkpoint.restOrder?.toInt() ?: -1)
+            putLong(KEY_SET_START_EPOCH_MS, checkpoint.setStartEpochMs ?: -1L)
+            putLong(KEY_UPDATED_AT, checkpoint.updatedAtEpochMs)
         }
     }
 
@@ -73,12 +69,8 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
     }
 
     fun saveRuntimeSnapshotJson(snapshotJson: String, synchronous: Boolean = false) {
-        val editor = prefs.edit()
-        editor.putString(KEY_RUNTIME_SNAPSHOT_JSON, snapshotJson)
-        if (synchronous) {
-            editor.commit()
-        } else {
-            editor.apply()
+        prefs.edit(commit = synchronous) {
+            putString(KEY_RUNTIME_SNAPSHOT_JSON, snapshotJson)
         }
     }
 

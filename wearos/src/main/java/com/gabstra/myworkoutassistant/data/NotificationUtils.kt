@@ -20,9 +20,7 @@ internal const val OPEN_ACTIVE_WORKOUT_ACTION =
 
 internal fun Intent.configureOpenActiveWorkoutIntent(workoutGlobalId: UUID? = null): Intent = apply {
     action = OPEN_ACTIVE_WORKOUT_ACTION
-    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-        Intent.FLAG_ACTIVITY_SINGLE_TOP
+    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
     if (workoutGlobalId != null) {
         putExtra("WORKOUT_ID", workoutGlobalId.toString())
     } else {
@@ -155,9 +153,7 @@ fun showSyncCompleteNotification(context: Context) {
     val notificationId = 2
 
     // Create an intent that will open the app when the notification is tapped
-    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-    }
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
     val pendingIntent = PendingIntent.getActivity(
         context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )

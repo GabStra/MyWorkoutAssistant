@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.sync
 
 import android.content.Context
 import android.util.Log
+import androidx.core.content.edit
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
@@ -46,39 +47,39 @@ object PhoneToWatchSyncCoordinator {
 
     private fun setPendingFollowUp(context: Context, pending: Boolean) {
         pendingFollowUp.set(pending)
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_PENDING_FOLLOW_UP, pending)
-            .apply()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_PENDING_FOLLOW_UP, pending)
+        }
     }
 
     private fun setPendingManualOverride(context: Context, pending: Boolean) {
         pendingManualOverride.set(pending)
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_PENDING_MANUAL_OVERRIDE, pending)
-            .apply()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_PENDING_MANUAL_OVERRIDE, pending)
+        }
     }
 
     private fun clearPendingSyncFlags(context: Context) {
         pendingFollowUp.set(false)
         pendingManualOverride.set(false)
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_PENDING_FOLLOW_UP, false)
-            .putBoolean(KEY_PENDING_MANUAL_OVERRIDE, false)
-            .apply()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_PENDING_FOLLOW_UP, false)
+            putBoolean(KEY_PENDING_MANUAL_OVERRIDE, false)
+        }
     }
 
     private fun setLastRequestedAutomaticFingerprint(context: Context, fingerprint: String?) {
         automaticSyncState.lastRequestedFingerprint = fingerprint
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString(KEY_LAST_REQUESTED_AUTO_FINGERPRINT, fingerprint)
-            .apply()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(KEY_LAST_REQUESTED_AUTO_FINGERPRINT, fingerprint)
+        }
     }
 
     private fun setLastCompletedAutomaticFingerprint(context: Context, fingerprint: String?) {
         automaticSyncState.lastCompletedFingerprint = fingerprint
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString(KEY_LAST_COMPLETED_AUTO_FINGERPRINT, fingerprint)
-            .apply()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(KEY_LAST_COMPLETED_AUTO_FINGERPRINT, fingerprint)
+        }
     }
 
     private fun restoreAutomaticFingerprintState(context: Context) {

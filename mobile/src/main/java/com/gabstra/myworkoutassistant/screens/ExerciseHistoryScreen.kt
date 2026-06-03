@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
@@ -91,7 +92,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 private data class ExerciseHistoryDisplayData(
@@ -143,7 +143,7 @@ fun ExerciseHistoryScreen(
     val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
     val restingHeartRate = appViewModel.workoutStore.restingHeartRate
 
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
 
     val volumeAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         formatNumber(value)

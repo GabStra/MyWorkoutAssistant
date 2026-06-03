@@ -10,6 +10,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.edit
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
@@ -38,6 +39,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.net.toUri
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -180,18 +182,18 @@ private fun persistUriPermission(
 fun setAutomaticRestoreDocumentUri(context: Context, uri: Uri) {
     persistUriPermission(context, uri, readOnly = true)
     backupStoragePrefs(context)
-        .edit()
-        .putString(AUTO_RESTORE_DOCUMENT_URI_KEY, uri.toString())
-        .apply()
+        .edit {
+            putString(AUTO_RESTORE_DOCUMENT_URI_KEY, uri.toString())
+        }
 }
 
 private fun readConfiguredBackupUri(context: Context, key: String): Uri? {
     val value = backupStoragePrefs(context).getString(key, null) ?: return null
-    return runCatching { Uri.parse(value) }.getOrNull()
+    return runCatching { value.toUri() }.getOrNull()
 }
 
 private fun clearConfiguredBackupUri(context: Context, key: String) {
-    backupStoragePrefs(context).edit().remove(key).apply()
+    backupStoragePrefs(context).edit { remove(key) }
 }
 
 private fun readTextFromUri(context: Context, uri: Uri): String? {
@@ -354,7 +356,7 @@ private suspend fun loadAppBackupFromConfiguredUri(
 fun formatSecondsToMinutesSeconds(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
-    return String.format("%02d:%02d", minutes, remainingSeconds)
+    return String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
 }
 
 fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
@@ -363,7 +365,7 @@ fun formatMillisecondsToMinutesSeconds(milliseconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     val remainingMilliseconds = milliseconds % 1000
-    return String.format("%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
+    return String.format(Locale.US, "%02d:%02d:%03d", minutes, remainingSeconds, remainingMilliseconds)
 }
 
 fun findWorkoutComponentByIdInWorkouts(workouts: List<Workout>, id: UUID): WorkoutComponent? {
@@ -628,7 +630,7 @@ private suspend fun findAllBackupFilesInDownloadsFolder(context: Context, exactF
                 val baseSelectionParts = mutableListOf<String>()
                 val baseSelectionArgs = mutableListOf<String>()
 
-                if (restrictToOwner && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                if (restrictToOwner) {
                     baseSelectionParts.add("${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
                     baseSelectionArgs.add(context.packageName)
                 }
@@ -841,7 +843,7 @@ private suspend fun findManualBackupFiles(context: Context): List<BackupFileEntr
                 val baseSelectionParts = mutableListOf<String>()
                 val baseSelectionArgs = mutableListOf<String>()
                 
-                if (restrictToOwner && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                if (restrictToOwner) {
                     baseSelectionParts.add("${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
                     baseSelectionArgs.add(context.packageName)
                 }
@@ -1600,4 +1602,3 @@ suspend fun streamMarkdownToDownloadsFolder(
         }
     }
 }
-

@@ -11,6 +11,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.edit
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
@@ -94,6 +95,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
@@ -106,9 +108,9 @@ fun FormatTime(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
     }
 }
 
@@ -118,6 +120,7 @@ fun FormatTime(seconds: Int): String {
 private val DEFAULT_CONTENT_FADE_HEIGHT = 5.dp
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     // Scrollbar appearance
@@ -314,6 +317,7 @@ fun Modifier.verticalColumnScrollbar(
 }
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalLazyColumnScrollbar(
     lazyListState: LazyListState,
     // Scrollbar appearance
@@ -678,7 +682,9 @@ private object WorkoutHistorySyncFaultInjection {
         }
         val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount - 1 } ?: fallbackIndex
         if (chunkIndex != targetIndex) return false
-        prefs.edit().putBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, true).apply()
+        prefs.edit {
+            putBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, true)
+        }
         Log.w(
             "WorkoutSync",
             "E2E fault injection: skipping initial workout history chunk index=$chunkIndex once"
@@ -700,7 +706,9 @@ private object WorkoutHistorySyncFaultInjection {
             else -> 0
         }
         val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount } ?: fallbackIndex
-        prefs.edit().putBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, true).apply()
+        prefs.edit {
+            putBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, true)
+        }
         return targetIndex
     }
 }

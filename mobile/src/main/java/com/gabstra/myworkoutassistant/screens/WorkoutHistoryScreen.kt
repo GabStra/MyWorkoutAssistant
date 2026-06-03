@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -116,7 +117,6 @@ import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
-import java.util.Locale
 import java.util.UUID
 
 private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
@@ -210,7 +210,7 @@ fun WorkoutHistoryScreen(
     val context = LocalContext.current
     var isChartInteractionActive by remember { mutableStateOf(false) }
 
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
     val scope = rememberCoroutineScope()
     val userAge by appViewModel.userAge
     val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate

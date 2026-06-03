@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +57,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale.getDefault
 import java.util.UUID
 
 @Composable
@@ -337,6 +337,7 @@ private fun RecoveryInfoBlock(
     entries: List<Pair<String, String>>,
     modifier: Modifier = Modifier
 ) {
+    val currentLocale = LocalLocale.current.platformLocale
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -352,7 +353,7 @@ private fun RecoveryInfoBlock(
                 verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Text(
-                    text = label.uppercase(getDefault()),
+                    text = label.uppercase(currentLocale),
                     modifier = Modifier.fillMaxWidth(),
                     style = workoutPagerTitleTextStyle(),
                     color = MaterialTheme.colorScheme.onBackground,
@@ -392,8 +393,9 @@ private fun RecoverySectionHeader(
     text: String,
     modifier: Modifier = Modifier
 ) {
+    val currentLocale = LocalLocale.current.platformLocale
     Text(
-        text = text.uppercase(getDefault()),
+        text = text.uppercase(currentLocale),
         modifier = modifier.padding(horizontal = 25.dp),
         style = workoutPagerTitleTextStyle(),
         color = MaterialTheme.colorScheme.onBackground,

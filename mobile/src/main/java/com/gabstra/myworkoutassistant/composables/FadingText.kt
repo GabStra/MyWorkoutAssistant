@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -75,7 +76,7 @@ fun FadingText(
     val fadeColor = MaterialTheme.colorScheme.background
     
     var textLayoutResult: TextLayoutResult? by remember { mutableStateOf(null) }
-    var containerWidth: Float by remember { mutableStateOf(0f) }
+    var containerWidth by remember { mutableFloatStateOf(0f) }
     
     val hasOverflow = remember(textLayoutResult, containerWidth) {
         if (containerWidth <= 0f) {

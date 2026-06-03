@@ -69,11 +69,12 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.sqrt
 
 private fun Double.compact(): String {
-    val s = String.format("%.2f", this).replace(',', '.')
+    val s = String.format(Locale.US, "%.2f", this)
     return s.trimEnd('0').trimEnd('.')
 }
 
@@ -869,6 +870,7 @@ private fun PagePlatesContent(
 private fun BarbellVisualization(
     plates: List<Double>,
     barbell: Barbell,
+    modifier: Modifier = Modifier,
     activeUiStep: PlateUiStep? = null,
     highlightedPlateIndices: Set<Int> = emptySet(),
     maxLogicalThickness: Float? = null,
@@ -877,7 +879,6 @@ private fun BarbellVisualization(
     currentStepIndex: Int = -1, // Current step index (-1 idle / between loops, 0..last while stepping)
     isFinalState: Boolean, // Set only by PagePlates animation logic (settled / preview / no-op), not derived here
     viewportWidth: Dp? = null, // When set, bar and plates use this width; labels use full canvas (content) width
-    modifier: Modifier = Modifier
 ) {
 
     // For REMOVE actions, use platesBeforeCurrentStep so the plate being removed is still drawn and can be highlighted

@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,7 +82,7 @@ fun WorkoutDetailScreen(
     val isCheckingWorkoutRecord by viewModel.isCheckingWorkoutRecord.collectAsState()
     // Track when checking started and ensure minimum display time to prevent flashing
     var showLoading by remember(selectedWorkoutId) { mutableStateOf(true) }
-    var checkStartTime by remember(selectedWorkoutId) { mutableStateOf(System.currentTimeMillis()) }
+    var checkStartTime by remember(selectedWorkoutId) { mutableLongStateOf(System.currentTimeMillis()) }
     
     LaunchedEffect(selectedWorkoutId) {
         showLoading = true

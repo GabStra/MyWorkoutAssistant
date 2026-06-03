@@ -148,14 +148,7 @@ internal fun SpannableStringBuilder.appendCompat(
     text: CharSequence,
     what: Any,
     flags: Int,
-): SpannableStringBuilder =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        append(text, what, flags)
-    } else {
-        append(text, 0, text.length)
-        setSpan(what, length - text.length, length, flags)
-        this
-    }
+): SpannableStringBuilder = append(text, what, flags)
 
 internal class DefaultValueFormatter(
     private val formatter: (Double) -> String,

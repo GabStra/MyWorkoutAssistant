@@ -347,7 +347,7 @@ fun ExerciseForm(
         mutableStateOf(exercise?.secondaryMuscleGroups ?: emptySet<MuscleGroup>())
     }
     var isSelectingSecondary by rememberSaveable { mutableStateOf(false) }
-    var resetMuscleMapTrigger by remember { mutableStateOf(0) }
+    var resetMuscleMapTrigger by remember { mutableIntStateOf(0) }
 
     var expandedWarmupProgression by rememberSaveable { mutableStateOf(false) }
     var expandedCalibration by rememberSaveable { mutableStateOf(false) }

@@ -59,7 +59,7 @@ fun buildWorkoutStatusRenderBlocks(
         return emptyList()
     }
 
-    val sortedSessions = sessions.sortedBy { it.startedAt }
+    val sortedSessions = sessions.sortedByDescending { it.startedAt }
     val blocks = mutableListOf<WorkoutStatusSessionRenderBlock>()
 
     sortedSessions.forEach { session ->

@@ -348,7 +348,9 @@ class DataLayerListenerService : WearableListenerService() {
         }
         
         // Update last service start time
-        sharedPreferences.edit().putLong("last_service_start_time", currentTime).apply()
+        sharedPreferences.edit {
+            putLong("last_service_start_time", currentTime)
+        }
     }
     
     /**
@@ -1830,7 +1832,9 @@ class DataLayerListenerService : WearableListenerService() {
                     timeoutRate > 0.3f -> 1.2f // Moderate issues
                     else -> 1.0f // Good connection
                 }
-                prefs.edit().putFloat(PREF_CONNECTION_QUALITY, multiplier).apply()
+                prefs.edit {
+                    putFloat(PREF_CONNECTION_QUALITY, multiplier)
+                }
                 Log.d("DataLayerSync", "Updated connection quality multiplier to $multiplier (timeout rate: $timeoutRate)")
             }
         }

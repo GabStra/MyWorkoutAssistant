@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -69,7 +70,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 @Composable
@@ -96,11 +96,11 @@ fun WorkoutOverviewTab(
     onRequestClearAllIncompleteSessions: () -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
+    modifier: Modifier = Modifier,
     workoutHistoryIdForExerciseNavigation: UUID? = null,
-    modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
     val resumeTimeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy HH:mm", currentLocale)
     }

@@ -142,6 +142,7 @@ private fun Throwable.toExportToastMessage(
 private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     width: Dp = 4.dp,
@@ -326,6 +327,7 @@ fun Modifier.verticalColumnScrollbar(
 }
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalLazyColumnScrollbar(
     lazyListState: LazyListState,
     width: Dp = 4.dp,

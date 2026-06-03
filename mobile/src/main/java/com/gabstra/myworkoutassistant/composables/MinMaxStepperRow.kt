@@ -48,10 +48,10 @@ fun MinMaxStepperRow(
     onMaxChange: (Int) -> Unit,
     minBound: Int,
     maxBound: Int,
+    modifier: Modifier = Modifier,
     step: Int = 1,
     minLabel: String = "Min",
     maxLabel: String = "Max",
-    modifier: Modifier = Modifier
 ) {
     fun clampAndOrder(newMin: Int, newMax: Int): Pair<Int, Int> {
         val cMin = newMin.coerceIn(minBound, maxBound)
@@ -210,8 +210,8 @@ fun SingleValueStepperRow(
     onValueChange: (Int) -> Unit,
     minBound: Int,
     maxBound: Int,
+    modifier: Modifier = Modifier,
     step: Int = 1,
-    modifier: Modifier = Modifier
 ) {
     fun clamp(newValue: Int): Int = newValue.coerceIn(minBound, maxBound)
 

@@ -51,7 +51,7 @@ object TimeConverter {
 
 @Composable
 fun CustomTimePicker(
-    modifier: Modifier = Modifier.fillMaxWidth(),
+    modifier: Modifier = Modifier,
     initialHour: Int = 0,
     initialMinute: Int = 0,
     initialSecond: Int = 0,

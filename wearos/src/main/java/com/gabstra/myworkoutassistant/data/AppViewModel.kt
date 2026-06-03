@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
@@ -599,9 +600,9 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 
-    private val _hrDisplayMode = mutableStateOf(0)
+    private val _hrDisplayMode = mutableIntStateOf(0)
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
-    private val _headerDisplayMode = mutableStateOf(0)
+    private val _headerDisplayMode = mutableIntStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
     private val _isRestTimerPageVisible = mutableStateOf(true)
     val isRestTimerPageVisible: State<Boolean> = _isRestTimerPageVisible
@@ -667,12 +668,12 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun switchHrDisplayMode() {
-        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+        _hrDisplayMode.intValue = (_hrDisplayMode.intValue + 1) % 2
         rebuildScreenState()
     }
 
     fun switchHeaderDisplayMode() {
-        _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
+        _headerDisplayMode.intValue = (_headerDisplayMode.intValue + 1) % 2
         rebuildScreenState()
     }
 
@@ -718,8 +719,8 @@ open class AppViewModel : WorkoutViewModel() {
             keepScreenOn = keepScreenOn.value,
             isAlertSoundEnabled = alertSoundEnabled.value,
             currentScreenDimmingState = currentScreenDimmingState.value,
-            headerDisplayMode = headerDisplayMode.value,
-            hrDisplayMode = hrDisplayMode.value,
+            headerDisplayMode = _headerDisplayMode.intValue,
+            hrDisplayMode = _hrDisplayMode.intValue,
             isRestTimerPageVisible = isRestTimerPageVisible.value,
             isExerciseDetailPageVisible = isExerciseDetailPageVisible.value,
         )
@@ -1238,8 +1239,8 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
-        _headerDisplayMode.value = 0
-        _hrDisplayMode.value = 0
+        _headerDisplayMode.intValue = 0
+        _hrDisplayMode.intValue = 0
         _isRestTimerPageVisible.value = true
         super.startWorkout()
     }
@@ -1320,8 +1321,8 @@ open class AppViewModel : WorkoutViewModel() {
      * state machine from snapshot or move to checkpoint state, timer/calibration options).
      */
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
-        _headerDisplayMode.value = 0
-        _hrDisplayMode.value = 0
+        _headerDisplayMode.intValue = 0
+        _hrDisplayMode.intValue = 0
         _isRestTimerPageVisible.value = true
         skipNextResumeLastState = false
         val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()

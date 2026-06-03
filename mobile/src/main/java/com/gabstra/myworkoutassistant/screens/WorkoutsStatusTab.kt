@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -54,7 +55,6 @@ import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 data class WeeklyStatusWorkoutHistory(
@@ -82,7 +82,7 @@ fun WorkoutsStatusTab(
     workoutHistorySessionStatuses: Map<UUID, WorkoutSessionStatus?>? = null,
 ) {
     val scrollState = rememberScrollState()
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
     val timeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("HH:mm", currentLocale)
     }

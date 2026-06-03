@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
@@ -14,17 +17,15 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.IconButtonColors
 import androidx.wear.compose.material3.IconButtonDefaults
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 @Composable
 fun EnhancedIconButton(
     onClick: () -> Unit,
-    boxModifier: Modifier = Modifier,
+    modifier: Modifier = Modifier,
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
     colors: IconButtonColors = IconButtonDefaults.filledTonalIconButtonColors(),
-    buttonSize: Dp = 48.dp,  // Default button size
+    buttonSize: Dp = 48.dp,
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit
 ) {
@@ -34,27 +35,17 @@ fun EnhancedIconButton(
     }
 
     Box(
-        modifier = boxModifier
+        modifier = modifier
             .size(hitBoxSize)
             .pointerInput(enabled) {
-                coroutineScope {
-                    while (true) {
-                        val event = awaitPointerEventScope {
-                            awaitPointerEvent()
-                        }
-                        when {
-                            event.changes.any { it.pressed } -> {
-                                launch {
-                                    interactionSource.emit(PressInteraction.Press(event.changes.first().position))
-                                    if (enabled) onClick()
-                                }
-                            }
-                            event.changes.any { !it.pressed } -> {
-                                launch {
-                                    interactionSource.emit(PressInteraction.Release(PressInteraction.Press(event.changes.first().position)))
-                                }
-                            }
-                        }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val press = PressInteraction.Press(down.position)
+                    interactionSource.tryEmit(press)
+                    val up = waitForUpOrCancellation()
+                    interactionSource.tryEmit(PressInteraction.Release(press))
+                    if (enabled && up != null) {
+                        onClick()
                     }
                 }
             }

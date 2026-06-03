@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -50,9 +51,11 @@ fun GenericButtonWithMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
-    val configuration = LocalConfiguration.current
     val density = LocalDensity.current
-    val maxPopupWidth = (configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val containerWidth = LocalWindowInfo.current.containerSize.width
+    val maxPopupWidth = with(density) {
+        (containerWidth.toDp() - 32.dp).coerceAtLeast(160.dp)
+    }
     val popupPositionProvider = remember(density) {
         TopCenterMenuPositionProvider(
             verticalMarginPx = with(density) { 4.dp.roundToPx() }
