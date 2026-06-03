@@ -297,6 +297,22 @@ function Ensure-SinglePackageVariant([string]$serial, [string]$appPackage) {
     Remove-PackageIfPresent -serial $serial -packageName $alternateTestPackage
 }
 
+function Invoke-AdbInstall([string]$serial, [string]$apkPath) {
+    $output = Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "install", "-r", $apkPath) 2>&1
+    return [PSCustomObject]@{
+        Output = $output
+        ExitCode = $LASTEXITCODE
+    }
+}
+
+function Recover-PhoneInstallSpace([string]$serial, [string]$appPackage) {
+    Write-Host "Recovering phone install space on $serial before retry..." -ForegroundColor Yellow
+    Ensure-SinglePackageVariant -serial $serial -appPackage $appPackage
+    Remove-PackageIfPresent -serial $serial -packageName (Get-AndroidTestPackage $appPackage)
+    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "shell", "rm", "-f", "/data/local/tmp/*.apk") | Out-Null
+    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "shell", "pm", "trim-caches", "256G") | Out-Null
+}
+
 function Test-PackageInstalled([string]$serial, [string]$packageName) {
     $lines = (Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "shell", "pm", "list", "packages", $packageName) 2>$null) -join "`n"
     return $lines -match ("package:{0}(\r?\n|$)" -f [regex]::Escape($packageName))
@@ -338,14 +354,35 @@ function Install-MobileAppAndTestApks([string]$phoneSerial, [string]$buildType, 
     Ensure-SinglePackageVariant -serial $phoneSerial -appPackage $appPackage
 
     Write-Host "Installing mobile APKs on $phoneSerial..." -ForegroundColor Cyan
-    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $phoneSerial, "install", "-r", $mobileApk) 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile app APK on $phoneSerial"
+    $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+    $mobileInstall.Output | Out-Host
+    if ($mobileInstall.ExitCode -ne 0) {
+        if (($mobileInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $appPackage
+        }
+        $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+        $mobileInstall.Output | Out-Host
+        if ($mobileInstall.ExitCode -ne 0) {
+            throw "Failed to install mobile app APK on $phoneSerial"
+        }
     }
 
-    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $phoneSerial, "install", "-r", $mobileTestApk) 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile androidTest APK on $phoneSerial"
+    $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+    $mobileTestInstall.Output | Out-Host
+    if ($mobileTestInstall.ExitCode -ne 0) {
+        if (($mobileTestInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $appPackage
+            $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+            $mobileInstall.Output | Out-Host
+            if ($mobileInstall.ExitCode -ne 0) {
+                throw "Failed to reinstall mobile app APK on $phoneSerial"
+            }
+        }
+        $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+        $mobileTestInstall.Output | Out-Host
+        if ($mobileTestInstall.ExitCode -ne 0) {
+            throw "Failed to install mobile androidTest APK on $phoneSerial"
+        }
     }
 }
 

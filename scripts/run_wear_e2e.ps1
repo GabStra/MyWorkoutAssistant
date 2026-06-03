@@ -419,6 +419,9 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearSetBadgeE2ETest",
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearMidSessionSetBadgeRefreshE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearOpenPhoneAppE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.ExactBackupPhoneToWearResumeRecordVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.ExactBackupPhoneToWearResumeVisibilityE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.ResumePhoneToWearWorkoutHistorySyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalPhoneToWearWorkoutStoreSyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalInsertedSetPhoneToWearWorkoutStoreSyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalInsertedRestPhoneToWearWorkoutStoreSyncVerificationE2ETest",
@@ -427,7 +430,11 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.DoubleProgressionNoHistoryPhoneToWearWorkoutHistorySyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.DoubleProgressionPhoneToWearWorkoutStoreSyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionRoundTripSetBadgeCrossDeviceE2ETest",
-        "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionNoHistoryRoundTripSetBadgeCrossDeviceE2ETest"
+        "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionNoHistoryRoundTripSetBadgeCrossDeviceE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncLateStaleRetryProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncRetryRecoveryProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearResumeCrossDeviceSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearResumeDiscardCrossDeviceSyncProducerE2ETest"
     )
     $excludedClasses = @()
     $excludedClasses += $excludedBenchmarkClasses

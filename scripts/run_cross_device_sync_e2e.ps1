@@ -225,6 +225,21 @@ function Reset-PhoneAppInstallState([string]$serial, [string]$appPackage) {
     Uninstall-PackageIfPresent -serial $serial -packageName "com.gabstra.myworkoutassistant.test"
 }
 
+function Invoke-AdbInstall([string]$serial, [string]$apkPath) {
+    $output = & adb -s $serial install -r $apkPath 2>&1
+    return [PSCustomObject]@{
+        Output = $output
+        ExitCode = $LASTEXITCODE
+    }
+}
+
+function Recover-PhoneInstallSpace([string]$serial, [string]$appPackage) {
+    Write-Host "Recovering phone install space on $serial before retry..." -ForegroundColor Yellow
+    Reset-PhoneAppInstallState -serial $serial -appPackage $appPackage
+    & adb -s $serial shell rm -f /data/local/tmp/*.apk | Out-Null
+    & adb -s $serial shell pm trim-caches 256G | Out-Null
+}
+
 function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     Write-Host "Building and installing mobile debug + androidTest APKs on phone emulator..." -ForegroundColor Cyan
     & .\gradlew :mobile:assembleDebug :mobile:assembleDebugAndroidTest
@@ -241,26 +256,37 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
         throw "Mobile test APK not found at $mobileTestApk"
     }
 
-    & adb -s $phoneSerial install -r $mobileApk | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+    if ($mobileInstall.ExitCode -ne 0) {
         Write-Host "Initial phone app install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
-        Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
-        & adb -s $phoneSerial install -r $mobileApk | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        if (($mobileInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $AppPackage
+        } else {
+            Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+        if ($mobileInstall.ExitCode -ne 0) {
+            $mobileInstall.Output | Out-Host
             throw "Failed to install mobile debug app on $phoneSerial"
         }
     }
 
-    & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+    if ($mobileTestInstall.ExitCode -ne 0) {
         Write-Host "Initial phone androidTest install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
-        Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
-        & adb -s $phoneSerial install -r $mobileApk | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        if (($mobileTestInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $AppPackage
+        } else {
+            Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+        if ($mobileInstall.ExitCode -ne 0) {
+            $mobileInstall.Output | Out-Host
             throw "Failed to reinstall mobile debug app on $phoneSerial after reset"
         }
-        & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+        if ($mobileTestInstall.ExitCode -ne 0) {
+            $mobileTestInstall.Output | Out-Host
             throw "Failed to install mobile androidTest APK on $phoneSerial"
         }
     }
