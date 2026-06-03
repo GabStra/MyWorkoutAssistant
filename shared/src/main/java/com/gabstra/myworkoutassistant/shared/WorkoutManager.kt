@@ -44,11 +44,15 @@ class WorkoutManager {
                 if (component == oldComponent) {
                     updatedComponent
                 } else {
-                    if(updatedComponent is Exercise && component is Superset){
-                        component.copy(exercises = updateWorkoutComponentsRecursively(component.exercises, oldComponent as Exercise,
-                            updatedComponent
-                        ) as List<Exercise>)
-                    }else{
+                    if (oldComponent is Exercise && updatedComponent is Exercise && component is Superset) {
+                        component.copy(
+                            exercises = updateExercisesRecursively(
+                                exercises = component.exercises,
+                                oldExercise = oldComponent,
+                                updatedExercise = updatedComponent,
+                            )
+                        )
+                    } else {
                         component
                     }
 
@@ -109,9 +113,16 @@ class WorkoutManager {
                     }
                     exercise.copy(sets = mutableSets.toList(), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 } else {
-                    if(component is Superset){
-                        component.copy(exercises = addSetToExerciseRecursively(component.exercises, parentExercise, newSet, index) as List<Exercise>)
-                    }else{
+                    if (component is Superset) {
+                        component.copy(
+                            exercises = addSetToExercisesRecursively(
+                                exercises = component.exercises,
+                                parentExercise = parentExercise,
+                                newSet = newSet,
+                                index = index,
+                            )
+                        )
+                    } else {
                         component
                     }
                 }
@@ -124,9 +135,14 @@ class WorkoutManager {
                     val exercise = component as Exercise
                     exercise.copy(sets = emptyList(), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 } else {
-                    if(component is Superset){
-                        component.copy(exercises = removeSetsFromExerciseRecursively(component.exercises, parentExercise) as List<Exercise>)
-                    }else{
+                    if (component is Superset) {
+                        component.copy(
+                            exercises = removeSetsFromExercisesRecursively(
+                                exercises = component.exercises,
+                                parentExercise = parentExercise,
+                            )
+                        )
+                    } else {
                         component
                     }
                 }
@@ -164,7 +180,13 @@ class WorkoutManager {
                     exercise.copy(sets = newSets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 } else {
                     if (component is Superset) {
-                        component.copy(exercises = replaceSetsInExerciseRecursively(component.exercises, parentExercise, newSets) as List<Exercise>)
+                        component.copy(
+                            exercises = replaceSetsInExercisesRecursively(
+                                exercises = component.exercises,
+                                parentExercise = parentExercise,
+                                newSets = newSets,
+                            )
+                        )
                     } else {
                         component
                     }
@@ -177,10 +199,17 @@ class WorkoutManager {
                 if(component == parentExercise) {
                     val exercise = component as Exercise
                     exercise.copy(sets = updateSet(component.sets,oldSet,updatedSet), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
-                }else{
-                    if(component is Superset){
-                        component.copy(exercises = updateSetInExerciseRecursively(component.exercises, parentExercise, oldSet, updatedSet) as List<Exercise>)
-                    }else{
+                } else {
+                    if (component is Superset) {
+                        component.copy(
+                            exercises = updateSetInExercisesRecursively(
+                                exercises = component.exercises,
+                                parentExercise = parentExercise,
+                                oldSet = oldSet,
+                                updatedSet = updatedSet,
+                            )
+                        )
+                    } else {
                         component
                     }
                 }
@@ -235,11 +264,112 @@ class WorkoutManager {
                     workoutComponent.copy(id = UUID.randomUUID())
                 }
                 is Superset -> {
-                    val newExercises = workoutComponent.exercises.map { cloneWorkoutComponent(it) as Exercise }
+                    val newExercises = workoutComponent.exercises.map(::cloneExercise)
                     workoutComponent.copy(id = UUID.randomUUID(), exercises = newExercises)
                 }
-                else -> throw IllegalArgumentException("Unknown workout component type")
             }
+        }
+
+        private fun updateExercisesRecursively(
+            exercises: List<Exercise>,
+            oldExercise: Exercise,
+            updatedExercise: Exercise
+        ): List<Exercise> {
+            return exercises.map { exercise ->
+                if (exercise == oldExercise) {
+                    updatedExercise
+                } else {
+                    exercise
+                }
+            }
+        }
+
+        private fun addSetToExercisesRecursively(
+            exercises: List<Exercise>,
+            parentExercise: Exercise,
+            newSet: Set,
+            index: UInt? = null
+        ): List<Exercise> {
+            return exercises.map { exercise ->
+                if (exercise.id == parentExercise.id) {
+                    val mutableSets = exercise.sets.toMutableList()
+                    if (index != null && index.toInt() in mutableSets.indices) {
+                        mutableSets.add(index.toInt(), newSet)
+                    } else {
+                        mutableSets.add(newSet)
+                    }
+                    exercise.copy(
+                        sets = mutableSets.toList(),
+                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                    )
+                } else {
+                    exercise
+                }
+            }
+        }
+
+        private fun removeSetsFromExercisesRecursively(
+            exercises: List<Exercise>,
+            parentExercise: Exercise
+        ): List<Exercise> {
+            return exercises.map { exercise ->
+                if (exercise.id == parentExercise.id) {
+                    exercise.copy(
+                        sets = emptyList(),
+                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                    )
+                } else {
+                    exercise
+                }
+            }
+        }
+
+        private fun replaceSetsInExercisesRecursively(
+            exercises: List<Exercise>,
+            parentExercise: Exercise,
+            newSets: List<Set>
+        ): List<Exercise> {
+            return exercises.map { exercise ->
+                if (exercise.id == parentExercise.id) {
+                    exercise.copy(
+                        sets = newSets,
+                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                    )
+                } else {
+                    exercise
+                }
+            }
+        }
+
+        private fun updateSetInExercisesRecursively(
+            exercises: List<Exercise>,
+            parentExercise: Exercise,
+            oldSet: Set,
+            updatedSet: Set
+        ): List<Exercise> {
+            return exercises.map { exercise ->
+                if (exercise == parentExercise) {
+                    exercise.copy(
+                        sets = updateSet(exercise.sets, oldSet, updatedSet),
+                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                    )
+                } else {
+                    exercise
+                }
+            }
+        }
+
+        private fun cloneExercise(exercise: Exercise): Exercise {
+            val newSets = exercise.sets.map {
+                when (it) {
+                    is BodyWeightSet -> it.copy(id = UUID.randomUUID())
+                    is WeightSet -> it.copy(id = UUID.randomUUID())
+                    is EnduranceSet -> it.copy(id = UUID.randomUUID())
+                    is TimedDurationSet -> it.copy(id = UUID.randomUUID())
+                    is RestSet -> it.copy(id = UUID.randomUUID())
+                }
+            }
+            return exercise.copy(name = exercise.name + " (copy)", id = UUID.randomUUID(), sets = newSets)
         }
     }
 }
