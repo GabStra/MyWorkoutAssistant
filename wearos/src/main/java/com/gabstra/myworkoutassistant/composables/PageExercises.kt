@@ -888,6 +888,7 @@ private data class PageExercisesPreviewFixture(
     val selectedExercise: Exercise,
     val currentExercise: Exercise,
     val firstSetState: WorkoutState.Set,
+    val firstExerciseSecondSetState: WorkoutState.Set,
     val supersetSetState: WorkoutState.Set,
     val restState: WorkoutState.Rest,
 )
@@ -1178,6 +1179,7 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         selectedExercise = secondExercise,
         currentExercise = firstExercise,
         firstSetState = firstSetState,
+        firstExerciseSecondSetState = firstExerciseSecondSetState,
         supersetSetState = supersetSetState,
         restState = restState
     )
@@ -1304,6 +1306,31 @@ private fun PageExercisesExercisePagePreview() {
             selectedExercise = fixture.firstExercise,
             selectedRestPageId = null,
             workoutState = fixture.firstSetState,
+            viewModel = fixture.viewModel,
+            hapticsViewModel = hapticsViewModel,
+            currentExercise = fixture.firstExercise,
+            onPageSelected = { _, _ -> }
+        )
+    }
+}
+
+@Preview(
+    name = "Exercise Page Done Sets Filled",
+    group = "PageExercises",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun PageExercisesExercisePageDoneSetsPreview() {
+    val fixture = remember { buildPageExercisesPreviewFixture() }
+    val context = LocalContext.current
+    val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
+
+    MyWorkoutAssistantTheme {
+        PageExercises(
+            selectedExercise = fixture.firstExercise,
+            selectedRestPageId = null,
+            workoutState = fixture.firstExerciseSecondSetState,
             viewModel = fixture.viewModel,
             hapticsViewModel = hapticsViewModel,
             currentExercise = fixture.firstExercise,

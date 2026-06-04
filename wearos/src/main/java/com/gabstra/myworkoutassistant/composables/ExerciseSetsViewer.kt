@@ -1234,28 +1234,31 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         rowModel: PageExercisesRowModel,
     ) {
         val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+        val completedFillColor = MaterialTheme.colorScheme.onBackground
+        val completedTextColor = MaterialTheme.colorScheme.background
         val borderColor = when (progressState) {
-            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+            ProgressState.PAST -> completedFillColor
             ProgressState.CURRENT -> when {
                 rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
-                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowModel.rowIndex < setIndex -> completedFillColor
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
         val backgroundColor = when (progressState) {
-            ProgressState.PAST -> MaterialTheme.colorScheme.background
+            ProgressState.PAST -> completedFillColor
             ProgressState.CURRENT -> when {
                 rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex < setIndex -> completedFillColor
                 else -> MaterialTheme.colorScheme.background
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.background
         }
         val textColor = when (progressState) {
-            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+            ProgressState.PAST -> completedTextColor
             ProgressState.CURRENT -> when {
                 rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
-                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowModel.rowIndex < setIndex -> completedTextColor
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
