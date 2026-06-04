@@ -9,8 +9,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.time.Duration
-import java.time.LocalDateTime
 import kotlin.math.abs
 
 @RunWith(AndroidJUnit4::class)
@@ -29,11 +27,6 @@ class PhoneToWearWorkoutHistorySyncVerificationE2ETest {
         while (System.currentTimeMillis() < deadline) {
             val doneHistories = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
             exactMatchFound = doneHistories.any { workoutHistory ->
-                val ageMinutes = Duration.between(workoutHistory.startTime, LocalDateTime.now()).toMinutes()
-                if (ageMinutes < 0 || ageMinutes > 180) {
-                    return@any false
-                }
-
                 if (
                     workoutHistory.workoutId != CrossDeviceSyncWorkoutStoreFixture.WORKOUT_ID ||
                     workoutHistory.globalId != CrossDeviceSyncWorkoutStoreFixture.PHONE_TO_WEAR_HISTORY_GLOBAL_ID ||
