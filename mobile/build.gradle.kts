@@ -50,7 +50,7 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 36
+    compileSdk = 37
     testBuildType = e2eTestBuildType
 
     defaultConfig {
@@ -148,7 +148,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.9.8")
 
     // AndroidX core
-    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures:1.3.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
@@ -170,7 +170,7 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.0")
     implementation("com.openai:openai-java:4.37.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
