@@ -572,7 +572,7 @@ open class WorkoutViewModel(
         }
 
         if (hadActiveSession && previousState !is WorkoutState.Completed) {
-            loadWorkoutHistory()
+            hydrateSelectedWorkoutTemplateForSession()
             if (previousMachine != null && refreshRequest != null) {
                 val currentSetState = previousState as? WorkoutState.Set
                 val preservedSetData = currentSetState?.currentSetData?.let(::copySetData)
@@ -1262,6 +1262,56 @@ open class WorkoutViewModel(
         }
     }
 
+    protected suspend fun upsertWorkoutRecordNow(
+        exerciseId: UUID,
+        setIndex: UInt,
+        lastKnownSessionStateOverride: String? = null
+    ): WorkoutRecord? {
+        val selectedWorkoutIdSnapshot = selectedWorkout.value.id
+        val workoutHistoryIdSnapshot = currentWorkoutHistory?.id
+        val existingRecordSnapshot = _workoutRecord
+        val ownerDevice = activeSessionOwnerDevice()
+        val lastKnownSessionState =
+            lastKnownSessionStateOverride ?: workoutState.value::class.simpleName
+
+        val updatedRecord = workoutRecordMutex.withLock {
+            workoutRecordService.upsertWorkoutRecord(
+                existingRecord = existingRecordSnapshot,
+                workoutId = selectedWorkoutIdSnapshot,
+                workoutHistoryId = workoutHistoryIdSnapshot,
+                exerciseId = exerciseId,
+                setIndex = setIndex,
+                ownerDevice = ownerDevice,
+                lastActiveSyncAt = LocalDateTime.now(),
+                lastKnownSessionState = lastKnownSessionState,
+            )
+        }
+
+        if (updatedRecord != null) {
+            _workoutRecord = updatedRecord
+            _hasWorkoutRecord.value = true
+            _workoutResumeInfo.value = WorkoutResumeInfo(
+                exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
+                setNumber = setIndex.toInt() + 1,
+                startedAt = currentWorkoutHistory?.startTime,
+                sessionStatus = when (ownerDevice) {
+                    SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
+                    SessionOwnerDevice.WEAR -> {
+                        if (lastKnownSessionState == WATCH_SESSION_STATE_RETURNED_HOME) {
+                            WorkoutSessionStatus.STOPPED_ON_WEAR
+                        } else {
+                            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
+                        }
+                    }
+                },
+                lastActiveSyncAt = updatedRecord.lastActiveSyncAt,
+            )
+            rebuildScreenState()
+        }
+
+        return updatedRecord
+    }
+
     fun deleteWorkoutRecord() {
         val recordIdToDelete = _workoutRecord?.id ?: return
         launchIO {
@@ -1457,11 +1507,7 @@ open class WorkoutViewModel(
             startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
 
             restoreExecutedSets()
-            loadWorkoutHistory()
-
-            preProcessExercises()
-            generateProgressions()
-            applyProgressions()
+            hydrateSelectedWorkoutTemplateForSession()
             val workoutSequence = generateWorkoutStates()
 
             val executedSetsHistorySnapshot = executedSetStore.executedSets.value
@@ -1994,10 +2040,7 @@ open class WorkoutViewModel(
     private suspend fun prepareWorkoutForStart(foundWorkout: Workout) {
         _selectedWorkout.value = foundWorkout
         rebuildScreenState()
-        loadWorkoutHistory()
-        preProcessExercises()
-        generateProgressions()
-        applyProgressions()
+        hydrateSelectedWorkoutTemplateForSession()
 
         val workoutSequence = generateWorkoutStates()
         val machine = initializeStateMachine(workoutSequence, 0)
@@ -2061,6 +2104,13 @@ open class WorkoutViewModel(
         loadedHistory.latestSetHistoryByExerciseAndSetId.forEach { (key, value) ->
             latestSetHistoryMap[SetKey(key.first, key.second)] = value
         }
+    }
+
+    private suspend fun hydrateSelectedWorkoutTemplateForSession() {
+        loadWorkoutHistory()
+        preProcessExercises()
+        generateProgressions()
+        applyProgressions()
     }
 
     open fun registerHeartBeat(heartBeat: Int) {

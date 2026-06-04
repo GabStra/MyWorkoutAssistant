@@ -2675,6 +2675,68 @@ class WorkoutViewModelSessionTest {
     }
 
     @Test
+    fun applyExternalSyncWorkoutStore_preservesFutureProgressedTargetsDuringActiveSession() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, firstSetId, 0u, 90.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, secondSetId, 1u, 90.0, 8)
+
+        createExerciseInfo(
+            exerciseId = testExerciseId,
+            lastSuccessfulSession = listOf(previousSet1, previousSet2),
+            successfulSessionCounter = 2u,
+            sessionFailedCounter = 0u
+        )
+
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 10, 92.5),
+                RestSet(UUID.randomUUID(), 90),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 92.5)
+            )
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        val preSyncSetStates = viewModel.allWorkoutStates.filterIsInstance<WorkoutState.Set>()
+            .filterNot { it.isWarmupSet }
+        assertEquals(2, preSyncSetStates.size)
+        val preSyncFirstSetData = preSyncSetStates[0].currentSetData as? WeightSetData
+        val preSyncSecondSetData = preSyncSetStates[1].currentSetData as? WeightSetData
+        assertNotNull(preSyncFirstSetData)
+        assertNotNull(preSyncSecondSetData)
+        assertEquals(90.0, preSyncFirstSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(10, preSyncFirstSetData?.actualReps)
+        assertEquals(90.0, preSyncSecondSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(9, preSyncSecondSetData?.actualReps)
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val postSyncSetStates = viewModel.allWorkoutStates.filterIsInstance<WorkoutState.Set>()
+            .filterNot { it.isWarmupSet }
+        assertEquals(2, postSyncSetStates.size)
+        val postSyncFirstSetData = postSyncSetStates[0].currentSetData as? WeightSetData
+        val postSyncSecondSetData = postSyncSetStates[1].currentSetData as? WeightSetData
+        assertNotNull(postSyncFirstSetData)
+        assertNotNull(postSyncSecondSetData)
+        assertEquals(90.0, postSyncFirstSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(10, postSyncFirstSetData?.actualReps)
+        assertEquals(90.0, postSyncSecondSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(9, postSyncSecondSetData?.actualReps)
+    }
+
+    @Test
     fun applyExternalSyncWorkoutStore_doesNotReenterResumeWhileSessionIsPreparing() = runTest(testDispatcher) {
         val setId = UUID.randomUUID()
         val exercise = createTestExercise(
