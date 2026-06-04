@@ -425,9 +425,15 @@ private fun ExerciseExpandableSetTableBody(
                 } else {
                     DisabledContentGray
                 }
+                val repRange = if (exercise.minReps > 0 && exercise.maxReps >= exercise.minReps) {
+                    "${exercise.minReps}-${exercise.maxReps}"
+                } else {
+                    null
+                }
 
-                    ExerciseMetadataStrip(
-                        equipmentName = equipment?.name,
+                ExerciseMetadataStrip(
+                    equipmentName = equipment?.name,
+                    repRange = repRange,
                     accessoryNameList = accessoryEquipments.map { it.name },
                     textColor = metadataTextColor,
                     modifier = Modifier.fillMaxWidth(),
