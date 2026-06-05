@@ -1325,6 +1325,14 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 
+    fun finishWorkoutEarlyWear(context: Context? = null, onEnd: suspend () -> Unit = {}) {
+        stopActiveTimerForCurrentState()
+        finishWorkoutEarly(context) {
+            reEvaluateDimmingForCurrentState()
+            onEnd()
+        }
+    }
+
     private fun stopActiveTimerForCurrentState() {
         when (val currentState = workoutState.value) {
             is WorkoutState.Set -> {
@@ -1608,10 +1616,11 @@ open class AppViewModel : WorkoutViewModel() {
         isDone: Boolean,
         context: Context?,
         forceNotSend: Boolean,
+        endReason: com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason,
         onEnd: suspend () -> Unit
     ) {
         Log.d(WORKOUT_SYNC_LOG_TAG, "pushAndStoreWorkoutData called: isDone=$isDone, forceNotSend=$forceNotSend")
-        super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
+        super.pushAndStoreWorkoutData(isDone, context, forceNotSend, endReason) {
             val currentState = workoutState.value
             val completedHistoryId = currentWorkoutHistory?.takeIf { it.isDone }?.id
             if (isDone) {

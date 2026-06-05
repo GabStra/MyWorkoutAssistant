@@ -27,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmOperationResult
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.normalizedWorkoutHistories
 import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -1278,6 +1279,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 "Parsing JSON backup (length: ${jsonBackup.length} chars) for transaction: $transactionId"
                                             )
                                             val appBackup = fromJSONtoAppBackup(jsonBackup)
+                                                .normalizedWorkoutHistories()
 
                                             processingStep = "saving workout store"
                                             Log.d(

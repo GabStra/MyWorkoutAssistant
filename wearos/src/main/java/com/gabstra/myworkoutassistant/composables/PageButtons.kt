@@ -80,7 +80,9 @@ fun PageButtons(
 
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipExerciseDialog by remember { mutableStateOf(false) }
+    var showFinishEarlyDialog by remember { mutableStateOf(false) }
     var shouldResumeTimerAfterSkipDialog by remember { mutableStateOf(false) }
+    var shouldResumeTimerAfterFinishEarlyDialog by remember { mutableStateOf(false) }
 
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
@@ -107,8 +109,33 @@ fun PageButtons(
     LaunchedEffect(updatedState) {
         showGoBackDialog = false
         showSkipExerciseDialog = false
+        showFinishEarlyDialog = false
         shouldResumeTimerAfterSkipDialog = false
+        shouldResumeTimerAfterFinishEarlyDialog = false
         scrollState.scrollTo(0)
+    }
+
+    fun shouldPauseCurrentTimerForDialog(): Boolean {
+        val currentSetState = currentWorkoutState as? WorkoutState.Set ?: return false
+        return (currentSetState.set is TimedDurationSet || currentSetState.set is EnduranceSet) &&
+            viewModel.workoutTimerService.isTimerRegistered(currentSetState.set.id)
+    }
+
+    fun pauseCurrentTimerForDialog() {
+        if (shouldPauseCurrentTimerForDialog()) {
+            viewModel.workoutTimerService.pauseTimer(updatedState.set.id)
+        }
+    }
+
+    fun resumeCurrentTimerAfterDialog(shouldResume: Boolean) {
+        if (
+            shouldResume &&
+            currentWorkoutState is WorkoutState.Set &&
+            (currentWorkoutState.set is TimedDurationSet || currentWorkoutState.set is EnduranceSet) &&
+            viewModel.workoutTimerService.isTimerRegistered(updatedState.set.id)
+        ) {
+            viewModel.workoutTimerService.resumeTimer(updatedState.set.id)
+        }
     }
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
@@ -506,6 +533,24 @@ fun PageButtons(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    text = "Finish early",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        showFinishEarlyDialog = true
+                    }
+                )
+            }
+            item {
+                ButtonWithText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     text = "Go Home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
@@ -578,26 +623,45 @@ fun PageButtons(
         },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
-                val currentSetState = currentWorkoutState as? WorkoutState.Set
-                shouldResumeTimerAfterSkipDialog =
-                    currentSetState != null &&
-                        (currentSetState.set is TimedDurationSet || currentSetState.set is EnduranceSet) &&
-                        viewModel.workoutTimerService.isTimerRegistered(currentSetState.set.id)
-
-                if (shouldResumeTimerAfterSkipDialog) {
-                    viewModel.workoutTimerService.pauseTimer(updatedState.set.id)
-                }
+                shouldResumeTimerAfterSkipDialog = shouldPauseCurrentTimerForDialog()
+                pauseCurrentTimerForDialog()
                 viewModel.setDimming(false)
             } else {
-                if (
-                    shouldResumeTimerAfterSkipDialog &&
-                    currentWorkoutState is WorkoutState.Set &&
-                    (currentWorkoutState.set is TimedDurationSet || currentWorkoutState.set is EnduranceSet) &&
-                    viewModel.workoutTimerService.isTimerRegistered(updatedState.set.id)
-                ) {
-                    viewModel.workoutTimerService.resumeTimer(updatedState.set.id)
-                }
+                resumeCurrentTimerAfterDialog(shouldResumeTimerAfterSkipDialog)
                 shouldResumeTimerAfterSkipDialog = false
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showFinishEarlyDialog,
+        title = "Finish early",
+        message = "End the workout now? All remaining exercises and sets will be skipped.",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            showFinishEarlyDialog = false
+            viewModel.finishWorkoutEarlyWear(context)
+            viewModel.lightScreenUp()
+        },
+        handleNoClick = {
+            showFinishEarlyDialog = false
+            shouldResumeTimerAfterFinishEarlyDialog = false
+            hapticsViewModel.doGentleVibration()
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showFinishEarlyDialog = false
+            shouldResumeTimerAfterFinishEarlyDialog = false
+        },
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                shouldResumeTimerAfterFinishEarlyDialog = shouldPauseCurrentTimerForDialog()
+                pauseCurrentTimerForDialog()
+                viewModel.setDimming(false)
+            } else {
+                resumeCurrentTimerAfterDialog(shouldResumeTimerAfterFinishEarlyDialog)
+                shouldResumeTimerAfterFinishEarlyDialog = false
                 viewModel.reEvaluateDimmingForCurrentState()
             }
         }
