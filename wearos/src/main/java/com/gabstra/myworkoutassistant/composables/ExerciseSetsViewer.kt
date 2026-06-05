@@ -674,6 +674,9 @@ internal fun rememberPageExercisesFittedRows(
     val baseStyle = remember(itemStyle) { pageExercisesBaseTextStyle(itemStyle) }
     val densityValue = density.density
     val fontScale = density.fontScale
+    val textFitCache = remember(baseStyle, densityValue, fontScale) {
+        mutableMapOf<PageExercisesTextFitKey, PageExercisesFittedTextCell>()
+    }
 
     return remember(
         preparedRows,
@@ -690,19 +693,20 @@ internal fun rememberPageExercisesFittedRows(
             baseStyle = baseStyle,
             textMeasurer = textMeasurer,
             density = density,
+            cache = textFitCache,
         )
     }
 }
 
-internal fun buildPageExercisesFittedRows(
+private fun buildPageExercisesFittedRows(
     preparedRows: PageExercisesPreparedRows,
     rowMaxWidth: Dp,
     rowMaxHeight: Dp,
     baseStyle: TextStyle,
     textMeasurer: TextMeasurer,
     density: Density,
+    cache: MutableMap<PageExercisesTextFitKey, PageExercisesFittedTextCell>,
 ): PageExercisesFittedRows {
-    val cache = mutableMapOf<PageExercisesTextFitKey, PageExercisesFittedTextCell>()
     val setInnerWidth = (rowMaxWidth - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
     val setInnerHeight = (rowMaxHeight - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
     val centeredWidth = (rowMaxWidth - PageExercisesCenteredRowHorizontalPadding * 2).coerceAtLeast(0.dp)
