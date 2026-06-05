@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.workout.history.WorkoutHistoryLayoutItem
 import com.gabstra.myworkoutassistant.shared.workout.history.buildWorkoutHistoryLayout
 import com.gabstra.myworkoutassistant.shared.workout.history.formatRestLineForMarkdown
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
@@ -104,6 +105,9 @@ suspend fun buildWorkoutSessionMarkdown(
     val markdown = StringBuilder()
 
     markdown.append("# ${workout.name}\n")
+    if (workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY) {
+        markdown.append("Session status: Finished early before completing the workout\n")
+    }
     markdown.append(
         "${workoutHistory.date} ${workoutHistory.time} | Dur: ${formatDurationForExport(workoutHistory.duration)}\n"
     )
