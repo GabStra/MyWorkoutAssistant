@@ -50,6 +50,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -468,6 +469,148 @@ class WorkoutViewModelSessionTest {
         val completedHistory = database.workoutHistoryDao()
             .getLatestWorkoutHistoryByWorkoutId(testWorkoutId, isDone = true)
         assertNotNull("Expected a completed workout history after skipping the final exercise.", completedHistory)
+    }
+
+    @Test
+    fun finishWorkoutEarly_fromMiddleOfWorkout_skipsOnlyRemainingSets_and_closesWithFinishedEarlyReason() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val thirdSetId = UUID.randomUUID()
+        val nextExerciseSetId = UUID.randomUUID()
+        val firstExercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 80.0),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 82.5),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(thirdSetId, 8, 85.0)
+            ),
+            name = "Bench Press"
+        )
+        val secondExercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(nextExerciseSetId, 10, 70.0)),
+            name = "Barbell Row"
+        ).copy(id = UUID.randomUUID())
+        val workout = createTestWorkout(listOf(firstExercise, secondExercise))
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        val firstState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(firstState)
+        firstState!!.startTime = LocalDateTime.now()
+        viewModel.storeSetData()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.finishWorkoutEarly(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertTrue(viewModel.workoutState.value is WorkoutState.Completed)
+
+        val firstExerciseHistories = viewModel.executedSetsHistory
+            .filter { it.exerciseId == firstExercise.id }
+            .associateBy { it.setId }
+        assertEquals(false, firstExerciseHistories[firstSetId]?.skipped)
+        assertEquals(true, firstExerciseHistories[secondSetId]?.skipped)
+        assertEquals(true, firstExerciseHistories[thirdSetId]?.skipped)
+
+        val secondExerciseHistories = viewModel.executedSetsHistory
+            .filter { it.exerciseId == secondExercise.id }
+            .associateBy { it.setId }
+        assertEquals(true, secondExerciseHistories[nextExerciseSetId]?.skipped)
+
+        val completedHistory = database.workoutHistoryDao()
+            .getLatestWorkoutHistoryByWorkoutId(testWorkoutId, isDone = true)
+        assertEquals(
+            com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.FINISHED_EARLY,
+            completedHistory?.endReason
+        )
+        assertNull(database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId))
+    }
+
+    @Test
+    fun finishWorkoutEarly_onFinalRemainingSet_stores_finished_early_and_does_not_update_last_successful_session() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val carriedSetId = UUID.randomUUID()
+        val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
+        val previousSet = createSetHistory(previousWorkoutHistory.id, testExerciseId, carriedSetId, 0u, 90.0, 8)
+
+        createExerciseInfo(
+            exerciseId = testExerciseId,
+            lastSuccessfulSession = listOf(previousSet),
+            successfulSessionCounter = 1u,
+            sessionFailedCounter = 0u
+        )
+
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 90.0),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(carriedSetId, 8, 92.5)
+            ),
+            name = "Bench Press"
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        val firstState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(firstState)
+        firstState!!.startTime = LocalDateTime.now()
+        viewModel.storeSetData()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.finishWorkoutEarly(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val completedHistory = database.workoutHistoryDao()
+            .getLatestWorkoutHistoryByWorkoutId(testWorkoutId, isDone = true)
+        assertEquals(
+            com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.FINISHED_EARLY,
+            completedHistory?.endReason
+        )
+
+        val exerciseInfo = database.exerciseInfoDao().getExerciseInfoById(testExerciseId)
+        assertNotNull(exerciseInfo)
+        assertEquals(0u, exerciseInfo?.successfulSessionCounter)
+        assertEquals(1u, exerciseInfo?.sessionFailedCounter)
+        assertEquals(
+            previousSet.setId,
+            exerciseInfo?.lastSuccessfulSession?.sets?.singleOrNull()?.setId
+        )
     }
 
     private suspend fun createExerciseInfo(

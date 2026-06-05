@@ -67,6 +67,7 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAss
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
@@ -116,6 +117,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -771,6 +773,8 @@ open class WorkoutViewModel(
 
     private val _completionPushCompleted = MutableStateFlow(false)
     val completionPushCompleted: StateFlow<Boolean> = _completionPushCompleted.asStateFlow()
+    private var pendingCompletionEndReason: WorkoutSessionEndReason =
+        WorkoutSessionEndReason.COMPLETED
 
     internal val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
@@ -2363,14 +2367,19 @@ open class WorkoutViewModel(
         isDone: Boolean,
         context: Context? = null,
         forceNotSend: Boolean = false,
+        endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED,
         onEnd: suspend () -> Unit = {}
     ) {
+        if (isDone) {
+            pendingCompletionEndReason = endReason
+        }
         launchIO {
             storeSetDataJob?.join()
             val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
                 startWorkoutTime = startWorkoutTime,
                 selectedWorkout = selectedWorkout.value,
                 currentWorkoutHistory = currentWorkoutHistory,
+                endReason = endReason,
                 heartBeatRecords = heartBeatHistory.toList(),
                 progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
                 comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
@@ -2382,8 +2391,16 @@ open class WorkoutViewModel(
                 isDone = isDone,
                 updateWorkoutStore = ::updateWorkoutStore
             )
-            withContext(dispatchers.main) {
+            val completionContext = if (isDone) {
+                NonCancellable + dispatchers.main
+            } else {
+                dispatchers.main
+            }
+            withContext(completionContext) {
                 currentWorkoutHistory = workoutHistoryForThisPush
+                if (isDone) {
+                    pendingCompletionEndReason = workoutHistoryForThisPush.endReason
+                }
                 if (isDone) {
                     workoutRecordMutex.withLock {
                         _workoutRecord = null
@@ -2391,12 +2408,19 @@ open class WorkoutViewModel(
                         _workoutResumeInfo.value = null
                     }
                 }
-            }
-            onEnd()
-            if (isDone) {
-                _completionPushCompleted.value = true
+                onEnd()
+                if (isDone) {
+                    _completionPushCompleted.value = true
+                }
             }
         }
+    }
+
+    fun resolveCompletionEndReasonForPersistence(): WorkoutSessionEndReason {
+        return currentWorkoutHistory
+            ?.takeIf { it.isDone }
+            ?.endReason
+            ?: pendingCompletionEndReason
     }
 
     fun clearCompletionPushCompleted() {
@@ -3355,6 +3379,10 @@ open class WorkoutViewModel(
         val nextSetIndex: Int?
     )
 
+    private data class FinishEarlyPlan(
+        val skippedSetStates: List<WorkoutState.Set>
+    )
+
     private fun buildExerciseSkipPlan(machine: WorkoutStateMachine): ExerciseSkipPlan? {
         val currentState = machine.currentState as? WorkoutState.Set ?: return null
         val exerciseId = currentState.exerciseId
@@ -3379,6 +3407,88 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return false
         val plan = buildExerciseSkipPlan(machine) ?: return false
         return plan.nextSetIndex == null
+    }
+
+    private fun buildFinishEarlyPlan(machine: WorkoutStateMachine): FinishEarlyPlan {
+        val skippedSetStates = machine.allStates
+            .subList(machine.currentIndex, machine.allStates.size)
+            .filterIsInstance<WorkoutState.Set>()
+        return FinishEarlyPlan(skippedSetStates = skippedSetStates)
+    }
+
+    open fun finishWorkoutEarly(
+        context: Context? = null,
+        onEnd: suspend () -> Unit = {}
+    ) {
+        val machineSnapshot = stateMachine ?: return
+        val finishPlan = buildFinishEarlyPlan(machineSnapshot)
+
+        launchIO {
+            val skippedSetStates = finishPlan.skippedSetStates.map { setState ->
+                setState.copy(
+                    startTime = setState.startTime ?: LocalDateTime.now(),
+                    skipped = true,
+                    hasBeenExecuted = true
+                ).also { copiedState ->
+                    copiedState.currentSetData = copySetData(setState.currentSetData)
+                }
+            }
+
+            skippedSetStates.forEach { skippedState ->
+                val snapshot = workoutPersistenceCoordinator.captureSetHistorySnapshot(
+                    currentState = skippedState,
+                    exercisesById = exercisesById,
+                    supersetIdByExerciseId = supersetIdByExerciseId,
+                    exercisesBySupersetId = exercisesBySupersetId
+                ) ?: return@forEach
+                workoutPersistenceCoordinator.upsertSetHistorySnapshot(snapshot)
+            }
+
+            withContext(dispatchers.main) {
+                val activeMachine = stateMachine ?: return@withContext
+                val currentIndexSnapshot = activeMachine.currentIndex
+                val updatedMachine = activeMachine.mapStatesIndexed { index, state ->
+                    val setState = state as? WorkoutState.Set ?: return@mapStatesIndexed state
+                    if (index < currentIndexSnapshot) {
+                        return@mapStatesIndexed state
+                    }
+
+                    skippedSetStates.firstOrNull {
+                        it.set.id == setState.set.id &&
+                            it.setIndex == setState.setIndex &&
+                            it.exerciseId == setState.exerciseId
+                    } ?: setState.copy(
+                        startTime = setState.startTime ?: LocalDateTime.now(),
+                        skipped = true,
+                        hasBeenExecuted = true
+                    ).also { copiedState ->
+                        copiedState.currentSetData = copySetData(setState.currentSetData)
+                    }
+                }
+                populateNextStateForRest(updatedMachine)
+                stateMachine = updatedMachine
+
+                val workoutStart = startWorkoutTime ?: LocalDateTime.now().also {
+                    startWorkoutTime = it
+                }
+                val completedState = WorkoutState.Completed(workoutStart).apply {
+                    endWorkoutTime = LocalDateTime.now()
+                }
+                _workoutState.value = completedState
+                _nextWorkoutState.value = null
+                _sessionPhase.value = WorkoutSessionPhase.COMPLETED
+                _isHistoryEmpty.value = updatedMachine.isHistoryEmpty
+                workoutTimerService.unregisterAll()
+                rebuildScreenState()
+
+                pushAndStoreWorkoutData(
+                    isDone = true,
+                    context = context,
+                    endReason = WorkoutSessionEndReason.FINISHED_EARLY,
+                    onEnd = onEnd
+                )
+            }
+        }
     }
 
     open fun skipCurrentExercise(
@@ -3454,6 +3564,7 @@ open class WorkoutViewModel(
                 pushAndStoreWorkoutData(
                     isDone = skipPlan.nextSetIndex == null,
                     context = context,
+                    endReason = WorkoutSessionEndReason.COMPLETED,
                     onEnd = onEnd
                 )
             }
