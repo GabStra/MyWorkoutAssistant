@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRestHistoryOps
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutSetHistoryOps
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -85,6 +86,7 @@ internal class WorkoutPersistenceCoordinator(
         val startWorkoutTime: LocalDateTime,
         val selectedWorkout: Workout,
         val currentWorkoutHistory: WorkoutHistory?,
+        val endReason: WorkoutSessionEndReason,
         val heartBeatRecords: List<Int>,
         val executedSetsHistory: List<SetHistory>,
         val executedRestHistories: List<RestHistory>,
@@ -257,6 +259,7 @@ internal class WorkoutPersistenceCoordinator(
         startWorkoutTime: LocalDateTime?,
         selectedWorkout: Workout,
         currentWorkoutHistory: WorkoutHistory?,
+        endReason: WorkoutSessionEndReason,
         heartBeatRecords: List<Int>,
         progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
         comparisonBaselineByExerciseId: Map<UUID, List<SimpleSet>>
@@ -268,6 +271,7 @@ internal class WorkoutPersistenceCoordinator(
             startWorkoutTime = startTime,
             selectedWorkout = selectedWorkout,
             currentWorkoutHistory = currentWorkoutHistory,
+            endReason = endReason,
             heartBeatRecords = heartBeatRecords,
             executedSetsHistory = executedSetsSnapshot,
             executedRestHistories = executedRestSnapshot,
@@ -294,6 +298,11 @@ internal class WorkoutPersistenceCoordinator(
         val workoutStoreRepositoryRef = workoutStoreRepository()
 
         var currentWorkoutHistorySnapshot = snapshot.currentWorkoutHistory
+        val resolvedEndReason = when {
+            !isDone -> WorkoutSessionEndReason.COMPLETED
+            currentWorkoutHistorySnapshot?.isDone == true -> currentWorkoutHistorySnapshot.endReason
+            else -> snapshot.endReason
+        }
 
         if (currentWorkoutHistorySnapshot == null) {
             currentWorkoutHistorySnapshot = WorkoutHistory(
@@ -306,7 +315,8 @@ internal class WorkoutPersistenceCoordinator(
                 startTime = snapshot.startWorkoutTime,
                 isDone = isDone,
                 hasBeenSentToHealth = false,
-                globalId = selectedWorkoutSnapshot.globalId
+                globalId = selectedWorkoutSnapshot.globalId,
+                endReason = resolvedEndReason
             )
         } else {
             currentWorkoutHistorySnapshot = currentWorkoutHistorySnapshot.copy(
@@ -315,7 +325,8 @@ internal class WorkoutPersistenceCoordinator(
                 time = snapshot.capturedAt.toLocalTime(),
                 isDone = isDone,
                 hasBeenSentToHealth = false,
-                version = currentWorkoutHistorySnapshot.version.inc()
+                version = currentWorkoutHistorySnapshot.version.inc(),
+                endReason = resolvedEndReason
             )
         }
         val workoutHistoryForThisPush = currentWorkoutHistorySnapshot
@@ -440,14 +451,16 @@ internal class WorkoutPersistenceCoordinator(
                 val expectedVolume = expectedSets.sumOf { it.weight * it.reps }
                 val executedVolume = executedSets.sumOf { it.weight * it.reps }
 
+                val finishedEarly = snapshot.endReason == WorkoutSessionEndReason.FINISHED_EARLY
+
                 if (exerciseInfo == null) {
                     val newExerciseInfo = com.gabstra.myworkoutassistant.shared.ExerciseInfo(
                         id = exerciseId,
                         bestSession = currentSessionSnapshot,
-                        lastSuccessfulSession = currentSessionSnapshot,
-                        successfulSessionCounter = if (isDeloadSession) 0u else 1u,
-                        sessionFailedCounter = 0u,
-                        completedSessionsSinceDeload = if (isDeloadSession) 0u else 1u,
+                        lastSuccessfulSession = if (finishedEarly) ExerciseSessionSnapshot() else currentSessionSnapshot,
+                        successfulSessionCounter = if (isDeloadSession || finishedEarly) 0u else 1u,
+                        sessionFailedCounter = if (finishedEarly) 1u else 0u,
+                        completedSessionsSinceDeload = if (isDeloadSession || finishedEarly) 0u else 1u,
                         timesCompletedInAWeek = weeklyCount,
                         weeklyCompletionUpdateDate = today,
                         lastSessionWasDeload = isDeloadSession,
@@ -462,6 +475,12 @@ internal class WorkoutPersistenceCoordinator(
                             successfulSessionCounter = 0u,
                             completedSessionsSinceDeload = 0u,
                             lastSessionWasDeload = true
+                        )
+                    } else if (finishedEarly) {
+                        updatedInfo = updatedInfo.copy(
+                            successfulSessionCounter = 0u,
+                            sessionFailedCounter = updatedInfo.sessionFailedCounter.inc(),
+                            lastSessionWasDeload = false
                         )
                     } else {
                         updatedInfo = updatedInfo.copy(

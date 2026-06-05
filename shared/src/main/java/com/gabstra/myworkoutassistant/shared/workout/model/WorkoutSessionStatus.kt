@@ -72,10 +72,21 @@ fun resolveWorkoutSessionStatus(
 
 /** User-visible strings for compact session labels (Status tab, history headers). */
 object WorkoutSessionDisplayLabels {
+    const val FINISHED_EARLY = "Finished early"
     const val IN_PROGRESS = "In progress"
     const val STOPPED_ON_WATCH = "Stopped"
     /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
     const val STALE_ON_WATCH = "Watch disconnected"
+}
+
+fun WorkoutHistory.isNormallyCompleted(): Boolean {
+    return isDone && endReason == WorkoutSessionEndReason.COMPLETED
+}
+
+fun completedWorkoutEndDisplayLabel(workoutHistory: WorkoutHistory): String? = when {
+    !workoutHistory.isDone -> null
+    workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY -> WorkoutSessionDisplayLabels.FINISHED_EARLY
+    else -> null
 }
 
 /**
