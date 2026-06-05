@@ -181,6 +181,40 @@ class WearWorkoutDriver(
         error("Could not find workout action '$actionText' within bidirectional pager scan.")
     }
 
+    private fun navigateToButtonsPage(
+        isOnButtonsPage: () -> Boolean,
+        canProceed: (() -> Boolean)? = null,
+        maxSwipesPerDirection: Int = 4
+    ): Boolean {
+        fun probe(): Boolean = isOnButtonsPage() || (canProceed?.invoke() == true)
+
+        if (probe()) {
+            return true
+        }
+
+        device.pressBack()
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        if (probe()) {
+            return true
+        }
+
+        repeat(maxSwipesPerDirection) {
+            navigateToPagerPage(Direction.RIGHT)
+            if (probe()) {
+                return true
+            }
+        }
+
+        repeat(maxSwipesPerDirection * 2) {
+            navigateToPagerPage(Direction.LEFT)
+            if (probe()) {
+                return true
+            }
+        }
+
+        return probe()
+    }
+
     /**
      * Finds an element, scrolling in the given directions if not immediately visible.
      * Use when content may be off-screen (e.g. in a scrollable list).
@@ -776,26 +810,78 @@ class WearWorkoutDriver(
             require(dialogAppeared) { "Skip exercise dialog did not appear" }
         }
 
-        if (!isOnButtonsPage()) {
-            repeat(3) {
-                navigateToPagerPage(Direction.RIGHT)
-                if (isOnButtonsPage()) {
-                    return@repeat
-                }
-            }
+        require(navigateToButtonsPage(::isOnButtonsPage, canProceed = { findSkipExerciseAction(1_000) != null })) {
+            "Could not navigate to the buttons page before attempting to skip the exercise."
         }
-
-        if (!isOnButtonsPage()) {
-            repeat(3) {
-                navigateToPagerPage(Direction.LEFT)
-                if (isOnButtonsPage()) {
-                    return@repeat
-                }
-            }
-        }
-
-        require(isOnButtonsPage()) { "Could not navigate to the buttons page before attempting to skip the exercise." }
         openSkipExerciseDialog()
+        longPressByDesc("Done", timeoutMs)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
+    fun finishEarly(timeoutMs: Long = 5_000) {
+        val finishActionSelectors = arrayOf(
+            By.text("Finish early"),
+            By.desc("Finish early")
+        )
+        val buttonsPageAnchors = arrayOf(
+            By.text("Keep screen on"),
+            By.textContains("Screen can dim"),
+            By.textContains("This exercise keeps the screen on"),
+            By.text("Back"),
+            By.text("Go Home"),
+            By.desc("Go Home")
+        )
+
+        fun findFinishEarlyAction(waitMs: Long = 400): UiObject2? {
+            return device.wait(Until.findObject(By.text("Finish early")), waitMs)
+                ?: device.wait(Until.findObject(By.desc("Finish early")), waitMs)
+        }
+
+        fun isOnButtonsPage(): Boolean {
+            return buttonsPageAnchors.any(device::hasObject) || finishActionSelectors.any(device::hasObject)
+        }
+
+        fun scrollButtonsPageDownUntilFinishVisible(): UiObject2? {
+            findFinishEarlyAction()?.let { return it }
+
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                finishActionSelectors.forEach { selector ->
+                    runCatching {
+                        scrollable.scrollUntil(Direction.DOWN, Until.findObject(selector))
+                    }.getOrNull()?.let { return it }
+                }
+            }
+
+            repeat(6) {
+                verticalSwipe(Direction.DOWN)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findFinishEarlyAction()?.let { return it }
+            }
+
+            return null
+        }
+
+        fun openFinishEarlyDialog() {
+            val action = scrollButtonsPageDownUntilFinishVisible()
+            require(action != null) { "Could not find 'Finish early' after scrolling the buttons page." }
+            clickObjectOrAncestorInternal(action)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+
+            val dialogAppeared = waitForAnyObject(
+                timeoutMs = timeoutMs,
+                selectors = arrayOf(
+                    By.text("Finish early"),
+                    By.text("End the workout now? All remaining exercises and sets will be skipped.")
+                )
+            )
+            require(dialogAppeared) { "Finish early dialog did not appear" }
+        }
+
+        require(navigateToButtonsPage(::isOnButtonsPage, canProceed = { findFinishEarlyAction(1_000) != null })) {
+            "Could not navigate to the buttons page before attempting to finish early."
+        }
+        openFinishEarlyDialog()
         longPressByDesc("Done", timeoutMs)
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
