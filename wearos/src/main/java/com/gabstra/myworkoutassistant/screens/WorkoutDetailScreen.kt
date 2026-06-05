@@ -110,30 +110,26 @@ fun WorkoutDetailScreen(
 
     val permissionLauncherStart = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-            viewModel.startWorkout()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
-            viewModel.clearRecoveryCheckpoint()
+    ) {
+        if (hasWorkoutRecord) viewModel.deleteWorkoutRecord()
+        viewModel.startWorkout()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+        viewModel.clearRecoveryCheckpoint()
 
-            navController.navigate(Screen.Workout.route)
-            viewModel.consumeStartWorkout()
-        }
+        navController.navigate(Screen.Workout.route)
+        viewModel.consumeStartWorkout()
     }
 
     val permissionLauncherResume = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            viewModel.resumeWorkoutFromRecord()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+    ) {
+        viewModel.resumeWorkoutFromRecord()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
 
-            navController.navigate(Screen.Workout.route)
-            viewModel.consumeStartWorkout()
-        }
+        navController.navigate(Screen.Workout.route)
+        viewModel.consumeStartWorkout()
     }
 
     LaunchedEffect(
