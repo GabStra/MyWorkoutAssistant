@@ -18,6 +18,7 @@ class PipelinePaths:
     cleaned_dir: Path
     retarget_dir: Path
     preview_dir: Path
+    wear_dir: Path
     logs_dir: Path
 
     @classmethod
@@ -28,8 +29,9 @@ class PipelinePaths:
         cleaned_dir = root / "cleaned"
         retarget_dir = root / "retarget"
         preview_dir = root / "preview"
+        wear_dir = root / "wear"
         logs_dir = root / "logs"
-        for path in (root, input_dir, raw_dir, cleaned_dir, retarget_dir, preview_dir, logs_dir):
+        for path in (root, input_dir, raw_dir, cleaned_dir, retarget_dir, preview_dir, wear_dir, logs_dir):
             path.mkdir(parents=True, exist_ok=True)
         return cls(
             root=root,
@@ -38,5 +40,6 @@ class PipelinePaths:
             cleaned_dir=cleaned_dir,
             retarget_dir=retarget_dir,
             preview_dir=preview_dir,
+            wear_dir=wear_dir,
             logs_dir=logs_dir,
         )

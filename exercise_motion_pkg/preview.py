@@ -29,6 +29,12 @@ CANONICAL_CAPSULES = [
     ("right_knee", "right_ankle", UNIFORM_CAPSULE_RADIUS),
     ("right_ankle", "right_foot", UNIFORM_CAPSULE_RADIUS),
 ]
+PREVIEW_SKELETON_CHAINS = [
+    ["left_foot", "left_ankle", "left_knee", "left_hip", "pelvis", "right_hip", "right_knee", "right_ankle", "right_foot"],
+    ["pelvis", "spine1", "spine2", "spine3", "neck", "head"],
+    ["neck", "left_collar", "left_shoulder", "left_elbow", "left_wrist", "left_hand"],
+    ["neck", "right_collar", "right_shoulder", "right_elbow", "right_wrist", "right_hand"],
+]
 
 JOINT_ALIASES = {
     "spine1": ("spine1", "spine"),
@@ -54,15 +60,15 @@ HINGE_LIMITS = (
 )
 MIN_LOOP_DURATION_SECONDS = 2.0
 MAX_DETECTED_LOOPS = 8
-ORIENTATION_SUPPORT_JOINTS = (
+ORIENTATION_PRIMARY_SUPPORT_JOINTS = (
     "left_foot",
     "right_foot",
-    "left_ankle",
-    "right_ankle",
-)
-HAND_SUPPORT_JOINTS = (
     "left_hand",
     "right_hand",
+)
+ORIENTATION_FALLBACK_SUPPORT_JOINTS = (
+    "left_ankle",
+    "right_ankle",
     "left_wrist",
     "right_wrist",
 )
@@ -76,7 +82,7 @@ YAW_ALIGNMENT_PAIRS = (
 
 def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    preview_clip = refine_motion_clip_for_preview(clip)
+    preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(clip))
     default_auto_alignment = _serialize_preview_rotations(_compute_preview_auto_alignment(preview_clip.frames))
     detected_loops = [
         {
@@ -98,13 +104,14 @@ def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_p
         "frameCount": preview_clip.frame_count,
         "jointNames": preview_clip.joint_names,
         "rootJoint": _find_root_joint(preview_clip),
-        "defaultFixedRoot": preview_clip.metadata.get("upstream") == "gvhmr" if isinstance(preview_clip.metadata, dict) else False,
+        "defaultFixedRoot": True,
         "rootTranslationToggleLabel": (
             "Show original camera-space translation"
             if preview_clip.metadata.get("upstream") == "gvhmr"
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
-        "defaultAutoWorldAlignment": False,
+        "defaultSceneInverted": False,
+        "defaultAutoWorldAlignment": True,
         "defaultAutoAlignment": default_auto_alignment,
         "loopable": bool(detected_loops),
         "detectedLoops": detected_loops,
@@ -126,7 +133,7 @@ def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_p
 def write_preview_debug_json(path: Path, clip: MotionClip) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fixed_root = bool(clip.metadata.get("upstream") == "gvhmr") if isinstance(clip.metadata, dict) else False
-    translation_track = _build_preview_translation_track(clip.frames)
+    translation_track = _build_preview_translation_track(clip.frames, _find_root_joint(clip))
     frames_payload = []
     for index, frame in enumerate(clip.frames):
         translation = translation_track[index] if fixed_root and index < len(translation_track) else (0.0, 0.0, 0.0)
@@ -157,6 +164,299 @@ def write_preview_debug_json(path: Path, clip: MotionClip) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def write_wear_skeleton_json(
+    path: Path,
+    clip: MotionClip,
+    *,
+    title: str,
+    selected_loop_index: int | None = None,
+    lock_y_drift: bool = False,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_wear_skeleton_payload(
+        clip,
+        title=title,
+        selected_loop_index=selected_loop_index,
+        lock_y_drift=lock_y_drift,
+    )
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def build_wear_skeleton_payload(
+    clip: MotionClip,
+    *,
+    title: str,
+    selected_loop_index: int | None = None,
+    lock_y_drift: bool = False,
+) -> dict[str, object]:
+    preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(clip))
+    detected_loops = _detect_preview_loops(preview_clip)
+    resolved_loop_index = (
+        0
+        if selected_loop_index is None and detected_loops
+        else -1
+        if selected_loop_index is None
+        else selected_loop_index
+    )
+    if resolved_loop_index < -1 or resolved_loop_index >= len(detected_loops):
+        raise ValueError(
+            f"selected_loop_index must be -1 or between 0 and {len(detected_loops) - 1}; got {resolved_loop_index}"
+        )
+    selected_loop = detected_loops[resolved_loop_index] if resolved_loop_index >= 0 else None
+    active_start_frame = int(selected_loop["startFrame"]) if selected_loop is not None else 0
+    active_end_frame = int(selected_loop["endFrame"]) if selected_loop is not None else max(0, preview_clip.frame_count - 1)
+    active_frames = preview_clip.frames[active_start_frame:active_end_frame + 1]
+    auto_alignment = _compute_preview_auto_alignment(active_frames)
+    root_joint = _find_root_joint(preview_clip)
+    active_root_anchor = _compute_root_anchor(active_frames, root_joint)
+    transformed_frames = _build_wear_transformed_frames(
+        active_frames=active_frames,
+        source_start_frame=active_start_frame,
+        root_joint=root_joint,
+        active_root_anchor=active_root_anchor,
+        auto_alignment=auto_alignment,
+        lock_y_drift=lock_y_drift,
+    )
+    bounds = _compute_transformed_joint_bounds(transformed_frames)
+    scene_origin = _bounds_center(bounds)
+    centered_frames = _subtract_scene_origin_from_frames(transformed_frames, scene_origin)
+    centered_bounds = _compute_transformed_joint_bounds(centered_frames)
+    active_duration = (
+        active_frames[-1].time_sec - active_frames[0].time_sec
+        if len(active_frames) >= 2
+        else 0.0
+    )
+
+    return {
+        "schemaVersion": 1,
+        "kind": "wearPreviewSkeleton",
+        "title": title,
+        "source": {
+            "fps": preview_clip.fps,
+            "frameCount": preview_clip.frame_count,
+            "activeStartFrame": active_start_frame,
+            "activeEndFrame": active_end_frame,
+        },
+        "fps": preview_clip.fps,
+        "frameCount": len(centered_frames),
+        "durationSec": active_duration,
+        "jointNames": preview_clip.joint_names,
+        "rootJoint": root_joint,
+        "bakedPreviewConfiguration": {
+            "autoWorldAlignment": True,
+            "lockGlobalRootDrift": True,
+            "lockYDrift": lock_y_drift,
+            "invertScene": False,
+            "selectedLoopIndex": resolved_loop_index,
+        },
+        "loop": {
+            "enabled": selected_loop is not None,
+            "startFrame": 0,
+            "endFrame": max(0, len(centered_frames) - 1),
+            "sourceStartFrame": active_start_frame,
+            "sourceEndFrame": active_end_frame,
+            "durationSec": active_duration,
+            "label": selected_loop.get("label") if selected_loop is not None else "Full clip",
+        },
+        "transforms": {
+            "autoAlignment": _serialize_preview_rotations(auto_alignment),
+            "rootAnchor": _point_to_list(active_root_anchor) if active_root_anchor is not None else None,
+            "sceneOriginOffset": _point_to_list(scene_origin),
+        },
+        "bounds": _serialize_bounds(centered_bounds),
+        "topology": {
+            "skeletonChains": PREVIEW_SKELETON_CHAINS,
+            "capsules": _build_capsules(preview_clip),
+        },
+        "geometry": {
+            "style": "low_poly_block_humanoid",
+            "limb": {
+                "legWidth": 0.105,
+                "legDepth": 0.075,
+                "armWidth": 0.086,
+                "armDepth": 0.061,
+            },
+            "chainProfiles": [
+                {"match": "leg_bridge", "minJointCount": 8, "width": 0.14, "depth": 0.09},
+                {"match": "spine_head", "includesJoint": "head", "width": 0.1, "depth": 0.08},
+                {"match": "default", "width": 0.08, "depth": 0.055},
+            ],
+            "head": {
+                "minScale": 0.086,
+                "maxScale": 0.116,
+                "scale": [0.88, 1.08, 0.86],
+            },
+        },
+        "frames": centered_frames,
+    }
+
+
+def _build_wear_transformed_frames(
+    *,
+    active_frames: list[MotionFrame],
+    source_start_frame: int,
+    root_joint: str | None,
+    active_root_anchor: tuple[float, float, float] | None,
+    auto_alignment: list[tuple[tuple[float, float, float], float]],
+    lock_y_drift: bool,
+) -> list[dict[str, object]]:
+    if not active_frames:
+        return []
+    active_start_time = active_frames[0].time_sec
+    transformed_frames: list[dict[str, object]] = []
+    for index, frame in enumerate(active_frames):
+        translation = _fixed_root_translation(frame, root_joint, active_root_anchor, lock_y_drift=lock_y_drift)
+        transformed_joints = {}
+        for joint_name, point in frame.joints.items():
+            translated = (
+                point[0] - translation[0],
+                point[1] - translation[1],
+                point[2] - translation[2],
+            )
+            transformed = _apply_rotations_to_point(translated, auto_alignment)
+            transformed_joints[joint_name] = _point_to_list(transformed)
+        transformed_frames.append(
+            {
+                "frameIndex": index,
+                "sourceFrameIndex": source_start_frame + index,
+                "timeSec": frame.time_sec - active_start_time,
+                "sourceTimeSec": frame.time_sec,
+                "rootTranslationApplied": _point_to_list(translation),
+                "joints": transformed_joints,
+            }
+        )
+    return transformed_frames
+
+
+def _compute_root_anchor(
+    frames: list[MotionFrame],
+    root_joint: str | None,
+) -> tuple[float, float, float] | None:
+    root_points = [
+        root_point
+        for root_point in (_frame_root_point(frame, root_joint) for frame in frames)
+        if root_point is not None
+    ]
+    if not root_points:
+        return None
+    return (
+        sum(point[0] for point in root_points) / len(root_points),
+        sum(point[1] for point in root_points) / len(root_points),
+        sum(point[2] for point in root_points) / len(root_points),
+    )
+
+
+def _fixed_root_translation(
+    frame: MotionFrame,
+    root_joint: str | None,
+    active_root_anchor: tuple[float, float, float] | None,
+    *,
+    lock_y_drift: bool,
+) -> tuple[float, float, float]:
+    if active_root_anchor is None:
+        return (0.0, 0.0, 0.0)
+    root_point = _frame_root_point(frame, root_joint)
+    if root_point is None:
+        return (0.0, 0.0, 0.0)
+    return (
+        root_point[0] - active_root_anchor[0],
+        root_point[1] - active_root_anchor[1] if lock_y_drift else 0.0,
+        root_point[2] - active_root_anchor[2],
+    )
+
+
+def _compute_transformed_joint_bounds(frames: list[dict[str, object]]) -> dict[str, float]:
+    min_x = math.inf
+    min_y = math.inf
+    min_z = math.inf
+    max_x = -math.inf
+    max_y = -math.inf
+    max_z = -math.inf
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        for point in joints.values():
+            if not _is_serialized_point(point):
+                continue
+            x, y, z = float(point[0]), float(point[1]), float(point[2])
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            min_z = min(min_z, z)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+            max_z = max(max_z, z)
+    if not all(math.isfinite(value) for value in (min_x, min_y, min_z, max_x, max_y, max_z)):
+        return {
+            "minX": -0.5,
+            "maxX": 0.5,
+            "minY": -0.5,
+            "maxY": 0.5,
+            "minZ": -0.5,
+            "maxZ": 0.5,
+        }
+    return {
+        "minX": min_x,
+        "maxX": max_x,
+        "minY": min_y,
+        "maxY": max_y,
+        "minZ": min_z,
+        "maxZ": max_z,
+    }
+
+
+def _bounds_center(bounds: dict[str, float]) -> tuple[float, float, float]:
+    return (
+        (bounds["minX"] + bounds["maxX"]) * 0.5,
+        (bounds["minY"] + bounds["maxY"]) * 0.5,
+        (bounds["minZ"] + bounds["maxZ"]) * 0.5,
+    )
+
+
+def _subtract_scene_origin_from_frames(
+    frames: list[dict[str, object]],
+    scene_origin: tuple[float, float, float],
+) -> list[dict[str, object]]:
+    centered_frames: list[dict[str, object]] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        centered_joints = {}
+        if isinstance(joints, dict):
+            centered_joints = {
+                joint_name: [
+                    float(point[0]) - scene_origin[0],
+                    float(point[1]) - scene_origin[1],
+                    float(point[2]) - scene_origin[2],
+                ]
+                for joint_name, point in joints.items()
+                if _is_serialized_point(point)
+            }
+        centered_frame = dict(frame)
+        centered_frame["joints"] = centered_joints
+        centered_frames.append(centered_frame)
+    return centered_frames
+
+
+def _serialize_bounds(bounds: dict[str, float]) -> dict[str, object]:
+    return {
+        **{key: float(value) for key, value in bounds.items()},
+        "center": _point_to_list(_bounds_center(bounds)),
+        "size": [
+            float(bounds["maxX"] - bounds["minX"]),
+            float(bounds["maxY"] - bounds["minY"]),
+            float(bounds["maxZ"] - bounds["minZ"]),
+        ],
+    }
+
+
+def _point_to_list(point: tuple[float, float, float]) -> list[float]:
+    return [float(point[0]), float(point[1]), float(point[2])]
+
+
+def _is_serialized_point(value: object) -> bool:
+    return isinstance(value, (list, tuple)) and len(value) >= 3
+
+
 def refine_motion_clip_for_preview(clip: MotionClip) -> MotionClip:
     if _clip_is_preview_refined(clip):
         return clip
@@ -165,6 +465,67 @@ def refine_motion_clip_for_preview(clip: MotionClip) -> MotionClip:
 
 def _prepare_preview_clip(clip: MotionClip) -> MotionClip:
     return refine_motion_clip_for_preview(clip)
+
+
+def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
+    if not clip.frames:
+        return clip
+
+    root_joint = _find_root_joint(clip)
+    translation_track = _build_preview_translation_track(clip.frames, root_joint)
+    min_x = math.inf
+    min_y = math.inf
+    min_z = math.inf
+    max_x = -math.inf
+    max_y = -math.inf
+    max_z = -math.inf
+    for frame_index, frame in enumerate(clip.frames):
+        translation = translation_track[frame_index] if frame_index < len(translation_track) else (0.0, 0.0, 0.0)
+        for point in frame.joints.values():
+            x = point[0] - translation[0]
+            y = point[1] - translation[1]
+            z = point[2] - translation[2]
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            min_z = min(min_z, z)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+            max_z = max(max_z, z)
+
+    if not all(math.isfinite(value) for value in (min_x, min_y, min_z, max_x, max_y, max_z)):
+        return clip
+
+    center = (
+        (min_x + max_x) * 0.5,
+        (min_y + max_y) * 0.5,
+        (min_z + max_z) * 0.5,
+    )
+    centered_frames = [
+        MotionFrame(
+            time_sec=frame.time_sec,
+            joints={
+                joint_name: (
+                    point[0] - center[0],
+                    point[1] - center[1],
+                    point[2] - center[2],
+                )
+                for joint_name, point in frame.joints.items()
+            },
+        )
+        for frame in clip.frames
+    ]
+    metadata = dict(clip.metadata)
+    metadata["previewCenterOffset"] = {
+        "space": "fixed_root_motion_bounds",
+        "point": list(center),
+    }
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=centered_frames,
+        source=clip.source,
+        metadata=metadata,
+    )
 
 
 def _clip_is_preview_refined(clip: MotionClip) -> bool:
@@ -202,17 +563,35 @@ def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
     )
 
 
-def _build_preview_translation_track(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
+def _frame_root_point(frame: MotionFrame, preferred_root_joint: str | None) -> tuple[float, float, float] | None:
+    for candidate in (preferred_root_joint, "pelvis", "spine1"):
+        if candidate is None:
+            continue
+        point = frame.joints.get(candidate)
+        if point is not None:
+            return point
+    return None
+
+
+def _build_preview_translation_track(
+    frames: list[MotionFrame],
+    preferred_root_joint: str | None = None,
+) -> list[tuple[float, float, float]]:
     if not frames:
         return []
-    base_center = _frame_joint_center(frames[0])
+    base_root_point = _frame_root_point(frames[0], preferred_root_joint)
+    if base_root_point is None:
+        return [(0.0, 0.0, 0.0) for _ in frames]
     translations: list[tuple[float, float, float]] = []
     for frame in frames:
-        center = _frame_joint_center(frame)
+        root_point = _frame_root_point(frame, preferred_root_joint)
+        if root_point is None:
+            translations.append((0.0, 0.0, 0.0))
+            continue
         translations.append((
-            center[0] - base_center[0],
-            center[1] - base_center[1],
-            center[2] - base_center[2],
+            root_point[0] - base_root_point[0],
+            0.0,
+            root_point[2] - base_root_point[2],
         ))
     return translations
 
@@ -265,10 +644,7 @@ def _estimate_support_plane_alignment_rotation(
     support_points = _collect_floor_support_points(frames)
     if len(support_points) < 6:
         return None
-    low_support_points = _select_low_support_points(support_points)
-    if len(low_support_points) < 6:
-        low_support_points = support_points
-    averaged = _fit_support_plane_normal(low_support_points)
+    averaged = _fit_support_plane_normal(support_points)
     if _vector_length(averaged) <= 1e-6:
         return None
     if averaged[1] < 0.0:
@@ -286,64 +662,33 @@ def _estimate_support_plane_alignment_rotation(
 
 
 def _collect_floor_support_points(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    preferred_points: list[tuple[float, float, float]] = []
+    primary_points: list[tuple[float, float, float]] = []
     fallback_points: list[tuple[float, float, float]] = []
     for frame in frames:
-        foot_points = [
+        primary_points.extend(
             frame.joints[joint_name]
-            for joint_name in ORIENTATION_SUPPORT_JOINTS
+            for joint_name in ORIENTATION_PRIMARY_SUPPORT_JOINTS
             if joint_name in frame.joints
-        ]
-        if not foot_points:
-            continue
-        fallback_points.extend(foot_points)
-        if not _frame_looks_floor_supported(frame, foot_points):
-            continue
-        preferred_points.extend(foot_points)
-    return preferred_points if len(preferred_points) >= 8 else fallback_points
+        )
+        fallback_points.extend(
+            frame.joints[joint_name]
+            for joint_name in ORIENTATION_FALLBACK_SUPPORT_JOINTS
+            if joint_name in frame.joints
+        )
+    combined_points = primary_points + fallback_points
+    if len(primary_points) >= 6 and _support_points_have_plane_span(primary_points):
+        return primary_points
+    if len(combined_points) >= 6 and _support_points_have_plane_span(combined_points):
+        return combined_points
+    return primary_points if len(primary_points) >= 6 else fallback_points
 
 
-def _frame_looks_floor_supported(
-    frame: MotionFrame,
-    foot_points: list[tuple[float, float, float]],
-) -> bool:
-    if len(foot_points) < 2:
+def _support_points_have_plane_span(points: list[tuple[float, float, float]]) -> bool:
+    if len(points) < 3:
         return False
-    foot_heights = [point[1] for point in foot_points]
-    foot_median_y = _median(foot_heights)
-    foot_span_y = max(foot_heights) - min(foot_heights)
-    if foot_span_y > 0.24:
-        return False
-
-    pelvis = frame.joints.get("pelvis")
-    if pelvis is not None and pelvis[1] - foot_median_y < 0.35:
-        return False
-
-    hand_points = [
-        frame.joints[joint_name]
-        for joint_name in HAND_SUPPORT_JOINTS
-        if joint_name in frame.joints
-    ]
-    if hand_points:
-        hand_median_y = _median([point[1] for point in hand_points])
-        if foot_median_y > hand_median_y - 0.06:
-            return False
-
-    return True
-
-
-def _select_low_support_points(
-    support_points: list[tuple[float, float, float]],
-) -> list[tuple[float, float, float]]:
-    if len(support_points) < 6:
-        return support_points
-    sorted_points = sorted(support_points, key=lambda point: point[1])
-    keep_count = max(6, int(len(sorted_points) * 0.35))
-    threshold = sorted_points[min(len(sorted_points) - 1, keep_count - 1)][1]
-    margin_threshold = sorted_points[0][1] + 0.16
-    max_threshold = min(threshold, margin_threshold)
-    selected = [point for point in sorted_points if point[1] <= max_threshold]
-    return selected if len(selected) >= 6 else sorted_points[:keep_count]
+    span_x = max(point[0] for point in points) - min(point[0] for point in points)
+    span_z = max(point[2] for point in points) - min(point[2] for point in points)
+    return span_x >= 0.08 and span_z >= 0.08
 
 
 def _fit_support_plane_normal(
@@ -445,7 +790,7 @@ def _estimate_support_profile_yaw_rotation(
     angle = math.atan2(direction[1], direction[0])
     if abs(angle) <= math.radians(2.0):
         return None
-    return ((0.0, 1.0, 0.0), -angle)
+    return ((0.0, 1.0, 0.0), angle)
 
 
 def _compute_preview_auto_alignment(
@@ -454,15 +799,78 @@ def _compute_preview_auto_alignment(
     if not frames:
         return []
     rotations: list[tuple[tuple[float, float, float], float]] = []
-    support_plane_rotation = _estimate_support_plane_alignment_rotation(frames)
     aligned_frames = frames
-    if support_plane_rotation is not None:
+    spine_rotation = _estimate_upright_spine_alignment_rotation(aligned_frames)
+    if spine_rotation is not None:
+        rotations.append(spine_rotation)
+        aligned_frames = [_rotate_frame(frame, spine_rotation) for frame in aligned_frames]
+    support_plane_rotation = _estimate_support_plane_alignment_rotation(aligned_frames)
+    if support_plane_rotation is not None and _rotation_preserves_upright_spine(aligned_frames, support_plane_rotation):
         rotations.append(support_plane_rotation)
         aligned_frames = [_rotate_frame(frame, support_plane_rotation) for frame in aligned_frames]
     support_profile_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
     if support_profile_rotation is not None:
         rotations.append(support_profile_rotation)
     return rotations
+
+
+def _rotation_preserves_upright_spine(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    upright_vectors = _collect_upright_spine_vectors(frames)
+    if len(upright_vectors) < 3:
+        return True
+    axis, angle = rotation
+    rotated_vectors = [
+        _rotate_point(vector, axis=axis, angle=angle)
+        for vector in upright_vectors
+    ]
+    average_verticality = sum(vector[1] for vector in rotated_vectors) / len(rotated_vectors)
+    return average_verticality >= math.cos(math.radians(8.0))
+
+
+def _estimate_upright_spine_alignment_rotation(
+    frames: list[MotionFrame],
+) -> tuple[tuple[float, float, float], float] | None:
+    upright_vectors = _collect_upright_spine_vectors(frames)
+    if len(upright_vectors) < 3:
+        return None
+    averaged = _normalize((
+        sum(vector[0] for vector in upright_vectors) / len(upright_vectors),
+        sum(vector[1] for vector in upright_vectors) / len(upright_vectors),
+        sum(vector[2] for vector in upright_vectors) / len(upright_vectors),
+    ))
+    if _vector_length(averaged) <= 1e-6:
+        return None
+    return _rotation_between_vectors(averaged, (0.0, 1.0, 0.0), minimum_degrees=2.0)
+
+
+def _collect_upright_spine_vectors(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
+    candidates: list[tuple[float, tuple[float, float, float]]] = []
+    for frame in frames:
+        pelvis = frame.joints.get("pelvis")
+        spine_top = frame.joints.get("neck") or frame.joints.get("head") or frame.joints.get("spine3")
+        if pelvis is None or spine_top is None:
+            continue
+        spine_vector = _subtract_points(spine_top, pelvis)
+        spine_length = _vector_length(spine_vector)
+        if spine_length <= 1e-5:
+            continue
+        normalized = (
+            spine_vector[0] / spine_length,
+            spine_vector[1] / spine_length,
+            spine_vector[2] / spine_length,
+        )
+        verticality = abs(normalized[1])
+        if verticality < 0.65:
+            continue
+        candidates.append((verticality, normalized))
+    if not candidates:
+        return []
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    keep_count = min(len(candidates), max(3, int(math.ceil(len(candidates) * 0.20))))
+    return [vector for _, vector in candidates[:keep_count]]
 
 
 def _serialize_preview_rotations(
@@ -1027,6 +1435,33 @@ def _vector_length(vector: tuple[float, float, float]) -> float:
     return math.sqrt(vector[0] ** 2 + vector[1] ** 2 + vector[2] ** 2)
 
 
+def _scale_vector(vector: tuple[float, float, float], scalar: float) -> tuple[float, float, float]:
+    return (
+        vector[0] * scalar,
+        vector[1] * scalar,
+        vector[2] * scalar,
+    )
+
+
+def _rotation_between_vectors(
+    source: tuple[float, float, float],
+    target: tuple[float, float, float],
+    *,
+    minimum_degrees: float,
+) -> tuple[tuple[float, float, float], float] | None:
+    normalized_source = _normalize(source)
+    normalized_target = _normalize(target)
+    if _vector_length(normalized_source) <= 1e-6 or _vector_length(normalized_target) <= 1e-6:
+        return None
+    alignment = max(-1.0, min(1.0, _dot(normalized_source, normalized_target)))
+    if alignment >= math.cos(math.radians(minimum_degrees)):
+        return None
+    axis = _cross(normalized_source, normalized_target)
+    if _vector_length(axis) <= 1e-6:
+        axis = (1.0, 0.0, 0.0)
+    return (_normalize(axis), math.acos(alignment))
+
+
 def _replace_local_temporal_outliers(frames: list[MotionFrame]) -> list[MotionFrame]:
     if len(frames) < 4:
         return frames
@@ -1552,13 +1987,61 @@ def _build_html(payload: dict[str, object]) -> str:
       gap: 12px;
       margin-top: 20px;
     }}
-    label {{
+    .control {{
       display: grid;
       gap: 6px;
       font-size: 0.95rem;
     }}
+    .control-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 28px;
+      font-size: 0.95rem;
+    }}
+    .control-row input[type="checkbox"] {{
+      flex: 0 0 auto;
+    }}
+    .control-group {{
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+    }}
+    .control-group-title {{
+      color: var(--muted);
+      font-size: 0.82rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }}
+    .control-inline {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }}
+    .control-inline output {{
+      min-width: 48px;
+      text-align: right;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }}
+    .control-inline input[type="range"] {{
+      grid-column: 1 / -1;
+    }}
     input[type="range"] {{
       width: 100%;
+    }}
+    select,
+    button {{
+      width: 100%;
+      min-height: 30px;
+      box-sizing: border-box;
     }}
     .stat {{
       font-variant-numeric: tabular-nums;
@@ -1589,53 +2072,56 @@ def _build_html(payload: dict[str, object]) -> str:
       <h1>{payload["title"]}</h1>
       <p>Interactive skeleton preview for the recovered motion after cleanup. Drag to rotate. Use this as the manual review gate before retargeting to a final Wear model.</p>
       <div class="controls">
-        <label>Playback speed
+        <label class="control">Playback speed
           <input id="speed" type="range" min="0.25" max="2" step="0.05" value="1" />
         </label>
         <button id="pauseToggle" type="button">Pause</button>
-        <label>Zoom
+        <label class="control">Zoom
           <input id="zoom" type="range" min="120" max="420" step="10" value="240" />
         </label>
-        <label>Camera mode
-          <select id="cameraMode">
-            <option value="perspective">Perspective</option>
-            <option value="orthographic">Orthographic</option>
-          </select>
-        </label>
-        <label>Vertical tilt
-          <input id="pitch" type="range" min="-1.2" max="1.2" step="0.05" value="0.35" />
-        </label>
-        <label>Use automatic world alignment
+        <label class="control-row" for="autoWorldAlignment">
+          <span>Use automatic world alignment</span>
           <input id="autoWorldAlignment" type="checkbox" />
         </label>
-        <label>World rotate X
-          <input id="rotateX" type="range" min="-90" max="90" step="1" value="0" />
+        <label class="control-row" for="sceneInverted">
+          <span>Invert scene</span>
+          <input id="sceneInverted" type="checkbox" />
         </label>
-        <label>World rotate Y
-          <input id="rotateY" type="range" min="-180" max="180" step="1" value="0" />
-        </label>
-        <label>World rotate Z
-          <input id="rotateZ" type="range" min="-90" max="90" step="1" value="0" />
-        </label>
-        <label>World translate X
-          <input id="translateX" type="range" min="-2" max="2" step="0.01" value="0" />
-        </label>
-        <label>World translate Y
-          <input id="translateY" type="range" min="-2" max="2" step="0.01" value="0" />
-        </label>
-        <label>World translate Z
-          <input id="translateZ" type="range" min="-2" max="2" step="0.01" value="0" />
-        </label>
-        <div class="stat">World rotation: <span id="worldRotationReadout">0, 0, 0</span></div>
-        <div class="stat">World translation: <span id="worldTranslationReadout">0, 0, 0</span></div>
-        <button id="resetTransform" type="button">Reset world transform</button>
-        <label>Root translation
-          <input id="fixedRoot" type="checkbox" />
-          <span id="rootTranslationLabel"></span>
-        </label>
-        <label>Loop preview
+        <div class="control-group">
+          <div class="control-group-title">Root lock</div>
+          <label class="control-row" for="fixedRoot">
+            <span id="rootTranslationLabel"></span>
+            <input id="fixedRoot" type="checkbox" />
+          </label>
+          <label class="control-row" for="lockYRoot">
+            <span>Lock root Y drift</span>
+            <input id="lockYRoot" type="checkbox" />
+          </label>
+          <label class="control-row" for="lockPlantedFeet">
+            <span>Lock planted feet</span>
+            <input id="lockPlantedFeet" type="checkbox" />
+          </label>
+          <div class="control-group-title">Ankle lock target offset</div>
+          <label class="control-inline" for="ankleOffsetForward">
+            <span>Forward</span>
+            <output id="ankleOffsetForwardValue">0.0 cm</output>
+            <input id="ankleOffsetForward" type="range" min="-0.25" max="0.25" step="0.005" value="0" />
+          </label>
+          <label class="control-inline" for="ankleOffsetLateral">
+            <span>Lateral</span>
+            <output id="ankleOffsetLateralValue">0.0 cm</output>
+            <input id="ankleOffsetLateral" type="range" min="-0.25" max="0.25" step="0.005" value="0" />
+          </label>
+          <label class="control-inline" for="ankleOffsetUp">
+            <span>Vertical</span>
+            <output id="ankleOffsetUpValue">0.0 cm</output>
+            <input id="ankleOffsetUp" type="range" min="-0.12" max="0.12" step="0.005" value="0" />
+          </label>
+        </div>
+        <label class="control">Loop preview
           <select id="loopSelect"></select>
         </label>
+        <button id="downloadWearSkeleton" type="button">Download baked Wear skeleton</button>
         <div class="stat">Detected loops: <span id="loopCount"></span></div>
         <div class="stat">Active span: <span id="activeLoop">Full clip</span></div>
         <div class="stat">Frames: <span id="frameCount"></span></div>
@@ -1667,57 +2153,70 @@ def _build_html(payload: dict[str, object]) -> str:
     const speedInput = document.getElementById("speed");
     const pauseToggleButton = document.getElementById("pauseToggle");
     const zoomInput = document.getElementById("zoom");
-    const cameraModeSelect = document.getElementById("cameraMode");
-    const pitchInput = document.getElementById("pitch");
     const autoWorldAlignmentInput = document.getElementById("autoWorldAlignment");
-    const rotateXInput = document.getElementById("rotateX");
-    const rotateYInput = document.getElementById("rotateY");
-    const rotateZInput = document.getElementById("rotateZ");
-    const translateXInput = document.getElementById("translateX");
-    const translateYInput = document.getElementById("translateY");
-    const translateZInput = document.getElementById("translateZ");
-    const resetTransformButton = document.getElementById("resetTransform");
+    const sceneInvertedInput = document.getElementById("sceneInverted");
     const fixedRootInput = document.getElementById("fixedRoot");
+    const lockYRootInput = document.getElementById("lockYRoot");
+    const lockPlantedFeetInput = document.getElementById("lockPlantedFeet");
+    const ankleOffsetForwardInput = document.getElementById("ankleOffsetForward");
+    const ankleOffsetLateralInput = document.getElementById("ankleOffsetLateral");
+    const ankleOffsetUpInput = document.getElementById("ankleOffsetUp");
+    const ankleOffsetForwardValue = document.getElementById("ankleOffsetForwardValue");
+    const ankleOffsetLateralValue = document.getElementById("ankleOffsetLateralValue");
+    const ankleOffsetUpValue = document.getElementById("ankleOffsetUpValue");
+    const downloadWearSkeletonButton = document.getElementById("downloadWearSkeleton");
     const loopSelect = document.getElementById("loopSelect");
     const loopCountNode = document.getElementById("loopCount");
     const activeLoopNode = document.getElementById("activeLoop");
     const rootTranslationLabel = document.getElementById("rootTranslationLabel");
     const frameIndexNode = document.getElementById("frameIndex");
-    const worldRotationReadoutNode = document.getElementById("worldRotationReadout");
-    const worldTranslationReadoutNode = document.getElementById("worldTranslationReadout");
     document.getElementById("frameCount").textContent = String(payload.frameCount);
     document.getElementById("fps").textContent = String(payload.fps);
 
-    let yaw = -0.55;
-    let pitch = parseFloat(pitchInput.value);
+    let yaw = 0.0;
+    let pitch = 0.18;
     let zoom = parseFloat(zoomInput.value);
     let speed = parseFloat(speedInput.value);
-    let cameraMode = cameraModeSelect.value;
     let fixedRoot = Boolean(payload.defaultFixedRoot);
     let paused = false;
     let frameCursor = 0;
     let playbackDirection = 1;
     let lastTimestamp = null;
     let dragging = false;
+    let cameraTouched = false;
     let dragX = 0;
     let dragY = 0;
     let pendingReframeHandle = null;
     let autoWorldAlignmentEnabled = Boolean(payload.defaultAutoWorldAlignment);
-    const translationTrack = buildTranslationTrack(payload.frames);
+    let sceneInverted = Boolean(payload.defaultSceneInverted);
+    let lockYRoot = false;
+    let lockPlantedFeet = false;
+    let ankleLockOffsetForward = parseFloat(ankleOffsetForwardInput.value);
+    let ankleLockOffsetLateral = parseFloat(ankleOffsetLateralInput.value);
+    let ankleLockOffsetUp = parseFloat(ankleOffsetUpInput.value);
+    let activeRenderFrame = null;
+    let footLockCorrectionsKey = null;
+    let footLockCorrections = new Map();
+    let lockedJointFrameKey = null;
+    let lockedJointPositions = new Map();
     const cameraTarget = new THREE.Vector3();
-    const transformPivot = new THREE.Vector3();
-    const manualRotation = new THREE.Euler(0, 0, 0, "XYZ");
-    const manualTranslation = new THREE.Vector3(0, 0, 0);
     const defaultAutoAlignment = Array.isArray(payload.defaultAutoAlignment) ? payload.defaultAutoAlignment : [];
     const detectedLoops = Array.isArray(payload.detectedLoops) ? payload.detectedLoops : [];
     let selectedLoopIndex = detectedLoops.length > 0 ? 0 : -1;
     let currentLoop = selectedLoopIndex >= 0 ? detectedLoops[selectedLoopIndex] : null;
     let currentAutoAlignment = currentLoop?.autoAlignment ?? defaultAutoAlignment;
     let playbackState = buildPlaybackState(payload.frames, currentLoop);
+    let activeRootAnchor = null;
+    let cachedSceneBoundsKey = null;
+    let cachedSceneBounds = null;
     fixedRootInput.checked = fixedRoot;
+    lockYRootInput.checked = lockYRoot;
+    lockPlantedFeetInput.checked = lockPlantedFeet;
     autoWorldAlignmentInput.checked = autoWorldAlignmentEnabled;
+    sceneInvertedInput.checked = sceneInverted;
     rootTranslationLabel.textContent = payload.rootTranslationToggleLabel ?? "Lock global root drift";
     loopCountNode.textContent = String(detectedLoops.length);
+    refreshAnkleLockOffsetLabels();
     populateLoopSelect();
     refreshActiveLoopLabel();
 
@@ -1734,61 +2233,206 @@ def _build_html(payload: dict[str, object]) -> str:
 
     const scene = new THREE.Scene();
     const perspectiveCamera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
-    const orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
-    let activeCamera = perspectiveCamera;
     scene.add(perspectiveCamera);
-    scene.add(orthographicCamera);
 
-    const ambientLight = new THREE.AmbientLight(0x6d7d88, 0.8);
+    const ambientLight = new THREE.AmbientLight(0x29404b, 0.5);
     scene.add(ambientLight);
-    const hemiLight = new THREE.HemisphereLight(0xc9ecf2, 0x0a0f12, 1.15);
+    const hemiLight = new THREE.HemisphereLight(0x9ff7ff, 0x03070a, 0.95);
     scene.add(hemiLight);
-    const directionalLight = new THREE.DirectionalLight(0xf8f2df, 2.1);
+    const directionalLight = new THREE.DirectionalLight(0xeaffff, 1.8);
     directionalLight.position.set(-4.6, 6.8, 3.2);
     scene.add(directionalLight);
-    const rimLight = new THREE.DirectionalLight(0x87d3ff, 0.85);
+    const rimLight = new THREE.DirectionalLight(0x2df0ff, 1.35);
     rimLight.position.set(3.6, 2.4, -5.2);
     scene.add(rimLight);
 
-    const grid = new THREE.GridHelper(3.5, 10, 0x6ea2ae, 0x31444d);
+    const grid = new THREE.GridHelper(3.5, 10, 0x1ed6e3, 0x15242c);
     scene.add(grid);
     const mergedBoundsHelper = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
-      new THREE.LineBasicMaterial({{ color: 0xe5bc62, transparent: true, opacity: 0.9 }})
+      new THREE.LineBasicMaterial({{ color: 0x38f7ff, transparent: true, opacity: 0.82 }})
     );
     scene.add(mergedBoundsHelper);
 
     const limbMaterial = new THREE.MeshStandardMaterial({{
-        color: 0x9fc7c1,
-        emissive: 0x0c1718,
-        emissiveIntensity: 0.18,
-        roughness: 0.46,
-        metalness: 0.02,
+        color: 0x081317,
+        emissive: 0x35f2ff,
+        emissiveIntensity: 0.62,
+        roughness: 0.28,
+        metalness: 0.2,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
         flatShading: true,
       }});
     const torsoMaterial = new THREE.MeshStandardMaterial({{
-        color: 0xadc7ba,
-        emissive: 0x101817,
-        emissiveIntensity: 0.12,
-        roughness: 0.5,
-        metalness: 0.02,
+        color: 0x0a1519,
+        emissive: 0x47f6ff,
+        emissiveIntensity: 0.78,
+        roughness: 0.22,
+        metalness: 0.24,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
         flatShading: true,
       }});
     const headMaterial = new THREE.MeshStandardMaterial({{
-        color: 0xd7e2d5,
-        emissive: 0x101514,
-        emissiveIntensity: 0.12,
-        roughness: 0.4,
-        metalness: 0.02,
+        color: 0x0d1a1f,
+        emissive: 0x8afbff,
+        emissiveIntensity: 0.9,
+        roughness: 0.16,
+        metalness: 0.3,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
         flatShading: true,
       }});
-    const cylinderGeometry = new THREE.CylinderGeometry(1, 1, 1, 8, 1, false);
-    const taperedLimbGeometry = new THREE.CylinderGeometry(0.8, 1.0, 1, 6, 1, false);
-    const pelvisGeometry = new THREE.CylinderGeometry(0.72, 1.0, 1, 7, 1, false);
-    const ribcageGeometry = new THREE.CylinderGeometry(1.0, 0.74, 1, 7, 1, false);
-    const clavicleGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const shoulderGeometry = new THREE.IcosahedronGeometry(1, 0);
-    const headGeometry = new THREE.IcosahedronGeometry(1, 1);
+    const limbOutlineMaterial = new THREE.LineBasicMaterial({{
+        color: 0x44f7ff,
+        transparent: true,
+        opacity: 0.95,
+      }});
+    const torsoOutlineMaterial = new THREE.LineBasicMaterial({{
+        color: 0x8bfdff,
+        transparent: true,
+        opacity: 0.98,
+      }});
+    const headOutlineMaterial = new THREE.LineBasicMaterial({{
+        color: 0xe9ffff,
+        transparent: true,
+        opacity: 1.0,
+      }});
+    function createStackedPrismGeometry(levels) {{
+      const vertices = [];
+      const indices = [];
+      for (const level of levels) {{
+        const halfWidth = level.width * 0.5;
+        const halfDepth = level.depth * 0.5;
+        const bevelWidth = halfWidth * 0.72;
+        const bevelDepth = halfDepth * 0.72;
+        vertices.push(
+          -bevelWidth, level.y, -halfDepth,
+          bevelWidth, level.y, -halfDepth,
+          halfWidth, level.y, -bevelDepth,
+          halfWidth, level.y, bevelDepth,
+          bevelWidth, level.y, halfDepth,
+          -bevelWidth, level.y, halfDepth,
+          -halfWidth, level.y, bevelDepth,
+          -halfWidth, level.y, -bevelDepth
+        );
+      }}
+      for (let index = 0; index < levels.length - 1; index += 1) {{
+        const base = index * 8;
+        const next = base + 8;
+        for (let side = 0; side < 8; side += 1) {{
+          const sideNext = (side + 1) % 8;
+          indices.push(base + side, base + sideNext, next + sideNext, base + side, next + sideNext, next + side);
+        }}
+      }}
+      const top = (levels.length - 1) * 8;
+      for (let side = 1; side < 7; side += 1) {{
+        indices.push(0, side + 1, side);
+        indices.push(top, top + side, top + side + 1);
+      }}
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }}
+
+    function createFacetedHeadGeometry() {{
+      const levels = [
+        {{ y: -0.5, width: 0.68, depth: 0.58 }},
+        {{ y: -0.18, width: 0.9, depth: 0.78 }},
+        {{ y: 0.28, width: 0.84, depth: 0.72 }},
+        {{ y: 0.5, width: 0.58, depth: 0.54 }},
+      ];
+      return createStackedPrismGeometry(levels);
+    }}
+
+    function createCoreShellGeometry(rings) {{
+      const validRings = rings.filter((ring) => ring?.center && ring?.xAxis && ring?.zAxis);
+      if (validRings.length < 2) {{
+        return null;
+      }}
+      const vertices = [];
+      const indices = [];
+      for (const ring of validRings) {{
+        const center = ring.center;
+        const xAxis = ring.xAxis.clone().normalize();
+        const zAxis = ring.zAxis.clone().normalize();
+        const xHalf = ring.width * 0.5;
+        const zHalf = ring.depth * 0.5;
+        const bevelX = xHalf * 0.72;
+        const bevelZ = zHalf * 0.72;
+        const offsets = [
+          xAxis.clone().multiplyScalar(-bevelX).addScaledVector(zAxis, -zHalf),
+          xAxis.clone().multiplyScalar(bevelX).addScaledVector(zAxis, -zHalf),
+          xAxis.clone().multiplyScalar(xHalf).addScaledVector(zAxis, -bevelZ),
+          xAxis.clone().multiplyScalar(xHalf).addScaledVector(zAxis, bevelZ),
+          xAxis.clone().multiplyScalar(bevelX).addScaledVector(zAxis, zHalf),
+          xAxis.clone().multiplyScalar(-bevelX).addScaledVector(zAxis, zHalf),
+          xAxis.clone().multiplyScalar(-xHalf).addScaledVector(zAxis, bevelZ),
+          xAxis.clone().multiplyScalar(-xHalf).addScaledVector(zAxis, -bevelZ),
+        ];
+        for (const offset of offsets) {{
+          const point = center.clone().add(offset);
+          vertices.push(point.x, point.y, point.z);
+        }}
+      }}
+      for (let index = 0; index < validRings.length - 1; index += 1) {{
+        const base = index * 8;
+        const next = base + 8;
+        for (let side = 0; side < 8; side += 1) {{
+          const sideNext = (side + 1) % 8;
+          indices.push(base + side, base + sideNext, next + sideNext, base + side, next + sideNext, next + side);
+        }}
+      }}
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }}
+
+    const limbGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.74, depth: 0.68 }},
+      {{ y: -0.12, width: 0.96, depth: 0.82 }},
+      {{ y: 0.24, width: 0.84, depth: 0.74 }},
+      {{ y: 0.5, width: 0.62, depth: 0.58 }},
+    ]);
+    const torsoSegmentGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.7, depth: 0.76 }},
+      {{ y: 0.05, width: 0.52, depth: 0.6 }},
+      {{ y: 0.5, width: 0.64, depth: 0.66 }},
+    ]);
+    const pelvisGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.88, depth: 0.72 }},
+      {{ y: -0.08, width: 1.0, depth: 0.84 }},
+      {{ y: 0.5, width: 0.62, depth: 0.64 }},
+    ]);
+    const ribcageGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.58, depth: 0.64 }},
+      {{ y: -0.08, width: 0.78, depth: 0.82 }},
+      {{ y: 0.32, width: 1.0, depth: 0.94 }},
+      {{ y: 0.5, width: 0.84, depth: 0.76 }},
+    ]);
+    const clavicleGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 1.0, depth: 0.7 }},
+      {{ y: 0.5, width: 0.86, depth: 0.58 }},
+    ]);
+    const shoulderGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.72, depth: 0.7 }},
+      {{ y: 0.0, width: 1.0, depth: 1.0 }},
+      {{ y: 0.5, width: 0.72, depth: 0.7 }},
+    ]);
+    const spineGeometry = createStackedPrismGeometry([
+      {{ y: -0.5, width: 0.42, depth: 0.52 }},
+      {{ y: 0.0, width: 0.32, depth: 0.4 }},
+      {{ y: 0.5, width: 0.38, depth: 0.46 }},
+    ]);
+    const headGeometry = createFacetedHeadGeometry();
     const axisX = new THREE.Vector3(1, 0, 0);
     const axisY = new THREE.Vector3(0, 1, 0);
     const axisZ = new THREE.Vector3(0, 0, 1);
@@ -1798,6 +2442,11 @@ def _build_html(payload: dict[str, object]) -> str:
     const tempScale = new THREE.Vector3();
     const tempPivotedPoint = new THREE.Vector3();
     const tempMatrix = new THREE.Matrix4();
+    const tempBoundsBox = new THREE.Box3();
+    const tempUnionBox = new THREE.Box3();
+    const tempBoundsCorner = new THREE.Vector3();
+    const sceneOriginOffset = new THREE.Vector3();
+    let suppressSceneOriginOffset = false;
     const sceneRotationQuaternion = new THREE.Quaternion();
     const sceneUp = new THREE.Vector3(0, 1, 0);
     const sceneRight = new THREE.Vector3(1, 0, 0);
@@ -1815,10 +2464,86 @@ def _build_html(payload: dict[str, object]) -> str:
         || key === "right_collar->right_shoulder";
     }}
 
+    function isLegCapsule(capsule) {{
+      const key = `${{capsule.start}}->${{capsule.end}}`;
+      return key === "left_hip->left_knee"
+        || key === "left_knee->left_ankle"
+        || key === "left_ankle->left_foot"
+        || key === "right_hip->right_knee"
+        || key === "right_knee->right_ankle"
+        || key === "right_ankle->right_foot";
+    }}
+
+    function isArmCapsule(capsule) {{
+      const key = `${{capsule.start}}->${{capsule.end}}`;
+      return key === "left_shoulder->left_elbow"
+        || key === "left_elbow->left_wrist"
+        || key === "right_shoulder->right_elbow"
+        || key === "right_elbow->right_wrist";
+    }}
+
+    function limbProfileForCapsule(capsule, radius) {{
+      const key = `${{capsule.start}}->${{capsule.end}}`;
+      if (key.includes("hip->") && key.includes("knee")) {{
+        return {{ width: radius * 1.95, depth: radius * 1.42 }};
+      }}
+      if (key.includes("knee->") && key.includes("ankle")) {{
+        return {{ width: radius * 1.55, depth: radius * 1.12 }};
+      }}
+      if (key.includes("ankle->") && key.includes("foot")) {{
+        return {{ width: radius * 1.28, depth: radius * 0.82 }};
+      }}
+      if (key.includes("shoulder->") && key.includes("elbow")) {{
+        return {{ width: radius * 1.62, depth: radius * 1.08 }};
+      }}
+      if (key.includes("elbow->") && key.includes("wrist")) {{
+        return {{ width: radius * 1.28, depth: radius * 0.88 }};
+      }}
+      if (key.includes("collar->") && key.includes("shoulder")) {{
+        return {{ width: radius * 1.18, depth: radius * 0.82 }};
+      }}
+      return {{ width: radius * 1.18, depth: radius * 0.9 }};
+    }}
+
+    function projectedAxis(axis, planeNormal) {{
+      if (!axis || !planeNormal) {{
+        return null;
+      }}
+      const projected = axis.clone().sub(
+        planeNormal.clone().multiplyScalar(axis.dot(planeNormal))
+      );
+      if (projected.lengthSq() <= 1e-8) {{
+        return null;
+      }}
+      return projected.normalize();
+    }}
+
+    function attachOutline(mesh, outlineMaterial) {{
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(mesh.geometry),
+        outlineMaterial
+      );
+      outline.renderOrder = 2;
+      mesh.userData.outline = outline;
+      mesh.userData.outlineMaterial = outlineMaterial;
+      mesh.add(outline);
+      return mesh;
+    }}
+
+    function replaceOutlinedGeometry(mesh, nextGeometry) {{
+      mesh.geometry.dispose();
+      mesh.geometry = nextGeometry;
+      const outline = mesh.userData.outline;
+      if (outline) {{
+        outline.geometry.dispose();
+        outline.geometry = new THREE.EdgesGeometry(nextGeometry);
+      }}
+    }}
+
     const limbNodes = payload.capsules
         .filter((capsule) => !isTorsoCapsule(capsule))
         .map((capsule) => {{
-        const mesh = new THREE.Mesh(taperedLimbGeometry, limbMaterial);
+        const mesh = attachOutline(new THREE.Mesh(limbGeometry, limbMaterial), limbOutlineMaterial);
         scene.add(mesh);
         return {{
           capsule,
@@ -1826,14 +2551,21 @@ def _build_html(payload: dict[str, object]) -> str:
         }};
       }});
 
-    const pelvisMesh = new THREE.Mesh(pelvisGeometry, torsoMaterial);
-    const abdomenMesh = new THREE.Mesh(cylinderGeometry, torsoMaterial);
-    const chestMesh = new THREE.Mesh(ribcageGeometry, torsoMaterial);
-    const upperChestMesh = new THREE.Mesh(cylinderGeometry, torsoMaterial);
-    const leftShoulderMassMesh = new THREE.Mesh(shoulderGeometry, torsoMaterial);
-    const rightShoulderMassMesh = new THREE.Mesh(shoulderGeometry, torsoMaterial);
-    const clavicleMesh = new THREE.Mesh(clavicleGeometry, torsoMaterial);
+    const pelvisMesh = attachOutline(new THREE.Mesh(pelvisGeometry, torsoMaterial), torsoOutlineMaterial);
+    const coreShellMesh = attachOutline(new THREE.Mesh(torsoSegmentGeometry.clone(), torsoMaterial), torsoOutlineMaterial);
+    coreShellMesh.visible = false;
+    const spineMeshes = [0, 1, 2].map(() => attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial));
+    const abdomenMesh = attachOutline(new THREE.Mesh(torsoSegmentGeometry, torsoMaterial), torsoOutlineMaterial);
+    const chestMesh = attachOutline(new THREE.Mesh(ribcageGeometry, torsoMaterial), torsoOutlineMaterial);
+    const upperChestMesh = attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial);
+    const leftShoulderMassMesh = attachOutline(new THREE.Mesh(shoulderGeometry, torsoMaterial), torsoOutlineMaterial);
+    const rightShoulderMassMesh = attachOutline(new THREE.Mesh(shoulderGeometry, torsoMaterial), torsoOutlineMaterial);
+    const clavicleMesh = attachOutline(new THREE.Mesh(clavicleGeometry, torsoMaterial), torsoOutlineMaterial);
     scene.add(pelvisMesh);
+    scene.add(coreShellMesh);
+    for (const mesh of spineMeshes) {{
+      scene.add(mesh);
+    }}
     scene.add(abdomenMesh);
     scene.add(chestMesh);
     scene.add(upperChestMesh);
@@ -1841,8 +2573,82 @@ def _build_html(payload: dict[str, object]) -> str:
     scene.add(rightShoulderMassMesh);
     scene.add(clavicleMesh);
 
-    const headMesh = new THREE.Mesh(headGeometry, headMaterial);
+    const headMesh = attachOutline(new THREE.Mesh(headGeometry, headMaterial), headOutlineMaterial);
     scene.add(headMesh);
+    const proceduralBodyMeshes = [
+      pelvisMesh,
+      coreShellMesh,
+      ...spineMeshes,
+      abdomenMesh,
+      chestMesh,
+      upperChestMesh,
+      leftShoulderMassMesh,
+      rightShoulderMassMesh,
+      clavicleMesh,
+      headMesh,
+      ...limbNodes.map((node) => node.mesh),
+    ];
+    const skeletonLineMaterial = new THREE.LineBasicMaterial({{
+      color: 0x64f7ff,
+      transparent: true,
+      opacity: 0.22,
+    }});
+    const skeletonSurfaceMaterial = new THREE.MeshStandardMaterial({{
+      color: 0x071014,
+      emissive: 0x4ff7ff,
+      emissiveIntensity: 0.58,
+      roughness: 0.18,
+      metalness: 0.22,
+      flatShading: true,
+    }});
+    const jointNodeMaterial = new THREE.MeshStandardMaterial({{
+      color: 0x0d171c,
+      emissive: 0xc7ffff,
+      emissiveIntensity: 0.72,
+      roughness: 0.14,
+      metalness: 0.18,
+      flatShading: true,
+    }});
+    const jointNodeGeometry = new THREE.SphereGeometry(1, 7, 6);
+    const skeletonChains = [
+      ["left_foot", "left_ankle", "left_knee", "left_hip", "pelvis", "right_hip", "right_knee", "right_ankle", "right_foot"],
+      ["pelvis", "spine1", "spine2", "spine3", "neck", "head"],
+      ["neck", "left_collar", "left_shoulder", "left_elbow", "left_wrist", "left_hand"],
+      ["neck", "right_collar", "right_shoulder", "right_elbow", "right_wrist", "right_hand"],
+    ];
+    const skeletonLines = skeletonChains.map((jointNames) => {{
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, 0),
+      ]);
+      const line = new THREE.Line(geometry, skeletonLineMaterial);
+      scene.add(line);
+      return {{ jointNames, line }};
+    }});
+    const skeletonSurfaces = skeletonChains.map((jointNames) => {{
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 1, 0),
+      ]);
+      const mesh = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(new THREE.Shape(), {{ steps: 1, depth: 0.01, bevelEnabled: false }}),
+        skeletonSurfaceMaterial
+      );
+      scene.add(mesh);
+      return {{ jointNames, mesh }};
+    }});
+    const jointNodeNames = Array.from(new Set(skeletonChains.flat()));
+    const jointNodeMeshes = jointNodeNames.map((jointName) => {{
+      const mesh = new THREE.Mesh(jointNodeGeometry, jointNodeMaterial);
+      scene.add(mesh);
+      return {{ jointName, mesh }};
+    }});
+    const previewBoundsObjects = [
+      ...proceduralBodyMeshes,
+      ...skeletonLines.map((entry) => entry.line),
+      ...skeletonSurfaces.map((entry) => entry.mesh),
+      ...jointNodeMeshes.map((entry) => entry.mesh),
+    ];
 
     function computeBaseSceneBounds(currentFixedRoot) {{
       const frames = playbackState.boundsFrames;
@@ -1863,13 +2669,14 @@ def _build_html(payload: dict[str, object]) -> str:
       let minZ = Number.POSITIVE_INFINITY;
       let maxZ = Number.NEGATIVE_INFINITY;
       for (const frame of frames) {{
+        activeRenderFrame = frame;
         const frameTranslation = currentFixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
-          const worldPoint = toBaseWorldPoint(point, frameTranslation);
+          const worldPoint = toBaseWorldPoint(point, frameTranslation, false);
           minX = Math.min(minX, worldPoint.x);
           maxX = Math.max(maxX, worldPoint.x);
           minY = Math.min(minY, worldPoint.y);
@@ -1891,12 +2698,33 @@ def _build_html(payload: dict[str, object]) -> str:
       return {{ minX, maxX, minY, maxY, minZ, maxZ }};
     }}
 
+    function buildProfileShape(width, depth) {{
+      const shape = new THREE.Shape();
+      const halfWidth = width * 0.5;
+      const halfDepth = depth * 0.5;
+      shape.moveTo(-halfWidth, -halfDepth);
+      shape.lineTo(halfWidth, -halfDepth);
+      shape.quadraticCurveTo(halfWidth * 1.08, 0, halfWidth, halfDepth);
+      shape.lineTo(-halfWidth, halfDepth);
+      shape.quadraticCurveTo(-halfWidth * 1.08, 0, -halfWidth, -halfDepth);
+      return shape;
+    }}
+
+    function chainProfileDimensions(jointNames) {{
+      if (jointNames.length >= 8) {{
+        return {{ width: 0.14, depth: 0.09 }};
+      }}
+      if (jointNames.includes("head")) {{
+        return {{ width: 0.1, depth: 0.08 }};
+      }}
+      return {{ width: 0.08, depth: 0.055 }};
+    }}
+
     function computeSceneBounds(currentFixedRoot) {{
       const frames = playbackState.boundsFrames;
       if (frames.length === 0) {{
         return computeBaseSceneBounds(currentFixedRoot);
       }}
-      refreshTransformPivot(currentFixedRoot);
       let minX = Number.POSITIVE_INFINITY;
       let maxX = Number.NEGATIVE_INFINITY;
       let minY = Number.POSITIVE_INFINITY;
@@ -1904,13 +2732,14 @@ def _build_html(payload: dict[str, object]) -> str:
       let minZ = Number.POSITIVE_INFINITY;
       let maxZ = Number.NEGATIVE_INFINITY;
       for (const frame of frames) {{
+        activeRenderFrame = frame;
         const frameTranslation = currentFixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
-          const worldPoint = toWorldPoint(point, frameTranslation, currentFixedRoot);
+          const worldPoint = toWorldPoint(point, frameTranslation, currentFixedRoot, false, jointName);
           minX = Math.min(minX, worldPoint.x);
           maxX = Math.max(maxX, worldPoint.x);
           minY = Math.min(minY, worldPoint.y);
@@ -1930,7 +2759,6 @@ def _build_html(payload: dict[str, object]) -> str:
       if (frames.length === 0) {{
         return computeSceneBounds(currentFixedRoot);
       }}
-      refreshTransformPivot(currentFixedRoot);
       refreshSceneBasis();
       const inverseSceneRotation = sceneRotationQuaternion.clone().invert();
       let minX = Number.POSITIVE_INFINITY;
@@ -1939,27 +2767,53 @@ def _build_html(payload: dict[str, object]) -> str:
       let maxY = Number.NEGATIVE_INFINITY;
       let minZ = Number.POSITIVE_INFINITY;
       let maxZ = Number.NEGATIVE_INFINITY;
+      suppressSceneOriginOffset = true;
       for (const frame of frames) {{
-        const frameTranslation = currentFixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
-        for (const jointName of payload.jointNames) {{
-          const point = frame.joints[jointName];
-          if (!Array.isArray(point) || point.length < 3) {{
+        updateSceneForFrame(frame);
+        scene.updateMatrixWorld(true);
+        tempUnionBox.makeEmpty();
+        for (const object of previewBoundsObjects) {{
+          if (!object.visible) {{
             continue;
           }}
-          const worldPoint = toWorldPoint(point, frameTranslation, currentFixedRoot);
-          const localPoint = worldPoint.clone().applyQuaternion(inverseSceneRotation);
-          minX = Math.min(minX, localPoint.x);
-          maxX = Math.max(maxX, localPoint.x);
-          minY = Math.min(minY, localPoint.y);
-          maxY = Math.max(maxY, localPoint.y);
-          minZ = Math.min(minZ, localPoint.z);
-          maxZ = Math.max(maxZ, localPoint.z);
+          tempBoundsBox.setFromObject(object);
+          if (tempBoundsBox.isEmpty()) {{
+            continue;
+          }}
+          tempUnionBox.union(tempBoundsBox);
+        }}
+        if (tempUnionBox.isEmpty()) {{
+          continue;
+        }}
+        for (const x of [tempUnionBox.min.x, tempUnionBox.max.x]) {{
+          for (const y of [tempUnionBox.min.y, tempUnionBox.max.y]) {{
+            for (const z of [tempUnionBox.min.z, tempUnionBox.max.z]) {{
+              tempBoundsCorner.set(x, y, z).applyQuaternion(inverseSceneRotation);
+              minX = Math.min(minX, tempBoundsCorner.x);
+              maxX = Math.max(maxX, tempBoundsCorner.x);
+              minY = Math.min(minY, tempBoundsCorner.y);
+              maxY = Math.max(maxY, tempBoundsCorner.y);
+              minZ = Math.min(minZ, tempBoundsCorner.z);
+              maxZ = Math.max(maxZ, tempBoundsCorner.z);
+            }}
+          }}
         }}
       }}
-      if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
+      suppressSceneOriginOffset = false;
+      if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {{
         return computeSceneBounds(currentFixedRoot);
       }}
-      return {{ minX, maxX, minY, maxY, minZ, maxZ }};
+      const horizontalPadding = 0.08;
+      const verticalPadding = 0.08;
+      const bounds = {{
+        minX: minX - horizontalPadding,
+        maxX: maxX + horizontalPadding,
+        minY: minY - verticalPadding,
+        maxY: maxY + verticalPadding,
+        minZ: minZ - horizontalPadding,
+        maxZ: maxZ + horizontalPadding,
+      }};
+      return bounds;
     }}
 
     function getFrameBounds(frame) {{
@@ -1987,102 +2841,73 @@ def _build_html(payload: dict[str, object]) -> str:
       return {{ minX, maxX, minY, maxY, minZ, maxZ }};
     }}
 
-    function buildTranslationTrack(frames) {{
-      if (!frames || frames.length === 0) {{
-        return [];
-      }}
-      const baseCenter = getFrameCenter(frames[0]);
-      return frames.map((frame) => {{
-        const center = getFrameCenter(frame);
-        if (!center) {{
-          return {{ x: 0, y: 0, z: 0 }};
-        }}
-        return {{
-          x: center.x - baseCenter.x,
-          y: center.y - baseCenter.y,
-          z: center.z - baseCenter.z,
-        }};
-      }});
-    }}
-
-    function getFrameCenter(frame) {{
-      const xs = [];
-      const ys = [];
-      const zs = [];
-      for (const jointName of payload.jointNames) {{
-        const point = frame.joints[jointName];
-        if (!Array.isArray(point) || point.length < 3) {{
+    function getFrameRootPoint(frame, preferredRootJoint) {{
+      const rootCandidates = [
+        preferredRootJoint,
+        "pelvis",
+        "spine1",
+      ];
+      for (const jointName of rootCandidates) {{
+        if (typeof jointName !== "string" || jointName.length === 0) {{
           continue;
         }}
-        xs.push(point[0]);
-        ys.push(point[1]);
-        zs.push(point[2]);
+        const point = frame.joints[jointName];
+        if (Array.isArray(point) && point.length >= 3) {{
+          return {{
+            x: point[0],
+            y: point[1],
+            z: point[2],
+          }};
+        }}
       }}
-      if (xs.length === 0 || ys.length === 0 || zs.length === 0) {{
-        return null;
-      }}
-      return {{
-        x: median(xs),
-        y: median(ys),
-        z: median(zs),
-      }};
+      return null;
     }}
 
-    function median(values) {{
-      if (values.length === 0) {{
-        return 0;
-      }}
-      const sorted = [...values].sort((left, right) => left - right);
-      const midpoint = Math.floor(values.length / 2);
-      if (sorted.length % 2 === 1) {{
-        return sorted[midpoint];
-      }}
-      return (sorted[midpoint - 1] + sorted[midpoint]) * 0.5;
+    function boundsCenterToWorld(bounds) {{
+      const localCenter = new THREE.Vector3(
+        (bounds.minX + bounds.maxX) * 0.5,
+        (bounds.minY + bounds.maxY) * 0.5,
+        (bounds.minZ + bounds.maxZ) * 0.5
+      );
+      localCenter.sub(sceneOriginOffset);
+      refreshSceneBasis();
+      localCenter.applyQuaternion(sceneRotationQuaternion);
+      return localCenter;
     }}
 
     function estimateSceneOrigin(currentFixedRoot) {{
-      const bounds = computeOrientedSceneBounds(currentFixedRoot);
-      const localOrigin = new THREE.Vector3(
-        (bounds.minX + bounds.maxX) * 0.5,
-        (bounds.minY + bounds.maxY) * 0.5,
-        (bounds.minZ + bounds.maxZ) * 0.5
-      );
-      refreshSceneBasis();
-      localOrigin.applyQuaternion(sceneRotationQuaternion);
-      return [localOrigin.x, localOrigin.y, localOrigin.z];
-    }}
-
-    function refreshTransformPivot(currentFixedRoot) {{
-      const bounds = computeBaseSceneBounds(currentFixedRoot);
-      transformPivot.set(
-        (bounds.minX + bounds.maxX) * 0.5,
-        (bounds.minY + bounds.maxY) * 0.5,
-        (bounds.minZ + bounds.maxZ) * 0.5
-      );
+      const bounds = getCachedSceneBounds(currentFixedRoot);
+      const worldCenter = boundsCenterToWorld(bounds);
+      return [worldCenter.x, worldCenter.y, worldCenter.z];
     }}
 
     function refreshGroundPlacement() {{
-      const bounds = computeOrientedSceneBounds(fixedRoot);
+      const bounds = getCachedSceneBounds(fixedRoot);
       refreshSceneBasis();
       const localCenter = new THREE.Vector3(
         (bounds.minX + bounds.maxX) * 0.5,
         bounds.minY - 0.06,
         (bounds.minZ + bounds.maxZ) * 0.5
       );
+      localCenter.sub(sceneOriginOffset);
       localCenter.applyQuaternion(sceneRotationQuaternion);
       grid.position.copy(localCenter);
       grid.quaternion.copy(sceneRotationQuaternion);
     }}
 
     function refreshMergedBoundsHelper() {{
-      const bounds = computeOrientedSceneBounds(fixedRoot);
+      const bounds = getCachedSceneBounds(fixedRoot);
+      if (!bounds) {{
+        mergedBoundsHelper.visible = false;
+        return;
+      }}
       refreshSceneBasis();
-      const center = new THREE.Vector3(
+      mergedBoundsHelper.visible = true;
+      mergedBoundsHelper.position.set(
         (bounds.minX + bounds.maxX) * 0.5,
         (bounds.minY + bounds.maxY) * 0.5,
         (bounds.minZ + bounds.maxZ) * 0.5
-      ).applyQuaternion(sceneRotationQuaternion);
-      mergedBoundsHelper.position.copy(center);
+      ).sub(sceneOriginOffset).applyQuaternion(sceneRotationQuaternion);
       mergedBoundsHelper.quaternion.copy(sceneRotationQuaternion);
       mergedBoundsHelper.scale.set(
         Math.max(0.001, bounds.maxX - bounds.minX),
@@ -2091,9 +2916,99 @@ def _build_html(payload: dict[str, object]) -> str:
       );
     }}
 
+    function buildSceneBoundsCacheKey(currentFixedRoot) {{
+      return `${{currentFixedRoot}}|${{lockYRoot}}|${{lockPlantedFeet}}|${{ankleLockOffsetForward}}|${{ankleLockOffsetLateral}}|${{ankleLockOffsetUp}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{selectedLoopIndex}}`;
+    }}
+
+    function invalidateSceneBoundsCache() {{
+      cachedSceneBoundsKey = null;
+      cachedSceneBounds = null;
+      footLockCorrectionsKey = null;
+      footLockCorrections = new Map();
+      lockedJointFrameKey = null;
+      lockedJointPositions = new Map();
+    }}
+
+    function getCachedSceneBounds(currentFixedRoot) {{
+      const key = buildSceneBoundsCacheKey(currentFixedRoot);
+      if (cachedSceneBoundsKey !== key || cachedSceneBounds == null) {{
+        cachedSceneBounds = computeOrientedSceneBounds(currentFixedRoot);
+        cachedSceneBoundsKey = key;
+        sceneOriginOffset.set(
+          (cachedSceneBounds.minX + cachedSceneBounds.maxX) * 0.5,
+          (cachedSceneBounds.minY + cachedSceneBounds.maxY) * 0.5,
+          (cachedSceneBounds.minZ + cachedSceneBounds.maxZ) * 0.5
+        );
+      }}
+      return cachedSceneBounds;
+    }}
+
+    function findFrameCursorClosestToBoundsCenter() {{
+      const frames = playbackState.frames;
+      if (!frames || frames.length === 0) {{
+        return 0;
+      }}
+      const bounds = getCachedSceneBounds(fixedRoot);
+      const targetX = (bounds.minX + bounds.maxX) * 0.5;
+      const targetY = (bounds.minY + bounds.maxY) * 0.5;
+      const targetZ = (bounds.minZ + bounds.maxZ) * 0.5;
+      refreshSceneBasis();
+      const inverseSceneRotation = sceneRotationQuaternion.clone().invert();
+      let bestIndex = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      frames.forEach((frame, index) => {{
+        activeRenderFrame = frame;
+        const frameTranslation = fixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
+        let minX = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        let minZ = Number.POSITIVE_INFINITY;
+        let maxZ = Number.NEGATIVE_INFINITY;
+        for (const jointName of payload.jointNames) {{
+          const point = frame.joints[jointName];
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          tempBoundsCorner.copy(toWorldPoint(point, frameTranslation, fixedRoot, false, jointName)).applyQuaternion(inverseSceneRotation);
+          minX = Math.min(minX, tempBoundsCorner.x);
+          maxX = Math.max(maxX, tempBoundsCorner.x);
+          minY = Math.min(minY, tempBoundsCorner.y);
+          maxY = Math.max(maxY, tempBoundsCorner.y);
+          minZ = Math.min(minZ, tempBoundsCorner.z);
+          maxZ = Math.max(maxZ, tempBoundsCorner.z);
+        }}
+        if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
+          return;
+        }}
+        const centerX = (minX + maxX) * 0.5;
+        const centerY = (minY + maxY) * 0.5;
+        const centerZ = (minZ + maxZ) * 0.5;
+        const distance =
+          (centerX - targetX) ** 2
+          + (centerY - targetY) ** 2
+          + (centerZ - targetZ) ** 2;
+        if (distance < bestDistance) {{
+          bestDistance = distance;
+          bestIndex = index;
+        }}
+      }});
+      return bestIndex;
+    }}
+
     function refreshCameraTarget() {{
-      const sceneOrigin = estimateSceneOrigin(fixedRoot);
-      cameraTarget.set(sceneOrigin[0], sceneOrigin[1], sceneOrigin[2]);
+      cameraTarget.copy(boundsCenterToWorld(getCachedSceneBounds(fixedRoot)));
+    }}
+
+    function resetCameraOrbitFromBounds() {{
+      const bounds = getCachedSceneBounds(fixedRoot);
+      const width = Math.max(0.001, bounds.maxX - bounds.minX);
+      const height = Math.max(0.001, bounds.maxY - bounds.minY);
+      const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
+      const horizontalAspect = width / Math.max(0.001, depth);
+      yaw = horizontalAspect >= 1.15 ? 0.0 : 0.22;
+      pitch = height >= Math.max(width, depth) * 0.95 ? 0.16 : 0.22;
+      cameraTarget.copy(boundsCenterToWorld(bounds));
     }}
 
     function refreshSceneFrame() {{
@@ -2102,13 +3017,30 @@ def _build_html(payload: dict[str, object]) -> str:
       refreshCameraTarget();
     }}
 
+    function recalculateSceneBoundsAndFrame() {{
+      invalidateSceneBoundsCache();
+      refreshSceneFrame();
+    }}
+
+    function applySceneReframe() {{
+      if (pendingReframeHandle != null) {{
+        cancelAnimationFrame(pendingReframeHandle);
+        pendingReframeHandle = null;
+      }}
+      recalculateSceneBoundsAndFrame();
+      if (!cameraTouched) {{
+        resetCameraOrbitFromBounds();
+      }}
+      updateCamera();
+    }}
+
     function scheduleSceneReframe() {{
       if (pendingReframeHandle != null) {{
         return;
       }}
       pendingReframeHandle = requestAnimationFrame(() => {{
         pendingReframeHandle = null;
-        refreshSceneFrame();
+        applySceneReframe();
       }});
     }}
 
@@ -2118,53 +3050,35 @@ def _build_html(payload: dict[str, object]) -> str:
       }}
       const startFrame = Number.isInteger(loop.startFrame) ? loop.startFrame : 0;
       const endFrame = Number.isInteger(loop.endFrame) ? loop.endFrame : (frames.length - 1);
-      const clipped = frames.slice(
+      return frames.slice(
         Math.max(0, Math.min(frames.length - 1, startFrame)),
         Math.max(0, Math.min(frames.length, endFrame + 1))
       );
-      if (clipped.length <= 1) {{
-        return clipped;
-      }}
-      const transitionFrames = Math.min(10, Math.max(4, Math.floor(payload.fps * 0.25)));
-      const loopStart = clipped[0];
-      const loopEnd = clipped[clipped.length - 1];
-      const appended = [];
-      for (let index = 1; index <= transitionFrames; index += 1) {{
-        const alpha = index / (transitionFrames + 1);
-        const joints = {{}};
-        for (const jointName of payload.jointNames) {{
-          const start = loopStart.joints[jointName];
-          const end = loopEnd.joints[jointName];
-          if (!start || !end) {{
-            continue;
-          }}
-          joints[jointName] = [
-            end[0] * (1 - alpha) + start[0] * alpha,
-            end[1] * (1 - alpha) + start[1] * alpha,
-            end[2] * (1 - alpha) + start[2] * alpha,
-          ];
-        }}
-        appended.push({{
-          frameIndex: loopEnd.frameIndex ?? (frames.length - 1),
-          timeSec: loopEnd.timeSec + index / payload.fps,
-          joints,
-        }});
-      }}
-      return [...clipped, ...appended];
     }}
 
     function buildPlaybackState(frames, loop) {{
       const activeFrames = buildPlaybackFrames(frames, loop);
-      const boundsFrames = loop
-        ? frames.slice(
-            Math.max(0, Math.min(frames.length - 1, loop.startFrame ?? 0)),
-            Math.max(0, Math.min(frames.length, (loop.endFrame ?? (frames.length - 1)) + 1))
-          )
-        : frames;
       return {{
         frames: activeFrames,
-        boundsFrames,
+        boundsFrames: activeFrames,
         loopable: Boolean(loop),
+      }};
+    }}
+
+    function computeActiveRootAnchor(frames) {{
+      if (!frames || frames.length === 0) {{
+        return null;
+      }}
+      const rootPoints = frames
+        .map((frame) => getFrameRootPoint(frame, payload.rootJoint))
+        .filter((point) => point != null);
+      if (rootPoints.length === 0) {{
+        return null;
+      }}
+      return {{
+        x: rootPoints.reduce((total, point) => total + point.x, 0) / rootPoints.length,
+        y: rootPoints.reduce((total, point) => total + point.y, 0) / rootPoints.length,
+        z: rootPoints.reduce((total, point) => total + point.z, 0) / rootPoints.length,
       }};
     }}
 
@@ -2194,10 +3108,12 @@ def _build_html(payload: dict[str, object]) -> str:
         : null;
       currentAutoAlignment = currentLoop?.autoAlignment ?? defaultAutoAlignment;
       playbackState = buildPlaybackState(payload.frames, currentLoop);
-      frameCursor = 0;
+      activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);
+      invalidateSceneBoundsCache();
+      frameCursor = findFrameCursorClosestToBoundsCenter();
       playbackDirection = 1;
       refreshActiveLoopLabel();
-      refreshSceneFrame();
+      applySceneReframe();
     }}
 
     function resize() {{
@@ -2208,12 +3124,6 @@ def _build_html(payload: dict[str, object]) -> str:
       const aspect = width / Math.max(1, height);
       perspectiveCamera.aspect = aspect;
       perspectiveCamera.updateProjectionMatrix();
-      const orthoSize = 240 / Math.max(120, zoom);
-      orthographicCamera.left = -orthoSize * aspect;
-      orthographicCamera.right = orthoSize * aspect;
-      orthographicCamera.top = orthoSize;
-      orthographicCamera.bottom = -orthoSize;
-      orthographicCamera.updateProjectionMatrix();
       refreshSceneFrame();
       updateCamera();
     }}
@@ -2222,59 +3132,66 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!fixedRoot) {{
         return [0, 0, 0];
       }}
-      const sourceIndexA = Number.isInteger(frame.sourceIndexA) ? frame.sourceIndexA : 0;
-      const sourceIndexB = Number.isInteger(frame.sourceIndexB) ? frame.sourceIndexB : sourceIndexA;
-      const blendAlpha = typeof frame.sourceAlpha === "number" ? frame.sourceAlpha : 0;
-      const translationA = sourceIndexA >= 0 && sourceIndexA < translationTrack.length ? translationTrack[sourceIndexA] : null;
-      const translationB = sourceIndexB >= 0 && sourceIndexB < translationTrack.length ? translationTrack[sourceIndexB] : translationA;
-      const frameTranslation = translationA && translationB
-        ? {{
-            x: translationA.x * (1 - blendAlpha) + translationB.x * blendAlpha,
-            z: translationA.z * (1 - blendAlpha) + translationB.z * blendAlpha,
-          }}
-        : {{ x: 0, z: 0 }};
+      const rootPoint = getFrameRootPoint(frame, payload.rootJoint);
+      if (!rootPoint || !activeRootAnchor) {{
+        return [0, 0, 0];
+      }}
       return [
-        frameTranslation.x,
-        frameTranslation.y,
-        frameTranslation.z,
+        rootPoint.x - activeRootAnchor.x,
+        lockYRoot ? rootPoint.y - activeRootAnchor.y : 0,
+        rootPoint.z - activeRootAnchor.z,
       ];
     }}
 
-    function updateManualTransformState() {{
-      manualRotation.set(
-        THREE.MathUtils.degToRad(parseFloat(rotateXInput.value)),
-        THREE.MathUtils.degToRad(parseFloat(rotateYInput.value)),
-        THREE.MathUtils.degToRad(parseFloat(rotateZInput.value)),
-        "XYZ"
-      );
-      manualTranslation.set(
-        parseFloat(translateXInput.value),
-        parseFloat(translateYInput.value),
-        parseFloat(translateZInput.value)
-      );
-      worldRotationReadoutNode.textContent = `${{rotateXInput.value}}, ${{rotateYInput.value}}, ${{rotateZInput.value}}`;
-      worldTranslationReadoutNode.textContent = `${{translateXInput.value}}, ${{translateYInput.value}}, ${{translateZInput.value}}`;
+    function getFrameBakeTranslation(frame, lockYDrift) {{
+      if (!fixedRoot) {{
+        return [0, 0, 0];
+      }}
+      const rootPoint = getFrameRootPoint(frame, payload.rootJoint);
+      if (!rootPoint || !activeRootAnchor) {{
+        return [0, 0, 0];
+      }}
+      return [
+        rootPoint.x - activeRootAnchor.x,
+        lockYDrift ? rootPoint.y - activeRootAnchor.y : 0,
+        rootPoint.z - activeRootAnchor.z,
+      ];
+    }}
+
+    function getFrameFloorMotionPoint(frame) {{
+      const primarySupportJointNames = ["left_foot", "right_foot", "left_hand", "right_hand"];
+      const fallbackSupportJointNames = ["left_ankle", "right_ankle", "left_wrist", "right_wrist"];
+      const collectPoints = (jointNames) => {{
+        const collected = [];
+        for (const jointName of jointNames) {{
+          const point = frame.joints[jointName];
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          collected.push(toBaseWorldPoint(point, [0, 0, 0], false));
+        }}
+        return collected;
+      }};
+      let points = collectPoints(primarySupportJointNames);
+      if (points.length === 0) {{
+        points = collectPoints(fallbackSupportJointNames);
+      }}
+      if (points.length === 0) {{
+        const rootPoint = getFrameRootPoint(frame, payload.rootJoint);
+        if (!rootPoint) {{
+          return null;
+        }}
+        const worldPoint = toBaseWorldPoint([rootPoint.x, rootPoint.y, rootPoint.z], [0, 0, 0], false);
+        return {{ x: worldPoint.x, z: worldPoint.z }};
+      }}
+      return {{
+        x: points.reduce((total, point) => total + point.x, 0) / points.length,
+        z: points.reduce((total, point) => total + point.z, 0) / points.length,
+      }};
     }}
 
     function refreshSceneBasis() {{
       sceneRotationQuaternion.identity();
-      const floorAlignment = Array.isArray(currentAutoAlignment) && currentAutoAlignment.length > 0
-        ? currentAutoAlignment[0]
-        : null;
-      if (floorAlignment) {{
-        const axis = floorAlignment?.axis;
-        const angle = floorAlignment?.angle;
-        if (Array.isArray(axis) && axis.length === 3 && typeof angle === "number") {{
-          tempVector.set(axis[0], axis[1], axis[2]);
-          if (tempVector.lengthSq() > 1e-8) {{
-            tempVector.normalize();
-            tempQuaternion.setFromAxisAngle(tempVector, angle);
-            sceneRotationQuaternion.multiply(tempQuaternion);
-          }}
-        }}
-      }}
-      tempQuaternion.setFromEuler(manualRotation);
-      sceneRotationQuaternion.multiply(tempQuaternion);
       sceneUp.copy(axisY).applyQuaternion(sceneRotationQuaternion).normalize();
       sceneRight.copy(axisX).applyQuaternion(sceneRotationQuaternion).normalize();
       sceneForward.copy(axisZ).applyQuaternion(sceneRotationQuaternion).normalize();
@@ -2302,29 +3219,425 @@ def _build_html(payload: dict[str, object]) -> str:
       return tempPivotedPoint.clone();
     }}
 
-    function toBaseWorldPoint(point, frameTranslation) {{
+    function toUncorrectedWorldPoint(point, frameTranslation) {{
       const tx = frameTranslation?.[0] ?? 0;
       const ty = frameTranslation?.[1] ?? 0;
       const tz = frameTranslation?.[2] ?? 0;
-      return applyAutoAlignment(new THREE.Vector3(
+      const transformedPoint = applyAutoAlignment(new THREE.Vector3(
         point[0] - tx,
         point[1] - ty,
         point[2] - tz
       ));
+      if (sceneInverted) {{
+        transformedPoint.applyAxisAngle(axisX, Math.PI);
+      }}
+      return transformedPoint;
     }}
 
-    function applyManualTransform(point) {{
-      tempPivotedPoint.copy(point);
-      tempPivotedPoint.sub(transformPivot);
-      tempPivotedPoint.applyEuler(manualRotation);
-      tempPivotedPoint.add(transformPivot);
-      tempPivotedPoint.add(manualTranslation);
-      return tempPivotedPoint.clone();
+    function frameFootLockKey(frame) {{
+      return Number.isInteger(frame?.frameIndex) ? `frame:${{frame.frameIndex}}` : `time:${{frame?.timeSec ?? 0}}`;
     }}
 
-    function toWorldPoint(point, frameTranslation, currentFixedRoot = fixedRoot) {{
-      refreshTransformPivot(currentFixedRoot);
-      return applyManualTransform(toBaseWorldPoint(point, frameTranslation));
+    function medianValue(values) {{
+      if (values.length === 0) {{
+        return 0;
+      }}
+      const sorted = values.slice().sort((left, right) => left - right);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) * 0.5;
+    }}
+
+    function availableFootJoints() {{
+      return ["left_ankle", "right_ankle"].filter((jointName) => payload.jointNames.includes(jointName));
+    }}
+
+    function formatCentimeters(value) {{
+      return `${{(value * 100).toFixed(1)}} cm`;
+    }}
+
+    function refreshAnkleLockOffsetLabels() {{
+      ankleOffsetForwardValue.textContent = formatCentimeters(ankleLockOffsetForward);
+      ankleOffsetLateralValue.textContent = formatCentimeters(ankleLockOffsetLateral);
+      ankleOffsetUpValue.textContent = formatCentimeters(ankleLockOffsetUp);
+    }}
+
+    function ankleLockTargetOffsetVector() {{
+      refreshSceneBasis();
+      return sceneForward
+        .clone()
+        .multiplyScalar(ankleLockOffsetForward)
+        .addScaledVector(sceneRight, ankleLockOffsetLateral)
+        .addScaledVector(sceneUp, ankleLockOffsetUp);
+    }}
+
+    function footSampleForFrame(frame, jointName) {{
+      const point = frame?.joints?.[jointName];
+      if (!Array.isArray(point) || point.length < 3) {{
+        return null;
+      }}
+      const translation = fixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
+      return toUncorrectedWorldPoint(point, translation);
+    }}
+
+    function computeFootLockCorrections() {{
+      const key = buildSceneBoundsCacheKey(fixedRoot);
+      if (footLockCorrectionsKey === key) {{
+        return footLockCorrections;
+      }}
+      footLockCorrectionsKey = key;
+      footLockCorrections = new Map();
+      if (!lockPlantedFeet) {{
+        return footLockCorrections;
+      }}
+      const frames = playbackState.frames ?? [];
+      const footJoints = availableFootJoints();
+      if (frames.length === 0 || footJoints.length === 0) {{
+        return footLockCorrections;
+      }}
+      const loopTargets = [];
+      const targetOffset = ankleLockTargetOffsetVector();
+      const contactHeight = 0.075;
+      const contactSpeed = 0.028;
+      for (const jointName of footJoints) {{
+        const samples = frames.map((frame, index) => {{
+          const point = footSampleForFrame(frame, jointName);
+          return point ? {{ frame, index, point }} : null;
+        }});
+        const validSamples = samples.filter((sample) => sample != null);
+        if (validSamples.length === 0) {{
+          continue;
+        }}
+        const floorY = Math.min(...validSamples.map((sample) => sample.point.y));
+        const plantedSamples = samples.filter((sample, index) => {{
+          if (!sample || sample.point.y > floorY + contactHeight) {{
+            return false;
+          }}
+          const previous = index > 0 ? samples[index - 1] : null;
+          const next = index + 1 < samples.length ? samples[index + 1] : null;
+          const speedPrev = previous ? Math.hypot(sample.point.x - previous.point.x, sample.point.z - previous.point.z) : 0;
+          const speedNext = next ? Math.hypot(next.point.x - sample.point.x, next.point.z - sample.point.z) : 0;
+          return Math.min(speedPrev, speedNext) <= contactSpeed;
+        }});
+        const anchorSamples = plantedSamples.length > 0 ? plantedSamples : validSamples;
+        const anchorPoint = new THREE.Vector3(
+          medianValue(anchorSamples.map((sample) => sample.point.x)),
+          medianValue(anchorSamples.map((sample) => sample.point.y)),
+          medianValue(anchorSamples.map((sample) => sample.point.z))
+        ).add(targetOffset);
+        loopTargets.push({{
+          jointName,
+          anchorX: anchorPoint.x,
+          anchorY: anchorPoint.y,
+          anchorZ: anchorPoint.z,
+          weight: 1,
+        }});
+      }}
+      for (const frame of frames) {{
+        footLockCorrections.set(frameFootLockKey(frame), loopTargets);
+      }}
+      return footLockCorrections;
+    }}
+
+    function getFootLockTargets(frame) {{
+      if (!lockPlantedFeet || !frame) {{
+        return null;
+      }}
+      return computeFootLockCorrections().get(frameFootLockKey(frame)) ?? null;
+    }}
+
+    function computeLockedJointPositions(frame, frameTranslation) {{
+      if (!lockPlantedFeet || !frame) {{
+        lockedJointFrameKey = null;
+        lockedJointPositions = new Map();
+        return lockedJointPositions;
+      }}
+      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{lockPlantedFeet}}`;
+      if (lockedJointFrameKey === cacheKey) {{
+        return lockedJointPositions;
+      }}
+      lockedJointFrameKey = cacheKey;
+      lockedJointPositions = new Map();
+      const targets = getFootLockTargets(frame);
+      if (!targets || targets.length === 0) {{
+        return lockedJointPositions;
+      }}
+      const basePositions = new Map();
+      for (const jointName of payload.jointNames) {{
+        const point = frame.joints[jointName];
+        if (Array.isArray(point) && point.length >= 3) {{
+          basePositions.set(jointName, toUncorrectedWorldPoint(point, frameTranslation));
+        }}
+      }}
+      for (const side of ["left", "right"]) {{
+        const ankleName = `${{side}}_ankle`;
+        const footName = `${{side}}_foot`;
+        const target = targets.find((candidate) => candidate.jointName === ankleName);
+        if (!target) {{
+          continue;
+        }}
+        const chain = [`${{side}}_hip`, `${{side}}_knee`, ankleName];
+        if (chain.some((jointName) => !basePositions.has(jointName))) {{
+          continue;
+        }}
+        const solved = solveLegIkChain(
+          chain.map((jointName) => basePositions.get(jointName).clone()),
+          new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
+        );
+        chain.forEach((jointName, index) => {{
+          lockedJointPositions.set(jointName, solved[index]);
+        }});
+        if (basePositions.has(footName)) {{
+          const originalAnkle = basePositions.get(ankleName);
+          const originalFoot = basePositions.get(footName);
+          const ankleToFoot = originalFoot.clone().sub(originalAnkle);
+          lockedJointPositions.set(footName, solved[solved.length - 1].clone().add(ankleToFoot));
+        }}
+      }}
+      return lockedJointPositions;
+    }}
+
+    function solveLegIkChain(points, target) {{
+      if (points.length < 3) {{
+        return points.map((point) => point.clone());
+      }}
+      const root = points[0].clone();
+      const originalKnee = points[1].clone();
+      const originalAnkle = points[2].clone();
+      const upperLength = Math.max(root.distanceTo(originalKnee), 1e-6);
+      const lowerLength = Math.max(originalKnee.distanceTo(originalAnkle), 1e-6);
+      const rootToTarget = target.clone().sub(root);
+      let targetDistance = rootToTarget.length();
+      if (targetDistance <= 1e-6) {{
+        rootToTarget.copy(originalAnkle).sub(root);
+        targetDistance = rootToTarget.length();
+      }}
+      if (targetDistance <= 1e-6) {{
+        rootToTarget.copy(sceneForward);
+        targetDistance = 1;
+      }}
+      const targetAxis = rootToTarget.normalize();
+      const maxReach = Math.max(upperLength + lowerLength - 1e-4, 1e-6);
+      const minReach = Math.max(Math.abs(upperLength - lowerLength) + 1e-4, 1e-6);
+      const solvedDistance = Math.min(Math.max(targetDistance, minReach), maxReach);
+      const solvedAnkle = root.clone().addScaledVector(targetAxis, solvedDistance);
+
+      const originalAxis = originalAnkle.clone().sub(root);
+      if (originalAxis.lengthSq() > 1e-8) {{
+        originalAxis.normalize();
+      }} else {{
+        originalAxis.copy(targetAxis);
+      }}
+      const sourceKneeOffset = originalKnee.clone().sub(root);
+      const sourceBendDirection = sourceKneeOffset
+        .clone()
+        .sub(originalAxis.clone().multiplyScalar(sourceKneeOffset.dot(originalAxis)));
+      let bendDirection = sourceBendDirection
+        .clone()
+        .sub(targetAxis.clone().multiplyScalar(sourceBendDirection.dot(targetAxis)));
+      if (bendDirection.lengthSq() <= 1e-8) {{
+        bendDirection = projectedAxis(sceneRight, targetAxis)
+          ?? projectedAxis(sceneForward, targetAxis)
+          ?? projectedAxis(axisY, targetAxis)
+          ?? new THREE.Vector3(1, 0, 0);
+      }} else {{
+        bendDirection.normalize();
+      }}
+
+      const kneeAlongAxis = (
+        (upperLength * upperLength) - (lowerLength * lowerLength) + (solvedDistance * solvedDistance)
+      ) / (2 * solvedDistance);
+      const kneeBendDistance = Math.sqrt(Math.max(
+        (upperLength * upperLength) - (kneeAlongAxis * kneeAlongAxis),
+        0
+      ));
+      const solvedKnee = root
+        .clone()
+        .addScaledVector(targetAxis, kneeAlongAxis)
+        .addScaledVector(bendDirection, kneeBendDistance);
+      return [root, solvedKnee, solvedAnkle];
+    }}
+
+    function toBaseWorldPoint(point, frameTranslation, applySceneOriginOffset = true, jointName = null) {{
+      const lockedPositions = computeLockedJointPositions(activeRenderFrame, frameTranslation);
+      const transformedPoint = typeof jointName === "string" && lockedPositions.has(jointName)
+        ? lockedPositions.get(jointName).clone()
+        : toUncorrectedWorldPoint(point, frameTranslation);
+      if (applySceneOriginOffset && !suppressSceneOriginOffset) {{
+        transformedPoint.sub(sceneOriginOffset);
+      }}
+      return transformedPoint;
+    }}
+
+    function toWorldPoint(point, frameTranslation, currentFixedRoot = fixedRoot, applySceneOriginOffset = true, jointName = null) {{
+      return toBaseWorldPoint(point, frameTranslation, applySceneOriginOffset, jointName);
+    }}
+
+    function computeBakedWearBounds(frames) {{
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      let minZ = Number.POSITIVE_INFINITY;
+      let maxZ = Number.NEGATIVE_INFINITY;
+      for (const frame of frames) {{
+        for (const point of Object.values(frame.joints ?? {{}})) {{
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          minX = Math.min(minX, point[0]);
+          maxX = Math.max(maxX, point[0]);
+          minY = Math.min(minY, point[1]);
+          maxY = Math.max(maxY, point[1]);
+          minZ = Math.min(minZ, point[2]);
+          maxZ = Math.max(maxZ, point[2]);
+        }}
+      }}
+      if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
+        minX = -0.5;
+        maxX = 0.5;
+        minY = -0.5;
+        maxY = 0.5;
+        minZ = -0.5;
+        maxZ = 0.5;
+      }}
+      return {{
+        minX,
+        maxX,
+        minY,
+        maxY,
+        minZ,
+        maxZ,
+        center: [
+          (minX + maxX) * 0.5,
+          (minY + maxY) * 0.5,
+          (minZ + maxZ) * 0.5,
+        ],
+        size: [
+          maxX - minX,
+          maxY - minY,
+          maxZ - minZ,
+        ],
+      }};
+    }}
+
+    function buildBakedWearSkeletonPayload() {{
+      const activeFrames = playbackState.frames ?? [];
+      const lockYDrift = Boolean(lockYRootInput.checked);
+      getCachedSceneBounds(fixedRoot);
+      const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
+      const frames = activeFrames.map((frame, index) => {{
+        activeRenderFrame = frame;
+        const translation = getFrameBakeTranslation(frame, lockYDrift);
+        const joints = {{}};
+        for (const jointName of payload.jointNames) {{
+          const point = frame.joints[jointName];
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          const transformed = toBaseWorldPoint(point, translation, true, jointName);
+          joints[jointName] = [transformed.x, transformed.y, transformed.z];
+        }}
+        return {{
+          frameIndex: index,
+          sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
+          timeSec: (frame.timeSec ?? 0) - firstSourceTime,
+          sourceTimeSec: frame.timeSec ?? 0,
+          rootTranslationApplied: translation,
+          joints,
+        }};
+      }});
+      const sourceStartFrame = frames.length > 0 ? frames[0].sourceFrameIndex : 0;
+      const sourceEndFrame = frames.length > 0 ? frames[frames.length - 1].sourceFrameIndex : sourceStartFrame;
+      const durationSec = frames.length > 1 ? frames[frames.length - 1].timeSec - frames[0].timeSec : 0;
+      return {{
+        schemaVersion: 1,
+        kind: "wearPreviewSkeleton",
+        title: payload.title,
+        source: {{
+          fps: payload.fps,
+          frameCount: payload.frameCount,
+          activeStartFrame: sourceStartFrame,
+          activeEndFrame: sourceEndFrame,
+        }},
+        fps: payload.fps,
+        frameCount: frames.length,
+        durationSec,
+        jointNames: payload.jointNames,
+        rootJoint: payload.rootJoint,
+        bakedPreviewConfiguration: {{
+          autoWorldAlignment: autoWorldAlignmentEnabled,
+          lockGlobalRootDrift: fixedRoot,
+          lockYDrift,
+          lockPlantedFeet,
+          ankleLockTargetOffset: {{
+            forward: ankleLockOffsetForward,
+            lateral: ankleLockOffsetLateral,
+            up: ankleLockOffsetUp,
+          }},
+          invertScene: sceneInverted,
+          selectedLoopIndex,
+        }},
+        loop: {{
+          enabled: currentLoop != null,
+          startFrame: 0,
+          endFrame: Math.max(0, frames.length - 1),
+          sourceStartFrame,
+          sourceEndFrame,
+          durationSec,
+          label: currentLoop?.label ?? "Full clip",
+        }},
+        transforms: {{
+          autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
+          rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
+          ankleLockTargetOffset: {{
+            forward: ankleLockOffsetForward,
+            lateral: ankleLockOffsetLateral,
+            up: ankleLockOffsetUp,
+          }},
+          sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
+        }},
+        bounds: computeBakedWearBounds(frames),
+        topology: {{
+          skeletonChains,
+          capsules: payload.capsules,
+        }},
+        geometry: {{
+          style: "low_poly_block_humanoid",
+          limb: {{
+            legWidth: 0.105,
+            legDepth: 0.075,
+            armWidth: 0.086,
+            armDepth: 0.061,
+          }},
+          chainProfiles: [
+            {{ match: "leg_bridge", minJointCount: 8, width: 0.14, depth: 0.09 }},
+            {{ match: "spine_head", includesJoint: "head", width: 0.1, depth: 0.08 }},
+            {{ match: "default", width: 0.08, depth: 0.055 }},
+          ],
+          head: {{
+            minScale: 0.086,
+            maxScale: 0.116,
+            scale: [0.88, 1.08, 0.86],
+          }},
+        }},
+        frames,
+      }};
+    }}
+
+    function downloadBakedWearSkeleton() {{
+      const exportPayload = buildBakedWearSkeletonPayload();
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const loopLabel = selectedLoopIndex >= 0 ? `loop-${{selectedLoopIndex + 1}}` : "full-clip";
+      const yLabel = lockYRootInput.checked ? "-lock-y" : "";
+      const footLabel = lockPlantedFeetInput.checked ? "-lock-feet" : "";
+      link.href = url;
+      link.download = `${{payload.title}}-${{loopLabel}}${{yLabel}}${{footLabel}}.wear-skeleton.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
     }}
 
     function setOrientedEllipsoid(mesh, center, xAxis, yAxis, width, height, depth) {{
@@ -2341,10 +3654,9 @@ def _build_html(payload: dict[str, object]) -> str:
       }}
       zDir.normalize();
       yDir.copy(new THREE.Vector3().crossVectors(zDir, xDir)).normalize();
-      tempMatrix.makeBasis(xDir, yDir, zDir);
       mesh.visible = true;
       mesh.position.copy(center);
-      mesh.quaternion.setFromRotationMatrix(tempMatrix);
+      applyStableMeshOrientation(mesh, xDir, yDir, zDir);
         mesh.scale.set(
           Math.max(0.001, width),
           Math.max(0.001, height),
@@ -2352,7 +3664,7 @@ def _build_html(payload: dict[str, object]) -> str:
         );
       }}
 
-      function setOrientedCylinder(mesh, start, end, radius) {{
+      function setOrientedCylinder(mesh, start, end, radius, lateralAxis = null) {{
         if (!start || !end) {{
           mesh.visible = false;
           return;
@@ -2363,12 +3675,89 @@ def _build_html(payload: dict[str, object]) -> str:
           mesh.visible = false;
           return;
         }}
+        const yDir = tempVector.clone().normalize();
+        let xDir = lateralAxis
+          ? projectedAxis(lateralAxis, yDir)
+          : null;
+        if (!xDir) {{
+          xDir = projectedAxis(sceneRight, yDir) ?? projectedAxis(sceneForward, yDir);
+        }}
+        if (!xDir) {{
+          mesh.visible = false;
+          return;
+        }}
+        const zDir = new THREE.Vector3().crossVectors(xDir, yDir).normalize();
+        if (zDir.lengthSq() <= 1e-8) {{
+          mesh.visible = false;
+          return;
+        }}
+        xDir = new THREE.Vector3().crossVectors(yDir, zDir).normalize();
         tempMidpoint.copy(start).add(end).multiplyScalar(0.5);
         mesh.visible = true;
         mesh.position.copy(tempMidpoint);
-        tempQuaternion.setFromUnitVectors(axisY, tempVector.clone().normalize());
-        mesh.quaternion.copy(tempQuaternion);
+        applyStableMeshOrientation(mesh, xDir, yDir, zDir);
         mesh.scale.set(Math.max(0.001, radius), Math.max(0.001, length), Math.max(0.001, radius));
+      }}
+
+      function chooseRollStableQuaternion(previousQuaternion, xDir, yDir, zDir) {{
+        const candidateMatrixA = new THREE.Matrix4().makeBasis(xDir, yDir, zDir);
+        const candidateMatrixB = new THREE.Matrix4().makeBasis(
+          xDir.clone().multiplyScalar(-1),
+          yDir,
+          zDir.clone().multiplyScalar(-1)
+        );
+        const candidateA = new THREE.Quaternion().setFromRotationMatrix(candidateMatrixA);
+        const candidateB = new THREE.Quaternion().setFromRotationMatrix(candidateMatrixB);
+        if (!previousQuaternion) {{
+          return candidateA;
+        }}
+        const dotA = Math.abs(candidateA.dot(previousQuaternion));
+        const dotB = Math.abs(candidateB.dot(previousQuaternion));
+        return dotB > dotA ? candidateB : candidateA;
+      }}
+
+      function applyStableMeshOrientation(mesh, xDir, yDir, zDir) {{
+        const previousQuaternion = mesh.userData.previousQuaternion ?? null;
+        const resolvedQuaternion = chooseRollStableQuaternion(previousQuaternion, xDir, yDir, zDir);
+        mesh.quaternion.copy(resolvedQuaternion);
+        mesh.userData.previousQuaternion = resolvedQuaternion.clone();
+      }}
+
+      function setOrientedLimbBox(mesh, start, end, lateralAxis, width, depth) {{
+        if (!start || !end) {{
+          mesh.visible = false;
+          return;
+        }}
+        const yDir = end.clone().sub(start);
+        const length = yDir.length();
+        if (length <= 1e-6) {{
+          mesh.visible = false;
+          return;
+        }}
+        yDir.normalize();
+        let xDir = projectedAxis(lateralAxis, yDir);
+        if (!xDir) {{
+          xDir = projectedAxis(sceneRight, yDir) ?? projectedAxis(sceneForward, yDir);
+        }}
+        if (!xDir) {{
+          mesh.visible = false;
+          return;
+        }}
+        const zDir = new THREE.Vector3().crossVectors(xDir, yDir).normalize();
+        if (zDir.lengthSq() <= 1e-8) {{
+          mesh.visible = false;
+          return;
+        }}
+        xDir = new THREE.Vector3().crossVectors(yDir, zDir).normalize();
+        tempMidpoint.copy(start).add(end).multiplyScalar(0.5);
+        mesh.visible = true;
+        mesh.position.copy(tempMidpoint);
+        applyStableMeshOrientation(mesh, xDir, yDir, zDir);
+        mesh.scale.set(
+          Math.max(0.001, width),
+          Math.max(0.001, length),
+          Math.max(0.001, depth)
+        );
       }}
 
       function setOrientedFrameVolume(mesh, center, xAxis, yAxis, width, height, depth) {{
@@ -2385,10 +3774,9 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
         zDir.normalize();
         yDir.copy(new THREE.Vector3().crossVectors(zDir, xDir)).normalize();
-        tempMatrix.makeBasis(xDir, yDir, zDir);
         mesh.visible = true;
         mesh.position.copy(center);
-        mesh.quaternion.setFromRotationMatrix(tempMatrix);
+        applyStableMeshOrientation(mesh, xDir, yDir, zDir);
         mesh.scale.set(
           Math.max(0.001, width),
           Math.max(0.001, height),
@@ -2410,10 +3798,9 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
         zDir.normalize();
         yDir.copy(new THREE.Vector3().crossVectors(zDir, xDir)).normalize();
-        tempMatrix.makeBasis(xDir, yDir, zDir);
         mesh.visible = true;
         mesh.position.copy(center);
-        mesh.quaternion.setFromRotationMatrix(tempMatrix);
+        applyStableMeshOrientation(mesh, xDir, yDir, zDir);
         mesh.scale.set(
           Math.max(0.001, width),
           Math.max(0.001, height),
@@ -2436,6 +3823,10 @@ def _build_html(payload: dict[str, object]) -> str:
 
       function hideProceduralBody() {{
         pelvisMesh.visible = false;
+        coreShellMesh.visible = false;
+        for (const mesh of spineMeshes) {{
+          mesh.visible = false;
+        }}
         abdomenMesh.visible = false;
         chestMesh.visible = false;
         upperChestMesh.visible = false;
@@ -2448,31 +3839,104 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
       }}
 
-      function getFrameJointWorld(frame, frameTranslation, jointName) {{
-        const point = frame.joints[jointName];
-        return point ? toWorldPoint(point, frameTranslation, fixedRoot) : null;
+      function hideConnectedSkeleton() {{
+        for (const entry of skeletonLines) {{
+          entry.line.visible = false;
+        }}
+        for (const entry of skeletonSurfaces) {{
+          entry.mesh.visible = false;
+        }}
+        for (const entry of jointNodeMeshes) {{
+          entry.mesh.visible = false;
+        }}
       }}
 
+      function updateConnectedSkeleton(frame, frameTranslation) {{
+        for (const entry of skeletonLines) {{
+          const points = entry.jointNames
+            .map((jointName) => frame.joints[jointName]
+              ? toWorldPoint(frame.joints[jointName], frameTranslation, fixedRoot, true, jointName)
+              : null)
+            .filter((point) => point != null);
+          if (points.length < 2) {{
+            entry.line.visible = false;
+            continue;
+          }}
+          entry.line.visible = true;
+          entry.line.geometry.setFromPoints(points);
+          entry.line.geometry.computeBoundingSphere();
+        }}
+        for (const entry of skeletonSurfaces) {{
+          const points = entry.jointNames
+            .map((jointName) => frame.joints[jointName]
+              ? toWorldPoint(frame.joints[jointName], frameTranslation, fixedRoot, true, jointName)
+              : null)
+            .filter((point) => point != null);
+          if (points.length < 2) {{
+            entry.mesh.visible = false;
+            continue;
+          }}
+          const curve = new THREE.CatmullRomCurve3(points);
+          const profile = chainProfileDimensions(entry.jointNames);
+          const nextGeometry = new THREE.ExtrudeGeometry(
+            buildProfileShape(profile.width, profile.depth),
+            {{
+              steps: Math.max(8, points.length * 4),
+              bevelEnabled: false,
+              extrudePath: curve,
+            }}
+          );
+          entry.mesh.visible = true;
+          entry.mesh.geometry.dispose();
+          entry.mesh.geometry = nextGeometry;
+        }}
+        for (const entry of jointNodeMeshes) {{
+          const point = frame.joints[entry.jointName]
+            ? toWorldPoint(frame.joints[entry.jointName], frameTranslation, fixedRoot, true, entry.jointName)
+            : null;
+          if (!point) {{
+            entry.mesh.visible = false;
+            continue;
+          }}
+          entry.mesh.visible = true;
+          entry.mesh.position.copy(point);
+          const scale = entry.jointName === "head"
+            ? 0.028
+            : entry.jointName === "pelvis"
+              ? 0.022
+              : 0.011;
+          entry.mesh.scale.setScalar(scale);
+        }}
+      }}
+
+    function getFrameJointWorld(frame, frameTranslation, jointName) {{
+      const point = frame.joints[jointName];
+      return point ? toWorldPoint(point, frameTranslation, fixedRoot, true, jointName) : null;
+    }}
+
+    function getCameraFitDistance() {{
+      const bounds = getCachedSceneBounds(fixedRoot);
+      const width = Math.max(0.001, bounds.maxX - bounds.minX);
+      const height = Math.max(0.001, bounds.maxY - bounds.minY);
+      const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
+      const verticalFov = THREE.MathUtils.degToRad(perspectiveCamera.fov);
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * perspectiveCamera.aspect);
+      const fitHeightDistance = height * 0.5 / Math.tan(verticalFov * 0.5);
+      const fitWidthDistance = width * 0.5 / Math.tan(horizontalFov * 0.5);
+      return Math.max(0.7, fitHeightDistance, fitWidthDistance, depth * 1.1);
+    }}
+
     function updateCamera() {{
-      const distance = 1200 / Math.max(120, zoom);
+      const zoomScale = 240 / Math.max(120, zoom);
+      const distance = getCameraFitDistance() * zoomScale * 1.18;
       const horizontalDistance = Math.cos(pitch) * distance;
       refreshSceneBasis();
-      activeCamera = cameraMode === "orthographic" ? orthographicCamera : perspectiveCamera;
-      activeCamera.position.copy(cameraTarget)
+      perspectiveCamera.position.copy(cameraTarget)
         .addScaledVector(sceneRight, Math.sin(yaw) * horizontalDistance)
         .addScaledVector(sceneForward, Math.cos(yaw) * horizontalDistance)
         .addScaledVector(sceneUp, Math.sin(pitch) * distance);
-      activeCamera.up.copy(sceneUp);
-      if (cameraMode === "orthographic") {{
-        const aspect = viewport.clientWidth / Math.max(1, viewport.clientHeight);
-        const orthoSize = 240 / Math.max(120, zoom);
-        orthographicCamera.left = -orthoSize * aspect;
-        orthographicCamera.right = orthoSize * aspect;
-        orthographicCamera.top = orthoSize;
-        orthographicCamera.bottom = -orthoSize;
-        orthographicCamera.updateProjectionMatrix();
-      }}
-      activeCamera.lookAt(cameraTarget);
+      perspectiveCamera.up.copy(sceneUp);
+      perspectiveCamera.lookAt(cameraTarget);
     }}
 
     function getInterpolatedFrame() {{
@@ -2480,11 +3944,14 @@ def _build_html(payload: dict[str, object]) -> str:
       if (frames.length === 0) {{
         return null;
       }}
-      const baseIndex = Math.max(0, Math.min(frames.length - 1, Math.floor(frameCursor)));
+      const normalizedCursor = playbackState.loopable
+        ? ((frameCursor % frames.length) + frames.length) % frames.length
+        : Math.max(0, Math.min(frames.length - 1, frameCursor));
+      const baseIndex = Math.max(0, Math.min(frames.length - 1, Math.floor(normalizedCursor)));
       const nextIndex = playbackState.loopable
         ? (baseIndex + 1) % frames.length
         : Math.max(0, Math.min(frames.length - 1, baseIndex + 1));
-      const alpha = frameCursor - Math.floor(frameCursor);
+      const alpha = normalizedCursor - Math.floor(normalizedCursor);
       const current = frames[baseIndex];
       const next = frames[nextIndex];
       if (!next || alpha <= 1e-6) {{
@@ -2522,23 +3989,31 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
       function updateSceneForFrame(frame) {{
+        activeRenderFrame = frame;
         const frameTranslation = getFrameTranslation(frame);
-        const pelvisJoint = frame.joints.pelvis ? toWorldPoint(frame.joints.pelvis, frameTranslation, fixedRoot) : null;
-      const spine1Joint = frame.joints.spine1 ? toWorldPoint(frame.joints.spine1, frameTranslation, fixedRoot) : null;
-      const spine2Joint = frame.joints.spine2 ? toWorldPoint(frame.joints.spine2, frameTranslation, fixedRoot) : null;
-      const spine3Joint = frame.joints.spine3 ? toWorldPoint(frame.joints.spine3, frameTranslation, fixedRoot) : null;
-      const neckJoint = frame.joints.neck ? toWorldPoint(frame.joints.neck, frameTranslation, fixedRoot) : null;
-      const leftHipJoint = frame.joints.left_hip ? toWorldPoint(frame.joints.left_hip, frameTranslation, fixedRoot) : null;
-      const rightHipJoint = frame.joints.right_hip ? toWorldPoint(frame.joints.right_hip, frameTranslation, fixedRoot) : null;
-      const leftShoulderJoint = frame.joints.left_shoulder ? toWorldPoint(frame.joints.left_shoulder, frameTranslation, fixedRoot) : null;
-      const rightShoulderJoint = frame.joints.right_shoulder ? toWorldPoint(frame.joints.right_shoulder, frameTranslation, fixedRoot) : null;
+        hideConnectedSkeleton();
+      const pelvisJoint = getFrameJointWorld(frame, frameTranslation, "pelvis");
+      const spine1Joint = getFrameJointWorld(frame, frameTranslation, "spine1");
+      const spine2Joint = getFrameJointWorld(frame, frameTranslation, "spine2");
+      const spine3Joint = getFrameJointWorld(frame, frameTranslation, "spine3");
+      const neckJoint = getFrameJointWorld(frame, frameTranslation, "neck");
+      const leftHipJoint = getFrameJointWorld(frame, frameTranslation, "left_hip");
+      const rightHipJoint = getFrameJointWorld(frame, frameTranslation, "right_hip");
+      const leftShoulderJoint = getFrameJointWorld(frame, frameTranslation, "left_shoulder");
+      const rightShoulderJoint = getFrameJointWorld(frame, frameTranslation, "right_shoulder");
+      const hipAxis = leftHipJoint && rightHipJoint
+        ? rightHipJoint.clone().sub(leftHipJoint)
+        : null;
+      const shoulderAxis = leftShoulderJoint && rightShoulderJoint
+        ? rightShoulderJoint.clone().sub(leftShoulderJoint)
+        : null;
 
       if (pelvisJoint && leftHipJoint && rightHipJoint && spine1Joint) {{
         const hipCenter = leftHipJoint.clone().add(rightHipJoint).multiplyScalar(0.5);
           const pelvisCenter = hipCenter.clone().lerp(pelvisJoint, 0.44);
           const hipAxis = rightHipJoint.clone().sub(leftHipJoint);
-          const pelvisHeight = Math.max(0.105, pelvisJoint.distanceTo(hipCenter) * 1.48);
-          const pelvisWidth = Math.max(0.16, hipAxis.length() * 1.08);
+          const pelvisHeight = Math.max(0.105, pelvisJoint.distanceTo(hipCenter) * 1.32);
+          const pelvisWidth = Math.max(0.165, hipAxis.length() * 1.08);
             setOrientedFrameVolume(
               pelvisMesh,
               pelvisCenter,
@@ -2546,21 +4021,123 @@ def _build_html(payload: dict[str, object]) -> str:
               spine1Joint.clone().sub(hipCenter),
               pelvisWidth,
               pelvisHeight,
-              pelvisWidth * 0.76
+              pelvisWidth * 0.78
             );
         }} else {{
           pelvisMesh.visible = false;
         }}
 
+        let coreShellVisible = false;
+        if (pelvisJoint && spine1Joint && spine2Joint && neckJoint && hipAxis && shoulderAxis) {{
+          const hipCenter = leftHipJoint && rightHipJoint
+            ? leftHipJoint.clone().add(rightHipJoint).multiplyScalar(0.5)
+            : pelvisJoint;
+          const shoulderCenter = leftShoulderJoint.clone().add(rightShoulderJoint).multiplyScalar(0.5);
+          const spineAxis = neckJoint.clone().sub(pelvisJoint);
+          const shellForwardAxis = new THREE.Vector3().crossVectors(shoulderAxis, spineAxis);
+          if (shellForwardAxis.lengthSq() > 1e-8) {{
+            shellForwardAxis.normalize();
+            const hipWidth = hipAxis.length();
+            const shoulderWidth = shoulderAxis.length();
+            const rings = [
+              {{
+                center: hipCenter.clone().lerp(pelvisJoint, 0.42),
+                xAxis: hipAxis,
+                zAxis: shellForwardAxis,
+                width: Math.max(0.15, hipWidth * 0.96),
+                depth: Math.max(0.11, hipWidth * 0.62),
+              }},
+              {{
+                center: spine1Joint.clone().lerp(spine2Joint, 0.18),
+                xAxis: shoulderAxis,
+                zAxis: shellForwardAxis,
+                width: Math.max(0.12, shoulderWidth * 0.42),
+                depth: Math.max(0.1, shoulderWidth * 0.34),
+              }},
+              {{
+                center: spine2Joint.clone().lerp(shoulderCenter, 0.38),
+                xAxis: shoulderAxis,
+                zAxis: shellForwardAxis,
+                width: Math.max(0.17, shoulderWidth * 0.72),
+                depth: Math.max(0.12, shoulderWidth * 0.42),
+              }},
+              {{
+                center: shoulderCenter.clone().lerp(neckJoint, 0.1),
+                xAxis: shoulderAxis,
+                zAxis: shellForwardAxis,
+                width: Math.max(0.2, shoulderWidth * 0.88),
+                depth: Math.max(0.12, shoulderWidth * 0.38),
+              }},
+            ];
+            const nextCoreGeometry = createCoreShellGeometry(rings);
+            if (nextCoreGeometry) {{
+              coreShellMesh.visible = true;
+              replaceOutlinedGeometry(coreShellMesh, nextCoreGeometry);
+              coreShellVisible = true;
+            }}
+          }}
+        }}
+        if (!coreShellVisible) {{
+          coreShellMesh.visible = false;
+        }}
+
+          const spineSegments = [
+            [pelvisJoint, spine1Joint],
+            [spine1Joint, spine2Joint],
+            [spine2Joint, spine3Joint ?? neckJoint],
+          ];
+        const spineLateralAxis = shoulderAxis ?? hipAxis;
+        spineSegments.forEach((segment, index) => {{
+          const [segmentStart, segmentEnd] = segment;
+          const mesh = spineMeshes[index];
+          if (coreShellVisible) {{
+            mesh.visible = false;
+            return;
+          }}
+          if (!segmentStart || !segmentEnd || !spineLateralAxis) {{
+            mesh.visible = false;
+            return;
+          }}
+          const segmentAxis = segmentEnd.clone().sub(segmentStart);
+          const segmentLength = segmentAxis.length();
+          if (segmentLength < 1e-4) {{
+            mesh.visible = false;
+            return;
+          }}
+          const spineWidth = Math.max(0.055, (index === 0 ? hipAxis?.length() ?? 0 : shoulderAxis?.length() ?? 0) * 0.2);
+          setOrientedFrameVolume(
+            mesh,
+            segmentStart.clone().lerp(segmentEnd, 0.5),
+            spineLateralAxis,
+            segmentAxis,
+            spineWidth,
+            Math.max(0.055, segmentLength * 0.82),
+            spineWidth * 0.84
+          );
+        }});
+        if (spineSegments.length < spineMeshes.length) {{
+          spineMeshes.slice(spineSegments.length).forEach((mesh) => {{
+            mesh.visible = false;
+          }});
+        }}
+
           if (spine1Joint && spine2Joint && leftShoulderJoint && rightShoulderJoint) {{
             const shoulderAxis = rightShoulderJoint.clone().sub(leftShoulderJoint);
-            const abdomenRadius = Math.max(0.06, shoulderAxis.length() * 0.1);
-          setOrientedCylinder(
+            const abdomenHeight = spine1Joint.distanceTo(spine2Joint);
+            const abdomenWidth = Math.max(0.11, shoulderAxis.length() * 0.28);
+          if (coreShellVisible) {{
+            abdomenMesh.visible = false;
+          }} else {{
+          setOrientedFrameVolume(
             abdomenMesh,
-            spine1Joint,
-            spine2Joint.clone().lerp(spine1Joint, 0.12),
-            abdomenRadius
+            spine1Joint.clone().lerp(spine2Joint, 0.42),
+            shoulderAxis,
+            spine2Joint.clone().sub(spine1Joint),
+            abdomenWidth,
+            Math.max(0.12, abdomenHeight * 0.86),
+            abdomenWidth * 0.84
           );
+          }}
         }} else {{
           abdomenMesh.visible = false;
         }}
@@ -2571,9 +4148,9 @@ def _build_html(payload: dict[str, object]) -> str:
             const shoulderAxis = rightShoulderJoint.clone().sub(leftShoulderJoint);
             const chestAxis = neckJoint.clone().sub(spine2Joint);
             const shoulderSpan = shoulderAxis.length();
-            const chestWidth = Math.max(0.16, shoulderSpan * 0.62);
-            const chestHeight = Math.max(0.17, chestAxis.length() * 1.04);
-            const chestDepth = Math.max(0.1, chestWidth * 0.48);
+            const chestWidth = Math.max(0.18, shoulderSpan * 0.76);
+            const chestHeight = Math.max(0.18, chestAxis.length() * 0.96);
+            const chestDepth = Math.max(0.105, chestWidth * 0.56);
           setOrientedFrameVolume(
             chestMesh,
             chestCenter,
@@ -2587,7 +4164,8 @@ def _build_html(payload: dict[str, object]) -> str:
             upperChestMesh,
             spine3Joint ? spine3Joint.clone().lerp(neckJoint, 0.35) : chestCenter.clone().lerp(neckJoint, 0.55),
             neckJoint,
-              Math.max(0.04, chestWidth * 0.09)
+              Math.max(0.045, chestWidth * 0.11),
+              shoulderAxis
             );
             setOrientedBar(
               clavicleMesh,
@@ -2631,8 +4209,8 @@ def _build_html(payload: dict[str, object]) -> str:
           node.mesh.visible = false;
             continue;
           }}
-          const startVector = toWorldPoint(start, frameTranslation, fixedRoot);
-          const endVector = toWorldPoint(end, frameTranslation, fixedRoot);
+          const startVector = toWorldPoint(start, frameTranslation, fixedRoot, true, node.capsule.start);
+          const endVector = toWorldPoint(end, frameTranslation, fixedRoot, true, node.capsule.end);
           tempVector.subVectors(endVector, startVector);
           const fullLength = tempVector.length();
           const direction = tempVector.clone().normalize();
@@ -2641,6 +4219,7 @@ def _build_html(payload: dict[str, object]) -> str:
             continue;
           }}
           const radius = node.capsule.radius;
+        const limbProfile = limbProfileForCapsule(node.capsule, radius);
         const jointInset = Math.min(radius * 0.35, fullLength * 0.08);
         const startInset = startVector.clone().addScaledVector(direction, jointInset);
         const endInset = endVector.clone().addScaledVector(direction, -jointInset);
@@ -2651,22 +4230,58 @@ def _build_html(payload: dict[str, object]) -> str:
             continue;
           }}
         node.mesh.visible = true;
-          tempMidpoint.addVectors(startInset, endInset).multiplyScalar(0.5);
-        node.mesh.position.copy(tempMidpoint);
-          tempQuaternion.setFromUnitVectors(axisY, tempVector.clone().normalize());
-        node.mesh.quaternion.copy(tempQuaternion);
-        node.mesh.scale.set(radius, length, radius);
+        if (isLegCapsule(node.capsule) && hipAxis) {{
+          setOrientedLimbBox(
+            node.mesh,
+            startInset,
+            endInset,
+            hipAxis,
+            limbProfile.width,
+            limbProfile.depth
+          );
+          continue;
+        }}
+        if (shoulderAxis && isArmCapsule(node.capsule)) {{
+          setOrientedLimbBox(
+            node.mesh,
+            startInset,
+            endInset,
+            shoulderAxis,
+            limbProfile.width,
+            limbProfile.depth
+          );
+          continue;
+        }}
+        setOrientedCylinder(
+          node.mesh,
+          startInset,
+          endInset,
+          Math.max(limbProfile.width, limbProfile.depth) * 0.5,
+          shoulderAxis ?? hipAxis ?? sceneRight
+        );
         }}
 
-      const headJoint = frame.joints.head ?? frame.joints.neck ?? null;
+      const headJointName = frame.joints.head ? "head" : frame.joints.neck ? "neck" : null;
+      const headJoint = headJointName ? getFrameJointWorld(frame, frameTranslation, headJointName) : null;
       if (headJoint) {{
         headMesh.visible = true;
-        headMesh.position.copy(toWorldPoint(headJoint, frameTranslation, fixedRoot));
-        const neckSourceJoint = frame.joints.neck ?? null;
-          const headScale = neckSourceJoint
-            ? Math.max(0.086, Math.min(0.116, toWorldPoint(headJoint, frameTranslation, fixedRoot).distanceTo(toWorldPoint(neckSourceJoint, frameTranslation, fixedRoot)) * 0.46))
-            : 0.108;
-          headMesh.scale.set(headScale * 0.88, headScale * 1.08, headScale * 0.86);
+        const neckSourceJoint = getFrameJointWorld(frame, frameTranslation, "neck");
+        const headAxis = neckSourceJoint ? headJoint.clone().sub(neckSourceJoint) : axisY.clone();
+        const headCenter = neckSourceJoint
+          ? neckSourceJoint.clone().lerp(headJoint, 0.82)
+          : headJoint.clone();
+        const headScale = neckSourceJoint
+            ? Math.max(0.115, Math.min(0.165, headJoint.distanceTo(neckSourceJoint) * 0.68))
+            : 0.135;
+        setOrientedFrameVolume(
+          headMesh,
+          headCenter,
+          shoulderAxis ?? hipAxis ?? sceneRight,
+          headAxis.lengthSq() > 1e-8 ? headAxis : axisY,
+          headScale * 0.86,
+          headScale * 1.16,
+          headScale * 0.78
+        );
       }} else {{
         headMesh.visible = false;
       }}
@@ -2677,10 +4292,10 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!frame) {{
         return;
       }}
-      updateCamera();
       updateSceneForFrame(frame);
+      updateCamera();
       frameIndexNode.textContent = String(Math.max(0, Math.min(playbackState.frames.length - 1, Math.floor(frameCursor))));
-      renderer.render(scene, activeCamera);
+      renderer.render(scene, perspectiveCamera);
     }}
 
     function animate(timestamp) {{
@@ -2693,7 +4308,9 @@ def _build_html(payload: dict[str, object]) -> str:
         if (playbackState.loopable) {{
           frameCursor += deltaSeconds * payload.fps * speed;
           if (playbackState.frames.length > 0) {{
-            frameCursor %= playbackState.frames.length;
+            while (frameCursor >= playbackState.frames.length) {{
+              frameCursor -= playbackState.frames.length;
+            }}
           }}
         }} else {{
           frameCursor += deltaSeconds * payload.fps * speed * playbackDirection;
@@ -2713,6 +4330,7 @@ def _build_html(payload: dict[str, object]) -> str:
 
     renderer.domElement.addEventListener("pointerdown", (event) => {{
       dragging = true;
+      cameraTouched = true;
       dragX = event.clientX;
       dragY = event.clientY;
       renderer.domElement.setPointerCapture(event.pointerId);
@@ -2725,9 +4343,9 @@ def _build_html(payload: dict[str, object]) -> str:
       const deltaY = event.clientY - dragY;
       dragX = event.clientX;
       dragY = event.clientY;
+      cameraTouched = true;
       yaw -= deltaX * 0.01;
       pitch = Math.max(-1.2, Math.min(1.2, pitch - deltaY * 0.01));
-      pitchInput.value = String(pitch);
     }});
     renderer.domElement.addEventListener("pointerup", () => {{
       dragging = false;
@@ -2744,43 +4362,52 @@ def _build_html(payload: dict[str, object]) -> str:
     }});
     fixedRootInput.addEventListener("change", () => {{
       fixedRoot = fixedRootInput.checked;
-      refreshSceneFrame();
+      invalidateSceneBoundsCache();
+      applySceneReframe();
     }});
+    lockYRootInput.addEventListener("change", () => {{
+      lockYRoot = lockYRootInput.checked;
+      invalidateSceneBoundsCache();
+      applySceneReframe();
+    }});
+    lockPlantedFeetInput.addEventListener("change", () => {{
+      lockPlantedFeet = lockPlantedFeetInput.checked;
+      invalidateSceneBoundsCache();
+      applySceneReframe();
+    }});
+    function updateAnkleLockOffset() {{
+      ankleLockOffsetForward = parseFloat(ankleOffsetForwardInput.value);
+      ankleLockOffsetLateral = parseFloat(ankleOffsetLateralInput.value);
+      ankleLockOffsetUp = parseFloat(ankleOffsetUpInput.value);
+      refreshAnkleLockOffsetLabels();
+      if (lockPlantedFeet) {{
+        invalidateSceneBoundsCache();
+        applySceneReframe();
+      }}
+    }}
+    ankleOffsetForwardInput.addEventListener("input", updateAnkleLockOffset);
+    ankleOffsetLateralInput.addEventListener("input", updateAnkleLockOffset);
+    ankleOffsetUpInput.addEventListener("input", updateAnkleLockOffset);
     autoWorldAlignmentInput.addEventListener("change", () => {{
       autoWorldAlignmentEnabled = autoWorldAlignmentInput.checked;
-      refreshSceneFrame();
+      invalidateSceneBoundsCache();
+      applySceneReframe();
+    }});
+    sceneInvertedInput.addEventListener("change", () => {{
+      sceneInverted = sceneInvertedInput.checked;
+      invalidateSceneBoundsCache();
+      applySceneReframe();
     }});
     loopSelect.addEventListener("change", () => {{
       setSelectedLoop(parseInt(loopSelect.value, 10));
     }});
+    downloadWearSkeletonButton.addEventListener("click", () => {{
+      downloadBakedWearSkeleton();
+    }});
     zoomInput.addEventListener("input", () => {{
+      cameraTouched = true;
       zoom = parseFloat(zoomInput.value);
       resize();
-    }});
-    cameraModeSelect.addEventListener("change", () => {{
-      cameraMode = cameraModeSelect.value;
-      updateCamera();
-      draw();
-    }});
-    pitchInput.addEventListener("input", () => {{
-      pitch = parseFloat(pitchInput.value);
-    }});
-    function refreshManualTransform() {{
-      updateManualTransformState();
-      scheduleSceneReframe();
-    }}
-    [rotateXInput, rotateYInput, rotateZInput, translateXInput, translateYInput, translateZInput].forEach((input) => {{
-      input.addEventListener("input", refreshManualTransform);
-      input.addEventListener("change", refreshSceneFrame);
-    }});
-    resetTransformButton.addEventListener("click", () => {{
-      rotateXInput.value = "0";
-      rotateYInput.value = "0";
-      rotateZInput.value = "0";
-      translateXInput.value = "0";
-      translateYInput.value = "0";
-      translateZInput.value = "0";
-      refreshManualTransform();
     }});
     window.addEventListener("keydown", (event) => {{
       if (event.code !== "Space") {{
@@ -2795,12 +4422,13 @@ def _build_html(payload: dict[str, object]) -> str:
       refreshPauseLabel();
     }});
     window.addEventListener("resize", resize);
-    updateManualTransformState();
     refreshPauseLabel();
-      refreshSceneFrame();
-      resize();
-      draw();
-      requestAnimationFrame(animate);
+    activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);
+    frameCursor = findFrameCursorClosestToBoundsCenter();
+    refreshSceneFrame();
+    resize();
+    draw();
+    requestAnimationFrame(animate);
     </script>
 </body>
 </html>
