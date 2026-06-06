@@ -15,6 +15,7 @@ test = [
     "pytest>=8.0.0",
 ]
 motion = [
+    "joblib>=1.4",
     "opencv-python>=4.10",
     "yt-dlp>=2024.8.6",
 ]
