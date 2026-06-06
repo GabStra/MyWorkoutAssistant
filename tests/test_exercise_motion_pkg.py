@@ -57,6 +57,23 @@ from exercise_motion_pkg.segment_detection import (
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.wham_runner import build_wham_command
+from exercise_motion_pkg.wham_smpl_preview import (
+    WhamSmplMeshSequence,
+    build_baked_wham_smpl_preview_payload,
+    extract_smpl_mesh_payload_for_preview,
+)
+from exercise_motion_pkg.youtube import (
+    ExerciseEntry,
+    YouTubeCandidate,
+    YouTubeRankingSettings,
+    build_candidate_vision_prompt,
+    build_youtube_queries,
+    compose_final_score,
+    discover_and_rank_youtube_candidates,
+    extract_workout_plan_exercises,
+    parse_yt_dlp_search_results,
+    score_candidate_metadata,
+)
 
 
 def build_fixture_clip() -> MotionClip:
@@ -1028,6 +1045,102 @@ def test_write_preview_debug_json_exports_rendered_joint_coordinates(tmp_path: P
     assert "translationApplied" in payload["frames"][0]
 
 
+def test_write_preview_html_embeds_optional_smpl_mesh_payload(tmp_path: Path) -> None:
+    clip = build_fixture_clip()
+    output = tmp_path / "preview-smpl.html"
+    smpl_mesh_payload = {
+        "bodyModel": "smpl",
+        "faces": [[0, 1, 2]],
+        "frames": [
+            {
+                "frameIndex": 0,
+                "sourceFrameIndex": 0,
+                "vertices": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0]],
+            }
+        ],
+    }
+
+    write_preview_html(output, clip, title="smpl-preview", smpl_mesh_payload=smpl_mesh_payload)
+
+    text = output.read_text(encoding="utf-8")
+    assert '"smplMesh": {' in text
+    assert "Show WHAM SMPL mesh" in text
+    assert "updateSmplMeshForFrame" in text
+
+
+def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata() -> None:
+    raw_clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_foot", "right_foot"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (1.0, 1.0, 1.0),
+                    "left_foot": (0.9, 0.0, 1.0),
+                    "right_foot": (1.1, 0.0, 1.0),
+                },
+            )
+        ],
+        metadata={"upstream": "wham"},
+    )
+    cleaned_clip = MotionClip(
+        fps=30.0,
+        joint_names=raw_clip.joint_names,
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (1.25, 1.2, 0.75),
+                    "left_foot": (1.15, 0.2, 0.75),
+                    "right_foot": (1.35, 0.2, 0.75),
+                },
+            )
+        ],
+        metadata={
+            "upstream": "wham",
+            "cleanup": {
+                "trimmedStartFrames": 0,
+                "trimmedEndFrames": 0,
+            },
+        },
+    )
+    sequence = WhamSmplMeshSequence(
+        fps=30.0,
+        subject_id="0",
+        coordinate_space="camera",
+        frame_ids=[0],
+        faces=[[0, 1, 2]],
+        vertices=[
+            [
+                (1.0, 1.0, 1.0),
+                (1.1, 1.0, 1.0),
+                (1.0, 1.1, 1.0),
+            ]
+        ],
+    )
+
+    payload = build_baked_wham_smpl_preview_payload(
+        sequence=sequence,
+        raw_clip=raw_clip,
+        cleaned_clip=cleaned_clip,
+        title="smpl-preview",
+        selected_loop_index=-1,
+    )
+
+    assert payload["kind"] == "whamBakedSmplMeshPreview"
+    assert payload["bodyModel"] == "smpl"
+    assert payload["faces"] == [[0, 1, 2]]
+    assert payload["loop"]["enabled"] is False
+    assert "cleanup_global_translation_delta" in payload["bakedPreviewConfiguration"]["postProcessingApplied"]
+    first_frame = payload["frames"][0]
+    assert first_frame["cleanupDeltaApplied"] == pytest.approx([0.25, 0.2, -0.25])
+
+    mesh_payload = extract_smpl_mesh_payload_for_preview(payload)
+    assert mesh_payload["faces"] == [[0, 1, 2]]
+    assert len(mesh_payload["frames"]) == 1
+
+
 def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering() -> None:
     clip = build_fixture_clip()
 
@@ -1214,6 +1327,7 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert Path(manifest["targetRigContractPath"]).exists()
     assert manifest["retargetSourcePath"] is None
     assert manifest["whamRetargetSourcePath"] is None
+    assert manifest["whamSmplPreviewJsonPath"] is None
     assert manifest["groundMetadata"]["renderGroundPlane"]["space"] == "motion"
     assert manifest["groundMetadata"]["renderGroundOrigin"]["space"] == "motion"
     assert manifest["postProcessing"]["steps"] == [
@@ -1224,6 +1338,7 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert Path(manifest["nextStage"]["wearSkeletonJsonPath"]).exists()
     assert manifest["nextStage"]["retargetSourcePath"] is None
     assert manifest["nextStage"]["whamRetargetSourcePath"] is None
+    assert manifest["nextStage"]["whamSmplPreviewJsonPath"] is None
 
     cleaned_clip = load_motion_json(result.cleaned_motion_json_path)
     assert cleaned_clip.metadata["ground"]["renderGroundPlane"]["space"] == "motion"
@@ -1903,3 +2018,287 @@ def test_trim_video_creates_expected_subclip(tmp_path: Path) -> None:
     metadata = read_basic_video_metadata(trimmed_path)
     assert metadata.fps > 0
     assert 7 <= metadata.frame_count <= 9
+
+
+def test_extract_workout_plan_exercises_from_planner_json_dedupes_and_skips_disabled() -> None:
+    payload = {
+        "exercises": [
+            {"id": "squat-a", "name": "Squat"},
+            {"id": "squat-b", "exerciseName": " squat "},
+            {"id": "pushup", "name": "Push Up", "enabled": False},
+            {"id": "rest", "name": "Rest", "type": "rest"},
+            {"id": "row", "exercise": {"name": "Bent Over Row"}},
+        ]
+    }
+
+    exercises = extract_workout_plan_exercises(payload)
+
+    assert [(item.exercise_id, item.name, item.slug) for item in exercises] == [
+        ("squat-a", "Squat", "squat"),
+        ("row", "Bent Over Row", "bent-over-row"),
+    ]
+
+
+def test_extract_workout_plan_exercises_from_final_package_and_nested_superset() -> None:
+    payload = {
+        "workouts": [
+            {
+                "workoutComponents": [
+                    {
+                        "type": "superset",
+                        "name": "Upper superset",
+                        "supersetExercises": [
+                            {"exerciseId": "curl", "exerciseName": "Dumbbell Curl"},
+                            {"exerciseId": "tri", "exerciseName": "Triceps Extension"},
+                        ],
+                    },
+                    {"type": "rest", "exerciseName": "Rest"},
+                ]
+            }
+        ]
+    }
+
+    exercises = extract_workout_plan_exercises(payload)
+
+    assert [item.name for item in exercises] == [
+        "Dumbbell Curl",
+        "Triceps Extension",
+    ]
+
+
+def test_extract_workout_plan_exercises_can_include_disabled() -> None:
+    payload = {"exercises": [{"id": "pushup", "name": "Push Up", "enabled": False}]}
+
+    exercises = extract_workout_plan_exercises(payload, include_disabled=True)
+
+    assert [item.name for item in exercises] == ["Push Up"]
+
+
+def test_extract_workout_plan_exercises_from_workout_store_backup_root() -> None:
+    payload = {
+        "WorkoutStore": {
+            "workouts": [
+                {
+                    "enabled": True,
+                    "workoutComponents": [
+                        {
+                            "id": "warmup",
+                            "type": "Exercise",
+                            "enabled": True,
+                            "name": "Warm-Up",
+                            "exerciseType": "COUNTDOWN",
+                        },
+                        {
+                            "id": "bench",
+                            "type": "Exercise",
+                            "enabled": True,
+                            "name": "Bench Press",
+                            "exerciseType": "WEIGHT",
+                        },
+                    ],
+                },
+                {
+                    "enabled": False,
+                    "workoutComponents": [
+                        {
+                            "id": "disabled",
+                            "type": "Exercise",
+                            "enabled": True,
+                            "name": "Disabled Workout Exercise",
+                            "exerciseType": "WEIGHT",
+                        }
+                    ],
+                },
+            ]
+        }
+    }
+
+    exercises = extract_workout_plan_exercises(payload)
+
+    assert [(item.exercise_id, item.name) for item in exercises] == [("bench", "Bench Press")]
+
+
+def test_parse_yt_dlp_search_results_normalizes_candidates() -> None:
+    info = {
+        "entries": [
+            {
+                "id": "abc123",
+                "title": "Squat proper form tutorial",
+                "channel": "Coach",
+                "duration": "120",
+                "view_count": "150000",
+                "upload_date": "20240102",
+                "description": "A full body side view squat demonstration.",
+                "thumbnails": [{"url": "small.jpg"}, {"url": "large.jpg"}],
+            }
+        ]
+    }
+
+    candidates = parse_yt_dlp_search_results(info)
+
+    assert len(candidates) == 1
+    assert candidates[0].url == "https://www.youtube.com/watch?v=abc123"
+    assert candidates[0].duration_seconds == 120
+    assert candidates[0].view_count == 150000
+    assert candidates[0].thumbnail == "large.jpg"
+
+
+def test_build_youtube_queries_biases_motion_extraction_candidates() -> None:
+    queries = build_youtube_queries("Bench Press")
+
+    assert queries == [
+        'Bench Press demonstration reps "same camera angle" -tutorial -"how to" -shorts',
+        'Bench Press "proper form" demo "single camera" -tutorial -mistakes -guide',
+        "Bench Press execution demo full movement stable camera -tutorial -workout -program",
+    ]
+    assert all("tutorial" in query for query in queries)
+    assert any("same camera angle" in query for query in queries)
+    assert any("stable camera" in query for query in queries)
+
+
+def test_candidate_vision_prompt_rejects_shaky_step_breakdown_videos() -> None:
+    prompt = build_candidate_vision_prompt(
+        "Bench Press",
+        YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=test",
+            video_id="test",
+            title="Bench Press Side View",
+            channel=None,
+            duration_seconds=None,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+        ),
+    )
+
+    assert "continuous uninterrupted repetitions" in prompt
+    assert "any angle is acceptable if it stays the same" in prompt
+    assert "shaky handheld video" in prompt
+    assert "step-by-step demonstrations" in prompt
+    assert '"continuous_motion": boolean' in prompt
+    assert '"no_step_breakdown": boolean' in prompt
+    assert '"no_camera_cuts": boolean' in prompt
+
+
+def test_metadata_scoring_prefers_demo_duration_and_penalizes_shorts() -> None:
+    exercise = ExerciseEntry(exercise_id="EXERCISE_0", name="Squat", slug="squat")
+    good = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=good",
+        video_id="good",
+        title="Squat proper form demonstration full body side view",
+        channel="Coach",
+        duration_seconds=120,
+        view_count=250000,
+        upload_date=None,
+        description_snippet="Squat exercise demonstration proper execution.",
+        thumbnail=None,
+    )
+    bad = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=bad",
+        video_id="bad",
+        title="Squat shorts challenge music compilation",
+        channel="Creator",
+        duration_seconds=8,
+        view_count=900,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    scored_good = score_candidate_metadata(
+        exercise,
+        good,
+        min_duration_seconds=20,
+        max_duration_seconds=480,
+    )
+    scored_bad = score_candidate_metadata(
+        exercise,
+        bad,
+        min_duration_seconds=20,
+        max_duration_seconds=480,
+    )
+
+    assert scored_good.metadata_score > scored_bad.metadata_score
+    assert "exercise_name_match" in scored_good.score_reasons
+    assert "usable_duration" in scored_good.score_reasons
+    assert "too_short" in scored_bad.score_reasons
+    assert "shorts_penalty" in scored_bad.score_reasons
+
+
+def test_final_score_composes_with_and_without_vision() -> None:
+    assert compose_final_score(0.7, None) == pytest.approx(0.7)
+    assert compose_final_score(0.7, 0.9) == pytest.approx(0.79)
+
+
+def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search_and_vision(
+    tmp_path: Path,
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "youtube_candidates.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {"name": "Squat"},
+                    {"name": "Push Up"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_search(query: str, results_per_query: int) -> list[YouTubeCandidate]:
+        calls.append(query)
+        exercise_name = "Push Up" if "Push Up" in query else "Squat"
+        video_id = "push" if exercise_name == "Push Up" else "squat"
+        return [
+            YouTubeCandidate(
+                url=f"https://www.youtube.com/watch?v={video_id}",
+                video_id=video_id,
+                title=f"{exercise_name} proper form demonstration full body side view",
+                channel="Coach",
+                duration_seconds=90,
+                view_count=100000,
+                upload_date=None,
+                description_snippet=f"{exercise_name} demonstration.",
+                thumbnail=None,
+            )
+        ]
+
+    def fake_vision(
+        exercise: ExerciseEntry,
+        candidate: YouTubeCandidate,
+        settings: YouTubeRankingSettings,
+    ) -> tuple[float, list[str]]:
+        return 0.9, ["full_body_visible"]
+
+    manifest = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            results_per_query=5,
+            max_candidates=3,
+            rank_with_litert=True,
+            vision_candidates_per_exercise=1,
+        ),
+        search_fn=fake_search,
+        vision_ranker=fake_vision,
+    )
+
+    saved = json.loads(out_path.read_text(encoding="utf-8"))
+    assert manifest == saved
+    assert saved["sourcePlanPath"] == str(plan_path)
+    assert saved["ranking"] == {
+        "metadataEnabled": True,
+        "visionEnabled": True,
+        "visionBackend": "litert",
+    }
+    assert len(saved["exercises"]) == 2
+    assert len(calls) == 6
+    assert saved["exercises"][0]["queries"] == build_youtube_queries("Squat")
+    first_candidate = saved["exercises"][0]["candidates"][0]
+    assert first_candidate["visionScore"] == 0.9
+    assert first_candidate["status"] == "recommended"
+    assert "full_body_visible" in first_candidate["scoreReasons"]

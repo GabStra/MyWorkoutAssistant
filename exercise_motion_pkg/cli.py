@@ -211,6 +211,8 @@ def main() -> None:
         print(f"Target rig contract JSON: {result.target_rig_contract_path}")
         if result.retarget_source_path is not None:
             print(f"WHAM retarget source JSON: {result.retarget_source_path}")
+        if result.smpl_preview_json_path is not None:
+            print(f"WHAM baked SMPL preview JSON: {result.smpl_preview_json_path}")
         if result.ground_metadata_path is not None:
             print(f"Ground metadata JSON: {result.ground_metadata_path}")
         return

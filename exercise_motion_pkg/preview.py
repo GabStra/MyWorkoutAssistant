@@ -80,7 +80,14 @@ YAW_ALIGNMENT_PAIRS = (
 )
 
 
-def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_path: Path | None = None) -> None:
+def write_preview_html(
+    path: Path,
+    clip: MotionClip,
+    *,
+    title: str,
+    debug_json_path: Path | None = None,
+    smpl_mesh_payload: dict[str, object] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(clip))
     default_auto_alignment = _serialize_preview_rotations(_compute_preview_auto_alignment(preview_clip.frames))
@@ -125,6 +132,7 @@ def write_preview_html(path: Path, clip: MotionClip, *, title: str, debug_json_p
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
+        "smplMesh": smpl_mesh_payload,
     }
     html = _build_html(payload)
     path.write_text(html, encoding="utf-8")
@@ -2087,6 +2095,10 @@ def _build_html(payload: dict[str, object]) -> str:
           <span>Invert scene</span>
           <input id="sceneInverted" type="checkbox" />
         </label>
+        <label class="control-row" for="showSmplMesh">
+          <span>Show WHAM SMPL mesh</span>
+          <input id="showSmplMesh" type="checkbox" />
+        </label>
         <div class="control-group">
           <div class="control-group-title">Root lock</div>
           <label class="control-row" for="fixedRoot">
@@ -2122,6 +2134,7 @@ def _build_html(payload: dict[str, object]) -> str:
           <select id="loopSelect"></select>
         </label>
         <button id="downloadWearSkeleton" type="button">Download baked Wear skeleton</button>
+        <button id="downloadSmplMesh" type="button">Download baked WHAM SMPL mesh</button>
         <div class="stat">Detected loops: <span id="loopCount"></span></div>
         <div class="stat">Active span: <span id="activeLoop">Full clip</span></div>
         <div class="stat">Frames: <span id="frameCount"></span></div>
@@ -2155,6 +2168,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const zoomInput = document.getElementById("zoom");
     const autoWorldAlignmentInput = document.getElementById("autoWorldAlignment");
     const sceneInvertedInput = document.getElementById("sceneInverted");
+    const showSmplMeshInput = document.getElementById("showSmplMesh");
     const fixedRootInput = document.getElementById("fixedRoot");
     const lockYRootInput = document.getElementById("lockYRoot");
     const lockPlantedFeetInput = document.getElementById("lockPlantedFeet");
@@ -2165,6 +2179,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const ankleOffsetLateralValue = document.getElementById("ankleOffsetLateralValue");
     const ankleOffsetUpValue = document.getElementById("ankleOffsetUpValue");
     const downloadWearSkeletonButton = document.getElementById("downloadWearSkeleton");
+    const downloadSmplMeshButton = document.getElementById("downloadSmplMesh");
     const loopSelect = document.getElementById("loopSelect");
     const loopCountNode = document.getElementById("loopCount");
     const activeLoopNode = document.getElementById("activeLoop");
@@ -2189,6 +2204,7 @@ def _build_html(payload: dict[str, object]) -> str:
     let pendingReframeHandle = null;
     let autoWorldAlignmentEnabled = Boolean(payload.defaultAutoWorldAlignment);
     let sceneInverted = Boolean(payload.defaultSceneInverted);
+    let showSmplMesh = Boolean(payload.smplMesh);
     let lockYRoot = false;
     let lockPlantedFeet = false;
     let ankleLockOffsetForward = parseFloat(ankleOffsetForwardInput.value);
@@ -2214,6 +2230,9 @@ def _build_html(payload: dict[str, object]) -> str:
     lockPlantedFeetInput.checked = lockPlantedFeet;
     autoWorldAlignmentInput.checked = autoWorldAlignmentEnabled;
     sceneInvertedInput.checked = sceneInverted;
+    showSmplMeshInput.checked = showSmplMesh;
+    showSmplMeshInput.disabled = !payload.smplMesh;
+    downloadSmplMeshButton.disabled = !payload.smplMesh;
     rootTranslationLabel.textContent = payload.rootTranslationToggleLabel ?? "Lock global root drift";
     loopCountNode.textContent = String(detectedLoops.length);
     refreshAnkleLockOffsetLabels();
@@ -2588,6 +2607,19 @@ def _build_html(payload: dict[str, object]) -> str:
       headMesh,
       ...limbNodes.map((node) => node.mesh),
     ];
+    const smplMeshMaterial = new THREE.MeshStandardMaterial({{
+      color: 0x102028,
+      emissive: 0x2cecff,
+      emissiveIntensity: 0.36,
+      roughness: 0.42,
+      metalness: 0.06,
+      flatShading: true,
+      side: THREE.DoubleSide,
+    }});
+    const smplMeshObject = new THREE.Mesh(new THREE.BufferGeometry(), smplMeshMaterial);
+    smplMeshObject.visible = false;
+    scene.add(smplMeshObject);
+    let smplMeshGeometry = null;
     const skeletonLineMaterial = new THREE.LineBasicMaterial({{
       color: 0x64f7ff,
       transparent: true,
@@ -3294,7 +3326,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (frames.length === 0 || footJoints.length === 0) {{
         return footLockCorrections;
       }}
-      const loopTargets = [];
+      const targetsByFrameKey = new Map(frames.map((frame) => [frameFootLockKey(frame), []]));
       const targetOffset = ankleLockTargetOffsetVector();
       const contactHeight = 0.075;
       const contactSpeed = 0.028;
@@ -3318,22 +3350,42 @@ def _build_html(payload: dict[str, object]) -> str:
           const speedNext = next ? Math.hypot(next.point.x - sample.point.x, next.point.z - sample.point.z) : 0;
           return Math.min(speedPrev, speedNext) <= contactSpeed;
         }});
-        const anchorSamples = plantedSamples.length > 0 ? plantedSamples : validSamples;
+        if (plantedSamples.length === 0) {{
+          continue;
+        }}
+        const anchorSamples = plantedSamples;
         const anchorPoint = new THREE.Vector3(
           medianValue(anchorSamples.map((sample) => sample.point.x)),
           medianValue(anchorSamples.map((sample) => sample.point.y)),
           medianValue(anchorSamples.map((sample) => sample.point.z))
         ).add(targetOffset);
-        loopTargets.push({{
-          jointName,
-          anchorX: anchorPoint.x,
-          anchorY: anchorPoint.y,
-          anchorZ: anchorPoint.z,
-          weight: 1,
-        }});
+        const plantedIndexes = new Set(plantedSamples.map((sample) => sample.index));
+        for (const sample of validSamples) {{
+          let weight = plantedIndexes.has(sample.index) ? 1 : 0;
+          for (const plantedSample of plantedSamples) {{
+            const distance = Math.abs(sample.index - plantedSample.index);
+            if (distance <= 4) {{
+              weight = Math.max(weight, 1 - distance / 5);
+            }}
+          }}
+          if (weight <= 0) {{
+            continue;
+          }}
+          const targets = targetsByFrameKey.get(frameFootLockKey(sample.frame));
+          if (!targets) {{
+            continue;
+          }}
+          targets.push({{
+            jointName,
+            anchorX: anchorPoint.x,
+            anchorY: anchorPoint.y,
+            anchorZ: anchorPoint.z,
+            weight,
+          }});
+        }}
       }}
       for (const frame of frames) {{
-        footLockCorrections.set(frameFootLockKey(frame), loopTargets);
+        footLockCorrections.set(frameFootLockKey(frame), targetsByFrameKey.get(frameFootLockKey(frame)) ?? []);
       }}
       return footLockCorrections;
     }}
@@ -3379,9 +3431,18 @@ def _build_html(payload: dict[str, object]) -> str:
         if (chain.some((jointName) => !basePositions.has(jointName))) {{
           continue;
         }}
+        const targetWeight = Math.max(0, Math.min(1, Number(target.weight) || 0));
+        if (targetWeight <= 0) {{
+          continue;
+        }}
+        const originalAnkle = basePositions.get(ankleName);
+        const blendedTarget = originalAnkle.clone().lerp(
+          new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ),
+          targetWeight
+        );
         const solved = solveLegIkChain(
           chain.map((jointName) => basePositions.get(jointName).clone()),
-          new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
+          blendedTarget
         );
         chain.forEach((jointName, index) => {{
           lockedJointPositions.set(jointName, solved[index]);
@@ -3624,6 +3685,320 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
+    function buildBakedSmplMeshPayload() {{
+      const meshPayload = payload.smplMesh;
+      if (!meshPayload || !Array.isArray(meshPayload.frames) || !Array.isArray(meshPayload.faces)) {{
+        return null;
+      }}
+      const activeFrames = playbackState.frames ?? [];
+      const lockYDrift = Boolean(lockYRootInput.checked);
+      getCachedSceneBounds(fixedRoot);
+      const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
+      const frames = [];
+      activeFrames.forEach((frame, index) => {{
+        const meshFrame = findSmplMeshFrame(frame);
+        if (!meshFrame || !Array.isArray(meshFrame.vertices)) {{
+          return;
+        }}
+        activeRenderFrame = frame;
+        const translation = getFrameBakeTranslation(frame, lockYDrift);
+        const vertices = meshFrame.vertices.map((vertex) => {{
+          const transformed = transformSmplVertex(vertex, frame, translation);
+          return [transformed.x, transformed.y, transformed.z];
+        }});
+        frames.push({{
+          frameIndex: frames.length,
+          sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
+          timeSec: (frame.timeSec ?? 0) - firstSourceTime,
+          sourceTimeSec: frame.timeSec ?? 0,
+          rootTranslationApplied: translation,
+          vertices,
+        }});
+      }});
+      smoothBakedSmplFrames(frames);
+      const sourceStartFrame = frames.length > 0 ? frames[0].sourceFrameIndex : 0;
+      const sourceEndFrame = frames.length > 0 ? frames[frames.length - 1].sourceFrameIndex : sourceStartFrame;
+      const durationSec = frames.length > 1 ? frames[frames.length - 1].timeSec - frames[0].timeSec : 0;
+      return {{
+        schemaVersion: 1,
+        kind: "whamBakedSmplMeshPreview",
+        title: payload.title,
+        bodyModel: meshPayload.bodyModel ?? "smpl",
+        fps: payload.fps,
+        frameCount: frames.length,
+        durationSec,
+        faces: meshPayload.faces,
+        bakedPreviewConfiguration: {{
+          autoWorldAlignment: autoWorldAlignmentEnabled,
+          lockGlobalRootDrift: fixedRoot,
+          lockYDrift,
+          lockPlantedFeet,
+          ankleLockTargetOffset: {{
+            forward: ankleLockOffsetForward,
+            lateral: ankleLockOffsetLateral,
+            up: ankleLockOffsetUp,
+          }},
+          invertScene: sceneInverted,
+          selectedLoopIndex,
+          runtimeBaked: true,
+          postProcessingApplied: [
+            "cleanup_trim",
+            "cleanup_global_translation_delta",
+            "preview_refinement_alignment",
+            "preview_root_lock",
+            "preview_loop_selection",
+            "preview_scene_centering",
+            ...(lockPlantedFeet ? ["preview_leg_ik_vertex_blend"] : []),
+          ],
+        }},
+        loop: {{
+          enabled: currentLoop != null,
+          startFrame: 0,
+          endFrame: Math.max(0, frames.length - 1),
+          sourceStartFrame,
+          sourceEndFrame,
+          durationSec,
+          label: currentLoop?.label ?? "Full clip",
+        }},
+        transforms: {{
+          autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
+          rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
+          sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
+        }},
+        bounds: computeBakedSmplBounds(frames),
+        frames,
+      }};
+    }}
+
+    function smoothBakedSmplFrames(frames) {{
+      if (!Array.isArray(frames) || frames.length < 3) {{
+        return;
+      }}
+      const sourceVertices = frames.map((frame) => frame.vertices ?? []);
+      const weights = [1, 2, 3, 2, 1];
+      const radius = 2;
+      for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {{
+        const vertices = sourceVertices[frameIndex];
+        if (!Array.isArray(vertices) || vertices.length === 0) {{
+          continue;
+        }}
+        const smoothedVertices = vertices.map((vertex, vertexIndex) => {{
+          let totalWeight = 0;
+          const smoothed = [0, 0, 0];
+          for (let offset = -radius; offset <= radius; offset += 1) {{
+            const neighborIndex = frameIndex + offset;
+            if (neighborIndex < 0 || neighborIndex >= sourceVertices.length) {{
+              continue;
+            }}
+            const neighbor = sourceVertices[neighborIndex]?.[vertexIndex];
+            if (!Array.isArray(neighbor) || neighbor.length < 3) {{
+              continue;
+            }}
+            const weight = weights[offset + radius];
+            smoothed[0] += neighbor[0] * weight;
+            smoothed[1] += neighbor[1] * weight;
+            smoothed[2] += neighbor[2] * weight;
+            totalWeight += weight;
+          }}
+          if (totalWeight <= 0) {{
+            return vertex;
+          }}
+          return [
+            smoothed[0] / totalWeight,
+            smoothed[1] / totalWeight,
+            smoothed[2] / totalWeight,
+          ];
+        }});
+        frames[frameIndex] = {{
+          ...frames[frameIndex],
+          vertices: smoothedVertices,
+        }};
+      }}
+    }}
+
+    function computeBakedSmplBounds(frames) {{
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      let minZ = Number.POSITIVE_INFINITY;
+      let maxZ = Number.NEGATIVE_INFINITY;
+      for (const frame of frames) {{
+        for (const vertex of frame.vertices ?? []) {{
+          if (!Array.isArray(vertex) || vertex.length < 3) {{
+            continue;
+          }}
+          minX = Math.min(minX, vertex[0]);
+          maxX = Math.max(maxX, vertex[0]);
+          minY = Math.min(minY, vertex[1]);
+          maxY = Math.max(maxY, vertex[1]);
+          minZ = Math.min(minZ, vertex[2]);
+          maxZ = Math.max(maxZ, vertex[2]);
+        }}
+      }}
+      if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
+        minX = -0.5;
+        maxX = 0.5;
+        minY = -0.5;
+        maxY = 0.5;
+        minZ = -0.5;
+        maxZ = 0.5;
+      }}
+      return {{
+        minX,
+        maxX,
+        minY,
+        maxY,
+        minZ,
+        maxZ,
+        center: [
+          (minX + maxX) * 0.5,
+          (minY + maxY) * 0.5,
+          (minZ + maxZ) * 0.5,
+        ],
+        size: [
+          maxX - minX,
+          maxY - minY,
+          maxZ - minZ,
+        ],
+      }};
+    }}
+
+    function updateSmplMeshForFrame(frame) {{
+      const meshPayload = payload.smplMesh;
+      if (!meshPayload || !Array.isArray(meshPayload.frames) || !Array.isArray(meshPayload.faces)) {{
+        smplMeshObject.visible = false;
+        return;
+      }}
+      if (!showSmplMesh) {{
+        smplMeshObject.visible = false;
+        return;
+      }}
+      const meshFrame = findSmplMeshFrame(frame);
+      if (!meshFrame || !Array.isArray(meshFrame.vertices)) {{
+        smplMeshObject.visible = false;
+        return;
+      }}
+      const frameTranslation = getFrameTranslation(frame);
+      const positions = new Float32Array(meshFrame.vertices.length * 3);
+      meshFrame.vertices.forEach((vertex, index) => {{
+        const transformed = transformSmplVertex(vertex, frame, frameTranslation);
+        positions[index * 3] = transformed.x;
+        positions[index * 3 + 1] = transformed.y;
+        positions[index * 3 + 2] = transformed.z;
+      }});
+      const indices = new Uint32Array(meshPayload.faces.length * 3);
+      meshPayload.faces.forEach((face, index) => {{
+        indices[index * 3] = Number(face[0]) || 0;
+        indices[index * 3 + 1] = Number(face[1]) || 0;
+        indices[index * 3 + 2] = Number(face[2]) || 0;
+      }});
+      const nextGeometry = new THREE.BufferGeometry();
+      nextGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      nextGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+      nextGeometry.computeVertexNormals();
+      if (smplMeshGeometry) {{
+        smplMeshGeometry.dispose();
+      }}
+      smplMeshGeometry = nextGeometry;
+      smplMeshObject.geometry = nextGeometry;
+      smplMeshObject.visible = true;
+    }}
+
+    function findSmplMeshFrame(frame) {{
+      const frames = payload.smplMesh?.frames ?? [];
+      if (frames.length === 0) {{
+        return null;
+      }}
+      const sourceFrameIndex = Number.isInteger(frame.sourceFrameIndex)
+        ? frame.sourceFrameIndex
+        : Number.isInteger(frame.frameIndex)
+        ? frame.frameIndex
+        : null;
+      if (sourceFrameIndex != null) {{
+        const match = frames.find((candidate) => candidate.sourceFrameIndex === sourceFrameIndex);
+        if (match) {{
+          return match;
+        }}
+      }}
+      const localIndex = Math.max(0, Math.min(frames.length - 1, Math.floor(frameCursor)));
+      return frames[localIndex];
+    }}
+
+    function transformSmplVertex(vertex, frame, frameTranslation) {{
+      const worldPoint = toUncorrectedWorldPoint(vertex, frameTranslation);
+      if (lockPlantedFeet) {{
+        worldPoint.add(computeSmplFootLockCorrection(worldPoint, frame, frameTranslation));
+      }}
+      if (!suppressSceneOriginOffset) {{
+        worldPoint.sub(sceneOriginOffset);
+      }}
+      return worldPoint;
+    }}
+
+    function computeSmplFootLockCorrection(worldPoint, frame, frameTranslation) {{
+      const lockedPositions = computeLockedJointPositions(frame, frameTranslation);
+      if (!lockedPositions || lockedPositions.size === 0) {{
+        return new THREE.Vector3();
+      }}
+      const weightedDelta = new THREE.Vector3();
+      let totalWeight = 0;
+      for (const side of ["left", "right"]) {{
+        const chain = [`${{side}}_hip`, `${{side}}_knee`, `${{side}}_ankle`, `${{side}}_foot`];
+        const points = chain
+          .map((jointName) => {{
+            const source = frame?.joints?.[jointName];
+            if (!Array.isArray(source) || source.length < 3) {{
+              return null;
+            }}
+            return {{
+              jointName,
+              original: toUncorrectedWorldPoint(source, frameTranslation),
+              locked: lockedPositions.get(jointName) ?? null,
+            }};
+          }})
+          .filter((entry) => entry != null && entry.locked != null);
+        for (let index = 0; index < points.length - 1; index += 1) {{
+          const start = points[index];
+          const end = points[index + 1];
+          const distance = pointToSegmentDistance(worldPoint, start.original, end.original);
+          const radius = index === 0 ? 0.18 : 0.16;
+          const normalizedDistance = Math.max(0, Math.min(1, distance / radius));
+          const smoothFalloff = 1 - (normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance));
+          const weight = smoothFalloff * smoothFalloff;
+          if (weight <= 0) {{
+            continue;
+          }}
+          const startDelta = start.locked.clone().sub(start.original);
+          const endDelta = end.locked.clone().sub(end.original);
+          const segmentDelta = startDelta.add(endDelta).multiplyScalar(0.5);
+          weightedDelta.addScaledVector(segmentDelta, weight);
+          totalWeight += weight;
+        }}
+      }}
+      if (totalWeight <= 1e-8) {{
+        return new THREE.Vector3();
+      }}
+      const averageDelta = weightedDelta.multiplyScalar(1 / totalWeight);
+      const correction = averageDelta.multiplyScalar(Math.min(1, totalWeight));
+      const maxCorrection = 0.075;
+      if (correction.length() > maxCorrection) {{
+        correction.setLength(maxCorrection);
+      }}
+      return correction;
+    }}
+
+    function pointToSegmentDistance(point, start, end) {{
+      const segment = end.clone().sub(start);
+      const lengthSq = segment.lengthSq();
+      if (lengthSq <= 1e-8) {{
+        return point.distanceTo(start);
+      }}
+      const t = Math.max(0, Math.min(1, point.clone().sub(start).dot(segment) / lengthSq));
+      const projection = start.clone().addScaledVector(segment, t);
+      return point.distanceTo(projection);
+    }}
+
     function downloadBakedWearSkeleton() {{
       const exportPayload = buildBakedWearSkeletonPayload();
       const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
@@ -3634,6 +4009,25 @@ def _build_html(payload: dict[str, object]) -> str:
       const footLabel = lockPlantedFeetInput.checked ? "-lock-feet" : "";
       link.href = url;
       link.download = `${{payload.title}}-${{loopLabel}}${{yLabel}}${{footLabel}}.wear-skeleton.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }}
+
+    function downloadBakedSmplMesh() {{
+      const exportPayload = buildBakedSmplMeshPayload();
+      if (!exportPayload) {{
+        return;
+      }}
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const loopLabel = selectedLoopIndex >= 0 ? `loop-${{selectedLoopIndex + 1}}` : "full-clip";
+      const yLabel = lockYRootInput.checked ? "-lock-y" : "";
+      const footLabel = lockPlantedFeetInput.checked ? "-lock-feet" : "";
+      link.href = url;
+      link.download = `${{payload.title}}-${{loopLabel}}${{yLabel}}${{footLabel}}.wham-smpl-mesh.json`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -3992,6 +4386,13 @@ def _build_html(payload: dict[str, object]) -> str:
         activeRenderFrame = frame;
         const frameTranslation = getFrameTranslation(frame);
         hideConnectedSkeleton();
+        proceduralBodyMeshes.forEach((mesh) => {{
+          mesh.visible = !showSmplMesh;
+        }});
+        updateSmplMeshForFrame(frame);
+        if (showSmplMesh && smplMeshObject.visible) {{
+          return;
+        }}
       const pelvisJoint = getFrameJointWorld(frame, frameTranslation, "pelvis");
       const spine1Joint = getFrameJointWorld(frame, frameTranslation, "spine1");
       const spine2Joint = getFrameJointWorld(frame, frameTranslation, "spine2");
@@ -4398,11 +4799,18 @@ def _build_html(payload: dict[str, object]) -> str:
       invalidateSceneBoundsCache();
       applySceneReframe();
     }});
+    showSmplMeshInput.addEventListener("change", () => {{
+      showSmplMesh = showSmplMeshInput.checked && Boolean(payload.smplMesh);
+      refreshSceneFrame();
+    }});
     loopSelect.addEventListener("change", () => {{
       setSelectedLoop(parseInt(loopSelect.value, 10));
     }});
     downloadWearSkeletonButton.addEventListener("click", () => {{
       downloadBakedWearSkeleton();
+    }});
+    downloadSmplMeshButton.addEventListener("click", () => {{
+      downloadBakedSmplMesh();
     }});
     zoomInput.addEventListener("input", () => {{
       cameraTouched = true;

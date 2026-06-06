@@ -15,6 +15,11 @@ from exercise_motion_pkg.retarget_contract import build_target_rig_contract
 from exercise_motion_pkg.wham_convert import normalize_wham_output
 from exercise_motion_pkg.wham_retarget_source import export_wham_retarget_source
 from exercise_motion_pkg.wham_runner import run_wham_locally
+from exercise_motion_pkg.wham_smpl_preview import (
+    build_wham_smpl_runtime_mesh_payload,
+    load_wham_smpl_mesh_sequence,
+    write_baked_wham_smpl_preview_json,
+)
 from exercise_motion_pkg.youtube import download_youtube
 
 
@@ -49,6 +54,7 @@ class GenerateResult:
     raw_motion_json_path: Path
     target_rig_contract_path: Path
     retarget_source_path: Path | None
+    smpl_preview_json_path: Path | None
     copied_input_video_path: Path
     cleanup_stats: CleanupStats
     ground_metadata_path: Path | None
@@ -59,6 +65,8 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     input_video_path = prepare_input_video(request, paths)
     raw_motion_json_path = paths.raw_dir / "motion.raw.json"
     retarget_source_path: Path | None = None
+    smpl_preview_sequence = None
+    smpl_preview_json_path: Path | None = None
     if request.normalized_motion_json is not None:
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
     else:
@@ -95,6 +103,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             output_json=paths.retarget_dir / "wham.retarget_source.json",
             coordinate_space=request.wham_coordinate_space,
         )
+        smpl_preview_sequence = load_wham_smpl_mesh_sequence(
+            wham_results_pkl=wham_results_pkl,
+            body_model_root=request.body_model_root.expanduser().resolve(),
+            coordinate_space=request.wham_coordinate_space,
+        )
 
     raw_clip = load_motion_json(raw_motion_json_path)
     raw_preview_html_path = paths.preview_dir / "motion_preview.raw.html"
@@ -124,7 +137,27 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     save_motion_json(cleaned_motion_json_path, cleaned_clip)
 
     preview_html_path = paths.preview_dir / "motion_preview.html"
-    write_preview_html(preview_html_path, cleaned_clip, title=request.exercise_slug)
+    smpl_mesh_payload = None
+    if smpl_preview_sequence is not None:
+        smpl_preview_json_path = paths.retarget_dir / "wham.smpl_preview.baked.json"
+        smpl_preview_payload = write_baked_wham_smpl_preview_json(
+            smpl_preview_json_path,
+            sequence=smpl_preview_sequence,
+            raw_clip=raw_clip,
+            cleaned_clip=cleaned_clip,
+            title=request.exercise_slug,
+        )
+        smpl_mesh_payload = build_wham_smpl_runtime_mesh_payload(
+            sequence=smpl_preview_sequence,
+            raw_clip=raw_clip,
+            cleaned_clip=cleaned_clip,
+        )
+    write_preview_html(
+        preview_html_path,
+        cleaned_clip,
+        title=request.exercise_slug,
+        smpl_mesh_payload=smpl_mesh_payload,
+    )
     wear_skeleton_json_path = paths.wear_dir / "skeleton.preview.json"
     write_wear_skeleton_json(wear_skeleton_json_path, cleaned_clip, title=request.exercise_slug)
     target_rig_contract_path = paths.retarget_dir / "target_rig.contract.json"
@@ -146,6 +179,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         "targetRigContractPath": str(target_rig_contract_path),
         "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
         "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
+        "whamSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
         "cleanupStats": {
             "inputFrames": cleanup_stats.input_frames,
             "outputFrames": cleanup_stats.output_frames,
@@ -170,6 +204,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
             "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
             "targetRigContractPath": str(target_rig_contract_path),
+            "whamSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
         },
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2), encoding="utf-8")
@@ -182,6 +217,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         raw_motion_json_path=raw_motion_json_path,
         target_rig_contract_path=target_rig_contract_path,
         retarget_source_path=retarget_source_path,
+        smpl_preview_json_path=smpl_preview_json_path,
         copied_input_video_path=input_video_path,
         cleanup_stats=cleanup_stats,
         ground_metadata_path=ground_metadata_path,
