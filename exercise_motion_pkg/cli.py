@@ -11,6 +11,7 @@ from exercise_motion_pkg.physics_bundle import PhysicsBundleConfig, write_physic
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
 from exercise_motion_pkg.preview import write_preview_debug_json, write_preview_html, write_wear_skeleton_json
 from exercise_motion_pkg.video_utils import trim_video
+from exercise_motion_pkg.youtube import YouTubeRankingSettings, discover_and_rank_youtube_candidates
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +108,31 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--max-frame-width", type=int, default=960)
     detect.add_argument("--merge-gap-seconds", type=float, default=2.0)
     detect.add_argument("--confidence-threshold", type=float, default=0.45)
+
+    youtube_search = subparsers.add_parser(
+        "find-youtube-videos",
+        help="Find and rank YouTube candidate videos for exercises in a workout plan JSON.",
+    )
+    youtube_search.add_argument("--workout-plan-json", required=True)
+    youtube_search.add_argument("--out-json", required=True)
+    youtube_search.add_argument("--results-per-query", type=int, default=10)
+    youtube_search.add_argument("--max-candidates", type=int, default=6)
+    youtube_search.add_argument("--min-duration-seconds", type=int, default=20)
+    youtube_search.add_argument("--max-duration-seconds", type=int, default=120)
+    youtube_search.add_argument("--rank-with-litert", action="store_true")
+    youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=3)
+    youtube_search.add_argument("--vision-frames-per-candidate", type=int, default=4)
+    youtube_search.add_argument("--vision-download-workers", type=int, default=3)
+    youtube_search.add_argument("--vision-llm-workers", type=int, default=1)
+    youtube_search.add_argument("--litert-command")
+    youtube_search.add_argument("--litert-backend", default="gpu")
+    youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
+    youtube_search.add_argument("--no-litert-server", action="store_true")
+    youtube_search.add_argument("--litert-server-url", default="http://127.0.0.1:9379")
+    youtube_search.add_argument("--litert-server-port", type=int, default=9379)
+    youtube_search.add_argument("--keep-litert-server", action="store_true")
+    youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
+    youtube_search.add_argument("--include-disabled", action="store_true")
 
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
@@ -252,6 +278,34 @@ def main() -> None:
         else:
             print(f"Detected span start: {result.detected_span.start_seconds:.3f}")
             print(f"Detected span end: {result.detected_span.end_seconds:.3f}")
+        return
+    if args.command == "find-youtube-videos":
+        manifest = discover_and_rank_youtube_candidates(
+            workout_plan_json=Path(args.workout_plan_json),
+            out_json=Path(args.out_json),
+            settings=YouTubeRankingSettings(
+                results_per_query=args.results_per_query,
+                max_candidates=args.max_candidates,
+                min_duration_seconds=args.min_duration_seconds,
+                max_duration_seconds=args.max_duration_seconds,
+                rank_with_litert=args.rank_with_litert,
+                vision_candidates_per_exercise=args.vision_candidates_per_exercise,
+                vision_frames_per_candidate=args.vision_frames_per_candidate,
+                vision_download_workers=args.vision_download_workers,
+                vision_llm_workers=args.vision_llm_workers,
+                litert_command=args.litert_command,
+                litert_backend=args.litert_backend,
+                vision_model=args.vision_model,
+                include_disabled=args.include_disabled,
+                use_litert_server=not args.no_litert_server,
+                litert_server_url=args.litert_server_url,
+                litert_server_port=args.litert_server_port,
+                keep_litert_server=args.keep_litert_server,
+                vision_early_stop_score=args.vision_early_stop_score,
+            ),
+        )
+        print(f"YouTube candidates JSON: {Path(args.out_json).resolve()}")
+        print(f"Exercises: {len(manifest['exercises'])}")
         return
     if args.command == "trim-video":
         output_path = trim_video(
