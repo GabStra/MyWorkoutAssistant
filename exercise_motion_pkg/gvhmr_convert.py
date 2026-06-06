@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from exercise_motion_pkg.legacy_smpl_compat import ensure_legacy_smpl_runtime_compat
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES
 
@@ -26,6 +27,7 @@ def convert_gvhmr_results_to_motion_clip(
     body_model_root: Path,
     coordinate_space: str = "incam",
 ) -> MotionClip:
+    ensure_legacy_smpl_runtime_compat()
     try:
         import torch  # type: ignore
         import smplx  # type: ignore
