@@ -496,12 +496,15 @@ def extract_detection_payload_loose(raw: str) -> dict[str, object] | None:
 
     def extract_number_or_null(keys: tuple[str, ...]) -> float | None | object:
         for key in keys:
-            match = re.search(rf'"{key}"\s*:\s*(null|-?\d+(?:\.\d+)?)', text, flags=re.IGNORECASE)
+            match = re.search(rf'"{key}"\s*:\s*(null|-?\d+(?:\.\d+)*)', text, flags=re.IGNORECASE)
             if not match:
                 continue
             value = match.group(1).lower()
             if value == "null":
                 return None
+            if value.count(".") > 1:
+                head, *tail = value.split(".")
+                value = f"{head}.{''.join(tail)}"
             return float(value)
         return ...
 
@@ -526,15 +529,13 @@ def extract_detection_payload_loose(raw: str) -> dict[str, object] | None:
 
     start_seconds = extract_number_or_null(("movement_start_seconds", "movement_startseconds"))
     end_seconds = extract_number_or_null(("movement_end_seconds", "movement_endseconds"))
-    if start_seconds is ... or end_seconds is ...:
-        return None
 
     return {
         "movement_present": movement_present,
         "contains_movement_start": contains_start if contains_start is not None else False,
         "contains_movement_end": contains_end if contains_end is not None else False,
-        "movement_start_seconds": start_seconds if movement_present else None,
-        "movement_end_seconds": end_seconds if movement_present else None,
+        "movement_start_seconds": start_seconds if movement_present and start_seconds is not ... else None,
+        "movement_end_seconds": end_seconds if movement_present and end_seconds is not ... else None,
         "confidence": confidence,
         "summary": summary,
         "reason": reason,
