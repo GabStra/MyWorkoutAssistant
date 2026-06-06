@@ -6,24 +6,27 @@ param(
     [string]$YouTubeUrl,
 
     [string]$Workspace = "build/exercise_motion",
-    [string]$GvhmrRepoPath,
+    [string]$WhamRepoPath,
     [string]$BodyModelRoot,
-    [string]$GvhmrPython = "python",
-    [switch]$UseWslForGvhmr,
-    [string]$WslDistro = "Ubuntu",
-    [string]$WslCondaRoot = "/home/gabriele/miniforge3",
-    [string]$WslEnvName = "gvhmr",
+    [string]$WhamPython = "python",
+    [switch]$UseWhamDocker,
+    [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$WhamDockerGpus = "all",
+    [string]$WhamDockerShmSize = "8g",
+    [switch]$EstimateLocalOnly,
+    [switch]$RunSmplify,
     [switch]$SkipSegmentDetection,
     [switch]$UseSourceAsIs,
+    [double]$SegmentStartSeconds = -1.0,
+    [double]$SegmentEndSeconds = -1.0,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
     [string]$LiteRtModelFile = "gemma-4-E4B-it.litertlm",
     [string]$VisionModel = "gemma-4-E4B-it",
     [int]$VisionPort = 8090,
     [ValidateSet("cpu", "gpu", "npu")]
     [string]$LiteRtBackend = "gpu",
-    [ValidateSet("incam", "global")]
-    [string]$GvhmrCoordinateSpace = "incam",
-    [switch]$StaticCamera
+    [ValidateSet("world", "camera")]
+    [string]$WhamCoordinateSpace = "camera"
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,15 +96,31 @@ if ($SkipSegmentDetection -and $UseSourceAsIs) {
     throw "Use only one of -SkipSegmentDetection or -UseSourceAsIs."
 }
 
+$manualSegmentRequested = ($SegmentStartSeconds -ge 0.0) -or ($SegmentEndSeconds -ge 0.0)
+if ($manualSegmentRequested) {
+    if ($UseSourceAsIs -or $SkipSegmentDetection) {
+        throw "Manual segment seconds cannot be combined with -UseSourceAsIs or -SkipSegmentDetection."
+    }
+    if ($SegmentStartSeconds -lt 0.0 -or $SegmentEndSeconds -lt 0.0) {
+        throw "Provide both -SegmentStartSeconds and -SegmentEndSeconds when manually trimming."
+    }
+    if ($SegmentEndSeconds -le $SegmentStartSeconds) {
+        throw "-SegmentEndSeconds must be greater than -SegmentStartSeconds."
+    }
+}
+
 $repoRoot = Get-RepoRoot
-$defaultGvhmrRepoPath = Join-Path $repoRoot "third_party\GVHMR"
-if ([string]::IsNullOrWhiteSpace($GvhmrRepoPath)) {
-    $GvhmrRepoPath = $defaultGvhmrRepoPath
+$defaultWhamRepoPath = "C:\Users\gabri\Downloads\WHAM"
+if (-not (Test-Path -LiteralPath $defaultWhamRepoPath)) {
+    $defaultWhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
+}
+if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
+    $WhamRepoPath = $defaultWhamRepoPath
 }
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
-    $BodyModelRoot = Join-Path $GvhmrRepoPath "inputs\checkpoints\body_models"
+    $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"
 }
-$resolvedGvhmrRepoPath = Resolve-StrictPath $GvhmrRepoPath
+$resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Workspace))
 $pythonCommand = Get-PythonCommand
@@ -144,9 +163,9 @@ if ([string]::IsNullOrWhiteSpace($ExerciseName)) {
 
 $exerciseWorkspace = Join-Path $workspaceRoot $ExerciseSlug
 $inputDir = Join-Path $exerciseWorkspace "input"
-$rawGvhmrDir = Join-Path $exerciseWorkspace "raw\gvhmr"
+$rawWhamDir = Join-Path $exerciseWorkspace "raw\wham"
 New-Item -ItemType Directory -Force -Path $inputDir | Out-Null
-New-Item -ItemType Directory -Force -Path $rawGvhmrDir | Out-Null
+New-Item -ItemType Directory -Force -Path $rawWhamDir | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($VideoPath)) {
     $sourceVideo = Resolve-StrictPath $VideoPath
@@ -176,6 +195,23 @@ print(video_path.resolve())
 
 if ($UseSourceAsIs) {
     Write-Host "Using source video as-is. Segment detection and trimming are disabled."
+}
+elseif ($manualSegmentRequested) {
+    Write-Host "Using manual video segment $SegmentStartSeconds-$SegmentEndSeconds seconds. Segment detection is disabled."
+    $trimmedInputVideoPath = Join-Path $inputDir "trimmed_source.mp4"
+    $trimArgs = @(
+        "-m", "exercise_motion_pkg.cli",
+        "trim-video",
+        "--video-path", $resolvedInputVideoPath,
+        "--out-video", $trimmedInputVideoPath,
+        "--start-seconds", "$SegmentStartSeconds",
+        "--end-seconds", "$SegmentEndSeconds"
+    )
+    & $pythonCommand @trimArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Video trimming failed with exit code $LASTEXITCODE."
+    }
+    $resolvedInputVideoPath = [System.IO.Path]::GetFullPath($trimmedInputVideoPath)
 }
 elseif (-not $SkipSegmentDetection) {
     $segmentRunnerScript = Join-Path $PSScriptRoot "run_exercise_segment_detection.ps1"
@@ -219,39 +255,42 @@ elseif (-not $SkipSegmentDetection) {
     $resolvedInputVideoPath = [System.IO.Path]::GetFullPath($trimmedInputVideoPath)
 }
 
-$gvhmrRunnerArgs = @(
-    "-GvhmrRepoPath", $resolvedGvhmrRepoPath,
+$whamRunnerArgs = @(
+    "-WhamRepoPath", $resolvedWhamRepoPath,
     "-InputVideo", $resolvedInputVideoPath,
-    "-OutputRoot", $rawGvhmrDir,
-    "-PythonCommand", $GvhmrPython
+    "-OutputRoot", $rawWhamDir,
+    "-PythonCommand", $WhamPython
 )
-if ($UseWslForGvhmr) {
-    $gvhmrRunnerArgs += @(
-        "-UseWsl",
-        "-WslDistro", $WslDistro,
-        "-WslCondaRoot", $WslCondaRoot,
-        "-WslEnvName", $WslEnvName
+if ($EstimateLocalOnly) {
+    $whamRunnerArgs += "-EstimateLocalOnly"
+}
+if ($RunSmplify) {
+    $whamRunnerArgs += "-RunSmplify"
+}
+if ($UseWhamDocker) {
+    $whamRunnerArgs += @(
+        "-UseDocker",
+        "-DockerImage", $WhamDockerImage,
+        "-DockerGpus", $WhamDockerGpus,
+        "-DockerShmSize", $WhamDockerShmSize
     )
 }
-if ($StaticCamera) {
-    $gvhmrRunnerArgs += "-StaticCamera"
+
+$whamCachedOutputDir = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
+if (Test-Path -LiteralPath $whamCachedOutputDir) {
+    Remove-Item -LiteralPath $whamCachedOutputDir -Recurse -Force
 }
 
-$gvhmrCachedOutputDir = Join-Path $rawGvhmrDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
-if (Test-Path -LiteralPath $gvhmrCachedOutputDir) {
-    Remove-Item -LiteralPath $gvhmrCachedOutputDir -Recurse -Force
-}
-
-$gvhmrRunnerScript = Join-Path $PSScriptRoot "run_gvhmr_local.ps1"
-& pwsh $gvhmrRunnerScript @gvhmrRunnerArgs
+$whamRunnerScript = Join-Path $PSScriptRoot "run_wham_local.ps1"
+& pwsh $whamRunnerScript @whamRunnerArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "GVHMR stage failed with exit code $LASTEXITCODE."
+    throw "WHAM stage failed with exit code $LASTEXITCODE."
 }
 
-$gvhmrResultsPt = Join-Path $rawGvhmrDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
-$gvhmrResultsPt = Join-Path $gvhmrResultsPt "hmr4d_results.pt"
-if (-not (Test-Path -LiteralPath $gvhmrResultsPt)) {
-    throw "GVHMR stage finished but did not produce hmr4d_results.pt at '$gvhmrResultsPt'."
+$whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
+$whamResultsPkl = Join-Path $whamResultsPkl "wham_output.pkl"
+if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
+    throw "WHAM stage finished but did not produce wham_output.pkl at '$whamResultsPkl'."
 }
 
 $generateArgs = @(
@@ -260,17 +299,17 @@ $generateArgs = @(
     "--exercise-slug", $ExerciseSlug,
     "--workspace", $Workspace,
     "--video-path", $resolvedInputVideoPath,
-    "--gvhmr-results-pt", $gvhmrResultsPt,
+    "--wham-results-pkl", $whamResultsPkl,
     "--body-model-root", $resolvedBodyModelRoot,
-    "--gvhmr-coordinate-space", $GvhmrCoordinateSpace
+    "--wham-coordinate-space", $WhamCoordinateSpace
 )
-if (-not [string]::IsNullOrWhiteSpace($resolvedGvhmrRepoPath)) {
-    $generateArgs += @("--gvhmr-repo-path", $resolvedGvhmrRepoPath)
+if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
+    $generateArgs += @("--wham-repo-path", $resolvedWhamRepoPath)
 }
-if ($StaticCamera) {
-    $generateArgs += "--gvhmr-static-camera"
+if ($EstimateLocalOnly) {
+    $generateArgs += "--wham-estimate-local-only"
 }
-$generateInterpreter = $pythonCommand
+$generateInterpreter = $WhamPython
 & $generateInterpreter @generateArgs
 if ($LASTEXITCODE -ne 0) {
     throw "exercise motion conversion stage failed with exit code $LASTEXITCODE."
@@ -290,7 +329,7 @@ $groundArgs = @(
     "--preview-html", (Join-Path $exerciseWorkspace "preview\\motion_preview.html"),
     "--preview-title", $ExerciseSlug
 )
-& $pythonCommand @groundArgs
+& $generateInterpreter @groundArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Ground metadata generation failed with exit code $LASTEXITCODE."
 }

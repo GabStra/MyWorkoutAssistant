@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
-from exercise_motion_pkg.gvhmr import normalize_gvhmr_output
-from exercise_motion_pkg.gvhmr_retarget_source import export_gvhmr_retarget_source
-from exercise_motion_pkg.gvhmr_runner import run_gvhmr_locally
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.paths import PipelinePaths
-from exercise_motion_pkg.preview import write_preview_html
+from exercise_motion_pkg.preview import write_preview_html, write_wear_skeleton_json
 from exercise_motion_pkg.retarget_contract import build_target_rig_contract
+from exercise_motion_pkg.wham_convert import normalize_wham_output
+from exercise_motion_pkg.wham_retarget_source import export_wham_retarget_source
+from exercise_motion_pkg.wham_runner import run_wham_locally
 from exercise_motion_pkg.youtube import download_youtube
 
 
@@ -24,14 +24,17 @@ class GenerateRequest:
     workspace: Path
     youtube_url: str | None = None
     video_path: Path | None = None
-    gvhmr_repo_path: Path | None = None
-    gvhmr_results_pt: Path | None = None
+    wham_repo_path: Path | None = None
+    wham_results_pkl: Path | None = None
     body_model_root: Path | None = None
-    gvhmr_python_command: str = "python"
-    gvhmr_static_camera: bool = False
-    gvhmr_coordinate_space: str = "incam"
+    wham_python_command: str = "python"
+    wham_estimate_local_only: bool = False
+    wham_run_smplify: bool = False
+    wham_coordinate_space: str = "camera"
     normalized_motion_json: Path | None = None
-    smoothing_window: int = 5
+    one_euro_min_cutoff: float = 0.6
+    one_euro_beta: float = 0.05
+    one_euro_derivative_cutoff: float = 1.0
     motion_threshold: float = 0.015
     padding_frames: int = 3
 
@@ -41,10 +44,11 @@ class GenerateResult:
     manifest_path: Path
     preview_html_path: Path
     raw_preview_html_path: Path
+    wear_skeleton_json_path: Path
     cleaned_motion_json_path: Path
     raw_motion_json_path: Path
     target_rig_contract_path: Path
-    gvhmr_retarget_source_path: Path | None
+    retarget_source_path: Path | None
     copied_input_video_path: Path
     cleanup_stats: CleanupStats
     ground_metadata_path: Path | None
@@ -54,41 +58,42 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     paths = PipelinePaths.create(request.workspace, request.exercise_slug)
     input_video_path = prepare_input_video(request, paths)
     raw_motion_json_path = paths.raw_dir / "motion.raw.json"
-    gvhmr_retarget_source_path: Path | None = None
+    retarget_source_path: Path | None = None
     if request.normalized_motion_json is not None:
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
     else:
         if request.body_model_root is None:
-            raise ValueError("body_model_root is required when using GVHMR output.")
-        gvhmr_output_dir = paths.raw_dir / "gvhmr"
-        gvhmr_output_dir.mkdir(parents=True, exist_ok=True)
-        gvhmr_results_pt = request.gvhmr_results_pt or (gvhmr_output_dir / "hmr4d_results.pt")
-        if request.gvhmr_results_pt is not None:
-            gvhmr_results_pt = request.gvhmr_results_pt.expanduser().resolve()
-        elif request.gvhmr_repo_path is not None:
-            gvhmr_result = run_gvhmr_locally(
-                gvhmr_repo_path=request.gvhmr_repo_path.expanduser().resolve(),
+            raise ValueError("body_model_root is required when using WHAM output.")
+        wham_output_dir = paths.raw_dir / "wham"
+        wham_output_dir.mkdir(parents=True, exist_ok=True)
+        wham_results_pkl = request.wham_results_pkl or (wham_output_dir / "wham_output.pkl")
+        if request.wham_results_pkl is not None:
+            wham_results_pkl = request.wham_results_pkl.expanduser().resolve()
+        elif request.wham_repo_path is not None:
+            wham_result = run_wham_locally(
+                wham_repo_path=request.wham_repo_path.expanduser().resolve(),
                 input_video=input_video_path,
-                output_root=gvhmr_output_dir,
+                output_root=wham_output_dir,
                 logs_dir=paths.logs_dir,
-                python_command=request.gvhmr_python_command,
-                static_camera=request.gvhmr_static_camera,
+                python_command=request.wham_python_command,
+                estimate_local_only=request.wham_estimate_local_only,
+                run_smplify=request.wham_run_smplify,
             )
-            gvhmr_results_pt = gvhmr_result.results_pt
+            wham_results_pkl = wham_result.results_pkl
         else:
             raise ValueError(
-                "Provide normalized_motion_json, or provide body_model_root with either gvhmr_repo_path or gvhmr_results_pt."
+                "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
             )
-        normalize_gvhmr_output(
-            gvhmr_results_pt=gvhmr_results_pt,
+        normalize_wham_output(
+            wham_results_pkl=wham_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
-            coordinate_space=request.gvhmr_coordinate_space,
+            coordinate_space=request.wham_coordinate_space,
         )
-        gvhmr_retarget_source_path = export_gvhmr_retarget_source(
-            gvhmr_results_pt=gvhmr_results_pt,
-            output_json=paths.retarget_dir / "gvhmr.retarget_source.json",
-            coordinate_space=request.gvhmr_coordinate_space,
+        retarget_source_path = export_wham_retarget_source(
+            wham_results_pkl=wham_results_pkl,
+            output_json=paths.retarget_dir / "wham.retarget_source.json",
+            coordinate_space=request.wham_coordinate_space,
         )
 
     raw_clip = load_motion_json(raw_motion_json_path)
@@ -96,7 +101,9 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     write_preview_html(raw_preview_html_path, raw_clip, title=f"{request.exercise_slug}-raw")
     cleaned_clip, cleanup_stats = cleanup_motion_clip(
         raw_clip,
-        smoothing_window=request.smoothing_window,
+        one_euro_min_cutoff=request.one_euro_min_cutoff,
+        one_euro_beta=request.one_euro_beta,
+        one_euro_derivative_cutoff=request.one_euro_derivative_cutoff,
         motion_threshold=request.motion_threshold,
         padding_frames=request.padding_frames,
     )
@@ -118,6 +125,8 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
 
     preview_html_path = paths.preview_dir / "motion_preview.html"
     write_preview_html(preview_html_path, cleaned_clip, title=request.exercise_slug)
+    wear_skeleton_json_path = paths.wear_dir / "skeleton.preview.json"
+    write_wear_skeleton_json(wear_skeleton_json_path, cleaned_clip, title=request.exercise_slug)
     target_rig_contract_path = paths.retarget_dir / "target_rig.contract.json"
     target_rig_contract_path.write_text(
         json.dumps(build_target_rig_contract(), indent=2),
@@ -132,9 +141,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         "cleanedMotionJsonPath": str(cleaned_motion_json_path),
         "rawPreviewHtmlPath": str(raw_preview_html_path),
         "previewHtmlPath": str(preview_html_path),
+        "wearSkeletonJsonPath": str(wear_skeleton_json_path),
         "groundMetadataPath": str(ground_metadata_path),
         "targetRigContractPath": str(target_rig_contract_path),
-        "gvhmrRetargetSourcePath": str(gvhmr_retarget_source_path) if gvhmr_retarget_source_path is not None else None,
+        "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
+        "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
         "cleanupStats": {
             "inputFrames": cleanup_stats.input_frames,
             "outputFrames": cleanup_stats.output_frames,
@@ -144,11 +155,20 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             "averageRootHeightAfter": cleanup_stats.average_root_height_after,
         },
         "groundMetadata": ground_metadata.to_dict(),
+        "postProcessing": {
+            "applied": True,
+            "steps": [
+                "ground_plane_fitting",
+                "root_translation_one_euro_xz",
+            ],
+        },
         "nextStage": {
-            "status": "pending_offline_retarget",
-            "description": "Retarget offline from the GVHMR SMPL source and cleaned motion review clip to the fixed humanoid rig, then export glb/glTF for Wear.",
+            "status": "wear_preview_skeleton_ready",
+            "description": "Render the baked preview skeleton directly on Wear. It already includes preview alignment, root-drift lock, active loop selection, and centering.",
             "cleanedMotionJsonPath": str(cleaned_motion_json_path),
-            "gvhmrRetargetSourcePath": str(gvhmr_retarget_source_path) if gvhmr_retarget_source_path is not None else None,
+            "wearSkeletonJsonPath": str(wear_skeleton_json_path),
+            "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
+            "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
             "targetRigContractPath": str(target_rig_contract_path),
         },
     }
@@ -157,10 +177,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         manifest_path=manifest_path,
         preview_html_path=preview_html_path,
         raw_preview_html_path=raw_preview_html_path,
+        wear_skeleton_json_path=wear_skeleton_json_path,
         cleaned_motion_json_path=cleaned_motion_json_path,
         raw_motion_json_path=raw_motion_json_path,
         target_rig_contract_path=target_rig_contract_path,
-        gvhmr_retarget_source_path=gvhmr_retarget_source_path,
+        retarget_source_path=retarget_source_path,
         copied_input_video_path=input_video_path,
         cleanup_stats=cleanup_stats,
         ground_metadata_path=ground_metadata_path,

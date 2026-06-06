@@ -5,14 +5,14 @@ Pipeline for turning an exercise video into a cleaned, reviewable motion clip th
 Current scope:
 
 - accepts a YouTube URL or local video file
-- runs GVHMR from a prepared local checkout, or consumes an existing `hmr4d_results.pt`
-- reconstructs joints from GVHMR `smpl_params_incam` or `smpl_params_global`
-- performs cleanup: trim idle frames, estimate support ground, stabilize drift, smooth jitter
+- runs WHAM from a prepared local checkout, or consumes an existing `wham_output.pkl`
+- reconstructs joints from WHAM `pose_world` or `pose`
+- performs automated post-processing: ground-plane fitting, soft root-height clamping, foot contact detection, foot locking, and support-segment root stabilization
 - writes `ground.metadata.json` plus embedded `metadata.ground`
 - writes a standalone HTML/WebGL preview
 - writes an offline retarget handoff:
   - fixed target rig contract
-  - GVHMR SMPL retarget source JSON when `hmr4d_results.pt` is available
+  - WHAM SMPL retarget source JSON when `wham_output.pkl` is available
 
 Not in scope:
 
@@ -27,25 +27,24 @@ Not in scope:
 pip install -e .[motion,test]
 ```
 
-## GVHMR Setup
+## WHAM Setup
 
-Clone and prepare the official GVHMR repo locally:
+Clone and prepare the official WHAM repo locally:
 
-1. Clone `https://github.com/zju3dv/GVHMR`
+1. Clone `https://github.com/yohanshin/WHAM`
 2. Follow the repo install instructions
 3. Make sure these required assets exist:
-   - `tools/demo/demo.py`
-   - `inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt`
-   - `inputs/checkpoints/hmr2/epoch=10-step=25000.ckpt`
-   - `inputs/checkpoints/vitpose/vitpose-h-multi-coco.pth`
-   - `inputs/checkpoints/yolo/yolov8x.pt`
-   - `inputs/checkpoints/body_models/smpl/SMPL_NEUTRAL.pkl`
-   - `inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz`
+   - `demo.py`
+   - `checkpoints/wham_vit_w_3dpw.pth.tar`
+   - `checkpoints/hmr2a.ckpt`
+   - `checkpoints/vitpose-h-multi-coco.pth`
+   - `checkpoints/yolov8x.pt`
+   - `dataset/body_models/smpl/SMPL_NEUTRAL.pkl`
 
 Repo defaults:
 
-- GVHMR repo: `C:\Users\gabri\Downloads\GVHMR`
-- body model root: `C:\Users\gabri\Downloads\GVHMR\inputs\checkpoints\body_models`
+- WHAM repo: `C:\Users\gabri\Downloads\WHAM`
+- body model root: `C:\Users\gabri\Downloads\WHAM\dataset\body_models`
 - workspace: `build/exercise_motion`
 
 ## Repo Runner
@@ -71,30 +70,30 @@ Key overrides:
 pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -ExerciseSlug burpee `
   -VideoPath "C:\path\to\video.mp4" `
-  -GvhmrRepoPath "C:\Users\gabri\Downloads\GVHMR" `
-  -BodyModelRoot "C:\Users\gabri\Downloads\GVHMR\inputs\checkpoints\body_models" `
-  -GvhmrPython "python" `
-  -StaticCamera
+  -WhamRepoPath "C:\Users\gabri\Downloads\WHAM" `
+  -BodyModelRoot "C:\Users\gabri\Downloads\WHAM\dataset\body_models" `
+  -WhamPython "python" `
+  -EstimateLocalOnly
 ```
 
 Runtime behavior:
 
 1. copies or downloads the source video into `build/exercise_motion/<slug>/input`
 2. optionally detects the exercise span and trims the clip first
-3. runs GVHMR and writes `hmr4d_results.pt` under `build/exercise_motion/<slug>/raw/gvhmr/<video-stem>/`
+3. runs WHAM and writes `wham_output.pkl` under `build/exercise_motion/<slug>/raw/wham/<video-stem>/`
 4. converts the result into repo motion JSON
-5. cleans the motion and regenerates motion-derived ground metadata
+5. applies the automated post-processing pass and regenerates motion-derived ground metadata
 6. writes raw, cleaned, preview, and manifest artifacts
 
 Main artifacts:
 
 - `manifest.json`
 - `raw/motion.raw.json`
-- `raw/gvhmr/<video-stem>/hmr4d_results.pt`
+- `raw/wham/<video-stem>/wham_output.pkl`
 - `cleaned/motion.cleaned.json`
 - `cleaned/ground.metadata.json`
 - `retarget/target_rig.contract.json`
-- `retarget/gvhmr.retarget_source.json` when the pipeline ran from GVHMR output
+- `retarget/wham.retarget_source.json` when the pipeline ran from WHAM output
 - `preview/motion_preview.html`
 
 ## Local LLM Segment Detection
@@ -120,7 +119,7 @@ build/exercise_motion/<video-stem-or-slug>/segment_detection/segment_detection.j
 build/exercise_motion/<video-stem-or-slug>/segment_detection/frames/...
 ```
 
-The resulting JSON contains the selected span that the main generator can trim before GVHMR runs.
+The resulting JSON contains the selected span that the main generator can trim before WHAM runs.
 
 ## Normalized Motion Contract
 
@@ -149,18 +148,18 @@ If you already have a normalized motion JSON, pass `--normalized-motion-json` an
 python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --youtube-url "https://www.youtube.com/watch?v=eFYv8Skf66g" `
-  --gvhmr-repo-path "C:\\Users\\gabri\\Downloads\\GVHMR" `
-  --body-model-root "C:\\Users\\gabri\\Downloads\\GVHMR\\inputs\\checkpoints\\body_models"
+  --wham-repo-path "C:\\Users\\gabri\\Downloads\\WHAM" `
+  --body-model-root "C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models"
 ```
 
-If you already ran GVHMR yourself:
+If you already ran WHAM yourself:
 
 ```powershell
 python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --video-path "C:\\path\\to\\video.mp4" `
-  --gvhmr-results-pt "C:\\path\\to\\hmr4d_results.pt" `
-  --body-model-root "C:\\Users\\gabri\\Downloads\\GVHMR\\inputs\\checkpoints\\body_models"
+  --wham-results-pkl "C:\\path\\to\\wham_output.pkl" `
+  --body-model-root "C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models"
 ```
 
 ## Kinematic Refinement

@@ -9,18 +9,18 @@ from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
 from exercise_motion_pkg.physics_bundle import PhysicsBundleConfig, write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
-from exercise_motion_pkg.preview import write_preview_debug_json, write_preview_html
+from exercise_motion_pkg.preview import write_preview_debug_json, write_preview_html, write_wear_skeleton_json
 from exercise_motion_pkg.video_utils import trim_video
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="exercise-motion",
-        description="Generate a cleaned, previewable exercise motion clip from a video and GVHMR output.",
+        description="Generate a cleaned, previewable exercise motion clip from a video and WHAM output.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    generate = subparsers.add_parser("generate", help="Run the video -> GVHMR -> cleanup -> preview pipeline.")
+    generate = subparsers.add_parser("generate", help="Run the video -> WHAM -> cleanup -> preview pipeline.")
     generate.add_argument("--exercise-slug", required=True, help="Stable slug for the output workspace.")
     generate.add_argument(
         "--workspace",
@@ -31,38 +31,45 @@ def build_parser() -> argparse.ArgumentParser:
     source_group.add_argument("--youtube-url", help="YouTube URL to download and process.")
     source_group.add_argument("--video-path", help="Existing local video path to process.")
     generate.add_argument(
-        "--gvhmr-repo-path",
-        help="Local GVHMR checkout prepared for inference. Required unless --normalized-motion-json is supplied.",
+        "--wham-repo-path",
+        help="Local WHAM checkout prepared for inference. Required unless --normalized-motion-json is supplied.",
     )
     generate.add_argument(
-        "--gvhmr-results-pt",
-        help="Existing GVHMR hmr4d_results.pt path inside or outside the GVHMR repo. If supplied, local inference is skipped.",
+        "--wham-results-pkl",
+        help="Existing WHAM wham_output.pkl path inside or outside the WHAM repo. If supplied, local inference is skipped.",
     )
     generate.add_argument(
         "--body-model-root",
-        help="Directory containing the SMPL/SMPLX body model folders used to reconstruct joints from GVHMR output.",
+        help="Directory containing the SMPL body model folders used to reconstruct joints from WHAM output.",
     )
     generate.add_argument(
-        "--gvhmr-python-command",
+        "--wham-python-command",
         default="python",
-        help="Python interpreter or command to run GVHMR and the GVHMR-backed conversion stage.",
+        help="Python interpreter or command to run WHAM and the WHAM-backed conversion stage.",
     )
     generate.add_argument(
-        "--gvhmr-static-camera",
+        "--wham-estimate-local-only",
         action="store_true",
-        help="Pass -s to GVHMR to skip visual odometry for static camera clips.",
+        help="Skip SLAM and only produce camera-space motion from WHAM.",
     )
     generate.add_argument(
-        "--gvhmr-coordinate-space",
-        choices=("incam", "global"),
-        default="incam",
-        help="Which GVHMR SMPL parameter set to convert into the repo motion clip. Default: incam",
+        "--wham-run-smplify",
+        action="store_true",
+        help="Run WHAM's Temporal SMPLify refinement before conversion.",
+    )
+    generate.add_argument(
+        "--wham-coordinate-space",
+        choices=("world", "camera"),
+        default="camera",
+        help="Which WHAM pose/translation space to convert into the repo motion clip. Default: camera",
     )
     generate.add_argument(
         "--normalized-motion-json",
-        help="Existing normalized motion JSON. If supplied, GVHMR execution and conversion are skipped.",
+        help="Existing normalized motion JSON. If supplied, WHAM execution and conversion are skipped.",
     )
-    generate.add_argument("--smoothing-window", type=int, default=5)
+    generate.add_argument("--one-euro-min-cutoff", type=float, default=0.6)
+    generate.add_argument("--one-euro-beta", type=float, default=0.05)
+    generate.add_argument("--one-euro-derivative-cutoff", type=float, default=1.0)
     generate.add_argument("--motion-threshold", type=float, default=0.015)
     generate.add_argument("--padding-frames", type=int, default=3)
 
@@ -71,6 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--out-html", required=True)
     preview.add_argument("--title", default="exercise-motion-preview")
     preview.add_argument("--render-debug-json", help="Optional JSON export of the exact joint coordinates used by the preview renderer.")
+    preview.add_argument("--wear-skeleton-json", help="Optional Wear-ready JSON export of the exact baked preview skeleton.")
+    preview.add_argument("--wear-skeleton-loop-index", type=int, help="Loop index to bake for --wear-skeleton-json. Use -1 for full clip. Defaults to first detected loop.")
+    preview.add_argument("--wear-skeleton-lock-y-drift", action="store_true", help="Also lock root Y drift in the baked Wear skeleton.")
+
+    wear_skeleton = subparsers.add_parser(
+        "wear-skeleton",
+        help="Export the exact baked preview skeleton coordinates as Wear-ready JSON.",
+    )
+    wear_skeleton.add_argument("--motion-json", required=True)
+    wear_skeleton.add_argument("--out-json", required=True)
+    wear_skeleton.add_argument("--title", default="exercise-motion-preview")
+    wear_skeleton.add_argument("--loop-index", type=int, help="Loop index to bake. Use -1 for full clip. Defaults to first detected loop.")
+    wear_skeleton.add_argument("--lock-y-drift", action="store_true", help="Also lock root Y drift in the baked Wear skeleton.")
 
     detect = subparsers.add_parser("detect-segment", help="Use a local multimodal model to detect the exercise span in a video.")
     detect.add_argument("--video-path", required=True)
@@ -142,14 +162,17 @@ def main() -> None:
                 workspace=Path(args.workspace),
                 youtube_url=args.youtube_url,
                 video_path=Path(args.video_path) if args.video_path else None,
-                gvhmr_repo_path=Path(args.gvhmr_repo_path) if args.gvhmr_repo_path else None,
-                gvhmr_results_pt=Path(args.gvhmr_results_pt) if args.gvhmr_results_pt else None,
+                wham_repo_path=Path(args.wham_repo_path) if args.wham_repo_path else None,
+                wham_results_pkl=Path(args.wham_results_pkl) if args.wham_results_pkl else None,
                 body_model_root=Path(args.body_model_root) if args.body_model_root else None,
-                gvhmr_python_command=args.gvhmr_python_command,
-                gvhmr_static_camera=args.gvhmr_static_camera,
-                gvhmr_coordinate_space=args.gvhmr_coordinate_space,
+                wham_python_command=args.wham_python_command,
+                wham_estimate_local_only=args.wham_estimate_local_only,
+                wham_run_smplify=args.wham_run_smplify,
+                wham_coordinate_space=args.wham_coordinate_space,
                 normalized_motion_json=Path(args.normalized_motion_json) if args.normalized_motion_json else None,
-                smoothing_window=args.smoothing_window,
+                one_euro_min_cutoff=args.one_euro_min_cutoff,
+                one_euro_beta=args.one_euro_beta,
+                one_euro_derivative_cutoff=args.one_euro_derivative_cutoff,
                 motion_threshold=args.motion_threshold,
                 padding_frames=args.padding_frames,
             )
@@ -157,10 +180,11 @@ def main() -> None:
         print(f"Manifest: {result.manifest_path}")
         print(f"Preview HTML: {result.preview_html_path}")
         print(f"Raw preview HTML: {result.raw_preview_html_path}")
+        print(f"Wear skeleton JSON: {result.wear_skeleton_json_path}")
         print(f"Cleaned motion JSON: {result.cleaned_motion_json_path}")
         print(f"Target rig contract JSON: {result.target_rig_contract_path}")
-        if result.gvhmr_retarget_source_path is not None:
-            print(f"GVHMR retarget source JSON: {result.gvhmr_retarget_source_path}")
+        if result.retarget_source_path is not None:
+            print(f"WHAM retarget source JSON: {result.retarget_source_path}")
         if result.ground_metadata_path is not None:
             print(f"Ground metadata JSON: {result.ground_metadata_path}")
         return
@@ -174,7 +198,27 @@ def main() -> None:
         )
         if args.render_debug_json:
             print(f"Preview render debug JSON: {Path(args.render_debug_json).resolve()}")
+        if args.wear_skeleton_json:
+            write_wear_skeleton_json(
+                Path(args.wear_skeleton_json),
+                clip,
+                title=args.title,
+                selected_loop_index=args.wear_skeleton_loop_index,
+                lock_y_drift=args.wear_skeleton_lock_y_drift,
+            )
+            print(f"Wear skeleton JSON: {Path(args.wear_skeleton_json).resolve()}")
         print(f"Preview HTML: {Path(args.out_html).resolve()}")
+        return
+    if args.command == "wear-skeleton":
+        clip = load_motion_json(Path(args.motion_json))
+        write_wear_skeleton_json(
+            Path(args.out_json),
+            clip,
+            title=args.title,
+            selected_loop_index=args.loop_index,
+            lock_y_drift=args.lock_y_drift,
+        )
+        print(f"Wear skeleton JSON: {Path(args.out_json).resolve()}")
         return
     if args.command == "detect-segment":
         from exercise_motion_pkg.segment_detection import (
