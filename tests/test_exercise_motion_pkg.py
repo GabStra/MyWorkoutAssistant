@@ -30,12 +30,18 @@ from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipelin
 from exercise_motion_pkg.physics_bundle import write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
 from exercise_motion_pkg.preview import (
+    _apply_rotations_to_point,
+    _build_preview_translation_track,
+    _center_preview_clip_for_render,
+    _compute_preview_auto_alignment,
     _detect_preview_loops,
     _build_capsules,
     _prepare_preview_clip,
+    build_wear_skeleton_payload,
     refine_motion_clip_for_preview,
     write_preview_debug_json,
     write_preview_html,
+    write_wear_skeleton_json,
 )
 from exercise_motion_pkg.segment_detection import (
     DetectionWindow,
@@ -50,7 +56,7 @@ from exercise_motion_pkg.segment_detection import (
     parse_detection_payload,
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
-from exercise_motion_pkg.gvhmr_runner import build_gvhmr_command
+from exercise_motion_pkg.wham_runner import build_wham_command
 
 
 def build_fixture_clip() -> MotionClip:
@@ -164,42 +170,104 @@ def test_cleanup_motion_clip_trims_centers_and_grounds() -> None:
     raw_trimmed_pelvis_xs = [frame.joints["pelvis"][0] for frame in clip.frames[1:]]
     raw_trimmed_root_span = max(raw_trimmed_pelvis_xs) - min(raw_trimmed_pelvis_xs)
 
-    cleaned, stats = cleanup_motion_clip(clip, smoothing_window=3, motion_threshold=0.03, padding_frames=1)
+    cleaned, stats = cleanup_motion_clip(clip, motion_threshold=0.03, padding_frames=1)
 
     assert stats.trimmed_start_frames == 1
     assert stats.trimmed_end_frames == 0
     assert cleaned.frame_count == 6
-    assert min(frame.joints["left_ankle"][1] for frame in cleaned.frames) >= 0.011999999
+    assert min(frame.joints["left_ankle"][1] for frame in cleaned.frames) >= 0.0
     cleaned_pelvis_xs = [frame.joints["pelvis"][0] for frame in cleaned.frames]
     cleaned_root_span = max(cleaned_pelvis_xs) - min(cleaned_pelvis_xs)
     assert cleaned_root_span < raw_trimmed_root_span
-    assert cleaned.metadata["cleanup"]["anchorFoot"] in {"left_ankle", "right_ankle"}
-    assert cleaned.metadata["cleanup"]["torsoMicroMovementTolerance"] > cleaned.metadata["cleanup"]["legMicroMovementTolerance"]
+    assert cleaned.metadata["cleanup"]["rootJoint"] == "pelvis"
+    assert cleaned.metadata["cleanup"]["smoothingMethod"] == "one_euro_root_translation_xz"
     assert cleaned.metadata["cleanup"]["reviewStatus"] == "needs_manual_review"
 
 
-def test_cleanup_motion_clip_stabilizes_anchor_foot_during_ground_contact() -> None:
+def test_cleanup_motion_clip_preserves_relative_joint_offsets() -> None:
     clip = build_fixture_clip()
 
-    cleaned, _ = cleanup_motion_clip(clip, smoothing_window=1, motion_threshold=0.03, padding_frames=1)
+    cleaned, _ = cleanup_motion_clip(clip, motion_threshold=0.03, padding_frames=1)
 
-    left_ankle_xs = [frame.joints["left_ankle"][0] for frame in cleaned.frames]
-    left_ankle_zs = [frame.joints["left_ankle"][2] for frame in cleaned.frames]
-
-    assert max(left_ankle_xs) - min(left_ankle_xs) < 0.03
-    assert max(left_ankle_zs) - min(left_ankle_zs) < 0.03
+    trimmed_source_frames = clip.frames[1:]
+    for source_frame, cleaned_frame in zip(trimmed_source_frames, cleaned.frames):
+        source_root = source_frame.joints["pelvis"]
+        cleaned_root = cleaned_frame.joints["pelvis"]
+        for joint_name in ("left_ankle", "right_ankle", "left_knee", "right_knee"):
+            source_joint = source_frame.joints[joint_name]
+            cleaned_joint = cleaned_frame.joints[joint_name]
+            source_relative = tuple(source_joint[axis] - source_root[axis] for axis in range(3))
+            cleaned_relative = tuple(cleaned_joint[axis] - cleaned_root[axis] for axis in range(3))
+            assert cleaned_relative == pytest.approx(source_relative, abs=1e-6)
 
 
 def test_cleanup_motion_clip_preserves_jump_travel_when_feet_leave_ground() -> None:
     clip = build_jump_fixture_clip()
 
-    cleaned, _ = cleanup_motion_clip(clip, smoothing_window=1, motion_threshold=0.01, padding_frames=0)
+    cleaned, stats = cleanup_motion_clip(clip, motion_threshold=0.01, padding_frames=0)
 
-    airborne_left_ankle_x = cleaned.frames[2].joints["left_ankle"][0]
-    landing_left_ankle_x = cleaned.frames[4].joints["left_ankle"][0]
+    trimmed_source_frames = clip.frames[stats.trimmed_start_frames : stats.trimmed_start_frames + cleaned.frame_count]
+    for source_frame, cleaned_frame in zip(trimmed_source_frames, cleaned.frames):
+        source_root = source_frame.joints["pelvis"]
+        cleaned_root = cleaned_frame.joints["pelvis"]
+        source_relative = tuple(
+            source_frame.joints["left_ankle"][axis] - source_root[axis]
+            for axis in range(3)
+        )
+        cleaned_relative = tuple(
+            cleaned_frame.joints["left_ankle"][axis] - cleaned_root[axis]
+            for axis in range(3)
+        )
+        assert cleaned_relative == pytest.approx(source_relative, abs=1e-6)
 
-    assert airborne_left_ankle_x - cleaned.frames[1].joints["left_ankle"][0] > 0.08
-    assert landing_left_ankle_x - cleaned.frames[1].joints["left_ankle"][0] > 0.16
+
+def test_stabilize_multi_contact_support_resets_anchor_after_airborne_phase() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_foot", "right_foot"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (0.0, 1.0, 0.0),
+                    "left_foot": (0.0, 0.0, 0.0),
+                    "right_foot": (0.4, 0.4, 0.0),
+                },
+            ),
+            MotionFrame(
+                time_sec=1.0 / 30.0,
+                joints={
+                    "pelvis": (1.0, 1.0, 0.0),
+                    "left_foot": (1.0, 0.4, 0.0),
+                    "right_foot": (1.4, 0.4, 0.0),
+                },
+            ),
+            MotionFrame(
+                time_sec=2.0 / 30.0,
+                joints={
+                    "pelvis": (2.0, 1.0, 0.0),
+                    "left_foot": (2.0, 0.0, 0.0),
+                    "right_foot": (2.4, 0.4, 0.0),
+                },
+            ),
+        ],
+        source="unit-test",
+    )
+    contact_states = [
+        {"state": "left_planted", "leftInContact": True, "rightInContact": False},
+        {"state": "airborne", "leftInContact": False, "rightInContact": False},
+        {"state": "left_planted", "leftInContact": True, "rightInContact": False},
+    ]
+
+    stabilized = stabilize_multi_contact_support(
+        clip,
+        contact_states=contact_states,
+        support_ground_y=0.0,
+    )
+
+    assert stabilized.frames[0].joints["left_foot"] == (0.0, 0.0, 0.0)
+    assert stabilized.frames[2].joints["left_foot"] == (2.0, 0.0, 0.0)
+    assert stabilized.frames[2].joints["pelvis"] == (2.0, 1.0, 0.0)
 
 
 def test_detect_support_contact_states_uses_hands_when_feet_are_not_supporting() -> None:
@@ -453,10 +521,10 @@ def test_cleanup_grounds_to_lowest_foot_joint_when_available() -> None:
         ],
     )
 
-    cleaned, _ = cleanup_motion_clip(clip, smoothing_window=1, motion_threshold=0.0, padding_frames=0)
+    cleaned, _ = cleanup_motion_clip(clip, motion_threshold=0.0, padding_frames=0)
 
-    assert min(frame.joints["left_foot"][1] for frame in cleaned.frames) >= 0.011999999
-    assert min(frame.joints["right_foot"][1] for frame in cleaned.frames) >= 0.011999999
+    assert min(frame.joints["left_foot"][1] for frame in cleaned.frames) >= 0.0
+    assert min(frame.joints["right_foot"][1] for frame in cleaned.frames) >= 0.0
 
 
 def test_estimate_motion_ground_origin_uses_grounded_contacts() -> None:
@@ -523,7 +591,9 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "squat-review" in text
     assert "Interactive skeleton preview" in text
     assert "\"pelvis\"" in text
-    assert "\"defaultFixedRoot\": false" in text
+    assert "\"defaultFixedRoot\": true" in text
+    assert "\"defaultSceneInverted\": false" in text
+    assert "\"defaultAutoWorldAlignment\": true" in text
     assert "<button id=\"pauseToggle\" type=\"button\">Pause</button>" in text
     assert "const cameraTarget = new THREE.Vector3();" in text
     assert "overflow-y: auto;" in text
@@ -531,29 +601,58 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "function refreshCameraTarget()" in text
     assert "let playbackState = buildPlaybackState(payload.frames, currentLoop);" in text
     assert "const detectedLoops = Array.isArray(payload.detectedLoops) ? payload.detectedLoops : [];" in text
-    assert "<select id=\"cameraMode\">" in text
     assert "<select id=\"loopSelect\"></select>" in text
+    assert "Root lock" in text
+    assert "Lock root Y drift" in text
+    assert "Lock planted feet" in text
+    assert "<input id=\"lockYRoot\" type=\"checkbox\" />" in text
+    assert "<input id=\"lockPlantedFeet\" type=\"checkbox\" />" in text
+    assert "Ankle lock target offset" in text
+    assert "<input id=\"ankleOffsetForward\" type=\"range\"" in text
+    assert "<input id=\"ankleOffsetLateral\" type=\"range\"" in text
+    assert "<span>Vertical</span>" in text
+    assert "<input id=\"ankleOffsetUp\" type=\"range\" min=\"-0.12\" max=\"0.12\"" in text
+    assert "Download baked Wear skeleton" in text
     assert "<input id=\"autoWorldAlignment\" type=\"checkbox\"" in text
-    assert "<input id=\"rotateX\" type=\"range\"" in text
-    assert "<input id=\"rotateY\" type=\"range\"" in text
-    assert "<input id=\"rotateZ\" type=\"range\"" in text
-    assert "<input id=\"translateX\" type=\"range\"" in text
-    assert "<input id=\"translateY\" type=\"range\"" in text
-    assert "<input id=\"translateZ\" type=\"range\"" in text
-    assert "World rotation:" in text
-    assert "World translation:" in text
-    assert "<button id=\"resetTransform\" type=\"button\">Reset world transform</button>" in text
+    assert "<input id=\"sceneInverted\" type=\"checkbox\"" in text
     assert "function populateLoopSelect()" in text
     assert "function setSelectedLoop(nextIndex)" in text
+    assert "function buildBakedWearSkeletonPayload()" in text
+    assert "function downloadBakedWearSkeleton()" in text
+    assert "lockYDrift" in text
     assert "function getFrameTranslation(frame)" in text
-    assert "const transformPivot = new THREE.Vector3();" in text
-    assert "function refreshTransformPivot(currentFixedRoot)" in text
-    assert "function updateManualTransformState()" in text
-    assert "function applyManualTransform(point)" in text
+    assert "function getFrameBakeTranslation(frame, lockYDrift)" in text
+    assert "lockYRootInput.addEventListener(\"change\"" in text
+    assert "lockPlantedFeetInput.addEventListener(\"change\"" in text
+    assert "ankleOffsetForwardInput.addEventListener(\"input\", updateAnkleLockOffset);" in text
+    assert "function ankleLockTargetOffsetVector()" in text
+    assert ".addScaledVector(sceneUp, ankleLockOffsetUp);" in text
+    assert "const leftHipJoint = getFrameJointWorld(frame, frameTranslation, \"left_hip\");" in text
+    assert "function computeFootLockCorrections()" in text
+    assert "function computeLockedJointPositions(frame, frameTranslation)" in text
+    assert "function solveLegIkChain(points, target)" in text
+    assert "const upperLength = Math.max(root.distanceTo(originalKnee), 1e-6);" in text
+    assert "const sourceBendDirection = sourceKneeOffset" in text
+    assert "const maxReach = Math.max(upperLength + lowerLength - 1e-4, 1e-6);" in text
+    assert "ankleLockTargetOffset" in text
+    assert "const loopTargets = []" in text
+    assert "${lockYRoot}" in text
+    assert "${lockPlantedFeet}" in text
+    assert "let activeRootAnchor = null;" in text
+    assert "function computeActiveRootAnchor(frames)" in text
+    assert "activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);" in text
+    assert "function getFrameRootPoint(frame, preferredRootJoint)" in text
+    assert "function getCachedSceneBounds(currentFixedRoot)" in text
+    assert "function invalidateSceneBoundsCache()" in text
+    assert "function recalculateSceneBoundsAndFrame()" in text
+    assert "boundsFrames: activeFrames" in text
+    assert "function buildSceneBoundsCacheKey(currentFixedRoot)" in text
+    assert "|${sceneInverted}|" in text
+    assert "tempBoundsBox.setFromObject(object);" in text
+    assert "transformedPoint.applyAxisAngle(axisX, Math.PI);" in text
     assert "type=\"module\"" in text
     assert "new THREE.WebGLRenderer" in text
     assert "new THREE.PerspectiveCamera" in text
-    assert "new THREE.OrthographicCamera" in text
     assert "new THREE.GridHelper" in text
     assert "new THREE.LineSegments(" in text
     assert "new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1))" in text
@@ -561,26 +660,123 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "\"capsules\"" in text
     assert "drawTorsoFacingMarker(frame, frameTranslation);" not in text
     assert ".filter((capsule) => !isTorsoCapsule(capsule))" in text
-    assert "const pelvisMesh = new THREE.Mesh(pelvisGeometry, torsoMaterial);" in text
+    assert "function attachOutline(mesh, outlineMaterial)" in text
+    assert "function replaceOutlinedGeometry(mesh, nextGeometry)" in text
+    assert "mesh.userData.outline = outline;" in text
+    assert "function createStackedPrismGeometry(levels)" in text
+    assert "const bevelWidth = halfWidth * 0.72;" in text
+    assert "for (let side = 0; side < 8; side += 1)" in text
+    assert "function createFacetedHeadGeometry()" in text
+    assert "function createCoreShellGeometry(rings)" in text
+    assert "function limbProfileForCapsule(capsule, radius)" in text
+    assert "const pelvisMesh = attachOutline(new THREE.Mesh(pelvisGeometry, torsoMaterial), torsoOutlineMaterial);" in text
+    assert "const coreShellMesh = attachOutline(new THREE.Mesh(torsoSegmentGeometry.clone(), torsoMaterial), torsoOutlineMaterial);" in text
+    assert "coreShellMesh.visible = false;" in text
+    assert "const spineMeshes = [0, 1, 2].map(() => attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial));" in text
     assert "function updateCamera()" in text
-    assert "activeCamera.lookAt(cameraTarget);" in text
+    assert "perspectiveCamera.lookAt(cameraTarget);" in text
     assert "function refreshMergedBoundsHelper()" in text
+    assert "function getFrameFloorMotionPoint(frame)" in text
+    assert "function refreshSceneBasis()" in text
+    assert "sceneRotationQuaternion.identity();" in text
+    assert "const floorPoint = getFrameFloorMotionPoint(frame);" not in text
+    assert "const horizontalPadding = 0.08;" in text
+    assert "mergedBoundsHelper.quaternion.copy(sceneRotationQuaternion);" in text or "grid.quaternion.copy(sceneRotationQuaternion);" in text
+    assert "const bounds = getCachedSceneBounds(fixedRoot);" in text
     assert "function computeOrientedSceneBounds(currentFixedRoot)" in text
     assert "function getInterpolatedFrame()" in text
     assert "function updateSceneForFrame(frame)" in text
-    assert "tempQuaternion.setFromUnitVectors(axisY, tempVector.clone().normalize());" in text
+    assert "function setOrientedCylinder(mesh, start, end, radius, lateralAxis = null)" in text
+    assert "function chooseRollStableQuaternion(previousQuaternion, xDir, yDir, zDir)" in text
+    assert "function applyStableMeshOrientation(mesh, xDir, yDir, zDir)" in text
     assert "function setOrientedEllipsoid(mesh, center, xAxis, yAxis, width, height, depth)" in text
-    assert "function setOrientedCylinder(mesh, start, end, radius)" in text
+    assert "function setOrientedCylinder(mesh, start, end, radius, lateralAxis = null)" in text
     assert "function setOrientedFrameVolume(mesh, center, xAxis, yAxis, width, height, depth)" in text
     assert "function setOrientedBar(mesh, center, xAxis, yAxis, width, height, depth)" in text
-    assert "const headScale = neckSourceJoint" in text
-    assert "headMesh.scale.set(headScale * 0.88, headScale * 1.08, headScale * 0.86);" in text
+    assert "const ribcageGeometry = createStackedPrismGeometry([" in text
+    assert "const spineGeometry = createStackedPrismGeometry([" in text
+    assert "const limbGeometry = createStackedPrismGeometry([" in text
+    assert "const limbProfile = limbProfileForCapsule(node.capsule, radius);" in text
+    assert "if (shoulderAxis && isArmCapsule(node.capsule))" in text
+    assert "const abdomenWidth = Math.max(0.11, shoulderAxis.length() * 0.28);" in text
+    assert "let coreShellVisible = false;" in text
+    assert "const nextCoreGeometry = createCoreShellGeometry(rings);" in text
+    assert "replaceOutlinedGeometry(coreShellMesh, nextCoreGeometry);" in text
+    assert "const spineSegments = [" in text
+    assert "spineSegments.forEach((segment, index) => {" in text
+    assert "new THREE.ExtrudeGeometry(new THREE.Shape(), { steps: 1, depth: 0.01, bevelEnabled: false })" in text
+    assert "const jointNodeGeometry = new THREE.SphereGeometry(1, 7, 6);" in text
+    assert "const skeletonSurfaces = skeletonChains.map((jointNames) => {" in text
+    assert "const jointNodeMeshes = jointNodeNames.map((jointName) => {" in text
+    assert "function buildProfileShape(width, depth)" in text
+    assert "function chainProfileDimensions(jointNames)" in text
+    assert "const headCenter = neckSourceJoint" in text
+    assert "Math.max(0.115, Math.min(0.165, headJoint.distanceTo(neckSourceJoint) * 0.68))" in text
     assert "let paused = false;" in text
+    assert "let cameraTouched = false;" in text
     assert "function refreshPauseLabel()" in text
+    assert "function resetCameraOrbitFromBounds()" in text
     assert "yaw -= deltaX * 0.01;" in text
     assert "let playbackDirection = 1;" in text
+    assert "<select id=\"cameraMode\">" not in text
+    assert "<input id=\"pitch\" type=\"range\"" not in text
+    assert "<input id=\"rotateX\" type=\"range\"" not in text
+    assert "<input id=\"translateX\" type=\"range\"" not in text
+    assert "World rotation:" not in text
+    assert "World translation:" not in text
+    assert "<button id=\"resetTransform\" type=\"button\">Reset world transform</button>" not in text
+    assert "new THREE.OrthographicCamera" not in text
     assert "playbackDirection = -1;" in text
     assert "deltaSeconds * payload.fps * speed" in text
+
+
+def test_center_preview_clip_for_render_removes_camera_space_offset() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "head", "left_foot", "right_foot"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (10.0, 1.0, 20.0),
+                    "head": (10.0, 2.0, 20.0),
+                    "left_foot": (9.8, 0.0, 20.0),
+                    "right_foot": (10.2, 0.0, 20.0),
+                },
+            ),
+            MotionFrame(
+                time_sec=1.0 / 30.0,
+                joints={
+                    "pelvis": (10.5, 1.0, 20.4),
+                    "head": (10.5, 2.0, 20.4),
+                    "left_foot": (10.3, 0.0, 20.4),
+                    "right_foot": (10.7, 0.0, 20.4),
+                },
+            ),
+        ],
+        metadata={"upstream": "wham"},
+    )
+
+    centered = _center_preview_clip_for_render(clip)
+    translation_track = _build_preview_translation_track(centered.frames, "pelvis")
+    rendered_points = []
+    for index, frame in enumerate(centered.frames):
+        translation = translation_track[index]
+        rendered_points.extend(
+            (
+                point[0] - translation[0],
+                point[1] - translation[1],
+                point[2] - translation[2],
+            )
+            for point in frame.joints.values()
+        )
+
+    center = tuple(
+        (min(point[axis] for point in rendered_points) + max(point[axis] for point in rendered_points)) * 0.5
+        for axis in range(3)
+    )
+    assert center == pytest.approx((0.0, 0.0, 0.0))
+    assert centered.metadata["previewCenterOffset"]["point"] == pytest.approx([10.0, 1.0, 20.0])
 
 
 def test_detect_preview_loops_finds_repeating_motion_span() -> None:
@@ -673,6 +869,126 @@ def test_prepare_preview_clip_suppresses_short_translation_burst() -> None:
     assert preview_clip.frames[3].joints["pelvis"][0] < 0.2
 
 
+def test_compute_preview_auto_alignment_levels_tilted_support_plane() -> None:
+    angle = math.radians(28.0)
+
+    def tilt(point: tuple[float, float, float]) -> tuple[float, float, float]:
+        x, y, z = point
+        return (
+            x * math.cos(angle) - y * math.sin(angle),
+            x * math.sin(angle) + y * math.cos(angle),
+            z,
+        )
+
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": tilt((0.0, 1.0, 0.0)),
+                "neck": tilt((0.0, 1.85, 0.0)),
+                "head": tilt((0.0, 2.1, 0.0)),
+                "left_shoulder": tilt((-0.28, 1.72, 0.0)),
+                "right_shoulder": tilt((0.28, 1.72, 0.0)),
+                "left_ankle": tilt((-0.12, 0.0, 0.0)),
+                "right_ankle": tilt((0.12, 0.0, 0.0)),
+                "left_foot": tilt((-0.16, 0.0, 0.08)),
+                "right_foot": tilt((0.16, 0.0, 0.08)),
+            },
+        )
+        for index in range(4)
+    ]
+
+    rotations = _compute_preview_auto_alignment(frames)
+
+    aligned_left_foot = _apply_rotations_to_point(frames[0].joints["left_foot"], rotations)
+    aligned_right_foot = _apply_rotations_to_point(frames[0].joints["right_foot"], rotations)
+    aligned_left_ankle = _apply_rotations_to_point(frames[0].joints["left_ankle"], rotations)
+    aligned_right_ankle = _apply_rotations_to_point(frames[0].joints["right_ankle"], rotations)
+    support_y_values = (
+        aligned_left_foot[1],
+        aligned_right_foot[1],
+        aligned_left_ankle[1],
+        aligned_right_ankle[1],
+    )
+
+    assert max(support_y_values) - min(support_y_values) < 0.08
+
+
+def test_compute_preview_auto_alignment_aligns_support_lateral_axis_to_scene_x() -> None:
+    yaw = math.radians(42.0)
+
+    def rotate_y(point: tuple[float, float, float]) -> tuple[float, float, float]:
+        x, y, z = point
+        return (
+            x * math.cos(yaw) + z * math.sin(yaw),
+            y,
+            -x * math.sin(yaw) + z * math.cos(yaw),
+        )
+
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": rotate_y((0.0, 1.0, 0.0)),
+                "neck": rotate_y((0.0, 1.9, 0.0)),
+                "left_shoulder": rotate_y((-0.3, 1.72, 0.0)),
+                "right_shoulder": rotate_y((0.3, 1.72, 0.0)),
+                "left_ankle": rotate_y((-0.12, 0.0, 0.0)),
+                "right_ankle": rotate_y((0.12, 0.0, 0.0)),
+                "left_foot": rotate_y((-0.16, 0.0, 0.08)),
+                "right_foot": rotate_y((0.16, 0.0, 0.08)),
+            },
+        )
+        for index in range(6)
+    ]
+
+    rotations = _compute_preview_auto_alignment(frames)
+
+    aligned_left = _apply_rotations_to_point(frames[0].joints["left_ankle"], rotations)
+    aligned_right = _apply_rotations_to_point(frames[0].joints["right_ankle"], rotations)
+    aligned_axis = (
+        aligned_right[0] - aligned_left[0],
+        aligned_right[1] - aligned_left[1],
+        aligned_right[2] - aligned_left[2],
+    )
+    axis_length = math.sqrt(sum(component * component for component in aligned_axis))
+
+    assert axis_length > 0.0
+    assert aligned_axis[0] / axis_length > 0.98
+    assert abs(aligned_axis[2] / axis_length) < 0.05
+
+
+def test_compute_preview_auto_alignment_aligns_upright_spine_to_scene_y() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (0.0, 1.0, 0.0),
+                "neck": (0.04, 0.08, -0.03),
+                "head": (0.05, -0.12, -0.04),
+                "left_foot": (-0.18, 0.0, 0.08),
+                "right_foot": (0.18, 0.0, 0.08),
+                "left_hand": (-0.24, 1.1, -0.02),
+                "right_hand": (0.24, 1.1, -0.02),
+            },
+        )
+        for index in range(6)
+    ]
+
+    rotations = _compute_preview_auto_alignment(frames)
+    aligned_pelvis = _apply_rotations_to_point(frames[0].joints["pelvis"], rotations)
+    aligned_neck = _apply_rotations_to_point(frames[0].joints["neck"], rotations)
+    aligned_spine = (
+        aligned_neck[0] - aligned_pelvis[0],
+        aligned_neck[1] - aligned_pelvis[1],
+        aligned_neck[2] - aligned_pelvis[2],
+    )
+    spine_length = math.sqrt(sum(component * component for component in aligned_spine))
+
+    assert spine_length > 0.0
+    assert aligned_spine[1] / spine_length > 0.98
+
+
 def test_write_preview_html_defaults_fixed_root_for_raw_gvhmr(tmp_path: Path) -> None:
     clip = build_fixture_clip()
     clip = MotionClip(
@@ -710,6 +1026,100 @@ def test_write_preview_debug_json_exports_rendered_joint_coordinates(tmp_path: P
     assert "sourceJoints" in payload["frames"][0]
     assert "renderedJoints" in payload["frames"][0]
     assert "translationApplied" in payload["frames"][0]
+
+
+def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering() -> None:
+    clip = build_fixture_clip()
+
+    payload = build_wear_skeleton_payload(clip, title="squat-wear")
+
+    assert payload["kind"] == "wearPreviewSkeleton"
+    assert payload["title"] == "squat-wear"
+    assert payload["bakedPreviewConfiguration"] == {
+        "autoWorldAlignment": True,
+        "lockGlobalRootDrift": True,
+        "lockYDrift": False,
+        "invertScene": False,
+        "selectedLoopIndex": -1,
+    }
+    assert payload["frameCount"] == clip.frame_count
+    assert payload["loop"]["enabled"] is False
+    assert payload["bounds"]["center"] == pytest.approx([0.0, 0.0, 0.0])
+    assert "skeletonChains" in payload["topology"]
+    assert "capsules" in payload["topology"]
+    assert payload["geometry"]["style"] == "low_poly_block_humanoid"
+
+    pelvis_points = [
+        frame["joints"]["pelvis"]
+        for frame in payload["frames"]
+    ]
+    assert max(point[0] for point in pelvis_points) - min(point[0] for point in pelvis_points) < 1e-9
+    assert max(point[2] for point in pelvis_points) - min(point[2] for point in pelvis_points) < 1e-9
+
+
+def test_write_wear_skeleton_json_exports_baked_preview_payload(tmp_path: Path) -> None:
+    output = tmp_path / "wear" / "skeleton.preview.json"
+
+    write_wear_skeleton_json(output, build_fixture_clip(), title="wear-preview")
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["title"] == "wear-preview"
+    assert payload["bakedPreviewConfiguration"]["autoWorldAlignment"] is True
+    assert payload["bakedPreviewConfiguration"]["lockGlobalRootDrift"] is True
+    assert payload["bakedPreviewConfiguration"]["lockYDrift"] is False
+    assert payload["bakedPreviewConfiguration"]["invertScene"] is False
+    assert len(payload["frames"]) == payload["frameCount"]
+
+
+def test_wear_skeleton_payload_can_bake_selected_loop_and_y_drift_lock() -> None:
+    clip = build_loop_fixture_clip()
+
+    payload = build_wear_skeleton_payload(
+        clip,
+        title="looped-wear",
+        selected_loop_index=0,
+        lock_y_drift=True,
+    )
+
+    assert payload["bakedPreviewConfiguration"]["selectedLoopIndex"] == 0
+    assert payload["bakedPreviewConfiguration"]["lockYDrift"] is True
+    assert payload["loop"]["enabled"] is True
+    assert payload["source"]["activeStartFrame"] == payload["loop"]["sourceStartFrame"]
+    assert payload["source"]["activeEndFrame"] == payload["loop"]["sourceEndFrame"]
+
+    pelvis_y_values = [
+        frame["joints"]["pelvis"][1]
+        for frame in payload["frames"]
+    ]
+    assert max(pelvis_y_values) - min(pelvis_y_values) < 1e-9
+
+
+def test_build_preview_translation_track_uses_root_joint_instead_of_joint_median() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=0.0,
+            joints={
+                "pelvis": (0.0, 1.0, 0.0),
+                "head": (0.0, 2.0, 0.0),
+                "left_hand": (-0.5, 1.5, 0.0),
+                "right_hand": (0.5, 1.5, 0.0),
+            },
+        ),
+        MotionFrame(
+            time_sec=1 / 30.0,
+            joints={
+                "pelvis": (0.1, 1.4, 0.0),
+                "head": (0.1, 2.4, 0.0),
+                "left_hand": (2.5, 1.9, 0.0),
+                "right_hand": (3.5, 1.9, 0.0),
+            },
+        ),
+    ]
+
+    track = _build_preview_translation_track(frames, "pelvis")
+
+    assert track[0] == pytest.approx((0.0, 0.0, 0.0))
+    assert track[1] == pytest.approx((0.1, 0.0, 0.0))
 
 
 def test_refine_motion_clip_for_preview_marks_clip_as_prepared() -> None:
@@ -791,7 +1201,6 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
             workspace=tmp_path / "workspace",
             video_path=source_video,
             normalized_motion_json=source_motion,
-            smoothing_window=3,
             motion_threshold=0.03,
             padding_frames=1,
         )
@@ -799,18 +1208,30 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert Path(manifest["previewHtmlPath"]).exists()
+    assert Path(manifest["wearSkeletonJsonPath"]).exists()
     assert Path(manifest["cleanedMotionJsonPath"]).exists()
     assert Path(manifest["groundMetadataPath"]).exists()
     assert Path(manifest["targetRigContractPath"]).exists()
-    assert manifest["gvhmrRetargetSourcePath"] is None
+    assert manifest["retargetSourcePath"] is None
+    assert manifest["whamRetargetSourcePath"] is None
     assert manifest["groundMetadata"]["renderGroundPlane"]["space"] == "motion"
     assert manifest["groundMetadata"]["renderGroundOrigin"]["space"] == "motion"
-    assert manifest["nextStage"]["status"] == "pending_offline_retarget"
-    assert manifest["nextStage"]["gvhmrRetargetSourcePath"] is None
+    assert manifest["postProcessing"]["steps"] == [
+        "ground_plane_fitting",
+        "root_translation_one_euro_xz",
+    ]
+    assert manifest["nextStage"]["status"] == "wear_preview_skeleton_ready"
+    assert Path(manifest["nextStage"]["wearSkeletonJsonPath"]).exists()
+    assert manifest["nextStage"]["retargetSourcePath"] is None
+    assert manifest["nextStage"]["whamRetargetSourcePath"] is None
 
     cleaned_clip = load_motion_json(result.cleaned_motion_json_path)
     assert cleaned_clip.metadata["ground"]["renderGroundPlane"]["space"] == "motion"
     assert cleaned_clip.metadata["ground"]["renderGroundOrigin"]["space"] == "motion"
+    assert cleaned_clip.metadata["cleanup"]["appliedPostProcessingSteps"] == [
+        "ground_plane_fitting",
+        "root_translation_one_euro_xz",
+    ]
 
     preview_html = result.preview_html_path.read_text(encoding="utf-8")
     assert "\"renderGroundPlane\"" in preview_html
@@ -840,7 +1261,6 @@ def test_generation_pipeline_writes_ground_metadata_when_enabled(tmp_path: Path)
             workspace=tmp_path / "workspace",
             video_path=source_video,
             normalized_motion_json=source_motion,
-            smoothing_window=3,
             motion_threshold=0.03,
             padding_frames=1,
         )
@@ -878,7 +1298,6 @@ def test_generation_pipeline_accepts_video_already_in_workspace_input(tmp_path: 
             workspace=workspace,
             video_path=source_video,
             normalized_motion_json=source_motion,
-            smoothing_window=3,
             motion_threshold=0.03,
             padding_frames=1,
         )
@@ -888,20 +1307,22 @@ def test_generation_pipeline_accepts_video_already_in_workspace_input(tmp_path: 
     assert result.manifest_path.exists()
 
 
-def test_build_gvhmr_command_uses_local_paths() -> None:
-    command = build_gvhmr_command(
-        gvhmr_repo_path=Path("C:/GVHMR"),
+def test_build_wham_command_uses_local_paths() -> None:
+    command = build_wham_command(
+        wham_repo_path=Path("C:/WHAM"),
         input_video=Path("C:/videos/burpee.mp4"),
         output_root=Path("C:/out"),
         python_command="python",
-        static_camera=True,
+        estimate_local_only=True,
+        run_smplify=True,
     )
 
-    assert command[:2] == ["python", "tools/demo/demo.py"]
-    assert "--video=C:\\videos\\burpee.mp4" in command
-    assert "--output_root" in command
+    assert command[:2] == ["python", "demo.py"]
+    assert "C:\\videos\\burpee.mp4" in command
+    assert "--output_pth" in command
     assert "C:\\out" in command
-    assert "-s" in command
+    assert "--estimate_local_only" in command
+    assert "--run_smplify" in command
 
 
 def test_iter_detection_windows_uses_overlap() -> None:
@@ -1197,6 +1618,20 @@ def test_parse_detection_payload_accepts_minor_key_drift() -> None:
     assert payload["movement_present"] is True
     assert payload["movement_start_seconds"] == 0.0
     assert payload["movement_end_seconds"] == 8.0
+
+
+def test_parse_detection_payload_accepts_malformed_confidence_without_timing() -> None:
+    payload = parse_detection_payload(
+        '{"movement_present": true, "confidence": 0.9.5, '
+        '"summary": "The athlete is actively performing a front squat rep.", '
+        '"reason": "The sampled frames show the exercise movement."}',
+        window=DetectionWindow(index=0, start_seconds=12.0, end_seconds=20.0),
+    )
+
+    assert payload["movement_present"] is True
+    assert payload["confidence"] == pytest.approx(0.95)
+    assert payload["movement_start_seconds"] is None
+    assert payload["movement_end_seconds"] is None
 
 
 def test_build_window_prompt_rejects_setup_and_prefers_tight_full_rep() -> None:
