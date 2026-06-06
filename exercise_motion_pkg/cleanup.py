@@ -38,6 +38,11 @@ LEG_MICRO_MOVEMENT_TOLERANCE = 0.018
 SUPPORT_LOCK_BLEND = 0.75
 SUPPORT_LOCK_XZ_BLEND = 0.7
 SUPPORT_LOCK_Y_BLEND = 0.9
+SEGMENT_ROOT_STABILIZATION_BLEND = 1.0
+SEGMENT_ROOT_STABILIZATION_MIN_FRAMES = 3
+ONE_EURO_MIN_CUTOFF = 0.6
+ONE_EURO_BETA = 0.05
+ONE_EURO_D_CUTOFF = 1.0
 
 LEFT_FOOT_GROUP = ("left_foot", "left_ankle", "l_ankle")
 RIGHT_FOOT_GROUP = ("right_foot", "right_ankle", "r_ankle")
@@ -63,7 +68,9 @@ class CleanupStats:
 def cleanup_motion_clip(
     clip: MotionClip,
     *,
-    smoothing_window: int = 5,
+    one_euro_min_cutoff: float = ONE_EURO_MIN_CUTOFF,
+    one_euro_beta: float = ONE_EURO_BETA,
+    one_euro_derivative_cutoff: float = ONE_EURO_D_CUTOFF,
     motion_threshold: float = 0.015,
     padding_frames: int = 3,
 ) -> tuple[MotionClip, CleanupStats]:
@@ -75,40 +82,14 @@ def cleanup_motion_clip(
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
     grounded = ground_to_floor(trimmed_clip)
-    smoothed = smooth_clip(grounded, window=smoothing_window)
-    denoised = suppress_micro_movements(smoothed)
-    torso_stabilized = stabilize_spine_chain(denoised)
-    contact_states = detect_support_contact_states(torso_stabilized)
-    support_ground_y = estimate_support_ground_height(torso_stabilized, contact_states)
-    stabilized = stabilize_floor_contact(
-        torso_stabilized,
+    smoothed = smooth_root_translation(
+        grounded,
         root_joint=root_joint,
-        contact_states=contact_states,
-        support_ground_y=support_ground_y,
+        min_cutoff=one_euro_min_cutoff,
+        beta=one_euro_beta,
+        derivative_cutoff=one_euro_derivative_cutoff,
     )
-    refined_contact_states = detect_support_contact_states(stabilized)
-    restabilized = stabilize_floor_contact(
-        stabilized,
-        root_joint=root_joint,
-        contact_states=refined_contact_states,
-        support_ground_y=support_ground_y,
-    )
-    corrected = lift_clip_above_support_ground(
-        restabilized,
-        support_ground_y=support_ground_y,
-        tolerance=GROUND_PENETRATION_TOLERANCE,
-    )
-    support_locked = stabilize_multi_contact_support(
-        corrected,
-        contact_states=refined_contact_states,
-        support_ground_y=support_ground_y,
-    )
-    relifted = lift_clip_above_support_ground(
-        support_locked,
-        support_ground_y=support_ground_y,
-        tolerance=GROUND_PENETRATION_TOLERANCE,
-    )
-    polished = suppress_micro_movements(relifted)
+    polished = smoothed
     avg_root_after = average_joint_axis(polished, root_joint, axis=1)
     stats = CleanupStats(
         input_frames=clip.frame_count,
@@ -119,23 +100,20 @@ def cleanup_motion_clip(
         average_root_height_after=avg_root_after,
     )
     metadata = dict(polished.metadata)
-    anchor_foot = choose_anchor_foot(polished)
     metadata["cleanup"] = {
-        "smoothingWindow": smoothing_window,
+        "oneEuroMinCutoff": one_euro_min_cutoff,
+        "oneEuroBeta": one_euro_beta,
+        "oneEuroDerivativeCutoff": one_euro_derivative_cutoff,
         "motionThreshold": motion_threshold,
         "paddingFrames": padding_frames,
+        "smoothingMethod": "one_euro_root_translation_xz",
         "trimmedStartFrames": start_trim,
         "trimmedEndFrames": end_trim,
-        "anchorFoot": anchor_foot,
-        "microMovementTolerance": MICRO_MOVEMENT_POSITION_TOLERANCE,
-        "torsoMicroMovementTolerance": TORSO_MICRO_MOVEMENT_TOLERANCE,
-        "armMicroMovementTolerance": ARM_MICRO_MOVEMENT_TOLERANCE,
-        "legMicroMovementTolerance": LEG_MICRO_MOVEMENT_TOLERANCE,
-        "spineChainBlend": SPINE_CHAIN_BLEND,
-        "supportGroundY": support_ground_y,
-        "groundPenetrationTolerance": GROUND_PENETRATION_TOLERANCE,
-        "supportLockBlend": SUPPORT_LOCK_BLEND,
-        "footContacts": refined_contact_states,
+        "rootJoint": root_joint,
+        "appliedPostProcessingSteps": [
+            "ground_plane_fitting",
+            "root_translation_one_euro_xz",
+        ],
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
@@ -145,6 +123,56 @@ def cleanup_motion_clip(
         source=polished.source,
         metadata=metadata,
     ), stats
+
+
+def smooth_root_translation(
+    clip: MotionClip,
+    *,
+    root_joint: str,
+    min_cutoff: float,
+    beta: float,
+    derivative_cutoff: float,
+) -> MotionClip:
+    if clip.frame_count < 2:
+        return clip
+
+    smoothed_frames: list[MotionFrame] = []
+    previous_filtered_root = clip.frames[0].joints[root_joint]
+    previous_filtered_derivative: Point3 = (0.0, 0.0, 0.0)
+
+    smoothed_frames.append(clip.frames[0])
+    for index, frame in enumerate(clip.frames[1:], start=1):
+        delta_time = max(frame.time_sec - clip.frames[index - 1].time_sec, 1e-6)
+        current_root = frame.joints[root_joint]
+        filtered_root, filtered_derivative = one_euro_filter_point(
+            current_point=current_root,
+            previous_filtered_point=previous_filtered_root,
+            previous_filtered_derivative=previous_filtered_derivative,
+            delta_time=delta_time,
+            min_cutoff=min_cutoff,
+            beta=beta,
+            derivative_cutoff=derivative_cutoff,
+        )
+        delta = (
+            filtered_root[0] - current_root[0],
+            0.0,
+            filtered_root[2] - current_root[2],
+        )
+        smoothed_joints = {
+            name: (coords[0] + delta[0], coords[1] + delta[1], coords[2] + delta[2])
+            for name, coords in frame.joints.items()
+        }
+        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
+        previous_filtered_root = filtered_root
+        previous_filtered_derivative = filtered_derivative
+
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=smoothed_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    )
 
 
 def trim_static_edges(
@@ -344,6 +372,7 @@ def stabilize_multi_contact_support(
 
     stabilized_frames: list[MotionFrame] = []
     support_targets: dict[str, Point3] = {}
+    previous_contacting_joints: set[str] = set()
     lock_blend = min(max(lock_blend, 0.0), 1.0)
     for frame_index, frame in enumerate(clip.frames):
         state = contact_states[frame_index] if frame_index < len(contact_states) else {}
@@ -353,6 +382,7 @@ def stabilize_multi_contact_support(
             if joint_name in frame.joints
         ]
         if not contacting_joints:
+            previous_contacting_joints = set()
             stabilized_frames.append(frame)
             continue
 
@@ -360,7 +390,8 @@ def stabilize_multi_contact_support(
         for joint_name in contacting_joints:
             current_point = frame.joints[joint_name]
             target = support_targets.get(joint_name)
-            if target is None:
+            is_new_contact = joint_name not in previous_contacting_joints
+            if target is None or is_new_contact:
                 target = (current_point[0], support_ground_y, current_point[2])
                 support_targets[joint_name] = target
             corrections.append(
@@ -392,11 +423,67 @@ def stabilize_multi_contact_support(
                 translated_point[2] * (1.0 - SUPPORT_LOCK_XZ_BLEND) + target[2] * SUPPORT_LOCK_XZ_BLEND,
             )
         stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=translated_joints))
+        previous_contacting_joints = set(contacting_joints)
 
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,
         frames=stabilized_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    )
+
+
+def stabilize_root_drift_by_support_segments(
+    clip: MotionClip,
+    *,
+    contact_states: list[dict[str, object]],
+    blend: float = SEGMENT_ROOT_STABILIZATION_BLEND,
+    min_segment_frames: int = SEGMENT_ROOT_STABILIZATION_MIN_FRAMES,
+) -> MotionClip:
+    if clip.frame_count == 0 or not contact_states or blend <= 0.0:
+        return clip
+
+    adjusted_frames: list[MotionFrame] = list(clip.frames)
+    frame_index = 0
+    while frame_index < clip.frame_count:
+        state = contact_states[frame_index] if frame_index < len(contact_states) else {}
+        support_joint = state.get("supportJoint")
+        if not isinstance(support_joint, str) or support_joint not in clip.joint_names:
+            frame_index += 1
+            continue
+
+        segment_start = frame_index
+        segment_end = frame_index + 1
+        while segment_end < clip.frame_count:
+            next_state = contact_states[segment_end] if segment_end < len(contact_states) else {}
+            if next_state.get("state") == "airborne":
+                break
+            if next_state.get("supportJoint") != support_joint:
+                break
+            segment_end += 1
+
+        if segment_end - segment_start >= min_segment_frames:
+            anchor = adjusted_frames[segment_start].joints[support_joint]
+            for index in range(segment_start + 1, segment_end):
+                current_support = adjusted_frames[index].joints[support_joint]
+                dx = (current_support[0] - anchor[0]) * blend
+                dz = (current_support[2] - anchor[2]) * blend
+                adjusted_joints = {
+                    name: (coords[0] - dx, coords[1], coords[2] - dz)
+                    for name, coords in adjusted_frames[index].joints.items()
+                }
+                adjusted_frames[index] = MotionFrame(
+                    time_sec=adjusted_frames[index].time_sec,
+                    joints=adjusted_joints,
+                )
+
+        frame_index = segment_end
+
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=adjusted_frames,
         source=clip.source,
         metadata=clip.metadata,
     )
@@ -423,25 +510,42 @@ def center_root_translation(clip: MotionClip, *, root_joint: str) -> MotionClip:
     )
 
 
-def smooth_clip(clip: MotionClip, *, window: int) -> MotionClip:
-    if window <= 1 or clip.frame_count < 3:
+def smooth_clip(
+    clip: MotionClip,
+    *,
+    min_cutoff: float,
+    beta: float,
+    derivative_cutoff: float,
+) -> MotionClip:
+    if clip.frame_count < 3:
         return clip
-    radius = window // 2
-    smoothed_frames = []
+    smoothed_frames: list[MotionFrame] = []
+    filter_state_by_joint: dict[str, tuple[Point3, Point3]] = {}
     for index, frame in enumerate(clip.frames):
         smoothed_joints: dict[str, Point3] = {}
-        start = max(0, index - radius)
-        end = min(clip.frame_count - 1, index + radius)
-        neighbors = clip.frames[start : end + 1]
+        if index == 0:
+            for joint_name in clip.joint_names:
+                coords = frame.joints[joint_name]
+                filter_state_by_joint[joint_name] = ((0.0, 0.0, 0.0), coords)
+                smoothed_joints[joint_name] = coords
+            smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
+            continue
+
+        previous_time = clip.frames[index - 1].time_sec
+        delta_time = max(frame.time_sec - previous_time, 1e-6)
         for joint_name in clip.joint_names:
-            xs = [neighbor.joints[joint_name][0] for neighbor in neighbors]
-            ys = [neighbor.joints[joint_name][1] for neighbor in neighbors]
-            zs = [neighbor.joints[joint_name][2] for neighbor in neighbors]
-            smoothed_joints[joint_name] = (
-                sum(xs) / len(xs),
-                sum(ys) / len(ys),
-                sum(zs) / len(zs),
+            previous_derivative, previous_filtered = filter_state_by_joint[joint_name]
+            filtered_point, filtered_derivative = one_euro_filter_point(
+                current_point=frame.joints[joint_name],
+                previous_filtered_point=previous_filtered,
+                previous_filtered_derivative=previous_derivative,
+                delta_time=delta_time,
+                min_cutoff=min_cutoff_for_joint(joint_name, base_cutoff=min_cutoff),
+                beta=one_euro_beta_for_joint(joint_name, base_beta=beta),
+                derivative_cutoff=derivative_cutoff,
             )
+            filter_state_by_joint[joint_name] = (filtered_derivative, filtered_point)
+            smoothed_joints[joint_name] = filtered_point
         smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
     return MotionClip(
         fps=clip.fps,
@@ -450,6 +554,79 @@ def smooth_clip(clip: MotionClip, *, window: int) -> MotionClip:
         source=clip.source,
         metadata=clip.metadata,
     )
+
+
+def one_euro_filter_point(
+    *,
+    current_point: Point3,
+    previous_filtered_point: Point3,
+    previous_filtered_derivative: Point3,
+    delta_time: float,
+    min_cutoff: float,
+    beta: float,
+    derivative_cutoff: float,
+) -> tuple[Point3, Point3]:
+    raw_derivative = tuple(
+        (current_point[axis] - previous_filtered_point[axis]) / delta_time
+        for axis in range(3)
+    )
+    derivative_alpha = smoothing_alpha(derivative_cutoff, delta_time)
+    filtered_derivative = tuple(
+        exponential_smooth(
+            current=raw_derivative[axis],
+            previous=previous_filtered_derivative[axis],
+            alpha=derivative_alpha,
+        )
+        for axis in range(3)
+    )
+    derivative_magnitude = math.sqrt(sum(value * value for value in filtered_derivative))
+    adaptive_cutoff = min_cutoff + beta * derivative_magnitude
+    point_alpha = smoothing_alpha(adaptive_cutoff, delta_time)
+    filtered_point = tuple(
+        exponential_smooth(
+            current=current_point[axis],
+            previous=previous_filtered_point[axis],
+            alpha=point_alpha,
+        )
+        for axis in range(3)
+    )
+    return filtered_point, filtered_derivative
+def min_cutoff_for_joint(joint_name: str, *, base_cutoff: float) -> float:
+    normalized = joint_name.lower()
+    if normalized in {
+        "pelvis",
+        "spine",
+        "spine1",
+        "spine2",
+        "spine3",
+        "neck",
+        "head",
+    }:
+        return base_cutoff * 0.75
+    if any(token in normalized for token in ("ankle", "foot", "toe", "wrist", "hand")):
+        return base_cutoff * 20.0
+    return max(base_cutoff, 1e-5)
+
+
+def one_euro_beta_for_joint(joint_name: str, *, base_beta: float) -> float:
+    normalized = joint_name.lower()
+    if normalized in {"pelvis", "spine", "spine1", "spine2", "spine3"}:
+        return base_beta * 1.6
+    if any(token in normalized for token in ("ankle", "foot", "toe")):
+        return base_beta * 8.0
+    if any(token in normalized for token in ("wrist", "hand")):
+        return base_beta * 6.0
+    return base_beta
+
+
+def smoothing_alpha(cutoff: float, delta_time: float) -> float:
+    effective_cutoff = max(cutoff, 1e-5)
+    tau = 1.0 / (2.0 * math.pi * effective_cutoff)
+    return 1.0 / (1.0 + tau / delta_time)
+
+
+def exponential_smooth(*, current: float, previous: float, alpha: float) -> float:
+    return alpha * current + (1.0 - alpha) * previous
 
 
 def suppress_micro_movements(
