@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -175,6 +176,7 @@ fun ExerciseScreen(
             (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
     val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
+    val showMovementPage = remember(exercise) { exercise.movementRef != null }
     val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
     val showTitledLinesPage = remember(exercise, equipment, accessoryEquipments) {
         exercise.notes.isNotEmpty() || equipment != null || accessoryEquipments.isNotEmpty()
@@ -192,6 +194,7 @@ fun ExerciseScreen(
     val pageTypes = remember(
         showPlatesPage,
         showTitledLinesPage,
+        showMovementPage,
         hasMuscleInfo,
         showProgressionComparisonPage,
         showNotesPage
@@ -201,7 +204,7 @@ fun ExerciseScreen(
             if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
-            add(ExerciseHorizontalPage.ANIMATION)
+            if (showMovementPage) add(ExerciseHorizontalPage.ANIMATION)
             //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
@@ -592,6 +595,7 @@ internal data class ExercisePreviewScenario(
     val showConfirmationDialog: Boolean = false,
     val includeBarbellPage: Boolean = false,
     val includeTitledLinesPage: Boolean = false,
+    val includeMovementPage: Boolean = false,
     val openPageIndex: Int? = null,
     val timedIsRunning: Boolean = false,
     val enduranceOverLimit: Boolean = false,
@@ -664,7 +668,15 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         keepScreenOn = false,
         showCountDownTimer = false,
         requiredAccessoryEquipmentIds = if (scenario.includeTitledLinesPage) listOf(accessoryId) else emptyList(),
-        requiresLoadCalibration = false
+        requiresLoadCalibration = false,
+        movementRef = if (scenario.includeMovementPage) {
+            ExerciseMovementRef(
+                movementId = "preview-movement",
+                contentHash = "preview",
+            )
+        } else {
+            null
+        }
     )
     val altExercise = Exercise(
         id = altExerciseId,
@@ -1108,7 +1120,8 @@ private fun ExerciseScreenPreviewAnimationPage() {
         ExercisePreviewScenario(
             name = "animation_page",
             setType = ExercisePreviewSetType.WEIGHT,
-            openPageIndex = 2
+            includeMovementPage = true,
+            openPageIndex = 3
         )
     )
 }

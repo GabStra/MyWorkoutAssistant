@@ -132,14 +132,15 @@ The Wear renderer expects a JSON payload with:
 
 The renderer does not run cleanup, alignment, loop selection, or root locking. Those are baked into the exported JSON by `write_wear_skeleton_json`.
 
-The current V1 renderer is intentionally lightweight:
+The runtime renderer uses Filament through an Android `SurfaceView` hosted from Compose:
 
-- Compose `Canvas`, no OpenGL dependency.
-- Primary-color low-poly humanoid.
-- Animated joint caps to visually connect limb segments.
+- Filament triangle mesh with a depth buffer, so limb and joint cap occlusion is handled by the renderer.
+- Primary-color low-poly humanoid generated directly from the baked skeleton JSON.
+- Animated low-poly joint caps to visually connect limb segments.
 - Articulated pelvis/spine/ribcage rather than a single solid torso.
-- Head rendered as a shaded sphere.
-- Floor grid projected from the same camera transform as the model.
+- Block-style head, neck, feet, and low-poly floor grid.
+
+Compose Preview uses the same Filament surface as runtime, so preview and device rendering exercise the same renderer path.
 
 ## 6. Verification
 
@@ -147,6 +148,12 @@ After changing Wear rendering code or raw resources, compile:
 
 ```powershell
 ./gradlew :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache
+```
+
+After changing Filament dependencies or renderer packaging, assemble the Wear debug app:
+
+```powershell
+./gradlew :wearos:assembleDebug --parallel --build-cache
 ```
 
 For motion pipeline changes, run the focused Python tests:

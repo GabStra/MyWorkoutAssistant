@@ -152,7 +152,6 @@ dependencies {
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
-
     //Horologist
     implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
     implementation("com.google.android.horologist:horologist-datalayer-watch:0.8.2-alpha")
@@ -175,7 +174,6 @@ dependencies {
     // Misc
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("dev.shreyaspatil:capturable:3.0.1")
-    implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Test
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.23.0")
