@@ -50,7 +50,7 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 36
+    compileSdk = 37
     testBuildType = e2eTestBuildType
 
     defaultConfig {
@@ -124,6 +124,7 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":motion-renderer"))
     implementation("androidx.documentfile:documentfile:1.1.0")
 
     // Compose BOM (Dec 2025)

@@ -44,7 +44,7 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 36
+    compileSdk = 37
     testBuildType = e2eTestBuildType
 
     defaultConfig {
@@ -115,6 +115,7 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":motion-renderer"))
     implementation("androidx.wear.compose:compose-material-core:1.6.2")
     implementation("androidx.navigation:navigation-compose:2.9.8")
     implementation("androidx.compose.ui:ui-graphics:1.11.2")
@@ -142,7 +143,7 @@ dependencies {
     implementation("androidx.wear.compose:compose-foundation:1.6.2")
 
     // AndroidX / Google
-    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
