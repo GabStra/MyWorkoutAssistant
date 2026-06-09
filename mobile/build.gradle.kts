@@ -149,7 +149,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.9.8")
 
     // AndroidX core
-    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures:1.3.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
@@ -171,13 +171,13 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
-    implementation("com.openai:openai-java:4.37.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")
+    implementation("com.openai:openai-java:4.39.1")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
     implementation("com.google.code.gson:gson:2.14.0")
-    implementation("com.patrykandpatrick.vico:compose:3.1.0")
+    implementation("com.patrykandpatrick.vico:compose:3.2.2")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
