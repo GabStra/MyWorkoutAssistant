@@ -19,12 +19,33 @@ param(
     [switch]$UseSourceAsIs,
     [double]$SegmentStartSeconds = -1.0,
     [double]$SegmentEndSeconds = -1.0,
+    [string]$LlamaCppCommand = "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-mtmd-cli.exe",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    [ValidateSet("cpu", "gpu")]
+    [string]$LlamaCppBackend = "gpu",
+    [switch]$UseLlamaCppServer,
+    [string]$LlamaCppServerCommand,
+    [int]$LlamaCppServerPort = 8090,
+    [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
+    [int]$LlamaCppNPredict = 768,
+    [int]$LlamaCppImageMinTokens = 0,
+    [int]$LlamaCppImageMaxTokens = 0,
+    [double]$SegmentWindowSeconds = 5.0,
+    [double]$SegmentOverlapSeconds = 2.5,
+    [int]$SegmentFramesPerWindow = 20,
+    [int]$SegmentMaxFrameWidth = 960,
+    [double]$SegmentMergeGapSeconds = 2.0,
+    [double]$SegmentConfidenceThreshold = 0.45,
+    [double]$SegmentMinSegmentSeconds = 2.0,
+    [double]$SegmentMaxSegmentSeconds = 20.0,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
     [string]$LiteRtModelFile = "gemma-4-E4B-it.litertlm",
     [string]$VisionModel = "gemma-4-E4B-it",
     [int]$VisionPort = 8090,
     [ValidateSet("cpu", "gpu", "npu")]
     [string]$LiteRtBackend = "gpu",
+    [switch]$UseLiteRt,
     [ValidateSet("world", "camera")]
     [string]$WhamCoordinateSpace = "camera"
 )
@@ -63,7 +84,10 @@ function Get-ContainerWorkspacePath {
 function Get-PythonCommand {
     $venvPython = Join-Path (Get-RepoRoot) ".venv\Scripts\python.exe"
     if (Test-Path -LiteralPath $venvPython) {
-        return $venvPython
+        & $venvPython -c "import encodings" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            return $venvPython
+        }
     }
     return "python"
 }
@@ -215,11 +239,31 @@ elseif ($manualSegmentRequested) {
 }
 elseif (-not $SkipSegmentDetection) {
     $segmentRunnerScript = Join-Path $PSScriptRoot "run_exercise_segment_detection.ps1"
-    & pwsh $segmentRunnerScript `
+  & pwsh $segmentRunnerScript `
         -VideoPath $resolvedInputVideoPath `
         -ExerciseName $ExerciseName `
         -OutputSlug $ExerciseSlug `
         -Workspace $Workspace `
+        -UseLiteRt:$UseLiteRt.IsPresent `
+        -LlamaCppCommand $LlamaCppCommand `
+        -LlamaCppModel $LlamaCppModel `
+        -LlamaCppMmproj $LlamaCppMmproj `
+        -LlamaCppBackend $LlamaCppBackend `
+        -UseLlamaCppServer:$UseLlamaCppServer.IsPresent `
+        -LlamaCppServerCommand $LlamaCppServerCommand `
+        -LlamaCppServerPort $LlamaCppServerPort `
+        -LlamaCppBaseUrl $LlamaCppBaseUrl `
+        -LlamaCppNPredict $LlamaCppNPredict `
+        -LlamaCppImageMinTokens $LlamaCppImageMinTokens `
+        -LlamaCppImageMaxTokens $LlamaCppImageMaxTokens `
+        -WindowSeconds $SegmentWindowSeconds `
+        -OverlapSeconds $SegmentOverlapSeconds `
+        -FramesPerWindow $SegmentFramesPerWindow `
+        -MaxFrameWidth $SegmentMaxFrameWidth `
+        -MergeGapSeconds $SegmentMergeGapSeconds `
+        -ConfidenceThreshold $SegmentConfidenceThreshold `
+        -MinSegmentSeconds $SegmentMinSegmentSeconds `
+        -MaxSegmentSeconds $SegmentMaxSegmentSeconds `
         -LiteRtModelRepo $LiteRtModelRepo `
         -LiteRtModelFile $LiteRtModelFile `
         -VisionModel $VisionModel `
@@ -268,13 +312,15 @@ if ($RunSmplify) {
     $whamRunnerArgs += "-RunSmplify"
 }
 if ($UseWhamDocker) {
-    $whamRunnerArgs += @(
-        "-UseDocker",
-        "-DockerImage", $WhamDockerImage,
-        "-DockerGpus", $WhamDockerGpus,
-        "-DockerShmSize", $WhamDockerShmSize
-    )
+    Write-Host "Note: -UseWhamDocker is deprecated for this script; WHAM is always executed via Docker."
 }
+$whamRunnerArgs += @(
+    "-UseDocker",
+    "-DockerImage", $WhamDockerImage,
+    "-DockerGpus", $WhamDockerGpus,
+    "-DockerShmSize", $WhamDockerShmSize
+)
+Write-Host "Running WHAM via Docker."
 
 $whamCachedOutputDir = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
 if (Test-Path -LiteralPath $whamCachedOutputDir) {

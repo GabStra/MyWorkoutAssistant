@@ -28,23 +28,145 @@ def download_youtube(url: str, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     template = str(output_dir / "source.%(ext)s")
     options = {
-        "format": "best[ext=mp4]/bestvideo[ext=mp4]/bestvideo/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]/bestvideo[ext=webm]/best",
         "outtmpl": template,
         "quiet": False,
         "noprogress": False,
         "noplaylist": True,
         "retries": 3,
+        "merge_output_format": "mp4",
     }
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=True)
         downloaded = Path(ydl.prepare_filename(info))
     if downloaded.exists():
-        return downloaded
+        return sanitize_downloaded_video(downloaded)
     for extension in (".mp4", ".mkv", ".webm", ".mov"):
         candidate = Path(os.path.splitext(str(downloaded))[0] + extension)
         if candidate.exists():
-            return candidate
+            return sanitize_downloaded_video(candidate)
     raise RuntimeError(f"Download finished but no video file was found in {output_dir}.")
+
+
+def download_youtube_preview(url: str, output_dir: Path) -> Path:
+    try:
+        from yt_dlp import YoutubeDL  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "yt-dlp is required for YouTube preview downloads. Install with: pip install .[motion]"
+        ) from exc
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    template = str(output_dir / "candidate.%(ext)s")
+    options = {
+        "format": "worst[ext=mp4]/worstvideo[ext=mp4]/worst",
+        "outtmpl": template,
+        "quiet": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "retries": 2,
+    }
+    with YoutubeDL(options) as ydl:
+        info = ydl.extract_info(url, download=True)
+        downloaded = Path(ydl.prepare_filename(info))
+    if downloaded.exists():
+        return sanitize_downloaded_video(downloaded)
+    for extension in (".mp4", ".webm", ".mkv", ".mov"):
+        candidate = Path(os.path.splitext(str(downloaded))[0] + extension)
+        if candidate.exists():
+            return sanitize_downloaded_video(candidate)
+    raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
+
+
+def sanitize_downloaded_video(video_path: Path) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return video_path
+
+    sanitized_path = video_path.with_name(f"{video_path.stem}_sanitized.mp4")
+    if sanitized_path.exists() and sanitized_path.stat().st_mtime >= video_path.stat().st_mtime:
+        return sanitized_path
+
+    temp_path = sanitized_path.with_suffix(".tmp.mp4")
+    command_base = [
+        ffmpeg,
+        "-hide_banner",
+        "-y",
+        "-loglevel",
+        "warning",
+        "-i",
+        str(video_path),
+    ]
+    copy_args = command_base + [
+        "-fflags",
+        "+discardcorrupt+genpts",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(temp_path),
+    ]
+
+    copy_exit_code, copy_stderr = _run_ffmpeg(copy_args)
+    warning_text = copy_stderr.lower()
+    copy_has_decode_warning = any(
+        token in warning_text for token in (
+            "co located pocs unavailable",
+            "missing reference picture",
+            "decode_slice_header error",
+            "possible mpeg-ts",
+            "malformed aac timestamps",
+        )
+    )
+
+    if copy_exit_code == 0 and not copy_has_decode_warning:
+        return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
+
+    reencode_args = command_base + [
+        "-fflags",
+        "+discardcorrupt+genpts",
+        "-err_detect",
+        "ignore_err",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "fast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(temp_path),
+    ]
+    _run_ffmpeg(reencode_args)
+    return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
+
+
+def _run_ffmpeg(args: list[str]) -> tuple[int, str]:
+    process = subprocess.run(
+        args,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return process.returncode, process.stderr
+
+
+def _finalize_sanitized_video(temp_path: Path, final_path: Path, fallback_path: Path) -> Path:
+    if not temp_path.exists() or temp_path.stat().st_size == 0:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        if final_path.exists():
+            return final_path
+        return fallback_path
+    temp_path.replace(final_path)
+    return final_path
 
 
 @dataclass(frozen=True)
@@ -70,6 +192,7 @@ class YouTubeCandidate:
     final_score: float = 0.0
     status: str = "candidate"
     score_reasons: list[str] = field(default_factory=list)
+    vision_payload: dict[str, Any] | None = None
 
     def key(self) -> str:
         if self.video_id:
@@ -93,6 +216,8 @@ class YouTubeCandidate:
             "status": self.status,
             "scoreReasons": self.score_reasons,
         }
+        if self.vision_payload is not None:
+            payload["visionPayload"] = self.vision_payload
         return payload
 
 
@@ -130,7 +255,8 @@ class PreparedVisionReview:
 
 
 SearchFn = Callable[[str, int], list[YouTubeCandidate]]
-VisionRankerFn = Callable[[ExerciseEntry, YouTubeCandidate, YouTubeRankingSettings], tuple[float, list[str]]]
+VisionRankResult = tuple[float, list[str]] | tuple[float, list[str], dict[str, Any] | None]
+VisionRankerFn = Callable[[ExerciseEntry, YouTubeCandidate, YouTubeRankingSettings], VisionRankResult]
 
 
 DEMO_KEYWORDS = (
@@ -167,6 +293,10 @@ PENALTY_KEYWORDS = (
     "combine",
     "crowd",
     "watches",
+    "camera angles",
+    "bad camera",
+    "shaky camera",
+    "sorry for the camera",
 )
 REST_COMPONENT_TYPES = {"rest", "recovery", "break"}
 NON_MOTION_EXERCISE_TYPES = {"countdown"}
@@ -310,7 +440,11 @@ def slugify(name: str) -> str:
 
 def build_youtube_queries(exercise_name: str) -> list[str]:
     base = exercise_name.strip()
-    return [base]
+    return [
+        f'{base} demonstration reps "same camera angle" -tutorial -"how to" -shorts',
+        f'{base} "proper form" demo "single camera" -tutorial -mistakes -guide',
+        f"{base} execution demo full movement stable camera -tutorial -workout -program",
+    ]
 
 
 def search_youtube(query: str, results_per_query: int) -> list[YouTubeCandidate]:
@@ -473,6 +607,7 @@ def replace_candidate(candidate: YouTubeCandidate, **changes: Any) -> YouTubeCan
         "final_score": candidate.final_score,
         "status": candidate.status,
         "score_reasons": list(candidate.score_reasons),
+        "vision_payload": candidate.vision_payload,
     }
     payload.update(changes)
     return YouTubeCandidate(**payload)
@@ -510,6 +645,8 @@ VISION_HARD_GATE_REASONS = {
     "correct_exercise",
     "usable_for_motion_extraction",
     "continuous_motion",
+    "athlete_fully_in_frame_throughout",
+    "static_camera_throughout",
     "single_camera_angle",
     "no_step_breakdown",
     "no_camera_cuts",
@@ -529,6 +666,14 @@ def candidate_passes_vision_hard_gates(
     if candidate.vision_score is None or candidate.vision_score < settings.vision_early_stop_score:
         return False
     return VISION_HARD_GATE_REASONS.issubset(set(candidate.score_reasons))
+
+
+def normalize_vision_result(result: VisionRankResult) -> tuple[float, list[str], dict[str, Any] | None]:
+    if len(result) >= 3:
+        score, reasons, payload = result
+        return score, reasons, payload
+    score, reasons = result
+    return score, reasons, None
 
 
 def litert_vision_backend(settings: YouTubeRankingSettings) -> str:
@@ -651,7 +796,7 @@ class LiteRtServerVisionRanker:
         exercise: ExerciseEntry,
         candidate: YouTubeCandidate,
         settings: YouTubeRankingSettings,
-    ) -> tuple[float, list[str]]:
+    ) -> VisionRankResult:
         return rank_candidate_with_vision_client(
             exercise=exercise,
             candidate=candidate,
@@ -663,7 +808,7 @@ class LiteRtServerVisionRanker:
         self,
         prepared: PreparedVisionReview,
         settings: YouTubeRankingSettings,
-    ) -> tuple[float, list[str]]:
+    ) -> VisionRankResult:
         return score_prepared_vision_review(
             prepared=prepared,
             settings=settings,
@@ -744,8 +889,10 @@ def rank_candidates_with_vision_ranker(
     vision_limit = max(0, settings.vision_candidates_per_exercise)
     for index, candidate in enumerate(ranked):
         if index < vision_limit:
-            vision_score, vision_reasons = vision_ranker(exercise, candidate, settings)
-            reviewed = apply_vision_score(candidate, vision_score, vision_reasons)
+            vision_score, vision_reasons, vision_payload = normalize_vision_result(
+                vision_ranker(exercise, candidate, settings)
+            )
+            reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
             reranked.append(reviewed)
             if candidate_passes_vision_hard_gates(reviewed, settings):
                 reranked.extend(ranked[index + 1 :])
@@ -783,8 +930,8 @@ def rank_candidates_with_prepared_vision_reviews(
                     if vision_result is None:
                         reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"])
                     else:
-                        vision_score, vision_reasons = vision_result
-                        reviewed = apply_vision_score(candidate, vision_score, vision_reasons)
+                        vision_score, vision_reasons, vision_payload = normalize_vision_result(vision_result)
+                        reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
                     reranked.append(reviewed)
                     if candidate_passes_vision_hard_gates(reviewed, settings):
                         reranked.extend(ranked[index + 1 :])
@@ -799,8 +946,10 @@ def rank_candidates_with_prepared_vision_reviews(
                 if prepared is None:
                     reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"])
                 else:
-                    vision_score, vision_reasons = vision_ranker.rank_prepared(prepared, settings)
-                    reviewed = apply_vision_score(candidate, vision_score, vision_reasons)
+                    vision_score, vision_reasons, vision_payload = normalize_vision_result(
+                        vision_ranker.rank_prepared(prepared, settings)
+                    )
+                    reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
                 reranked.append(reviewed)
                 if candidate_passes_vision_hard_gates(reviewed, settings):
                     reranked.extend(ranked[index + 1 :])
@@ -818,11 +967,11 @@ def score_prepared_vision_reviews_parallel(
     prepared_reviews: list[PreparedVisionReview],
     settings: YouTubeRankingSettings,
     vision_ranker: LiteRtServerVisionRanker,
-) -> dict[str, tuple[float, list[str]]]:
+) -> dict[str, VisionRankResult]:
     if not prepared_reviews:
         return {}
     workers = max(1, min(settings.vision_llm_workers, len(prepared_reviews)))
-    results: dict[str, tuple[float, list[str]]] = {}
+    results: dict[str, VisionRankResult] = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(vision_ranker.rank_prepared, prepared, settings): prepared
@@ -841,6 +990,7 @@ def apply_vision_score(
     candidate: YouTubeCandidate,
     vision_score: float,
     vision_reasons: list[str],
+    vision_payload: dict[str, Any] | None = None,
 ) -> YouTubeCandidate:
     final_score = compose_final_score(candidate.metadata_score, vision_score)
     return replace_candidate(
@@ -849,6 +999,7 @@ def apply_vision_score(
         final_score=final_score,
         status=status_for_score(final_score),
         score_reasons=dedupe_reasons(candidate.score_reasons + vision_reasons),
+        vision_payload=vision_payload,
     )
 
 
@@ -891,17 +1042,18 @@ def prepare_vision_review(
         metadata = read_basic_video_metadata(video_path)
         duration = max(0.5, metadata.duration_seconds)
         window = DetectionWindow(index=0, start_seconds=0.0, end_seconds=min(duration, 30.0))
-        frame_paths = extract_window_frames(
+        frame_samples = extract_window_frames(
             video_path=video_path,
             window=window,
             frames_per_window=max(1, settings.vision_frames_per_candidate),
             max_frame_width=960,
+            original_fps=metadata.fps,
             output_dir=temp_path / "frames",
         )
         return PreparedVisionReview(
             candidate=candidate,
             temp_dir=temp_dir,
-            frame_paths=frame_paths,
+            frame_paths=[sample.path for sample in frame_samples],
             prompt=build_candidate_vision_prompt(exercise.name, candidate),
         )
     except Exception:
@@ -913,7 +1065,7 @@ def rank_candidate_with_litert(
     exercise: ExerciseEntry,
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
-) -> tuple[float, list[str]]:
+) -> VisionRankResult:
     from exercise_motion_pkg.segment_detection import LiteRtCliVisionClient
 
     command = settings.litert_command or find_default_litert_command()
@@ -936,7 +1088,7 @@ def rank_candidate_with_vision_client(
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
     caption_images: Callable[..., str],
-) -> tuple[float, list[str]]:
+) -> VisionRankResult:
     try:
         prepared = prepare_vision_review(exercise, candidate, settings)
         try:
@@ -956,7 +1108,7 @@ def score_prepared_vision_review(
     prepared: PreparedVisionReview,
     settings: YouTubeRankingSettings,
     caption_images: Callable[..., str],
-) -> tuple[float, list[str]]:
+) -> VisionRankResult:
     from exercise_motion_pkg.segment_detection import extract_json_object
 
     try:
@@ -969,7 +1121,15 @@ def score_prepared_vision_review(
 
     correct_exercise = parse_bool_value(payload.get("correct_exercise"), default=False)
     full_body_visible = parse_bool_value(payload.get("full_body_visible"), default=False)
+    athlete_fully_in_frame_throughout = parse_bool_value(
+        payload.get("athlete_fully_in_frame_throughout"),
+        default=full_body_visible,
+    )
     stable_camera = parse_bool_value(payload.get("stable_camera"), default=False)
+    static_camera_throughout = parse_bool_value(
+        payload.get("static_camera_throughout"),
+        default=stable_camera,
+    )
     repeated_reps = parse_bool_value(payload.get("repeated_reps"), default=False)
     low_obstruction = parse_bool_value(payload.get("low_obstruction"), default=False)
     usable = parse_bool_value(payload.get("usable_for_motion_extraction"), default=False)
@@ -994,11 +1154,21 @@ def score_prepared_vision_review(
     else:
         reasons.append("wrong_exercise_penalty")
     if full_body_visible:
-        score += 0.20
+        score += 0.12
         reasons.append("full_body_visible")
+    if athlete_fully_in_frame_throughout:
+        score += 0.12
+        reasons.append("athlete_fully_in_frame_throughout")
+    else:
+        reasons.append("athlete_or_implement_out_of_frame_penalty")
     if stable_camera:
-        score += 0.08
+        score += 0.04
         reasons.append("stable_camera")
+    if static_camera_throughout:
+        score += 0.08
+        reasons.append("static_camera_throughout")
+    else:
+        reasons.append("moving_or_reframing_camera_penalty")
     if repeated_reps:
         score += 0.10
         reasons.append("repeated_reps")
@@ -1064,14 +1234,16 @@ def score_prepared_vision_review(
         score *= 0.55
     if not continuous_motion or not no_step_breakdown or not no_camera_cuts:
         score *= 0.45
-    if not stable_camera or not single_camera_angle:
+    if not stable_camera or not static_camera_throughout or not single_camera_angle:
         score *= 0.60
+    if not full_body_visible or not athlete_fully_in_frame_throughout:
+        score *= 0.35
     if not unobstructed_motion or not key_joints_visible or not implement_path_visible:
         score *= 0.25
     if not single_primary_subject or not clean_scene or not no_nearby_people:
         score *= 0.20
     score *= max(0.0, min(1.0, float(confidence_score)))
-    return clamp_score(score), reasons
+    return clamp_score(score), reasons, payload
 
 
 def parse_bool_value(value: Any, *, default: bool) -> bool:
@@ -1094,44 +1266,16 @@ def find_default_litert_command() -> str:
     return found or "litert-lm"
 
 
-def download_youtube_preview(url: str, output_dir: Path) -> Path:
-    try:
-        from yt_dlp import YoutubeDL  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError(
-            "yt-dlp is required for YouTube preview downloads. Install with: pip install .[motion]"
-        ) from exc
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    template = str(output_dir / "candidate.%(ext)s")
-    options = {
-        "format": "worst[ext=mp4]/worstvideo[ext=mp4]/worst",
-        "outtmpl": template,
-        "quiet": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "retries": 2,
-    }
-    with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=True)
-        downloaded = Path(ydl.prepare_filename(info))
-    if downloaded.exists():
-        return downloaded
-    for extension in (".mp4", ".webm", ".mkv", ".mov"):
-        candidate = Path(os.path.splitext(str(downloaded))[0] + extension)
-        if candidate.exists():
-            return candidate
-    raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
-
-
 def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidate) -> str:
     return (
         "Rank this YouTube candidate for exercise motion extraction.\n"
         f"Target exercise: {exercise_name}.\n"
         f"Video title: {candidate.title}.\n"
         "Judge the sampled frames together. We need a short demo clip for WHAM-style motion extraction, not a full tutorial.\n"
-        "Strongly prefer: the actual target exercise being performed as continuous uninterrupted repetitions, a stable single camera angle, the whole relevant body and implement visible through the rep, clear joint motion, no obstruction, and little or no talking/setup/title-card content.\n"
+        "Strongly prefer: the actual target exercise being performed as continuous uninterrupted repetitions, a fixed tripod-like camera, the whole relevant body and implement visible through the entire rep, clear joint motion, no obstruction, and little or no talking/setup/title-card content.\n"
         "For bench press, the bar path, hands, elbows, shoulders, torso, and bench must remain clearly visible through the press; any angle is acceptable if it stays the same and clearly shows the full pressing motion.\n"
+        "Mark athlete_fully_in_frame_throughout false if the head, feet, hands, bar, dumbbell, kettlebell, or medicine ball leaves the frame during the movement, even briefly.\n"
+        "Mark static_camera_throughout false if the camera pans, tilts, follows the athlete, zooms, reframes, shakes, or otherwise moves during the rep. A single fixed angle is required.\n"
         "The scene should contain one clearly isolated primary athlete. Reject crowded gym/event scenes, spectators, multiple nearby people, spotters/helpers close to the lifter, or other bodies that could confuse person tracking, even if the main lifter is visible.\n"
         "Reject or down-rank wrong exercises, cropped bodies, shaky handheld video, setup-only clips, talking-only/tutorial clips, title cards, excessive camera movement, camera cuts between reps, montage edits, obstructed lifters, crowded gym clips, spotters or equipment blocking the motion, and videos not usable for motion extraction.\n"
         "Reject step-by-step demonstrations where the movement is broken into separate instructional positions, paused stages, freeze frames, or edited fragments instead of a continuous rep.\n"
@@ -1139,7 +1283,9 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         "{"
         '"correct_exercise": boolean, '
         '"full_body_visible": boolean, '
+        '"athlete_fully_in_frame_throughout": boolean, '
         '"stable_camera": boolean, '
+        '"static_camera_throughout": boolean, '
         '"repeated_reps": boolean, '
         '"low_obstruction": boolean, '
         '"usable_for_motion_extraction": boolean, '

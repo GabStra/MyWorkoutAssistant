@@ -20,6 +20,10 @@ def run_wham_locally(
     python_command: str,
     estimate_local_only: bool = False,
     run_smplify: bool = False,
+    use_docker: bool = False,
+    docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    docker_gpus: str = "all",
+    docker_shm_size: str = "8g",
 ) -> WhamRunResult:
     validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -34,6 +38,10 @@ def run_wham_locally(
         python_command=python_command,
         estimate_local_only=estimate_local_only,
         run_smplify=run_smplify,
+        use_docker=use_docker,
+        docker_image=docker_image,
+        docker_gpus=docker_gpus,
+        docker_shm_size=docker_shm_size,
     )
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
         "w",
@@ -73,8 +81,45 @@ def build_wham_command(
     python_command: str,
     estimate_local_only: bool,
     run_smplify: bool,
+    use_docker: bool = False,
+    docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    docker_gpus: str = "all",
+    docker_shm_size: str = "8g",
 ) -> list[str]:
-    del wham_repo_path
+    if use_docker:
+        command = ["docker", "run", "--rm"]
+        if docker_gpus:
+            command.extend(["--gpus", docker_gpus])
+        if docker_shm_size:
+            command.extend(["--shm-size", docker_shm_size])
+        command.extend(
+            [
+                "-v",
+                f"{wham_repo_path.resolve()}:/code",
+                "-v",
+                f"{input_video.parent.resolve()}:/input",
+                "-v",
+                f"{output_root.resolve()}:/output",
+                "-w",
+                "/code",
+                docker_image,
+                "python",
+                "-u",
+                "demo.py",
+                "--video",
+                f"/input/{input_video.name}",
+                "--output_pth",
+                "/output",
+                "--save_pkl",
+            ]
+        )
+        if estimate_local_only:
+            command.append("--estimate_local_only")
+        if run_smplify:
+            command.append("--run_smplify")
+        return command
+
+    del wham_repo_path, docker_image, docker_gpus, docker_shm_size
     command = [
         python_command,
         "demo.py",

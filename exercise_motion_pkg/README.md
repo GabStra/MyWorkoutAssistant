@@ -98,6 +98,8 @@ Main artifacts:
 
 ## Local LLM Segment Detection
 
+For the current llama.cpp + Qwen3VL setup (paths, mmproj compatibility, and the cat-cow workflow), see [LLAMACPP_SEGMENT_DETECTION.md](LLAMACPP_SEGMENT_DETECTION.md).
+
 Use the segment detector before extraction when you want a tighter clip:
 
 ```powershell

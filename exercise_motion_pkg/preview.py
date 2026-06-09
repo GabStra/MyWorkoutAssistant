@@ -299,6 +299,19 @@ def build_wear_skeleton_payload(
     }
 
 
+def detect_preview_loops_for_clip(clip: MotionClip) -> list[dict[str, object]]:
+    preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(clip))
+    return [
+        {
+            **loop,
+            "autoAlignment": _serialize_preview_rotations(
+                _compute_preview_auto_alignment(preview_clip.frames[loop["startFrame"]: loop["endFrame"] + 1])
+            ),
+        }
+        for loop in _detect_preview_loops(preview_clip)
+    ]
+
+
 def _build_wear_transformed_frames(
     *,
     active_frames: list[MotionFrame],
@@ -2205,6 +2218,7 @@ def _build_html(payload: dict[str, object]) -> str:
     let autoWorldAlignmentEnabled = Boolean(payload.defaultAutoWorldAlignment);
     let sceneInverted = Boolean(payload.defaultSceneInverted);
     let showSmplMesh = Boolean(payload.smplMesh);
+    let showBoundsHelper = true;
     let lockYRoot = false;
     let lockPlantedFeet = false;
     let ankleLockOffsetForward = parseFloat(ankleOffsetForwardInput.value);
@@ -2928,6 +2942,10 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function refreshMergedBoundsHelper() {{
+      if (!showBoundsHelper) {{
+        mergedBoundsHelper.visible = false;
+        return;
+      }}
       const bounds = getCachedSceneBounds(fixedRoot);
       if (!bounds) {{
         mergedBoundsHelper.visible = false;
@@ -3326,7 +3344,12 @@ def _build_html(payload: dict[str, object]) -> str:
       if (frames.length === 0 || footJoints.length === 0) {{
         return footLockCorrections;
       }}
-      const targetsByFrameKey = new Map(frames.map((frame) => [frameFootLockKey(frame), []]));
+      const loopTargets = [];
+      const targetsByFrameKey = new Map(frames.map((frame) => {{
+        const targets = [];
+        loopTargets.push(targets);
+        return [frameFootLockKey(frame), targets];
+      }}));
       const targetOffset = ankleLockTargetOffsetVector();
       const contactHeight = 0.075;
       const contactSpeed = 0.028;
@@ -4033,6 +4056,112 @@ def _build_html(payload: dict[str, object]) -> str:
       link.remove();
       URL.revokeObjectURL(url);
     }}
+
+    function applyAutomationSettings(options = {{}}) {{
+      if (Object.prototype.hasOwnProperty.call(options, "fixedRoot")) {{
+        fixedRoot = Boolean(options.fixedRoot);
+        fixedRootInput.checked = fixedRoot;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "lockYDrift")) {{
+        lockYRoot = Boolean(options.lockYDrift);
+        lockYRootInput.checked = lockYRoot;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "lockPlantedFeet")) {{
+        lockPlantedFeet = Boolean(options.lockPlantedFeet);
+        lockPlantedFeetInput.checked = lockPlantedFeet;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "autoWorldAlignment")) {{
+        autoWorldAlignmentEnabled = Boolean(options.autoWorldAlignment);
+        autoWorldAlignmentInput.checked = autoWorldAlignmentEnabled;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "sceneInverted")) {{
+        sceneInverted = Boolean(options.sceneInverted);
+        sceneInvertedInput.checked = sceneInverted;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "showSmplMesh")) {{
+        showSmplMesh = Boolean(options.showSmplMesh) && Boolean(payload.smplMesh);
+        showSmplMeshInput.checked = showSmplMesh;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "showBoundsHelper")) {{
+        showBoundsHelper = Boolean(options.showBoundsHelper);
+      }}
+      if (options.ankleLockTargetOffset) {{
+        const offset = options.ankleLockTargetOffset;
+        if (Number.isFinite(Number(offset.forward))) {{
+          ankleLockOffsetForward = Number(offset.forward);
+          ankleOffsetForwardInput.value = String(ankleLockOffsetForward);
+        }}
+        if (Number.isFinite(Number(offset.lateral))) {{
+          ankleLockOffsetLateral = Number(offset.lateral);
+          ankleOffsetLateralInput.value = String(ankleLockOffsetLateral);
+        }}
+        if (Number.isFinite(Number(offset.up))) {{
+          ankleLockOffsetUp = Number(offset.up);
+          ankleOffsetUpInput.value = String(ankleLockOffsetUp);
+        }}
+        refreshAnkleLockOffsetLabels();
+      }}
+      invalidateSceneBoundsCache();
+      activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);
+      applySceneReframe();
+      if (Number.isFinite(Number(options.cameraYawDegrees))) {{
+        yaw = Number(options.cameraYawDegrees) * Math.PI / 180;
+        cameraTouched = true;
+      }}
+      if (Number.isFinite(Number(options.cameraPitchDegrees))) {{
+        pitch = Math.max(-1.2, Math.min(1.2, Number(options.cameraPitchDegrees) * Math.PI / 180));
+        cameraTouched = true;
+      }}
+      refreshMergedBoundsHelper();
+      updateCamera();
+    }}
+
+    function renderDeterministicFrame(frameIndex) {{
+      const frames = playbackState.frames ?? [];
+      const boundedIndex = Math.max(0, Math.min(Math.max(0, frames.length - 1), Math.floor(Number(frameIndex) || 0)));
+      paused = true;
+      refreshPauseLabel();
+      frameCursor = boundedIndex;
+      draw();
+      return renderer.domElement.toDataURL("image/png");
+    }}
+
+    window.exerciseMotionAutomation = {{
+      getPayloadSummary() {{
+        return {{
+          title: payload.title,
+          fps: payload.fps,
+          frameCount: payload.frameCount,
+          detectedLoops,
+          selectedLoopIndex,
+        }};
+      }},
+      configure(options = {{}}) {{
+        applyAutomationSettings(options);
+        return this.getPayloadSummary();
+      }},
+      selectLoop(loopIndex) {{
+        const nextIndex = Number(loopIndex);
+        if (!Number.isInteger(nextIndex) || nextIndex < -1 || nextIndex >= detectedLoops.length) {{
+          throw new Error(`Invalid loop index: ${{loopIndex}}`);
+        }}
+        setSelectedLoop(nextIndex);
+        loopSelect.value = String(selectedLoopIndex);
+        return this.getPayloadSummary();
+      }},
+      exportWearSkeleton(options = {{}}) {{
+        applyAutomationSettings(options);
+        return buildBakedWearSkeletonPayload();
+      }},
+      bakeLoop(loopIndex, options = {{}}) {{
+        this.selectLoop(loopIndex);
+        return this.exportWearSkeleton(options);
+      }},
+      renderFrame(frameIndex, options = {{}}) {{
+        applyAutomationSettings(options);
+        return renderDeterministicFrame(frameIndex);
+      }},
+    }};
 
     function setOrientedEllipsoid(mesh, center, xAxis, yAxis, width, height, depth) {{
         if (!center || !xAxis || !yAxis) {{

@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from exercise_motion_pkg.bake_and_rank import BakeAndRankRequest, run_bake_and_rank_pipeline
 from exercise_motion_pkg.ground import embed_ground_metadata_in_clip, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
@@ -48,6 +49,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="python",
         help="Python interpreter or command to run WHAM and the WHAM-backed conversion stage.",
     )
+    generate.add_argument(
+        "--use-wham-docker",
+        action="store_true",
+        help="Run WHAM through Docker instead of the local Python environment.",
+    )
+    generate.add_argument(
+        "--wham-docker-image",
+        default="yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+        help="Docker image to use when --use-wham-docker is set.",
+    )
+    generate.add_argument("--wham-docker-gpus", default="all")
+    generate.add_argument("--wham-docker-shm-size", default="8g")
     generate.add_argument(
         "--wham-estimate-local-only",
         action="store_true",
@@ -98,16 +111,25 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--out-json", required=True)
     detect.add_argument("--frames-dir", required=True)
     detect.add_argument("--exercise-name")
+    detect.add_argument("--llama-cpp-command")
+    detect.add_argument("--llama-cpp-model")
+    detect.add_argument("--llama-cpp-mmproj")
+    detect.add_argument("--llama-cpp-backend", default="gpu")
+    detect.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    detect.add_argument("--llama-cpp-image-min-tokens", type=int)
+    detect.add_argument("--llama-cpp-image-max-tokens", type=int)
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
     detect.add_argument("--model", default="local-vision")
     detect.add_argument("--litert-command")
     detect.add_argument("--litert-backend", default="gpu")
-    detect.add_argument("--window-seconds", type=float, default=8.0)
-    detect.add_argument("--overlap-seconds", type=float, default=4.0)
-    detect.add_argument("--frames-per-window", type=int, default=6)
+    detect.add_argument("--window-seconds", type=float, default=5.0)
+    detect.add_argument("--overlap-seconds", type=float, default=2.5)
+    detect.add_argument("--frames-per-window", type=int, default=20)
     detect.add_argument("--max-frame-width", type=int, default=960)
     detect.add_argument("--merge-gap-seconds", type=float, default=2.0)
     detect.add_argument("--confidence-threshold", type=float, default=0.45)
+    detect.add_argument("--min-segment-seconds", type=float, default=2.0)
+    detect.add_argument("--max-segment-seconds", type=float, default=20.0)
 
     youtube_search = subparsers.add_parser(
         "find-youtube-videos",
@@ -133,6 +155,55 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--keep-litert-server", action="store_true")
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument("--include-disabled", action="store_true")
+
+    bake_and_rank = subparsers.add_parser(
+        "bake-and-rank",
+        help="Run WHAM, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
+    )
+    bake_and_rank.add_argument("--candidates-json", required=True)
+    bake_and_rank.add_argument(
+        "--workspace",
+        default="build/exercise_motion",
+        help="Workspace root for generated artifacts. Default: build/exercise_motion",
+    )
+    bake_and_rank.add_argument("--wham-repo-path", required=True)
+    bake_and_rank.add_argument("--body-model-root", required=True)
+    bake_and_rank.add_argument("--max-loop-seconds", type=float, default=10.0)
+    bake_and_rank.add_argument("--wham-python", default="python")
+    bake_and_rank.add_argument("--use-wham-docker", action="store_true")
+    bake_and_rank.add_argument(
+        "--wham-docker-image",
+        default="yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    )
+    bake_and_rank.add_argument("--wham-docker-gpus", default="all")
+    bake_and_rank.add_argument("--wham-docker-shm-size", default="8g")
+    bake_and_rank.add_argument("--estimate-local-only", action="store_true")
+    bake_and_rank.add_argument("--run-smplify", action="store_true")
+    bake_and_rank.add_argument(
+        "--wham-coordinate-space",
+        choices=("world", "camera"),
+        default="camera",
+    )
+    bake_and_rank.add_argument("--litert-command")
+    bake_and_rank.add_argument("--litert-backend", default="gpu")
+    bake_and_rank.add_argument("--vision-model", default="gemma-4-E4B-it")
+    bake_and_rank.add_argument("--no-litert-server", action="store_true")
+    bake_and_rank.add_argument("--litert-server-url", default="http://127.0.0.1:9379")
+    bake_and_rank.add_argument("--litert-server-port", type=int, default=9379)
+    bake_and_rank.add_argument("--keep-litert-server", action="store_true")
+    bake_and_rank.add_argument("--review-frames", type=int, default=12)
+    bake_and_rank.add_argument("--min-selected-score", type=float, default=0.55)
+    bake_and_rank.add_argument("--skip-source-segment-detection", action="store_true")
+    bake_and_rank.add_argument("--segment-base-url")
+    bake_and_rank.add_argument("--segment-model")
+    bake_and_rank.add_argument("--segment-window-seconds", type=float, default=5.0)
+    bake_and_rank.add_argument("--segment-overlap-seconds", type=float, default=2.5)
+    bake_and_rank.add_argument("--segment-frames-per-window", type=int, default=20)
+    bake_and_rank.add_argument("--segment-confidence-threshold", type=float, default=0.45)
+    bake_and_rank.add_argument("--segment-padding-seconds", type=float, default=0.35)
+    bake_and_rank.add_argument("--segment-end-padding-seconds", type=float, default=0.35)
+    bake_and_rank.add_argument("--segment-min-seconds", type=float, default=2.0)
+    bake_and_rank.add_argument("--segment-max-seconds", type=float, default=20.0)
 
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
@@ -192,6 +263,10 @@ def main() -> None:
                 wham_results_pkl=Path(args.wham_results_pkl) if args.wham_results_pkl else None,
                 body_model_root=Path(args.body_model_root) if args.body_model_root else None,
                 wham_python_command=args.wham_python_command,
+                use_wham_docker=args.use_wham_docker,
+                wham_docker_image=args.wham_docker_image,
+                wham_docker_gpus=args.wham_docker_gpus,
+                wham_docker_shm_size=args.wham_docker_shm_size,
                 wham_estimate_local_only=args.wham_estimate_local_only,
                 wham_run_smplify=args.wham_run_smplify,
                 wham_coordinate_space=args.wham_coordinate_space,
@@ -254,11 +329,20 @@ def main() -> None:
             detect_exercise_segment,
             save_detection_result,
         )
+        if args.llama_cpp_n_predict <= 0:
+            raise ValueError("--llama-cpp-n-predict must be greater than 0.")
 
         result = detect_exercise_segment(
             video_path=Path(args.video_path),
             output_dir=Path(args.frames_dir),
             settings=DetectionSettings(
+                llama_cpp_command=args.llama_cpp_command,
+                llama_cpp_model=args.llama_cpp_model,
+                llama_cpp_mmproj=args.llama_cpp_mmproj,
+                llama_cpp_backend=args.llama_cpp_backend,
+                llama_cpp_n_predict=args.llama_cpp_n_predict,
+                llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
+                llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
                 model=args.model,
                 litert_command=args.litert_command,
@@ -269,6 +353,8 @@ def main() -> None:
                 max_frame_width=args.max_frame_width,
                 merge_gap_seconds=args.merge_gap_seconds,
                 confidence_threshold=args.confidence_threshold,
+                min_segment_seconds=args.min_segment_seconds,
+                max_segment_seconds=args.max_segment_seconds,
             ),
             exercise_name=args.exercise_name,
         )
@@ -308,6 +394,55 @@ def main() -> None:
         )
         print(f"YouTube candidates JSON: {Path(args.out_json).resolve()}")
         print(f"Exercises: {len(manifest['exercises'])}")
+        return
+    if args.command == "bake-and-rank":
+        manifest = run_bake_and_rank_pipeline(
+            BakeAndRankRequest(
+                candidates_json=Path(args.candidates_json),
+                workspace=Path(args.workspace),
+                wham_repo_path=Path(args.wham_repo_path),
+                body_model_root=Path(args.body_model_root),
+                wham_python_command=args.wham_python,
+                use_wham_docker=args.use_wham_docker,
+                wham_docker_image=args.wham_docker_image,
+                wham_docker_gpus=args.wham_docker_gpus,
+                wham_docker_shm_size=args.wham_docker_shm_size,
+                wham_estimate_local_only=args.estimate_local_only,
+                wham_run_smplify=args.run_smplify,
+                wham_coordinate_space=args.wham_coordinate_space,
+                max_loop_seconds=args.max_loop_seconds,
+                litert_command=args.litert_command,
+                litert_backend=args.litert_backend,
+                vision_model=args.vision_model,
+                use_litert_server=not args.no_litert_server,
+                litert_server_url=args.litert_server_url,
+                litert_server_port=args.litert_server_port,
+                keep_litert_server=args.keep_litert_server,
+                review_frames=args.review_frames,
+                min_selected_score=args.min_selected_score,
+                detect_source_segment=not args.skip_source_segment_detection,
+                segment_base_url=args.segment_base_url,
+                segment_model=args.segment_model,
+                segment_window_seconds=args.segment_window_seconds,
+                segment_overlap_seconds=args.segment_overlap_seconds,
+                segment_frames_per_window=args.segment_frames_per_window,
+                segment_confidence_threshold=args.segment_confidence_threshold,
+                segment_padding_seconds=args.segment_padding_seconds,
+                segment_end_padding_seconds=args.segment_end_padding_seconds,
+                segment_min_seconds=args.segment_min_seconds,
+                segment_max_seconds=args.segment_max_seconds,
+            )
+        )
+        selection_path = Path(args.workspace) / "selection_manifest.json"
+        print(f"Selection manifest: {selection_path.resolve()}")
+        selected = manifest.get("selected")
+        if selected:
+            print(f"Selected Wear skeleton: {selected['selectedWearSkeletonPath']}")
+            preview_html = manifest.get("selectedLoopPreviewHtmlPath")
+            if preview_html:
+                print(f"Selected loop preview: {Path(preview_html).resolve()}")
+        else:
+            print("Selected Wear skeleton: none")
         return
     if args.command == "trim-video":
         output_path = trim_video(

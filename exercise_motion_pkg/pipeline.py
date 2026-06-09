@@ -33,6 +33,10 @@ class GenerateRequest:
     wham_results_pkl: Path | None = None
     body_model_root: Path | None = None
     wham_python_command: str = "python"
+    use_wham_docker: bool = False
+    wham_docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest"
+    wham_docker_gpus: str = "all"
+    wham_docker_shm_size: str = "8g"
     wham_estimate_local_only: bool = False
     wham_run_smplify: bool = False
     wham_coordinate_space: str = "camera"
@@ -86,6 +90,10 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
                 python_command=request.wham_python_command,
                 estimate_local_only=request.wham_estimate_local_only,
                 run_smplify=request.wham_run_smplify,
+                use_docker=request.use_wham_docker,
+                docker_image=request.wham_docker_image,
+                docker_gpus=request.wham_docker_gpus,
+                docker_shm_size=request.wham_docker_shm_size,
             )
             wham_results_pkl = wham_result.results_pkl
         else:

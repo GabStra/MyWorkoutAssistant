@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import exercise_motion_pkg.bake_and_rank as bake_and_rank_module
 from exercise_motion_pkg.cleanup import (
+    CleanupStats,
     choose_anchor_foot,
     cleanup_motion_clip,
     detect_support_contact_states,
@@ -18,6 +21,22 @@ from exercise_motion_pkg.cleanup import (
     stabilize_spine_chain,
     suppress_micro_movements,
 )
+from exercise_motion_pkg.bake_and_rank import (
+    BakeAndRankRequest,
+    LoopRanking,
+    RankedCandidate,
+    ReviewItem,
+    apply_loop_continuity_adjustment,
+    choose_best_review_item,
+    compute_loop_continuity_metrics,
+    parse_loop_ranking_response,
+    parse_ranked_candidates_manifest,
+    parse_export_fps,
+    parse_top_ranked_candidates_manifest,
+    run_bake_and_rank_pipeline,
+    sample_review_frame_indices,
+    split_loops_by_duration,
+)
 from exercise_motion_pkg.ground import (
     PlaneEstimate,
     adjust_render_ground_height_to_clip,
@@ -26,7 +45,7 @@ from exercise_motion_pkg.ground import (
 )
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
-from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
+from exercise_motion_pkg.pipeline import GenerateRequest, GenerateResult, run_generation_pipeline
 from exercise_motion_pkg.physics_bundle import write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
 from exercise_motion_pkg.preview import (
@@ -44,6 +63,8 @@ from exercise_motion_pkg.preview import (
     write_wear_skeleton_json,
 )
 from exercise_motion_pkg.segment_detection import (
+    CandidateExecution,
+    DetectionResult,
     DetectionWindow,
     DetectedSpan,
     WindowDetection,
@@ -64,6 +85,7 @@ from exercise_motion_pkg.wham_smpl_preview import (
 )
 from exercise_motion_pkg.youtube import (
     ExerciseEntry,
+    PreparedVisionReview,
     YouTubeCandidate,
     YouTubeRankingSettings,
     build_candidate_vision_prompt,
@@ -72,6 +94,7 @@ from exercise_motion_pkg.youtube import (
     discover_and_rank_youtube_candidates,
     extract_workout_plan_exercises,
     parse_yt_dlp_search_results,
+    score_prepared_vision_review,
     score_candidate_metadata,
 )
 
@@ -1492,7 +1515,7 @@ def test_merge_detection_intervals_merges_close_segments() -> None:
     assert merged[0].contributing_windows == [0, 1]
 
 
-def test_choose_detected_span_prefers_longest_positive_cluster() -> None:
+def test_choose_detected_span_prefers_complete_precise_interval_over_partial_cluster() -> None:
     detections = [
         WindowDetection(
             window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=8.0),
@@ -1551,9 +1574,166 @@ def test_choose_detected_span_prefers_longest_positive_cluster() -> None:
     span = choose_detected_span(detections=detections, confidence_threshold=0.45, merge_gap_seconds=2.0)
 
     assert span is not None
-    assert span.start_seconds == 4.0
-    assert span.end_seconds == 16.0
-    assert span.contributing_windows == [1, 2]
+    assert span.start_seconds == 21.0
+    assert span.end_seconds == 24.0
+    assert span.contributing_windows == [3]
+
+
+def test_choose_detected_span_rejects_too_short_precise_fragment() -> None:
+    detections = [
+        WindowDetection(
+            window=DetectionWindow(index=0, start_seconds=20.0, end_seconds=40.0),
+            movement_present=True,
+            contains_movement_start=True,
+            contains_movement_end=True,
+            movement_start_seconds=0.0,
+            movement_end_seconds=0.9,
+            confidence=0.95,
+            summary="short fragment",
+            reason="too short to contain a complete movement",
+            camera_variation=0.01,
+            frame_paths=[],
+        ),
+        WindowDetection(
+            window=DetectionWindow(index=1, start_seconds=30.0, end_seconds=46.0),
+            movement_present=True,
+            contains_movement_start=True,
+            contains_movement_end=True,
+            movement_start_seconds=0.0,
+            movement_end_seconds=4.5,
+            confidence=0.9,
+            summary="complete execution",
+            reason="contains the full movement execution",
+            camera_variation=0.03,
+            frame_paths=[],
+        ),
+    ]
+
+    span = choose_detected_span(
+        detections=detections,
+        confidence_threshold=0.45,
+        merge_gap_seconds=2.0,
+        min_segment_seconds=2.0,
+    )
+
+    assert span is not None
+    assert span.start_seconds == 30.0
+    assert span.end_seconds == 34.5
+    assert span.contributing_windows == [1]
+
+
+def test_choose_detected_span_prefers_single_execution_candidate_over_broad_multi_execution() -> None:
+    detections = [
+        WindowDetection(
+            window=DetectionWindow(index=0, start_seconds=10.0, end_seconds=40.0),
+            movement_present=True,
+            contains_movement_start=True,
+            contains_movement_end=True,
+            movement_start_seconds=0.0,
+            movement_end_seconds=28.0,
+            confidence=0.96,
+            summary="broad span includes multiple attempts",
+            reason="model returned setup and two executions",
+            camera_variation=0.02,
+            frame_paths=[],
+            executions=[
+                CandidateExecution(
+                    start_seconds=10.0,
+                    end_seconds=38.0,
+                    confidence=0.96,
+                    quality=0.95,
+                    complete=True,
+                    single_execution=False,
+                    contains_multiple_executions=True,
+                    contains_idle_or_reset=True,
+                    reason="contains more than one attempt",
+                    source_window_index=0,
+                )
+            ],
+        ),
+        WindowDetection(
+            window=DetectionWindow(index=1, start_seconds=30.0, end_seconds=50.0),
+            movement_present=True,
+            contains_movement_start=True,
+            contains_movement_end=True,
+            movement_start_seconds=1.5,
+            movement_end_seconds=15.0,
+            confidence=0.86,
+            summary="one complete execution",
+            reason="clean single execution",
+            camera_variation=0.06,
+            frame_paths=[],
+            executions=[
+                CandidateExecution(
+                    start_seconds=31.5,
+                    end_seconds=45.0,
+                    confidence=0.86,
+                    quality=0.88,
+                    complete=True,
+                    single_execution=True,
+                    contains_multiple_executions=False,
+                    contains_idle_or_reset=False,
+                    reason="one complete execution reaches terminal position",
+                    source_window_index=1,
+                )
+            ],
+        ),
+    ]
+
+    span = choose_detected_span(
+        detections=detections,
+        confidence_threshold=0.45,
+        merge_gap_seconds=2.0,
+        min_segment_seconds=2.0,
+        max_segment_seconds=20.0,
+    )
+
+    assert span is not None
+    assert span.start_seconds == 31.5
+    assert span.end_seconds == 45.0
+    assert span.contributing_windows == [1]
+
+
+def test_choose_detected_span_does_not_fallback_when_execution_candidates_are_invalid() -> None:
+    detections = [
+        WindowDetection(
+            window=DetectionWindow(index=0, start_seconds=10.0, end_seconds=40.0),
+            movement_present=True,
+            contains_movement_start=True,
+            contains_movement_end=True,
+            movement_start_seconds=0.0,
+            movement_end_seconds=28.0,
+            confidence=0.96,
+            summary="broad span includes multiple executions",
+            reason="model emitted invalid candidate executions",
+            camera_variation=0.02,
+            frame_paths=[],
+            executions=[
+                CandidateExecution(
+                    start_seconds=10.0,
+                    end_seconds=38.0,
+                    confidence=0.96,
+                    quality=0.95,
+                    complete=True,
+                    single_execution=False,
+                    contains_multiple_executions=True,
+                    contains_idle_or_reset=True,
+                    reason="contains more than one attempt",
+                    source_window_index=0,
+                )
+            ],
+        )
+    ]
+
+    span = choose_detected_span(
+        detections=detections,
+        confidence_threshold=0.45,
+        merge_gap_seconds=2.0,
+        min_segment_seconds=2.0,
+        max_segment_seconds=20.0,
+    )
+
+    assert span is None
 
 
 def test_choose_detected_span_does_not_bridge_across_negative_window() -> None:
@@ -1733,6 +1913,59 @@ def test_parse_detection_payload_accepts_minor_key_drift() -> None:
     assert payload["movement_present"] is True
     assert payload["movement_start_seconds"] == 0.0
     assert payload["movement_end_seconds"] == 8.0
+    assert len(payload["executions"]) == 1
+    assert payload["executions"][0].start_seconds == 12.0
+    assert payload["executions"][0].end_seconds == 20.0
+
+
+def test_parse_detection_payload_accepts_execution_candidates_with_absolute_timestamps() -> None:
+    payload = parse_detection_payload(
+        json.dumps(
+            {
+                "movement_present": True,
+                "executions": [
+                    {
+                        "start_seconds": 31.5,
+                        "end_seconds": 45.2,
+                        "complete": True,
+                        "single_execution": True,
+                        "contains_multiple_executions": False,
+                        "contains_idle_or_reset": False,
+                        "quality": 0.87,
+                        "confidence": 0.91,
+                        "reason": "one full execution reaches the terminal position",
+                    },
+                    {
+                        "start_seconds": 30.0,
+                        "end_seconds": 49.0,
+                        "complete": True,
+                        "single_execution": False,
+                        "contains_multiple_executions": True,
+                        "contains_idle_or_reset": True,
+                        "quality": 0.2,
+                        "confidence": 0.9,
+                        "reason": "contains reset and multiple attempts",
+                    },
+                ],
+                "movement_start_seconds": 31.5,
+                "movement_end_seconds": 45.2,
+                "confidence": 0.91,
+                "summary": "full execution visible",
+                "reason": "candidate is clear",
+            }
+        ),
+        window=DetectionWindow(index=3, start_seconds=30.0, end_seconds=50.0),
+    )
+
+    executions = payload["executions"]
+
+    assert len(executions) == 2
+    assert executions[0].start_seconds == pytest.approx(31.5)
+    assert executions[0].end_seconds == pytest.approx(45.2)
+    assert executions[0].quality == pytest.approx(0.87)
+    assert executions[0].source_window_index == 3
+    assert executions[1].contains_multiple_executions is True
+    assert executions[1].contains_idle_or_reset is True
 
 
 def test_parse_detection_payload_accepts_malformed_confidence_without_timing() -> None:
@@ -1756,19 +1989,16 @@ def test_build_window_prompt_rejects_setup_and_prefers_tight_full_rep() -> None:
         end_seconds=20.0,
     )
 
-    assert "Treat setup, walking into position, unracking, bracing, idle preparation, and recovery after the rep as NOT movement" in prompt
-    assert "We are specifically looking for the part where the exercise rep is actually done" in prompt
-    assert "Do not mark movement_present true for preparation alone" in prompt
-    assert "title cards, explanation slides, still demonstration poses" in prompt
-    assert "Judge the exercise from the sequence of frames together" in prompt
-    assert "Ignore on-screen instructional text, bullet points, titles, logos, or slide-like layout" in prompt
-    assert "Only call it a static instructional slide if the sampled frames show essentially the same still image or pose" in prompt
-    assert "Determine whether this window contains the part where the exercise rep is actively being performed" in prompt
-    assert "movement_present should be true only if the athlete is actively performing the exercise rep in this window" in prompt
-    assert "For cyclical exercises, prefer windows where one rep is actively being performed rather than rest between reps" in prompt
+    assert "Goal: decide whether this window contains at least one complete target movement execution." in prompt
+    assert "movement_present is true only when the full execution is visibly complete in this window." in prompt
+    assert "movement_start_seconds and movement_end_seconds are coarse timing hints only" in prompt
+    assert "read them in frame-number order, left-to-right within each row and then top-to-bottom across rows" in prompt
+    assert "execution candidates, if provided, are optional and are hints, not hard boundaries." in prompt
+    assert "Prefer classification." in prompt
     assert "contains_loop_anchor" not in prompt
-    assert '"movement_start_seconds"' not in prompt
-    assert '"movement_end_seconds"' not in prompt
+    assert '"executions": [' in prompt
+    assert '"movement_start_seconds": number|null' in prompt
+    assert '"movement_end_seconds": number|null' in prompt
 
 
 def test_write_physics_bundle_emits_reference_and_mjcf(tmp_path: Path) -> None:
@@ -2174,8 +2404,12 @@ def test_candidate_vision_prompt_rejects_shaky_step_breakdown_videos() -> None:
 
     assert "continuous uninterrupted repetitions" in prompt
     assert "any angle is acceptable if it stays the same" in prompt
+    assert "the whole relevant body and implement visible through the entire rep" in prompt
+    assert "static_camera_throughout false" in prompt
     assert "shaky handheld video" in prompt
     assert "step-by-step demonstrations" in prompt
+    assert '"athlete_fully_in_frame_throughout": boolean' in prompt
+    assert '"static_camera_throughout": boolean' in prompt
     assert '"continuous_motion": boolean' in prompt
     assert '"no_step_breakdown": boolean' in prompt
     assert '"no_camera_cuts": boolean' in prompt
@@ -2226,9 +2460,94 @@ def test_metadata_scoring_prefers_demo_duration_and_penalizes_shorts() -> None:
     assert "shorts_penalty" in scored_bad.score_reasons
 
 
+def test_metadata_scoring_penalizes_bad_camera_angle_text() -> None:
+    exercise = ExerciseEntry(exercise_id="EXERCISE_0", name="Clean and Jerk", slug="clean-and-jerk")
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=camera",
+        video_id="camera",
+        title="Clean and Jerk technique",
+        channel="Coach",
+        duration_seconds=48,
+        view_count=1000,
+        upload_date=None,
+        description_snippet="Technique is coming along. Sorry for the camera angles.",
+        thumbnail=None,
+    )
+
+    scored = score_candidate_metadata(
+        exercise,
+        candidate,
+        min_duration_seconds=20,
+        max_duration_seconds=120,
+    )
+
+    assert "camera_angles_penalty" in scored.score_reasons
+    assert scored.metadata_score < 0.69
+
+
 def test_final_score_composes_with_and_without_vision() -> None:
     assert compose_final_score(0.7, None) == pytest.approx(0.7)
     assert compose_final_score(0.7, 0.9) == pytest.approx(0.79)
+
+
+def test_vision_scoring_penalizes_moving_camera_and_incomplete_framing(
+    tmp_path: Path,
+) -> None:
+    temp_dir = tempfile.TemporaryDirectory(dir=tmp_path)
+    prepared = PreparedVisionReview(
+        candidate=YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=test",
+            video_id="test",
+            title="Clean and Jerk demo",
+            channel=None,
+            duration_seconds=40,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+        ),
+        temp_dir=temp_dir,
+        frame_paths=[],
+        prompt="prompt",
+    )
+
+    try:
+        score, reasons, payload = score_prepared_vision_review(
+            prepared=prepared,
+            settings=YouTubeRankingSettings(),
+            caption_images=lambda *, frame_paths, prompt: json.dumps(
+                {
+                    "correct_exercise": True,
+                    "full_body_visible": True,
+                    "athlete_fully_in_frame_throughout": False,
+                    "stable_camera": True,
+                    "static_camera_throughout": False,
+                    "repeated_reps": True,
+                    "low_obstruction": True,
+                    "usable_for_motion_extraction": True,
+                    "continuous_motion": True,
+                    "single_camera_angle": False,
+                    "no_step_breakdown": True,
+                    "no_camera_cuts": True,
+                    "unobstructed_motion": True,
+                    "key_joints_visible": True,
+                    "implement_path_visible": False,
+                    "single_primary_subject": True,
+                    "clean_scene": True,
+                    "no_nearby_people": True,
+                    "confidence": 1.0,
+                    "reason": "camera follows the athlete and implement leaves frame",
+                }
+            ),
+        )
+    finally:
+        prepared.close()
+
+    assert score < 0.35
+    assert "athlete_or_implement_out_of_frame_penalty" in reasons
+    assert "moving_or_reframing_camera_penalty" in reasons
+    assert payload is not None
+    assert payload["static_camera_throughout"] is False
 
 
 def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search_and_vision(
@@ -2271,8 +2590,8 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
         exercise: ExerciseEntry,
         candidate: YouTubeCandidate,
         settings: YouTubeRankingSettings,
-    ) -> tuple[float, list[str]]:
-        return 0.9, ["full_body_visible"]
+    ) -> tuple[float, list[str], dict[str, object]]:
+        return 0.9, ["full_body_visible"], {"full_body_visible": True}
 
     manifest = discover_and_rank_youtube_candidates(
         workout_plan_json=plan_path,
@@ -2293,12 +2612,404 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
     assert saved["ranking"] == {
         "metadataEnabled": True,
         "visionEnabled": True,
-        "visionBackend": "litert",
+        "visionBackend": "litert-server",
     }
     assert len(saved["exercises"]) == 2
     assert len(calls) == 6
     assert saved["exercises"][0]["queries"] == build_youtube_queries("Squat")
     first_candidate = saved["exercises"][0]["candidates"][0]
     assert first_candidate["visionScore"] == 0.9
+    assert first_candidate["visionPayload"] == {"full_body_visible": True}
     assert first_candidate["status"] == "recommended"
     assert "full_body_visible" in first_candidate["scoreReasons"]
+
+
+def test_bake_and_rank_manifest_parser_uses_top_candidate_per_exercise() -> None:
+    payload = {
+        "exercises": [
+            {
+                "exerciseId": "squat",
+                "exerciseName": "Squat",
+                "slug": "squat",
+                "candidates": [
+                    {"videoId": "top", "url": "https://www.youtube.com/watch?v=top", "title": "Top"},
+                    {"videoId": "second", "url": "https://www.youtube.com/watch?v=second", "title": "Second"},
+                ],
+            },
+            {
+                "exerciseId": "row",
+                "exerciseName": "Row",
+                "slug": "row",
+                "candidates": [
+                    {"videoId": "row-top", "url": "https://www.youtube.com/watch?v=row-top", "title": "Row Top"},
+                ],
+            },
+        ]
+    }
+
+    all_candidates = parse_ranked_candidates_manifest(payload)
+    top_candidates = parse_top_ranked_candidates_manifest(payload)
+
+    assert [candidate.video_id for candidate in all_candidates] == ["top", "second", "row-top"]
+    assert [candidate.video_id for candidate in top_candidates] == ["top", "row-top"]
+    assert [candidate.candidate_rank for candidate in top_candidates] == [0, 0]
+
+
+def test_bake_and_rank_rejects_loops_over_max_duration() -> None:
+    eligible, rejected = split_loops_by_duration(
+        [
+            {"startFrame": 0, "endFrame": 30, "durationSec": 3.0},
+            {"startFrame": 0, "endFrame": 120, "durationSec": 12.0},
+        ],
+        max_loop_seconds=10.0,
+    )
+
+    assert [item.loop_index for item in eligible] == [0]
+    assert [item.loop_index for item in rejected] == [1]
+    assert rejected[0].reason == "loop_too_long"
+
+
+def test_bake_and_rank_records_top_candidate_with_no_eligible_loops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates_path = tmp_path / "youtube_candidates.json"
+    candidates_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {
+                        "exerciseId": "squat",
+                        "exerciseName": "Squat",
+                        "slug": "squat",
+                        "candidates": [
+                            {"videoId": "top", "url": "https://www.youtube.com/watch?v=top", "title": "Top"},
+                            {"videoId": "second", "url": "https://www.youtube.com/watch?v=second", "title": "Second"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_generate(ranked_candidate: RankedCandidate, *, request: BakeAndRankRequest) -> GenerateResult:
+        root = request.workspace / ranked_candidate.workspace_slug
+        for directory in ("cleaned", "preview", "raw", "retarget", "wear", "input", "logs"):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        cleaned_motion_json = root / "cleaned" / "motion.cleaned.json"
+        save_motion_json(cleaned_motion_json, build_loop_fixture_clip())
+        preview_html = root / "preview" / "motion_preview.html"
+        preview_html.write_text("<html></html>", encoding="utf-8")
+        return GenerateResult(
+            manifest_path=root / "manifest.json",
+            preview_html_path=preview_html,
+            raw_preview_html_path=root / "preview" / "motion_preview.raw.html",
+            wear_skeleton_json_path=root / "wear" / "skeleton.preview.json",
+            cleaned_motion_json_path=cleaned_motion_json,
+            raw_motion_json_path=root / "raw" / "motion.raw.json",
+            target_rig_contract_path=root / "retarget" / "target_rig.contract.json",
+            retarget_source_path=None,
+            smpl_preview_json_path=None,
+            copied_input_video_path=root / "input" / "source.mp4",
+            cleanup_stats=CleanupStats(
+                input_frames=1,
+                output_frames=1,
+                trimmed_start_frames=0,
+                trimmed_end_frames=0,
+                average_root_height_before=0.0,
+                average_root_height_after=0.0,
+            ),
+            ground_metadata_path=None,
+        )
+
+    monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fake_generate)
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "detect_preview_loops_for_clip",
+        lambda clip: [{"startFrame": 0, "endFrame": 120, "durationSec": 12.0}],
+    )
+
+    def fail_baker(*args: object, **kwargs: object) -> list[object]:
+        raise AssertionError("Preview baker should not run without eligible loops.")
+
+    def fail_ranker(*args: object, **kwargs: object) -> list[object]:
+        raise AssertionError("Ranker should not run without review items.")
+
+    manifest = run_bake_and_rank_pipeline(
+        BakeAndRankRequest(
+            candidates_json=candidates_path,
+            workspace=tmp_path / "build",
+            wham_repo_path=None,
+            body_model_root=None,
+        ),
+        preview_baker=fail_baker,
+        loop_ranker=fail_ranker,
+    )
+
+    assert manifest["candidateSelectionPolicy"] == "top_ranked_per_exercise"
+    assert len(manifest["candidateResults"]) == 1
+    candidate_result = manifest["candidateResults"][0]
+    assert candidate_result["candidate"]["videoId"] == "top"
+    assert candidate_result["status"] == "skipped_no_eligible_loops"
+    assert candidate_result["rejectedLoops"][0]["reason"] == "loop_too_long"
+    assert manifest["selected"] is None
+
+
+def test_generate_candidate_motion_trims_llm_selected_source_segment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"video")
+    captured: dict[str, Path] = {}
+
+    def fake_detect_exercise_segment(**kwargs: object) -> DetectionResult:
+        return DetectionResult(
+            video_path=str(kwargs["video_path"]),
+            exercise_name=str(kwargs["exercise_name"]),
+            source_duration_seconds=20.0,
+            window_seconds=8.0,
+            overlap_seconds=4.0,
+            detected_span=DetectedSpan(
+                start_seconds=3.0,
+                end_seconds=9.0,
+                confidence=0.85,
+                average_camera_variation=0.01,
+                contributing_windows=[0, 1],
+            ),
+            windows=[],
+        )
+
+    def fake_trim_video(**kwargs: object) -> Path:
+        output_path = Path(kwargs["output_path"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"trimmed")
+        captured["trim_start"] = float(kwargs["start_seconds"])
+        captured["trim_end"] = float(kwargs["end_seconds"])
+        return output_path
+
+    def fake_run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
+        assert request.video_path is not None
+        captured["video_path"] = request.video_path
+        root = request.workspace / request.exercise_slug
+        for directory in ("cleaned", "preview", "raw", "retarget", "wear", "input", "logs"):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        cleaned_motion_json = root / "cleaned" / "motion.cleaned.json"
+        save_motion_json(cleaned_motion_json, build_loop_fixture_clip())
+        preview_html = root / "preview" / "motion_preview.html"
+        preview_html.write_text("<html></html>", encoding="utf-8")
+        return GenerateResult(
+            manifest_path=root / "manifest.json",
+            preview_html_path=preview_html,
+            raw_preview_html_path=root / "preview" / "motion_preview.raw.html",
+            wear_skeleton_json_path=root / "wear" / "skeleton.preview.json",
+            cleaned_motion_json_path=cleaned_motion_json,
+            raw_motion_json_path=root / "raw" / "motion.raw.json",
+            target_rig_contract_path=root / "retarget" / "target_rig.contract.json",
+            retarget_source_path=None,
+            smpl_preview_json_path=None,
+            copied_input_video_path=root / "input" / "selected_segment.mp4",
+            cleanup_stats=CleanupStats(
+                input_frames=1,
+                output_frames=1,
+                trimmed_start_frames=0,
+                trimmed_end_frames=0,
+                average_root_height_before=0.0,
+                average_root_height_after=0.0,
+            ),
+            ground_metadata_path=None,
+        )
+
+    monkeypatch.setattr(bake_and_rank_module, "detect_exercise_segment", fake_detect_exercise_segment)
+    monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
+    monkeypatch.setattr(bake_and_rank_module, "run_generation_pipeline", fake_run_generation_pipeline)
+
+    result = bake_and_rank_module.generate_candidate_motion(
+        RankedCandidate(
+            exercise_index=0,
+            candidate_rank=0,
+            exercise_id="clean-and-jerk",
+            exercise_name="Clean and Jerk",
+            exercise_slug="clean-and-jerk",
+            candidate={"videoPath": str(source_video), "title": "Clean and Jerk"},
+        ),
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path / "build",
+            wham_repo_path=None,
+            body_model_root=None,
+            segment_padding_seconds=0.5,
+            segment_end_padding_seconds=3.0,
+        ),
+    )
+
+    assert result.cleaned_motion_json_path.exists()
+    assert captured["video_path"].name == "selected_segment.mp4"
+    assert captured["trim_start"] == pytest.approx(2.5)
+    assert captured["trim_end"] == pytest.approx(12.0)
+    assert (tmp_path / "build" / "clean-and-jerk-001-clean-and-jerk" / "segment_detection" / "segment_detection.json").exists()
+
+
+def test_loop_ranking_parser_handles_valid_malformed_and_missing_score() -> None:
+    valid = parse_loop_ranking_response('{"score": 0.82, "reasons": ["smooth", "readable"]}')
+    malformed = parse_loop_ranking_response("not json")
+    missing_score = parse_loop_ranking_response('{"reasons": ["no score"]}')
+
+    assert valid.score == pytest.approx(0.82)
+    assert valid.reasons == ["smooth", "readable"]
+    assert malformed.score == 0.0
+    assert malformed.reasons == ["ranking_invalid_json"]
+    assert missing_score.score == 0.0
+    assert missing_score.reasons == ["ranking_missing_score"]
+
+
+def test_review_video_capture_uses_full_loop_frames_and_export_fps() -> None:
+    payload = {"frameCount": 87, "fps": 30.0}
+
+    assert sample_review_frame_indices(payload, 8) == list(range(87))
+    assert parse_export_fps(payload) == pytest.approx(30.0)
+    assert parse_export_fps({"fps": 0}) == pytest.approx(30.0)
+
+
+def test_loop_continuity_adjustment_penalizes_bad_restart_seam(tmp_path: Path) -> None:
+    good_skeleton = tmp_path / "good.json"
+    bad_skeleton = tmp_path / "bad.json"
+    good_skeleton.write_text(
+        json.dumps(
+            {
+                "jointNames": ["pelvis", "left_ankle"],
+                "frames": [
+                    {"joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.0, 0.0, 0.0]}},
+                    {"joints": {"pelvis": [0.1, 1.0, 0.0], "left_ankle": [0.1, 0.0, 0.0]}},
+                    {"joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.0, 0.0, 0.0]}},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    bad_skeleton.write_text(
+        json.dumps(
+            {
+                "jointNames": ["pelvis", "left_ankle"],
+                "frames": [
+                    {"joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.0, 0.0, 0.0]}},
+                    {"joints": {"pelvis": [0.1, 1.0, 0.0], "left_ankle": [0.1, 0.0, 0.0]}},
+                    {"joints": {"pelvis": [0.4, 1.0, 0.0], "left_ankle": [0.4, 0.0, 0.0]}},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidate_workspace = tmp_path / "candidate"
+    good_item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Squat",
+        candidate_title="Top",
+        candidate_workspace=candidate_workspace,
+        skeleton_path=good_skeleton,
+        review_video_path=candidate_workspace / "review" / "good.webm",
+        duration_sec=3.0,
+        candidate={"videoId": "top"},
+    )
+    bad_item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=1,
+        exercise_name="Squat",
+        candidate_title="Top",
+        candidate_workspace=candidate_workspace,
+        skeleton_path=bad_skeleton,
+        review_video_path=candidate_workspace / "review" / "bad.webm",
+        duration_sec=3.0,
+        candidate={"videoId": "top"},
+    )
+
+    good_adjusted = apply_loop_continuity_adjustment(good_item, LoopRanking(score=0.65, reasons=[]))
+    bad_adjusted = apply_loop_continuity_adjustment(bad_item, LoopRanking(score=0.75, reasons=[]))
+
+    good_metrics = compute_loop_continuity_metrics(good_skeleton)
+    bad_metrics = compute_loop_continuity_metrics(bad_skeleton)
+
+    assert good_metrics["continuityScore"] > bad_metrics["continuityScore"]
+    assert "loop_restart_discontinuity_penalty" in bad_adjusted.reasons
+    assert good_adjusted.score > bad_adjusted.score
+    assert good_adjusted.model_score == pytest.approx(0.65)
+    assert good_adjusted.continuity_score is not None
+
+
+def test_final_selection_chooses_highest_score_deterministically(tmp_path: Path) -> None:
+    items = [
+        ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=1,
+            exercise_name="Squat",
+            candidate_title="Top",
+            candidate_workspace=tmp_path / "candidate",
+            skeleton_path=tmp_path / "candidate" / "wear" / "loop-2.json",
+            review_video_path=tmp_path / "candidate" / "review" / "loop-2.mp4",
+            duration_sec=3.0,
+            candidate={"videoId": "top"},
+        ),
+        ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=0,
+            exercise_name="Squat",
+            candidate_title="Top",
+            candidate_workspace=tmp_path / "candidate",
+            skeleton_path=tmp_path / "candidate" / "wear" / "loop-1.json",
+            review_video_path=tmp_path / "candidate" / "review" / "loop-1.mp4",
+            duration_sec=3.0,
+            candidate={"videoId": "top"},
+        ),
+    ]
+
+    selected = choose_best_review_item(
+        items,
+        [
+            LoopRanking(score=0.9, reasons=["tie"]),
+            LoopRanking(score=0.9, reasons=["tie"]),
+        ],
+    )
+
+    assert selected is not None
+    assert selected[0].loop_index == 0
+
+
+def test_final_selection_rejects_best_loop_below_min_score(tmp_path: Path) -> None:
+    items = [
+        ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=0,
+            exercise_name="Clean and Jerk",
+            candidate_title="Top",
+            candidate_workspace=tmp_path / "candidate",
+            skeleton_path=tmp_path / "candidate" / "wear" / "loop-1.json",
+            review_video_path=tmp_path / "candidate" / "review" / "loop-1.webm",
+            duration_sec=2.0,
+            candidate={"videoId": "top"},
+        )
+    ]
+
+    selected = choose_best_review_item(items, [LoopRanking(score=0.31, reasons=[])], min_score=0.55)
+
+    assert selected is None
+
+
+def test_preview_html_exposes_headless_bake_automation_api(tmp_path: Path) -> None:
+    html_path = tmp_path / "motion_preview.html"
+    write_preview_html(html_path, build_loop_fixture_clip(), title="Squat")
+
+    html = html_path.read_text(encoding="utf-8")
+    assert "window.exerciseMotionAutomation" in html
+    assert "bakeLoop(loopIndex" in html
+    assert "lockPlantedFeet" in html
+    assert "autoWorldAlignment" in html
+    assert "showBoundsHelper" in html
+    assert "cameraYawDegrees" in html
+    assert "cameraPitchDegrees" in html

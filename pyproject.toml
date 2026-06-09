@@ -17,6 +17,7 @@ test = [
 motion = [
     "joblib>=1.4",
     "opencv-python>=4.10",
+    "playwright>=1.44",
     "yt-dlp>=2024.8.6",
 ]
 
