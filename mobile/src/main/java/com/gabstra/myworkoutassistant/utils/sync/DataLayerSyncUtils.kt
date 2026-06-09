@@ -77,6 +77,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -467,6 +468,153 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         SyncHandshakeManager.cleanup(transactionId)
         Log.e("DataLayerSync", "Error sending workout store", exception)
         throw exception
+    }
+}
+
+suspend fun sendExerciseMovement(
+    dataClient: DataClient,
+    movementRef: ExerciseMovementRef,
+    movementJson: String,
+    context: android.content.Context? = null,
+) {
+    val transactionId = UUID.randomUUID().toString()
+    Log.d(
+        "DataLayerSync",
+        "Starting exercise movement sync, movementId=${movementRef.movementId}, transactionId=$transactionId"
+    )
+    try {
+        require(movementRef.format == ExerciseMovementRef.FORMAT_WEAR_SKELETON_JSON) {
+            "Unsupported exercise movement format: ${movementRef.format}"
+        }
+        require(movementRef.contentHash.equals(ExerciseMovementRef.contentHashFor(movementJson), ignoreCase = true)) {
+            "Exercise movement content hash does not match the provided reference"
+        }
+
+        if (context != null && !checkConnection(context)) {
+            throw SyncError.ConnectionError(transactionId)
+        }
+
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
+        if (!handshakeSuccess) {
+            throw SyncError.HandshakeError(transactionId)
+        }
+
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+        val compressedData = compressString(movementJson)
+        val chunkSize = 50000
+        val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
+
+        val startPath = DataLayerPaths.buildPath(DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX, transactionId)
+        val startRequest = PutDataMapRequest.create(startPath).apply {
+            dataMap.putBoolean("isStart", true)
+            dataMap.putInt("chunksCount", chunks.size)
+            dataMap.putString("movementId", movementRef.movementId)
+            dataMap.putString("contentHash", movementRef.contentHash)
+            dataMap.putString("format", movementRef.format)
+            dataMap.putInt("version", movementRef.version)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
+        }.asPutDataRequest().setUrgent()
+        dataClient.putDataItem(startRequest)
+
+        delay(250)
+
+        chunks.forEachIndexed { index, chunk ->
+            val isLastChunk = index == chunks.lastIndex
+            val chunkPath = DataLayerPaths.buildPath(
+                DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX,
+                transactionId,
+                index
+            )
+            val request = PutDataMapRequest.create(chunkPath).apply {
+                dataMap.putByteArray("chunk", chunk)
+                dataMap.putInt("chunkIndex", index)
+                dataMap.putBoolean("isLastChunk", isLastChunk)
+                dataMap.putString("movementId", movementRef.movementId)
+                dataMap.putString("contentHash", movementRef.contentHash)
+                dataMap.putString("format", movementRef.format)
+                dataMap.putInt("version", movementRef.version)
+                dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                dataMap.putString("transactionId", transactionId)
+            }.asPutDataRequest().setUrgent()
+            dataClient.putDataItem(request)
+            if (!isLastChunk) {
+                delay(250)
+            }
+        }
+
+        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
+        val result = withTimeoutOrNull(completionTimeout) {
+            select<Pair<Boolean, String?>> {
+                completionWaiter.onAwait.invoke {
+                    Pair(true, null)
+                }
+                errorWaiter.onAwait.invoke { errorMessage ->
+                    Pair(false, errorMessage)
+                }
+            }
+        }
+
+        when {
+            result == null -> {
+                throw SyncError.TimeoutError(transactionId, completionTimeout)
+            }
+            result.first -> {
+                Log.d(
+                    "DataLayerSync",
+                    "Exercise movement sync completed, movementId=${movementRef.movementId}, transactionId=$transactionId"
+                )
+            }
+            else -> {
+                val errorMessage = result.second ?: "Unknown error"
+                throw SyncError.ProcessingError(
+                    transactionId,
+                    "exercise movement sync",
+                    Exception(errorMessage)
+                )
+            }
+        }
+    } catch (cancellationException: CancellationException) {
+        throw cancellationException
+    } catch (exception: Exception) {
+        Log.e("DataLayerSync", "Error sending exercise movement", exception)
+        throw exception
+    } finally {
+        SyncHandshakeManager.cleanup(transactionId)
+        cleanupExerciseMovementTransactionDataItems(dataClient, transactionId)
+    }
+}
+
+private suspend fun cleanupExerciseMovementTransactionDataItems(
+    dataClient: DataClient,
+    transactionId: String,
+) {
+    val transactionPaths = listOf(
+        DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX, transactionId),
+    )
+
+    transactionPaths.forEach { path ->
+        try {
+            val uri = Uri.Builder()
+                .scheme("wear")
+                .path(path)
+                .build()
+            val deletedCount = Tasks.await(
+                dataClient.deleteDataItems(uri, DataClient.FILTER_PREFIX)
+            )
+            Log.d(
+                "DataLayerSync",
+                "Cleaned up $deletedCount exercise movement DataItem(s) for path=$path transaction=$transactionId"
+            )
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to clean up exercise movement DataItems for path=$path transaction=$transactionId: ${exception.message}"
+            )
+        }
     }
 }
 

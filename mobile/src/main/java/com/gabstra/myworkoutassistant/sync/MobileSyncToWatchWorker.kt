@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
 import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
+import com.gabstra.myworkoutassistant.shared.motion.collectExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -133,8 +134,9 @@ class MobileSyncToWatchWorker(
                 .filter { progression -> progression.workoutHistoryId in validWorkoutHistoryIds }
             val errorLogs = errorLogDao.getAllErrorLogs().first()
 
+            val adjustedWorkoutStore = workoutStore.copy(workouts = adjustedWorkouts)
             val appBackup = AppBackup(
-                workoutStore.copy(workouts = adjustedWorkouts),
+                adjustedWorkoutStore,
                 validWorkoutHistories,
                 setHistories,
                 exerciseInfos,
@@ -142,7 +144,8 @@ class MobileSyncToWatchWorker(
                 workoutRecords,
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
-                restHistories
+                restHistories,
+                ExerciseMovements = collectExerciseMovementBackups(context, adjustedWorkoutStore)
             )
 
             workerSyncMutex.withLock {

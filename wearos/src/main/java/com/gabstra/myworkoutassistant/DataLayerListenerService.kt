@@ -27,12 +27,16 @@ import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmOperationResult
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
+import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.sync.WearBackupSyncEventPolicy
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -55,6 +59,12 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.room.withTransaction
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+
+private data class ExerciseMovementInboundTransfer(
+    var movementRef: ExerciseMovementRef,
+    var expectedChunks: Int,
+    val chunks: MutableMap<Int, ByteArray> = mutableMapOf(),
+)
 
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -80,6 +90,8 @@ class DataLayerListenerService : WearableListenerService() {
         )
     }
     private val gson = Gson()
+    private val exerciseMovementTransferLock = Any()
+    private val exerciseMovementTransfers = mutableMapOf<String, ExerciseMovementInboundTransfer>()
 
     @OptIn(ExperimentalEncodingApi::class)
     private var backupChunks: MutableMap<Int, ByteArray>
@@ -649,6 +661,145 @@ class DataLayerListenerService : WearableListenerService() {
         )
     }
 
+    private fun handleExerciseMovementDataItem(path: String, dataMap: DataMap) {
+        val isStartPath = DataLayerPaths.matchesPrefix(path, DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX)
+        val isChunkPath = DataLayerPaths.matchesPrefix(path, DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX)
+        val transactionId = if (isStartPath) {
+            DataLayerPaths.parseTransactionId(path, DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX)
+        } else {
+            DataLayerPaths.parseTransactionId(path, DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX)
+        } ?: dataMap.getString("transactionId")
+
+        if (transactionId == null) {
+            Log.w("DataLayerSync", "Received exercise movement data without transactionId")
+            return
+        }
+
+        val movementRef = readExerciseMovementRef(dataMap)
+        if (movementRef == null) {
+            scope.launch {
+                sendExerciseMovementSyncError(transactionId, "Invalid exercise movement metadata")
+            }
+            return
+        }
+
+        val expectedChunks = if (dataMap.containsKey("chunksCount")) {
+            dataMap.getInt("chunksCount")
+        } else {
+            0
+        }
+        val chunkIndex = if (isChunkPath) {
+            DataLayerPaths.parseChunkIndex(path, DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX)
+                ?: if (dataMap.containsKey("chunkIndex")) dataMap.getInt("chunkIndex") else -1
+        } else {
+            -1
+        }
+        val chunk = dataMap.getByteArray("chunk")
+
+        val completedTransfer = synchronized(exerciseMovementTransferLock) {
+            val transfer = exerciseMovementTransfers.getOrPut(transactionId) {
+                ExerciseMovementInboundTransfer(
+                    movementRef = movementRef,
+                    expectedChunks = expectedChunks,
+                )
+            }
+            transfer.movementRef = movementRef
+            if (expectedChunks > 0) {
+                transfer.expectedChunks = expectedChunks
+            }
+            if (chunk != null && chunkIndex >= 0) {
+                transfer.chunks[chunkIndex] = chunk
+            }
+
+            if (transfer.expectedChunks > 0 && transfer.chunks.size >= transfer.expectedChunks) {
+                exerciseMovementTransfers.remove(transactionId)
+                ExerciseMovementInboundTransfer(
+                    movementRef = transfer.movementRef,
+                    expectedChunks = transfer.expectedChunks,
+                    chunks = transfer.chunks.toMutableMap(),
+                )
+            } else {
+                null
+            }
+        }
+
+        if (completedTransfer != null) {
+            scope.launch(Dispatchers.IO) {
+                processCompletedExerciseMovementTransfer(transactionId, completedTransfer)
+            }
+        }
+    }
+
+    private fun readExerciseMovementRef(dataMap: DataMap): ExerciseMovementRef? {
+        val movementId = dataMap.getString("movementId")?.takeIf { it.isNotBlank() } ?: return null
+        val contentHash = dataMap.getString("contentHash")?.takeIf { it.isNotBlank() } ?: return null
+        val format = dataMap.getString("format") ?: ExerciseMovementRef.FORMAT_WEAR_SKELETON_JSON
+        val version = if (dataMap.containsKey("version")) dataMap.getInt("version") else 1
+        return ExerciseMovementRef(
+            movementId = movementId,
+            contentHash = contentHash,
+            format = format,
+            version = version,
+        )
+    }
+
+    private suspend fun processCompletedExerciseMovementTransfer(
+        transactionId: String,
+        transfer: ExerciseMovementInboundTransfer,
+    ) {
+        try {
+            val sortedChunks = (0 until transfer.expectedChunks).mapNotNull { index ->
+                transfer.chunks[index]
+            }
+            if (sortedChunks.size != transfer.expectedChunks) {
+                sendExerciseMovementSyncError(
+                    transactionId,
+                    "Missing exercise movement chunks: expected ${transfer.expectedChunks}, received ${sortedChunks.size}"
+                )
+                return
+            }
+
+            val compressedMovementJson = combineChunks(sortedChunks)
+            val movementJson = decompressToString(compressedMovementJson)
+            ExerciseMovementStorage.writeMovementJson(
+                context = this@DataLayerListenerService,
+                movementRef = transfer.movementRef,
+                json = movementJson,
+            )
+
+            Log.d(
+                "DataLayerSync",
+                "Stored exercise movement ${transfer.movementRef.movementId} for transaction: $transactionId"
+            )
+            sendExerciseMovementSyncComplete(transactionId)
+        } catch (exception: Exception) {
+            Log.e("DataLayerSync", "Failed to process exercise movement transaction: $transactionId", exception)
+            sendExerciseMovementSyncError(
+                transactionId,
+                exception.message ?: "Unknown error processing exercise movement"
+            )
+        }
+    }
+
+    private suspend fun sendExerciseMovementSyncComplete(transactionId: String) {
+        val completePath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_COMPLETE_PREFIX, transactionId)
+        val completeDataMapRequest = PutDataMapRequest.create(completePath)
+        completeDataMapRequest.dataMap.putString("transactionId", transactionId)
+        completeDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        val completeRequest = completeDataMapRequest.asPutDataRequest().setUrgent()
+        Tasks.await(dataClient.putDataItem(completeRequest))
+    }
+
+    private suspend fun sendExerciseMovementSyncError(transactionId: String, errorMessage: String) {
+        val errorPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_ERROR_PREFIX, transactionId)
+        val errorDataMapRequest = PutDataMapRequest.create(errorPath)
+        errorDataMapRequest.dataMap.putString("transactionId", transactionId)
+        errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
+        errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        val errorRequest = errorDataMapRequest.asPutDataRequest().setUrgent()
+        Tasks.await(dataClient.putDataItem(errorRequest))
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
             // Collect events first to avoid multiple iterations
@@ -850,6 +1001,12 @@ class DataLayerListenerService : WearableListenerService() {
                                 exception.printStackTrace()
                             }
                         } ?: Log.w("DataLayerSync", "Received SYNC_REQUEST without transactionId")
+                    }
+
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX) ||
+                        DataLayerPaths.matchesPrefix(path, DataLayerPaths.EXERCISE_MOVEMENT_CHUNK_PREFIX) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        handleExerciseMovementDataItem(path, dataMap)
                     }
 
                     // Handle transaction-scoped workout store path
@@ -1309,6 +1466,10 @@ class DataLayerListenerService : WearableListenerService() {
                                             Log.d(
                                                 "DataLayerSync",
                                                 "Saving workout store for transaction: $transactionId"
+                                            )
+                                            restoreExerciseMovementBackups(
+                                                context = this@DataLayerListenerService,
+                                                movementBackups = appBackup.ExerciseMovements.orEmpty()
                                             )
                                             workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 

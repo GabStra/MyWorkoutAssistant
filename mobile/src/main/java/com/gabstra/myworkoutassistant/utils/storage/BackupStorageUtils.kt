@@ -92,6 +92,7 @@ import com.gabstra.myworkoutassistant.shared.fromJSONToAppBackupArchive
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.buildAppBackupArchiveWithCurrentBackup
+import com.gabstra.myworkoutassistant.shared.motion.collectExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -965,7 +966,7 @@ private fun calculateContentHash(bytes: ByteArray): String {
  * Creates an AppBackup from the current workout store and database state.
  * This is a helper function that extracts the backup creation logic.
  */
-suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBackup? {
+suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase, context: Context? = null): AppBackup? {
     return withContext(Dispatchers.IO + NonCancellable) {
         try {
             // Get all DAOs
@@ -1019,7 +1020,8 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
                 workoutRecords,
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
-                restHistories
+                restHistories,
+                ExerciseMovements = context?.let { collectExerciseMovementBackups(it, workoutStore) }
             )
 
             // Check if AppBackup has any data before returning
@@ -1031,6 +1033,7 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
                     appBackup.WorkoutSchedules.isNotEmpty() ||
                     appBackup.WorkoutRecords.isNotEmpty() ||
                     appBackup.ExerciseSessionProgressions.isNotEmpty() ||
+                    appBackup.ExerciseMovements.orEmpty().isNotEmpty() ||
                     run {
                         val errorLogs = appBackup.ErrorLogs
                         errorLogs != null && errorLogs.isNotEmpty()
@@ -1286,7 +1289,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
     withContext(Dispatchers.IO + NonCancellable) {
         backupFileWriteMutex.withLock {
             try {
-                val appBackup = createAppBackup(workoutStore, db)
+                val appBackup = createAppBackup(workoutStore, db, context)
                 if (appBackup == null) {
                     Log.d("Utils", "No data to backup, skipping backup")
                     return@withContext
@@ -1464,7 +1467,8 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 workoutRecords,
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
-                restHistories
+                restHistories,
+                ExerciseMovements = collectExerciseMovementBackups(context, workoutStore)
             )
 
             // Check if AppBackup has any data before saving
@@ -1476,6 +1480,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                     appBackup.WorkoutSchedules.isNotEmpty() ||
                     appBackup.WorkoutRecords.isNotEmpty() ||
                     appBackup.ExerciseSessionProgressions.isNotEmpty() ||
+                    appBackup.ExerciseMovements.orEmpty().isNotEmpty() ||
                     run {
                         val errorLogs = appBackup.ErrorLogs
                         errorLogs != null && errorLogs.isNotEmpty()
