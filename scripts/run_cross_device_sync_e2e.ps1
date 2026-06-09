@@ -30,6 +30,31 @@ $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
 $timings["skipWearRebuildAfterFirstRun"] = $SkipWearRebuildAfterFirstRun.IsPresent
 $timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
 
+function Resolve-AdbPath {
+    $cmd = Get-Command adb -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $candidates = @(
+        "$env:ANDROID_SDK_ROOT\platform-tools\adb.exe",
+        "$env:ANDROID_HOME\platform-tools\adb.exe",
+        "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+    if ($candidates.Count -gt 0) {
+        return $candidates | Select-Object -First 1
+    }
+
+    throw "Could not find adb. Set ANDROID_SDK_ROOT/ANDROID_HOME or add adb to PATH."
+}
+
+$script:AdbPath = Resolve-AdbPath
+$script:AdbDirectory = Split-Path -Parent $script:AdbPath
+if ($env:PATH -notlike "*$script:AdbDirectory*") {
+    $env:PATH = "$script:AdbDirectory$([System.IO.Path]::PathSeparator)$env:PATH"
+}
+
 function Save-TimingOutput {
     param(
         [hashtable]$timingMap,
@@ -79,6 +104,35 @@ function Get-DeviceKind([string]$serial) {
         return "watch"
     }
     return "phone"
+}
+
+function Get-EmulatorPairingStatus([string]$serial) {
+    return (& adb -s $serial shell am broadcast -a com.google.android.gms.wearable.EMULATOR --es operation get-pairing-status 2>&1) -join "`n"
+}
+
+function Assert-EmulatorPairingEndpointAvailable([string]$serial, [string]$kind) {
+    $status = Get-EmulatorPairingStatus -serial $serial
+    if ($status -notmatch "result=1") {
+        throw @"
+$kind emulator '$serial' does not expose the Wear emulator pairing endpoint.
+
+Pairing status output:
+$status
+
+Use a phone AVD/image that supports the Wear OS companion/Data Layer emulator pairing flow, then pair it with the Wear emulator before running this script.
+"@
+    }
+
+    if ($kind -eq "watch" -and $status -notmatch "Peer:\[[^\]]+,true,true\]") {
+        throw @"
+Wear emulator '$serial' is not paired to an online phone emulator.
+
+Pairing status output:
+$status
+
+Pair the Wear emulator with a compatible phone emulator before running this script.
+"@
+    }
 }
 
 function Resolve-EmulatorPath {
@@ -442,7 +496,7 @@ function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage
 
 function Bring-PhoneAppToForeground([string]$phoneSerial, [string]$appPackage) {
     Write-Host "Bringing phone app to foreground before Wear producer run..." -ForegroundColor Cyan
-    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 | Out-Null
+    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 > $null 2>&1
 }
 
 function Ensure-PhonePackageState([string]$phoneSerial) {
@@ -508,6 +562,8 @@ $timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeco
 Write-Host "Using watch: $watchSerial" -ForegroundColor Green
 Write-Host "Using phone: $phoneSerial" -ForegroundColor Green
 Write-Host "Required package on both: $AppPackage" -ForegroundColor Green
+Assert-EmulatorPairingEndpointAvailable -serial $phoneSerial -kind "phone"
+Assert-EmulatorPairingEndpointAvailable -serial $watchSerial -kind "watch"
 
 $logsDir = "wearos/build/e2e-logs"
 if (-not (Test-Path $logsDir)) {

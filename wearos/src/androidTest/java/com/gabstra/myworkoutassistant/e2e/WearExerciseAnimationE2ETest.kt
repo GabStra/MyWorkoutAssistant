@@ -26,75 +26,22 @@ class WearExerciseAnimationE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun animationPage_inNormalWorkoutFlow_staysResponsiveDuringRotationAndIncline() {
+    fun animationPage_inNormalWorkoutFlow_rendersMovementPreview() {
         startWorkout(SnatchAnimationWorkoutStoreFixture.getWorkoutName())
 
         workoutDriver.navigateToPagerPage(Direction.LEFT)
 
         require(
             device.wait(
-                Until.hasObject(By.desc("Animation reset view")),
+                Until.hasObject(By.desc("Exercise movement preview")),
                 defaultTimeoutMs
             )
-        ) { "Animation page controls did not appear from the normal workout flow" }
-
-        require(device.wait(Until.hasObject(By.desc("Animation viewer canvas")), 3_000)) {
-            "Animation viewer canvas did not appear"
-        }
-
-        val zoomIn = requireNotNull(device.findObject(By.desc("Animation zoom in"))) {
-            "Animation zoom in button not found"
-        }
-        val zoomOut = requireNotNull(device.findObject(By.desc("Animation zoom out"))) {
-            "Animation zoom out button not found"
-        }
-        val reset = requireNotNull(device.findObject(By.desc("Animation reset view"))) {
-            "Animation reset button not found"
-        }
-
-        zoomIn.click()
-        device.waitForIdle(500)
-        zoomOut.click()
-        device.waitForIdle(500)
-
-        repeat(3) {
-            rotateAndInclineViewer()
-            device.waitForIdle(1_000)
-        }
+        ) { "Exercise movement preview did not appear from the normal workout flow" }
 
         SystemClock.sleep(4_000)
-        reset.click()
-        device.waitForIdle(1_000)
 
-        require(device.hasObject(By.desc("Animation reset view"))) {
-            "Animation page stopped responding after repeated interaction"
+        require(device.hasObject(By.desc("Exercise movement preview"))) {
+            "Exercise movement preview disappeared while rendering"
         }
-        require(device.hasObject(By.desc("Animation viewer canvas"))) {
-            "Animation viewer disappeared after repeated interaction"
-        }
-    }
-
-    private fun rotateAndInclineViewer() {
-        val width = device.displayWidth
-        val height = device.displayHeight
-        val centerY = (height * 0.48f).toInt()
-        val lowerY = (height * 0.62f).toInt()
-
-        device.swipe(
-            (width * 0.72f).toInt(),
-            centerY,
-            (width * 0.38f).toInt(),
-            centerY,
-            18
-        )
-        device.waitForIdle(600)
-
-        device.swipe(
-            (width * 0.60f).toInt(),
-            lowerY,
-            (width * 0.46f).toInt(),
-            (height * 0.35f).toInt(),
-            18
-        )
     }
 }

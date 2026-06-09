@@ -388,7 +388,7 @@ function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage
 
 function Bring-PhoneAppToForeground([string]$phoneSerial, [string]$appPackage) {
     Write-Host "Bringing phone app to foreground before Wear discard run..." -ForegroundColor Cyan
-    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 | Out-Null
+    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 > $null 2>&1
 }
 
 function Ensure-PhonePackageState([string]$phoneSerial) {

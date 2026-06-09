@@ -1,12 +1,15 @@
 package com.gabstra.myworkoutassistant.e2e.fixtures
 
 import android.content.Context
+import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
@@ -18,6 +21,19 @@ object SnatchAnimationWorkoutStoreFixture {
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
+        val movementJson = context.resources
+            .openRawResource(R.raw.youtube_uyumul_g_v0_loop_1_lock_feet)
+            .bufferedReader()
+            .use { reader -> reader.readText() }
+        val movementRef = ExerciseMovementRef.forWearSkeletonJson(
+            movementId = "snatch-arranque-test",
+            json = movementJson,
+        )
+        ExerciseMovementStorage.writeMovementJson(
+            context = context,
+            movementRef = movementRef,
+            json = movementJson,
+        )
         val exercise = Exercise(
             id = UUID.randomUUID(),
             enabled = true,
@@ -40,7 +56,8 @@ object SnatchAnimationWorkoutStoreFixture {
             intraSetRestInSeconds = null,
             loadJumpDefaultPct = 0.025,
             loadJumpMaxPct = 0.5,
-            loadJumpOvercapUntil = 2
+            loadJumpOvercapUntil = 2,
+            movementRef = movementRef,
         )
 
         val workout = Workout(

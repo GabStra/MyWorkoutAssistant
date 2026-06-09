@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import kotlinx.coroutines.delay
@@ -42,6 +43,11 @@ class PhoneSyncPreparationTest {
 
         val store = CrossDeviceSyncPhoneWorkoutStoreFixture.createWorkoutStore()
         WorkoutStoreRepository(context.filesDir).saveWorkoutStore(store)
+        ExerciseMovementStorage.writeMovementJson(
+            context = context,
+            movementRef = CrossDeviceSyncPhoneWorkoutStoreFixture.movementRef(),
+            json = CrossDeviceSyncPhoneWorkoutStoreFixture.MOVEMENT_JSON.trimIndent()
+        )
         seedDeterministicPhoneHistory(db)
         val request = OneTimeWorkRequestBuilder<MobileSyncToWatchWorker>().build()
         WorkManager.getInstance(context).enqueueUniqueWork(
