@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -106,6 +107,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 }
                 if (src.deloadCutSetsTo != null) {
                     jsonObject.addProperty("deloadCutSetsTo", src.deloadCutSetsTo)
+                }
+                if (src.movementRef != null) {
+                    jsonObject.add("movementRef", context.serialize(src.movementRef))
                 }
             }
 
@@ -322,6 +326,14 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     }
                     else -> null
                 }
+                val movementRef = if (jsonObject.has("movementRef") && !jsonObject.get("movementRef").isJsonNull) {
+                    context.deserialize<ExerciseMovementRef>(
+                        jsonObject.get("movementRef"),
+                        ExerciseMovementRef::class.java
+                    )
+                } else {
+                    null
+                }
 
                 Exercise(
                     id,
@@ -353,7 +365,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     deloadCompletedSessionsInterval,
                     deloadWeightFactor,
                     deloadRepsDrop,
-                    deloadCutSetsTo
+                    deloadCutSetsTo,
+                    movementRef
                 )
             }
 

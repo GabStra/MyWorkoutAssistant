@@ -16,6 +16,8 @@ object DataLayerPaths {
     const val WORKOUT_SESSION_HEARTBEAT_PATH = "/workoutSession/heartbeat"
     const val APP_BACKUP_START_PREFIX = "/appBackup/start"
     const val APP_BACKUP_CHUNK_PREFIX = "/appBackup/chunk"
+    const val EXERCISE_MOVEMENT_START_PREFIX = "/exerciseMovement/start"
+    const val EXERCISE_MOVEMENT_CHUNK_PREFIX = "/exerciseMovement/chunk"
     const val WORKOUT_STORE_PREFIX = "/workoutStore"
     const val PHONE_LLM_OPERATION_REQUEST_PREFIX = "/phoneLlm/request"
     const val PHONE_LLM_OPERATION_RESULT_PREFIX = "/phoneLlm/result"

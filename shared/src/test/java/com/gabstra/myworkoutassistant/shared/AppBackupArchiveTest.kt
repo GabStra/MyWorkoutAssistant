@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
@@ -39,7 +40,8 @@ class AppBackupArchiveTest {
             workoutSchedules = listOf(workoutSchedule("00000000-0000-0000-0000-000000000005", hour = 7)),
             workoutRecords = listOf(workoutRecord("00000000-0000-0000-0000-000000000006", setIndex = 0u)),
             exerciseSessionProgressions = listOf(exerciseSessionProgression("00000000-0000-0000-0000-000000000007", executedVolume = 100.0)),
-            errorLogs = listOf(errorLog("error-a", "before"))
+            errorLogs = listOf(errorLog("error-a", "before")),
+            exerciseMovements = listOf(exerciseMovement("movement-a", "before"))
         )
         val current = backup(
             workoutStore = workoutStore("After"),
@@ -50,7 +52,8 @@ class AppBackupArchiveTest {
             workoutSchedules = listOf(workoutSchedule("00000000-0000-0000-0000-000000000105", hour = 8)),
             workoutRecords = listOf(workoutRecord("00000000-0000-0000-0000-000000000106", setIndex = 1u)),
             exerciseSessionProgressions = listOf(exerciseSessionProgression("00000000-0000-0000-0000-000000000107", executedVolume = 200.0)),
-            errorLogs = listOf(errorLog("error-b", "after"))
+            errorLogs = listOf(errorLog("error-b", "after")),
+            exerciseMovements = listOf(exerciseMovement("movement-b", "after"))
         )
 
         val archive = buildAppBackupArchiveWithCurrentBackup(
@@ -63,6 +66,8 @@ class AppBackupArchiveTest {
         assertEquals(1, archive.deltas.size)
         assertTrue(archive.deltas.single().workoutStore != null)
         assertEquals(listOf("00000000-0000-0000-0000-000000000002"), archive.deltas.single().setHistories.deletes)
+        assertEquals(1, archive.deltas.single().exerciseMovements.upserts.size)
+        assertEquals("movement-b", archive.deltas.single().exerciseMovements.upserts.single().movementRef.movementId)
     }
 
     @Test
@@ -98,6 +103,7 @@ class AppBackupArchiveTest {
         workoutRecords: List<WorkoutRecord> = emptyList(),
         exerciseSessionProgressions: List<ExerciseSessionProgression> = emptyList(),
         errorLogs: List<ErrorLog> = emptyList(),
+        exerciseMovements: List<ExerciseMovementBackup> = emptyList(),
     ): AppBackup = AppBackup(
         WorkoutStore = workoutStore,
         WorkoutHistories = workoutHistories,
@@ -108,6 +114,7 @@ class AppBackupArchiveTest {
         ExerciseSessionProgressions = exerciseSessionProgressions,
         ErrorLogs = errorLogs.takeIf { it.isNotEmpty() },
         RestHistories = restHistories,
+        ExerciseMovements = exerciseMovements.takeIf { it.isNotEmpty() },
     )
 
     private fun workoutStore(name: String): WorkoutStore = WorkoutStore(
@@ -215,6 +222,16 @@ class AppBackupArchiveTest {
         stackTrace = "stack",
     )
 
+    private fun exerciseMovement(movementId: String, jsonValue: String): ExerciseMovementBackup {
+        val json = """{"value":"$jsonValue"}"""
+        return ExerciseMovementBackup(
+            movementRef = ExerciseMovementRef.forWearSkeletonJson(
+                movementId = movementId,
+                json = json,
+            ),
+            json = json,
+        )
+    }
+
     private fun uuid(value: String): UUID = UUID.fromString(value)
 }
-

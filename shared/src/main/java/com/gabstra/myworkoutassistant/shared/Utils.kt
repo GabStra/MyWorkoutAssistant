@@ -400,6 +400,10 @@ fun buildAppBackupDelta(
             currentBackup.ExerciseSessionProgressions
         ) { it.id.toString() },
         errorLogs = buildListDelta(previousBackup.ErrorLogs.orEmpty(), currentBackup.ErrorLogs.orEmpty()) { it.id },
+        exerciseMovements = buildListDelta(
+            previousBackup.ExerciseMovements.orEmpty(),
+            currentBackup.ExerciseMovements.orEmpty()
+        ) { "${it.movementRef.movementId}:${it.movementRef.contentHash}" },
     )
 }
 
@@ -492,6 +496,13 @@ private fun applyAppBackupDelta(
     } else {
         applyListDelta(appBackup.ErrorLogs.orEmpty(), delta.errorLogs) { it.id }.takeIf { it.isNotEmpty() }
     }
+    val exerciseMovements = if (appBackup.ExerciseMovements == null && delta.exerciseMovements.isEmpty()) {
+        null
+    } else {
+        applyListDelta(appBackup.ExerciseMovements.orEmpty(), delta.exerciseMovements) {
+            "${it.movementRef.movementId}:${it.movementRef.contentHash}"
+        }.takeIf { it.isNotEmpty() }
+    }
     return appBackup.copy(
         WorkoutStore = delta.workoutStore ?: appBackup.WorkoutStore,
         WorkoutHistories = applyListDelta(appBackup.WorkoutHistories, delta.workoutHistories) { it.id.toString() },
@@ -505,6 +516,7 @@ private fun applyAppBackupDelta(
             delta.exerciseSessionProgressions
         ) { it.id.toString() },
         ErrorLogs = errorLogs,
+        ExerciseMovements = exerciseMovements,
     )
 }
 

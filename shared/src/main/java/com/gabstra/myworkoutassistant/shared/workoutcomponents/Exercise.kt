@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
 
@@ -40,6 +41,7 @@ data class Exercise (
     val deloadWeightFactor: Double? = null,
     val deloadRepsDrop: Int? = null,
     val deloadCutSetsTo: Int? = null,
+    val movementRef: ExerciseMovementRef? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -75,6 +77,7 @@ data class Exercise (
         result = 31 * result + (deloadWeightFactor?.hashCode() ?: 0)
         result = 31 * result + (deloadRepsDrop?.hashCode() ?: 0)
         result = 31 * result + (deloadCutSetsTo?.hashCode() ?: 0)
+        result = 31 * result + (movementRef?.hashCode() ?: 0)
         return result
     }
     
@@ -112,6 +115,7 @@ data class Exercise (
         if (deloadWeightFactor != other.deloadWeightFactor) return false
         if (deloadRepsDrop != other.deloadRepsDrop) return false
         if (deloadCutSetsTo != other.deloadCutSetsTo) return false
+        if (movementRef != other.movementRef) return false
         
         return true
     }

@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+
 data class AppBackup(
     val WorkoutStore: WorkoutStore,
     val WorkoutHistories: List<WorkoutHistory>,
@@ -13,4 +15,11 @@ data class AppBackup(
     val RestHistories: List<RestHistory>? = null,
     /** LiteRT-LM model source URI used to repopulate the local model file on restore. */
     val LiteRtLmModelSourceUri: String? = null,
+    /** Wear skeleton movement JSON assets referenced by exercises in the workout store. */
+    val ExerciseMovements: List<ExerciseMovementBackup>? = null,
+)
+
+data class ExerciseMovementBackup(
+    val movementRef: ExerciseMovementRef,
+    val json: String,
 )
