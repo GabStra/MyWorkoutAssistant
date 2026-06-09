@@ -1,5 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,6 +48,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +57,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -71,17 +78,24 @@ import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
 
@@ -140,6 +154,8 @@ fun ExerciseForm(
     exercise: Exercise? = null,
     isSaving: Boolean = false
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
     val notesState = rememberSaveable { mutableStateOf(exercise?.notes ?: "") }
@@ -169,6 +185,11 @@ fun ExerciseForm(
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
     val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
+    val movementRefState = remember(exercise?.id) { mutableStateOf(exercise?.movementRef) }
+    var movementJson by remember(exercise?.id) { mutableStateOf<String?>(null) }
+    var movementError by remember(exercise?.id) { mutableStateOf<String?>(null) }
+    var isMovementLoading by remember { mutableStateOf(false) }
+    var expandedMovement by rememberSaveable { mutableStateOf(exercise?.movementRef != null) }
 
     // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
     val isUnilateral = rememberSaveable {
@@ -357,6 +378,44 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val movementPickerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri ?: return@rememberLauncherForActivityResult
+            if (isMovementLoading) return@rememberLauncherForActivityResult
+
+            scope.launch {
+                isMovementLoading = true
+                movementError = null
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val json = context.contentResolver.openInputStream(uri)
+                            ?.bufferedReader()
+                            ?.use { reader -> reader.readText() }
+                            ?: error("Unable to read selected movement file.")
+                        validateWearSkeletonJson(json)
+                        val movementId = context.resolveMovementId(uri, json)
+                        ExerciseMovementRef.forWearSkeletonJson(movementId, json) to json
+                    }
+                }.onSuccess { (movementRef, json) ->
+                    movementRefState.value = movementRef
+                    movementJson = json
+                }.onFailure { error ->
+                    movementError = error.message ?: "Unable to load selected movement JSON."
+                }
+                isMovementLoading = false
+            }
+        }
+
+    LaunchedEffect(exercise?.movementRef) {
+        val movementRef = exercise?.movementRef
+        movementJson = if (movementRef == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                ExerciseMovementStorage.readMovementJson(context, movementRef)
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -452,6 +511,72 @@ fun ExerciseForm(
                         minLines = 3,
                         singleLine = false
                     )
+                }
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+            val movementSummary = when {
+                movementRefState.value == null -> "No movement assigned"
+                movementJson == null -> "Movement: ${movementRefState.value?.movementId}\nPreview unavailable"
+                else -> "Movement: ${movementRefState.value?.movementId}\nPreview ready"
+            }
+            CollapsibleSection(
+                title = "Movement",
+                summary = movementSummary,
+                expanded = expandedMovement,
+                onToggle = { expandedMovement = !expandedMovement }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AppPrimaryOutlinedButton(
+                            text = "Pick JSON",
+                            onClick = { movementPickerLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isMovementLoading
+                        )
+                        AppSecondaryButton(
+                            text = "Clear",
+                            onClick = {
+                                movementRefState.value = null
+                                movementJson = null
+                                movementError = null
+                            },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isMovementLoading && movementRefState.value != null
+                        )
+                    }
+
+                    movementError?.let { error ->
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    val selectedMovementJson = movementJson
+                    if (selectedMovementJson != null) {
+                        SkeletonMotionPreview(
+                            skeletonJson = selectedMovementJson,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f),
+                            backgroundColor = MaterialTheme.colorScheme.background,
+                            primaryFill = MaterialTheme.colorScheme.primary,
+                            animated = true,
+                            orbitView = false,
+                        )
+                    } else {
+                        Text(
+                            text = if (isMovementLoading) "Loading movement" else "Pick a Wear skeleton JSON to preview it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -1199,8 +1324,18 @@ fun ExerciseForm(
                             deloadCompletedSessionsInterval = deloadCompletedSessionsInterval,
                             deloadWeightFactor = deloadWeightFactor,
                             deloadRepsDrop = deloadRepsDrop,
-                            deloadCutSetsTo = deloadCutSetsTo
+                            deloadCutSetsTo = deloadCutSetsTo,
+                            movementRef = movementRefState.value
                         )
+                        val selectedMovementRef = movementRefState.value
+                        val selectedMovementJson = movementJson
+                        if (selectedMovementRef != null && selectedMovementJson != null) {
+                            ExerciseMovementStorage.writeMovementJson(
+                                context = context,
+                                movementRef = selectedMovementRef,
+                                json = selectedMovementJson
+                            )
+                        }
                         onExerciseUpsert(newExercise)
                     },
                     enabled = canBeSaved,
@@ -1215,6 +1350,32 @@ fun ExerciseForm(
     }
 }
 
+private fun validateWearSkeletonJson(json: String) {
+    val root = JsonParser.parseString(json).asJsonObject
+    root.getAsJsonObject("bounds")
+    val frames = root.getAsJsonArray("frames")
+    require(frames.size() > 0) { "Movement JSON has no frames." }
+    val joints = frames[0].asJsonObject.getAsJsonObject("joints")
+    require(joints.has("pelvis") && joints.has("neck")) {
+        "Movement JSON is missing required skeleton joints."
+    }
+}
+
+private fun android.content.Context.resolveMovementId(uri: Uri, json: String): String {
+    val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)
+            } else {
+                null
+            }
+        }
+    val baseName = displayName
+        ?.substringBeforeLast('.', missingDelimiterValue = displayName)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    return baseName ?: "movement-${ExerciseMovementRef.contentHashFor(json).take(12)}"
+}
 
 
 

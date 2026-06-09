@@ -112,6 +112,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
@@ -716,6 +717,10 @@ fun MyWorkoutAssistantNavHost(
             val newWorkoutStore = appBackup.WorkoutStore.copy(
                 workouts = allowedWorkouts
             )
+            restoreExerciseMovementBackups(
+                context = context,
+                movementBackups = appBackup.ExerciseMovements.orEmpty()
+            )
 
             val deleteAndInsertJob = coroutineScope {
                 async {
@@ -1167,7 +1172,7 @@ fun MyWorkoutAssistantNavHost(
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            val appBackup = createAppBackup(appViewModel.workoutStore, db)
+                            val appBackup = createAppBackup(appViewModel.workoutStore, db, context)
                             if (appBackup == null) {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(
@@ -1889,7 +1894,8 @@ fun MyWorkoutAssistantNavHost(
                                     setHistoryDao = setHistoryDao,
                                     restHistoryDao = restHistoryDao,
                                     exercise = selectedExercise,
-                                    initialSelectedTabIndex = screenData.selectedTabIndex + 1,
+                                    initialSelectedTabIndex = screenData.selectedTabIndex +
+                                        if (selectedExercise.movementRef == null) 1 else 2,
                                     initialWorkoutHistoryId = screenData.workoutHistoryId,
                                 ) {
                                     appViewModel.goBack()

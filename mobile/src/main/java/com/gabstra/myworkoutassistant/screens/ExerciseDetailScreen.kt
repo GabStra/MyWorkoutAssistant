@@ -171,7 +171,17 @@ fun ExerciseDetailScreen(
     var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
-    val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
+    val hasMovement = exercise.movementRef != null
+    val tabTitles = remember(hasMovement) {
+        buildList {
+            add("Overview")
+            if (hasMovement) add("Movement")
+            add("Graph History")
+            add("Set History")
+        }
+    }
+    val historyTabStartIndex = if (hasMovement) 2 else 1
+    val historyTabRange = historyTabStartIndex..(historyTabStartIndex + 1)
     var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
     }
@@ -334,13 +344,13 @@ fun ExerciseDetailScreen(
     }
 
     LaunchedEffect(selectedTopTab) {
-        if (selectedTopTab !in 1..2) {
+        if (selectedTopTab !in historyTabRange) {
             historyActionsLoading = false
         }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in 1..2
+        val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in historyTabRange
         val enableHistoryActions = showHistoryActions && !historyActionsLoading
         Scaffold(
             topBar = {
@@ -720,12 +730,12 @@ fun ExerciseDetailScreen(
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
-                        historyActionsLoading = index in 1..2
+                        historyActionsLoading = index in historyTabRange
                         val targetScreenData = ScreenData.ExerciseDetail(
                             workoutId = workout.id,
                             selectedExerciseId = exercise.id,
                             selectedTabIndex = index,
-                            workoutHistoryId = if (index in 1..2) displayedWorkoutHistoryId else null,
+                            workoutHistoryId = if (index in historyTabRange) displayedWorkoutHistoryId else null,
                         )
                         appViewModel.updateScreenDataIfChanged(targetScreenData)
                     },
@@ -763,7 +773,43 @@ fun ExerciseDetailScreen(
                             }
                         )
 
-                        1, 2 -> ExerciseHistoryScreen(
+                        1 -> if (hasMovement) {
+                            ExerciseMovementPreviewPage(
+                                exercise = exercise,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            ExerciseHistoryScreen(
+                                appViewModel = appViewModel,
+                                workout = workout,
+                                workoutHistoryDao = workoutHistoryDao,
+                                setHistoryDao = setHistoryDao,
+                                restHistoryDao = restHistoryDao,
+                                exercise = exercise,
+                                workoutHistoryId = displayedWorkoutHistoryId,
+                                selectedHistoryMode = pageIndex - historyTabStartIndex,
+                                historyFilterRange = historyFilterRange,
+                                onHistoryFilterRangeChange = { historyFilterRange = it },
+                                onGoBack = onGoBack,
+                                onSelectedWorkoutHistoryIdChanged = { id ->
+                                    if (pageIndex == selectedTopTab) {
+                                        if (displayedWorkoutHistoryId != id) {
+                                            displayedWorkoutHistoryId = id
+                                        }
+                                        historyActionsLoading = false
+                                        val targetScreenData = ScreenData.ExerciseDetail(
+                                            workoutId = workout.id,
+                                            selectedExerciseId = exercise.id,
+                                            selectedTabIndex = selectedTopTab,
+                                            workoutHistoryId = id,
+                                        )
+                                        appViewModel.updateScreenDataIfChanged(targetScreenData)
+                                    }
+                                },
+                            )
+                        }
+
+                        2, 3 -> ExerciseHistoryScreen(
                             appViewModel = appViewModel,
                             workout = workout,
                             workoutHistoryDao = workoutHistoryDao,
@@ -771,7 +817,7 @@ fun ExerciseDetailScreen(
                             restHistoryDao = restHistoryDao,
                             exercise = exercise,
                             workoutHistoryId = displayedWorkoutHistoryId,
-                            selectedHistoryMode = pageIndex - 1,
+                            selectedHistoryMode = pageIndex - historyTabStartIndex,
                             historyFilterRange = historyFilterRange,
                             onHistoryFilterRangeChange = { historyFilterRange = it },
                             onGoBack = onGoBack,
@@ -799,7 +845,7 @@ fun ExerciseDetailScreen(
                         workoutId = workout.id,
                         selectedExerciseId = exercise.id,
                         selectedTabIndex = selectedTopTab,
-                        workoutHistoryId = if (selectedTopTab in 1..2) displayedWorkoutHistoryId else null,
+                        workoutHistoryId = if (selectedTopTab in historyTabRange) displayedWorkoutHistoryId else null,
                     )
                     appViewModel.updateScreenDataIfChanged(targetScreenData)
                 }
