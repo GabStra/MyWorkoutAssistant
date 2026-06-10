@@ -11,11 +11,11 @@
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/mobile" />
+            <option value="$PROJECT_DIR$/motion-renderer" />
             <option value="$PROJECT_DIR$/shared" />
             <option value="$PROJECT_DIR$/wearos" />
           </set>
         </option>
-        <option name="resolveExternalAnnotations" value="false" />
       </GradleProjectSettings>
     </option>
     <option name="parallelModelFetch" value="true" />
