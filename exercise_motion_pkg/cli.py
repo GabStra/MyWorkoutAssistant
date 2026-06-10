@@ -125,11 +125,16 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--window-seconds", type=float, default=5.0)
     detect.add_argument("--overlap-seconds", type=float, default=2.5)
     detect.add_argument("--frames-per-window", type=int, default=20)
-    detect.add_argument("--max-frame-width", type=int, default=960)
+    detect.add_argument("--max-frame-width", type=int, default=640)
     detect.add_argument("--merge-gap-seconds", type=float, default=2.0)
     detect.add_argument("--confidence-threshold", type=float, default=0.45)
     detect.add_argument("--min-segment-seconds", type=float, default=2.0)
     detect.add_argument("--max-segment-seconds", type=float, default=20.0)
+    detect.add_argument("--refinement-window-seconds", type=float, default=2.0)
+    detect.add_argument("--refinement-overlap-seconds", type=float, default=1.0)
+    detect.add_argument("--refinement-frames-per-window", type=int, default=0)
+    detect.add_argument("--refinement-padding-seconds", type=float, default=1.0)
+    detect.add_argument("--classification-workers", type=int, default=3)
 
     youtube_search = subparsers.add_parser(
         "find-youtube-videos",
@@ -138,17 +143,32 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--workout-plan-json", required=True)
     youtube_search.add_argument("--out-json", required=True)
     youtube_search.add_argument("--results-per-query", type=int, default=10)
-    youtube_search.add_argument("--max-candidates", type=int, default=6)
+    youtube_search.add_argument("--max-candidates", type=int, default=5)
     youtube_search.add_argument("--min-duration-seconds", type=int, default=20)
     youtube_search.add_argument("--max-duration-seconds", type=int, default=120)
     youtube_search.add_argument("--rank-with-litert", action="store_true")
-    youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=3)
-    youtube_search.add_argument("--vision-frames-per-candidate", type=int, default=4)
+    youtube_search.add_argument("--rank-with-vision", dest="rank_with_litert", action="store_true")
+    youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=5)
+    youtube_search.add_argument("--vision-frames-per-candidate", type=int)
+    youtube_search.add_argument("--vision-chunk-seconds", type=float)
+    youtube_search.add_argument("--vision-chunk-overlap-seconds", type=float)
     youtube_search.add_argument("--vision-download-workers", type=int, default=3)
-    youtube_search.add_argument("--vision-llm-workers", type=int, default=1)
+    youtube_search.add_argument("--vision-llm-workers", type=int, default=3)
     youtube_search.add_argument("--litert-command")
     youtube_search.add_argument("--litert-backend", default="gpu")
     youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
+    youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
+    youtube_search.add_argument("--no-llama-cpp", action="store_true")
+    youtube_search.add_argument("--llama-cpp-model", default="C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf")
+    youtube_search.add_argument("--llama-cpp-command")
+    youtube_search.add_argument("--llama-cpp-server-command")
+    youtube_search.add_argument("--llama-cpp-mmproj", default="C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf")
+    youtube_search.add_argument("--llama-cpp-backend", default="gpu")
+    youtube_search.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
+    youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
+    youtube_search.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
+    youtube_search.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     youtube_search.add_argument("--no-litert-server", action="store_true")
     youtube_search.add_argument("--litert-server-url", default="http://127.0.0.1:9379")
     youtube_search.add_argument("--litert-server-port", type=int, default=9379)
@@ -161,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run WHAM, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
+    bake_and_rank.add_argument("--fallback-candidates", type=int, default=1)
     bake_and_rank.add_argument(
         "--workspace",
         default="build/exercise_motion",
@@ -168,7 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--wham-repo-path", required=True)
     bake_and_rank.add_argument("--body-model-root", required=True)
-    bake_and_rank.add_argument("--max-loop-seconds", type=float, default=10.0)
     bake_and_rank.add_argument("--wham-python", default="python")
     bake_and_rank.add_argument("--use-wham-docker", action="store_true")
     bake_and_rank.add_argument(
@@ -184,26 +204,22 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("world", "camera"),
         default="camera",
     )
-    bake_and_rank.add_argument("--litert-command")
-    bake_and_rank.add_argument("--litert-backend", default="gpu")
-    bake_and_rank.add_argument("--vision-model", default="gemma-4-E4B-it")
-    bake_and_rank.add_argument("--no-litert-server", action="store_true")
-    bake_and_rank.add_argument("--litert-server-url", default="http://127.0.0.1:9379")
-    bake_and_rank.add_argument("--litert-server-port", type=int, default=9379)
-    bake_and_rank.add_argument("--keep-litert-server", action="store_true")
-    bake_and_rank.add_argument("--review-frames", type=int, default=12)
-    bake_and_rank.add_argument("--min-selected-score", type=float, default=0.55)
     bake_and_rank.add_argument("--skip-source-segment-detection", action="store_true")
     bake_and_rank.add_argument("--segment-base-url")
     bake_and_rank.add_argument("--segment-model")
-    bake_and_rank.add_argument("--segment-window-seconds", type=float, default=5.0)
-    bake_and_rank.add_argument("--segment-overlap-seconds", type=float, default=2.5)
-    bake_and_rank.add_argument("--segment-frames-per-window", type=int, default=20)
+    bake_and_rank.add_argument("--segment-window-seconds", type=float)
+    bake_and_rank.add_argument("--segment-overlap-seconds", type=float)
+    bake_and_rank.add_argument("--segment-frames-per-window", type=int)
     bake_and_rank.add_argument("--segment-confidence-threshold", type=float, default=0.45)
     bake_and_rank.add_argument("--segment-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-end-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-min-seconds", type=float, default=2.0)
     bake_and_rank.add_argument("--segment-max-seconds", type=float, default=20.0)
+    bake_and_rank.add_argument("--segment-refinement-window-seconds", type=float, default=2.0)
+    bake_and_rank.add_argument("--segment-refinement-overlap-seconds", type=float, default=1.0)
+    bake_and_rank.add_argument("--segment-refinement-frames-per-window", type=int, default=0)
+    bake_and_rank.add_argument("--segment-refinement-padding-seconds", type=float, default=1.0)
+    bake_and_rank.add_argument("--segment-classification-workers", type=int, default=3)
 
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
@@ -355,6 +371,11 @@ def main() -> None:
                 confidence_threshold=args.confidence_threshold,
                 min_segment_seconds=args.min_segment_seconds,
                 max_segment_seconds=args.max_segment_seconds,
+                refinement_window_seconds=args.refinement_window_seconds,
+                refinement_overlap_seconds=args.refinement_overlap_seconds,
+                refinement_frames_per_window=args.refinement_frames_per_window or max(24, args.frames_per_window * 2),
+                refinement_padding_seconds=args.refinement_padding_seconds,
+                classification_workers=args.classification_workers,
             ),
             exercise_name=args.exercise_name,
         )
@@ -379,16 +400,22 @@ def main() -> None:
                 rank_with_litert=args.rank_with_litert,
                 vision_candidates_per_exercise=args.vision_candidates_per_exercise,
                 vision_frames_per_candidate=args.vision_frames_per_candidate,
+                vision_chunk_seconds=args.vision_chunk_seconds,
+                vision_chunk_overlap_seconds=args.vision_chunk_overlap_seconds,
                 vision_download_workers=args.vision_download_workers,
                 vision_llm_workers=args.vision_llm_workers,
-                litert_command=args.litert_command,
-                litert_backend=args.litert_backend,
-                vision_model=args.vision_model,
+                llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
+                llama_cpp_model=args.llama_cpp_model,
+                llama_cpp_command=args.llama_cpp_command,
+                llama_cpp_server_command=args.llama_cpp_server_command,
+                llama_cpp_mmproj=args.llama_cpp_mmproj,
+                llama_cpp_backend=args.llama_cpp_backend,
+                llama_cpp_n_predict=args.llama_cpp_n_predict,
+                llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
+                llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
+                llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
+                llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
                 include_disabled=args.include_disabled,
-                use_litert_server=not args.no_litert_server,
-                litert_server_url=args.litert_server_url,
-                litert_server_port=args.litert_server_port,
-                keep_litert_server=args.keep_litert_server,
                 vision_early_stop_score=args.vision_early_stop_score,
             ),
         )
@@ -402,6 +429,7 @@ def main() -> None:
                 workspace=Path(args.workspace),
                 wham_repo_path=Path(args.wham_repo_path),
                 body_model_root=Path(args.body_model_root),
+                fallback_candidates=args.fallback_candidates,
                 wham_python_command=args.wham_python,
                 use_wham_docker=args.use_wham_docker,
                 wham_docker_image=args.wham_docker_image,
@@ -410,16 +438,6 @@ def main() -> None:
                 wham_estimate_local_only=args.estimate_local_only,
                 wham_run_smplify=args.run_smplify,
                 wham_coordinate_space=args.wham_coordinate_space,
-                max_loop_seconds=args.max_loop_seconds,
-                litert_command=args.litert_command,
-                litert_backend=args.litert_backend,
-                vision_model=args.vision_model,
-                use_litert_server=not args.no_litert_server,
-                litert_server_url=args.litert_server_url,
-                litert_server_port=args.litert_server_port,
-                keep_litert_server=args.keep_litert_server,
-                review_frames=args.review_frames,
-                min_selected_score=args.min_selected_score,
                 detect_source_segment=not args.skip_source_segment_detection,
                 segment_base_url=args.segment_base_url,
                 segment_model=args.segment_model,
@@ -431,16 +449,19 @@ def main() -> None:
                 segment_end_padding_seconds=args.segment_end_padding_seconds,
                 segment_min_seconds=args.segment_min_seconds,
                 segment_max_seconds=args.segment_max_seconds,
+                segment_refinement_window_seconds=args.segment_refinement_window_seconds,
+                segment_refinement_overlap_seconds=args.segment_refinement_overlap_seconds,
+                segment_refinement_frames_per_window=args.segment_refinement_frames_per_window,
+                segment_refinement_padding_seconds=args.segment_refinement_padding_seconds,
+                segment_classification_workers=args.segment_classification_workers,
             )
         )
         selection_path = Path(args.workspace) / "selection_manifest.json"
         print(f"Selection manifest: {selection_path.resolve()}")
         selected = manifest.get("selected")
         if selected:
-            print(f"Selected Wear skeleton: {selected['selectedWearSkeletonPath']}")
-            preview_html = manifest.get("selectedLoopPreviewHtmlPath")
-            if preview_html:
-                print(f"Selected loop preview: {Path(preview_html).resolve()}")
+            print(f"Wear skeleton JSON: {selected['wearSkeletonJsonPath']}")
+            print(f"Preview HTML: {Path(selected['previewHtmlPath']).resolve()}")
         else:
             print("Selected Wear skeleton: none")
         return

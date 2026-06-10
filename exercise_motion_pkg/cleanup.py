@@ -43,6 +43,8 @@ SEGMENT_ROOT_STABILIZATION_MIN_FRAMES = 3
 ONE_EURO_MIN_CUTOFF = 0.6
 ONE_EURO_BETA = 0.05
 ONE_EURO_D_CUTOFF = 1.0
+SUPPORT_GROUND_HEIGHT_QUANTILE = 0.30
+FOOT_CONTACT_GROUND_QUANTILE = 0.20
 
 LEFT_FOOT_GROUP = ("left_foot", "left_ankle", "l_ankle")
 RIGHT_FOOT_GROUP = ("right_foot", "right_ankle", "r_ankle")
@@ -81,7 +83,9 @@ def cleanup_motion_clip(
     )
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
-    grounded = ground_to_floor(trimmed_clip)
+    raw_support_states = detect_support_contact_states(trimmed_clip)
+    grounded = ground_to_floor(trimmed_clip, support_states=raw_support_states)
+    support_states = detect_support_contact_states(grounded)
     smoothed = smooth_root_translation(
         grounded,
         root_joint=root_joint,
@@ -91,6 +95,7 @@ def cleanup_motion_clip(
     )
     polished = smoothed
     avg_root_after = average_joint_axis(polished, root_joint, axis=1)
+    support_profile = _summarize_support_states(support_states)
     stats = CleanupStats(
         input_frames=clip.frame_count,
         output_frames=polished.frame_count,
@@ -113,7 +118,10 @@ def cleanup_motion_clip(
         "appliedPostProcessingSteps": [
             "ground_plane_fitting",
             "root_translation_one_euro_xz",
+            "support_contact_detection",
         ],
+        "supportProfile": support_profile,
+        "footContacts": support_states,
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
@@ -207,11 +215,28 @@ def trim_static_edges(
     )
 
 
-def ground_to_floor(clip: MotionClip) -> MotionClip:
+def ground_to_floor(
+    clip: MotionClip,
+    *,
+    floor_height: float | None = None,
+    support_states: list[dict[str, object]] | None = None,
+) -> MotionClip:
     foot_joint_names = [joint for joint in DEFAULT_FOOT_JOINTS if joint in clip.joint_names]
     if not foot_joint_names:
         return clip
-    floor_height = min(frame.joints[joint][1] for frame in clip.frames for joint in foot_joint_names)
+    if floor_height is None:
+        candidates = estimate_support_floor_height(
+            clip,
+            support_states if support_states is not None else [],
+        )
+        if not math.isfinite(candidates):
+            floor_height = min(
+                frame.joints[joint][1]
+                for frame in clip.frames
+                for joint in foot_joint_names
+            )
+        else:
+            floor_height = candidates
     grounded_frames = []
     for frame in clip.frames:
         grounded_joints = {
@@ -317,7 +342,31 @@ def estimate_support_ground_height(
                 support_heights.append(float(coords[1]))
     if not support_heights:
         return 0.0
-    return percentile(support_heights, 0.3)
+    return percentile(support_heights, SUPPORT_GROUND_HEIGHT_QUANTILE)
+
+
+def estimate_support_floor_height(
+    clip: MotionClip,
+    contact_states: list[dict[str, object]],
+) -> float:
+    support_joint_names = [joint for joint in DEFAULT_FOOT_JOINTS if joint in clip.joint_names]
+    candidate_heights: list[float] = []
+    if support_joint_names:
+        for frame_index, frame in enumerate(clip.frames):
+            state = contact_states[frame_index] if frame_index < len(contact_states) else None
+            if isinstance(state, dict):
+                for joint_name in iter_contact_joint_names(state):
+                    point = frame.joints.get(joint_name)
+                    if point is not None:
+                        candidate_heights.append(float(point[1]))
+            if not isinstance(state, dict) or not _support_state_has_ground_contact(state):
+                for joint_name in support_joint_names:
+                    point = frame.joints.get(joint_name)
+                    if point is not None:
+                        candidate_heights.append(float(point[1]))
+    if not candidate_heights:
+        return float("nan")
+    return percentile(candidate_heights, FOOT_CONTACT_GROUND_QUANTILE)
 
 
 def lift_clip_above_support_ground(
@@ -939,6 +988,50 @@ def iter_contact_joint_names(state: dict[str, object]) -> list[str]:
             if isinstance(joint_name, str):
                 joints.append(joint_name)
     return joints
+
+
+def _support_state_has_ground_contact(state: dict[str, object]) -> bool:
+    return bool(state.get("leftInContact")) or bool(state.get("rightInContact"))
+
+
+def _summarize_support_states(states: list[dict[str, object]]) -> dict[str, object]:
+    state_counts: dict[str, int] = {}
+    left_foot_contacts = 0
+    right_foot_contacts = 0
+    left_hand_contacts = 0
+    right_hand_contacts = 0
+    ground_contact_frames = 0
+
+    for state in states:
+        raw_state = state.get("state")
+        state_name = raw_state if isinstance(raw_state, str) and raw_state else "unknown"
+        state_counts[state_name] = state_counts.get(state_name, 0) + 1
+        if bool(state.get("leftInContact")):
+            left_foot_contacts += 1
+        if bool(state.get("rightInContact")):
+            right_foot_contacts += 1
+        if bool(state.get("leftHandInContact")):
+            left_hand_contacts += 1
+        if bool(state.get("rightHandInContact")):
+            right_hand_contacts += 1
+        if _support_state_has_ground_contact(state):
+            ground_contact_frames += 1
+
+    total_frames = len(states)
+    return {
+        "totalFrames": total_frames,
+        "stateCounts": state_counts,
+        "leftFootContactFrames": left_foot_contacts,
+        "rightFootContactFrames": right_foot_contacts,
+        "leftHandContactFrames": left_hand_contacts,
+        "rightHandContactFrames": right_hand_contacts,
+        "groundContactFrames": ground_contact_frames,
+        "handContactFrames": sum(
+            1
+            for state in states
+            if bool(state.get("leftHandInContact")) or bool(state.get("rightHandInContact"))
+        ),
+    }
 
 
 def support_contact_for_joint(

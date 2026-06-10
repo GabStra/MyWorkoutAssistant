@@ -20,7 +20,7 @@ from exercise_motion_pkg.wham_smpl_preview import (
     load_wham_smpl_mesh_sequence,
     write_baked_wham_smpl_preview_json,
 )
-from exercise_motion_pkg.youtube import download_youtube
+from exercise_motion_pkg.youtube import download_youtube, sanitize_video_for_processing
 
 
 @dataclass(frozen=True)
@@ -241,7 +241,7 @@ def prepare_input_video(request: GenerateRequest, paths: PipelinePaths) -> Path:
             raise FileNotFoundError(f"Input video not found: {source}")
         destination = paths.input_dir / source.name
         if source == destination.resolve():
-            return destination
+            return sanitize_video_for_processing(destination)
         shutil.copy2(source, destination)
-        return destination
+        return sanitize_video_for_processing(destination)
     raise ValueError("Either youtube_url or video_path must be provided.")

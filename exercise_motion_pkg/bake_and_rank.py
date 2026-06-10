@@ -16,13 +16,16 @@ from exercise_motion_pkg.pipeline import GenerateRequest, GenerateResult, run_ge
 from exercise_motion_pkg.segment_detection import (
     DetectionSettings,
     DetectionWindow,
+    SupportDominanceResult,
+    classify_support_dominance_from_frames,
     detect_exercise_segment,
     extract_json_object,
     extract_window_frames,
     save_detection_result,
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
-from exercise_motion_pkg.youtube import LiteRtServerVisionRanker, YouTubeRankingSettings, download_youtube, find_default_litert_command, slugify
+from exercise_motion_pkg.youtube import LlamaCppVisionRanker, LiteRtServerVisionRanker, YouTubeRankingSettings, download_youtube, slugify
+from exercise_motion_pkg.chunking import estimate_chunking, find_default_litert_command, frames_for_chunk_seconds
 
 
 DEFAULT_MAX_LOOP_SECONDS = 10.0
@@ -87,6 +90,7 @@ class RejectedLoop:
 class BakedLoopArtifact:
     loop_index: int
     skeleton_path: Path
+    skeleton_path_no_feet_lock: Path
     review_video_path: Path
     export_payload: dict[str, Any]
 
@@ -114,6 +118,12 @@ class ReviewItem:
     review_video_path: Path
     duration_sec: float
     candidate: dict[str, Any]
+    support_dominance: str | None = None
+    support_dominance_confidence: float | None = None
+    support_dominance_reason: str | None = None
+    support_dominance_uncertain: bool | None = None
+    support_dominance_model_output: dict[str, object] | None = None
+    skeleton_path_no_feet_lock: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +132,7 @@ class BakeAndRankRequest:
     workspace: Path
     wham_repo_path: Path | None
     body_model_root: Path | None
+    fallback_candidates: int = 1
     wham_python_command: str = "python"
     use_wham_docker: bool = False
     wham_docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest"
@@ -130,27 +141,22 @@ class BakeAndRankRequest:
     wham_estimate_local_only: bool = False
     wham_run_smplify: bool = False
     wham_coordinate_space: str = "camera"
-    max_loop_seconds: float = DEFAULT_MAX_LOOP_SECONDS
-    litert_command: str | None = None
-    litert_backend: str = "gpu"
-    vision_model: str = "gemma-4-E4B-it"
-    use_litert_server: bool = True
-    litert_server_url: str = "http://127.0.0.1:9379"
-    litert_server_port: int = 9379
-    keep_litert_server: bool = False
-    review_frames: int = DEFAULT_REVIEW_FRAMES
-    min_selected_score: float = DEFAULT_MIN_SELECTED_SCORE
     detect_source_segment: bool = True
     segment_base_url: str | None = None
     segment_model: str | None = None
-    segment_window_seconds: float = 5.0
-    segment_overlap_seconds: float = 2.5
-    segment_frames_per_window: int = 20
+    segment_window_seconds: float | None = None
+    segment_overlap_seconds: float | None = None
+    segment_frames_per_window: int | None = None
     segment_confidence_threshold: float = 0.45
     segment_padding_seconds: float = 0.35
     segment_end_padding_seconds: float = 0.35
     segment_min_seconds: float = 2.0
     segment_max_seconds: float = 20.0
+    segment_refinement_window_seconds: float = 2.0
+    segment_refinement_overlap_seconds: float = 1.0
+    segment_refinement_frames_per_window: int = 0
+    segment_refinement_padding_seconds: float = 1.0
+    segment_classification_workers: int = 3
 
 
 PreviewBaker = Callable[[Path, list[EligibleLoop], Path, int], list[BakedLoopArtifact]]
@@ -368,6 +374,11 @@ def clamp_unit(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+def build_vision_client_settings(request: BakeAndRankRequest) -> YouTubeRankingSettings:
+    return YouTubeRankingSettings(
+    )
+
+
 def run_bake_and_rank_pipeline(
     request: BakeAndRankRequest,
     *,
@@ -375,34 +386,50 @@ def run_bake_and_rank_pipeline(
     loop_ranker: LoopRanker | None = None,
 ) -> dict[str, Any]:
     candidates = load_ranked_candidates_manifest(request.candidates_json)
-    preview_baker = preview_baker or bake_preview_loops_with_playwright
+    candidates = candidates[: max(1, request.fallback_candidates)]
     request.workspace.mkdir(parents=True, exist_ok=True)
-
     candidate_results: list[dict[str, Any]] = []
-    review_items: list[ReviewItem] = []
-    review_item_entries: list[dict[str, Any]] = []
-
+    selected_result: GenerateResult | None = None
+    selected_candidate: RankedCandidate | None = None
     for ranked_candidate in candidates:
-        candidate_result = process_ranked_candidate(
-            ranked_candidate,
-            request=request,
-            preview_baker=preview_baker,
-            review_items=review_items,
-            review_item_entries=review_item_entries,
-        )
-        candidate_results.append(candidate_result)
+        result_payload: dict[str, Any] = {
+            "exerciseName": ranked_candidate.exercise_name,
+            "candidateRank": ranked_candidate.candidate_rank,
+            "candidate": ranked_candidate.candidate,
+            "workspaceSlug": ranked_candidate.workspace_slug,
+            "status": "pending",
+            "failures": [],
+        }
+        try:
+            generated = generate_candidate_motion(ranked_candidate, request=request)
+            result_payload.update(
+                {
+                    "status": "selected" if selected_result is None else "generated_not_selected",
+                    "manifestPath": str(generated.manifest_path),
+                    "previewHtmlPath": str(generated.preview_html_path),
+                    "rawPreviewHtmlPath": str(generated.raw_preview_html_path),
+                    "wearSkeletonJsonPath": str(generated.wear_skeleton_json_path),
+                    "cleanedMotionJsonPath": str(generated.cleaned_motion_json_path),
+                    "rawMotionJsonPath": str(generated.raw_motion_json_path),
+                    "copiedInputVideoPath": str(generated.copied_input_video_path),
+                }
+            )
+            if selected_result is None:
+                selected_result = generated
+                selected_candidate = ranked_candidate
+                candidate_results.append(result_payload)
+                break
+        except Exception as exc:
+            result_payload["status"] = "failed"
+            result_payload["failures"].append({"reason": "candidate_failed", "message": str(exc)})
+        candidate_results.append(result_payload)
 
-    selected: SelectedArtifact | None = (review_items[0], None) if review_items else None
-    selection_manifest = build_selection_manifest(
+    selection_manifest = build_skeleton_selection_manifest(
         request=request,
         candidate_results=candidate_results,
-        review_entries=review_item_entries,
-        selected=selected,
-        rejected_best=None,
+        selected_result=selected_result,
+        selected_candidate=selected_candidate,
     )
-    selected_preview_path = write_selected_loop_preview_html(request.workspace, selected)
-    if selected_preview_path is not None:
-        selection_manifest["selectedLoopPreviewHtmlPath"] = str(selected_preview_path)
     selection_path = request.workspace / "selection_manifest.json"
     selection_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
     return selection_manifest
@@ -434,6 +461,11 @@ def write_selected_loop_preview_html(
     fallback_rel = relative_html_path(fallback_mp4, workspace) if fallback_mp4 != item.review_video_path else None
     interactive_rel = relative_html_path(item.candidate_workspace / "preview" / "motion_preview.html", workspace)
     skeleton_rel = relative_html_path(item.skeleton_path, workspace)
+    skeleton_no_lock_rel = (
+        relative_html_path(item.skeleton_path_no_feet_lock, workspace)
+        if item.skeleton_path_no_feet_lock is not None
+        else None
+    )
     title = html.escape(f"{item.exercise_name} - Selected {loop_label}")
     source_elements = [
         f'      <source src="{html.escape(video_rel)}" type="{mime_type_for_video_path(item.review_video_path)}">'
@@ -489,6 +521,7 @@ def write_selected_loop_preview_html(
       <a href="{html.escape(video_rel)}">Open review video</a>
       <a href="{html.escape(interactive_rel)}">Open interactive preview</a>
       <a href="{html.escape(skeleton_rel)}">Open selected skeleton JSON</a>
+{f'      <a href="{html.escape(skeleton_no_lock_rel)}">Open selected skeleton JSON (no feet lock)</a>' if skeleton_no_lock_rel is not None else ""}
     </div>
   </main>
 </body>
@@ -497,6 +530,39 @@ def write_selected_loop_preview_html(
         encoding="utf-8",
     )
     return preview_path
+
+
+def build_skeleton_selection_manifest(
+    *,
+    request: BakeAndRankRequest,
+    candidate_results: list[dict[str, Any]],
+    selected_result: GenerateResult | None,
+    selected_candidate: RankedCandidate | None,
+) -> dict[str, Any]:
+    selected = None
+    if selected_result is not None and selected_candidate is not None:
+        selected = {
+            "exerciseName": selected_candidate.exercise_name,
+            "candidateRank": selected_candidate.candidate_rank,
+            "candidate": selected_candidate.candidate,
+            "manifestPath": str(selected_result.manifest_path),
+            "previewHtmlPath": str(selected_result.preview_html_path),
+            "rawPreviewHtmlPath": str(selected_result.raw_preview_html_path),
+            "wearSkeletonJsonPath": str(selected_result.wear_skeleton_json_path),
+            "cleanedMotionJsonPath": str(selected_result.cleaned_motion_json_path),
+            "rawMotionJsonPath": str(selected_result.raw_motion_json_path),
+            "copiedInputVideoPath": str(selected_result.copied_input_video_path),
+        }
+    return {
+        "schemaVersion": 2,
+        "pipeline": "source_video_to_single_rep_skeleton",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "candidatesJson": str(request.candidates_json),
+        "workspace": str(request.workspace),
+        "fallbackCandidates": max(1, request.fallback_candidates),
+        "candidateResults": candidate_results,
+        "selected": selected,
+    }
 
 
 def relative_html_path(path: Path, root: Path) -> str:
@@ -522,6 +588,7 @@ def process_ranked_candidate(
     preview_baker: PreviewBaker,
     review_items: list[ReviewItem],
     review_item_entries: list[dict[str, Any]],
+    support_dominance_classifier: Callable[[list[Path], str], str] | None,
 ) -> dict[str, Any]:
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
     result_payload: dict[str, Any] = {
@@ -562,6 +629,14 @@ def process_ranked_candidate(
                     }
                 )
                 continue
+            support_dominance_result = classify_support_dominance_for_review_loop(
+                review_video_path=artifact.review_video_path,
+                exercise_name=ranked_candidate.exercise_name,
+                classifier=support_dominance_classifier,
+                candidate_workspace=candidate_workspace,
+                loop_index=eligible_loop.loop_index,
+                sample_frames=request.review_frames,
+            )
             review_item = ReviewItem(
                 exercise_index=ranked_candidate.exercise_index,
                 candidate_rank=ranked_candidate.candidate_rank,
@@ -570,9 +645,23 @@ def process_ranked_candidate(
                 candidate_title=ranked_candidate.title,
                 candidate_workspace=candidate_workspace,
                 skeleton_path=artifact.skeleton_path,
+                skeleton_path_no_feet_lock=artifact.skeleton_path_no_feet_lock,
                 review_video_path=artifact.review_video_path,
                 duration_sec=eligible_loop.duration_sec,
                 candidate=ranked_candidate.candidate,
+                support_dominance=support_dominance_result.support_dominance if support_dominance_result else None,
+                support_dominance_confidence=(
+                    support_dominance_result.confidence if support_dominance_result else None
+                ),
+                support_dominance_reason=(
+                    support_dominance_result.reason if support_dominance_result else None
+                ),
+                support_dominance_uncertain=(
+                    support_dominance_result.uncertain if support_dominance_result else None
+                ),
+                support_dominance_model_output=(
+                    support_dominance_result.model_output if support_dominance_result else None
+                ),
             )
             review_items.append(review_item)
             review_item_entries.append(review_item_to_manifest(review_item))
@@ -623,6 +712,62 @@ def build_full_clip_eligible_loop(cleaned_clip: Any) -> EligibleLoop:
     )
 
 
+def classify_support_dominance_for_review_loop(
+    *,
+    review_video_path: Path,
+    exercise_name: str,
+    classifier: Callable[[list[Path], str], str] | None,
+    candidate_workspace: Path,
+    loop_index: int,
+    sample_frames: int,
+) -> SupportDominanceResult | None:
+    if classifier is None:
+        return None
+    if not review_video_path.exists():
+        return SupportDominanceResult(
+            support_dominance="mixed_support",
+            confidence=0.0,
+            reason="Review loop video is missing.",
+            exercise_name=exercise_name,
+            uncertain=True,
+            model_output={"error": "missing_review_video"},
+        )
+
+    metadata = read_basic_video_metadata(review_video_path)
+    duration_seconds = metadata.duration_seconds
+    if duration_seconds <= 0.0:
+        duration_seconds = 0.1
+
+    output_dir = candidate_workspace / "support_dominance_frames" / f"loop_{loop_index + 1:04d}"
+    window = DetectionWindow(
+        index=0,
+        start_seconds=0.0,
+        end_seconds=duration_seconds,
+    )
+    try:
+        frame_paths = extract_window_frames(
+            video_path=review_video_path,
+            window=window,
+            frames_per_window=max(1, sample_frames),
+            max_frame_width=DEFAULT_RANK_FRAME_WIDTH,
+            output_dir=output_dir,
+        )
+        return classify_support_dominance_from_frames(
+            frame_paths=frame_paths,
+            exercise_name=exercise_name,
+            caption_images=classifier,
+        )
+    except Exception as exc:
+        return SupportDominanceResult(
+            support_dominance="mixed_support",
+            confidence=0.0,
+            reason=f"Support dominance classification failed: {exc}",
+            exercise_name=exercise_name,
+            uncertain=True,
+            model_output={"error": str(exc)},
+        )
+
+
 def prepare_candidate_input_video(ranked_candidate: RankedCandidate, *, request: BakeAndRankRequest) -> Path:
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
     source_dir = candidate_workspace / "source"
@@ -630,27 +775,93 @@ def prepare_candidate_input_video(ranked_candidate: RankedCandidate, *, request:
     if not request.detect_source_segment:
         return source_video_path
     segment_dir = candidate_workspace / "segment_detection"
-    detection_result = detect_exercise_segment(
-        video_path=source_video_path,
-        output_dir=segment_dir / "frames",
+    chunk_estimate = estimate_chunking(
         exercise_name=ranked_candidate.exercise_name,
-        settings=DetectionSettings(
-            base_url=request.segment_base_url or request.litert_server_url,
-            model=request.segment_model or request.vision_model,
-            litert_command=None if request.segment_base_url else request.litert_command,
-            litert_backend=request.litert_backend,
-            window_seconds=request.segment_window_seconds,
-            overlap_seconds=request.segment_overlap_seconds,
-            frames_per_window=request.segment_frames_per_window,
-            confidence_threshold=request.segment_confidence_threshold,
-            min_segment_seconds=request.segment_min_seconds,
-            max_segment_seconds=request.segment_max_seconds,
-        ),
+        litert_command=find_default_litert_command(),
+        use_llm=True,
     )
+    segment_window_seconds = request.segment_window_seconds or chunk_estimate.chunk_seconds
+    segment_overlap_seconds = (
+        request.segment_overlap_seconds
+        if request.segment_overlap_seconds is not None
+        else chunk_estimate.chunk_overlap_seconds
+    )
+    segment_frames_per_window = request.segment_frames_per_window or frames_for_chunk_seconds(segment_window_seconds)
+    segment_refinement_frames_per_window = request.segment_refinement_frames_per_window or max(
+        24,
+        segment_frames_per_window * 2,
+    )
+    segment_base_url = request.segment_base_url or "http://127.0.0.1:8090"
+    segment_model = request.segment_model or "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf"
+    segment_server = LlamaCppVisionRanker(
+        YouTubeRankingSettings(
+            llama_cpp_base_url=segment_base_url,
+            llama_cpp_model=segment_model,
+            vision_llm_workers=request.segment_classification_workers,
+        )
+    )
+    try:
+        detection_result = detect_exercise_segment(
+            video_path=source_video_path,
+            output_dir=segment_dir / "frames",
+            exercise_name=ranked_candidate.exercise_name,
+            settings=DetectionSettings(
+                base_url=segment_base_url,
+                model=segment_model,
+                window_seconds=segment_window_seconds,
+                overlap_seconds=segment_overlap_seconds,
+                frames_per_window=segment_frames_per_window,
+                confidence_threshold=request.segment_confidence_threshold,
+                min_segment_seconds=request.segment_min_seconds,
+                max_segment_seconds=request.segment_max_seconds,
+                refinement_window_seconds=request.segment_refinement_window_seconds,
+                refinement_overlap_seconds=request.segment_refinement_overlap_seconds,
+                refinement_frames_per_window=segment_refinement_frames_per_window,
+                refinement_padding_seconds=request.segment_refinement_padding_seconds,
+                classification_workers=request.segment_classification_workers,
+            ),
+        )
+    finally:
+        segment_server.close()
     detection_json_path = segment_dir / "segment_detection.json"
     save_detection_result(detection_json_path, detection_result)
     if detection_result.detected_span is None:
         raise RuntimeError(f"Source segment detection did not find a usable {ranked_candidate.exercise_name} span.")
+    segment_selection_path = segment_dir / "segment_selection.json"
+    segment_selection_path.write_text(
+        json.dumps(
+            {
+                "role": "final_single_rep_segment",
+                "source": "detect_exercise_segment",
+                "sourceVideoPath": str(source_video_path),
+                "exerciseName": ranked_candidate.exercise_name,
+                "chunkEstimate": {
+                    "repDurationMinSec": chunk_estimate.rep_duration_min_sec,
+                    "repDurationMaxSec": chunk_estimate.rep_duration_max_sec,
+                    "movementComplexity": chunk_estimate.movement_complexity,
+                    "chunkSeconds": chunk_estimate.chunk_seconds,
+                    "chunkOverlapSeconds": chunk_estimate.chunk_overlap_seconds,
+                    "source": chunk_estimate.source,
+                    "reason": chunk_estimate.reason,
+                },
+                "segmentSettings": {
+                    "windowSeconds": segment_window_seconds,
+                    "overlapSeconds": segment_overlap_seconds,
+                    "framesPerWindow": segment_frames_per_window,
+                    "classificationWorkers": request.segment_classification_workers,
+                    "refinementFramesPerWindow": segment_refinement_frames_per_window,
+                },
+                "selectedSpan": {
+                    "startSeconds": detection_result.detected_span.start_seconds,
+                    "endSeconds": detection_result.detected_span.end_seconds,
+                    "confidence": detection_result.detected_span.confidence,
+                    "contributingWindows": detection_result.detected_span.contributing_windows,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     selected_segment_path = candidate_workspace / "input" / "selected_segment.mp4"
     trim_video(
         source_path=source_video_path,
@@ -683,10 +894,9 @@ def bake_preview_loops_with_playwright(
         page.goto(preview_html_path.resolve().as_uri(), wait_until="networkidle")
         page.wait_for_function("() => window.exerciseMotionAutomation != null")
         for eligible_loop in eligible_loops:
-            options = {
+            base_options = {
                 "fixedRoot": True,
                 "autoWorldAlignment": True,
-                "lockPlantedFeet": True,
                 "lockYDrift": False,
                 "sceneInverted": False,
                 "showSmplMesh": False,
@@ -694,6 +904,7 @@ def bake_preview_loops_with_playwright(
                 "cameraYawDegrees": 45.0,
                 "cameraPitchDegrees": 30.0,
             }
+            options = {**base_options, "lockPlantedFeet": True}
             export_payload = page.evaluate(
                 """({ loopIndex, options }) => window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
                 {"loopIndex": eligible_loop.loop_index, "options": options},
@@ -715,10 +926,18 @@ def bake_preview_loops_with_playwright(
                 review_video_path,
                 fps=parse_export_fps(export_payload),
             )
+            no_lock_options = {**base_options, "lockPlantedFeet": False}
+            no_lock_payload = page.evaluate(
+                """({ loopIndex, options }) => window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
+                {"loopIndex": eligible_loop.loop_index, "options": no_lock_options},
+            )
+            no_lock_skeleton_path = wear_dir / f"skeleton.baked.{artifact_label}.no-foot-lock.json"
+            no_lock_skeleton_path.write_text(json.dumps(no_lock_payload, indent=2), encoding="utf-8")
             artifacts.append(
                 BakedLoopArtifact(
                     loop_index=eligible_loop.loop_index,
                     skeleton_path=skeleton_path,
+                    skeleton_path_no_feet_lock=no_lock_skeleton_path,
                     review_video_path=review_video_path,
                     export_payload=export_payload,
                 )
@@ -810,10 +1029,9 @@ def rank_review_item_with_server(
         window=window,
         frames_per_window=max(1, request.review_frames),
         max_frame_width=DEFAULT_RANK_FRAME_WIDTH,
-        original_fps=metadata.fps,
         output_dir=frames_dir,
     )
-    frame_paths = [sample.path for sample in frame_samples]
+    frame_paths = [sample.path if hasattr(sample, "path") else sample for sample in frame_samples]
     raw = ranker.caption_images(frame_paths=frame_paths, prompt=build_loop_ranking_prompt(item))
     return parse_loop_ranking_response(raw)
 
@@ -896,6 +1114,8 @@ def selected_to_manifest(item: ReviewItem, ranking: LoopRanking | None) -> dict[
     else:
         payload["ranking"] = ranking_to_manifest(ranking)
     payload["selectedWearSkeletonPath"] = str(item.skeleton_path)
+    if item.skeleton_path_no_feet_lock is not None:
+        payload["selectedWearSkeletonPathNoFeetLock"] = str(item.skeleton_path_no_feet_lock)
     payload["selectedReviewVideoPath"] = str(item.review_video_path)
     return payload
 
@@ -942,9 +1162,15 @@ def review_item_to_manifest(item: ReviewItem) -> dict[str, Any]:
         "candidateTitle": item.candidate_title,
         "candidateWorkspace": str(item.candidate_workspace),
         "skeletonPath": str(item.skeleton_path),
+        "skeletonPathNoFeetLock": str(item.skeleton_path_no_feet_lock) if item.skeleton_path_no_feet_lock is not None else None,
         "reviewVideoPath": str(item.review_video_path),
         "durationSec": item.duration_sec,
         "candidate": item.candidate,
+        "supportDominance": item.support_dominance,
+        "supportDominanceConfidence": item.support_dominance_confidence,
+        "supportDominanceReason": item.support_dominance_reason,
+        "supportDominanceUncertain": item.support_dominance_uncertain,
+        "supportDominanceModelOutput": item.support_dominance_model_output,
     }
 
 
