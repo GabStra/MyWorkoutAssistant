@@ -12,9 +12,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Callable
 
 import httpx
+from exercise_motion_pkg.chunking import estimate_chunking, find_default_litert_command, frames_for_chunk_seconds
 
 
 def download_youtube(url: str, output_dir: Path) -> Path:
@@ -26,16 +28,13 @@ def download_youtube(url: str, output_dir: Path) -> Path:
         ) from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    template = str(output_dir / "source.%(ext)s")
-    options = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]/bestvideo[ext=webm]/best",
-        "outtmpl": template,
-        "quiet": False,
-        "noprogress": False,
-        "noplaylist": True,
-        "retries": 3,
-        "merge_output_format": "mp4",
-    }
+    options = build_youtube_download_options(
+        outtmpl=str(output_dir / "source.%(ext)s"),
+        quiet=False,
+        noprogress=False,
+        retries=3,
+        preview=False,
+    )
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=True)
         downloaded = Path(ydl.prepare_filename(info))
@@ -57,15 +56,13 @@ def download_youtube_preview(url: str, output_dir: Path) -> Path:
         ) from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    template = str(output_dir / "candidate.%(ext)s")
-    options = {
-        "format": "worst[ext=mp4]/worstvideo[ext=mp4]/worst",
-        "outtmpl": template,
-        "quiet": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "retries": 2,
-    }
+    options = build_youtube_download_options(
+        outtmpl=str(output_dir / "candidate.%(ext)s"),
+        quiet=True,
+        noprogress=True,
+        retries=2,
+        preview=True,
+    )
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=True)
         downloaded = Path(ydl.prepare_filename(info))
@@ -78,7 +75,14 @@ def download_youtube_preview(url: str, output_dir: Path) -> Path:
     raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
 
 
+def sanitize_video_for_processing(video_path: Path) -> Path:
+    """Re-encode/detox incoming video files to a clean local MP4 for downstream tooling."""
+    return sanitize_downloaded_video(video_path)
+
+
 def sanitize_downloaded_video(video_path: Path) -> Path:
+    if not video_path.exists():
+        raise FileNotFoundError(f"Input video not found: {video_path}")
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         return video_path
@@ -169,6 +173,71 @@ def _finalize_sanitized_video(temp_path: Path, final_path: Path, fallback_path: 
     return final_path
 
 
+def build_youtube_download_options(
+    *,
+    outtmpl: str,
+    quiet: bool,
+    noprogress: bool,
+    retries: int,
+    preview: bool = False,
+) -> dict[str, Any]:
+    ffmpeg_available = shutil.which("ffmpeg") is not None
+    remote_components = ["ejs:github"]
+    if preview:
+        if ffmpeg_available:
+            return {
+                "format": (
+                    "worst[ext=mp4][protocol^=http][vcodec!=none][acodec!=none]/"
+                    "worst[ext=mp4][protocol^=https][vcodec!=none][acodec!=none]/"
+                    "worst[ext=mp4][vcodec!=none][acodec!=none]/"
+                    "worst[ext=mp4][vcodec!=none]/worst"
+                ),
+                "outtmpl": outtmpl,
+                "quiet": quiet,
+                "noprogress": noprogress,
+                "noplaylist": True,
+                "retries": retries,
+                "remote_components": remote_components,
+            }
+        return {
+            "format": (
+                "worst[ext=mp4][protocol^=http][vcodec!=none]/"
+                "worst[ext=mp4][protocol^=https][vcodec!=none]/"
+                "worst[ext=webm][protocol^=http][vcodec!=none]/"
+                "worst[ext=webm][protocol^=https][vcodec!=none]/"
+                "worst"
+            ),
+            "outtmpl": outtmpl,
+            "quiet": quiet,
+            "noprogress": noprogress,
+            "noplaylist": True,
+            "retries": retries,
+            "remote_components": remote_components,
+        }
+
+    if ffmpeg_available:
+        return {
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]/bestvideo[ext=webm]/best",
+            "outtmpl": outtmpl,
+            "quiet": quiet,
+            "noprogress": noprogress,
+            "noplaylist": True,
+            "retries": retries,
+            "merge_output_format": "mp4",
+            "remote_components": remote_components,
+        }
+
+    return {
+        "format": "best[ext=mp4][vcodec!=none][acodec!=none]/best[ext=mp4][vcodec!=none]/best",
+        "outtmpl": outtmpl,
+        "quiet": quiet,
+        "noprogress": noprogress,
+        "noplaylist": True,
+        "retries": retries,
+        "remote_components": remote_components,
+    }
+
+
 @dataclass(frozen=True)
 class ExerciseEntry:
     exercise_id: str
@@ -224,22 +293,32 @@ class YouTubeCandidate:
 @dataclass(frozen=True)
 class YouTubeRankingSettings:
     results_per_query: int = 10
-    max_candidates: int = 6
+    max_candidates: int = 5
     min_duration_seconds: int = 20
     max_duration_seconds: int = 120
     rank_with_litert: bool = False
-    vision_candidates_per_exercise: int = 3
-    vision_frames_per_candidate: int = 4
+    vision_candidates_per_exercise: int = 5
+    vision_frames_per_candidate: int | None = None
+    vision_chunk_seconds: float | None = None
+    vision_chunk_overlap_seconds: float | None = None
+    vision_contact_sheet_columns: int = 4
+    vision_contact_sheet_tile_width: int = 320
+    vision_contact_sheet_frames_per_sheet: int = 8
+    vision_contact_sheet_jpeg_quality: int = 82
     vision_download_workers: int = 3
-    vision_llm_workers: int = 1
-    litert_command: str | None = None
-    litert_backend: str = "gpu"
-    vision_model: str = "gemma-4-E4B-it"
+    vision_llm_workers: int = 3
+    llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
+    llama_cpp_model: str = "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf"
+    llama_cpp_command: str | None = None
+    llama_cpp_server_command: str | None = None
+    llama_cpp_mmproj: str | None = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+    llama_cpp_backend: str = "gpu"
+    llama_cpp_n_predict: int = 512
+    llama_cpp_image_min_tokens: int | None = None
+    llama_cpp_image_max_tokens: int | None = None
+    llama_cpp_auto_start_server: bool = True
+    llama_cpp_server_startup_timeout_seconds: float = 180.0
     include_disabled: bool = False
-    use_litert_server: bool = True
-    litert_server_url: str = "http://127.0.0.1:9379"
-    litert_server_port: int = 9379
-    keep_litert_server: bool = False
     vision_early_stop_score: float = 0.95
 
 
@@ -248,6 +327,9 @@ class PreparedVisionReview:
     candidate: YouTubeCandidate
     temp_dir: tempfile.TemporaryDirectory[str]
     frame_paths: list[Path]
+    frame_path_chunks: list[list[Path]]
+    chunk_windows: list[tuple[float, float]]
+    chunk_count: int
     prompt: str
 
     def close(self) -> None:
@@ -441,9 +523,9 @@ def slugify(name: str) -> str:
 def build_youtube_queries(exercise_name: str) -> list[str]:
     base = exercise_name.strip()
     return [
-        f'{base} demonstration reps "same camera angle" -tutorial -"how to" -shorts',
-        f'{base} "proper form" demo "single camera" -tutorial -mistakes -guide',
-        f"{base} execution demo full movement stable camera -tutorial -workout -program",
+        base,
+        f"{base} exercise",
+        f"{base} demo",
     ]
 
 
@@ -461,6 +543,7 @@ def search_youtube(query: str, results_per_query: int) -> list[YouTubeCandidate]
         "extract_flat": True,
         "ignoreerrors": True,
         "noplaylist": True,
+        "remote_components": ["ejs:github"],
     }
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(f"ytsearch{results_per_query}:{query}", download=False)
@@ -638,12 +721,17 @@ def status_for_score(score: float) -> str:
 def compose_final_score(metadata_score: float, vision_score: float | None) -> float:
     if vision_score is None:
         return clamp_score(metadata_score)
-    return clamp_score(metadata_score * 0.55 + vision_score * 0.45)
+    return clamp_score(metadata_score * 0.10 + vision_score * 0.90)
 
 
 VISION_HARD_GATE_REASONS = {
     "correct_exercise",
     "usable_for_motion_extraction",
+    "complete_repetition_visible",
+    "loopable_repetition_cycle",
+    "exercise_only_chunk",
+    "normal_speed_execution",
+    "not_broken_into_steps",
     "continuous_motion",
     "athlete_fully_in_frame_throughout",
     "static_camera_throughout",
@@ -652,7 +740,6 @@ VISION_HARD_GATE_REASONS = {
     "no_camera_cuts",
     "unobstructed_motion",
     "key_joints_visible",
-    "implement_path_visible",
     "single_primary_subject",
     "clean_scene",
     "no_nearby_people",
@@ -682,6 +769,47 @@ def litert_vision_backend(settings: YouTubeRankingSettings) -> str:
     return "litert-cli"
 
 
+def vision_backend_name(settings: YouTubeRankingSettings) -> str:
+    if settings.llama_cpp_command:
+        return "llama-cpp-cli"
+    return "llama-cpp-server"
+
+
+def default_llama_cpp_mmproj_path() -> str:
+    return "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+
+
+def default_llama_cpp_server_path() -> str:
+    return "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-server.exe"
+
+
+def resolve_llama_cpp_server_command(
+    *,
+    configured_command: str | None,
+    primary_command: str | None,
+) -> str:
+    if configured_command:
+        return configured_command
+    if primary_command:
+        inferred = Path(primary_command).with_name("llama-server.exe")
+        if inferred.exists():
+            return str(inferred)
+    fallback = Path(default_llama_cpp_server_path())
+    if fallback.exists():
+        return str(fallback)
+    found = shutil.which("llama-server")
+    return found or "llama-server"
+
+
+def parse_llama_cpp_base_url(base_url: str | None) -> dict[str, object]:
+    if not base_url:
+        raise ValueError("llama.cpp server mode requires a base URL.")
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 8090
+    return {"host": host, "port": port}
+
+
 def settings_litert_serve_command(settings: YouTubeRankingSettings) -> list[str]:
     command = settings.litert_command or find_default_litert_command()
     return [
@@ -706,11 +834,8 @@ def discover_and_rank_youtube_candidates(
     vision_enabled = settings.rank_with_litert
     owns_vision_ranker = False
     if vision_enabled and vision_ranker is None:
-        if settings.use_litert_server:
-            vision_ranker = LiteRtServerVisionRanker(settings)
-            owns_vision_ranker = True
-        else:
-            vision_ranker = rank_candidate_with_litert
+        vision_ranker = LlamaCppVisionRanker(settings)
+        owns_vision_ranker = True
 
     exercise_payloads: list[dict[str, Any]] = []
     try:
@@ -738,7 +863,7 @@ def discover_and_rank_youtube_candidates(
             ranked = ranked[: settings.max_candidates]
 
             if vision_enabled and vision_ranker is not None:
-                if isinstance(vision_ranker, LiteRtServerVisionRanker):
+                if isinstance(vision_ranker, LlamaCppVisionRanker):
                     reranked = rank_candidates_with_prepared_vision_reviews(
                         exercise=exercise,
                         ranked=ranked,
@@ -765,7 +890,7 @@ def discover_and_rank_youtube_candidates(
                 }
             )
     finally:
-        if owns_vision_ranker and isinstance(vision_ranker, LiteRtServerVisionRanker):
+        if owns_vision_ranker and isinstance(vision_ranker, LlamaCppVisionRanker):
             vision_ranker.close()
 
     manifest = {
@@ -774,13 +899,123 @@ def discover_and_rank_youtube_candidates(
         "ranking": {
             "metadataEnabled": True,
             "visionEnabled": vision_enabled,
-            "visionBackend": litert_vision_backend(settings) if vision_enabled else None,
+            "visionBackend": vision_backend_name(settings) if vision_enabled else None,
         },
         "exercises": exercise_payloads,
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
+
+
+class LlamaCppVisionRanker:
+    def __init__(self, settings: YouTubeRankingSettings) -> None:
+        from exercise_motion_pkg.segment_detection import LlamaCppVisionClient
+
+        if settings.llama_cpp_command and not settings.llama_cpp_mmproj:
+            raise ValueError("llama.cpp command mode requires --llama-cpp-mmproj.")
+        self.settings = settings
+        self.process: subprocess.Popen[str] | None = None
+        if settings.llama_cpp_command is None and settings.llama_cpp_base_url is not None:
+            self._ensure_server()
+        self.client = LlamaCppVisionClient(
+            base_url=None if settings.llama_cpp_command else settings.llama_cpp_base_url,
+            model=settings.llama_cpp_model,
+            command=settings.llama_cpp_command,
+            mmproj=settings.llama_cpp_mmproj,
+            backend=settings.llama_cpp_backend,
+            n_predict=settings.llama_cpp_n_predict,
+            image_min_tokens=settings.llama_cpp_image_min_tokens,
+            image_max_tokens=settings.llama_cpp_image_max_tokens,
+        )
+
+    def close(self) -> None:
+        self.client.client.close()
+        if self.process is None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=10.0)
+
+    def _ensure_server(self) -> None:
+        if self._is_healthy():
+            return
+        if not self.settings.llama_cpp_auto_start_server:
+            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
+            response.raise_for_status()
+            return
+        command = resolve_llama_cpp_server_command(
+            configured_command=self.settings.llama_cpp_server_command,
+            primary_command=self.settings.llama_cpp_command,
+        )
+        model_path = Path(self.settings.llama_cpp_model)
+        mmproj_path = Path(self.settings.llama_cpp_mmproj or default_llama_cpp_mmproj_path())
+        if not model_path.exists():
+            raise FileNotFoundError(f"Could not find llama.cpp model file: {model_path}")
+        if not mmproj_path.exists():
+            raise FileNotFoundError(f"Could not find llama.cpp mmproj file: {mmproj_path}")
+        if shutil.which(command) is None and not Path(command).exists():
+            raise FileNotFoundError(f"Could not find llama-server binary: {command}")
+        parsed = parse_llama_cpp_base_url(self.settings.llama_cpp_base_url)
+        args = [
+            command,
+            "-m",
+            str(model_path),
+            "--mmproj",
+            str(mmproj_path),
+            "--host",
+            parsed["host"],
+            "--port",
+            str(parsed["port"]),
+            "--parallel",
+            str(max(1, self.settings.vision_llm_workers)),
+        ]
+        if self.settings.llama_cpp_backend == "gpu":
+            args.extend(["--gpu-layers", "all"])
+        else:
+            args.extend(["--gpu-layers", "0"])
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        self.process = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            creationflags=creationflags,
+        )
+        deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                break
+            if self._is_healthy():
+                return
+            time.sleep(1.0)
+        raise RuntimeError(
+            f"llama-server did not become healthy at {self.settings.llama_cpp_base_url} "
+            f"within {self.settings.llama_cpp_server_startup_timeout_seconds:.0f} seconds."
+        )
+
+    def _is_healthy(self) -> bool:
+        if self.settings.llama_cpp_base_url is None:
+            return False
+        try:
+            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
+            return response.status_code < 500
+        except httpx.HTTPError:
+            return False
+
+    def rank_prepared(
+        self,
+        prepared: PreparedVisionReview,
+        settings: YouTubeRankingSettings,
+    ) -> VisionRankResult:
+        return score_prepared_vision_review(
+            prepared=prepared,
+            settings=settings,
+            caption_images=self.client.caption_images,
+        )
 
 
 class LiteRtServerVisionRanker:
@@ -907,7 +1142,7 @@ def rank_candidates_with_prepared_vision_reviews(
     exercise: ExerciseEntry,
     ranked: list[YouTubeCandidate],
     settings: YouTubeRankingSettings,
-    vision_ranker: LiteRtServerVisionRanker,
+    vision_ranker: Any,
 ) -> list[YouTubeCandidate]:
     vision_limit = max(0, settings.vision_candidates_per_exercise)
     candidates_to_review = ranked[:vision_limit]
@@ -966,7 +1201,7 @@ def score_prepared_vision_reviews_parallel(
     *,
     prepared_reviews: list[PreparedVisionReview],
     settings: YouTubeRankingSettings,
-    vision_ranker: LiteRtServerVisionRanker,
+    vision_ranker: Any,
 ) -> dict[str, VisionRankResult]:
     if not prepared_reviews:
         return {}
@@ -1032,7 +1267,7 @@ def prepare_vision_review(
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
 ) -> PreparedVisionReview:
-    from exercise_motion_pkg.segment_detection import DetectionWindow, extract_window_frames
+    from exercise_motion_pkg.segment_detection import DetectionWindow, extract_window_frames, iter_detection_windows
     from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
     temp_dir = tempfile.TemporaryDirectory(prefix="exercise-motion-youtube-")
@@ -1041,19 +1276,54 @@ def prepare_vision_review(
         video_path = download_youtube_preview(candidate.url, temp_path)
         metadata = read_basic_video_metadata(video_path)
         duration = max(0.5, metadata.duration_seconds)
-        window = DetectionWindow(index=0, start_seconds=0.0, end_seconds=min(duration, 30.0))
-        frame_samples = extract_window_frames(
-            video_path=video_path,
-            window=window,
-            frames_per_window=max(1, settings.vision_frames_per_candidate),
-            max_frame_width=960,
-            original_fps=metadata.fps,
-            output_dir=temp_path / "frames",
+        chunk_estimate = estimate_chunking(
+            exercise_name=exercise.name,
+            litert_command=find_default_litert_command(),
+            use_llm=True,
         )
+        chunk_seconds = settings.vision_chunk_seconds or chunk_estimate.chunk_seconds
+        chunk_overlap_seconds = (
+            settings.vision_chunk_overlap_seconds
+            if settings.vision_chunk_overlap_seconds is not None
+            else chunk_estimate.chunk_overlap_seconds
+        )
+        windows = iter_detection_windows(
+            duration_seconds=duration,
+            window_seconds=min(max(1.0, chunk_seconds), duration),
+            overlap_seconds=max(0.0, chunk_overlap_seconds),
+        )
+        frame_paths: list[Path] = []
+        frame_path_chunks: list[list[Path]] = []
+        chunk_windows: list[tuple[float, float]] = []
+        frames_per_chunk = max(1, settings.vision_frames_per_candidate or frames_for_chunk_seconds(chunk_seconds))
+        for window in windows:
+            frame_samples = extract_window_frames(
+                video_path=video_path,
+                window=DetectionWindow(
+                    index=window.index,
+                    start_seconds=window.start_seconds,
+                    end_seconds=window.end_seconds,
+                ),
+                frames_per_window=frames_per_chunk,
+                max_frame_width=640,
+                contact_sheet_enabled=True,
+                contact_sheet_columns=settings.vision_contact_sheet_columns,
+                contact_sheet_tile_width=settings.vision_contact_sheet_tile_width,
+                contact_sheet_frames_per_sheet=settings.vision_contact_sheet_frames_per_sheet,
+                contact_sheet_jpeg_quality=settings.vision_contact_sheet_jpeg_quality,
+                output_dir=temp_path / "frames" / f"chunk_{window.index:04d}",
+            )
+            chunk_paths = [sample.path if hasattr(sample, "path") else sample for sample in frame_samples]
+            frame_path_chunks.append(chunk_paths)
+            chunk_windows.append((window.start_seconds, window.end_seconds))
+            frame_paths.extend(chunk_paths)
         return PreparedVisionReview(
             candidate=candidate,
             temp_dir=temp_dir,
-            frame_paths=[sample.path for sample in frame_samples],
+            frame_paths=frame_paths,
+            frame_path_chunks=frame_path_chunks,
+            chunk_windows=chunk_windows,
+            chunk_count=len(windows),
             prompt=build_candidate_vision_prompt(exercise.name, candidate),
         )
     except Exception:
@@ -1080,6 +1350,23 @@ def rank_candidate_with_litert(
         settings=settings,
         caption_images=client.caption_images,
     )
+
+
+def rank_candidate_with_llama_cpp(
+    exercise: ExerciseEntry,
+    candidate: YouTubeCandidate,
+    settings: YouTubeRankingSettings,
+) -> VisionRankResult:
+    ranker = LlamaCppVisionRanker(settings)
+    try:
+        return rank_candidate_with_vision_client(
+            exercise=exercise,
+            candidate=candidate,
+            settings=settings,
+            caption_images=ranker.client.caption_images,
+        )
+    finally:
+        ranker.close()
 
 
 def rank_candidate_with_vision_client(
@@ -1111,139 +1398,142 @@ def score_prepared_vision_review(
 ) -> VisionRankResult:
     from exercise_motion_pkg.segment_detection import extract_json_object
 
-    try:
-        raw = caption_images(frame_paths=prepared.frame_paths, prompt=prepared.prompt)
-    except Exception:
-        return 0.0, ["vision_review_failed"]
-    payload = extract_json_object(raw)
-    if not isinstance(payload, dict):
-        return 0.0, ["vision_invalid_json"]
+    chunk_scores: list[float] = []
+    chunk_results: list[tuple[float, list[str], dict[str, Any], int]] = []
+    invalid_json_count = 0
+    failed_count = 0
+    for chunk_index, chunk_paths in enumerate(prepared.frame_path_chunks):
+        if not chunk_paths:
+            continue
+        chunk_start, chunk_end = (
+            prepared.chunk_windows[chunk_index]
+            if chunk_index < len(prepared.chunk_windows)
+            else (0.0, 0.0)
+        )
+        chunk_prompt = (
+            f"{prepared.prompt}\n"
+            f"These contact-sheet images are from chunk {chunk_index + 1} of {prepared.chunk_count} "
+            f"covering {chunk_start:.3f}s to {chunk_end:.3f}s in the preview video. "
+            "Treat multiple attached contact sheets as consecutive context segments from the same chunk. "
+            "Score only this chunk as evidence that the source video contains a usable target-exercise segment. "
+            "The final single-rep trim will be found later by detect_exercise_segment."
+        )
+        try:
+            raw = caption_images(frame_paths=chunk_paths, prompt=chunk_prompt)
+        except Exception:
+            failed_count += 1
+            continue
+        payload = extract_json_object(raw)
+        if not isinstance(payload, dict):
+            invalid_json_count += 1
+            continue
+        score, reasons = score_candidate_vision_payload(payload)
+        chunk_scores.append(score)
+        chunk_results.append((score, reasons, payload, chunk_index))
 
-    correct_exercise = parse_bool_value(payload.get("correct_exercise"), default=False)
-    full_body_visible = parse_bool_value(payload.get("full_body_visible"), default=False)
-    athlete_fully_in_frame_throughout = parse_bool_value(
-        payload.get("athlete_fully_in_frame_throughout"),
-        default=full_body_visible,
-    )
-    stable_camera = parse_bool_value(payload.get("stable_camera"), default=False)
-    static_camera_throughout = parse_bool_value(
-        payload.get("static_camera_throughout"),
-        default=stable_camera,
-    )
-    repeated_reps = parse_bool_value(payload.get("repeated_reps"), default=False)
-    low_obstruction = parse_bool_value(payload.get("low_obstruction"), default=False)
-    usable = parse_bool_value(payload.get("usable_for_motion_extraction"), default=False)
-    continuous_motion = parse_bool_value(payload.get("continuous_motion"), default=False)
-    single_camera_angle = parse_bool_value(payload.get("single_camera_angle"), default=stable_camera)
-    no_step_breakdown = parse_bool_value(payload.get("no_step_breakdown"), default=False)
-    no_camera_cuts = parse_bool_value(payload.get("no_camera_cuts"), default=single_camera_angle)
-    unobstructed_motion = parse_bool_value(payload.get("unobstructed_motion"), default=low_obstruction)
-    key_joints_visible = parse_bool_value(payload.get("key_joints_visible"), default=full_body_visible)
-    implement_path_visible = parse_bool_value(payload.get("implement_path_visible"), default=full_body_visible)
-    single_primary_subject = parse_bool_value(payload.get("single_primary_subject"), default=False)
-    clean_scene = parse_bool_value(payload.get("clean_scene"), default=False)
-    no_nearby_people = parse_bool_value(payload.get("no_nearby_people"), default=False)
-    confidence = payload.get("confidence")
-    confidence_score = confidence if isinstance(confidence, (int, float)) else 0.5
+    if not chunk_results:
+        reasons = ["vision_review_failed"]
+        if invalid_json_count:
+            reasons.append("vision_invalid_json")
+        return 0.0, reasons
 
-    score = 0.0
+    best_score, best_reasons, best_payload, best_chunk_index = max(chunk_results, key=lambda item: item[0])
+    average_score = sum(chunk_scores) / len(chunk_scores)
+    valid_chunk_count = sum(1 for score in chunk_scores if score >= 0.50)
+    valid_chunk_ratio = valid_chunk_count / len(chunk_scores)
+    final_score = clamp_score((best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio * 0.05))
+    compact_payload = dict(best_payload)
+    best_chunk_start, best_chunk_end = (
+        prepared.chunk_windows[best_chunk_index]
+        if best_chunk_index < len(prepared.chunk_windows)
+        else (None, None)
+    )
+    compact_payload["selectionRole"] = "source_video_suitability_only"
+    compact_payload["sampledFrameCount"] = len(prepared.frame_paths)
+    compact_payload["sampledChunkCount"] = prepared.chunk_count
+    compact_payload["scoredChunkCount"] = len(chunk_scores)
+    compact_payload["validChunkCount"] = valid_chunk_count
+    compact_payload["validChunkRatio"] = valid_chunk_ratio
+    compact_payload["bestChunkIndex"] = best_chunk_index
+    compact_payload["bestChunkStartSeconds"] = best_chunk_start
+    compact_payload["bestChunkEndSeconds"] = best_chunk_end
+    compact_payload["bestChunkScore"] = best_score
+    compact_payload["averageChunkScore"] = average_score
+    compact_payload["failedChunkCount"] = failed_count
+    compact_payload["invalidJsonChunkCount"] = invalid_json_count
+    return final_score, dedupe_reasons(best_reasons + ["chunked_source_video_review"]), compact_payload
+
+
+def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list[str]]:
+
+    target_match = parse_score_value(
+        payload.get("target_match"),
+        default=0.0,
+    )
+    complete_movement = parse_score_value(
+        payload.get("complete_movement"),
+        default=0.0,
+    )
+    capture_quality = parse_score_value(
+        payload.get("capture_quality"),
+        default=0.0,
+    )
+    execution_quality = parse_score_value(
+        payload.get("execution_quality"),
+        default=0.0,
+    )
+    source_score = parse_score_value(
+        payload.get("source_score"),
+        default=0.0,
+    )
+    blocking_issues = parse_blocking_issues(payload.get("blocking_issues", payload.get("blocking_issue")))
+    confidence_score = parse_score_value(payload.get("confidence"), default=0.5)
+
+    score = source_score
     reasons: list[str] = []
-    if correct_exercise:
-        score += 0.30
-        reasons.append("correct_exercise")
+    for issue in blocking_issues:
+        if issue != "none":
+            reasons.append(f"{issue}_penalty")
+    if target_match >= 0.75:
+        reasons.append("target_match")
     else:
         reasons.append("wrong_exercise_penalty")
-    if full_body_visible:
-        score += 0.12
-        reasons.append("full_body_visible")
-    if athlete_fully_in_frame_throughout:
-        score += 0.12
-        reasons.append("athlete_fully_in_frame_throughout")
+    if complete_movement >= 0.75:
+        reasons.append("complete_movement")
     else:
-        reasons.append("athlete_or_implement_out_of_frame_penalty")
-    if stable_camera:
-        score += 0.04
-        reasons.append("stable_camera")
-    if static_camera_throughout:
-        score += 0.08
-        reasons.append("static_camera_throughout")
+        reasons.append("partial_movement_penalty")
+    if capture_quality >= 0.75:
+        reasons.append("capture_quality")
     else:
-        reasons.append("moving_or_reframing_camera_penalty")
-    if repeated_reps:
-        score += 0.10
-        reasons.append("repeated_reps")
-    if low_obstruction:
-        score += 0.08
-        reasons.append("low_obstruction")
-    if usable:
-        score += 0.07
-        reasons.append("usable_for_motion_extraction")
+        reasons.append("bad_capture_quality_penalty")
+    if execution_quality >= 0.75:
+        reasons.append("execution_quality")
+    else:
+        reasons.append("bad_execution_quality_penalty")
+    if source_score >= 0.75:
+        reasons.append("source_score")
+    else:
+        reasons.append("weak_source_score_penalty")
 
-    if continuous_motion:
-        score += 0.17
-        reasons.append("continuous_motion")
-    else:
-        reasons.append("broken_or_noncontinuous_motion_penalty")
-    if single_camera_angle:
-        score += 0.08
-        reasons.append("single_camera_angle")
-    else:
-        reasons.append("angle_change_or_shaky_camera_penalty")
-    if no_step_breakdown:
-        score += 0.08
-        reasons.append("no_step_breakdown")
-    else:
-        reasons.append("step_breakdown_penalty")
-    if no_camera_cuts:
-        score += 0.04
-        reasons.append("no_camera_cuts")
-    else:
-        reasons.append("camera_cuts_penalty")
-    if unobstructed_motion:
-        score += 0.08
-        reasons.append("unobstructed_motion")
-    else:
-        reasons.append("obstructed_motion_penalty")
-    if key_joints_visible:
-        score += 0.06
-        reasons.append("key_joints_visible")
-    else:
-        reasons.append("key_joints_obstructed_penalty")
-    if implement_path_visible:
-        score += 0.04
-        reasons.append("implement_path_visible")
-    else:
-        reasons.append("implement_path_obstructed_penalty")
-    if single_primary_subject:
-        score += 0.08
-        reasons.append("single_primary_subject")
-    else:
-        reasons.append("multiple_people_penalty")
-    if clean_scene:
-        score += 0.06
-        reasons.append("clean_scene")
-    else:
-        reasons.append("busy_scene_penalty")
-    if no_nearby_people:
-        score += 0.04
-        reasons.append("no_nearby_people")
-    else:
-        reasons.append("nearby_people_penalty")
+    minimum_gate_score = min(
+        target_match,
+        complete_movement,
+        capture_quality,
+        execution_quality,
+    )
+    valid_motion_scene = minimum_gate_score >= 0.75
+    if valid_motion_scene:
+        reasons.append("valid_motion_scene")
 
-    if not usable or not correct_exercise:
-        score *= 0.55
-    if not continuous_motion or not no_step_breakdown or not no_camera_cuts:
-        score *= 0.45
-    if not stable_camera or not static_camera_throughout or not single_camera_angle:
-        score *= 0.60
-    if not full_body_visible or not athlete_fully_in_frame_throughout:
-        score *= 0.35
-    if not unobstructed_motion or not key_joints_visible or not implement_path_visible:
-        score *= 0.25
-    if not single_primary_subject or not clean_scene or not no_nearby_people:
-        score *= 0.20
-    score *= max(0.0, min(1.0, float(confidence_score)))
-    return clamp_score(score), reasons, payload
+    if minimum_gate_score < 0.65:
+        score = min(score, 0.49)
+    else:
+        score = min(score, minimum_gate_score)
+    score = apply_blocking_issue_caps(score, blocking_issues)
+    score *= confidence_score
+    if not valid_motion_scene:
+        score = min(score, 0.49)
+    return clamp_score(score), reasons
 
 
 def parse_bool_value(value: Any, *, default: bool) -> bool:
@@ -1258,47 +1548,95 @@ def parse_bool_value(value: Any, *, default: bool) -> bool:
     return default
 
 
-def find_default_litert_command() -> str:
-    local = Path(".venv") / "Scripts" / "litert-lm.exe"
-    if local.exists():
-        return str(local)
-    found = shutil.which("litert-lm")
-    return found or "litert-lm"
+def parse_score_value(value: Any, *, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        score = float(value)
+    elif isinstance(value, str):
+        try:
+            score = float(value.strip())
+        except ValueError:
+            return default
+    else:
+        return default
+    if score > 1.0 and score <= 10.0:
+        score /= 10.0
+    return clamp_score(score)
+
+
+def parse_blocking_issues(value: Any) -> list[str]:
+    allowed = {
+        "none",
+        "wrong_exercise",
+        "partial_movement",
+        "camera_motion",
+        "cropped_body",
+        "multiple_people",
+        "obstruction",
+        "slow_instruction",
+        "setup_or_talking",
+    }
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        return ["none"]
+    issues: list[str] = []
+    for item in raw_items:
+        text = str(item).strip().lower()
+        if text in allowed and text not in issues:
+            issues.append(text)
+    if not issues:
+        return ["none"]
+    if len(issues) > 1 and "none" in issues:
+        issues.remove("none")
+    return issues
+
+
+def apply_blocking_issue_caps(score: float, blocking_issues: list[str]) -> float:
+    caps = {
+        "wrong_exercise": 0.20,
+        "partial_movement": 0.49,
+        "camera_motion": 0.49,
+        "cropped_body": 0.49,
+        "multiple_people": 0.49,
+        "obstruction": 0.49,
+        "slow_instruction": 0.49,
+        "setup_or_talking": 0.49,
+    }
+    capped = score
+    for issue in blocking_issues:
+        if issue in caps:
+            capped = min(capped, caps[issue])
+    return capped
 
 
 def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidate) -> str:
     return (
-        "Rank this YouTube candidate for exercise motion extraction.\n"
+        "Score this sampled video chunk for exercise motion extraction source suitability.\n"
         f"Target exercise: {exercise_name}.\n"
         f"Video title: {candidate.title}.\n"
-        "Judge the sampled frames together. We need a short demo clip for WHAM-style motion extraction, not a full tutorial.\n"
-        "Strongly prefer: the actual target exercise being performed as continuous uninterrupted repetitions, a fixed tripod-like camera, the whole relevant body and implement visible through the entire rep, clear joint motion, no obstruction, and little or no talking/setup/title-card content.\n"
-        "For bench press, the bar path, hands, elbows, shoulders, torso, and bench must remain clearly visible through the press; any angle is acceptable if it stays the same and clearly shows the full pressing motion.\n"
-        "Mark athlete_fully_in_frame_throughout false if the head, feet, hands, bar, dumbbell, kettlebell, or medicine ball leaves the frame during the movement, even briefly.\n"
-        "Mark static_camera_throughout false if the camera pans, tilts, follows the athlete, zooms, reframes, shakes, or otherwise moves during the rep. A single fixed angle is required.\n"
-        "The scene should contain one clearly isolated primary athlete. Reject crowded gym/event scenes, spectators, multiple nearby people, spotters/helpers close to the lifter, or other bodies that could confuse person tracking, even if the main lifter is visible.\n"
-        "Reject or down-rank wrong exercises, cropped bodies, shaky handheld video, setup-only clips, talking-only/tutorial clips, title cards, excessive camera movement, camera cuts between reps, montage edits, obstructed lifters, crowded gym clips, spotters or equipment blocking the motion, and videos not usable for motion extraction.\n"
-        "Reject step-by-step demonstrations where the movement is broken into separate instructional positions, paused stages, freeze frames, or edited fragments instead of a continuous rep.\n"
+        "Judge only the attached frames/contact sheets from this chunk. Do not infer missing phases from other chunks.\n"
+        "This is source-video selection only; final trim timing is handled later by segment detection.\n"
+        "Return numeric scores from 0.0 to 1.0, not booleans.\n"
+        "Use this scale: 1.0 excellent, 0.8 good, 0.6 flawed but maybe usable, 0.4 poor, 0.0 unusable.\n"
+        "Score definitions:\n"
+        "- target_match: how clearly this chunk shows the requested exercise.\n"
+        "- complete_movement: how clearly this chunk contains a full repetition or movement cycle, not just a partial transition.\n"
+        "- capture_quality: how suitable the capture is for motion extraction: fixed camera, whole relevant body/equipment visible, one person, no obstructions.\n"
+        "- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n"
+        "- source_score: overall usefulness of this chunk as evidence that the video contains a good source segment.\n"
+        "Before scoring, list all visible blocking issues across every attached contact sheet. Use [] or [\"none\"] only if no blocking issue is visible. If any sheet shows camera zoom/reframing, body cropping, partial movement, obstruction, multiple people, slow instruction, setup, talking, or wrong exercise, include the matching blocking issue.\n"
         "Return JSON only with these keys:\n"
         "{"
-        '"correct_exercise": boolean, '
-        '"full_body_visible": boolean, '
-        '"athlete_fully_in_frame_throughout": boolean, '
-        '"stable_camera": boolean, '
-        '"static_camera_throughout": boolean, '
-        '"repeated_reps": boolean, '
-        '"low_obstruction": boolean, '
-        '"usable_for_motion_extraction": boolean, '
-        '"continuous_motion": boolean, '
-        '"single_camera_angle": boolean, '
-        '"no_step_breakdown": boolean, '
-        '"no_camera_cuts": boolean, '
-        '"unobstructed_motion": boolean, '
-        '"key_joints_visible": boolean, '
-        '"implement_path_visible": boolean, '
-        '"single_primary_subject": boolean, '
-        '"clean_scene": boolean, '
-        '"no_nearby_people": boolean, '
+        '"target_match": number, '
+        '"complete_movement": number, '
+        '"capture_quality": number, '
+        '"execution_quality": number, '
+        '"source_score": number, '
+        '"blocking_issues": ["none|wrong_exercise|partial_movement|camera_motion|cropped_body|multiple_people|obstruction|slow_instruction|setup_or_talking"], '
         '"confidence": number, '
         '"reason": string'
         "}"
