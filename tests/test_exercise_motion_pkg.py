@@ -22,6 +22,7 @@ from exercise_motion_pkg.cleanup import (
     suppress_micro_movements,
 )
 from exercise_motion_pkg.bake_and_rank import (
+    BakedLoopArtifact,
     BakeAndRankRequest,
     LoopRanking,
     RankedCandidate,
@@ -67,6 +68,7 @@ from exercise_motion_pkg.segment_detection import (
     DetectionResult,
     DetectionWindow,
     DetectedSpan,
+    SupportDominanceResult,
     WindowDetection,
     build_window_prompt,
     choose_detected_span,
@@ -2697,8 +2699,17 @@ def test_bake_and_rank_records_top_candidate_with_no_eligible_loops(
         root = request.workspace / ranked_candidate.workspace_slug
         for directory in ("cleaned", "preview", "raw", "retarget", "wear", "input", "logs"):
             (root / directory).mkdir(parents=True, exist_ok=True)
+        loop_clip = build_loop_fixture_clip()
+        long_loop_frames = loop_clip.frames * 4
+        long_loop = MotionClip(
+            fps=loop_clip.fps,
+            joint_names=loop_clip.joint_names,
+            frames=long_loop_frames,
+            source=loop_clip.source,
+            metadata=loop_clip.metadata,
+        )
         cleaned_motion_json = root / "cleaned" / "motion.cleaned.json"
-        save_motion_json(cleaned_motion_json, build_loop_fixture_clip())
+        save_motion_json(cleaned_motion_json, long_loop)
         preview_html = root / "preview" / "motion_preview.html"
         preview_html.write_text("<html></html>", encoding="utf-8")
         return GenerateResult(
@@ -2724,14 +2735,21 @@ def test_bake_and_rank_records_top_candidate_with_no_eligible_loops(
         )
 
     monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fake_generate)
-    monkeypatch.setattr(
-        bake_and_rank_module,
-        "detect_preview_loops_for_clip",
-        lambda clip: [{"startFrame": 0, "endFrame": 120, "durationSec": 12.0}],
+    artifact = BakedLoopArtifact(
+        loop_index=-1,
+        skeleton_path=tmp_path / "build" / "squat-001-top" / "wear" / "skeleton.baked.full-clip.no-foot-lock.json",
+        skeleton_path_no_feet_lock=tmp_path / "build" / "squat-001-top" / "wear" / "skeleton.baked.full-clip.no-foot-lock.json",
+        review_video_path=tmp_path / "build" / "squat-001-top" / "review" / "full-clip.webm",
+        export_payload={},
     )
+    artifact.skeleton_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact.skeleton_path.write_text("{}", encoding="utf-8")
+    artifact.review_video_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact.review_video_path.write_text("video-bytes", encoding="utf-8")
 
-    def fail_baker(*args: object, **kwargs: object) -> list[object]:
-        raise AssertionError("Preview baker should not run without eligible loops.")
+    def fake_bake_preview_loops_with_playwright(*args: object, **kwargs: object) -> list[BakedLoopArtifact]:
+        artifact.skeleton_path.write_text(json.dumps({"frames": []}, ensure_ascii=False), encoding="utf-8")
+        return [artifact]
 
     def fail_ranker(*args: object, **kwargs: object) -> list[object]:
         raise AssertionError("Ranker should not run without review items.")
@@ -2742,18 +2760,213 @@ def test_bake_and_rank_records_top_candidate_with_no_eligible_loops(
             workspace=tmp_path / "build",
             wham_repo_path=None,
             body_model_root=None,
+            classify_support_dominance=False,
         ),
-        preview_baker=fail_baker,
+        preview_baker=fake_bake_preview_loops_with_playwright,
         loop_ranker=fail_ranker,
     )
 
-    assert manifest["candidateSelectionPolicy"] == "top_ranked_per_exercise"
+    assert manifest["candidateSelectionPolicy"] == "top_ranked_per_exercise_then_cropped_full_clip"
     assert len(manifest["candidateResults"]) == 1
     candidate_result = manifest["candidateResults"][0]
     assert candidate_result["candidate"]["videoId"] == "top"
-    assert candidate_result["status"] == "skipped_no_eligible_loops"
-    assert candidate_result["rejectedLoops"][0]["reason"] == "loop_too_long"
-    assert manifest["selected"] is None
+    assert candidate_result["status"] == "ready_for_selection"
+    assert manifest["selected"] is not None
+
+
+def test_process_ranked_candidate_stores_support_dominance_from_preview_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id="pull-up",
+        exercise_name="Pull Up",
+        exercise_slug="pull-up",
+        candidate={
+            "videoId": "vid123",
+            "url": "https://www.youtube.com/watch?v=vid123",
+            "title": "Pull Up Demo",
+        },
+    )
+    workspace_root = tmp_path / "build" / candidate.workspace_slug
+
+    def fake_generate_candidate_motion(
+        ranked_candidate: RankedCandidate,
+        *,
+        request: BakeAndRankRequest,
+    ) -> GenerateResult:
+        assert ranked_candidate.exercise_slug == candidate.exercise_slug
+        root = request.workspace / ranked_candidate.workspace_slug
+        root.mkdir(parents=True, exist_ok=True)
+        preview_html = root / "preview" / "motion_preview.html"
+        preview_html.parent.mkdir(parents=True, exist_ok=True)
+        preview_html.write_text("<html></html>", encoding="utf-8")
+        cleaned_motion_json = root / "cleaned" / "motion.cleaned.json"
+        cleaned_motion_json.parent.mkdir(parents=True, exist_ok=True)
+        save_motion_json(cleaned_motion_json, build_loop_fixture_clip())
+        return GenerateResult(
+            manifest_path=root / "manifest.json",
+            preview_html_path=preview_html,
+            raw_preview_html_path=root / "preview" / "motion_preview.raw.html",
+            wear_skeleton_json_path=root / "wear" / "skeleton.preview.json",
+            cleaned_motion_json_path=cleaned_motion_json,
+            raw_motion_json_path=root / "raw" / "motion.raw.json",
+            target_rig_contract_path=root / "retarget" / "target_rig.contract.json",
+            retarget_source_path=None,
+            smpl_preview_json_path=None,
+            copied_input_video_path=root / "input" / "selected_segment.mp4",
+            cleanup_stats=CleanupStats(
+                input_frames=10,
+                output_frames=10,
+                trimmed_start_frames=0,
+                trimmed_end_frames=0,
+                average_root_height_before=0.0,
+                average_root_height_after=0.0,
+            ),
+            ground_metadata_path=None,
+        )
+
+    artifact = BakedLoopArtifact(
+        loop_index=-1,
+        skeleton_path=workspace_root / "wear" / "skeleton.baked.full-clip.json",
+        skeleton_path_no_feet_lock=workspace_root / "wear" / "skeleton.baked.full-clip.no-foot-lock.json",
+        review_video_path=workspace_root / "review" / "full-clip.webm",
+        export_payload={},
+    )
+    artifact.skeleton_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact.skeleton_path.write_text("{}", encoding="utf-8")
+    artifact.review_video_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact.review_video_path.write_bytes(b"fake-video")
+
+    def fake_preview_baker(
+        preview_html_path: Path,
+        eligible_loops: list[bake_and_rank_module.EligibleLoop],
+        candidate_workspace: Path,
+        review_frames: int,
+    ) -> list[BakedLoopArtifact]:
+        return [artifact]
+
+    monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fake_generate_candidate_motion)
+    monkeypatch.setattr(bake_and_rank_module, "bake_preview_loops_with_playwright", fake_preview_baker)
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "classify_support_dominance_for_review_loop",
+        lambda **_: SupportDominanceResult(
+            support_dominance="hand_dominant",
+            confidence=0.91,
+            reason="Hands are used to pull the body upward.",
+            exercise_name="Pull Up",
+            uncertain=False,
+            model_output={"supportDominance": "hand_dominant"},
+        ),
+    )
+
+    review_items: list[ReviewItem] = []
+    review_entries: list[dict[str, Any]] = []
+    result = bake_and_rank_module.process_ranked_candidate(
+        candidate,
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path / "build",
+            wham_repo_path=None,
+            body_model_root=None,
+            detect_source_segment=False,
+            classify_support_dominance=False,
+        ),
+        preview_baker=fake_preview_baker,
+        review_items=review_items,
+        review_item_entries=review_entries,
+        support_dominance_classifier=lambda frame_paths, prompt: "",
+    )
+
+    assert result["status"] == "ready_for_selection"
+    assert len(review_items) == 1
+    assert review_items[0].support_dominance == "hand_dominant"
+    assert review_items[0].support_dominance_confidence == pytest.approx(0.91)
+    assert review_items[0].support_dominance_uncertain is False
+    assert review_items[0].support_dominance_model_output == {"supportDominance": "hand_dominant"}
+    assert review_entries[0]["supportDominance"] == "hand_dominant"
+    assert review_entries[0]["supportDominanceConfidence"] == pytest.approx(0.91)
+    assert review_entries[0]["supportDominanceUncertain"] is False
+    assert review_entries[0]["supportDominanceModelOutput"] == {"supportDominance": "hand_dominant"}
+
+
+def test_classify_support_dominance_from_review_loop_uses_classification_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"called": 0}
+    expected_frame_paths: list[Path] = []
+    review_video = tmp_path / "review.webm"
+    review_video.write_bytes(b"video")
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    for index in range(3):
+        frame_path = frame_dir / f"frame_{index:02d}.jpg"
+        frame_path.write_bytes(b"frame")
+        expected_frame_paths.append(frame_path)
+
+    def fake_read_basic_video_metadata(path: Path):
+        from exercise_motion_pkg.video_utils import BasicVideoMetadata
+        return BasicVideoMetadata(fps=30.0, frame_count=30, width=640, height=480)
+
+    def fake_extract_window_frames(
+        *,
+        video_path: Path,
+        window: DetectionWindow,
+        frames_per_window: int,
+        max_frame_width: int,
+        output_dir: Path,
+    ) -> list[Path]:
+        assert frames_per_window == 7
+        assert float(window.start_seconds) == 0.0
+        assert float(window.end_seconds) == pytest.approx(1.0)
+        return expected_frame_paths
+
+    def fake_classify_support_dominance_from_frames(
+        *,
+        frame_paths: list[Path],
+        exercise_name: str,
+        caption_images: object,
+    ) -> SupportDominanceResult:
+        calls["called"] += 1
+        assert exercise_name == "Pull Up"
+        assert frame_paths == expected_frame_paths
+        return SupportDominanceResult(
+            support_dominance="hand_dominant",
+            confidence=0.9,
+            reason="Hands are clearly propelling the movement.",
+            exercise_name=exercise_name,
+            uncertain=False,
+            model_output={"supportDominance": "hand_dominant"},
+        )
+
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+        return "unused"
+
+    monkeypatch.setattr(bake_and_rank_module, "read_basic_video_metadata", fake_read_basic_video_metadata)
+    monkeypatch.setattr(bake_and_rank_module, "extract_window_frames", fake_extract_window_frames)
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "classify_support_dominance_from_frames",
+        fake_classify_support_dominance_from_frames,
+    )
+
+    result = bake_and_rank_module.classify_support_dominance_for_review_loop(
+        review_video_path=review_video,
+        exercise_name="Pull Up",
+        classifier=fake_caption_images,
+        candidate_workspace=tmp_path,
+        loop_index=0,
+        sample_frames=7,
+    )
+
+    assert calls["called"] == 1
+    assert result is not None
+    assert result.support_dominance == "hand_dominant"
+    assert result.confidence == pytest.approx(0.9)
 
 
 def test_generate_candidate_motion_trims_llm_selected_source_segment(
@@ -2978,6 +3191,36 @@ def test_final_selection_chooses_highest_score_deterministically(tmp_path: Path)
 
     assert selected is not None
     assert selected[0].loop_index == 0
+
+
+def test_review_item_to_manifest_includes_support_dominance_fields() -> None:
+    candidate_workspace = Path("tmp") / "candidate"
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=1,
+        exercise_name="Pull Up",
+        candidate_title="Demo",
+        candidate_workspace=candidate_workspace,
+        skeleton_path=candidate_workspace / "wear" / "loop-1.json",
+        skeleton_path_no_feet_lock=candidate_workspace / "wear" / "loop-1.no-foot-lock.json",
+        review_video_path=candidate_workspace / "review" / "loop-1.webm",
+        duration_sec=2.5,
+        candidate={"videoId": "abc"},
+        support_dominance="hand_dominant",
+        support_dominance_confidence=0.88,
+        support_dominance_reason="Hands and forearms clearly carry the body.",
+        support_dominance_uncertain=False,
+        support_dominance_model_output={"supportDominance": "hand_dominant"},
+    )
+
+    manifest = bake_and_rank_module.review_item_to_manifest(item)
+
+    assert manifest["supportDominance"] == "hand_dominant"
+    assert manifest["supportDominanceConfidence"] == pytest.approx(0.88)
+    assert manifest["supportDominanceReason"] == "Hands and forearms clearly carry the body."
+    assert manifest["supportDominanceUncertain"] is False
+    assert manifest["supportDominanceModelOutput"] == {"supportDominance": "hand_dominant"}
 
 
 def test_final_selection_rejects_best_loop_below_min_score(tmp_path: Path) -> None:
