@@ -32,6 +32,8 @@ param(
     [double]$ConfidenceThreshold = 0.45,
     [double]$MinSegmentSeconds = 2.0,
     [double]$MaxSegmentSeconds = 20.0,
+    [int]$ClassificationWorkers = 3,
+    [int]$LlamaCppServerParallel = 0,
     [int]$HealthTimeoutSeconds = 180
 )
 
@@ -104,7 +106,8 @@ function Resolve-LlamaCppServerProcess {
         [string]$MmprojPath,
         [string]$Backend,
         [string]$HostAddress,
-        [int]$Port
+        [int]$Port,
+        [int]$ParallelSlots
     )
 
     $args = @(
@@ -117,6 +120,9 @@ function Resolve-LlamaCppServerProcess {
         "--port",
         "$Port"
     )
+    if ($ParallelSlots -gt 1) {
+        $args += @("--parallel", "$ParallelSlots")
+    }
     if ($Backend -eq "gpu") {
         $args += @("--gpu-layers", "all")
     }
@@ -226,7 +232,8 @@ $pythonArgs = @(
     "--merge-gap-seconds", "$MergeGapSeconds",
     "--confidence-threshold", "$ConfidenceThreshold",
     "--min-segment-seconds", "$MinSegmentSeconds",
-    "--max-segment-seconds", "$MaxSegmentSeconds"
+    "--max-segment-seconds", "$MaxSegmentSeconds",
+    "--classification-workers", "$ClassificationWorkers"
 )
 $llamaCppServerProcess = $null
 $cleanupLlamaCppServer = $false
@@ -273,6 +280,10 @@ if ($UseLiteRt) {
         if (-not (Test-PortInUse -Port $LlamaCppServerPort)) {
             $serverHost = "127.0.0.1"
             $resolvedLlamaCppBaseUrl = "http://$serverHost`:$LlamaCppServerPort"
+            $parallelSlots = $LlamaCppServerParallel
+            if ($parallelSlots -le 0) {
+                $parallelSlots = $ClassificationWorkers
+            }
             Write-Host "Starting llama-server: $llamaCppServerCommand ..."
             $llamaCppServerProcess = Resolve-LlamaCppServerProcess `
                 -Command $llamaCppServerCommand `
@@ -280,7 +291,8 @@ if ($UseLiteRt) {
                 -MmprojPath $LlamaCppMmproj `
                 -Backend $LlamaCppBackend `
                 -HostAddress $serverHost `
-                -Port $LlamaCppServerPort
+                -Port $LlamaCppServerPort `
+                -ParallelSlots $parallelSlots
             $cleanupLlamaCppServer = $true
             if (-not $llamaCppServerProcess -or $llamaCppServerProcess.HasExited) {
                 throw "Failed to start llama-server process."
