@@ -104,6 +104,7 @@ import com.gabstra.myworkoutassistant.shared.workout.history.WorkoutHistoryLayou
 import com.gabstra.myworkoutassistant.shared.workout.history.buildWorkoutHistoryLayout
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.completedWorkoutEndDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -683,6 +684,14 @@ fun WorkoutHistoryScreen(
                     )?.let { statusLabel ->
                         Text(
                             text = statusLabel,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    completedWorkoutEndDisplayLabel(selectedWorkoutHistory!!)?.let { endLabel ->
+                        Text(
+                            text = endLabel,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelMedium,

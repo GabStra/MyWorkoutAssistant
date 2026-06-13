@@ -375,7 +375,7 @@ fun EnduranceSetScreen (
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
                     markSetExecuted()
-                    hapticsViewModel.doHardVibrationTwice()
+                    hapticsViewModel.doHardVibrationTwiceWithBeep()
                     onTimerEnd()
                 },
                 onTimerEnabled = onTimerEnabled,

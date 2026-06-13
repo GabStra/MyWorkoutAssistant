@@ -249,6 +249,39 @@ object WearWorkoutStateMutationHelper {
         return false
     }
 
+    fun finishWorkoutEarly(
+        device: UiDevice,
+        context: Context,
+        timeoutMs: Long = 15_000
+    ): Boolean {
+        var invoked = false
+
+        withResumedViewModel { viewModel ->
+            when (viewModel.workoutState.value) {
+                is WorkoutState.Set, is WorkoutState.Rest -> {
+                    viewModel.finishWorkoutEarlyWear(context.applicationContext)
+                    invoked = true
+                }
+                else -> Unit
+            }
+        }
+
+        if (!invoked) {
+            return false
+        }
+
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (isWorkoutCompleted()) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return true
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+
+        return false
+    }
+
     fun getCurrentSetId(): UUID? {
         return when (val snapshot = readCurrentStateSnapshot()) {
             is CurrentStateSnapshot.SetState -> snapshot.setId

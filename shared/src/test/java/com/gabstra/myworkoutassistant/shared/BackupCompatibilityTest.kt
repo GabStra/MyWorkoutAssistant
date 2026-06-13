@@ -4,14 +4,183 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
+import com.gabstra.myworkoutassistant.shared.typeconverters.ListIntConverter
 import com.google.gson.GsonBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.util.UUID
 
 class BackupCompatibilityTest {
+    @Test
+    fun `legacy workout history without end reason defaults to completed`() {
+        val backupJson = """
+            {
+              "WorkoutStore": {
+                "workouts": [],
+                "polarDeviceId": null,
+                "birthDateYear": 1990,
+                "weightKg": 80.0,
+                "equipments": [],
+                "workoutPlans": [],
+                "progressionPercentageAmount": 0.0,
+                "measuredMaxHeartRate": null,
+                "restingHeartRate": null
+              },
+              "WorkoutHistories": [
+                {
+                  "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                  "workoutId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                  "date": "2026-01-01",
+                  "time": "09:00:00",
+                  "startTime": "2026-01-01T09:00:00",
+                  "duration": 1200,
+                  "heartBeatRecords": [],
+                  "isDone": true,
+                  "hasBeenSentToHealth": false,
+                  "globalId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                  "version": 0
+                }
+              ],
+              "SetHistories": [],
+              "ExerciseInfos": [],
+              "WorkoutSchedules": [],
+              "WorkoutRecords": [],
+              "ExerciseSessionProgressions": []
+            }
+        """.trimIndent()
+
+        val backup = fromJSONtoAppBackup(backupJson)
+
+        assertEquals(
+            com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.COMPLETED,
+            backup.WorkoutHistories.single().endReason
+        )
+    }
+
+    @Test
+    fun `legacy workout history heartbeat decimals deserialize as ints`() {
+        val backupJson = """
+            {
+              "WorkoutStore": {
+                "workouts": [],
+                "polarDeviceId": null,
+                "birthDateYear": 1990,
+                "weightKg": 80.0,
+                "equipments": [],
+                "workoutPlans": [],
+                "progressionPercentageAmount": 0.0,
+                "measuredMaxHeartRate": null,
+                "restingHeartRate": null
+              },
+              "WorkoutHistories": [
+                {
+                  "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                  "workoutId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                  "date": "2026-01-01",
+                  "time": "09:00:00",
+                  "startTime": "2026-01-01T09:00:00",
+                  "duration": 1200,
+                  "heartBeatRecords": [108.0, 112, "115.0"],
+                  "isDone": true,
+                  "hasBeenSentToHealth": false,
+                  "globalId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                  "version": 0
+                }
+              ],
+              "SetHistories": [],
+              "ExerciseInfos": [],
+              "WorkoutSchedules": [],
+              "WorkoutRecords": [],
+              "ExerciseSessionProgressions": []
+            }
+        """.trimIndent()
+
+        val backup = fromJSONtoAppBackup(backupJson)
+
+        assertEquals(listOf(108, 112, 115), backup.WorkoutHistories.single().heartBeatRecords)
+    }
+
+    @Test
+    fun `list int converter tolerates decimal heartbeat storage`() {
+        val converter = ListIntConverter()
+
+        assertEquals(listOf(108, 112, 115), converter.toIntList("108.0,112,115.0"))
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `list int converter normalizes erased numeric heartbeat lists before persistence`() {
+        val converter = ListIntConverter()
+
+        assertEquals("108,112,115", converter.fromIntList(listOf(108.0, 112, "115.0") as List<Int>))
+    }
+
+    @Test
+    fun `app backup json round trip preserves integer heartbeat records`() {
+        val backup = AppBackup(
+            WorkoutStore = WorkoutStore(
+                workouts = emptyList(),
+                birthDateYear = 1990,
+                weightKg = 80.0,
+                progressionPercentageAmount = 0.0
+            ),
+            WorkoutHistories = listOf(
+                WorkoutHistory(
+                    id = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                    workoutId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                    date = LocalDate.parse("2026-01-01"),
+                    time = LocalTime.parse("09:00:00"),
+                    startTime = LocalDateTime.parse("2026-01-01T09:00:00"),
+                    duration = 1200,
+                    heartBeatRecords = listOf(108, 112, 115),
+                    isDone = true,
+                    hasBeenSentToHealth = false,
+                    globalId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                    endReason = WorkoutSessionEndReason.COMPLETED
+                )
+            ),
+            SetHistories = emptyList(),
+            ExerciseInfos = emptyList(),
+            WorkoutSchedules = emptyList(),
+            WorkoutRecords = emptyList(),
+            ExerciseSessionProgressions = emptyList()
+        )
+
+        val reparsed = fromJSONtoAppBackup(fromAppBackupToJSON(backup))
+
+        assertEquals(listOf(108, 112, 115), reparsed.WorkoutHistories.single().heartBeatRecords)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `workout history normalization coerces erased numeric heartbeat records to ints`() {
+        val malformedHistory = WorkoutHistory(
+            id = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            workoutId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            date = LocalDate.parse("2026-01-01"),
+            time = LocalTime.parse("09:00:00"),
+            startTime = LocalDateTime.parse("2026-01-01T09:00:00"),
+            duration = 1200,
+            heartBeatRecords = listOf(108.0, 112, "115.0") as List<Int>,
+            isDone = true,
+            hasBeenSentToHealth = false,
+            globalId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            endReason = WorkoutSessionEndReason.COMPLETED
+        )
+
+        val normalizedHistory = malformedHistory.normalizedHeartBeatRecords()
+
+        assertEquals(listOf(108, 112, 115), normalizedHistory.heartBeatRecords)
+        assertEquals("108,112,115", ListIntConverter().fromIntList(normalizedHistory.heartBeatRecords))
+    }
+
     @Test
     fun `old backup workout records deserialize with default active session metadata`() {
         val backupJson = """

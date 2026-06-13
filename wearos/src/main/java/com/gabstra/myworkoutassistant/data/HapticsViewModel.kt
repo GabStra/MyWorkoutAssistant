@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -15,6 +14,12 @@ import kotlinx.coroutines.launch
 import kotlin.coroutines.EmptyCoroutineContext
 
 class HapticsHelper(context: Context) {
+    private data class ToneHandle(
+        val instance: Any,
+        val startTone: (Any, Int, Int) -> Unit,
+        val release: (Any) -> Unit
+    )
+
     private val appContext = context.applicationContext
 
     private val vibrator: Vibrator? = try {
@@ -27,9 +32,31 @@ class HapticsHelper(context: Context) {
     private val hasAmp: Boolean = vibrator?.hasAmplitudeControl() == true
 
     // STREAM_ALARM is audible on Wear; STREAM_NOTIFICATION often is not.
-    private val tone: ToneGenerator? = try {
-        ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
-    } catch (e: Exception) {
+    // Studio preview can run without android.media.ToneGenerator on the preview classpath.
+    // Resolve it reflectively so preview rendering degrades to vibration-only instead of crashing.
+    private val tone: ToneHandle? = createToneHandle()
+
+    private fun createToneHandle(): ToneHandle? = try {
+        val toneGeneratorClass = Class.forName("android.media.ToneGenerator")
+        val constructor = toneGeneratorClass.getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+        val startToneMethod = toneGeneratorClass.getMethod(
+            "startTone",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType
+        )
+        val releaseMethod = toneGeneratorClass.getMethod("release")
+        val maxVolume = toneGeneratorClass.getField("MAX_VOLUME").getInt(null)
+        val tonePropAck = toneGeneratorClass.getField("TONE_PROP_ACK").getInt(null)
+        val instance = constructor.newInstance(AudioManager.STREAM_ALARM, maxVolume)
+
+        ToneHandle(
+            instance = instance,
+            startTone = { handle, _, durationMs ->
+                startToneMethod.invoke(handle, tonePropAck, durationMs)
+            },
+            release = { handle -> releaseMethod.invoke(handle) }
+        )
+    } catch (_: Throwable) {
         null
     }
 
@@ -63,7 +90,7 @@ class HapticsHelper(context: Context) {
 
     fun playBeep() {
         try {
-            tone?.startTone(ToneGenerator.TONE_PROP_ACK, 150)
+            tone?.startTone?.invoke(tone.instance, 0, 150)
         } catch (e: Exception) {
             // Preview mode - ignore
         }
@@ -71,7 +98,7 @@ class HapticsHelper(context: Context) {
 
     fun release() {
         try {
-            tone?.release()
+            tone?.release?.invoke(tone.instance)
         } catch (e: Exception) {
             // Preview mode - ignore
         }

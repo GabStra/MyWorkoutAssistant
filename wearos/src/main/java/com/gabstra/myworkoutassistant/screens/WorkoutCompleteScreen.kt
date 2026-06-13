@@ -112,7 +112,12 @@ fun WorkoutCompleteScreen(
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
             prefs.edit { putBoolean("isWorkoutInProgress", false) }
 
-            viewModel.pushAndStoreWorkoutData(isDone = true, context = context, forceNotSend = false) {
+            viewModel.pushAndStoreWorkoutData(
+                isDone = true,
+                context = context,
+                forceNotSend = false,
+                endReason = viewModel.resolveCompletionEndReasonForPersistence()
+            ) {
                 android.util.Log.d(
                     "WorkoutSync",
                     "SYNC_TRACE event=completion_force_send side=wear isDone=true"

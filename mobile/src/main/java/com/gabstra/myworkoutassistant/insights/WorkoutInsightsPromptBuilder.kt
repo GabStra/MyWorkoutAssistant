@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -284,8 +285,8 @@ suspend fun buildWorkoutSessionInsightsPrompt(
             val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutHistoryId(workoutHistoryId)
             val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
             val sessionStatus = resolveWorkoutSessionStatus(workoutHistory, workoutRecord)
-            val sessionStatusLine = "${buildWorkoutSessionStatusLine(sessionStatus)}\n"
-            val sessionStatusSummary = describeWorkoutSessionStatusForPrompt(sessionStatus)
+            val sessionStatusLine = "${buildWorkoutSessionStatusLine(workoutHistory, sessionStatus)}\n"
+            val sessionStatusSummary = describeWorkoutSessionStatusForPrompt(workoutHistory, sessionStatus)
             val workoutType = workout?.type
             val workoutCategoryLine = workoutType
                 ?.let(::buildWorkoutCategoryContextLine)
@@ -2463,9 +2464,14 @@ private fun buildWorkoutCategoryContextLine(
 ): String = "Workout category: ${WorkoutTypes.GetNameFromInt(workoutType)}"
 
 private fun buildWorkoutSessionStatusLine(
+    workoutHistory: WorkoutHistory,
     status: WorkoutSessionStatus,
 ): String = when (status) {
-    WorkoutSessionStatus.COMPLETED -> "Session status: Completed normally"
+    WorkoutSessionStatus.COMPLETED -> when (workoutHistory.endReason) {
+        com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.FINISHED_EARLY ->
+            "Session status: Finished early before completing the workout"
+        else -> "Session status: Completed normally"
+    }
     WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Session status: Still in progress on phone"
     WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Session status: Still in progress on wear device"
     WorkoutSessionStatus.STOPPED_ON_WEAR -> "Session status: Stopped on wear device before completion"
@@ -2473,9 +2479,14 @@ private fun buildWorkoutSessionStatusLine(
 }
 
 private fun describeWorkoutSessionStatusForPrompt(
+    workoutHistory: WorkoutHistory,
     status: WorkoutSessionStatus,
 ): String = when (status) {
-    WorkoutSessionStatus.COMPLETED -> "completed normally"
+    WorkoutSessionStatus.COMPLETED -> when (workoutHistory.endReason) {
+        com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.FINISHED_EARLY ->
+            "finished early before completing the workout"
+        else -> "completed normally"
+    }
     WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "still in progress on phone"
     WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "still in progress on wear device"
     WorkoutSessionStatus.STOPPED_ON_WEAR -> "stopped on wear device before completion"

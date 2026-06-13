@@ -28,6 +28,7 @@ import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.completedWorkoutEndDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import java.time.format.DateTimeFormatter
 
@@ -105,6 +106,13 @@ fun WorkoutHistoryCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 workoutSessionDisplayLabel(sessionStatus)?.let { label ->
+                    SessionInfoPill(
+                        text = label,
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                completedWorkoutEndDisplayLabel(workoutHistory)?.let { label ->
                     SessionInfoPill(
                         text = label,
                         backgroundColor = MaterialTheme.colorScheme.surfaceVariant,

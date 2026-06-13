@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
@@ -63,7 +64,7 @@ internal class WorkoutSessionLifecycleService(
         val workoutHistories = workoutHistoryDao()
             .getAllWorkoutHistories()
             .filter {
-                it.isDone &&
+                it.isNormallyCompleted() &&
                     it.globalId == workout.globalId
             }
             .sortedLatestFirst()
@@ -124,7 +125,7 @@ internal class WorkoutSessionLifecycleService(
             .getAllWorkoutHistories()
             .filter {
                 it.globalId == workoutGlobalId &&
-                    it.isDone &&
+                    it.isNormallyCompleted() &&
                     it.id != currentWorkoutHistoryId
             }
             .sortedLatestFirst()

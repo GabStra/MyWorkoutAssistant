@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.AppBackupAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
@@ -15,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
@@ -132,6 +134,7 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
     return gson.toJson(workoutPlanPackage)
 }
@@ -219,6 +222,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .setPrettyPrinting()
         .create()
 
@@ -289,6 +293,7 @@ fun detectBackupFileType(json: String): BackupFileType {
 
 fun fromJSONtoAppBackup(json: String) : AppBackup {
     val gson = GsonBuilder()
+        .registerTypeAdapter(AppBackup::class.java, AppBackupAdapter())
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
@@ -305,6 +310,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)
 }
@@ -480,6 +486,7 @@ private fun appBackupArchiveGsonBuilder(): GsonBuilder {
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
 }
 
 private fun applyAppBackupDelta(

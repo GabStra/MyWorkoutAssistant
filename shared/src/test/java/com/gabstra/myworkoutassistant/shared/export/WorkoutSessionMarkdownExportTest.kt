@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -173,6 +174,39 @@ class WorkoutSessionMarkdownExportTest {
         assertTrue(markdown.contains("#### Executed Timeline"))
     }
 
+    @Test
+    fun buildWorkoutSessionMarkdown_includes_finished_early_status_for_non_normal_closed_session() = runTest {
+        val workout = createWorkout()
+        val workoutStore = createWorkoutStore(workout)
+        val selectedHistoryId = UUID.randomUUID()
+
+        insertCompletedSession(
+            workoutHistoryId = selectedHistoryId,
+            date = LocalDate.of(2026, 2, 9),
+            time = LocalTime.of(8, 30),
+            firstWeight = 35.0,
+            firstReps = 10,
+            secondWeight = 35.0,
+            secondReps = 8,
+            progressionState = null,
+            vsExpected = null,
+            vsPrevious = null,
+            endReason = WorkoutSessionEndReason.FINISHED_EARLY
+        )
+
+        val result = buildWorkoutSessionMarkdown(
+            workoutHistoryId = selectedHistoryId,
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workoutStore = workoutStore
+        )
+
+        val markdown = (result as WorkoutSessionMarkdownResult.Success).markdown
+        assertTrue(markdown.contains("Session status: Finished early before completing the workout"))
+    }
+
     private suspend fun insertCompletedSession(
         workoutHistoryId: UUID,
         date: LocalDate,
@@ -184,6 +218,7 @@ class WorkoutSessionMarkdownExportTest {
         progressionState: ProgressionState?,
         vsExpected: Ternary?,
         vsPrevious: Ternary?,
+        endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED,
     ) {
         val startTime = LocalDateTime.of(date, time)
         database.workoutHistoryDao().insert(
@@ -197,7 +232,8 @@ class WorkoutSessionMarkdownExportTest {
                 heartBeatRecords = List(720) { 118 + (it % 9) },
                 isDone = true,
                 hasBeenSentToHealth = false,
-                globalId = workoutGlobalId
+                globalId = workoutGlobalId,
+                endReason = endReason
             )
         )
 

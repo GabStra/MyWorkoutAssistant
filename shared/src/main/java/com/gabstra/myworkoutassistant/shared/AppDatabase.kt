@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndReasonTypeConverter
 
 @Database(
     entities = [
@@ -31,7 +32,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
         ExerciseSessionProgression::class,
         ErrorLog::class
     ],
-    version = 59,
+    version = 60,
     exportSchema = false
 )
 @TypeConverters(
@@ -46,7 +47,8 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
     ExerciseSessionSnapshotTypeConverter::class,
     ListSimpleSetTypeConverter::class,
     ProgressionStateTypeConverter::class,
-    TernaryTypeConverter::class
+    TernaryTypeConverter::class,
+    WorkoutSessionEndReasonTypeConverter::class
 )
 
 abstract class AppDatabase : RoomDatabase() {

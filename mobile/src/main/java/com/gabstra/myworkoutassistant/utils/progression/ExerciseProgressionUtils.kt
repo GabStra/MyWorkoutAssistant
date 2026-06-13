@@ -67,6 +67,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
@@ -149,6 +150,7 @@ suspend fun backfillExerciseSessionProgressions(
         
         // Get all completed workouts chronologically
         val allWorkouts = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(isDone = true)
+            .filter { it.isNormallyCompleted() }
         
         if (allWorkouts.isEmpty()) {
             Log.d("BackfillProgression", "No completed workouts found, skipping backfill")

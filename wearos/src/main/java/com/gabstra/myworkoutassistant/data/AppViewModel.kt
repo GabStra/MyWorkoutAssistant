@@ -94,6 +94,47 @@ internal fun resolveWorkoutHistorySyncRequestMode(
     else -> null
 }
 
+internal data class WearActiveSessionSyncState(
+    val exerciseId: UUID,
+    val setIndex: UInt,
+    val sessionState: String
+)
+
+internal fun resolveWearActiveSessionSyncState(
+    currentState: WorkoutState,
+    existingRecord: com.gabstra.myworkoutassistant.shared.WorkoutRecord?
+): WearActiveSessionSyncState? = when (currentState) {
+    is WorkoutState.Set -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "Set"
+    )
+    is WorkoutState.CalibrationLoadSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "CalibrationLoadSelection"
+    )
+    is WorkoutState.CalibrationRIRSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "CalibrationRIRSelection"
+    )
+    is WorkoutState.AutoRegulationRIRSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "AutoRegulationRIRSelection"
+    )
+    is WorkoutState.Rest -> {
+        val fallbackRecord = existingRecord ?: return null
+        WearActiveSessionSyncState(
+            exerciseId = currentState.exerciseId ?: fallbackRecord.exerciseId,
+            setIndex = fallbackRecord.setIndex,
+            sessionState = currentState::class.simpleName ?: "Rest"
+        )
+    }
+    else -> null
+}
+
 open class AppViewModel : WorkoutViewModel() {
 
     companion object {
@@ -1250,6 +1291,7 @@ open class AppViewModel : WorkoutViewModel() {
         super.goToNextState()
         restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
+        syncWearActiveStateAfterTransition()
     }
 
     /**
@@ -1278,6 +1320,14 @@ open class AppViewModel : WorkoutViewModel() {
         stopActiveTimerForCurrentState()
         skipCurrentExercise(context) {
             restartCurrentRestStateForManualNavigation()
+            reEvaluateDimmingForCurrentState()
+            onEnd()
+        }
+    }
+
+    fun finishWorkoutEarlyWear(context: Context? = null, onEnd: suspend () -> Unit = {}) {
+        stopActiveTimerForCurrentState()
+        finishWorkoutEarly(context) {
             reEvaluateDimmingForCurrentState()
             onEnd()
         }
@@ -1566,10 +1616,11 @@ open class AppViewModel : WorkoutViewModel() {
         isDone: Boolean,
         context: Context?,
         forceNotSend: Boolean,
+        endReason: com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason,
         onEnd: suspend () -> Unit
     ) {
         Log.d(WORKOUT_SYNC_LOG_TAG, "pushAndStoreWorkoutData called: isDone=$isDone, forceNotSend=$forceNotSend")
-        super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
+        super.pushAndStoreWorkoutData(isDone, context, forceNotSend, endReason) {
             val currentState = workoutState.value
             val completedHistoryId = currentWorkoutHistory?.takeIf { it.isDone }?.id
             if (isDone) {
@@ -1694,6 +1745,25 @@ open class AppViewModel : WorkoutViewModel() {
             WearOutboundWorkoutHistorySyncCoordinator.requestCompletedWorkoutSync(completedHistoryId),
             resolveSyncContext(context)
         )
+    }
+
+    private fun syncWearActiveStateAfterTransition() {
+        if (sessionPhase.value != com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE) {
+            return
+        }
+        val syncState = resolveWearActiveSessionSyncState(
+            currentState = workoutState.value,
+            existingRecord = _workoutRecord
+        ) ?: return
+
+        launchIO {
+            upsertWorkoutRecordNow(
+                exerciseId = syncState.exerciseId,
+                setIndex = syncState.setIndex,
+                lastKnownSessionStateOverride = syncState.sessionState
+            )
+            sendImmediateWorkoutSessionHeartbeatIfPossible()
+        }
     }
 
     private fun startDirectWorkoutHistorySync(

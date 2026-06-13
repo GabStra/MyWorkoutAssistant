@@ -49,6 +49,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -1038,6 +1039,7 @@ private suspend fun sendWorkoutHistoryStoreInternal(
             .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+            .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
             .create()
     val jsonString = gson.toJson(workoutHistoryStore)
     val chunkSize = 50000 // Adjust the chunk size as needed
@@ -1057,8 +1059,6 @@ private suspend fun sendWorkoutHistoryStoreInternal(
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
-
-        delay(500)
 
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->

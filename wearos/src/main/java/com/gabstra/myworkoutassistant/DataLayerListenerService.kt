@@ -30,6 +30,7 @@ import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.normalizedWorkoutHistories
 import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -833,35 +834,9 @@ class DataLayerListenerService : WearableListenerService() {
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_ACK_PREFIX) -> {
                         val transactionId =
                             DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_ACK_PREFIX)
-                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val timestampStr = dataMap.getString("timestamp")
 
                         // Ignore ACKs without transactionId
                         transactionId?.let { tid ->
-                            // Ignore stale ACKs (older than threshold, default 60 seconds)
-                            if (timestampStr != null) {
-                                try {
-                                    val timestamp = timestampStr.toLong()
-                                    val currentTime = System.currentTimeMillis()
-                                    val age = currentTime - timestamp
-                                    // Get stale ACK threshold from SharedPreferences, default 60 seconds
-                                    val staleAckThreshold = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
-                                        .getLong("stale_ack_threshold_ms", 60000L)
-                                    if (age > staleAckThreshold) {
-                                        Log.w(
-                                            "DataLayerSync",
-                                            "Received stale SYNC_ACK for transaction: $tid (age: ${age}ms, threshold: ${staleAckThreshold}ms) - ignoring"
-                                        )
-                                        return@forEach
-                                    }
-                                } catch (e: NumberFormatException) {
-                                    Log.w(
-                                        "DataLayerSync",
-                                        "Received SYNC_ACK with invalid timestamp format for transaction: $tid"
-                                    )
-                                }
-                            }
-
                             Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $tid")
                             com.gabstra.myworkoutassistant.data.SyncHandshakeManager.completeAck(tid)
                         } ?: Log.w(
@@ -1461,6 +1436,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 "Parsing JSON backup (length: ${jsonBackup.length} chars) for transaction: $transactionId"
                                             )
                                             val appBackup = fromJSONtoAppBackup(jsonBackup)
+                                                .normalizedWorkoutHistories()
 
                                             processingStep = "saving workout store"
                                             Log.d(

@@ -38,6 +38,7 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.composables.Chip
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
@@ -86,6 +87,8 @@ import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.lang.reflect.Field
@@ -587,6 +590,7 @@ internal enum class ExercisePreviewSetType {
 internal data class ExercisePreviewScenario(
     val name: String,
     val setType: ExercisePreviewSetType,
+    val progressionState: ProgressionState? = ProgressionState.PROGRESS,
     val isWarmupSet: Boolean = false,
     val isCalibrationSet: Boolean = false,
     val isAutoRegulationWorkSet: Boolean = false,
@@ -749,7 +753,7 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         skipped = false,
         currentBodyWeight = 75.0,
         streak = 1,
-        progressionState = ProgressionState.PROGRESS,
+        progressionState = scenario.progressionState,
         isWarmupSet = scenario.isWarmupSet,
         equipmentId = mainExercise.equipmentId,
         isUnilateral = scenario.isUnilateral,
@@ -929,6 +933,40 @@ private fun ExerciseScreenPreviewWeightWarmup() {
             name = "weight_warmup",
             setType = ExercisePreviewSetType.WEIGHT,
             isWarmupSet = true
+        )
+    )
+}
+
+@Preview(
+    name = "Weight Retry Set",
+    group = "ExerciseScreen/States",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewWeightRetry() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "weight_retry",
+            setType = ExercisePreviewSetType.WEIGHT,
+            progressionState = ProgressionState.RETRY
+        )
+    )
+}
+
+@Preview(
+    name = "Weight Deload Set",
+    group = "ExerciseScreen/States",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewWeightDeload() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "weight_deload",
+            setType = ExercisePreviewSetType.WEIGHT,
+            progressionState = ProgressionState.DELOAD
         )
     )
 }
@@ -1161,6 +1199,14 @@ private fun ExerciseDetailContent(
                 }
                 val isCalibrationSet = remember(state.isCalibrationSet) { state.isCalibrationSet }
                 val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) { state.isAutoRegulationWorkSet }
+                val progressionState = remember(state.progressionState) { state.progressionState }
+                val setLabelPrefix = remember(state) {
+                    when (displayCounterKindForSetState(state)) {
+                        SetDisplayCounterKind.Warmup -> "Warm-up"
+                        SetDisplayCounterKind.Work -> "Work Set"
+                        else -> "Set"
+                    }
+                }
                 val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
                     if (isSuperset) viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty() else null
                 }
@@ -1183,6 +1229,7 @@ private fun ExerciseDetailContent(
                     ExerciseMetadataStrip(
                         supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
                         supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
+                        setLabelPrefix = setLabelPrefix,
                         setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
                             ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
                         repRange = repRange,
@@ -1190,48 +1237,19 @@ private fun ExerciseDetailContent(
                         currentSideIndex = viewModel.getUnilateralSideIndex(state)
                     )
 
-                    if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
+                    if (
+                        isCalibrationSet ||
+                        isAutoRegulationWorkSet ||
+                        progressionState == ProgressionState.RETRY ||
+                        progressionState == ProgressionState.DELOAD
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (isWarmupSet) {
-                                Box(
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.background,
-                                            RoundedCornerShape(25)
-                                        )
-                                        .border(
-                                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                            RoundedCornerShape(25)
-                                        )
-                                        .padding(5.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Warm-up",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
                             if (isCalibrationSet) {
-                                Box(
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.background,
-                                            RoundedCornerShape(25)
-                                        )
-                                        .border(
-                                            BorderStroke(1.dp, Green),
-                                            RoundedCornerShape(25)
-                                        )
-                                        .padding(5.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
+                                Chip(backgroundColor = Green) {
                                     Text(
                                         text = "Calibration",
                                         style = MaterialTheme.typography.bodySmall,
@@ -1240,28 +1258,26 @@ private fun ExerciseDetailContent(
                                     )
                                 }
                             }
-//                            if (isAutoRegulationWorkSet) {
-//                                Box(
-//                                    modifier = Modifier
-//                                        .background(
-//                                            MaterialTheme.colorScheme.background,
-//                                            RoundedCornerShape(25)
-//                                        )
-//                                        .border(
-//                                            BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
-//                                            RoundedCornerShape(25)
-//                                        )
-//                                        .padding(5.dp),
-//                                    contentAlignment = Alignment.Center
-//                                ) {
-//                                    Text(
-//                                        text = "Auto-regulation",
-//                                        style = MaterialTheme.typography.bodySmall,
-//                                        color = MaterialTheme.colorScheme.tertiary,
-//                                        textAlign = TextAlign.Center
-//                                    )
-//                                }
-//                            }
+                            if (progressionState == ProgressionState.RETRY) {
+                                Chip(backgroundColor = MaterialTheme.colorScheme.tertiary) {
+                                    Text(
+                                        text = "Retry",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                            if (progressionState == ProgressionState.DELOAD) {
+                                Chip(backgroundColor = MaterialTheme.colorScheme.error) {
+                                    Text(
+                                        text = "Deload",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
                         }
                     }
                 }

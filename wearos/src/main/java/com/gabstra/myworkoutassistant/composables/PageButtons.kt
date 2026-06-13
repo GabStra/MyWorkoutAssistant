@@ -3,8 +3,10 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Switch
@@ -20,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -77,7 +80,9 @@ fun PageButtons(
 
     var showGoBackDialog by remember { mutableStateOf(false) }
     var showSkipExerciseDialog by remember { mutableStateOf(false) }
+    var showFinishEarlyDialog by remember { mutableStateOf(false) }
     var shouldResumeTimerAfterSkipDialog by remember { mutableStateOf(false) }
+    var shouldResumeTimerAfterFinishEarlyDialog by remember { mutableStateOf(false) }
 
     val exercise = viewModel.exercisesById[updatedState.exerciseId]!!
     val exerciseSets = exercise.sets
@@ -92,12 +97,45 @@ fun PageButtons(
             currentWorkoutState.set.id == updatedState.set.id
     val nextWorkoutState by viewModel.nextWorkoutState.collectAsState()
     val scrollState = rememberScrollState()
+    val showNavigationSection = !isHistoryEmpty || isActiveSetPage
+    val showExerciseSection =
+        (isMovementSet &&
+            (exercise.exerciseType == ExerciseType.WEIGHT ||
+                exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+            canChangeEquipment) ||
+            (isMovementSet && isLastSet) ||
+            isMovementSet
 
     LaunchedEffect(updatedState) {
         showGoBackDialog = false
         showSkipExerciseDialog = false
+        showFinishEarlyDialog = false
         shouldResumeTimerAfterSkipDialog = false
+        shouldResumeTimerAfterFinishEarlyDialog = false
         scrollState.scrollTo(0)
+    }
+
+    fun shouldPauseCurrentTimerForDialog(): Boolean {
+        val currentSetState = currentWorkoutState as? WorkoutState.Set ?: return false
+        return (currentSetState.set is TimedDurationSet || currentSetState.set is EnduranceSet) &&
+            viewModel.workoutTimerService.isTimerRegistered(currentSetState.set.id)
+    }
+
+    fun pauseCurrentTimerForDialog() {
+        if (shouldPauseCurrentTimerForDialog()) {
+            viewModel.workoutTimerService.pauseTimer(updatedState.set.id)
+        }
+    }
+
+    fun resumeCurrentTimerAfterDialog(shouldResume: Boolean) {
+        if (
+            shouldResume &&
+            currentWorkoutState is WorkoutState.Set &&
+            (currentWorkoutState.set is TimedDurationSet || currentWorkoutState.set is EnduranceSet) &&
+            viewModel.workoutTimerService.isTimerRegistered(updatedState.set.id)
+        ) {
+            viewModel.workoutTimerService.resumeTimer(updatedState.set.id)
+        }
     }
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
@@ -133,6 +171,21 @@ fun PageButtons(
             contentPadding = WorkoutPagerPageSafeAreaPadding,
             state = state
         ) {
+            if (showNavigationSection) {
+                item {
+                    PageButtonsSectionHeader(
+                        text = "Navigation",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            )
+                    )
+                }
+            }
             if (!isHistoryEmpty) {
                 item {
                     ButtonWithText(
@@ -189,6 +242,115 @@ fun PageButtons(
                         enabled = true,
                     )
                 }
+            }
+            if (showNavigationSection && showExerciseSection) {
+                item {
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+            }
+            if (showExerciseSection) {
+                item {
+                    PageButtonsSectionHeader(
+                        text = "Exercise",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            )
+                    )
+                }
+            }
+            if (
+                isMovementSet &&
+                (exercise.exerciseType == ExerciseType.WEIGHT ||
+                    exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+                canChangeEquipment
+            ) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Change equipment",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            onChangeEquipmentClick()
+                        }
+                    )
+                }
+            }
+            if (isMovementSet && isLastSet) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Add rest-pause set",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.storeSetData()
+                            viewModel.pushAndStoreWorkoutData(false, context) {
+                                viewModel.addNewRestPauseSet()
+                            }
+                        }
+                    )
+                }
+            }
+            if (isMovementSet) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Add set",
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.storeSetData()
+                            viewModel.pushAndStoreWorkoutData(false, context) {
+                                viewModel.addNewSetStandard()
+                            }
+                        }
+                    )
+                }
+            }
+            if (showExerciseSection) {
+                item {
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+            }
+            item {
+                PageButtonsSectionHeader(
+                    text = "Preferences",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        )
+                )
             }
             item {
                 val alertSoundEnabled = screenState.isAlertSoundEnabled
@@ -267,7 +429,6 @@ fun PageButtons(
                     enabled = isSwitchEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
-                        //.heightIn(min = 80.dp)
                         .then(
                             if (isInspectionMode) Modifier else Modifier.transformedHeight(
                                 this,
@@ -325,79 +486,21 @@ fun PageButtons(
                     }
                 }
             }
-
-            if (
-                isMovementSet &&
-                (exercise.exerciseType == ExerciseType.WEIGHT ||
-                        exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
-                canChangeEquipment
-            ) {
-                item {
-                    ButtonWithText(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
-                                    this,
-                                    spec
-                                )
-                            ),
-                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Change equipment",
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            onChangeEquipmentClick()
-                        }
-                    )
-                }
+            item {
+                Spacer(modifier = Modifier.height(10.dp))
             }
-
-            if (isMovementSet && isLastSet) {
-                item {
-                    ButtonWithText(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
-                                    this,
-                                    spec
-                                )
-                            ),
-                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add rest-pause set",
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.storeSetData()
-                            viewModel.pushAndStoreWorkoutData(false, context) {
-                                viewModel.addNewRestPauseSet()
-                            }
-                        }
-                    )
-                }
-
-            }
-            if (isMovementSet) {
-                item {
-                    ButtonWithText(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
-                                    this,
-                                    spec
-                                )
-                            ),
-                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add set",
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.storeSetData()
-                            viewModel.pushAndStoreWorkoutData(false, context) {
-                                viewModel.addNewSetStandard()
-                            }
-                        }
-                    )
-                }
+            item {
+                PageButtonsSectionHeader(
+                    text = "Session",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        )
+                )
             }
             if (isActiveSetPage) {
                 item {
@@ -419,19 +522,24 @@ fun PageButtons(
                     )
                 }
             }
-            /*            item{
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
-                                transformation = SurfaceTransformation(spec),
-                                text = "Next exercise",
-                                onClick = {
-                                    hapticsViewModel.doGentleVibration()
-                                    viewModel.goToNextExercise()
-                                }
+            item {
+                ButtonWithText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
                             )
-                        }*/
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    text = "Finish early",
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        showFinishEarlyDialog = true
+                    }
+                )
+            }
             item {
                 ButtonWithText(
                     modifier = Modifier
@@ -448,17 +556,12 @@ fun PageButtons(
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
                         viewModel.stopWorkoutSessionHeartbeat()
-                        // Save workout record (updatedState is already WorkoutState.Set)
                         viewModel.upsertWorkoutRecord(
                             updatedState.exerciseId,
                             updatedState.setIndex,
                             WATCH_SESSION_STATE_RETURNED_HOME
                         )
-
-                        // Clear ongoing workout notification/icon
                         cancelWorkoutInProgressNotification(context)
-
-                        // Flush any pending sync before navigating away
                         scope.launch {
                             viewModel.flushWorkoutSync()
                         }
@@ -520,28 +623,62 @@ fun PageButtons(
         },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
-                val currentSetState = currentWorkoutState as? WorkoutState.Set
-                shouldResumeTimerAfterSkipDialog =
-                    currentSetState != null &&
-                        (currentSetState.set is TimedDurationSet || currentSetState.set is EnduranceSet) &&
-                        viewModel.workoutTimerService.isTimerRegistered(currentSetState.set.id)
-
-                if (shouldResumeTimerAfterSkipDialog) {
-                    viewModel.workoutTimerService.pauseTimer(updatedState.set.id)
-                }
+                shouldResumeTimerAfterSkipDialog = shouldPauseCurrentTimerForDialog()
+                pauseCurrentTimerForDialog()
                 viewModel.setDimming(false)
             } else {
-                if (
-                    shouldResumeTimerAfterSkipDialog &&
-                    currentWorkoutState is WorkoutState.Set &&
-                    (currentWorkoutState.set is TimedDurationSet || currentWorkoutState.set is EnduranceSet) &&
-                    viewModel.workoutTimerService.isTimerRegistered(updatedState.set.id)
-                ) {
-                    viewModel.workoutTimerService.resumeTimer(updatedState.set.id)
-                }
+                resumeCurrentTimerAfterDialog(shouldResumeTimerAfterSkipDialog)
                 shouldResumeTimerAfterSkipDialog = false
                 viewModel.reEvaluateDimmingForCurrentState()
             }
         }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showFinishEarlyDialog,
+        title = "Finish early",
+        message = "End the workout now? All remaining exercises and sets will be skipped.",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            showFinishEarlyDialog = false
+            viewModel.finishWorkoutEarlyWear(context)
+            viewModel.lightScreenUp()
+        },
+        handleNoClick = {
+            showFinishEarlyDialog = false
+            shouldResumeTimerAfterFinishEarlyDialog = false
+            hapticsViewModel.doGentleVibration()
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showFinishEarlyDialog = false
+            shouldResumeTimerAfterFinishEarlyDialog = false
+        },
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                shouldResumeTimerAfterFinishEarlyDialog = shouldPauseCurrentTimerForDialog()
+                pauseCurrentTimerForDialog()
+                viewModel.setDimming(false)
+            } else {
+                resumeCurrentTimerAfterDialog(shouldResumeTimerAfterFinishEarlyDialog)
+                shouldResumeTimerAfterFinishEarlyDialog = false
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+    )
+}
+
+@Composable
+private fun PageButtonsSectionHeader(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    val currentLocale = LocalLocale.current.platformLocale
+    Text(
+        text = text.uppercase(currentLocale),
+        modifier = modifier.padding(horizontal = 25.dp),
+        style = workoutPagerTitleTextStyle(),
+        color = MaterialTheme.colorScheme.onBackground,
+        textAlign = TextAlign.Center
     )
 }

@@ -115,6 +115,47 @@ internal sealed class PageExercisesItem {
     ) : PageExercisesItem()
 }
 
+private data class PageExercisesStateMatchKey(
+    val type: String,
+    val exerciseId: UUID?,
+    val setLikeId: UUID?,
+    val order: UInt?,
+)
+
+private fun buildPageExercisesStateMatchKey(state: WorkoutState?): PageExercisesStateMatchKey? = when (state) {
+    is WorkoutState.Set -> PageExercisesStateMatchKey(
+        type = "set",
+        exerciseId = state.exerciseId,
+        setLikeId = state.set.id,
+        order = state.setIndex
+    )
+    is WorkoutState.Rest -> PageExercisesStateMatchKey(
+        type = "rest",
+        exerciseId = state.exerciseId,
+        setLikeId = state.set.id,
+        order = state.order
+    )
+    is WorkoutState.CalibrationLoadSelection -> PageExercisesStateMatchKey(
+        type = "calibration_load",
+        exerciseId = state.exerciseId,
+        setLikeId = state.calibrationSet.id,
+        order = state.setIndex
+    )
+    is WorkoutState.CalibrationRIRSelection -> PageExercisesStateMatchKey(
+        type = "calibration_rir",
+        exerciseId = state.exerciseId,
+        setLikeId = state.calibrationSet.id,
+        order = state.setIndex
+    )
+    is WorkoutState.AutoRegulationRIRSelection -> PageExercisesStateMatchKey(
+        type = "auto_regulation_rir",
+        exerciseId = state.exerciseId,
+        setLikeId = state.workSet.id,
+        order = state.setIndex
+    )
+    else -> null
+}
+
 internal fun resolvePageExercisesActiveState(
     workoutState: WorkoutState?,
     fallbackSetState: WorkoutState.Set? = null,
@@ -482,16 +523,20 @@ private fun TransformingLazyColumnScope.RestPageContent(
                 .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
             contentAlignment = Alignment.Center
         ) {
+            val completedFillColor = MaterialTheme.colorScheme.onBackground
+            val completedTextColor = MaterialTheme.colorScheme.background
             val borderColor: Color = when (progressState) {
-                ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+                ProgressState.PAST -> completedFillColor
                 ProgressState.CURRENT -> MaterialTheme.colorScheme.primary
                 ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
             }
             val backgroundColor: Color = when (progressState) {
+                ProgressState.PAST -> completedFillColor
                 ProgressState.CURRENT -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.background
             }
             val textColor: Color = when (progressState) {
+                ProgressState.PAST -> completedTextColor
                 ProgressState.CURRENT -> MaterialTheme.colorScheme.onPrimary
                 else -> borderColor
             }
@@ -606,14 +651,20 @@ fun PageExercises(
     val selectedPageCurrentSet = selectedPageItem?.let { page ->
         if (page is PageExercisesItem.RestPage) null else resolvePageCurrentSet(page, activeWorkoutState)
     }
-    val selectedPagePreparedRows = remember(
+    val selectedPagePreparedRowsKey = remember(
         selectedPageItem,
         selectedPageCurrentSet,
         selectedSetStateToMatch,
-        viewModel.allWorkoutStates.size,
-        viewModel.supersetIdByExerciseId,
-        viewModel.exercisesBySupersetId,
-        viewModel.workoutStore.equipments
+        viewModel.allWorkoutStates.size
+    ) {
+        Triple(
+            selectedPageItem,
+            selectedPageCurrentSet?.id,
+            buildPageExercisesStateMatchKey(selectedSetStateToMatch) to viewModel.allWorkoutStates.size
+        )
+    }
+    val selectedPagePreparedRows = remember(
+        selectedPagePreparedRowsKey
     ) {
         val pageItem = selectedPageItem
         val currentSet = selectedPageCurrentSet
@@ -659,23 +710,11 @@ fun PageExercises(
             shouldUseWeightHeader(viewModel = viewModel, pageItem = pageItem)
         } ?: false
     }
-    val isSelectedPageScrollable = remember(
-        selectedPageItem,
-        viewModel.allWorkoutStates.size,
-        viewModel.supersetIdByExerciseId,
-        viewModel.exercisesBySupersetId
-    ) {
-        when (val pageItem = selectedPageItem) {
-            is PageExercisesItem.ExercisePage -> buildExerciseSetDisplayRows(
-                viewModel = viewModel,
-                exerciseId = pageItem.exercise.id
-            ).size > 1
-            is PageExercisesItem.SupersetPage -> buildSupersetSetDisplayRows(
-                viewModel = viewModel,
-                supersetId = pageItem.supersetId
-            ).size > 1
+    val isSelectedPageScrollable = remember(selectedPageItem, selectedPagePreparedRows) {
+        when (selectedPageItem) {
             is PageExercisesItem.RestPage,
             null -> false
+            else -> (selectedPagePreparedRows?.rowModels?.size ?: 0) > 1
         }
     }
     val headerOverlayHeightDp = 40.dp
@@ -888,6 +927,7 @@ private data class PageExercisesPreviewFixture(
     val selectedExercise: Exercise,
     val currentExercise: Exercise,
     val firstSetState: WorkoutState.Set,
+    val firstExerciseSecondSetState: WorkoutState.Set,
     val supersetSetState: WorkoutState.Set,
     val restState: WorkoutState.Rest,
 )
@@ -1178,6 +1218,7 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         selectedExercise = secondExercise,
         currentExercise = firstExercise,
         firstSetState = firstSetState,
+        firstExerciseSecondSetState = firstExerciseSecondSetState,
         supersetSetState = supersetSetState,
         restState = restState
     )
@@ -1304,6 +1345,31 @@ private fun PageExercisesExercisePagePreview() {
             selectedExercise = fixture.firstExercise,
             selectedRestPageId = null,
             workoutState = fixture.firstSetState,
+            viewModel = fixture.viewModel,
+            hapticsViewModel = hapticsViewModel,
+            currentExercise = fixture.firstExercise,
+            onPageSelected = { _, _ -> }
+        )
+    }
+}
+
+@Preview(
+    name = "Exercise Page Done Sets Filled",
+    group = "PageExercises",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun PageExercisesExercisePageDoneSetsPreview() {
+    val fixture = remember { buildPageExercisesPreviewFixture() }
+    val context = LocalContext.current
+    val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
+
+    MyWorkoutAssistantTheme {
+        PageExercises(
+            selectedExercise = fixture.firstExercise,
+            selectedRestPageId = null,
+            workoutState = fixture.firstExerciseSecondSetState,
             viewModel = fixture.viewModel,
             hapticsViewModel = hapticsViewModel,
             currentExercise = fixture.firstExercise,

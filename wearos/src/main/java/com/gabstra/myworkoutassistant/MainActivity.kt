@@ -644,10 +644,10 @@ fun WearApp(
             val permissionLauncherResume =
                 androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
-                ) { result ->
-                    if (result.all { it.value }) {
-                        resumeRecoveredWorkout()
-                    }
+                ) {
+                    // Recovery resume must not silently die on partial permission denial.
+                    // External-HR preparation can still surface the missing requirement and allow skip.
+                    resumeRecoveredWorkout()
                 }
 
             LaunchedEffect(showRecoveredNotice) {

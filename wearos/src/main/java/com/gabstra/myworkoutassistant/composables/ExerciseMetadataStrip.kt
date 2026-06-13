@@ -22,6 +22,7 @@ fun ExerciseMetadataStrip(
     exerciseLabel: String? = null,
     supersetExerciseIndex: Int? = null,
     supersetExerciseTotal: Int? = null,
+    setLabelPrefix: String = "Set",
     setLabel: String? = null,
     repRange: String? = null,
     sideIndicator: String? = null,
@@ -87,7 +88,7 @@ fun ExerciseMetadataStrip(
 
             setLabel?.let {
                 Text(
-                    text = "Set: $it",
+                    text = "$setLabelPrefix: $it",
                     style = baseStyle,
                     color = secondaryTextColor
                 )
@@ -95,7 +96,7 @@ fun ExerciseMetadataStrip(
 
             repRange?.let {
                 Text(
-                    text = "$it reps",
+                    text = "Target: $it reps",
                     style = baseStyle,
                     color = secondaryTextColor
                 )
