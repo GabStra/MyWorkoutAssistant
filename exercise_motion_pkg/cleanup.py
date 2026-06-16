@@ -31,7 +31,6 @@ HAND_CONTACT_VERTICAL_SPEED_TOLERANCE = 0.08
 MAX_UNSUPPORTED_SUPPORT_CLEARANCE = 0.18
 GROUND_PENETRATION_TOLERANCE = 0.012
 MICRO_MOVEMENT_POSITION_TOLERANCE = 0.015
-SPINE_CHAIN_BLEND = 0.65
 TORSO_MICRO_MOVEMENT_TOLERANCE = 0.03
 ARM_MICRO_MOVEMENT_TOLERANCE = 0.02
 LEG_MICRO_MOVEMENT_TOLERANCE = 0.018
@@ -50,11 +49,6 @@ LEFT_FOOT_GROUP = ("left_foot", "left_ankle", "l_ankle")
 RIGHT_FOOT_GROUP = ("right_foot", "right_ankle", "r_ankle")
 LEFT_HAND_GROUP = ("left_hand", "left_wrist")
 RIGHT_HAND_GROUP = ("right_hand", "right_wrist")
-SPINE_CHAIN_RATIOS = (
-    ("spine1", 0.28),
-    ("spine2", 0.52),
-    ("spine3", 0.74),
-)
 
 
 @dataclass(frozen=True)
@@ -93,18 +87,17 @@ def cleanup_motion_clip(
         beta=one_euro_beta,
         derivative_cutoff=one_euro_derivative_cutoff,
     )
-    polished = smoothed
-    avg_root_after = average_joint_axis(polished, root_joint, axis=1)
+    avg_root_after = average_joint_axis(smoothed, root_joint, axis=1)
     support_profile = _summarize_support_states(support_states)
     stats = CleanupStats(
         input_frames=clip.frame_count,
-        output_frames=polished.frame_count,
+        output_frames=smoothed.frame_count,
         trimmed_start_frames=start_trim,
         trimmed_end_frames=end_trim,
         average_root_height_before=avg_root_before,
         average_root_height_after=avg_root_after,
     )
-    metadata = dict(polished.metadata)
+    metadata = dict(smoothed.metadata)
     metadata["cleanup"] = {
         "oneEuroMinCutoff": one_euro_min_cutoff,
         "oneEuroBeta": one_euro_beta,
@@ -125,10 +118,10 @@ def cleanup_motion_clip(
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
-        fps=polished.fps,
-        joint_names=polished.joint_names,
-        frames=polished.frames,
-        source=polished.source,
+        fps=smoothed.fps,
+        joint_names=smoothed.joint_names,
+        frames=smoothed.frames,
+        source=smoothed.source,
         metadata=metadata,
     ), stats
 
@@ -191,8 +184,7 @@ def trim_static_edges(
 ) -> tuple[MotionClip, int, int]:
     if clip.frame_count <= 2:
         return clip, 0, 0
-    deltas = [frame_motion_delta(clip.frames[index - 1], clip.frames[index]) for index in range(1, clip.frame_count)]
-    active_indices = [index for index, delta in enumerate(deltas, start=1) if delta >= motion_threshold]
+    active_indices = find_active_motion_indices(clip, motion_threshold=motion_threshold)
     if not active_indices:
         return clip, 0, 0
     start_frame = max(0, active_indices[0] - padding_frames)
@@ -215,6 +207,18 @@ def trim_static_edges(
     )
 
 
+def find_active_motion_indices(clip: MotionClip, *, motion_threshold: float) -> list[int]:
+    active_indices: list[int] = []
+    reference_frame = clip.frames[0]
+    for index in range(1, clip.frame_count):
+        immediate_delta = frame_motion_delta(clip.frames[index - 1], clip.frames[index])
+        cumulative_delta = frame_motion_delta(reference_frame, clip.frames[index])
+        if immediate_delta >= motion_threshold or cumulative_delta >= motion_threshold:
+            active_indices.append(index)
+            reference_frame = clip.frames[index]
+    return active_indices
+
+
 def ground_to_floor(
     clip: MotionClip,
     *,
@@ -225,18 +229,19 @@ def ground_to_floor(
     if not foot_joint_names:
         return clip
     if floor_height is None:
+        lowest_foot_height = min(
+            frame.joints[joint][1]
+            for frame in clip.frames
+            for joint in foot_joint_names
+        )
         candidates = estimate_support_floor_height(
             clip,
             support_states if support_states is not None else [],
         )
         if not math.isfinite(candidates):
-            floor_height = min(
-                frame.joints[joint][1]
-                for frame in clip.frames
-                for joint in foot_joint_names
-            )
+            floor_height = lowest_foot_height
         else:
-            floor_height = candidates
+            floor_height = min(candidates, lowest_foot_height)
     grounded_frames = []
     for frame in clip.frames:
         grounded_joints = {
@@ -740,50 +745,6 @@ def micro_movement_tolerance_for_joint(joint_name: str, *, default: float) -> fl
     if any(token in normalized for token in ("hip", "knee", "ankle", "foot", "toe")):
         return LEG_MICRO_MOVEMENT_TOLERANCE
     return default
-
-
-def stabilize_spine_chain(
-    clip: MotionClip,
-    *,
-    blend: float = SPINE_CHAIN_BLEND,
-) -> MotionClip:
-    if clip.frame_count == 0 or blend <= 0:
-        return clip
-    if "pelvis" not in clip.joint_names or "neck" not in clip.joint_names:
-        return clip
-
-    blend = min(max(blend, 0.0), 1.0)
-    stabilized_frames: list[MotionFrame] = []
-    for frame in clip.frames:
-        pelvis = frame.joints.get("pelvis")
-        neck = frame.joints.get("neck")
-        if pelvis is None or neck is None:
-            stabilized_frames.append(frame)
-            continue
-        adjusted_joints = dict(frame.joints)
-        for joint_name, ratio in SPINE_CHAIN_RATIOS:
-            joint = adjusted_joints.get(joint_name)
-            if joint is None:
-                continue
-            target = (
-                pelvis[0] + (neck[0] - pelvis[0]) * ratio,
-                pelvis[1] + (neck[1] - pelvis[1]) * ratio,
-                pelvis[2] + (neck[2] - pelvis[2]) * ratio,
-            )
-            adjusted_joints[joint_name] = (
-                joint[0] * (1.0 - blend) + target[0] * blend,
-                joint[1] * (1.0 - blend) + target[1] * blend,
-                joint[2] * (1.0 - blend) + target[2] * blend,
-            )
-        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=adjusted_joints))
-
-    return MotionClip(
-        fps=clip.fps,
-        joint_names=clip.joint_names,
-        frames=stabilized_frames,
-        source=clip.source,
-        metadata=clip.metadata,
-    )
 
 
 def find_first_joint(clip: MotionClip, candidates: tuple[str, ...]) -> str:

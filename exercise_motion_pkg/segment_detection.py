@@ -41,8 +41,8 @@ class DetectionSettings:
     contact_sheet_jpeg_quality: int = 90
     incomplete_movement_penalty: float = 0.20
     duration_penalty_per_second: float = 0.02
-    max_candidate_camera_variation: float = 0.04
-    comparative_selection_enabled: bool = True
+    max_candidate_camera_variation: float = 0.15
+    comparative_selection_enabled: bool = False
     comparative_selection_score_tolerance: float = 0.02
     comparative_selection_max_candidates: int = 8
     merge_gap_seconds: float = 2.0
@@ -74,6 +74,7 @@ class DetectionSettings:
     min_refined_score_ratio: float = 0.85
     min_refinement_duration_ratio: float = 0.65
     health_timeout_seconds: float = 180.0
+    request_timeout_seconds: float = 90.0
 
 
 @dataclass(frozen=True)
@@ -208,6 +209,7 @@ def detect_exercise_segment(
             n_predict=settings.llama_cpp_n_predict,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
+            request_timeout_seconds=settings.request_timeout_seconds,
         )
     elif settings.litert_command:
         client = LiteRtCliVisionClient(
@@ -222,6 +224,7 @@ def detect_exercise_segment(
             n_predict=settings.llama_cpp_n_predict,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
+            request_timeout_seconds=settings.request_timeout_seconds,
         )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1076,13 +1079,14 @@ def extract_window_frames(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     times = linspace_times(window.start_seconds, window.end_seconds, max(1, frames_per_window))
+    ffmpeg_available = shutil.which("ffmpeg") is not None
     frame_paths = extract_window_frames_with_ffmpeg(
         video_path=video_path,
         times=times,
         max_frame_width=max_frame_width,
         output_dir=output_dir,
     )
-    if not frame_paths:
+    if not frame_paths and not ffmpeg_available:
         capture = cv2.VideoCapture(str(video_path))
         if not capture.isOpened():
             raise RuntimeError(f"Could not open video: {video_path}")
@@ -1153,7 +1157,16 @@ def extract_window_frames_with_ffmpeg(
             "5",
             str(frame_path),
         ]
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if result.returncode == 0 and frame_path.exists() and frame_path.stat().st_size > 0:
             frame_paths.append(frame_path)
     return frame_paths
@@ -1271,8 +1284,11 @@ class LlamaCppVisionClient:
         mmproj: str | None = None,
         backend: str = "gpu",
         n_predict: int = 768,
+        temperature: float = 0.2,
+        disable_reasoning: bool = True,
         image_min_tokens: int | None = None,
         image_max_tokens: int | None = None,
+        request_timeout_seconds: float = 90.0,
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url is not None else None
         self.model = model
@@ -1280,9 +1296,12 @@ class LlamaCppVisionClient:
         self.mmproj = mmproj
         self.backend = backend
         self.n_predict = max(1, n_predict)
+        self.temperature = max(0.0, float(temperature))
+        self.disable_reasoning = disable_reasoning
         self.image_min_tokens = image_min_tokens
         self.image_max_tokens = image_max_tokens
-        self.client = httpx.Client(timeout=600.0)
+        self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+        self.client = httpx.Client(timeout=self.request_timeout_seconds)
 
     def detect_window(
         self,
@@ -1299,7 +1318,10 @@ class LlamaCppVisionClient:
             require_complete_execution=require_complete_execution,
         )
         raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
-        payload = parse_detection_payload(raw, window=window)
+        try:
+            payload = parse_detection_payload(raw, window=window)
+        except RuntimeError:
+            return build_unusable_window_detection(window=window, frame_paths=frame_paths, reason=raw)
         return WindowDetection(
             window=window,
             movement_present=payload["movement_present"],
@@ -1355,6 +1377,7 @@ class LlamaCppVisionClient:
             command,
             capture_output=True,
             text=True,
+            timeout=self.request_timeout_seconds,
         )
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "").strip()
@@ -1378,11 +1401,11 @@ class LlamaCppVisionClient:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": content}],
-            "temperature": 0.2,
+            "temperature": self.temperature,
             "max_tokens": self.n_predict,
             "response_format": {"type": "json_object"},
         }
-        if self.model == "local-vision":
+        if self.disable_reasoning:
             payload["reasoning_format"] = "none"
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         if self.base_url is None:
@@ -1432,7 +1455,10 @@ class LiteRtCliVisionClient(VisionClient):
             require_complete_execution=require_complete_execution,
         )
         raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
-        payload = parse_detection_payload(raw, window=window)
+        try:
+            payload = parse_detection_payload(raw, window=window)
+        except RuntimeError:
+            return build_unusable_window_detection(window=window, frame_paths=frame_paths, reason=raw)
         return WindowDetection(
             window=window,
             movement_present=payload["movement_present"],
@@ -1667,6 +1693,28 @@ def parse_detection_payload(raw: str, *, window: DetectionWindow) -> dict[str, o
     }
 
 
+def build_unusable_window_detection(
+    *,
+    window: DetectionWindow,
+    frame_paths: list[Path],
+    reason: str,
+) -> WindowDetection:
+    return WindowDetection(
+        window=window,
+        movement_present=False,
+        contains_movement_start=False,
+        contains_movement_end=False,
+        movement_start_seconds=None,
+        movement_end_seconds=None,
+        confidence=0.0,
+        summary="Model response could not be parsed.",
+        reason=reason[:300],
+        camera_variation=compute_camera_variation(frame_paths),
+        executions=(),
+        frame_paths=[str(path) for path in frame_paths],
+    )
+
+
 def canonicalize_detection_payload(payload: dict[str, object]) -> dict[str, object]:
     aliases = {
         "movementstartseconds": "movement_start_seconds",
@@ -1801,7 +1849,7 @@ def parse_execution_payloads(
 
 
 def extract_json_object(raw: str) -> dict | None:
-    text = raw.strip()
+    text = normalize_json_like_model_output(raw)
     if not text:
         return None
     try:
@@ -1813,11 +1861,19 @@ def extract_json_object(raw: str) -> dict | None:
     end = text.rfind("}")
     if start >= 0 and end > start:
         try:
-            parsed = json.loads(text[start : end + 1])
+            parsed = json.loads(normalize_json_like_model_output(text[start : end + 1]))
             return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             return None
     return None
+
+
+def normalize_json_like_model_output(raw: str) -> str:
+    text = raw.strip()
+    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.IGNORECASE | re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    return re.sub(r",(\s*[}\]])", r"\1", text)
 
 
 def extract_detection_payload_loose(raw: str) -> dict[str, object] | None:
@@ -2494,8 +2550,8 @@ def _collect_model_execution_candidates(
                 continue
             candidates.append(
                 DetectedSpan(
-                    start_seconds=detection.window.start_seconds,
-                    end_seconds=detection.window.end_seconds,
+                    start_seconds=start_seconds,
+                    end_seconds=end_seconds,
                     confidence=_score_execution_candidate(
                         execution=execution,
                         detection=detection,
@@ -2546,11 +2602,10 @@ def _score_execution_candidate(
         vlm_score *= extra_motion_penalty
     if execution.extra_motion_after:
         vlm_score *= extra_motion_penalty
-    duration_seconds = max(0.0, detection.window.end_seconds - detection.window.start_seconds)
-    duration_penalty = duration_seconds * (
-        settings.duration_penalty_per_second if settings is not None else 0.02
-    )
-    vlm_score -= duration_penalty
+    if settings is not None and settings.target_segment_seconds is not None:
+        duration_seconds = max(0.0, execution.end_seconds - execution.start_seconds)
+        duration_error = abs(duration_seconds - settings.target_segment_seconds)
+        vlm_score -= duration_error * settings.duration_penalty_per_second
     return max(0.0, min(1.0, vlm_score))
 
 
@@ -2559,7 +2614,7 @@ def _select_best_single_execution_span(candidates: list[DetectedSpan]) -> Detect
         candidates,
         key=lambda item: (
             item.confidence,
-            -(item.end_seconds - item.start_seconds),
+            -item.average_camera_variation,
             -item.start_seconds,
         ),
     )
@@ -2572,7 +2627,7 @@ def _select_best_model_execution_span(
         candidates,
         key=lambda item: (
             item.confidence,
-            -(item.end_seconds - item.start_seconds),
+            -item.average_camera_variation,
             -item.start_seconds,
         ),
     )

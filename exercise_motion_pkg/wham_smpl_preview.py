@@ -5,18 +5,20 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+from exercise_motion_pkg.legacy_smpl_compat import ensure_legacy_smpl_runtime_compat
 from exercise_motion_pkg.models import MotionClip, Point3
 from exercise_motion_pkg.preview import (
     _apply_rotations_to_point,
     _build_preview_translation_track,
     _center_preview_clip_for_render,
+    _clip_requests_raw_motion_render,
     _compute_preview_auto_alignment,
     _compute_root_anchor,
     _detect_preview_loops,
     _find_root_joint,
     _fixed_root_translation,
+    _prepare_preview_clip,
     _serialize_bounds,
-    refine_motion_clip_for_preview,
 )
 from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
 
@@ -42,6 +44,7 @@ def load_wham_smpl_mesh_sequence(
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
 ) -> WhamSmplMeshSequence:
+    ensure_legacy_smpl_runtime_compat()
     try:
         import torch  # type: ignore
         import smplx  # type: ignore
@@ -134,7 +137,8 @@ def build_baked_wham_smpl_preview_payload(
     selected_loop_index: int | None = None,
     lock_y_drift: bool = False,
 ) -> dict[str, object]:
-    preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(cleaned_clip))
+    raw_motion_review = _clip_requests_raw_motion_render(cleaned_clip)
+    preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(cleaned_clip))
     detected_loops = _detect_preview_loops(preview_clip)
     resolved_loop_index = _resolve_loop_index(selected_loop_index, detected_loops)
     selected_loop = detected_loops[resolved_loop_index] if resolved_loop_index >= 0 else None
@@ -143,7 +147,7 @@ def build_baked_wham_smpl_preview_payload(
     active_frames = preview_clip.frames[active_start_frame:active_end_frame + 1]
     auto_alignment = _compute_preview_auto_alignment(active_frames)
     root_joint = _find_root_joint(preview_clip)
-    active_root_anchor = _compute_root_anchor(active_frames, root_joint)
+    active_root_anchor = None if raw_motion_review else _compute_root_anchor(active_frames, root_joint)
     trim_start = _cleanup_trim_start(cleaned_clip)
     raw_root_joint = _find_root_joint(raw_clip)
 
@@ -152,11 +156,15 @@ def build_baked_wham_smpl_preview_payload(
         raw_frame_index = trim_start + local_frame_index
         if raw_frame_index < 0 or raw_frame_index >= sequence.frame_count or raw_frame_index >= raw_clip.frame_count:
             continue
-        frame_translation = _fixed_root_translation(
-            preview_frame,
-            root_joint,
-            active_root_anchor,
-            lock_y_drift=lock_y_drift,
+        frame_translation = (
+            _fixed_root_translation(
+                preview_frame,
+                root_joint,
+                active_root_anchor,
+                lock_y_drift=lock_y_drift,
+            )
+            if not raw_motion_review
+            else (0.0, 0.0, 0.0)
         )
         cleanup_delta = _root_delta_for_frame(
             raw_clip=raw_clip,
@@ -221,7 +229,7 @@ def build_baked_wham_smpl_preview_payload(
             "activeEndFrame": active_end_frame,
             "subjectId": sequence.subject_id,
             "coordinateSpace": sequence.coordinate_space,
-            "postProcessedFromCleanedMotion": True,
+            "postProcessedFromCleanedMotion": not raw_motion_review,
         },
         "fps": sequence.fps,
         "frameCount": len(centered_frames),
@@ -230,17 +238,21 @@ def build_baked_wham_smpl_preview_payload(
         "faces": sequence.faces,
         "bakedPreviewConfiguration": {
             "autoWorldAlignment": True,
-            "lockGlobalRootDrift": True,
+            "lockGlobalRootDrift": not raw_motion_review,
             "lockYDrift": lock_y_drift,
             "selectedLoopIndex": resolved_loop_index,
-            "postProcessingApplied": [
-                "cleanup_trim",
-                "cleanup_global_translation_delta",
-                "preview_refinement_alignment",
-                "preview_root_lock",
-                "preview_loop_selection",
-                "preview_scene_centering",
-            ],
+            "postProcessingApplied": (
+                ["preview_scene_centering"]
+                if raw_motion_review
+                else [
+                    "cleanup_trim",
+                    "cleanup_global_translation_delta",
+                    "preview_refinement_alignment",
+                    "preview_root_lock",
+                    "preview_loop_selection",
+                    "preview_scene_centering",
+                ]
+            ),
         },
         "loop": {
             "enabled": selected_loop is not None,
@@ -277,7 +289,8 @@ def build_wham_smpl_runtime_mesh_payload(
     raw_clip: MotionClip,
     cleaned_clip: MotionClip,
 ) -> dict[str, object]:
-    preview_clip = _center_preview_clip_for_render(refine_motion_clip_for_preview(cleaned_clip))
+    raw_motion_review = _clip_requests_raw_motion_render(cleaned_clip)
+    preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(cleaned_clip))
     trim_start = _cleanup_trim_start(cleaned_clip)
     raw_root_joint = _find_root_joint(raw_clip)
     preview_root_joint = _find_root_joint(preview_clip)
@@ -316,12 +329,16 @@ def build_wham_smpl_runtime_mesh_payload(
         "faces": sequence.faces,
         "frames": frames,
         "runtimeBaked": False,
-        "postProcessingApplied": [
-            "cleanup_trim",
-            "cleanup_global_translation_delta",
-            "preview_refinement_alignment",
-            "preview_scene_centering",
-        ],
+        "postProcessingApplied": (
+            ["preview_scene_centering"]
+            if raw_motion_review
+            else [
+                "cleanup_trim",
+                "cleanup_global_translation_delta",
+                "preview_refinement_alignment",
+                "preview_scene_centering",
+            ]
+        ),
     }
 
 

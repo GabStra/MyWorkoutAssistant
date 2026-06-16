@@ -19,7 +19,7 @@ def run_wham_locally(
     logs_dir: Path,
     python_command: str,
     estimate_local_only: bool = False,
-    run_smplify: bool = False,
+    run_smplify: bool = True,
     use_docker: bool = False,
     docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
     docker_gpus: str = "all",
