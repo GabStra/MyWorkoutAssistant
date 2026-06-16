@@ -7,21 +7,28 @@ param(
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
     [string]$PythonCommand = "python",
-    [int]$ResultsPerQuery = 8,
-    [int]$MaxCandidates = 5,
-    [int]$VisionCandidatesPerExercise = 5,
-    [int]$VisionFramesPerCandidate,
+    [int]$ResultsPerQuery = 10,
+    [int]$MaxCandidates = 8,
+    [int]$MetadataCandidatePoolSize = 24,
+    [switch]$UseDeepSeekQueryPlanner,
+    [string]$DeepSeekApiKey,
+    [string]$DeepSeekBaseUrl = "https://api.deepseek.com",
+    [string]$DeepSeekModel = "deepseek-v4-flash",
+    [int]$DeepSeekMaxQueries = 4,
+    [int]$VisionCandidatesPerExercise = 8,
+    [int]$VisionFramesPerCandidate = 6,
+    [int]$VisionMaxChunksPerCandidate = 5,
     [int]$VisionDownloadWorkers = 3,
     [int]$VisionLlmWorkers = 3,
-    [int]$FallbackCandidates = 1,
+    [int]$FallbackCandidates = 3,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "8g",
     [switch]$FullWhamCameraSlam,
-    [switch]$RunSmplify,
-    [ValidateSet("world", "camera")]
-    [string]$WhamCoordinateSpace = "camera",
+    [switch]$SkipSmplify,
+    [switch]$NoReuseWhamCache,
+    [switch]$SkipMotionTuning,
     [switch]$SkipSourceSegmentDetection,
     [string]$SegmentBaseUrl,
     [string]$SegmentModel,
@@ -32,7 +39,25 @@ param(
     [double]$SegmentPaddingSeconds = 0.35,
     [double]$SegmentEndPaddingSeconds = 0.35,
     [double]$SegmentMinSeconds = 2.0,
-    [double]$SegmentMaxSeconds = 20.0
+    [double]$SegmentMaxSeconds = 20.0,
+    [switch]$RankPreviewVariants,
+    [switch]$SkipPreviewVariantRanking,
+    [switch]$SkipSupportDominanceClassification,
+    [int]$ReviewFrames = 6,
+    [int]$MaxReviewWindows = 3,
+    [double]$MinSelectedScore = 0.55,
+    [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    [string]$LlamaCppCommand,
+    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    [string]$LlamaCppBackend = "gpu",
+    [int]$LlamaCppNPredict = 768,
+    [Nullable[int]]$LlamaCppImageMinTokens,
+    [Nullable[int]]$LlamaCppImageMaxTokens,
+    [switch]$NoLlamaCppAutoStartServer,
+    [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
+    [double]$LlamaCppRequestTimeoutSeconds = 90.0
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,12 +127,28 @@ $youtubeArgs = @(
     "--out-json", $candidatesPath,
     "--results-per-query", "$ResultsPerQuery",
     "--max-candidates", "$MaxCandidates",
+    "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
     "--rank-with-vision",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
+    "--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers"
 )
-if ($VisionFramesPerCandidate.HasValue) {
+if ($LlamaCppRequestTimeoutSeconds -gt 0) {
+    $youtubeArgs += @("--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds")
+}
+if ($UseDeepSeekQueryPlanner) {
+    $youtubeArgs += @(
+        "--use-deepseek-query-planner",
+        "--deepseek-base-url", $DeepSeekBaseUrl,
+        "--deepseek-model", $DeepSeekModel,
+        "--deepseek-max-queries", "$DeepSeekMaxQueries"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($DeepSeekApiKey)) {
+        $youtubeArgs += @("--deepseek-api-key", $DeepSeekApiKey)
+    }
+}
+if ($VisionFramesPerCandidate -gt 0) {
     $youtubeArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
 }
 
@@ -124,13 +165,43 @@ $bakeArgs = @(
     "--wham-repo-path", $resolvedWhamRepoPath,
     "--body-model-root", $resolvedBodyModelRoot,
     "--wham-python", "python",
-    "--wham-coordinate-space", $WhamCoordinateSpace,
     "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
     "--segment-padding-seconds", "$SegmentPaddingSeconds",
     "--segment-end-padding-seconds", "$SegmentEndPaddingSeconds",
     "--segment-min-seconds", "$SegmentMinSeconds",
-    "--segment-max-seconds", "$SegmentMaxSeconds"
+    "--segment-max-seconds", "$SegmentMaxSeconds",
+    "--review-frames", "$ReviewFrames",
+    "--max-review-windows", "$MaxReviewWindows",
+    "--min-selected-score", "$MinSelectedScore",
+    "--llama-cpp-base-url", $LlamaCppBaseUrl,
+    "--llama-cpp-model", $LlamaCppModel,
+    "--llama-cpp-mmproj", $LlamaCppMmproj,
+    "--llama-cpp-backend", $LlamaCppBackend,
+    "--llama-cpp-n-predict", "$LlamaCppNPredict",
+    "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
+    "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
+if (-not $SkipPreviewVariantRanking) {
+    $bakeArgs += "--rank-preview-variants"
+}
+if ($SkipSupportDominanceClassification) {
+    $bakeArgs += "--no-classify-support-dominance"
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
+    $bakeArgs += @("--llama-cpp-command", $LlamaCppCommand)
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
+    $bakeArgs += @("--llama-cpp-server-command", $LlamaCppServerCommand)
+}
+if ($LlamaCppImageMinTokens.HasValue) {
+    $bakeArgs += @("--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens")
+}
+if ($LlamaCppImageMaxTokens.HasValue) {
+    $bakeArgs += @("--llama-cpp-image-max-tokens", "$LlamaCppImageMaxTokens")
+}
+if ($NoLlamaCppAutoStartServer) {
+    $bakeArgs += "--no-llama-cpp-auto-start-server"
+}
 if ($SegmentWindowSeconds.HasValue) {
     $bakeArgs += @("--segment-window-seconds", "$SegmentWindowSeconds")
 }
@@ -151,8 +222,14 @@ if (-not $NoWhamDocker) {
 if (-not $FullWhamCameraSlam) {
     $bakeArgs += "--estimate-local-only"
 }
-if ($RunSmplify) {
-    $bakeArgs += "--run-smplify"
+if ($SkipSmplify) {
+    $bakeArgs += "--skip-smplify"
+}
+if ($NoReuseWhamCache) {
+    $bakeArgs += "--no-reuse-wham-cache"
+}
+if ($SkipMotionTuning) {
+    $bakeArgs += "--skip-motion-tuning"
 }
 if (-not [string]::IsNullOrWhiteSpace($SegmentBaseUrl)) {
     $bakeArgs += @("--segment-base-url", $SegmentBaseUrl)
@@ -172,8 +249,10 @@ Write-Host "Plan JSON: $((Resolve-Path -LiteralPath $planPath).Path)"
 Write-Host "YouTube candidates JSON: $((Resolve-Path -LiteralPath $candidatesPath).Path)"
 Write-Host "Selection manifest: $((Resolve-Path -LiteralPath $selectionPath).Path)"
 if ($selection.selected) {
-    Write-Host "Wear skeleton JSON: $($selection.selected.wearSkeletonJsonPath)"
-    Write-Host "Preview HTML: $($selection.selected.previewHtmlPath)"
+    Write-Host "Wear skeleton JSON: $($selection.selected.selectedWearSkeletonPath)"
+    if ($selection.selectedPreviewHtmlPath) {
+        Write-Host "Preview HTML: $($selection.selectedPreviewHtmlPath)"
+    }
 } else {
     Write-Host "Selected Wear skeleton: none"
 }

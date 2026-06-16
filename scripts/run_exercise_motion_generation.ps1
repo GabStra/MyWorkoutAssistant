@@ -14,7 +14,9 @@ param(
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "8g",
     [switch]$EstimateLocalOnly,
-    [switch]$RunSmplify,
+    [switch]$SkipSmplify,
+    [switch]$NoReuseWhamCache,
+    [switch]$SkipMotionTuning,
     [switch]$SkipSegmentDetection,
     [switch]$UseSourceAsIs,
     [double]$SegmentStartSeconds = -1.0,
@@ -24,6 +26,8 @@ param(
     [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
+    [string]$YouTubeCookies,
+    [string]$YouTubeCookiesPath,
     [switch]$UseLlamaCppServer,
     [string]$LlamaCppServerCommand,
     [int]$LlamaCppServerPort = 8090,
@@ -45,9 +49,7 @@ param(
     [int]$VisionPort = 8090,
     [ValidateSet("cpu", "gpu", "npu")]
     [string]$LiteRtBackend = "gpu",
-    [switch]$UseLiteRt,
-    [ValidateSet("world", "camera")]
-    [string]$WhamCoordinateSpace = "camera"
+    [switch]$UseLiteRt
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,15 +83,30 @@ function Get-ContainerWorkspacePath {
     return "/workspace/$containerRelative"
 }
 
-function Get-PythonCommand {
-    $venvPython = Join-Path (Get-RepoRoot) ".venv\Scripts\python.exe"
-    if (Test-Path -LiteralPath $venvPython) {
-        & $venvPython -c "import encodings" 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            return $venvPython
-        }
+function Test-PythonRuntime {
+    param([string]$PythonCommand)
+    try {
+        & $PythonCommand -c "import encodings, sys; import torch, smplx, joblib; print(sys.executable)" *> $null
+        return $LASTEXITCODE -eq 0
     }
-    return "python"
+    catch {
+        return $false
+    }
+}
+
+function Get-PythonCommand {
+    if (-not [string]::IsNullOrWhiteSpace($env:EXERCISE_MOTION_PYTHON)) {
+        if (-not (Test-PythonRuntime $env:EXERCISE_MOTION_PYTHON)) {
+            throw "EXERCISE_MOTION_PYTHON does not point to a Python runtime with torch, smplx, and joblib."
+        }
+        return $env:EXERCISE_MOTION_PYTHON
+    }
+    $pythonCommand = Get-Command python -ErrorAction Stop
+    $pythonPath = if ($pythonCommand.Source) { $pythonCommand.Source } else { $pythonCommand.Path }
+    if (-not (Test-PythonRuntime $pythonPath)) {
+        throw "Could not find a Python runtime with torch, smplx, and joblib."
+    }
+    return $pythonPath
 }
 
 function Convert-ToExerciseSlug {
@@ -201,10 +218,33 @@ if (-not [string]::IsNullOrWhiteSpace($VideoPath)) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($YouTubeUrl)) {
+    $youtubeCookiesPath = $YouTubeCookiesPath
+    if ([string]::IsNullOrWhiteSpace($youtubeCookiesPath)) {
+        $youtubeCookiesPath = $YouTubeCookies
+    }
+    if (-not [string]::IsNullOrWhiteSpace($youtubeCookiesPath)) {
+        $resolvedYouTubeCookiesPath = Resolve-StrictPath $youtubeCookiesPath
+        if (-not (Test-Path -LiteralPath $resolvedYouTubeCookiesPath)) {
+            throw "YouTube cookies file not found: $resolvedYouTubeCookiesPath"
+        }
+    } else {
+        $resolvedYouTubeCookiesPath = ""
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedYouTubeCookiesPath)) {
+        $downloadCookiesArg = "None"
+    }
+    else {
+        $downloadCookiesArg = "Path(r'''$resolvedYouTubeCookiesPath''')"
+    }
+
     $downloadScript = @"
 from pathlib import Path
 from exercise_motion_pkg.youtube import download_youtube
-video_path = download_youtube(r'''$YouTubeUrl''', Path(r'''$inputDir'''))
+video_path = download_youtube(
+    r'''$YouTubeUrl''',
+    Path(r'''$inputDir'''),
+    $downloadCookiesArg
+)
 print(video_path.resolve())
 "@
     $downloadedPath = & $pythonCommand -c $downloadScript
@@ -308,7 +348,7 @@ $whamRunnerArgs = @(
 if ($EstimateLocalOnly) {
     $whamRunnerArgs += "-EstimateLocalOnly"
 }
-if ($RunSmplify) {
+if (-not $SkipSmplify) {
     $whamRunnerArgs += "-RunSmplify"
 }
 if ($UseWhamDocker) {
@@ -322,19 +362,23 @@ $whamRunnerArgs += @(
 )
 Write-Host "Running WHAM via Docker."
 
-$whamCachedOutputDir = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
-if (Test-Path -LiteralPath $whamCachedOutputDir) {
-    Remove-Item -LiteralPath $whamCachedOutputDir -Recurse -Force
-}
-
-$whamRunnerScript = Join-Path $PSScriptRoot "run_wham_local.ps1"
-& pwsh $whamRunnerScript @whamRunnerArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "WHAM stage failed with exit code $LASTEXITCODE."
-}
-
 $whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
 $whamResultsPkl = Join-Path $whamResultsPkl "wham_output.pkl"
+$whamCachedOutputDir = Split-Path -Parent $whamResultsPkl
+if ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
+    Write-Host "Reusing cached WHAM output: $whamResultsPkl"
+}
+else {
+    if ($NoReuseWhamCache -and (Test-Path -LiteralPath $whamCachedOutputDir)) {
+        Remove-Item -LiteralPath $whamCachedOutputDir -Recurse -Force
+    }
+    $whamRunnerScript = Join-Path $PSScriptRoot "run_wham_local.ps1"
+    & pwsh $whamRunnerScript @whamRunnerArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "WHAM stage failed with exit code $LASTEXITCODE."
+    }
+}
+
 if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
     throw "WHAM stage finished but did not produce wham_output.pkl at '$whamResultsPkl'."
 }
@@ -346,8 +390,7 @@ $generateArgs = @(
     "--workspace", $Workspace,
     "--video-path", $resolvedInputVideoPath,
     "--wham-results-pkl", $whamResultsPkl,
-    "--body-model-root", $resolvedBodyModelRoot,
-    "--wham-coordinate-space", $WhamCoordinateSpace
+    "--body-model-root", $resolvedBodyModelRoot
 )
 if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
     $generateArgs += @("--wham-repo-path", $resolvedWhamRepoPath)
@@ -355,27 +398,11 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
 if ($EstimateLocalOnly) {
     $generateArgs += "--wham-estimate-local-only"
 }
+if ($SkipMotionTuning) {
+    $generateArgs += "--skip-motion-tuning"
+}
 $generateInterpreter = $WhamPython
 & $generateInterpreter @generateArgs
 if ($LASTEXITCODE -ne 0) {
     throw "exercise motion conversion stage failed with exit code $LASTEXITCODE."
-}
-
-$cleanedMotionJson = Join-Path $exerciseWorkspace "cleaned\motion.cleaned.json"
-$groundMetadataJson = Join-Path $exerciseWorkspace "cleaned\ground.metadata.json"
-$manifestPath = Join-Path $exerciseWorkspace "manifest.json"
-$groundArgs = @(
-    "-m", "exercise_motion_pkg.cli",
-    "ground-metadata",
-    "--video-path", $resolvedInputVideoPath,
-    "--motion-json", $cleanedMotionJson,
-    "--out-json", $groundMetadataJson,
-    "--embed-motion-json", $cleanedMotionJson,
-    "--manifest-path", $manifestPath,
-    "--preview-html", (Join-Path $exerciseWorkspace "preview\\motion_preview.html"),
-    "--preview-title", $ExerciseSlug
-)
-& $generateInterpreter @groundArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "Ground metadata generation failed with exit code $LASTEXITCODE."
 }
