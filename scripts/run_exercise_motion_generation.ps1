@@ -10,10 +10,11 @@ param(
     [string]$BodyModelRoot,
     [string]$WhamPython = "python",
     [switch]$UseWhamDocker,
-    [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "8g",
+    [string]$WhamDockerShmSize = "16g",
     [switch]$EstimateLocalOnly,
+    [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
@@ -345,22 +346,24 @@ $whamRunnerArgs = @(
     "-OutputRoot", $rawWhamDir,
     "-PythonCommand", $WhamPython
 )
-if ($EstimateLocalOnly) {
+if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
     $whamRunnerArgs += "-EstimateLocalOnly"
 }
 if (-not $SkipSmplify) {
     $whamRunnerArgs += "-RunSmplify"
 }
 if ($UseWhamDocker) {
-    Write-Host "Note: -UseWhamDocker is deprecated for this script; WHAM is always executed via Docker."
+    $whamRunnerArgs += @(
+        "-UseDocker",
+        "-DockerImage", $WhamDockerImage,
+        "-DockerGpus", $WhamDockerGpus,
+        "-DockerShmSize", $WhamDockerShmSize
+    )
+    Write-Host "Running WHAM via Docker."
 }
-$whamRunnerArgs += @(
-    "-UseDocker",
-    "-DockerImage", $WhamDockerImage,
-    "-DockerGpus", $WhamDockerGpus,
-    "-DockerShmSize", $WhamDockerShmSize
-)
-Write-Host "Running WHAM via Docker."
+else {
+    Write-Host "Running WHAM with local Python: $WhamPython"
+}
 
 $whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
 $whamResultsPkl = Join-Path $whamResultsPkl "wham_output.pkl"
@@ -395,7 +398,7 @@ $generateArgs = @(
 if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
     $generateArgs += @("--wham-repo-path", $resolvedWhamRepoPath)
 }
-if ($EstimateLocalOnly) {
+if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
     $generateArgs += "--wham-estimate-local-only"
 }
 if ($SkipMotionTuning) {

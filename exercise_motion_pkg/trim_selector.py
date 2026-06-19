@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote
 
+from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import download_youtube_preview, sanitize_video_for_processing
 
@@ -31,7 +32,7 @@ class TrimSelectorRequest:
     wham_repo_path: Path = Path("C:\\Users\\gabri\\Downloads\\WHAM")
     body_model_root: Path = Path("C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models")
     wham_python_command: str = "python"
-    wham_estimate_local_only: bool = False
+    wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     motion_tuning_enabled: bool = True
     dominant_chain_ratio: float = 0.65

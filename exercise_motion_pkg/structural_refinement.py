@@ -91,9 +91,11 @@ def refine_motion_clip_structurally(
         strongest_chain_motion,
         chain_range=chain_range,
         body_height=body_height,
+        active_threshold=active_threshold,
         dominant_chain_ratio=dominant_chain_ratio,
     )
-    if "torso" in set(dominant_profile.get("dominantGroups", [])):
+    dominant_groups = set(dominant_profile.get("dominantGroups", []))
+    if "torso" in dominant_groups:
         refined, refinement_metadata = _refine_torso_dominant_motion_conservatively(
             clip,
             active_threshold=active_threshold,
@@ -106,7 +108,13 @@ def refine_motion_clip_structurally(
             clip,
             dominant_profile=dominant_profile,
         )
-    refined, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
+    if dominant_groups == {"arms"}:
+        head_metadata = {
+            "applied": False,
+            "reason": "head_motion_not_part_of_arms_only_dominant_motion",
+        }
+    else:
+        refined, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
     refinement_metadata = {
         **refinement_metadata,
         "headPosePreservation": head_metadata,
@@ -153,6 +161,7 @@ def _preserve_reference_head_pose(
     total_correction = 0.0
     max_correction = 0.0
     samples = 0
+    projected_samples = 0
     for frame, reference_frame in zip(clip.frames, reference_clip.frames):
         head = frame.joints.get("head")
         neck = frame.joints.get("neck")
@@ -161,7 +170,11 @@ def _preserve_reference_head_pose(
         if head is None or neck is None or reference_head is None or reference_neck is None:
             frames.append(frame)
             continue
-        target_head = _add(neck, _subtract(reference_head, reference_neck))
+        reference_offset = _subtract(reference_head, reference_neck)
+        target_offset, projected = _plausible_head_offset(frame, reference_offset)
+        if projected:
+            projected_samples += 1
+        target_head = _add(neck, target_offset)
         correction = _distance(head, target_head)
         if correction > 1e-6:
             total_correction += correction
@@ -172,10 +185,33 @@ def _preserve_reference_head_pose(
         frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
     return replace(clip, frames=frames), {
         "applied": samples > 0,
-        "strategy": "restore_reference_neck_to_head_vector",
+        "strategy": "restore_reference_neck_to_head_vector_with_spine_axis_sanity",
         "averageCorrection": total_correction / samples if samples else 0.0,
         "maxCorrection": max_correction,
+        "spineAxisProjectedSamples": projected_samples,
     }
+
+
+def _plausible_head_offset(
+    frame: MotionFrame,
+    reference_offset: Point3,
+) -> tuple[Point3, bool]:
+    length = _length(reference_offset)
+    if length <= 1e-6:
+        return reference_offset, False
+    body_frame = _body_local_frame(frame)
+    if body_frame is None:
+        return reference_offset, False
+    local = (
+        _dot(reference_offset, body_frame.right),
+        _dot(reference_offset, body_frame.up),
+        _dot(reference_offset, body_frame.forward),
+    )
+    off_axis = math.hypot(local[0], local[2])
+    along_spine = local[1]
+    if along_spine > 0.0 and off_axis <= max(abs(along_spine) * 0.85, length * 0.45):
+        return reference_offset, False
+    return _scale(body_frame.up, length), True
 
 
 def _preserve_reference_root_vertical_motion(
@@ -456,6 +492,7 @@ def _refine_non_torso_dominant_motion_by_transfer(
     *,
     dominant_profile: dict[str, object],
 ) -> tuple[MotionClip, dict[str, object]]:
+    dominant_groups = set(dominant_profile.get("dominantGroups", []))
     refined, transfer_metadata = _transfer_selected_motion_to_canonical_body(
         clip,
         dominant_profile=dominant_profile,
@@ -470,13 +507,25 @@ def _refine_non_torso_dominant_motion_by_transfer(
         reference_clip=clip,
         dominant_profile=dominant_profile,
     )
-    refined, root_vertical_metadata = _preserve_reference_root_vertical_motion(refined, reference_clip=clip)
+    refined, paired_hands_metadata = _preserve_same_phase_paired_hand_path(
+        refined,
+        reference_clip=clip,
+        transfer_metadata=transfer_metadata,
+    )
+    if dominant_groups == {"arms"}:
+        root_vertical_metadata = {
+            "applied": False,
+            "reason": "root_vertical_motion_not_part_of_arms_only_dominant_motion",
+        }
+    else:
+        refined, root_vertical_metadata = _preserve_reference_root_vertical_motion(refined, reference_clip=clip)
     return refined, {
         "strategy": "canonical_body_selected_motion_transfer",
         "selectedMotionTransfer": transfer_metadata,
         "boneLengthProjection": length_metadata,
         "exactBilateralSymmetry": exact_bilateral_metadata,
         "dominantLocalMotionReapplication": reapplied_metadata,
+        "pairedHandPathPreservation": paired_hands_metadata,
         "rootVerticalMotionPreservation": root_vertical_metadata,
         "steps": [
             "canonical_body_estimation",
@@ -484,6 +533,7 @@ def _refine_non_torso_dominant_motion_by_transfer(
             "reference_bone_length_projection",
             "exact_same_phase_bilateral_symmetry",
             "dominant_local_motion_reapplication",
+            "same_phase_paired_hand_path_preservation",
             "reference_root_vertical_motion_preservation",
         ],
     }
@@ -539,7 +589,16 @@ def _transfer_selected_motion_to_canonical_body(
     dominant_profile: dict[str, object],
 ) -> tuple[MotionClip, dict[str, object]]:
     dominant_groups = set(dominant_profile.get("dominantGroups", []))
-    canonical_joints, canonical_metadata = _build_canonical_body_pose(clip)
+    if "torso" not in dominant_groups:
+        canonical_joints, canonical_metadata = _build_non_torso_dominant_scaffold(
+            clip,
+            dominant_groups=dominant_groups,
+        )
+    else:
+        canonical_joints, canonical_metadata = _build_canonical_body_pose(
+            clip,
+            preserve_chain_offsets=True,
+        )
     if not canonical_joints:
         return clip, {"applied": False, "reason": "canonical_body_unavailable"}
     bilateral_modes = _dominant_bilateral_motion_modes(clip, dominant_groups)
@@ -818,15 +877,12 @@ def _median_root_relative_offset(clip: MotionClip, root_joint: str, joint_name: 
     ])
 
 
-def _build_canonical_body_pose(clip: MotionClip) -> tuple[dict[str, Point3], dict[str, object]]:
-    stable = {
-        joint_name: _median_point([
-            frame.joints[joint_name]
-            for frame in clip.frames
-            if joint_name in frame.joints
-        ])
-        for joint_name in clip.joint_names
-    }
+def _build_canonical_body_pose(
+    clip: MotionClip,
+    *,
+    preserve_chain_offsets: bool = False,
+) -> tuple[dict[str, Point3], dict[str, object]]:
+    stable, _stable_metadata = _build_stable_body_pose(clip)
     required = ("pelvis", "left_hip", "right_hip", "left_shoulder", "right_shoulder")
     if any(joint not in stable for joint in required):
         return stable, {"straightened": False, "reason": "missing_body_frame_joints"}
@@ -872,7 +928,8 @@ def _build_canonical_body_pose(clip: MotionClip) -> tuple[dict[str, Point3], dic
         canonical["head"] = _add(canonical[spine_top_name], _scale(spine_axis, head_offset))
     body_frame = _body_local_frame(MotionFrame(time_sec=0.0, joints=canonical))
     if body_frame is not None:
-        _place_canonical_bilateral_rest_chains(
+        chain_placer = _preserve_stable_chain_offsets if preserve_chain_offsets else _place_canonical_bilateral_rest_chains
+        chain_placer(
             stable,
             canonical,
             body_frame=body_frame,
@@ -886,7 +943,7 @@ def _build_canonical_body_pose(clip: MotionClip) -> tuple[dict[str, Point3], dic
             left_extra="left_foot",
             right_extra="right_foot",
         )
-        _place_canonical_bilateral_rest_chains(
+        chain_placer(
             stable,
             canonical,
             body_frame=body_frame,
@@ -903,8 +960,246 @@ def _build_canonical_body_pose(clip: MotionClip) -> tuple[dict[str, Point3], dic
     return canonical, {
         "straightened": True,
         "jointCount": len(canonical),
-        "target": "median_pose_straight_spine_parallel_hips_shoulders",
+        "target": (
+            "median_pose_straight_spine_parallel_hips_shoulders_preserve_chain_offsets"
+            if preserve_chain_offsets
+            else "median_pose_straight_spine_parallel_hips_shoulders"
+        ),
     }
+
+
+def _build_stable_body_pose(
+    clip: MotionClip,
+    *,
+    stable_joints: set[str] | None = None,
+    coherent_frame: bool = False,
+) -> tuple[dict[str, Point3], dict[str, object]]:
+    median_pose = {
+        joint_name: _median_point([
+            frame.joints[joint_name]
+            for frame in clip.frames
+            if joint_name in frame.joints
+        ])
+        for joint_name in clip.joint_names
+    }
+    if coherent_frame:
+        representative = _representative_stable_frame_pose(
+            clip,
+            median_pose=median_pose,
+            stable_joints=stable_joints or set(clip.joint_names),
+        )
+        if representative is not None:
+            return representative, {
+                "straightened": False,
+                "jointCount": len(representative),
+                "target": "representative_frame_pose_without_torso_or_chain_canonicalization",
+            }
+    return median_pose, {
+        "straightened": False,
+        "jointCount": len(median_pose),
+        "target": "median_pose_without_torso_or_chain_canonicalization",
+    }
+
+
+def _build_non_torso_dominant_scaffold(
+    clip: MotionClip,
+    *,
+    dominant_groups: set[str],
+) -> tuple[dict[str, Point3], dict[str, object]]:
+    representative, representative_metadata = _build_stable_body_pose(
+        clip,
+        stable_joints=_stable_scaffold_joints_for_dominant_groups(clip, dominant_groups),
+        coherent_frame=True,
+    )
+    if "arms" in dominant_groups and "legs" not in dominant_groups:
+        scaffold = _canonicalize_static_non_dominant_body(
+            representative,
+            canonicalize_legs=False,
+        )
+        if scaffold is not None:
+            return scaffold, {
+                "straightened": True,
+                "jointCount": len(scaffold),
+                "source": representative_metadata.get("target"),
+                "target": "representative_frame_straight_torso_preserve_non_dominant_leg_pose",
+            }
+    return representative, representative_metadata
+
+
+def _canonicalize_static_non_dominant_body(
+    stable: dict[str, Point3],
+    *,
+    canonicalize_legs: bool,
+) -> dict[str, Point3] | None:
+    required = ("pelvis", "left_hip", "right_hip", "left_shoulder", "right_shoulder")
+    if any(joint not in stable for joint in required):
+        return None
+    spine_top_name = "neck" if "neck" in stable else "spine3" if "spine3" in stable else "head" if "head" in stable else None
+    if spine_top_name is None:
+        return None
+    spine_axis = _normalize(_subtract(stable[spine_top_name], stable["pelvis"]))
+    if spine_axis is None:
+        return None
+    shoulder_axis = _subtract(stable["right_shoulder"], stable["left_shoulder"])
+    hip_axis = _subtract(stable["right_hip"], stable["left_hip"])
+    shoulder_right = _project_axis_perpendicular_to(shoulder_axis, spine_axis)
+    hip_right = _project_axis_perpendicular_to(hip_axis, spine_axis)
+    canonical_right = shoulder_right or hip_right
+    if shoulder_right is not None and hip_right is not None:
+        canonical_right = _normalize(_add(shoulder_right, hip_right)) or shoulder_right
+    if canonical_right is None:
+        return None
+
+    canonical = dict(stable)
+    spine_chain = [joint for joint in ("pelvis", "spine1", "spine2", "spine3", "neck") if joint in stable]
+    for joint_name, distance_from_pelvis in _spine_chain_distances(stable, spine_chain).items():
+        canonical[joint_name] = _add(stable["pelvis"], _scale(spine_axis, distance_from_pelvis))
+    hip_center = _project_center_to_spine_level(
+        _average_points([stable["left_hip"], stable["right_hip"]]),
+        stable["pelvis"],
+        spine_axis,
+    )
+    shoulder_center = _project_center_to_spine_level(
+        _average_points([stable["left_shoulder"], stable["right_shoulder"]]),
+        stable["pelvis"],
+        spine_axis,
+    )
+    shoulder_half_width = _length(shoulder_axis) * 0.5
+    hip_half_width = max(_length(hip_axis) * 0.5, shoulder_half_width * 0.45)
+    canonical["left_hip"] = _add(hip_center, _scale(canonical_right, -hip_half_width))
+    canonical["right_hip"] = _add(hip_center, _scale(canonical_right, hip_half_width))
+    canonical["left_shoulder"] = _add(shoulder_center, _scale(canonical_right, -shoulder_half_width))
+    canonical["right_shoulder"] = _add(shoulder_center, _scale(canonical_right, shoulder_half_width))
+    for collar_name, shoulder_name in (("left_collar", "left_shoulder"), ("right_collar", "right_shoulder")):
+        if collar_name in canonical:
+            canonical[collar_name] = _add(stable[collar_name], _subtract(canonical[shoulder_name], stable[shoulder_name]))
+    if "head" in canonical and spine_top_name in canonical:
+        head_offset = max(0.0, _dot(_subtract(stable["head"], stable[spine_top_name]), spine_axis))
+        canonical["head"] = _add(canonical[spine_top_name], _scale(spine_axis, head_offset))
+    if canonicalize_legs:
+        replacements = _straightened_non_dominant_leg_replacements(stable, canonical, canonical_right)
+        canonical.update(replacements)
+    else:
+        body_frame = _body_local_frame(MotionFrame(time_sec=0.0, joints=canonical))
+        if body_frame is not None:
+            _preserve_stable_chain_offsets(
+                stable,
+                canonical,
+                body_frame=body_frame,
+                group_name="legs",
+                left_root="left_hip",
+                right_root="right_hip",
+                left_mid="left_knee",
+                right_mid="right_knee",
+                left_end="left_ankle",
+                right_end="right_ankle",
+                left_extra="left_foot",
+                right_extra="right_foot",
+            )
+    return canonical
+
+
+def _stable_scaffold_joints_for_dominant_groups(clip: MotionClip, dominant_groups: set[str]) -> set[str]:
+    joints = set(clip.joint_names)
+    if "arms" in dominant_groups:
+        joints.difference_update({
+            "left_elbow",
+            "right_elbow",
+            "left_wrist",
+            "right_wrist",
+            "left_hand",
+            "right_hand",
+        })
+    if "legs" in dominant_groups:
+        joints.difference_update({
+            "left_knee",
+            "right_knee",
+            "left_ankle",
+            "right_ankle",
+            "left_foot",
+            "right_foot",
+        })
+    return joints
+
+
+def _representative_stable_frame_pose(
+    clip: MotionClip,
+    *,
+    median_pose: dict[str, Point3],
+    stable_joints: set[str],
+) -> dict[str, Point3] | None:
+    scored_frames: list[tuple[float, int, MotionFrame]] = []
+    for frame_index, frame in enumerate(clip.frames):
+        score = 0.0
+        samples = 0
+        for joint_name in stable_joints:
+            point = frame.joints.get(joint_name)
+            median_point = median_pose.get(joint_name)
+            if point is None or median_point is None:
+                continue
+            distance = _distance(point, median_point)
+            score += distance * distance
+            samples += 1
+        if samples:
+            scored_frames.append((score / samples, frame_index, frame))
+    if not scored_frames:
+        return None
+    _score, frame_index, frame = min(scored_frames, key=lambda item: (item[0], abs(item[1] - clip.frame_count * 0.5)))
+    return {
+        joint_name: frame.joints.get(joint_name, median_pose[joint_name])
+        for joint_name in clip.joint_names
+        if joint_name in frame.joints or joint_name in median_pose
+    }
+
+
+def _preserve_stable_chain_offsets(
+    stable: dict[str, Point3],
+    canonical: dict[str, Point3],
+    *,
+    body_frame: "BodyFrame",
+    group_name: str,
+    left_root: str,
+    right_root: str,
+    left_mid: str,
+    right_mid: str,
+    left_end: str,
+    right_end: str,
+    left_extra: str | None,
+    right_extra: str | None,
+) -> None:
+    if (
+        left_root in stable
+        and right_root in stable
+        and left_root in canonical
+        and right_root in canonical
+    ):
+        for left_joint, right_joint in ((left_mid, right_mid), (left_end, right_end)):
+            if left_joint not in stable or right_joint not in stable:
+                continue
+            left_offset = _to_local(stable[left_joint], body_frame, stable[left_root])
+            right_offset = _to_local(stable[right_joint], body_frame, stable[right_root])
+            left_target, right_target = _canonical_mirrored_offsets(left_offset, right_offset, group_name=group_name)
+            canonical[left_joint] = _from_local(left_target, body_frame, canonical[left_root])
+            canonical[right_joint] = _from_local(right_target, body_frame, canonical[right_root])
+        if left_extra and right_extra and left_extra in stable and right_extra in stable:
+            left_offset = _to_local(stable[left_extra], body_frame, stable[left_root])
+            right_offset = _to_local(stable[right_extra], body_frame, stable[right_root])
+            left_target, right_target = _canonical_mirrored_offsets(left_offset, right_offset, group_name=group_name)
+            canonical[left_extra] = _from_local(left_target, body_frame, canonical[left_root])
+            canonical[right_extra] = _from_local(right_target, body_frame, canonical[right_root])
+        return
+
+    for root_joint, child_joints in (
+        (left_root, (left_mid, left_end, left_extra)),
+        (right_root, (right_mid, right_end, right_extra)),
+    ):
+        if root_joint not in stable or root_joint not in canonical:
+            continue
+        for child_joint in child_joints:
+            if child_joint is None or child_joint not in stable:
+                continue
+            stable_offset = _to_local(stable[child_joint], body_frame, stable[root_joint])
+            canonical[child_joint] = _from_local(stable_offset, body_frame, canonical[root_joint])
 
 
 def _place_canonical_bilateral_rest_chains(
@@ -1075,6 +1370,334 @@ def _enforce_exact_same_phase_bilateral_symmetry(
         "maxDisplacement": max_displacement,
         "target": "exact_body_local_mirrored_arm_pairs",
     }
+
+
+def _preserve_same_phase_paired_hand_path(
+    clip: MotionClip,
+    *,
+    reference_clip: MotionClip,
+    transfer_metadata: dict[str, object],
+) -> tuple[MotionClip, dict[str, object]]:
+    modes = transfer_metadata.get("bilateralModes") if isinstance(transfer_metadata, dict) else None
+    arms_mode = modes.get("arms") if isinstance(modes, dict) else None
+    if not isinstance(arms_mode, dict) or arms_mode.get("mode") != "same_phase_symmetric":
+        return clip, {"applied": False, "reason": "arms_not_same_phase_symmetric"}
+    required = (
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+    )
+    if any(joint not in clip.joint_names for joint in required):
+        return clip, {"applied": False, "reason": "missing_arm_joints"}
+
+    endpoint_pairs = [
+        ("left_wrist", "right_wrist"),
+    ]
+    if "left_hand" in clip.joint_names and "right_hand" in clip.joint_names:
+        endpoint_pairs.append(("left_hand", "right_hand"))
+    path_constraints = _paired_endpoint_path_constraints(clip, endpoint_pairs)
+    if path_constraints is None:
+        return clip, {"applied": False, "reason": "missing_endpoint_widths"}
+    half_widths = path_constraints["half_widths"]
+    shared_axis_bounds = path_constraints["shared_axis_bounds"]
+    elbow_axis_bounds = path_constraints["elbow_axis_bounds"]
+    elbow_half_width = float(path_constraints["elbow_half_width"])
+
+    left_upper_len = _median_bone_length(reference_clip, "left_shoulder", "left_elbow")
+    left_lower_len = _median_bone_length(reference_clip, "left_elbow", "left_wrist")
+    right_upper_len = _median_bone_length(reference_clip, "right_shoulder", "right_elbow")
+    right_lower_len = _median_bone_length(reference_clip, "right_elbow", "right_wrist")
+    if min(left_upper_len, left_lower_len, right_upper_len, right_lower_len) <= 1e-6:
+        return clip, {"applied": False, "reason": "invalid_arm_lengths"}
+    upper_len = (left_upper_len + right_upper_len) * 0.5
+    lower_len = (left_lower_len + right_lower_len) * 0.5
+    left_hand_len = _median_bone_length(reference_clip, "left_wrist", "left_hand") if "left_hand" in reference_clip.joint_names else 0.0
+    right_hand_len = _median_bone_length(reference_clip, "right_wrist", "right_hand") if "right_hand" in reference_clip.joint_names else 0.0
+    hand_len = (left_hand_len + right_hand_len) * 0.5 if min(left_hand_len, right_hand_len) > 1e-6 else 0.0
+
+    frames: list[MotionFrame] = []
+    total_displacement = 0.0
+    max_displacement = 0.0
+    samples = 0
+    for frame, reference_frame in zip(clip.frames, reference_clip.frames):
+        body_frame = _body_local_frame(frame)
+        if body_frame is None:
+            frames.append(frame)
+            continue
+        joints = dict(frame.joints)
+        reference_joints = reference_frame.joints
+        pair_origin = _paired_arm_origin(joints, fallback=body_frame.origin)
+        desired_local_targets: dict[str, Point3] = {}
+        for left_joint, right_joint in endpoint_pairs:
+            if left_joint not in joints or right_joint not in joints:
+                continue
+            left_local = _to_local(joints[left_joint], body_frame, pair_origin)
+            right_local = _to_local(joints[right_joint], body_frame, pair_origin)
+            shared = [0.0, 0.0, 0.0]
+            for axis in (1, 2):
+                shared_value = (left_local[axis] + right_local[axis]) * 0.5
+                axis_bounds = shared_axis_bounds.get((left_joint, right_joint), {}).get(axis)
+                if axis_bounds is not None:
+                    shared_value = min(max(shared_value, axis_bounds[0]), axis_bounds[1])
+                shared[axis] = shared_value
+            half_width = half_widths.get((left_joint, right_joint))
+            if half_width is None:
+                continue
+            desired_local_targets[left_joint] = (-half_width, shared[1], shared[2])
+            desired_local_targets[right_joint] = (half_width, shared[1], shared[2])
+
+        left_elbow_local = _to_local(joints["left_elbow"], body_frame, pair_origin)
+        right_elbow_local = _to_local(joints["right_elbow"], body_frame, pair_origin)
+        elbow_hint = [0.0, 0.0, 0.0]
+        for axis in (1, 2):
+            elbow_value = (left_elbow_local[axis] + right_elbow_local[axis]) * 0.5
+            axis_bounds = elbow_axis_bounds.get(axis)
+            if axis_bounds is not None:
+                elbow_value = min(max(elbow_value, axis_bounds[0]), axis_bounds[1])
+            elbow_hint[axis] = elbow_value
+
+        arm_targets = _solve_symmetric_same_phase_arm_pair(
+            joints,
+            body_frame,
+            pair_origin=pair_origin,
+            desired_local_targets=desired_local_targets,
+            elbow_hint=(elbow_hint[0], elbow_hint[1], elbow_hint[2]),
+            elbow_half_width=elbow_half_width,
+            upper_len=upper_len,
+            lower_len=lower_len,
+            hand_len=hand_len,
+            wrist_reach=_average_reference_wrist_reach(reference_joints),
+        )
+        for joint_name, target in arm_targets.items():
+            displacement = _distance(joints[joint_name], target)
+            if displacement > 1e-6:
+                total_displacement += displacement
+                max_displacement = max(max_displacement, displacement)
+                samples += 1
+            joints[joint_name] = target
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+
+    return replace(clip, frames=frames), {
+        "applied": True,
+        "groups": ["arms"],
+        "endpointPairs": [f"{left}:{right}" for left, right in endpoint_pairs],
+        "averageDisplacement": total_displacement / samples if samples else 0.0,
+        "maxDisplacement": max_displacement,
+        "target": "same_phase_paired_hand_plane_path_preservation",
+        "movingBodyLocalAxis": "up_forward_plane",
+        "fixedBodyLocalAxis": None,
+        "armOrigin": "shoulder_center",
+        "elbowSymmetry": "body_local_same_phase_mirrored_two_bone_solution",
+        "boneLengthMode": "shared_reference_upper_lower_hand_lengths",
+    }
+
+
+def _paired_arm_origin(joints: dict[str, Point3], *, fallback: Point3) -> Point3:
+    if "left_shoulder" in joints and "right_shoulder" in joints:
+        return _average_points([joints["left_shoulder"], joints["right_shoulder"]])
+    return fallback
+
+
+def _solve_symmetric_same_phase_arm_pair(
+    joints: dict[str, Point3],
+    body_frame: BodyFrame,
+    *,
+    pair_origin: Point3,
+    desired_local_targets: dict[str, Point3],
+    elbow_hint: Point3,
+    elbow_half_width: float,
+    upper_len: float,
+    lower_len: float,
+    hand_len: float,
+    wrist_reach: float | None,
+) -> dict[str, Point3]:
+    required = (
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+    )
+    if any(joint_name not in joints for joint_name in required):
+        return {}
+    left_shoulder_local = _to_local(joints["left_shoulder"], body_frame, pair_origin)
+    left_wrist_target = desired_local_targets.get("left_wrist")
+    right_wrist_target = desired_local_targets.get("right_wrist")
+    if left_wrist_target is None or right_wrist_target is None:
+        return {}
+    if wrist_reach is not None and wrist_reach > 1e-6:
+        target_direction = _normalize(_subtract(left_wrist_target, left_shoulder_local))
+        if target_direction is not None:
+            max_reach = max(1e-6, upper_len + lower_len - 1e-5)
+            min_reach = max(0.0, abs(upper_len - lower_len) + 1e-5)
+            target_reach = min(max(wrist_reach, min_reach), max_reach)
+            left_wrist_target = _add(left_shoulder_local, _scale(target_direction, target_reach))
+            right_wrist_target = (-left_wrist_target[0], left_wrist_target[1], left_wrist_target[2])
+
+    left_elbow_local, left_wrist_local = _solve_two_bone_local(
+        root=left_shoulder_local,
+        current_mid=(-elbow_half_width, elbow_hint[1], elbow_hint[2]),
+        target_end=left_wrist_target,
+        upper_len=upper_len,
+        lower_len=lower_len,
+        fallback_axis=(0.0, 0.0, 1.0),
+    )
+    right_elbow_local = (-left_elbow_local[0], left_elbow_local[1], left_elbow_local[2])
+    right_wrist_local = (-left_wrist_local[0], left_wrist_local[1], left_wrist_local[2])
+    targets = {
+        "left_elbow": _from_local(left_elbow_local, body_frame, pair_origin),
+        "right_elbow": _from_local(right_elbow_local, body_frame, pair_origin),
+        "left_wrist": _from_local(left_wrist_local, body_frame, pair_origin),
+        "right_wrist": _from_local(right_wrist_local, body_frame, pair_origin),
+    }
+    if hand_len > 1e-6 and "left_hand" in joints and "right_hand" in joints:
+        left_hand_target = desired_local_targets.get("left_hand")
+        if left_hand_target is not None:
+            left_hand_local = _place_hand_from_wrist_local(
+                wrist=left_wrist_local,
+                desired_hand=left_hand_target,
+                fallback_direction=_subtract(left_wrist_local, left_elbow_local),
+                hand_len=hand_len,
+            )
+            right_hand_local = (-left_hand_local[0], left_hand_local[1], left_hand_local[2])
+            targets["left_hand"] = _from_local(left_hand_local, body_frame, pair_origin)
+            targets["right_hand"] = _from_local(right_hand_local, body_frame, pair_origin)
+    return targets
+
+
+def _average_reference_wrist_reach(joints: dict[str, Point3]) -> float | None:
+    reaches: list[float] = []
+    for side in ("left", "right"):
+        shoulder = joints.get(f"{side}_shoulder")
+        wrist = joints.get(f"{side}_wrist")
+        if shoulder is not None and wrist is not None:
+            reaches.append(_distance(shoulder, wrist))
+    return sum(reaches) / len(reaches) if reaches else None
+
+
+def _solve_two_bone_local(
+    *,
+    root: Point3,
+    current_mid: Point3,
+    target_end: Point3,
+    upper_len: float,
+    lower_len: float,
+    fallback_axis: Point3,
+) -> tuple[Point3, Point3]:
+    return _solve_two_bone(
+        root=root,
+        current_mid=current_mid,
+        target_end=target_end,
+        upper_len=upper_len,
+        lower_len=lower_len,
+        fallback_axis=fallback_axis,
+    )
+
+
+def _place_hand_from_wrist_local(
+    *,
+    wrist: Point3,
+    desired_hand: Point3,
+    fallback_direction: Point3,
+    hand_len: float,
+) -> Point3:
+    direction = _normalize(_subtract(desired_hand, wrist))
+    if direction is None:
+        direction = _normalize(fallback_direction)
+    if direction is None:
+        direction = (0.0, 0.0, 1.0)
+    return _add(wrist, _scale(direction, hand_len))
+
+
+def _paired_endpoint_path_constraints(
+    clip: MotionClip,
+    endpoint_pairs: list[tuple[str, str]],
+) -> dict[str, object] | None:
+    half_width_values: dict[tuple[str, str], list[float]] = {pair: [] for pair in endpoint_pairs}
+    fixed_axis_values: dict[tuple[str, str], dict[int, list[float]]] = {
+        pair: {1: [], 2: []}
+        for pair in endpoint_pairs
+    }
+    shared_axis_values: dict[int, list[float]] = {1: [], 2: []}
+    elbow_axis_values: dict[int, list[float]] = {1: [], 2: []}
+    elbow_half_width_values: list[float] = []
+    for frame in clip.frames:
+        body_frame = _body_local_frame(frame)
+        if body_frame is None:
+            continue
+        pair_origin = _paired_arm_origin(frame.joints, fallback=body_frame.origin)
+        for left_joint, right_joint in endpoint_pairs:
+            if left_joint not in frame.joints or right_joint not in frame.joints:
+                continue
+            left_local = _to_local(frame.joints[left_joint], body_frame, pair_origin)
+            right_local = _to_local(frame.joints[right_joint], body_frame, pair_origin)
+            shared_y = (left_local[1] + right_local[1]) * 0.5
+            shared_z = (left_local[2] + right_local[2]) * 0.5
+            half_width_values[(left_joint, right_joint)].append((abs(left_local[0]) + abs(right_local[0])) * 0.5)
+            fixed_axis_values[(left_joint, right_joint)][1].append(shared_y)
+            fixed_axis_values[(left_joint, right_joint)][2].append(shared_z)
+            shared_axis_values[1].append(shared_y)
+            shared_axis_values[2].append(shared_z)
+        if "left_elbow" in frame.joints and "right_elbow" in frame.joints:
+            left_elbow = _to_local(frame.joints["left_elbow"], body_frame, pair_origin)
+            right_elbow = _to_local(frame.joints["right_elbow"], body_frame, pair_origin)
+            elbow_axis_values[1].append((left_elbow[1] + right_elbow[1]) * 0.5)
+            elbow_axis_values[2].append((left_elbow[2] + right_elbow[2]) * 0.5)
+            elbow_half_width_values.append((abs(left_elbow[0]) + abs(right_elbow[0])) * 0.5)
+    half_widths = {
+        pair: median(pair_values)
+        for pair, pair_values in half_width_values.items()
+        if pair_values
+    }
+    if not half_widths:
+        return None
+    axis_ranges = {
+        axis: _value_range(values)
+        for axis, values in shared_axis_values.items()
+        if values
+    }
+    moving_axis = max(axis_ranges, key=lambda axis: axis_ranges[axis]) if axis_ranges else 2
+    fixed_axis = 1 if moving_axis == 2 else 2
+    fixed_values = {
+        pair: median(axis_values[fixed_axis])
+        for pair, axis_values in fixed_axis_values.items()
+        if axis_values[fixed_axis]
+    }
+    shared_axis_bounds = {
+        pair: {
+            axis: _central_value_bounds(axis_values[axis], lower=0.01, upper=0.99)
+            for axis in (1, 2)
+            if axis_values[axis]
+        }
+        for pair, axis_values in fixed_axis_values.items()
+    }
+    elbow_axis_bounds = {
+        axis: _central_value_bounds(elbow_axis_values[axis], lower=0.01, upper=0.99)
+        for axis in (1, 2)
+        if elbow_axis_values[axis]
+    }
+    return {
+        "half_widths": half_widths,
+        "moving_axis": moving_axis,
+        "shared_axis_bounds": shared_axis_bounds,
+        "fixed_values": fixed_values,
+        "elbow_axis_bounds": elbow_axis_bounds,
+        "elbow_fixed_value": median(elbow_axis_values[fixed_axis]) if elbow_axis_values[fixed_axis] else 0.0,
+        "elbow_half_width": median(elbow_half_width_values) if elbow_half_width_values else 0.0,
+    }
+
+
+def _central_value_bounds(values: list[float], *, lower: float, upper: float) -> tuple[float, float]:
+    if not values:
+        return 0.0, 0.0
+    sorted_values = sorted(values)
+    lower_index = min(len(sorted_values) - 1, max(0, round((len(sorted_values) - 1) * lower)))
+    upper_index = min(len(sorted_values) - 1, max(0, round((len(sorted_values) - 1) * upper)))
+    return sorted_values[lower_index], sorted_values[upper_index]
 
 
 def _same_phase_bilateral_group_for_chain(root_joint: str, bilateral_modes: dict[str, dict[str, object]]) -> str | None:
@@ -1254,6 +1877,7 @@ def _dominant_motion_profile(
     *,
     chain_range: dict[str, float],
     body_height: float,
+    active_threshold: float,
     dominant_chain_ratio: float,
 ) -> dict[str, object]:
     if strongest_chain_motion <= 1e-8:
@@ -1271,7 +1895,10 @@ def _dominant_motion_profile(
     motion_dominant_groups = {
         group_name
         for group_name, motion in group_motion.items()
-        if motion >= strongest_chain_motion * dominant_chain_ratio
+        if (
+            (motion >= active_threshold or motion >= strongest_chain_motion - 1e-9)
+            and motion >= strongest_chain_motion * dominant_chain_ratio
+        )
     }
     strongest_chain_range = max(chain_range.values(), default=0.0)
     range_threshold = max(
@@ -1284,6 +1911,13 @@ def _dominant_motion_profile(
         for group_name, total_range in chain_range.items()
         if total_range >= range_threshold
     }
+    if (
+        "arms" in motion_dominant_groups
+        and "torso" not in motion_dominant_groups
+        and group_motion["torso"] < active_threshold
+        and chain_range.get("torso", 0.0) < chain_range.get("arms", 0.0) * 0.75
+    ):
+        range_dominant_groups.discard("torso")
     dominant_groups = sorted(motion_dominant_groups | range_dominant_groups)
     return {
         "dominantGroups": dominant_groups,

@@ -19,13 +19,28 @@ param(
     [int]$VisionMaxChunksPerCandidate = 5,
     [int]$VisionDownloadWorkers = 3,
     [int]$VisionLlmWorkers = 1,
+    [switch]$SkipVisionRanking,
+    [switch]$SemanticGateWithLiteRt,
+    [Nullable[int]]$SemanticGateCandidatesPerExercise,
+    [double]$SemanticGateMinScore = 0.55,
+    [double]$SemanticGateTimeoutSeconds = 0.0,
+    [switch]$PosePrefilter,
+    [switch]$SkipPosePrefilter,
+    [string]$PosePrefilterModel = "yolo26x-pose.pt",
+    [Nullable[int]]$PosePrefilterCandidatesPerExercise,
+    [double]$PosePrefilterSampleFps = 2.0,
+    [double]$PosePrefilterMaxSeconds = 90.0,
+    [double]$PosePrefilterWindowSeconds = 8.0,
+    [double]$PosePrefilterOverlapSeconds = 4.0,
+    [double]$PosePrefilterMinScore = 0.45,
+    [int]$PosePrefilterWorkers = 3,
     [int]$ExerciseWorkers = 2,
     [int]$FallbackCandidates = 3,
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
-    [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "8g",
+    [string]$WhamDockerShmSize = "16g",
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$SkipMotionTuning,
@@ -255,13 +270,25 @@ $youtubeArgs = @(
     "--results-per-query", "$ResultsPerQuery",
     "--max-candidates", "$MaxCandidates",
     "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
-    "--rank-with-vision",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
     "--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
+if (-not $SkipVisionRanking) {
+    $youtubeArgs += "--rank-with-vision"
+}
+if ($SemanticGateWithLiteRt) {
+    $youtubeArgs += @(
+        "--semantic-gate-with-litert",
+        "--semantic-gate-min-score", "$SemanticGateMinScore",
+        "--semantic-gate-timeout-seconds", "$SemanticGateTimeoutSeconds"
+    )
+    if ($SemanticGateCandidatesPerExercise.HasValue) {
+        $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$($SemanticGateCandidatesPerExercise.Value)")
+    }
+}
 if ($UseDeepSeekQueryPlanner) {
     $youtubeArgs += @(
         "--use-deepseek-query-planner",
@@ -275,6 +302,21 @@ if ($UseDeepSeekQueryPlanner) {
 }
 if ($VisionFramesPerCandidate -gt 0) {
     $youtubeArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
+}
+if ($PosePrefilter -and -not $SkipPosePrefilter) {
+    $youtubeArgs += @(
+        "--pose-prefilter",
+        "--pose-prefilter-model", $PosePrefilterModel,
+        "--pose-prefilter-sample-fps", "$PosePrefilterSampleFps",
+        "--pose-prefilter-max-seconds", "$PosePrefilterMaxSeconds",
+        "--pose-prefilter-window-seconds", "$PosePrefilterWindowSeconds",
+        "--pose-prefilter-overlap-seconds", "$PosePrefilterOverlapSeconds",
+        "--pose-prefilter-min-score", "$PosePrefilterMinScore",
+        "--pose-prefilter-workers", "$PosePrefilterWorkers"
+    )
+    if ($PosePrefilterCandidatesPerExercise.HasValue) {
+        $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$($PosePrefilterCandidatesPerExercise.Value)")
+    }
 }
 if ($IncludeDisabled) {
     $youtubeArgs += "--include-disabled"

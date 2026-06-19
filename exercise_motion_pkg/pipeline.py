@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from dataclasses import replace
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
@@ -15,9 +17,13 @@ from exercise_motion_pkg.retarget_contract import build_target_rig_contract
 from exercise_motion_pkg.structural_refinement import refine_motion_clip_structurally
 from exercise_motion_pkg.wham_convert import normalize_wham_output
 from exercise_motion_pkg.wham_retarget_source import export_wham_retarget_source
-from exercise_motion_pkg.wham_runner import run_wham_locally
+from exercise_motion_pkg.wham_runner import (
+    DEFAULT_WHAM_DOCKER_IMAGE,
+    DEFAULT_WHAM_DOCKER_SHM_SIZE,
+    DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
+    run_wham_locally,
+)
 from exercise_motion_pkg.wham_smpl_preview import (
-    build_wham_smpl_runtime_mesh_payload,
     load_wham_smpl_mesh_sequence,
     write_baked_wham_smpl_preview_json,
 )
@@ -40,10 +46,10 @@ class GenerateRequest:
     body_model_root: Path | None = None
     wham_python_command: str = "python"
     use_wham_docker: bool = False
-    wham_docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest"
+    wham_docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE
     wham_docker_gpus: str = "all"
-    wham_docker_shm_size: str = "8g"
-    wham_estimate_local_only: bool = False
+    wham_docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE
+    wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     normalized_motion_json: Path | None = None
     one_euro_min_cutoff: float = 0.6
@@ -77,6 +83,7 @@ class GenerateResult:
     motion_tuning_enabled: bool
     wham_results_pkl: Path | None = None
     wham_cache_status: str = "not_used"
+    timings: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -120,8 +127,16 @@ def resolve_wham_results_source(
 
 
 def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
+    pipeline_started = time.perf_counter()
+    timings: dict[str, Any] = {}
+
+    def record_timing(name: str, started: float) -> None:
+        timings[name] = round(time.perf_counter() - started, 3)
+
     paths = PipelinePaths.create(request.workspace, request.exercise_slug)
+    stage_started = time.perf_counter()
     input_video_path = prepare_input_video(request, paths)
+    record_timing("prepareInputVideoSeconds", stage_started)
     raw_motion_json_path = paths.raw_dir / "motion.raw.json"
     retarget_source_path: Path | None = None
     smpl_preview_sequence = None
@@ -129,7 +144,9 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     wham_results_pkl: Path | None = None
     wham_cache_status = "not_used_normalized_motion"
     if request.normalized_motion_json is not None:
+        stage_started = time.perf_counter()
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
+        record_timing("copyNormalizedMotionSeconds", stage_started)
     else:
         if request.body_model_root is None:
             raise ValueError("body_model_root is required when using WHAM output.")
@@ -148,6 +165,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
                 raise ValueError(
                     "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
                 )
+            stage_started = time.perf_counter()
             wham_result = run_wham_locally(
                 wham_repo_path=request.wham_repo_path.expanduser().resolve(),
                 input_video=input_video_path,
@@ -161,29 +179,55 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
                 docker_gpus=request.wham_docker_gpus,
                 docker_shm_size=request.wham_docker_shm_size,
             )
+            record_timing("whamRunSeconds", stage_started)
+            timings["wham"] = wham_result.timing_payload()
             wham_results_pkl = wham_result.results_pkl
+        else:
+            timings["wham"] = {
+                "elapsedSeconds": 0.0,
+                "cacheStatus": wham_cache_status,
+                "resultsPkl": str(wham_results_pkl),
+            }
+        stage_started = time.perf_counter()
         normalize_wham_output(
             wham_results_pkl=wham_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
             coordinate_space=WHAM_COORDINATE_SPACE,
         )
+        record_timing("normalizeWhamOutputSeconds", stage_started)
+        stage_started = time.perf_counter()
         retarget_source_path = export_wham_retarget_source(
             wham_results_pkl=wham_results_pkl,
             output_json=paths.retarget_dir / "wham.retarget_source.json",
             coordinate_space=WHAM_COORDINATE_SPACE,
         )
+        record_timing("exportWhamRetargetSourceSeconds", stage_started)
+        stage_started = time.perf_counter()
         smpl_preview_sequence = load_wham_smpl_mesh_sequence(
             wham_results_pkl=wham_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             coordinate_space=WHAM_COORDINATE_SPACE,
         )
+        record_timing("loadWhamSmplMeshSeconds", stage_started)
 
+    stage_started = time.perf_counter()
     raw_clip = load_motion_json(raw_motion_json_path)
+    record_timing("loadRawMotionSeconds", stage_started)
     raw_preview_html_path = paths.preview_dir / "motion_preview.raw.html"
-    write_preview_html(raw_preview_html_path, raw_clip, title=f"{request.exercise_slug}-raw")
+    stage_started = time.perf_counter()
+    raw_preview_clip = replace(
+        raw_clip,
+        metadata={
+            **raw_clip.metadata,
+            "motionTuning": _motion_tuning_metadata(enabled=False),
+        },
+    )
+    write_preview_html(raw_preview_html_path, raw_preview_clip, title=f"{request.exercise_slug}-raw")
+    record_timing("writeRawPreviewSeconds", stage_started)
 
     if request.motion_tuning_enabled:
+        stage_started = time.perf_counter()
         cleaned_clip, cleanup_stats = cleanup_motion_clip(
             raw_clip,
             one_euro_min_cutoff=request.one_euro_min_cutoff,
@@ -192,18 +236,23 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             motion_threshold=request.motion_threshold,
             padding_frames=request.padding_frames,
         )
+        record_timing("cleanupMotionSeconds", stage_started)
+        stage_started = time.perf_counter()
         cleaned_clip = refine_motion_clip_structurally(
             cleaned_clip,
             dominant_chain_ratio=request.dominant_chain_ratio,
             non_dominant_damping=request.non_dominant_damping,
             non_dominant_radius_scale=request.non_dominant_radius_scale,
         )
+        record_timing("structuralRefinementSeconds", stage_started)
         ground_metadata_path = paths.cleaned_dir / "ground.metadata.json"
+        stage_started = time.perf_counter()
         ground_metadata: GroundMetadata | None = generate_ground_metadata(
             video_path=input_video_path,
             cleaned_clip=cleaned_clip,
             output_path=ground_metadata_path,
         )
+        record_timing("groundMetadataSeconds", stage_started)
         cleaned_clip = replace(
             cleaned_clip,
             metadata={
@@ -231,39 +280,43 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         post_processing_steps = []
 
     cleaned_motion_json_path = paths.cleaned_dir / "motion.cleaned.json"
+    stage_started = time.perf_counter()
     save_motion_json(cleaned_motion_json_path, cleaned_clip)
+    record_timing("saveCleanedMotionSeconds", stage_started)
 
     preview_html_path = paths.preview_dir / "motion_preview.html"
-    smpl_mesh_payload = None
     if smpl_preview_sequence is not None:
         smpl_preview_json_path = paths.retarget_dir / "wham.smpl_preview.baked.json"
-        smpl_preview_payload = write_baked_wham_smpl_preview_json(
+        stage_started = time.perf_counter()
+        write_baked_wham_smpl_preview_json(
             smpl_preview_json_path,
             sequence=smpl_preview_sequence,
             raw_clip=raw_clip,
             cleaned_clip=cleaned_clip,
             title=request.exercise_slug,
         )
-        smpl_mesh_payload = build_wham_smpl_runtime_mesh_payload(
-            sequence=smpl_preview_sequence,
-            raw_clip=raw_clip,
-            cleaned_clip=cleaned_clip,
-        )
+        record_timing("writeSmplPreviewJsonSeconds", stage_started)
+    stage_started = time.perf_counter()
     write_preview_html(
         preview_html_path,
         cleaned_clip,
         title=request.exercise_slug,
-        smpl_mesh_payload=smpl_mesh_payload,
     )
+    record_timing("writeCleanedPreviewSeconds", stage_started)
     wear_skeleton_json_path = paths.wear_dir / "skeleton.preview.json"
+    stage_started = time.perf_counter()
     write_wear_skeleton_json(wear_skeleton_json_path, cleaned_clip, title=request.exercise_slug)
+    record_timing("writeWearSkeletonSeconds", stage_started)
     target_rig_contract_path = paths.retarget_dir / "target_rig.contract.json"
+    stage_started = time.perf_counter()
     target_rig_contract_path.write_text(
         json.dumps(build_target_rig_contract(), indent=2),
         encoding="utf-8",
     )
+    record_timing("writeTargetRigContractSeconds", stage_started)
 
     manifest_path = paths.root / "manifest.json"
+    timings["totalSeconds"] = round(time.perf_counter() - pipeline_started, 3)
     manifest_payload = {
         "exerciseSlug": request.exercise_slug,
         "inputVideoPath": str(input_video_path),
@@ -293,6 +346,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             "applied": request.motion_tuning_enabled,
             "steps": post_processing_steps,
         },
+        "timings": timings,
         "nextStage": {
             "status": "wear_preview_skeleton_ready",
             "description": (
@@ -325,8 +379,9 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         cleanup_stats=cleanup_stats,
         ground_metadata_path=ground_metadata_path,
         motion_tuning_enabled=request.motion_tuning_enabled,
-        wham_results_pkl=wham_results_pkl,
-        wham_cache_status=wham_cache_status,
+            wham_results_pkl=wham_results_pkl,
+            wham_cache_status=wham_cache_status,
+            timings=timings,
     )
 
 

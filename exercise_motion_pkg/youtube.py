@@ -18,6 +18,31 @@ from typing import Any, Callable, Iterable
 
 import httpx
 from exercise_motion_pkg.chunking import estimate_chunking, find_default_litert_command, frames_for_chunk_seconds
+from exercise_motion_pkg.pose_prefilter import (
+    PosePrefilterSettings,
+    run_yolo_pose_prefilter,
+)
+
+LOW_RES_VIDEO_ONLY_FORMAT = (
+    "bestvideo[height<=360][ext=mp4][protocol^=http][vcodec!=none]/"
+    "bestvideo[height<=360][ext=mp4][protocol^=https][vcodec!=none]/"
+    "bestvideo[height<=360][ext=mp4][vcodec!=none]/"
+    "bestvideo[height<=360][vcodec!=none]/"
+    "bestvideo[height<=480][ext=mp4][vcodec!=none]/"
+    "bestvideo[height<=480][vcodec!=none]/"
+    "worst[height<=480][ext=mp4][vcodec!=none]/"
+    "worst[height<=480][vcodec!=none]/"
+    "worst[ext=mp4][vcodec!=none]/"
+    "worst[vcodec!=none]/worst"
+)
+
+LOW_RES_PROGRESSIVE_VIDEO_FORMAT = (
+    "best[height<=360][ext=mp4][vcodec!=none]/"
+    "best[height<=480][ext=mp4][vcodec!=none]/"
+    "worst[height<=480][ext=mp4][vcodec!=none]/"
+    "worst[ext=mp4][vcodec!=none]/"
+    "worst[vcodec!=none]/worst"
+)
 
 
 def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
@@ -54,19 +79,19 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
     raise RuntimeError(f"Download finished but no video file was found in {output_dir}.")
 
 
-def download_youtube_preview(url: str, output_dir: Path) -> Path:
+def download_youtube_preview(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+    resolved_cookies_path: Path | None = None
+    if cookies_path is not None:
+        resolved_cookies_path = cookies_path.expanduser().resolve()
+        if not resolved_cookies_path.exists():
+            raise FileNotFoundError(f"YouTube cookies file not found: {resolved_cookies_path}")
     output_dir.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,
         "-m",
         "yt_dlp",
         "--format",
-        (
-            "worst[height<=480][ext=mp4][vcodec!=none]/"
-            "worst[height<=480][vcodec!=none]/"
-            "worst[ext=mp4][vcodec!=none]/"
-            "worst[vcodec!=none]/worst"
-        ),
+        LOW_RES_VIDEO_ONLY_FORMAT,
         "--output",
         str(output_dir / "candidate.%(ext)s"),
         "--no-playlist",
@@ -79,8 +104,10 @@ def download_youtube_preview(url: str, output_dir: Path) -> Path:
         "--no-progress",
         "--no-warnings",
         "--force-overwrites",
-        url,
     ]
+    if resolved_cookies_path is not None:
+        command += ["--cookies", str(resolved_cookies_path)]
+    command.append(url)
     try:
         completed = subprocess.run(
             command,
@@ -130,7 +157,8 @@ def sanitize_downloaded_video(video_path: Path) -> Path:
     copy_args = command_base + [
         "-fflags",
         "+discardcorrupt+genpts",
-        "-c",
+        "-an",
+        "-c:v",
         "copy",
         "-movflags",
         "+faststart",
@@ -165,10 +193,7 @@ def sanitize_downloaded_video(video_path: Path) -> Path:
         "fast",
         "-crf",
         "20",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
+        "-an",
         "-movflags",
         "+faststart",
         str(temp_path),
@@ -217,12 +242,7 @@ def build_youtube_download_options(
     if preview:
         if ffmpeg_available:
             options = {
-                "format": (
-                    "worst[ext=mp4][protocol^=http][vcodec!=none][acodec!=none]/"
-                    "worst[ext=mp4][protocol^=https][vcodec!=none][acodec!=none]/"
-                    "worst[ext=mp4][vcodec!=none][acodec!=none]/"
-                    "worst[ext=mp4][vcodec!=none]/worst"
-                ),
+                "format": LOW_RES_VIDEO_ONLY_FORMAT,
                 "outtmpl": outtmpl,
                 "quiet": quiet,
                 "noprogress": noprogress,
@@ -232,13 +252,7 @@ def build_youtube_download_options(
             }
         else:
             options = {
-                "format": (
-                    "worst[ext=mp4][protocol^=http][vcodec!=none]/"
-                    "worst[ext=mp4][protocol^=https][vcodec!=none]/"
-                    "worst[ext=webm][protocol^=http][vcodec!=none]/"
-                    "worst[ext=webm][protocol^=https][vcodec!=none]/"
-                    "worst"
-                ),
+                "format": LOW_RES_PROGRESSIVE_VIDEO_FORMAT,
                 "outtmpl": outtmpl,
                 "quiet": quiet,
                 "noprogress": noprogress,
@@ -248,7 +262,7 @@ def build_youtube_download_options(
             }
     elif ffmpeg_available:
         options = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]/bestvideo[ext=webm]/best",
+            "format": LOW_RES_VIDEO_ONLY_FORMAT,
             "outtmpl": outtmpl,
             "quiet": quiet,
             "noprogress": noprogress,
@@ -259,7 +273,7 @@ def build_youtube_download_options(
         }
     else:
         options = {
-            "format": "best[ext=mp4][vcodec!=none][acodec!=none]/best[ext=mp4][vcodec!=none]/best",
+            "format": LOW_RES_PROGRESSIVE_VIDEO_FORMAT,
             "outtmpl": outtmpl,
             "quiet": quiet,
             "noprogress": noprogress,
@@ -327,6 +341,8 @@ class YouTubeCandidate:
 @dataclass(frozen=True)
 class YouTubeRankingSettings:
     results_per_query: int = 10
+    youtube_search_empty_retries: int = 5
+    youtube_cookies: Path | None = None
     max_candidates: int = 8
     metadata_candidate_pool_size: int | None = None
     min_duration_seconds: int = 20
@@ -338,11 +354,31 @@ class YouTubeRankingSettings:
     deepseek_max_queries: int = 4
     deepseek_timeout_seconds: float = 60.0
     rank_with_litert: bool = False
+    semantic_gate_enabled: bool = False
+    semantic_gate_candidates_per_exercise: int | None = None
+    semantic_gate_min_score: float = 0.55
+    semantic_gate_timeout_seconds: float = 0.0
+    pose_prefilter_enabled: bool = False
+    pose_prefilter_model: str = "yolo26x-pose.pt"
+    pose_prefilter_candidates_per_exercise: int | None = None
+    pose_prefilter_sample_fps: float = 2.0
+    pose_prefilter_max_seconds: float = 90.0
+    pose_prefilter_window_seconds: float = 8.0
+    pose_prefilter_overlap_seconds: float = 4.0
+    pose_prefilter_min_score: float = 0.45
+    pose_prefilter_min_keypoint_confidence: float = 0.35
+    pose_prefilter_min_body_scale: float = 0.18
+    pose_prefilter_workers: int = 3
     vision_candidates_per_exercise: int = 8
     vision_frames_per_candidate: int | None = 6
     vision_chunk_seconds: float | None = None
     vision_chunk_overlap_seconds: float | None = None
     vision_max_chunks_per_candidate: int | None = 5
+    vision_adaptive_chunk_review: bool = True
+    vision_initial_chunks_per_candidate: int = 3
+    vision_expand_chunks_per_candidate: int = 2
+    vision_motion_scan_sample_fps: float = 0.5
+    vision_motion_scan_max_seconds: float = 90.0
     vision_contact_sheet_columns: int = 4
     vision_contact_sheet_tile_width: int = 320
     vision_contact_sheet_frames_per_sheet: int = 8
@@ -387,7 +423,29 @@ class YouTubeRankingSettings:
             return max(1, self.metadata_candidate_pool_size)
         if self.rank_with_litert:
             return max(24, self.max_candidates, self.vision_candidates_per_exercise)
+        if self.pose_prefilter_enabled:
+            return max(24, self.max_candidates, self.resolved_pose_prefilter_candidates_per_exercise())
         return max(1, self.max_candidates)
+
+    def resolved_pose_prefilter_candidates_per_exercise(self) -> int:
+        if self.pose_prefilter_candidates_per_exercise is not None:
+            return max(1, self.pose_prefilter_candidates_per_exercise)
+        return max(self.max_candidates, self.vision_candidates_per_exercise)
+
+    def resolved_semantic_gate_candidates_per_exercise(self) -> int:
+        if self.semantic_gate_candidates_per_exercise is not None:
+            return max(1, self.semantic_gate_candidates_per_exercise)
+        if self.pose_prefilter_enabled:
+            return self.resolved_pose_prefilter_candidates_per_exercise()
+        return max(self.max_candidates, self.vision_candidates_per_exercise)
+
+
+@dataclass(frozen=True)
+class PreparedReviewWindow:
+    index: int
+    start_seconds: float
+    end_seconds: float
+    source: str = "fallback_even"
 
 
 @dataclass
@@ -399,6 +457,14 @@ class PreparedVisionReview:
     chunk_windows: list[tuple[float, float]]
     chunk_count: int
     prompt: str
+    video_path: Path | None = None
+    review_windows: list[PreparedReviewWindow] = field(default_factory=list)
+    frames_per_chunk: int = 0
+    preview_preparation_elapsed_seconds: float = 0.0
+    preview_download_elapsed_seconds: float = 0.0
+    motion_scan_elapsed_seconds: float = 0.0
+    window_planning_elapsed_seconds: float = 0.0
+    rendered_chunk_cache: dict[int, tuple[list[Path], float]] = field(default_factory=dict)
 
     def close(self) -> None:
         self.temp_dir.cleanup()
@@ -408,6 +474,10 @@ SearchFn = Callable[[str, int], list[YouTubeCandidate]]
 QueryPlannerFn = Callable[[ExerciseEntry, list[str], YouTubeRankingSettings], list[str]]
 VisionRankResult = tuple[float, list[str]] | tuple[float, list[str], dict[str, Any] | None]
 VisionRankerFn = Callable[[ExerciseEntry, YouTubeCandidate, YouTubeRankingSettings], VisionRankResult]
+PoseRankResult = tuple[float, list[str], dict[str, Any] | None]
+PoseRankerFn = Callable[[ExerciseEntry, YouTubeCandidate, YouTubeRankingSettings], PoseRankResult]
+SemanticGateResult = tuple[float, list[str], dict[str, Any] | None]
+SemanticGateFn = Callable[[ExerciseEntry, YouTubeCandidate, YouTubeRankingSettings], SemanticGateResult]
 
 
 DEMO_KEYWORDS = (
@@ -458,6 +528,39 @@ PENALTY_KEYWORDS = (
     "bad camera",
     "shaky camera",
     "sorry for the camera",
+)
+
+SEMANTIC_GATE_OTHER_EXERCISE_TERMS = (
+    "squat",
+    "deadlift",
+    "power clean",
+    "clean and jerk",
+    "snatch",
+    "step up",
+    "tricep extension",
+    "biceps curl",
+    "curl",
+    "row",
+    "pull up",
+    "chin up",
+    "lunge",
+    "shoulder press",
+    "overhead press",
+    "kettlebell",
+    "dumbbell",
+)
+
+SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE = {
+    "barbell bench press": ("bench press", "barbell bench", "panca piana", "flat bench"),
+    "bench press": ("bench press", "panca piana", "flat bench"),
+}
+YOUTUBE_QUERY_EQUIPMENT_PREFIXES = (
+    "barbell",
+    "dumbbell",
+    "kettlebell",
+    "cable",
+    "machine",
+    "smith machine",
 )
 EXERCISE_VARIANT_TERMS = (
     "incline",
@@ -632,7 +735,7 @@ def slugify(name: str) -> str:
 def build_youtube_queries(exercise_name: str) -> list[str]:
     base = exercise_name.strip()
     exclusions = build_youtube_query_exclusion_suffix(base)
-    return [
+    queries = [
         f'{base} demonstration reps "same camera angle"{exclusions}',
         f'{base} "proper form" demo "single camera"{exclusions} -mistakes -guide',
         f"{base} execution demo full movement stable camera{exclusions} -workout -program",
@@ -640,6 +743,30 @@ def build_youtube_queries(exercise_name: str) -> list[str]:
         f"{base} full body demo reps side view{exclusions}",
         f"{base} technique demo complete repetition static camera{exclusions}",
     ]
+    for alias in generic_youtube_query_aliases(base):
+        alias_exclusions = build_youtube_query_exclusion_suffix(base)
+        queries.extend(
+            [
+                f"{alias} exercise demonstration full rep single person{alias_exclusions}",
+                f"{alias} full body demo reps side view{alias_exclusions}",
+                f'{alias} "same camera angle" reps{alias_exclusions}',
+            ]
+        )
+    return merge_youtube_queries(queries)
+
+
+def generic_youtube_query_aliases(exercise_name: str) -> list[str]:
+    normalized = normalize_exercise_name(exercise_name)
+    aliases: list[str] = []
+    for prefix in YOUTUBE_QUERY_EQUIPMENT_PREFIXES:
+        normalized_prefix = normalize_exercise_name(prefix)
+        if normalized == normalized_prefix:
+            continue
+        if normalized.startswith(f"{normalized_prefix} "):
+            stripped = normalized[len(normalized_prefix) + 1 :].strip()
+            if stripped:
+                aliases.append(stripped.title())
+    return aliases
 
 
 def build_youtube_query_exclusion_suffix(exercise_name: str) -> str:
@@ -841,6 +968,66 @@ def select_evenly_spaced_review_windows(windows: list[Any], max_windows: int | N
     return [windows[index] for index in sorted(indexes)]
 
 
+def select_review_windows_by_budget(
+    windows: list[PreparedReviewWindow],
+    max_windows: int | None,
+) -> list[PreparedReviewWindow]:
+    if max_windows is None or max_windows <= 0 or len(windows) <= max_windows:
+        return reindex_review_windows(windows)
+    motion_windows = [window for window in windows if window.source == "motion_interval"]
+    coverage_windows = [window for window in windows if window.source != "motion_interval"]
+    selected = [*motion_windows[: max(0, max_windows - 1)], *coverage_windows[:1]]
+    if len(selected) < max_windows:
+        selected_keys = {(round(window.start_seconds, 3), round(window.end_seconds, 3)) for window in selected}
+        selected.extend(
+            window
+            for window in windows
+            if (round(window.start_seconds, 3), round(window.end_seconds, 3)) not in selected_keys
+        )
+    return reindex_review_windows(selected[:max_windows])
+
+
+def add_coverage_review_window(
+    windows: list[PreparedReviewWindow],
+    *,
+    duration_seconds: float,
+    window_seconds: float,
+) -> list[PreparedReviewWindow]:
+    if duration_seconds <= 0.0 or window_seconds <= 0.0:
+        return windows
+    midpoint = duration_seconds / 2.0
+    start = max(0.0, min(max(0.0, duration_seconds - window_seconds), midpoint - (window_seconds / 2.0)))
+    end = min(duration_seconds, start + window_seconds)
+    key = (round(start, 3), round(end, 3))
+    existing = {
+        (round(window.start_seconds, 3), round(window.end_seconds, 3))
+        for window in windows
+    }
+    if key in existing or end <= start:
+        return windows
+    return [
+        *windows,
+        PreparedReviewWindow(
+            index=len(windows),
+            start_seconds=start,
+            end_seconds=end,
+            source="coverage_probe",
+        ),
+    ]
+
+
+def reindex_review_windows(windows: list[PreparedReviewWindow]) -> list[PreparedReviewWindow]:
+    return [
+        PreparedReviewWindow(
+            index=index,
+            start_seconds=window.start_seconds,
+            end_seconds=window.end_seconds,
+            source=window.source,
+        )
+        for index, window in enumerate(windows)
+    ]
+
+
 def candidate_from_yt_dlp_entry(entry: dict[str, Any]) -> YouTubeCandidate:
     video_id = as_optional_string(entry.get("id") or entry.get("display_id"))
     url = as_optional_string(entry.get("webpage_url") or entry.get("url"))
@@ -883,6 +1070,19 @@ def as_optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def truncate_text(value: str, limit: int) -> str | None:
@@ -957,6 +1157,46 @@ def score_candidate_metadata(
     )
 
 
+def vision_review_priority_score(
+    candidate: YouTubeCandidate,
+    *,
+    min_duration_seconds: int,
+    max_duration_seconds: int,
+) -> float:
+    reasons = set(candidate.score_reasons)
+    score = candidate.metadata_score * 0.20
+    if "exercise_name_match" in reasons:
+        score += 0.35
+    elif "partial_exercise_name_match" in reasons:
+        score += 0.12
+    source_keyword_count = sum(
+        1
+        for reason in reasons
+        if reason.endswith("_keyword") and reason.removesuffix("_keyword") in {
+            slugify(keyword).replace("-", "_") for keyword in DEMO_KEYWORDS
+        }
+    )
+    score += min(0.30, source_keyword_count * 0.12)
+    duration = candidate.duration_seconds
+    if duration is None:
+        score -= 0.04
+    elif duration < min_duration_seconds:
+        score -= 0.45
+    elif duration <= max_duration_seconds:
+        score += 0.10
+    elif duration <= max_duration_seconds * 2:
+        score -= 0.02
+    elif duration <= max_duration_seconds * 5:
+        score -= 0.12
+    else:
+        score -= 0.30
+    if has_source_quality_demoter(candidate.score_reasons):
+        score -= 0.35
+    if "low_view_count" in reasons:
+        score -= 0.03
+    return clamp_score(score)
+
+
 def unrequested_variant_terms(candidate_text: str, exercise_name: str) -> list[str]:
     normalized_candidate = normalize_exercise_name(candidate_text)
     normalized_exercise = normalize_exercise_name(exercise_name)
@@ -1010,6 +1250,28 @@ def clamp_score(score: float) -> float:
     return max(0.0, min(1.0, score))
 
 
+def round_elapsed(seconds: float) -> float:
+    return round(max(0.0, seconds), 3)
+
+
+def sum_candidate_vision_payload_number(exercise_payloads: list[dict[str, Any]], key: str) -> float:
+    total = 0.0
+    for exercise in exercise_payloads:
+        candidates = exercise.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            payload = candidate.get("visionPayload")
+            if not isinstance(payload, dict):
+                continue
+            value = payload.get(key)
+            if isinstance(value, (int, float)):
+                total += float(value)
+    return total
+
+
 def status_for_score(score: float) -> str:
     if score >= 0.68:
         return "recommended"
@@ -1055,7 +1317,6 @@ VISION_HARD_GATE_REASONS = {
     "correct_exercise",
     "usable_for_motion_extraction",
     "complete_repetition_visible",
-    "loopable_repetition_cycle",
     "exercise_only_chunk",
     "normal_speed_execution",
     "not_broken_into_steps",
@@ -1071,6 +1332,9 @@ VISION_HARD_GATE_REASONS = {
     "pose_friendly_camera_angle",
     "body_joint_motion_visible",
     "low_equipment_occlusion",
+    "critical_moving_joints_visible",
+    "low_critical_joint_occlusion",
+    "reconstruction_suitable",
     "single_person_chunk",
 }
 
@@ -1083,6 +1347,12 @@ def candidate_passes_vision_hard_gates(
         return False
     if has_source_quality_demoter(candidate.score_reasons):
         return False
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    if bool(payload.get("chunkEvidenceCapApplied")):
+        return False
+    valid_chunk_count = as_optional_int(payload.get("validChunkCount"))
+    if valid_chunk_count is not None and valid_chunk_count <= 0:
+        return False
     return VISION_HARD_GATE_REASONS.issubset(set(candidate.score_reasons))
 
 
@@ -1092,6 +1362,369 @@ def normalize_vision_result(result: VisionRankResult) -> tuple[float, list[str],
         return score, reasons, payload
     score, reasons = result
     return score, reasons, None
+
+
+def normalize_pose_result(result: PoseRankResult) -> tuple[float, list[str], dict[str, Any] | None]:
+    score, reasons, payload = result
+    return score, reasons, payload
+
+
+def normalize_semantic_gate_result(result: SemanticGateResult) -> tuple[float, list[str], dict[str, Any] | None]:
+    score, reasons, payload = result
+    return score, reasons, payload
+
+
+def rank_candidates_with_semantic_gate(
+    *,
+    exercise: ExerciseEntry,
+    ranked: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+    semantic_gate: SemanticGateFn | None = None,
+) -> list[YouTubeCandidate]:
+    if not ranked:
+        return []
+    limit = min(len(ranked), settings.resolved_semantic_gate_candidates_per_exercise())
+    candidates_to_review = ranked[:limit]
+    active_gate = semantic_gate or rank_candidate_with_litert_semantic_gate
+    workers = max(1, min(settings.vision_llm_workers, len(candidates_to_review)))
+    scored_by_key: dict[str, YouTubeCandidate] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(active_gate, exercise, candidate, settings): candidate
+            for candidate in candidates_to_review
+        }
+        for future in as_completed(futures):
+            candidate = futures[future]
+            try:
+                semantic_score, semantic_reasons, semantic_payload = normalize_semantic_gate_result(future.result())
+                scored_by_key[candidate.key()] = apply_semantic_gate_score(
+                    candidate,
+                    semantic_score=semantic_score,
+                    semantic_reasons=semantic_reasons,
+                    semantic_payload=semantic_payload,
+                    settings=settings,
+                )
+            except Exception as exc:
+                scored_by_key[candidate.key()] = apply_semantic_gate_score(
+                    candidate,
+                    semantic_score=0.0,
+                    semantic_reasons=["semantic_gate_failed"],
+                    semantic_payload={
+                        "enabled": True,
+                        "passed": False,
+                        "score": 0.0,
+                        "error": str(exc),
+                    },
+                    settings=settings,
+                )
+    reviewed = [scored_by_key.get(candidate.key(), candidate) for candidate in candidates_to_review]
+    passed = [
+        candidate
+        for candidate in reviewed
+        if isinstance(candidate.vision_payload, dict)
+        and isinstance(candidate.vision_payload.get("semanticGate"), dict)
+        and bool(candidate.vision_payload["semanticGate"].get("passed"))
+    ]
+    narrowed = reviewed
+    narrowed.sort(key=lambda item: (semantic_gate_score(item), item.metadata_score, item.final_score), reverse=True)
+    return narrowed
+
+
+def apply_semantic_gate_score(
+    candidate: YouTubeCandidate,
+    *,
+    semantic_score: float,
+    semantic_reasons: list[str],
+    semantic_payload: dict[str, Any] | None,
+    settings: YouTubeRankingSettings,
+) -> YouTubeCandidate:
+    clamped_score = clamp_score(semantic_score)
+    payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+    semantic_payload = dict(semantic_payload) if isinstance(semantic_payload, dict) else {}
+    passed = bool(semantic_payload.get("passed", clamped_score >= settings.semantic_gate_min_score))
+    if clamped_score < settings.semantic_gate_min_score:
+        passed = False
+    semantic_payload.setdefault("enabled", True)
+    semantic_payload["passed"] = passed
+    semantic_payload["score"] = clamped_score
+    payload["semanticGate"] = semantic_payload
+    score_reasons = dedupe_reasons(candidate.score_reasons + semantic_reasons)
+    if passed:
+        score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_passed"])
+    else:
+        score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_rejected"])
+    final_score = clamp_score(candidate.metadata_score * 0.55 + clamped_score * 0.45)
+    final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
+    return replace_candidate(
+        candidate,
+        final_score=final_score,
+        status=status_for_score(final_score),
+        score_reasons=dedupe_reasons(score_reasons + cap_reasons),
+        vision_payload=payload,
+    )
+
+
+def semantic_gate_score(candidate: YouTubeCandidate) -> float:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    semantic_payload = payload.get("semanticGate") if isinstance(payload, dict) else None
+    if not isinstance(semantic_payload, dict):
+        return 0.0
+    value = semantic_payload.get("score")
+    return clamp_score(float(value)) if isinstance(value, (int, float)) else 0.0
+
+
+def rank_candidate_with_litert_semantic_gate(
+    exercise: ExerciseEntry,
+    candidate: YouTubeCandidate,
+    settings: YouTubeRankingSettings,
+) -> SemanticGateResult:
+    from exercise_motion_pkg.segment_detection import extract_json_object
+
+    command = settings.litert_command or find_default_litert_command()
+    prompt = build_candidate_semantic_gate_prompt(exercise, candidate)
+    process = subprocess.run(
+        [
+            command,
+            "run",
+            settings.vision_model,
+            "--backend",
+            settings.litert_backend,
+            "--prompt",
+            prompt,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=semantic_gate_subprocess_timeout(settings),
+    )
+    if process.returncode != 0:
+        message = truncate_text(process.stderr or process.stdout or "LiteRT semantic gate failed.", 240)
+        raise RuntimeError(message or "LiteRT semantic gate failed.")
+    payload = extract_json_object(process.stdout)
+    if not isinstance(payload, dict):
+        raise RuntimeError("LiteRT semantic gate returned no JSON object.")
+    score = coerce_float(payload.get("score"))
+    if score is None:
+        score = coerce_float(payload.get("targetExerciseMatch"))
+    if score is None:
+        score = 0.0
+    wrong_exercise = bool(payload.get("wrongExercise"))
+    passed = bool(payload.get("passed", score >= settings.semantic_gate_min_score and not wrong_exercise))
+    reasons = ["semantic_text_match" if passed else "semantic_text_mismatch"]
+    conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
+    if conflict_reasons:
+        passed = False
+        score = min(score, 0.20)
+        reasons.extend(conflict_reasons)
+    if wrong_exercise:
+        reasons.append("semantic_wrong_exercise")
+    if bool(payload.get("wrongEquipment")):
+        reasons.append("semantic_wrong_equipment")
+    return clamp_score(score), reasons, {
+        "enabled": True,
+        "passed": passed,
+        "score": clamp_score(score),
+        "wrongExercise": wrong_exercise,
+        "wrongEquipment": bool(payload.get("wrongEquipment")),
+        "textConflictReasons": conflict_reasons,
+        "matchedExercise": truncate_text(str(payload.get("matchedExercise") or ""), 120),
+        "reason": truncate_text(str(payload.get("reason") or ""), 240),
+    }
+
+
+def semantic_gate_subprocess_timeout(settings: YouTubeRankingSettings) -> float | None:
+    if settings.semantic_gate_timeout_seconds <= 0:
+        return None
+    return max(1.0, settings.semantic_gate_timeout_seconds)
+
+
+def semantic_gate_text_conflict_reasons(exercise: ExerciseEntry, candidate: YouTubeCandidate) -> list[str]:
+    normalized_exercise = normalize_exercise_name(exercise.name)
+    normalized_title = normalize_exercise_name(candidate.title)
+    normalized_description = normalize_exercise_name(candidate.description_snippet or "")
+    reasons: list[str] = []
+    aliases = SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(normalized_exercise)
+    title_has_target = False
+    if aliases:
+        title_has_target = any(normalize_exercise_name(alias) in normalized_title for alias in aliases)
+    else:
+        target_tokens = normalized_exercise.split()
+        title_tokens = set(normalized_title.split())
+        title_has_target = bool(target_tokens) and all(token in title_tokens for token in target_tokens)
+    other_terms = [
+        term
+        for term in SEMANTIC_GATE_OTHER_EXERCISE_TERMS
+        if normalize_exercise_name(term) not in normalized_exercise
+        and normalize_exercise_name(term) in normalized_title
+    ]
+    if other_terms:
+        reasons.append("semantic_title_mentions_other_exercise")
+    if not title_has_target:
+        target_in_description = False
+        if aliases:
+            target_in_description = any(normalize_exercise_name(alias) in normalized_description for alias in aliases)
+        else:
+            target_tokens = normalized_exercise.split()
+            description_tokens = set(normalized_description.split())
+            target_in_description = bool(target_tokens) and all(token in description_tokens for token in target_tokens)
+        if target_in_description:
+            reasons.append("semantic_target_only_in_description")
+    return reasons
+
+
+def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: YouTubeCandidate) -> str:
+    description = truncate_text(candidate.description_snippet or "", 800) or ""
+    return (
+        "You are a fast text-only semantic gate for YouTube exercise source selection.\n"
+        "Decide whether the candidate title/description is plausibly the target exercise. "
+        "Do not inspect video frames. Be strict about the actual movement and equipment. "
+        "Pass only if the candidate is primarily about the target exercise as a source clip or exercise demo. "
+        "Reject videos where the target is only implied by a muscle group, only briefly mentioned in a broader workout, or listed among multiple lifts. "
+        "Reject unrelated exercises, different lifts, warmups, mobility drills, triceps accessories, step-ups, power cleans, deadlifts, curls, and other non-target movements. "
+        "Accept common language aliases and translations when they clearly refer to the same exercise, such as panca piana for flat bench press.\n"
+        "Return JSON only with this schema: "
+        "{\"passed\": boolean, \"score\": number, \"wrongExercise\": boolean, \"wrongEquipment\": boolean, "
+        "\"matchedExercise\": string, \"reason\": string}.\n"
+        "Use score 0.0 to 1.0. passed should be true only when score >= 0.55 and wrongExercise is false.\n"
+        f"Target exercise: {exercise.name}\n"
+        f"Candidate title: {candidate.title}\n"
+        f"Candidate channel: {candidate.channel or ''}\n"
+        f"Candidate description: {description}\n"
+    )
+
+
+def rank_candidates_with_pose_prefilter(
+    *,
+    exercise: ExerciseEntry,
+    ranked: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+    pose_ranker: PoseRankerFn | None = None,
+) -> list[YouTubeCandidate]:
+    if not ranked:
+        return []
+    limit = min(len(ranked), settings.resolved_pose_prefilter_candidates_per_exercise())
+    candidates_to_review = ranked[:limit]
+    active_ranker = pose_ranker or rank_candidate_with_yolo_pose
+    workers = max(1, min(settings.pose_prefilter_workers, len(candidates_to_review)))
+    scored_by_key: dict[str, YouTubeCandidate] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(active_ranker, exercise, candidate, settings): candidate
+            for candidate in candidates_to_review
+        }
+        for future in as_completed(futures):
+            candidate = futures[future]
+            try:
+                pose_score, pose_reasons, pose_payload = normalize_pose_result(future.result())
+                scored_by_key[candidate.key()] = apply_pose_prefilter_score(
+                    candidate,
+                    pose_score=pose_score,
+                    pose_reasons=pose_reasons,
+                    pose_payload=pose_payload,
+                    settings=settings,
+                )
+            except Exception as exc:
+                scored_by_key[candidate.key()] = apply_pose_prefilter_score(
+                    candidate,
+                    pose_score=0.0,
+                    pose_reasons=["pose_prefilter_failed"],
+                    pose_payload={
+                        "enabled": True,
+                        "passed": False,
+                        "score": 0.0,
+                        "error": str(exc),
+                    },
+                    settings=settings,
+                )
+    reviewed = [scored_by_key.get(candidate.key(), candidate) for candidate in candidates_to_review]
+    passed = [
+        candidate
+        for candidate in reviewed
+        if isinstance(candidate.vision_payload, dict)
+        and isinstance(candidate.vision_payload.get("posePrefilter"), dict)
+        and bool(candidate.vision_payload["posePrefilter"].get("passed"))
+    ]
+    narrowed = reviewed if settings.semantic_gate_enabled else (passed if passed else reviewed)
+    narrowed.sort(key=lambda item: (pose_prefilter_score(item), item.final_score), reverse=True)
+    return narrowed
+
+
+def apply_pose_prefilter_score(
+    candidate: YouTubeCandidate,
+    *,
+    pose_score: float,
+    pose_reasons: list[str],
+    pose_payload: dict[str, Any] | None,
+    settings: YouTubeRankingSettings,
+) -> YouTubeCandidate:
+    clamped_pose_score = clamp_score(pose_score)
+    passed = clamped_pose_score >= settings.pose_prefilter_min_score
+    payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = dict(pose_payload) if isinstance(pose_payload, dict) else {}
+    pose_payload.setdefault("enabled", True)
+    pose_payload.setdefault("passed", passed)
+    pose_payload.setdefault("score", clamped_pose_score)
+    payload["posePrefilter"] = pose_payload
+    if passed:
+        start_seconds = pose_payload.get("bestChunkStartSeconds")
+        end_seconds = pose_payload.get("bestChunkEndSeconds")
+        if "bestChunkStartSeconds" not in payload and isinstance(start_seconds, (int, float)):
+            payload["bestChunkStartSeconds"] = float(start_seconds)
+        if "bestChunkEndSeconds" not in payload and isinstance(end_seconds, (int, float)):
+            payload["bestChunkEndSeconds"] = float(end_seconds)
+        if "bestChunkScore" not in payload:
+            payload["bestChunkScore"] = clamped_pose_score
+        payload.setdefault("bestChunkSource", "pose_prefilter")
+    score_reasons = dedupe_reasons(candidate.score_reasons + pose_reasons)
+    if not passed:
+        score_reasons = dedupe_reasons([*score_reasons, "pose_prefilter_below_threshold"])
+    final_score = clamp_score(candidate.metadata_score * 0.25 + clamped_pose_score * 0.75)
+    final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
+    score_reasons = dedupe_reasons(score_reasons + cap_reasons)
+    return replace_candidate(
+        candidate,
+        final_score=final_score,
+        status=status_for_score(final_score),
+        score_reasons=score_reasons,
+        vision_payload=payload,
+    )
+
+
+def pose_prefilter_score(candidate: YouTubeCandidate) -> float:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    if not isinstance(pose_payload, dict):
+        return 0.0
+    value = pose_payload.get("score")
+    return clamp_score(float(value)) if isinstance(value, (int, float)) else 0.0
+
+
+def rank_candidate_with_yolo_pose(
+    exercise: ExerciseEntry,
+    candidate: YouTubeCandidate,
+    settings: YouTubeRankingSettings,
+) -> PoseRankResult:
+    del exercise
+    temp_dir = tempfile.TemporaryDirectory(prefix="exercise-motion-yolo-pose-")
+    try:
+        video_path = download_youtube_preview(candidate.url, Path(temp_dir.name), settings.youtube_cookies)
+        result = run_yolo_pose_prefilter(
+            video_path=video_path,
+            settings=PosePrefilterSettings(
+                model=settings.pose_prefilter_model,
+                sample_fps=settings.pose_prefilter_sample_fps,
+                max_seconds=settings.pose_prefilter_max_seconds,
+                window_seconds=settings.pose_prefilter_window_seconds,
+                overlap_seconds=settings.pose_prefilter_overlap_seconds,
+                min_score=settings.pose_prefilter_min_score,
+                min_keypoint_confidence=settings.pose_prefilter_min_keypoint_confidence,
+                min_body_scale=settings.pose_prefilter_min_body_scale,
+                max_candidates=settings.resolved_pose_prefilter_candidates_per_exercise(),
+            ),
+        )
+        return result.score, result.reasons, result.payload
+    finally:
+        temp_dir.cleanup()
 
 
 def litert_vision_backend(settings: YouTubeRankingSettings) -> str:
@@ -1160,8 +1793,16 @@ def discover_and_rank_youtube_candidates(
     settings: YouTubeRankingSettings,
     search_fn: SearchFn = search_youtube,
     query_planner: QueryPlannerFn | None = None,
+    semantic_gate: SemanticGateFn | None = None,
+    pose_ranker: PoseRankerFn | None = None,
     vision_ranker: VisionRankerFn | None = None,
 ) -> dict[str, Any]:
+    run_started = time.monotonic()
+    search_elapsed_total = 0.0
+    metadata_elapsed_total = 0.0
+    semantic_gate_elapsed_total = 0.0
+    pose_elapsed_total = 0.0
+    vision_elapsed_total = 0.0
     exercises = load_workout_plan_exercises(workout_plan_json, include_disabled=settings.include_disabled)
     metadata_candidate_pool_size = settings.resolved_metadata_candidate_pool_size()
     owns_query_planner = False
@@ -1208,10 +1849,25 @@ def discover_and_rank_youtube_candidates(
                     )
             by_key: dict[str, YouTubeCandidate] = {}
             search_errors: list[dict[str, str]] = []
+            search_attempts: list[dict[str, Any]] = []
             for query in queries:
+                search_started = time.monotonic()
                 try:
-                    search_results = search_fn(query, settings.results_per_query)
+                    search_results, attempts = search_youtube_with_empty_retries(
+                        query,
+                        settings=settings,
+                        search_fn=search_fn,
+                    )
+                    search_elapsed_total += time.monotonic() - search_started
+                    search_attempts.append(
+                        {
+                            "query": query,
+                            "attempts": attempts,
+                            "resultCount": len(search_results),
+                        }
+                    )
                 except Exception as exc:
+                    search_elapsed_total += time.monotonic() - search_started
                     search_errors.append({"query": query, "error": str(exc)})
                     continue
                 for candidate in search_results:
@@ -1221,6 +1877,7 @@ def discover_and_rank_youtube_candidates(
                     if key not in by_key:
                         by_key[key] = candidate
 
+            metadata_started = time.monotonic()
             ranked = [
                 score_candidate_metadata(
                     exercise,
@@ -1230,10 +1887,30 @@ def discover_and_rank_youtube_candidates(
                 )
                 for candidate in by_key.values()
             ]
-            ranked.sort(key=lambda item: item.metadata_score, reverse=True)
-            ranked = ranked[:metadata_candidate_pool_size]
+            metadata_elapsed_total += time.monotonic() - metadata_started
+
+            if settings.semantic_gate_enabled:
+                semantic_gate_started = time.monotonic()
+                ranked = rank_candidates_with_semantic_gate(
+                    exercise=exercise,
+                    ranked=ranked,
+                    settings=settings,
+                    semantic_gate=semantic_gate,
+                )
+                semantic_gate_elapsed_total += time.monotonic() - semantic_gate_started
+
+            if settings.pose_prefilter_enabled:
+                pose_started = time.monotonic()
+                ranked = rank_candidates_with_pose_prefilter(
+                    exercise=exercise,
+                    ranked=ranked,
+                    settings=settings,
+                    pose_ranker=pose_ranker,
+                )
+                pose_elapsed_total += time.monotonic() - pose_started
 
             if vision_enabled and vision_ranker is not None:
+                vision_started = time.monotonic()
                 if isinstance(vision_ranker, LlamaCppVisionRanker):
                     reranked = rank_candidates_with_prepared_vision_reviews(
                         exercise=exercise,
@@ -1249,6 +1926,7 @@ def discover_and_rank_youtube_candidates(
                         vision_ranker=vision_ranker,
                     )
                 ranked = reranked
+                vision_elapsed_total += time.monotonic() - vision_started
                 ranked.sort(key=lambda item: (item.vision_score is not None, item.final_score), reverse=True)
             else:
                 ranked.sort(key=lambda item: item.final_score, reverse=True)
@@ -1263,6 +1941,7 @@ def discover_and_rank_youtube_candidates(
                     "queries": queries,
                     "queryPlanning": query_planning_payload,
                     "searchErrors": search_errors,
+                    "searchAttempts": search_attempts,
                     "candidates": [candidate.to_manifest_dict() for candidate in ranked],
                 }
             )
@@ -1272,6 +1951,17 @@ def discover_and_rank_youtube_candidates(
         if owns_vision_ranker and isinstance(vision_ranker, LlamaCppVisionRanker):
             vision_ranker.close()
 
+    write_started = time.monotonic()
+    timing_payload = {
+        "searchElapsedSeconds": round_elapsed(search_elapsed_total),
+        "metadataRankingElapsedSeconds": round_elapsed(metadata_elapsed_total),
+        "semanticGateElapsedSeconds": round_elapsed(semantic_gate_elapsed_total),
+        "posePrefilterElapsedSeconds": round_elapsed(pose_elapsed_total),
+        "visionScoringElapsedSeconds": round_elapsed(vision_elapsed_total),
+    }
+    timing_payload["visionPreparationElapsedSeconds"] = round_elapsed(
+        sum_candidate_vision_payload_number(exercise_payloads, "previewPreparationElapsedSeconds")
+    )
     manifest = {
         "sourcePlanPath": str(workout_plan_json),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1284,12 +1974,49 @@ def discover_and_rank_youtube_candidates(
             "visionEnabled": vision_enabled,
             "visionBackend": vision_backend_name(settings) if vision_enabled else None,
             "visionCandidatesPerExercise": settings.vision_candidates_per_exercise if vision_enabled else None,
+            "semanticGateEnabled": settings.semantic_gate_enabled,
+            "semanticGateBackend": "litert-lm" if settings.semantic_gate_enabled else None,
+            "semanticGateModel": settings.vision_model if settings.semantic_gate_enabled else None,
+            "semanticGateCandidatesPerExercise": (
+                settings.resolved_semantic_gate_candidates_per_exercise()
+                if settings.semantic_gate_enabled
+                else None
+            ),
+            "semanticGateMinScore": settings.semantic_gate_min_score if settings.semantic_gate_enabled else None,
+            "posePrefilterEnabled": settings.pose_prefilter_enabled,
+            "posePrefilterBackend": "yolo-pose" if settings.pose_prefilter_enabled else None,
+            "posePrefilterModel": settings.pose_prefilter_model if settings.pose_prefilter_enabled else None,
+            "posePrefilterCandidatesPerExercise": (
+                settings.resolved_pose_prefilter_candidates_per_exercise()
+                if settings.pose_prefilter_enabled
+                else None
+            ),
+            "timing": timing_payload,
         },
         "exercises": exercise_payloads,
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest["ranking"]["timing"]["writeManifestElapsedSeconds"] = round_elapsed(time.monotonic() - write_started)
+    manifest["ranking"]["timing"]["totalElapsedSeconds"] = round_elapsed(time.monotonic() - run_started)
+    out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
+
+
+def search_youtube_with_empty_retries(
+    query: str,
+    *,
+    settings: YouTubeRankingSettings,
+    search_fn: SearchFn,
+) -> tuple[list[YouTubeCandidate], int]:
+    max_attempts = max(1, settings.youtube_search_empty_retries + 1)
+    last_results: list[YouTubeCandidate] = []
+    for attempt in range(1, max_attempts + 1):
+        last_results = search_fn(query, settings.results_per_query)
+        if last_results or attempt >= max_attempts:
+            return last_results, attempt
+        time.sleep(min(0.25 * attempt, 1.0))
+    return last_results, max_attempts
 
 
 class LlamaCppVisionRanker:
@@ -1548,15 +2275,15 @@ def rank_candidates_with_prepared_vision_reviews(
     vision_ranker: Any,
 ) -> list[YouTubeCandidate]:
     vision_limit = max(0, settings.vision_candidates_per_exercise)
-    candidates_to_review = ranked[:vision_limit]
-    prepared_by_key = prepare_vision_reviews_parallel(
-        exercise=exercise,
-        candidates=candidates_to_review,
-        settings=settings,
-    )
     reranked: list[YouTubeCandidate] = []
-    try:
-        if settings.vision_llm_workers > 1:
+    if settings.vision_llm_workers > 1:
+        candidates_to_review = ranked[:vision_limit]
+        prepared_by_key = prepare_vision_reviews_parallel(
+            exercise=exercise,
+            candidates=candidates_to_review,
+            settings=settings,
+        )
+        try:
             vision_results_by_key = score_prepared_vision_reviews_parallel(
                 prepared_reviews=list(prepared_by_key.values()),
                 settings=settings,
@@ -1577,9 +2304,25 @@ def rank_candidates_with_prepared_vision_reviews(
                 else:
                     reranked.append(candidate)
             return reranked
+        finally:
+            for prepared in prepared_by_key.values():
+                prepared.close()
 
-        for index, candidate in enumerate(ranked):
-            if index < vision_limit:
+    index = 0
+    batch_size = max(1, settings.vision_download_workers)
+    while index < len(ranked):
+        if index >= vision_limit:
+            reranked.extend(ranked[index:])
+            break
+        batch_end = min(len(ranked), vision_limit, index + batch_size)
+        prepared_by_key = prepare_vision_reviews_parallel(
+            exercise=exercise,
+            candidates=ranked[index:batch_end],
+            settings=settings,
+        )
+        try:
+            while index < batch_end:
+                candidate = ranked[index]
                 prepared = prepared_by_key.get(candidate.key())
                 if prepared is None:
                     reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"])
@@ -1591,12 +2334,11 @@ def rank_candidates_with_prepared_vision_reviews(
                 reranked.append(reviewed)
                 if candidate_passes_vision_hard_gates(reviewed, settings):
                     reranked.extend(ranked[index + 1 :])
-                    break
-            else:
-                reranked.append(candidate)
-    finally:
-        for prepared in prepared_by_key.values():
-            prepared.close()
+                    return reranked
+                index += 1
+        finally:
+            for prepared in prepared_by_key.values():
+                prepared.close()
     return reranked
 
 
@@ -1634,13 +2376,16 @@ def apply_vision_score(
     final_score = compose_final_score(candidate.metadata_score, vision_score)
     final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
     score_reasons = dedupe_reasons(score_reasons + cap_reasons)
+    merged_payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+    if vision_payload is not None:
+        merged_payload.update(vision_payload)
     return replace_candidate(
         candidate,
         vision_score=vision_score,
         final_score=final_score,
         status=status_for_score(final_score),
         score_reasons=score_reasons,
-        vision_payload=vision_payload,
+        vision_payload=merged_payload or None,
     )
 
 
@@ -1673,13 +2418,22 @@ def prepare_vision_review(
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
 ) -> PreparedVisionReview:
-    from exercise_motion_pkg.segment_detection import DetectionWindow, extract_window_frames, iter_detection_windows
+    from exercise_motion_pkg.segment_detection import (
+        DetectionSettings,
+        VideoMetadata,
+        detect_motion_candidate_intervals,
+        iter_detection_windows,
+        iter_detection_windows_for_intervals,
+    )
     from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
+    preparation_started = time.monotonic()
     temp_dir = tempfile.TemporaryDirectory(prefix="exercise-motion-youtube-")
     temp_path = Path(temp_dir.name)
     try:
-        video_path = download_youtube_preview(candidate.url, temp_path)
+        download_started = time.monotonic()
+        video_path = download_youtube_preview(candidate.url, temp_path, settings.youtube_cookies)
+        preview_download_elapsed = time.monotonic() - download_started
         metadata = read_basic_video_metadata(video_path)
         duration = max(0.5, metadata.duration_seconds)
         chunk_estimate = estimate_chunking(
@@ -1693,45 +2447,88 @@ def prepare_vision_review(
             if settings.vision_chunk_overlap_seconds is not None
             else chunk_estimate.chunk_overlap_seconds
         )
-        windows = iter_detection_windows(
-            duration_seconds=duration,
-            window_seconds=min(max(1.0, chunk_seconds), duration),
-            overlap_seconds=max(0.0, chunk_overlap_seconds),
+        window_seconds = min(max(1.0, chunk_seconds), duration)
+        overlap_seconds = max(0.0, chunk_overlap_seconds)
+        motion_started = time.monotonic()
+        scan_duration = min(duration, max(window_seconds, settings.vision_motion_scan_max_seconds))
+        motion_intervals = detect_motion_candidate_intervals(
+            video_path=video_path,
+            metadata=VideoMetadata(
+                duration_seconds=scan_duration,
+                fps=metadata.fps,
+                frame_count=metadata.frame_count,
+                width=metadata.width,
+                height=metadata.height,
+            ),
+            settings=DetectionSettings(
+                window_seconds=window_seconds,
+                overlap_seconds=overlap_seconds,
+                frames_per_window=max(1, settings.vision_frames_per_candidate or frames_for_chunk_seconds(chunk_seconds)),
+                max_frame_width=320,
+                max_motion_candidates=max(1, settings.vision_max_chunks_per_candidate or 5),
+                motion_sample_fps=settings.vision_motion_scan_sample_fps,
+            ),
         )
-        windows = select_evenly_spaced_review_windows(windows, settings.vision_max_chunks_per_candidate)
-        frame_paths: list[Path] = []
-        frame_path_chunks: list[list[Path]] = []
-        chunk_windows: list[tuple[float, float]] = []
-        frames_per_chunk = max(1, settings.vision_frames_per_candidate or frames_for_chunk_seconds(chunk_seconds))
-        for window in windows:
-            frame_samples = extract_window_frames(
-                video_path=video_path,
-                window=DetectionWindow(
-                    index=window.index,
+        motion_scan_elapsed = time.monotonic() - motion_started
+        planning_started = time.monotonic()
+        if motion_intervals and not (
+            len(motion_intervals) == 1
+            and round(motion_intervals[0].start_seconds, 3) == 0.0
+            and round(motion_intervals[0].end_seconds, 3) >= round(duration, 3)
+        ):
+            windows = iter_detection_windows_for_intervals(
+                intervals=motion_intervals,
+                duration_seconds=duration,
+                window_seconds=window_seconds,
+                overlap_seconds=overlap_seconds,
+            )
+            review_windows = [
+                PreparedReviewWindow(
+                    index=index,
                     start_seconds=window.start_seconds,
                     end_seconds=window.end_seconds,
-                ),
-                frames_per_window=frames_per_chunk,
-                max_frame_width=640,
-                contact_sheet_enabled=True,
-                contact_sheet_columns=settings.vision_contact_sheet_columns,
-                contact_sheet_tile_width=settings.vision_contact_sheet_tile_width,
-                contact_sheet_frames_per_sheet=settings.vision_contact_sheet_frames_per_sheet,
-                contact_sheet_jpeg_quality=settings.vision_contact_sheet_jpeg_quality,
-                output_dir=temp_path / "frames" / f"chunk_{window.index:04d}",
+                    source="motion_interval",
+                )
+                for index, window in enumerate(windows)
+            ]
+            review_windows = add_coverage_review_window(
+                review_windows,
+                duration_seconds=duration,
+                window_seconds=window_seconds,
             )
-            chunk_paths = [sample.path if hasattr(sample, "path") else sample for sample in frame_samples]
-            frame_path_chunks.append(chunk_paths)
-            chunk_windows.append((window.start_seconds, window.end_seconds))
-            frame_paths.extend(chunk_paths)
+        else:
+            windows = iter_detection_windows(
+                duration_seconds=duration,
+                window_seconds=window_seconds,
+                overlap_seconds=overlap_seconds,
+            )
+            review_windows = [
+                PreparedReviewWindow(
+                    index=index,
+                    start_seconds=window.start_seconds,
+                    end_seconds=window.end_seconds,
+                    source="fallback_even",
+                )
+                for index, window in enumerate(windows)
+            ]
+        review_windows = select_review_windows_by_budget(review_windows, settings.vision_max_chunks_per_candidate)
+        window_planning_elapsed = time.monotonic() - planning_started
+        frames_per_chunk = max(1, settings.vision_frames_per_candidate or frames_for_chunk_seconds(chunk_seconds))
         return PreparedVisionReview(
             candidate=candidate,
             temp_dir=temp_dir,
-            frame_paths=frame_paths,
-            frame_path_chunks=frame_path_chunks,
-            chunk_windows=chunk_windows,
-            chunk_count=len(windows),
+            frame_paths=[],
+            frame_path_chunks=[],
+            chunk_windows=[(window.start_seconds, window.end_seconds) for window in review_windows],
+            chunk_count=len(review_windows),
             prompt=build_candidate_vision_prompt(exercise.name, candidate),
+            video_path=video_path,
+            review_windows=review_windows,
+            frames_per_chunk=frames_per_chunk,
+            preview_preparation_elapsed_seconds=time.monotonic() - preparation_started,
+            preview_download_elapsed_seconds=preview_download_elapsed,
+            motion_scan_elapsed_seconds=motion_scan_elapsed,
+            window_planning_elapsed_seconds=window_planning_elapsed,
         )
     except Exception:
         temp_dir.cleanup()
@@ -1805,17 +2602,30 @@ def score_prepared_vision_review(
 ) -> VisionRankResult:
     from exercise_motion_pkg.segment_detection import extract_json_object
 
+    review_started = time.monotonic()
     chunk_scores: list[float] = []
     chunk_results: list[tuple[float, list[str], dict[str, Any], int]] = []
+    reviewed_chunks: list[dict[str, Any]] = []
     invalid_json_count = 0
     failed_count = 0
-    for chunk_index, chunk_paths in enumerate(prepared.frame_path_chunks):
+    render_elapsed_total = 0.0
+    vlm_elapsed_total = 0.0
+    chunk_indexes = planned_adaptive_chunk_indexes(prepared, settings)
+    early_stop_reason: str | None = None
+    for review_order, chunk_index in enumerate(chunk_indexes):
+        chunk_paths, render_elapsed = get_prepared_chunk_paths(prepared, chunk_index, settings)
+        render_elapsed_total += render_elapsed
         if not chunk_paths:
             continue
         chunk_start, chunk_end = (
             prepared.chunk_windows[chunk_index]
             if chunk_index < len(prepared.chunk_windows)
             else (0.0, 0.0)
+        )
+        window_source = (
+            prepared.review_windows[chunk_index].source
+            if chunk_index < len(prepared.review_windows)
+            else "pre_rendered"
         )
         chunk_prompt = (
             f"{prepared.prompt}\n"
@@ -1825,24 +2635,82 @@ def score_prepared_vision_review(
             "Score only this chunk as evidence that the source video contains a usable target-exercise segment. "
             "The final single-rep trim will be found later by detect_exercise_segment."
         )
+        vlm_started = time.monotonic()
         try:
             raw = caption_images(frame_paths=chunk_paths, prompt=chunk_prompt)
         except Exception:
+            vlm_elapsed = time.monotonic() - vlm_started
+            vlm_elapsed_total += vlm_elapsed
             failed_count += 1
+            reviewed_chunks.append(
+                build_reviewed_chunk_timing(
+                    chunk_index=chunk_index,
+                    chunk_start=chunk_start,
+                    chunk_end=chunk_end,
+                    window_source=window_source,
+                    render_elapsed=render_elapsed,
+                    vlm_elapsed=vlm_elapsed,
+                    failure="vlm_exception",
+                )
+            )
             continue
+        vlm_elapsed = time.monotonic() - vlm_started
+        vlm_elapsed_total += vlm_elapsed
         payload = extract_json_object(raw)
         if not isinstance(payload, dict):
             invalid_json_count += 1
+            reviewed_chunks.append(
+                build_reviewed_chunk_timing(
+                    chunk_index=chunk_index,
+                    chunk_start=chunk_start,
+                    chunk_end=chunk_end,
+                    window_source=window_source,
+                    render_elapsed=render_elapsed,
+                    vlm_elapsed=vlm_elapsed,
+                    failure="invalid_json",
+                )
+            )
             continue
         score, reasons = score_candidate_vision_payload(payload)
         chunk_scores.append(score)
         chunk_results.append((score, reasons, payload, chunk_index))
+        reviewed_chunks.append(
+            build_reviewed_chunk_timing(
+                chunk_index=chunk_index,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                window_source=window_source,
+                render_elapsed=render_elapsed,
+                vlm_elapsed=vlm_elapsed,
+                score=score,
+                valid=score >= 0.50,
+            )
+        )
+        early_stop_reason = adaptive_review_stop_reason(
+            chunk_scores=chunk_scores,
+            chunk_results=chunk_results,
+            review_order=review_order,
+            settings=settings,
+        )
+        if early_stop_reason is not None:
+            break
 
     if not chunk_results:
         reasons = ["vision_review_failed"]
         if invalid_json_count:
             reasons.append("vision_invalid_json")
-        return 0.0, reasons
+        payload = build_failed_vision_payload(
+            prepared=prepared,
+            settings=settings,
+            reviewed_chunks=reviewed_chunks,
+            failed_count=failed_count,
+            invalid_json_count=invalid_json_count,
+            render_elapsed_total=render_elapsed_total,
+            vlm_elapsed_total=vlm_elapsed_total,
+            review_elapsed=time.monotonic() - review_started,
+            early_stop_reason=early_stop_reason or "no_valid_vlm_payload",
+        )
+        return 0.0, reasons, payload
 
     best_score, best_reasons, best_payload, best_chunk_index = max(chunk_results, key=lambda item: item[0])
     average_score = sum(chunk_scores) / len(chunk_scores)
@@ -1875,7 +2743,214 @@ def score_prepared_vision_review(
     compact_payload["chunkEvidenceCapApplied"] = final_score < clamp_score((best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio * 0.05))
     compact_payload["failedChunkCount"] = failed_count
     compact_payload["invalidJsonChunkCount"] = invalid_json_count
+    compact_payload.update(
+        build_vision_timing_payload(
+            prepared=prepared,
+            settings=settings,
+            reviewed_chunks=reviewed_chunks,
+            render_elapsed_total=render_elapsed_total,
+            vlm_elapsed_total=vlm_elapsed_total,
+            review_elapsed=time.monotonic() - review_started,
+            early_stop_reason=early_stop_reason or "max_budget_reached",
+        )
+    )
     return final_score, dedupe_reasons(best_reasons + evidence_reasons + ["chunked_source_video_review"]), compact_payload
+
+
+def planned_adaptive_chunk_indexes(
+    prepared: PreparedVisionReview,
+    settings: YouTubeRankingSettings,
+) -> list[int]:
+    chunk_count = prepared.chunk_count or len(prepared.frame_path_chunks)
+    if chunk_count <= 0:
+        return []
+    hard_limit = settings.vision_max_chunks_per_candidate or chunk_count
+    hard_limit = max(1, min(hard_limit, chunk_count))
+    if not settings.vision_adaptive_chunk_review:
+        return list(range(hard_limit))
+    initial_budget = max(1, min(settings.vision_initial_chunks_per_candidate, hard_limit))
+    expansion_budget = max(0, settings.vision_expand_chunks_per_candidate)
+    budget = min(hard_limit, initial_budget + expansion_budget)
+    motion_indexes = [
+        index
+        for index, window in enumerate(prepared.review_windows)
+        if window.source == "motion_interval"
+    ]
+    coverage_indexes = [
+        index
+        for index, window in enumerate(prepared.review_windows)
+        if window.source != "motion_interval"
+    ]
+    ordered: list[int] = []
+    for index in [*motion_indexes[:1], *coverage_indexes[:1], *motion_indexes[1:], *coverage_indexes[1:]]:
+        if index not in ordered and index < chunk_count:
+            ordered.append(index)
+    for index in range(chunk_count):
+        if index not in ordered:
+            ordered.append(index)
+    return ordered[:budget]
+
+
+def get_prepared_chunk_paths(
+    prepared: PreparedVisionReview,
+    chunk_index: int,
+    settings: YouTubeRankingSettings,
+) -> tuple[list[Path], float]:
+    if chunk_index in prepared.rendered_chunk_cache:
+        return prepared.rendered_chunk_cache[chunk_index][0], 0.0
+    if chunk_index < len(prepared.frame_path_chunks):
+        paths = prepared.frame_path_chunks[chunk_index]
+        prepared.rendered_chunk_cache[chunk_index] = (paths, 0.0)
+        return paths, 0.0
+    if prepared.video_path is None or chunk_index >= len(prepared.review_windows):
+        return [], 0.0
+    from exercise_motion_pkg.segment_detection import DetectionWindow, extract_window_frames
+
+    window = prepared.review_windows[chunk_index]
+    started = time.monotonic()
+    frame_samples = extract_window_frames(
+        video_path=prepared.video_path,
+        window=DetectionWindow(
+            index=window.index,
+            start_seconds=window.start_seconds,
+            end_seconds=window.end_seconds,
+        ),
+        frames_per_window=max(1, prepared.frames_per_chunk or settings.vision_frames_per_candidate or 1),
+        max_frame_width=640,
+        contact_sheet_enabled=True,
+        contact_sheet_columns=settings.vision_contact_sheet_columns,
+        contact_sheet_tile_width=settings.vision_contact_sheet_tile_width,
+        contact_sheet_frames_per_sheet=settings.vision_contact_sheet_frames_per_sheet,
+        contact_sheet_jpeg_quality=settings.vision_contact_sheet_jpeg_quality,
+        output_dir=Path(prepared.temp_dir.name) / "frames" / f"chunk_{chunk_index:04d}",
+    )
+    elapsed = time.monotonic() - started
+    paths = [sample.path if hasattr(sample, "path") else sample for sample in frame_samples]
+    prepared.rendered_chunk_cache[chunk_index] = (paths, elapsed)
+    if chunk_index >= len(prepared.frame_path_chunks):
+        prepared.frame_path_chunks.extend([[] for _ in range(chunk_index - len(prepared.frame_path_chunks) + 1)])
+    prepared.frame_path_chunks[chunk_index] = paths
+    prepared.frame_paths.extend(paths)
+    return paths, elapsed
+
+
+def adaptive_review_stop_reason(
+    *,
+    chunk_scores: list[float],
+    chunk_results: list[tuple[float, list[str], dict[str, Any], int]],
+    review_order: int,
+    settings: YouTubeRankingSettings,
+) -> str | None:
+    if not settings.vision_adaptive_chunk_review:
+        return None
+    initial_budget = max(1, settings.vision_initial_chunks_per_candidate)
+    if len(chunk_scores) >= initial_budget and max(chunk_scores, default=0.0) < 0.50:
+        return "all_diagnostic_chunks_bad"
+    best_score, best_reasons, _, _ = max(chunk_results, key=lambda item: item[0])
+    if (
+        len(chunk_scores) >= initial_budget
+        and sum(1 for score in chunk_scores if score >= 0.50) >= 2
+        and best_score >= settings.vision_early_stop_score
+        and VISION_HARD_GATE_REASONS.issubset(set(best_reasons))
+    ):
+        return "strong_source_interval"
+    return None
+
+
+def build_reviewed_chunk_timing(
+    *,
+    chunk_index: int,
+    chunk_start: float,
+    chunk_end: float,
+    window_source: str,
+    render_elapsed: float,
+    vlm_elapsed: float,
+    score: float | None = None,
+    valid: bool | None = None,
+    failure: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "chunkIndex": chunk_index,
+        "startSeconds": round(chunk_start, 3),
+        "endSeconds": round(chunk_end, 3),
+        "windowSource": window_source,
+        "renderElapsedSeconds": round_elapsed(render_elapsed),
+        "vlmElapsedSeconds": round_elapsed(vlm_elapsed),
+    }
+    if score is not None:
+        payload["score"] = round(score, 4)
+    if valid is not None:
+        payload["valid"] = valid
+    if failure is not None:
+        payload["failure"] = failure
+    return payload
+
+
+def build_vision_timing_payload(
+    *,
+    prepared: PreparedVisionReview,
+    settings: YouTubeRankingSettings,
+    reviewed_chunks: list[dict[str, Any]],
+    render_elapsed_total: float,
+    vlm_elapsed_total: float,
+    review_elapsed: float,
+    early_stop_reason: str,
+) -> dict[str, Any]:
+    return {
+        "previewPreparationElapsedSeconds": round_elapsed(prepared.preview_preparation_elapsed_seconds),
+        "previewDownloadElapsedSeconds": round_elapsed(prepared.preview_download_elapsed_seconds),
+        "motionScanElapsedSeconds": round_elapsed(prepared.motion_scan_elapsed_seconds),
+        "windowPlanningElapsedSeconds": round_elapsed(prepared.window_planning_elapsed_seconds),
+        "totalVisionReviewElapsedSeconds": round_elapsed(review_elapsed),
+        "totalChunkRenderElapsedSeconds": round_elapsed(render_elapsed_total),
+        "totalChunkVlmElapsedSeconds": round_elapsed(vlm_elapsed_total),
+        "reviewedChunks": reviewed_chunks,
+        "adaptiveReviewPolicy": {
+            "enabled": settings.vision_adaptive_chunk_review,
+            "initialChunkBudget": max(1, settings.vision_initial_chunks_per_candidate),
+            "expansionChunkBudget": max(0, settings.vision_expand_chunks_per_candidate),
+            "maxChunkBudget": settings.vision_max_chunks_per_candidate,
+            "earlyStopReason": early_stop_reason,
+            "reviewedChunkCount": len(reviewed_chunks),
+            "plannedChunkCount": prepared.chunk_count,
+        },
+    }
+
+
+def build_failed_vision_payload(
+    *,
+    prepared: PreparedVisionReview,
+    settings: YouTubeRankingSettings,
+    reviewed_chunks: list[dict[str, Any]],
+    failed_count: int,
+    invalid_json_count: int,
+    render_elapsed_total: float,
+    vlm_elapsed_total: float,
+    review_elapsed: float,
+    early_stop_reason: str,
+) -> dict[str, Any]:
+    payload = {
+        "selectionRole": "source_video_suitability_only",
+        "sampledFrameCount": len(prepared.frame_paths),
+        "sampledChunkCount": prepared.chunk_count,
+        "scoredChunkCount": 0,
+        "validChunkCount": 0,
+        "validChunkRatio": 0.0,
+        "failedChunkCount": failed_count,
+        "invalidJsonChunkCount": invalid_json_count,
+    }
+    payload.update(
+        build_vision_timing_payload(
+            prepared=prepared,
+            settings=settings,
+            reviewed_chunks=reviewed_chunks,
+            render_elapsed_total=render_elapsed_total,
+            vlm_elapsed_total=vlm_elapsed_total,
+            review_elapsed=review_elapsed,
+            early_stop_reason=early_stop_reason,
+        )
+    )
+    return payload
 
 
 def apply_chunk_evidence_caps(
@@ -1885,7 +2960,7 @@ def apply_chunk_evidence_caps(
     valid_chunk_count: int,
     valid_chunk_ratio: float,
 ) -> tuple[float, list[str]]:
-    if scored_chunk_count < 3:
+    if scored_chunk_count <= 0:
         return score, []
     if valid_chunk_count <= 0:
         return min(score, 0.34), ["no_valid_source_chunk_evidence"]
@@ -1949,6 +3024,12 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         reasons.append("weak_body_joint_motion_penalty")
     if explicit_gate_values.get("low_equipment_occlusion") is False:
         reasons.append("equipment_occlusion_penalty")
+    if explicit_gate_values.get("critical_moving_joints_visible") is False:
+        reasons.append("critical_joint_visibility_penalty")
+    if explicit_gate_values.get("low_critical_joint_occlusion") is False:
+        reasons.append("critical_joint_occlusion_penalty")
+    if explicit_gate_values.get("reconstruction_suitable") is False:
+        reasons.append("poor_reconstruction_suitability_penalty")
 
     for issue in blocking_issues:
         if issue != "none":
@@ -2027,6 +3108,9 @@ def default_capture_quality_from_payload(
         explicit_gate_values.get("pose_friendly_camera_angle"),
         explicit_gate_values.get("body_joint_motion_visible"),
         explicit_gate_values.get("low_equipment_occlusion"),
+        explicit_gate_values.get("critical_moving_joints_visible"),
+        explicit_gate_values.get("low_critical_joint_occlusion"),
+        explicit_gate_values.get("reconstruction_suitable"),
         explicit_gate_values.get("single_person_chunk"),
         parse_payload_bool(payload, "implement_path_visible"),
     ]
@@ -2056,7 +3140,6 @@ def append_execution_gate_reasons(
     explicit_gate_values: dict[str, bool | None],
 ) -> None:
     for gate in (
-        "loopable_repetition_cycle",
         "exercise_only_chunk",
         "normal_speed_execution",
         "not_broken_into_steps",
@@ -2070,6 +3153,9 @@ def append_execution_gate_reasons(
         "pose_friendly_camera_angle",
         "body_joint_motion_visible",
         "low_equipment_occlusion",
+        "critical_moving_joints_visible",
+        "low_critical_joint_occlusion",
+        "reconstruction_suitable",
     ):
         if explicit_gate_values.get(gate) is not False:
             reasons.append(gate)
@@ -2080,7 +3166,6 @@ def apply_explicit_gate_caps(score: float, explicit_gate_values: dict[str, bool 
         "correct_exercise": 0.20,
         "usable_for_motion_extraction": 0.49,
         "complete_repetition_visible": 0.49,
-        "loopable_repetition_cycle": 0.49,
         "exercise_only_chunk": 0.49,
         "normal_speed_execution": 0.49,
         "not_broken_into_steps": 0.49,
@@ -2096,6 +3181,9 @@ def apply_explicit_gate_caps(score: float, explicit_gate_values: dict[str, bool 
         "pose_friendly_camera_angle": 0.49,
         "body_joint_motion_visible": 0.49,
         "low_equipment_occlusion": 0.49,
+        "critical_moving_joints_visible": 0.34,
+        "low_critical_joint_occlusion": 0.34,
+        "reconstruction_suitable": 0.34,
     }
     capped = score
     for gate, cap in caps.items():
@@ -2164,6 +3252,8 @@ def parse_blocking_issues(value: Any) -> list[str]:
         "bad_pose_angle",
         "weak_body_joint_motion",
         "equipment_occlusion",
+        "critical_joint_occlusion",
+        "poor_reconstruction_suitability",
         "slow_instruction",
         "setup_or_talking",
     }
@@ -2197,6 +3287,8 @@ def apply_blocking_issue_caps(score: float, blocking_issues: list[str]) -> float
         "bad_pose_angle": 0.49,
         "weak_body_joint_motion": 0.49,
         "equipment_occlusion": 0.49,
+        "critical_joint_occlusion": 0.34,
+        "poor_reconstruction_suitability": 0.34,
         "slow_instruction": 0.49,
         "setup_or_talking": 0.49,
     }
@@ -2221,6 +3313,7 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         "The whole relevant body and implement visible through the entire rep is required.\n"
         "Judge whether this chunk is friendly for monocular human-pose extraction, not merely understandable to a human viewer.\n"
         "The athlete body should occupy enough of the frame that shoulders, elbows, wrists, hips, knees, and ankles are readable across the rep.\n"
+        "Critical moving joints for the requested exercise must stay visible enough for 3D reconstruction. Penalize clips where a moving elbow, wrist, knee, ankle, shoulder, or hip is repeatedly hidden by the body, equipment, bench, rack, plates, camera angle, or crop even if a human can still recognize the exercise.\n"
         "Prefer side or three-quarter views where limb joint travel is visible. Penalize top-down, extreme front/back, very low, very far, or tiny-body views even if the exercise is clear.\n"
         "Visible motion must come from the athlete body joints, not only from an implement such as a barbell, dumbbell, cable handle, or machine arm.\n"
         "Penalize equipment, plates, bench pads, racks, machines, text overlays, or props that hide the torso, shoulders, elbows, wrists, hips, knees, or ankles during the rep.\n"
@@ -2237,9 +3330,10 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         "- target_match: how clearly this chunk shows the requested exercise.\n"
         "- complete_movement: how clearly this chunk contains a full repetition or movement cycle, not just a partial transition.\n"
         "- capture_quality: how suitable the capture is for motion extraction: fixed camera, whole relevant body/equipment visible, one person, no obstructions, readable body scale, pose-friendly angle, visible body-joint motion.\n"
+        "- reconstruction_suitability: whether the visible frames are likely to reconstruct into a usable 3D skeleton, with critical moving joints readable rather than inferred through occlusion.\n"
         "- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n"
         "- source_score: overall usefulness of this chunk as evidence that the video contains a source segment likely to reconstruct into a usable body skeleton.\n"
-        "Before scoring, list all visible blocking issues across every attached contact sheet. Use [] or [\"none\"] only if no blocking issue is visible. If any sheet shows camera zoom/reframing, body cropping, partial movement, obstruction, multiple people, slow instruction, setup, talking, wrong exercise, tiny body, bad pose angle, weak body-joint motion, or equipment occlusion, include the matching blocking issue.\n"
+        "Before scoring, list all visible blocking issues across every attached contact sheet. Use [] or [\"none\"] only if no blocking issue is visible. If any sheet shows camera zoom/reframing, body cropping, partial movement, obstruction, multiple people, slow instruction, setup, talking, wrong exercise, tiny body, bad pose angle, weak body-joint motion, equipment occlusion, critical joint occlusion, or poor reconstruction suitability, include the matching blocking issue.\n"
         "Return JSON only with these keys:\n"
         "{"
         '"correct_exercise": boolean, '
@@ -2261,6 +3355,9 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         '"pose_friendly_camera_angle": boolean, '
         '"body_joint_motion_visible": boolean, '
         '"low_equipment_occlusion": boolean, '
+        '"critical_moving_joints_visible": boolean, '
+        '"low_critical_joint_occlusion": boolean, '
+        '"reconstruction_suitable": boolean, '
         '"single_person_chunk": boolean, '
         '"target_identity_match": boolean, '
         '"target_match": number, '
@@ -2268,7 +3365,7 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         '"capture_quality": number, '
         '"execution_quality": number, '
         '"source_score": number, '
-        '"blocking_issues": ["none|wrong_exercise|partial_movement|camera_motion|cropped_body|multiple_people|obstruction|small_body|bad_pose_angle|weak_body_joint_motion|equipment_occlusion|slow_instruction|setup_or_talking"], '
+        '"blocking_issues": ["none|wrong_exercise|partial_movement|camera_motion|cropped_body|multiple_people|obstruction|small_body|bad_pose_angle|weak_body_joint_motion|equipment_occlusion|critical_joint_occlusion|poor_reconstruction_suitability|slow_instruction|setup_or_talking"], '
         '"confidence": number, '
         '"reason": string'
         "}"

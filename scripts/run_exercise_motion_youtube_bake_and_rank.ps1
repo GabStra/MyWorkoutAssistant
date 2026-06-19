@@ -6,25 +6,43 @@ param(
     [string]$WorkspaceRoot = "build/exercise_motion",
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
+    [string]$YouTubeCookiesPath,
     [string]$PythonCommand = "python",
-    [int]$ResultsPerQuery = 10,
-    [int]$MaxCandidates = 8,
-    [int]$MetadataCandidatePoolSize = 24,
+    [int]$ResultsPerQuery = 25,
+    [int]$YoutubeSearchEmptyRetries = 5,
+    [int]$MaxCandidates = 12,
+    [int]$MetadataCandidatePoolSize = 36,
     [switch]$UseDeepSeekQueryPlanner,
     [string]$DeepSeekApiKey,
     [string]$DeepSeekBaseUrl = "https://api.deepseek.com",
     [string]$DeepSeekModel = "deepseek-v4-flash",
     [int]$DeepSeekMaxQueries = 4,
-    [int]$VisionCandidatesPerExercise = 8,
+    [int]$VisionCandidatesPerExercise = 12,
     [int]$VisionFramesPerCandidate = 6,
     [int]$VisionMaxChunksPerCandidate = 5,
     [int]$VisionDownloadWorkers = 3,
     [int]$VisionLlmWorkers = 3,
-    [int]$FallbackCandidates = 3,
+    [switch]$SkipVisionRanking,
+    [switch]$SemanticGateWithLiteRt,
+    [switch]$SkipSemanticGate,
+    [Nullable[int]]$SemanticGateCandidatesPerExercise = 12,
+    [double]$SemanticGateMinScore = 0.55,
+    [double]$SemanticGateTimeoutSeconds = 0.0,
+    [switch]$PosePrefilter,
+    [switch]$SkipPosePrefilter,
+    [string]$PosePrefilterModel = "yolo26x-pose.pt",
+    [Nullable[int]]$PosePrefilterCandidatesPerExercise = 12,
+    [double]$PosePrefilterSampleFps = 1.0,
+    [double]$PosePrefilterMaxSeconds = 32.0,
+    [double]$PosePrefilterWindowSeconds = 8.0,
+    [double]$PosePrefilterOverlapSeconds = 4.0,
+    [double]$PosePrefilterMinScore = 0.45,
+    [int]$PosePrefilterWorkers = 3,
+    [int]$FallbackCandidates = 5,
     [switch]$NoWhamDocker,
-    [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "8g",
+    [string]$WhamDockerShmSize = "16g",
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
@@ -41,7 +59,11 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
     [switch]$RankPreviewVariants,
+    [switch]$AdaptivePreviewSettings,
+    [switch]$SkipAdaptivePreviewSettings,
+    [int]$MaxAdaptivePreviewSettings = 1,
     [switch]$SkipPreviewVariantRanking,
+    [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 6,
     [int]$MaxReviewWindows = 3,
@@ -104,6 +126,9 @@ if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
     $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"
 }
+if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+    $YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
+}
 $exerciseWorkspace = Join-Path $WorkspaceRoot "$slug-e2e"
 $bakeWorkspace = Join-Path $exerciseWorkspace "bake-final"
 $planPath = Join-Path $exerciseWorkspace "$slug-plan.json"
@@ -126,16 +151,32 @@ $youtubeArgs = @(
     "--workout-plan-json", $planPath,
     "--out-json", $candidatesPath,
     "--results-per-query", "$ResultsPerQuery",
+    "--youtube-search-empty-retries", "$YoutubeSearchEmptyRetries",
     "--max-candidates", "$MaxCandidates",
     "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
-    "--rank-with-vision",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
     "--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers"
 )
+if (-not $SkipVisionRanking) {
+    $youtubeArgs += "--rank-with-vision"
+}
+if ($SemanticGateWithLiteRt -or -not $SkipSemanticGate) {
+    $youtubeArgs += @(
+        "--semantic-gate-with-litert",
+        "--semantic-gate-min-score", "$SemanticGateMinScore",
+        "--semantic-gate-timeout-seconds", "$SemanticGateTimeoutSeconds"
+    )
+    if ($SemanticGateCandidatesPerExercise.HasValue) {
+        $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$($SemanticGateCandidatesPerExercise.Value)")
+    }
+}
 if ($LlamaCppRequestTimeoutSeconds -gt 0) {
     $youtubeArgs += @("--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds")
+}
+if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+    $youtubeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
 }
 if ($UseDeepSeekQueryPlanner) {
     $youtubeArgs += @(
@@ -150,6 +191,21 @@ if ($UseDeepSeekQueryPlanner) {
 }
 if ($VisionFramesPerCandidate -gt 0) {
     $youtubeArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
+}
+if ($PosePrefilter -or -not $SkipPosePrefilter) {
+    $youtubeArgs += @(
+        "--pose-prefilter",
+        "--pose-prefilter-model", $PosePrefilterModel,
+        "--pose-prefilter-sample-fps", "$PosePrefilterSampleFps",
+        "--pose-prefilter-max-seconds", "$PosePrefilterMaxSeconds",
+        "--pose-prefilter-window-seconds", "$PosePrefilterWindowSeconds",
+        "--pose-prefilter-overlap-seconds", "$PosePrefilterOverlapSeconds",
+        "--pose-prefilter-min-score", "$PosePrefilterMinScore",
+        "--pose-prefilter-workers", "$PosePrefilterWorkers"
+    )
+    if ($PosePrefilterCandidatesPerExercise.HasValue) {
+        $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$($PosePrefilterCandidatesPerExercise.Value)")
+    }
 }
 
 Invoke-PythonModule -Arguments $youtubeArgs
@@ -181,10 +237,16 @@ $bakeArgs = @(
     "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
-if (-not $SkipPreviewVariantRanking) {
+if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
     $bakeArgs += "--rank-preview-variants"
 }
-if ($SkipSupportDominanceClassification) {
+if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants)) {
+    $bakeArgs += @(
+        "--adaptive-preview-settings",
+        "--max-adaptive-preview-settings", "$MaxAdaptivePreviewSettings"
+    )
+}
+if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification) {
     $bakeArgs += "--no-classify-support-dominance"
 }
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
@@ -227,6 +289,9 @@ if ($SkipSmplify) {
 }
 if ($NoReuseWhamCache) {
     $bakeArgs += "--no-reuse-wham-cache"
+}
+if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+    $bakeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
 }
 if ($SkipMotionTuning) {
     $bakeArgs += "--skip-motion-tuning"

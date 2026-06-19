@@ -2320,13 +2320,15 @@ def build_boundary_refinement_prompt(
         f"Chunk source time range: {start_seconds:.2f}s to {end_seconds:.2f}s.\n"
         "Task: choose source-video start and end timestamps for a clean looping clip.\n"
         "The selected interval must contain one complete target-exercise cycle and should loop smoothly when end is followed by start.\n"
+        "Completeness is more important than perfect endpoint similarity: never remove the effort/return phase just to make endpoints match.\n"
+        "For lifting movements, include both directions of the rep, such as lowering plus pressing/pulling/standing back up.\n"
         "Pick start and end frames at visually compatible movement phases, preferably the same or very similar posture.\n"
         "For cyclical or mobility exercises, a good loop is usually endpoint A -> endpoint B -> endpoint A, or endpoint B -> endpoint A -> endpoint B.\n"
         "For strength exercises, a good loop is usually start/setup posture -> effort path -> return to the same start/setup posture.\n"
         "Do not choose first visible motion and last visible motion if those poses do not match for looping.\n"
         "Do not choose the full chunk unless its first and last frames already form a clean loop.\n"
         "The interval may start after the chunk begins and end before the chunk ends if that creates a better loop.\n"
-        "Do not return a partial transition, static hold, different exercise, setup-only segment, or recovery-only segment.\n"
+        "Do not return a partial transition, static hold, mid-rep to mid-rep shortcut, different exercise, setup-only segment, or recovery-only segment.\n"
         "If there is no clean loop inside the chunk, choose the best approximate loop that includes the complete movement and explain why.\n"
         "Use only the visible contact-sheet frames and their displayed source timestamps.\n"
         "Return valid JSON only:\n"
@@ -2626,11 +2628,16 @@ def _select_best_model_execution_span(
     return max(
         candidates,
         key=lambda item: (
-            item.confidence,
+            round(item.confidence, 3),
+            _detected_span_duration(item),
             -item.average_camera_variation,
             -item.start_seconds,
         ),
     )
+
+
+def _detected_span_duration(span: DetectedSpan) -> float:
+    return max(0.0, span.end_seconds - span.start_seconds)
 
 
 def cluster_has_complete_rep(detections: list[WindowDetection], *, cluster: list[int]) -> bool:

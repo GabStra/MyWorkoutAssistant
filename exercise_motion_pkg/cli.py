@@ -22,6 +22,7 @@ from exercise_motion_pkg.raw_preview import write_raw_motion_preview_html
 from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_wham_pkl
 from exercise_motion_pkg.trim_selector import TrimSelectorRequest, run_trim_selector
 from exercise_motion_pkg.video_utils import trim_video
+from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_DOCKER_IMAGE, DEFAULT_WHAM_DOCKER_SHM_SIZE
 from exercise_motion_pkg.youtube import YouTubeRankingSettings, discover_and_rank_youtube_candidates
 
 
@@ -71,15 +72,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.add_argument(
         "--wham-docker-image",
-        default="yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+        default=DEFAULT_WHAM_DOCKER_IMAGE,
         help="Docker image to use when --use-wham-docker is set.",
     )
     generate.add_argument("--wham-docker-gpus", default="all")
-    generate.add_argument("--wham-docker-shm-size", default="8g")
+    generate.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
     generate.add_argument(
         "--wham-estimate-local-only",
         action="store_true",
-        help="Skip SLAM and only produce camera-space motion from WHAM.",
+        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
+    )
+    generate.add_argument(
+        "--full-wham-camera-slam",
+        action="store_true",
+        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
     )
     generate.add_argument(
         "--skip-wham-smplify",
@@ -204,6 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--workout-plan-json", required=True)
     youtube_search.add_argument("--out-json", required=True)
     youtube_search.add_argument("--results-per-query", type=int, default=10)
+    youtube_search.add_argument("--youtube-search-empty-retries", type=int, default=5)
+    youtube_search.add_argument(
+        "--youtube-cookies",
+        "--youtube-cookies-path",
+        type=Path,
+        help="Path to a YouTube cookies.txt file for preview downloads used by YOLO/VLM ranking.",
+    )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
     youtube_search.add_argument("--metadata-candidate-pool-size", type=int)
     youtube_search.add_argument("--min-duration-seconds", type=int, default=20)
@@ -220,11 +233,35 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--deepseek-timeout-seconds", type=float, default=60.0)
     youtube_search.add_argument("--rank-with-litert", action="store_true")
     youtube_search.add_argument("--rank-with-vision", dest="rank_with_litert", action="store_true")
+    youtube_search.add_argument(
+        "--semantic-gate-with-litert",
+        action="store_true",
+        help="Use a text-only LiteRT-LM semantic gate before YOLO pose or VLM ranking.",
+    )
+    youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int)
+    youtube_search.add_argument("--semantic-gate-min-score", type=float, default=0.55)
+    youtube_search.add_argument("--semantic-gate-timeout-seconds", type=float, default=0.0)
+    youtube_search.add_argument("--pose-prefilter", action="store_true", help="Use YOLO pose as a fast visual prefilter before optional VLM ranking.")
+    youtube_search.add_argument("--pose-prefilter-model", default="yolo26x-pose.pt")
+    youtube_search.add_argument("--pose-prefilter-candidates-per-exercise", type=int)
+    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=2.0)
+    youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=90.0)
+    youtube_search.add_argument("--pose-prefilter-window-seconds", type=float, default=8.0)
+    youtube_search.add_argument("--pose-prefilter-overlap-seconds", type=float, default=4.0)
+    youtube_search.add_argument("--pose-prefilter-min-score", type=float, default=0.45)
+    youtube_search.add_argument("--pose-prefilter-min-keypoint-confidence", type=float, default=0.35)
+    youtube_search.add_argument("--pose-prefilter-min-body-scale", type=float, default=0.18)
+    youtube_search.add_argument("--pose-prefilter-workers", type=int, default=3)
     youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=8)
     youtube_search.add_argument("--vision-frames-per-candidate", type=int, default=6)
     youtube_search.add_argument("--vision-chunk-seconds", type=float)
     youtube_search.add_argument("--vision-chunk-overlap-seconds", type=float)
     youtube_search.add_argument("--vision-max-chunks-per-candidate", type=int, default=5)
+    youtube_search.add_argument("--no-vision-adaptive-chunk-review", action="store_true")
+    youtube_search.add_argument("--vision-initial-chunks-per-candidate", type=int, default=3)
+    youtube_search.add_argument("--vision-expand-chunks-per-candidate", type=int, default=2)
+    youtube_search.add_argument("--vision-motion-scan-sample-fps", type=float, default=0.5)
+    youtube_search.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
     youtube_search.add_argument("--vision-download-workers", type=int, default=3)
     youtube_search.add_argument("--vision-llm-workers", type=int, default=3)
     youtube_search.add_argument("--litert-command")
@@ -271,6 +308,12 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--body-model-root", required=True)
     bake_and_rank.add_argument("--wham-python", default="python")
     bake_and_rank.add_argument(
+        "--youtube-cookies",
+        "--youtube-cookies-path",
+        type=Path,
+        help="Path to a YouTube cookies.txt file for source downloads.",
+    )
+    bake_and_rank.add_argument(
         "--no-reuse-wham-cache",
         action="store_true",
         help="Run WHAM even when raw/wham/<input-video-stem>/wham_output.pkl already exists.",
@@ -278,11 +321,20 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--use-wham-docker", action="store_true")
     bake_and_rank.add_argument(
         "--wham-docker-image",
-        default="yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+        default=DEFAULT_WHAM_DOCKER_IMAGE,
     )
     bake_and_rank.add_argument("--wham-docker-gpus", default="all")
-    bake_and_rank.add_argument("--wham-docker-shm-size", default="8g")
-    bake_and_rank.add_argument("--estimate-local-only", action="store_true")
+    bake_and_rank.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    bake_and_rank.add_argument(
+        "--estimate-local-only",
+        action="store_true",
+        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
+    )
+    bake_and_rank.add_argument(
+        "--full-wham-camera-slam",
+        action="store_true",
+        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
+    )
     bake_and_rank.add_argument(
         "--skip-smplify",
         action="store_true",
@@ -332,6 +384,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--rank-preview-variants",
         action="store_true",
         help="Bake preset preview tuning variants and ask llama.cpp to score/select the best loopable preview section.",
+    )
+    bake_and_rank.add_argument(
+        "--adaptive-preview-settings",
+        action="store_true",
+        help="Use a baseline visual review to ask the VLM for a small set of preview settings to bake instead of sweeping every preset variant.",
+    )
+    bake_and_rank.add_argument(
+        "--max-adaptive-preview-settings",
+        type=int,
+        default=3,
+        help="Maximum VLM-suggested preview settings variants to bake in --adaptive-preview-settings mode. The baseline is always included.",
     )
     bake_and_rank.add_argument("--min-selected-score", type=float, default=0.55)
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
@@ -422,7 +485,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="SMPL body model root used when --run-wham-on-write is set.",
     )
     select_trim.add_argument("--wham-python-command", default="python")
-    select_trim.add_argument("--wham-estimate-local-only", action="store_true")
+    select_trim.add_argument(
+        "--wham-estimate-local-only",
+        action="store_true",
+        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
+    )
+    select_trim.add_argument(
+        "--full-wham-camera-slam",
+        action="store_true",
+        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
+    )
     select_trim.add_argument("--skip-wham-smplify", action="store_true")
     select_trim.add_argument("--skip-motion-tuning", action="store_true")
     select_trim.add_argument("--dominant-chain-ratio", type=float, default=0.65)
@@ -511,7 +583,7 @@ def main() -> None:
                 wham_docker_image=args.wham_docker_image,
                 wham_docker_gpus=args.wham_docker_gpus,
                 wham_docker_shm_size=args.wham_docker_shm_size,
-                wham_estimate_local_only=args.wham_estimate_local_only,
+                wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_wham_smplify,
                 normalized_motion_json=Path(args.normalized_motion_json) if args.normalized_motion_json else None,
                 one_euro_min_cutoff=args.one_euro_min_cutoff,
@@ -675,6 +747,8 @@ def main() -> None:
             out_json=Path(args.out_json),
             settings=YouTubeRankingSettings(
                 results_per_query=args.results_per_query,
+                youtube_search_empty_retries=args.youtube_search_empty_retries,
+                youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
                 max_candidates=args.max_candidates,
                 metadata_candidate_pool_size=args.metadata_candidate_pool_size,
                 min_duration_seconds=args.min_duration_seconds,
@@ -686,13 +760,36 @@ def main() -> None:
                 deepseek_max_queries=args.deepseek_max_queries,
                 deepseek_timeout_seconds=args.deepseek_timeout_seconds,
                 rank_with_litert=args.rank_with_litert,
+                semantic_gate_enabled=args.semantic_gate_with_litert,
+                semantic_gate_candidates_per_exercise=args.semantic_gate_candidates_per_exercise,
+                semantic_gate_min_score=args.semantic_gate_min_score,
+                semantic_gate_timeout_seconds=args.semantic_gate_timeout_seconds,
+                pose_prefilter_enabled=args.pose_prefilter,
+                pose_prefilter_model=args.pose_prefilter_model,
+                pose_prefilter_candidates_per_exercise=args.pose_prefilter_candidates_per_exercise,
+                pose_prefilter_sample_fps=args.pose_prefilter_sample_fps,
+                pose_prefilter_max_seconds=args.pose_prefilter_max_seconds,
+                pose_prefilter_window_seconds=args.pose_prefilter_window_seconds,
+                pose_prefilter_overlap_seconds=args.pose_prefilter_overlap_seconds,
+                pose_prefilter_min_score=args.pose_prefilter_min_score,
+                pose_prefilter_min_keypoint_confidence=args.pose_prefilter_min_keypoint_confidence,
+                pose_prefilter_min_body_scale=args.pose_prefilter_min_body_scale,
+                pose_prefilter_workers=args.pose_prefilter_workers,
                 vision_candidates_per_exercise=args.vision_candidates_per_exercise,
                 vision_frames_per_candidate=args.vision_frames_per_candidate,
                 vision_chunk_seconds=args.vision_chunk_seconds,
                 vision_chunk_overlap_seconds=args.vision_chunk_overlap_seconds,
                 vision_max_chunks_per_candidate=args.vision_max_chunks_per_candidate,
+                vision_adaptive_chunk_review=not args.no_vision_adaptive_chunk_review,
+                vision_initial_chunks_per_candidate=args.vision_initial_chunks_per_candidate,
+                vision_expand_chunks_per_candidate=args.vision_expand_chunks_per_candidate,
+                vision_motion_scan_sample_fps=args.vision_motion_scan_sample_fps,
+                vision_motion_scan_max_seconds=args.vision_motion_scan_max_seconds,
                 vision_download_workers=args.vision_download_workers,
                 vision_llm_workers=args.vision_llm_workers,
+                litert_command=args.litert_command,
+                litert_backend=args.litert_backend,
+                vision_model=args.vision_model,
                 llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
                 llama_cpp_model=args.llama_cpp_model,
                 llama_cpp_command=args.llama_cpp_command,
@@ -719,6 +816,7 @@ def main() -> None:
                 workspace=Path(args.workspace),
                 wham_repo_path=Path(args.wham_repo_path),
                 body_model_root=Path(args.body_model_root),
+                youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
                 fallback_candidates=args.fallback_candidates,
                 candidate_workers=args.candidate_workers,
                 wham_python_command=args.wham_python,
@@ -727,7 +825,7 @@ def main() -> None:
                 wham_docker_image=args.wham_docker_image,
                 wham_docker_gpus=args.wham_docker_gpus,
                 wham_docker_shm_size=args.wham_docker_shm_size,
-                wham_estimate_local_only=args.estimate_local_only,
+                wham_estimate_local_only=args.estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_smplify,
                 detect_source_segment=not args.skip_source_segment_detection,
                 segment_base_url=args.segment_base_url,
@@ -750,6 +848,8 @@ def main() -> None:
                 max_llm_review_items=args.max_llm_review_items,
                 max_review_windows=args.max_review_windows,
                 rank_preview_variants=args.rank_preview_variants,
+                adaptive_preview_settings=args.adaptive_preview_settings,
+                max_adaptive_preview_settings=args.max_adaptive_preview_settings,
                 min_selected_score=args.min_selected_score,
                 motion_tuning_enabled=not args.skip_motion_tuning,
                 classify_support_dominance=not args.no_classify_support_dominance,
@@ -829,7 +929,7 @@ def main() -> None:
                 wham_repo_path=Path(args.wham_repo_path),
                 body_model_root=Path(args.body_model_root),
                 wham_python_command=args.wham_python_command,
-                wham_estimate_local_only=args.wham_estimate_local_only,
+                wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_wham_smplify,
                 motion_tuning_enabled=not args.skip_motion_tuning,
                 dominant_chain_ratio=args.dominant_chain_ratio,

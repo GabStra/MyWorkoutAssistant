@@ -106,13 +106,14 @@ def write_preview_html(
     *,
     title: str,
     debug_json_path: Path | None = None,
-    smpl_mesh_payload: dict[str, object] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
     has_horizontal_torso_profile = _has_horizontal_torso_profile(preview_clip.frames)
-    default_auto_alignment = _serialize_preview_rotations(_compute_preview_auto_alignment(preview_clip.frames))
+    default_auto_alignment_rotations = _compute_preview_auto_alignment(preview_clip.frames)
+    default_auto_alignment = _serialize_preview_rotations(default_auto_alignment_rotations)
+    default_scene_inverted = _aligned_body_points_down(preview_clip.frames, default_auto_alignment_rotations)
     detected_loops = [
         {
             **loop,
@@ -139,9 +140,11 @@ def write_preview_html(
             if preview_clip.metadata.get("upstream") == "gvhmr"
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
-        "defaultSceneInverted": False,
-        "defaultAutoWorldAlignment": bool(default_auto_alignment) or not has_horizontal_torso_profile,
+        "defaultSceneInverted": default_scene_inverted,
+        "defaultAutoWorldAlignment": bool(default_auto_alignment) and not has_horizontal_torso_profile,
         "defaultAutoAlignment": default_auto_alignment,
+        "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
+        "defaultCameraPitchDegrees": 0.0 if has_horizontal_torso_profile else 10.3,
         "previewMaxRenderFps": min(30.0, max(12.0, float(preview_clip.fps))),
         "motionTuningEnabled": not raw_motion_review,
         "rawWhamPassthrough": raw_motion_review,
@@ -157,7 +160,6 @@ def write_preview_html(
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
-        "smplMesh": smpl_mesh_payload,
         "comparisonFrames": _build_preview_comparison_frames(clip, preview_clip),
         "rawComparisonFrames": _build_preview_raw_comparison_frames(clip),
         "structuralRefinement": (
@@ -1145,6 +1147,7 @@ def _compute_preview_auto_alignment(
 ) -> list[tuple[tuple[float, float, float], float]]:
     if not frames:
         return []
+    dominant_target_axis = _dominant_movement_nearest_world_axis(frames)
     rotations: list[tuple[tuple[float, float, float], float]] = []
     aligned_frames = frames
     spine_rotation = _estimate_upright_spine_alignment_rotation(aligned_frames)
@@ -1152,15 +1155,26 @@ def _compute_preview_auto_alignment(
         rotations.append(spine_rotation)
         aligned_frames = [_rotate_frame(frame, spine_rotation) for frame in aligned_frames]
     support_plane_rotation = _estimate_support_plane_alignment_rotation(aligned_frames)
-    if support_plane_rotation is not None and _rotation_preserves_upright_spine(aligned_frames, support_plane_rotation):
+    if (
+        support_plane_rotation is not None
+        and _rotation_preserves_body_orientation(aligned_frames, support_plane_rotation)
+        and _rotation_preserves_dominant_movement_alignment(
+            aligned_frames,
+            support_plane_rotation,
+            dominant_target_axis,
+        )
+    ):
         rotations.append(support_plane_rotation)
         aligned_frames = [_rotate_frame(frame, support_plane_rotation) for frame in aligned_frames]
     support_profile_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
     if support_profile_rotation is not None:
         rotations.append(support_profile_rotation)
         aligned_frames = [_rotate_frame(frame, support_profile_rotation) for frame in aligned_frames]
-    movement_axis_rotation = _estimate_dominant_movement_to_nearest_world_axis_rotation(aligned_frames)
-    if movement_axis_rotation is not None:
+    movement_axis_rotation = _estimate_dominant_movement_to_nearest_world_axis_rotation(
+        aligned_frames,
+        target_axis=dominant_target_axis,
+    )
+    if movement_axis_rotation is not None and _rotation_preserves_body_orientation(aligned_frames, movement_axis_rotation):
         rotations.append(movement_axis_rotation)
     return rotations
 
@@ -1188,6 +1202,8 @@ def _estimate_shoulder_floor_level_rotation(
 
 def _estimate_dominant_movement_to_nearest_world_axis_rotation(
     frames: list[MotionFrame],
+    *,
+    target_axis: tuple[float, float, float] | None = None,
 ) -> tuple[tuple[float, float, float], float] | None:
     points = _dominant_movement_axis_points(frames)
     if points is None:
@@ -1200,22 +1216,57 @@ def _estimate_dominant_movement_to_nearest_world_axis_rotation(
     displacement = _subtract_points(points[-1], points[0])
     if _dot(direction, displacement) < 0.0:
         direction = _scale_vector(direction, -1.0)
-    horizontal_magnitude = math.hypot(direction[0], direction[2])
-    vertical_magnitude = abs(direction[1])
-    if horizontal_magnitude <= 1e-6:
+    target = target_axis or _nearest_signed_world_axis(direction)
+    return _rotation_between_vectors(direction, target, minimum_degrees=2.0)
+
+
+def _dominant_movement_nearest_world_axis(
+    frames: list[MotionFrame],
+) -> tuple[float, float, float] | None:
+    points = _dominant_movement_axis_points(frames)
+    if points is None:
         return None
-    if vertical_magnitude >= horizontal_magnitude * DOMINANT_MOVEMENT_AXIS_VERTICAL_RATIO:
+    direction = _principal_direction_3d(points)
+    if direction is None:
+        direction = _subtract_points(points[-1], points[0])
+    if _vector_length(direction) <= 1e-6:
         return None
-    horizontal_range = _horizontal_point_track_range(points)
-    if horizontal_range < DOMINANT_MOVEMENT_AXIS_MIN_HORIZONTAL_RANGE:
+    displacement = _subtract_points(points[-1], points[0])
+    if _dot(direction, displacement) < 0.0:
+        direction = _scale_vector(direction, -1.0)
+    return _nearest_signed_world_axis(direction)
+
+
+def _rotation_preserves_dominant_movement_alignment(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+    target_axis: tuple[float, float, float] | None,
+) -> bool:
+    if target_axis is None:
+        return True
+    before = _dominant_movement_alignment_score(frames, target_axis)
+    if before is None or before < 0.70:
+        return True
+    rotated_frames = [_rotate_frame(frame, rotation) for frame in frames]
+    after = _dominant_movement_alignment_score(rotated_frames, target_axis)
+    if after is None:
+        return True
+    return after >= max(0.70, before - 0.12)
+
+
+def _dominant_movement_alignment_score(
+    frames: list[MotionFrame],
+    target_axis: tuple[float, float, float],
+) -> float | None:
+    points = _dominant_movement_axis_points(frames)
+    if points is None:
         return None
-    source_angle = math.atan2(direction[2], direction[0])
-    target = _nearest_signed_horizontal_world_axis((direction[0], direction[2]))
-    target_angle = math.atan2(target[1], target[0])
-    yaw = _normalize_signed_angle(source_angle - target_angle)
-    if abs(yaw) <= math.radians(2.0):
+    direction = _principal_direction_3d(points)
+    if direction is None:
+        direction = _subtract_points(points[-1], points[0])
+    if _vector_length(direction) <= 1e-6:
         return None
-    return ((0.0, 1.0, 0.0), yaw)
+    return abs(_dot(_normalize(direction), _normalize(target_axis)))
 
 
 def _dominant_movement_axis_points(
@@ -1224,16 +1275,16 @@ def _dominant_movement_axis_points(
     candidates: list[tuple[float, list[tuple[float, float, float]]]] = []
     for joint_name in DOMINANT_MOVEMENT_AXIS_JOINTS:
         points = _joint_motion_axis_points(frames, joint_name, root_relative=True)
-        _append_motion_axis_candidate(candidates, points)
+        _append_motion_axis_candidate(candidates, points, priority=_dominant_movement_joint_priority(joint_name))
     for joint_name in ("pelvis", "spine2", "spine1"):
         points = _joint_motion_axis_points(frames, joint_name, root_relative=False)
-        _append_motion_axis_candidate(candidates, points)
+        _append_motion_axis_candidate(candidates, points, priority=0.55)
     body_points = [
         point
         for point in _smooth_motion_line_path([_frame_joint_center(frame) for frame in frames])
         if point is not None
     ]
-    _append_motion_axis_candidate(candidates, body_points)
+    _append_motion_axis_candidate(candidates, body_points, priority=0.45)
     if not candidates:
         return None
     candidates.sort(key=lambda candidate: candidate[0], reverse=True)
@@ -1260,15 +1311,35 @@ def _joint_motion_axis_points(
 def _append_motion_axis_candidate(
     candidates: list[tuple[float, list[tuple[float, float, float]]]],
     points: list[tuple[float, float, float]],
+    *,
+    priority: float,
 ) -> None:
     if len(points) < 3:
         return
     track_range = _point_track_range(points)
     if track_range < DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
         return
-    horizontal_range = _horizontal_point_track_range(points)
-    score = max(track_range, horizontal_range)
+    direction = _principal_direction_3d(points) or _subtract_points(points[-1], points[0])
+    direction_length = _vector_length(direction)
+    if direction_length <= 1e-6:
+        return
+    axis_range = _point_track_range_along_direction(points, direction)
+    residual_range = max(0.0, track_range - axis_range)
+    coherence = axis_range / max(track_range, 1e-6)
+    if coherence < 0.45 and residual_range > DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
+        return
+    score = track_range * coherence * max(0.0, priority)
     candidates.append((score, points))
+
+
+def _dominant_movement_joint_priority(joint_name: str) -> float:
+    if joint_name in {"left_hand", "right_hand", "left_wrist", "right_wrist"}:
+        return 1.6
+    if joint_name in {"left_elbow", "right_elbow", "left_foot", "right_foot", "left_ankle", "right_ankle"}:
+        return 1.25
+    if joint_name in {"left_knee", "right_knee"}:
+        return 1.0
+    return 0.75
 
 
 def _horizontal_point_track_range(points: list[tuple[float, float, float]]) -> float:
@@ -1280,6 +1351,36 @@ def _horizontal_point_track_range(points: list[tuple[float, float, float]]) -> f
         max(math.hypot(point[0] - center_x, point[2] - center_z) for point in points) *
         2.0
     )
+
+
+def _point_track_range_along_direction(
+    points: list[tuple[float, float, float]],
+    direction: tuple[float, float, float],
+) -> float:
+    if len(points) < 2:
+        return 0.0
+    normalized = _normalize(direction)
+    if _vector_length(normalized) <= 1e-6:
+        return 0.0
+    projections = [_dot(point, normalized) for point in points]
+    return max(projections) - min(projections)
+
+
+def _nearest_signed_world_axis(
+    direction: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    normalized = _normalize(direction)
+    if _vector_length(normalized) <= 1e-8:
+        return (0.0, 1.0, 0.0)
+    axes = (
+        (1.0, 0.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, -1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, -1.0),
+    )
+    return max(axes, key=lambda candidate: _dot(normalized, candidate))
 
 
 def _nearest_signed_horizontal_world_axis(
@@ -1773,6 +1874,31 @@ def _rotation_preserves_upright_spine(
     return average_verticality >= math.cos(math.radians(8.0))
 
 
+def _rotation_preserves_body_orientation(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    if _collect_upright_spine_vectors(frames):
+        return _rotation_preserves_upright_spine(frames, rotation)
+    if _classify_torso_alignment_mode(frames) == "horizontal_plane":
+        return _rotation_preserves_horizontal_torso(frames, rotation)
+    return True
+
+
+def _rotation_preserves_horizontal_torso(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    spine_vectors = _collect_spine_vectors(frames)
+    if len(spine_vectors) < 3:
+        return True
+    before = _median([abs(vector[1]) for vector in spine_vectors])
+    axis, angle = rotation
+    rotated = [_rotate_point(vector, axis=axis, angle=angle) for vector in spine_vectors]
+    after = _median([abs(vector[1]) for vector in rotated])
+    return after <= max(0.18, before + 0.10)
+
+
 def _estimate_upright_spine_alignment_rotation(
     frames: list[MotionFrame],
 ) -> tuple[tuple[float, float, float], float] | None:
@@ -1842,6 +1968,28 @@ def _apply_rotations_to_point(
     for axis, angle in rotations:
         rotated = _rotate_point(rotated, axis=axis, angle=angle)
     return rotated
+
+
+def _aligned_body_points_down(
+    frames: list[MotionFrame],
+    rotations: list[tuple[tuple[float, float, float], float]],
+) -> bool:
+    y_values: list[float] = []
+    for frame in frames:
+        pelvis = frame.joints.get("pelvis")
+        upper = (
+            frame.joints.get("neck")
+            or frame.joints.get("spine3")
+            or frame.joints.get("head")
+        )
+        if pelvis is None or upper is None:
+            continue
+        aligned_pelvis = _apply_rotations_to_point(pelvis, rotations)
+        aligned_upper = _apply_rotations_to_point(upper, rotations)
+        y_values.append(aligned_upper[1] - aligned_pelvis[1])
+    if not y_values:
+        return False
+    return _median(y_values) < -0.05
 
 
 def _extract_motion_line_samples(frames: list[MotionFrame]) -> list[tuple[float, float]]:
@@ -3322,8 +3470,8 @@ def _build_html(payload: dict[str, object]) -> str:
     document.getElementById("frameCount").textContent = String(payload.frameCount);
     document.getElementById("fps").textContent = String(payload.fps);
 
-    let yaw = 0.0;
-    let pitch = 0.18;
+    let yaw = (Number(payload.defaultCameraYawDegrees) || 0.0) * Math.PI / 180;
+    let pitch = (Number(payload.defaultCameraPitchDegrees) || 0.0) * Math.PI / 180;
     let zoom = parseFloat(zoomInput.value);
     let speed = parseFloat(speedInput.value);
     let fixedRoot = Boolean(payload.defaultFixedRoot);
@@ -4268,15 +4416,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (activeFrames.length < 2) {{
         return activeFrames;
       }}
-      const bridgeFrameCount = Math.min(12, Math.max(4, Math.round(activeFrames.length * 0.12)));
-      const endLoopFrame = activeFrames[activeFrames.length - 1];
-      const startLoopFrame = activeFrames[0];
-      const bridgedFrames = activeFrames.slice();
-      for (let bridgeIndex = 1; bridgeIndex <= bridgeFrameCount; bridgeIndex += 1) {{
-        const alpha = bridgeIndex / (bridgeFrameCount + 1);
-        bridgedFrames.push(interpolateSyntheticLoopFrame(endLoopFrame, startLoopFrame, alpha, bridgeIndex));
-      }}
-      return bridgedFrames;
+      return activeFrames;
     }}
 
     function buildPlaybackState(frames, loop) {{
@@ -4478,16 +4618,6 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function getFrameTranslation(frame) {{
-      if (lockPlantedHands && activeHandSupportAnchor) {{
-        const handSupportPoint = getFrameHandSupportPoint(frame);
-        if (handSupportPoint) {{
-          return [
-            handSupportPoint.x - activeHandSupportAnchor.x,
-            handSupportPoint.y - activeHandSupportAnchor.y,
-            handSupportPoint.z - activeHandSupportAnchor.z,
-          ];
-        }}
-      }}
       if (!fixedRoot) {{
         return [0, 0, 0];
       }}
@@ -4551,9 +4681,11 @@ def _build_html(payload: dict[str, object]) -> str:
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
-          xValues.push(point[0]);
-          yValues.push(point[1]);
-          zValues.push(point[2]);
+          const frameTranslation = fixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
+          const scenePoint = toUncorrectedWorldPoint(point, frameTranslation, frame);
+          xValues.push(scenePoint.x);
+          yValues.push(scenePoint.y);
+          zValues.push(scenePoint.z);
         }}
         if (xValues.length >= 3) {{
           anchors.set(jointName, new THREE.Vector3(
@@ -4674,16 +4806,6 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function getFrameBakeTranslation(frame, lockYDrift) {{
-      if (lockPlantedHands && activeHandSupportAnchor) {{
-        const handSupportPoint = getFrameHandSupportPoint(frame);
-        if (handSupportPoint) {{
-          return [
-            handSupportPoint.x - activeHandSupportAnchor.x,
-            handSupportPoint.y - activeHandSupportAnchor.y,
-            handSupportPoint.z - activeHandSupportAnchor.z,
-          ];
-        }}
-      }}
       if (!fixedRoot) {{
         return [0, 0, 0];
       }}
@@ -4778,31 +4900,29 @@ def _build_html(payload: dict[str, object]) -> str:
       return tempPivotedPoint.clone();
     }}
 
-    function toUncorrectedWorldPoint(point, frameTranslation) {{
+    function toRootAdjustedPoint(point, frameTranslation) {{
       const tx = frameTranslation?.[0] ?? 0;
       const ty = frameTranslation?.[1] ?? 0;
       const tz = frameTranslation?.[2] ?? 0;
-      const transformedPoint = applyAutoAlignment(new THREE.Vector3(
+      return new THREE.Vector3(
         point[0] - tx,
         point[1] - ty,
         point[2] - tz
-      ));
-      applyLockedHandBodyDriftCorrection(transformedPoint);
-      applyFrameShoulderLeveling(transformedPoint, activeRenderFrame, frameTranslation);
+      );
+    }}
+
+    function applySceneTransform(point) {{
+      const transformedPoint = applyAutoAlignment(point);
       if (sceneInverted) {{
         transformedPoint.applyAxisAngle(axisX, Math.PI);
       }}
       return transformedPoint;
     }}
 
-    function applyLockedHandBodyDriftCorrection(point) {{
-      const correction = computeLockedHandBodyDriftCorrection(activeRenderFrame);
-      if (!correction) {{
-        return point;
-      }}
-      point.x -= correction.x;
-      point.z -= correction.z;
-      return point;
+    function toUncorrectedWorldPoint(point, frameTranslation, frame = activeRenderFrame) {{
+      const transformedPoint = applySceneTransform(toRootAdjustedPoint(point, frameTranslation));
+      applyFrameShoulderLeveling(transformedPoint, frame, frameTranslation);
+      return transformedPoint;
     }}
 
     function computeLockedHandBodyDriftCorrection(frame) {{
@@ -4823,7 +4943,7 @@ def _build_html(payload: dict[str, object]) -> str:
         bodyPoint.y - (handSupportPoint.y - activeHandSupportAnchor.y),
         bodyPoint.z - (handSupportPoint.z - activeHandSupportAnchor.z)
       );
-      const alignedBodyPoint = applyAutoAlignment(handLockedBodyPoint);
+      const alignedBodyPoint = applySceneTransform(handLockedBodyPoint);
       return {{
         x: alignedBodyPoint.x - anchor.x,
         z: alignedBodyPoint.z - anchor.z,
@@ -4834,7 +4954,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!lockPlantedHands || !activeHandSupportAnchor) {{
         return null;
       }}
-      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}`;
+      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
       if (lockedHandBodyDriftAnchorKey === cacheKey) {{
         return lockedHandBodyDriftAnchor;
       }}
@@ -4853,7 +4973,7 @@ def _build_html(payload: dict[str, object]) -> str:
           bodyPoint.y - (handSupportPoint.y - activeHandSupportAnchor.y),
           bodyPoint.z - (handSupportPoint.z - activeHandSupportAnchor.z)
         );
-        const alignedBodyPoint = applyAutoAlignment(handLockedBodyPoint);
+        const alignedBodyPoint = applySceneTransform(handLockedBodyPoint);
         xValues.push(alignedBodyPoint.x);
         zValues.push(alignedBodyPoint.z);
       }}
@@ -4882,7 +5002,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!lockPlantedHands || !activeHandSupportAnchor) {{
         return null;
       }}
-      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}`;
+      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
       if (lockedHandMovementAlignmentKey === cacheKey) {{
         return lockedHandMovementAlignmentTransform;
       }}
@@ -4895,7 +5015,7 @@ def _build_html(payload: dict[str, object]) -> str:
         if (!handSupportPoint || !bodyPoint) {{
           continue;
         }}
-        points.push(applyAutoAlignment(new THREE.Vector3(
+        points.push(applySceneTransform(new THREE.Vector3(
           bodyPoint.x - (handSupportPoint.x - activeHandSupportAnchor.x),
           bodyPoint.y - (handSupportPoint.y - activeHandSupportAnchor.y),
           bodyPoint.z - (handSupportPoint.z - activeHandSupportAnchor.z)
@@ -4922,7 +5042,7 @@ def _build_html(payload: dict[str, object]) -> str:
         return null;
       }}
       lockedHandMovementAlignmentTransform = {{
-        pivot: applyAutoAlignment(new THREE.Vector3(activeHandSupportAnchor.x, activeHandSupportAnchor.y, activeHandSupportAnchor.z)),
+        pivot: applySceneTransform(new THREE.Vector3(activeHandSupportAnchor.x, activeHandSupportAnchor.y, activeHandSupportAnchor.z)),
         quaternion: new THREE.Quaternion().setFromAxisAngle(rotationAxis, angle),
       }};
       return lockedHandMovementAlignmentTransform;
@@ -5014,7 +5134,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (lockPlantedHands || !autoWorldAlignmentEnabled || !frame) {{
         return null;
       }}
-      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}`;
+      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
       if (frameShoulderLevelingKey === cacheKey) {{
         return frameShoulderLevelingTransform;
       }}
@@ -5028,8 +5148,8 @@ def _build_html(payload: dict[str, object]) -> str:
       const tx = frameTranslation?.[0] ?? 0;
       const ty = frameTranslation?.[1] ?? 0;
       const tz = frameTranslation?.[2] ?? 0;
-      const leftPoint = applyAutoAlignment(new THREE.Vector3(left[0] - tx, left[1] - ty, left[2] - tz));
-      const rightPoint = applyAutoAlignment(new THREE.Vector3(right[0] - tx, right[1] - ty, right[2] - tz));
+      const leftPoint = applySceneTransform(new THREE.Vector3(left[0] - tx, left[1] - ty, left[2] - tz));
+      const rightPoint = applySceneTransform(new THREE.Vector3(right[0] - tx, right[1] - ty, right[2] - tz));
       const shoulderAxis = rightPoint.clone().sub(leftPoint);
       const horizontalAxis = new THREE.Vector3(shoulderAxis.x, 0, shoulderAxis.z);
       if (shoulderAxis.lengthSq() <= 1e-8 || horizontalAxis.lengthSq() <= 1e-8) {{
@@ -5213,7 +5333,7 @@ def _build_html(payload: dict[str, object]) -> str:
         lockedJointPositions = new Map();
         return lockedJointPositions;
       }}
-      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{lockPlantedFeet}}|${{lockPlantedHands}}`;
+      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{lockPlantedFeet}}|${{lockPlantedHands}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
       if (lockedJointFrameKey === cacheKey) {{
         return lockedJointPositions;
       }}
@@ -5224,12 +5344,11 @@ def _build_html(payload: dict[str, object]) -> str:
       if (lockPlantedHands) {{
         const handAnchors = computeActiveHandJointAnchors(playbackState.boundsFrames);
         for (const [jointName, anchor] of handAnchors.entries()) {{
-          const targetPoint = applyAutoAlignment(anchor);
           activeTargets.push({{
             jointName,
-            anchorX: targetPoint.x,
-            anchorY: targetPoint.y,
-            anchorZ: targetPoint.z,
+            anchorX: anchor.x,
+            anchorY: anchor.y,
+            anchorZ: anchor.z,
             weight: 1,
           }});
         }}
@@ -5456,9 +5575,19 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
+    function sanitizedPlaybackSpeed(value) {{
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {{
+        return 1.0;
+      }}
+      return Math.max(0.5, Math.min(1.5, parsed));
+    }}
+
     function buildBakedWearSkeletonPayload() {{
       const activeFrames = playbackState.frames ?? [];
       const lockYDrift = Boolean(lockYRootInput.checked);
+      const exportPlaybackSpeed = sanitizedPlaybackSpeed(speed);
+      const exportFps = Math.max(1, Number(payload.fps) * exportPlaybackSpeed);
       getCachedSceneBounds(fixedRoot);
       const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
       const frames = activeFrames.map((frame, index) => {{
@@ -5476,7 +5605,7 @@ def _build_html(payload: dict[str, object]) -> str:
         return {{
           frameIndex: index,
           sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
-          timeSec: (frame.timeSec ?? 0) - firstSourceTime,
+          timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
           sourceTimeSec: frame.timeSec ?? 0,
           syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
           rootTranslationApplied: translation,
@@ -5489,7 +5618,8 @@ def _build_html(payload: dict[str, object]) -> str:
       const sourceEndFrame = timelineFrames.length > 0 ? timelineFrames[timelineFrames.length - 1].sourceFrameIndex : sourceStartFrame;
       const sourceStartTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[0].sourceTimeSec) || 0 : 0;
       const sourceEndTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec) || sourceStartTimeSec : sourceStartTimeSec;
-      const durationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
+      const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
+      const durationSec = sourceDurationSec / exportPlaybackSpeed;
       return {{
         schemaVersion: 1,
         kind: "wearPreviewSkeleton",
@@ -5500,7 +5630,8 @@ def _build_html(payload: dict[str, object]) -> str:
           activeStartFrame: sourceStartFrame,
           activeEndFrame: sourceEndFrame,
         }},
-        fps: payload.fps,
+        fps: exportFps,
+        playbackSpeed: exportPlaybackSpeed,
         frameCount: frames.length,
         durationSec,
         jointNames: payload.jointNames,
@@ -5512,6 +5643,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockPlantedFeet,
           lockPlantedHands,
           invertScene: sceneInverted,
+          playbackSpeed: exportPlaybackSpeed,
           selectedLoopIndex,
           rawWhamPassthrough: Boolean(payload.rawWhamPassthrough),
         }},
@@ -5523,6 +5655,7 @@ def _build_html(payload: dict[str, object]) -> str:
           sourceEndFrame,
           sourceStartTimeSec,
           sourceEndTimeSec,
+          sourceDurationSec,
           durationSec,
           label: currentLoop?.label ?? "Full clip",
         }},
@@ -5566,6 +5699,8 @@ def _build_html(payload: dict[str, object]) -> str:
       }}
       const activeFrames = playbackState.frames ?? [];
       const lockYDrift = Boolean(lockYRootInput.checked);
+      const exportPlaybackSpeed = sanitizedPlaybackSpeed(speed);
+      const exportFps = Math.max(1, Number(payload.fps) * exportPlaybackSpeed);
       getCachedSceneBounds(fixedRoot);
       const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
       const frames = [];
@@ -5583,7 +5718,7 @@ def _build_html(payload: dict[str, object]) -> str:
         frames.push({{
           frameIndex: frames.length,
           sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
-          timeSec: (frame.timeSec ?? 0) - firstSourceTime,
+          timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
           sourceTimeSec: frame.timeSec ?? 0,
           syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
           rootTranslationApplied: translation,
@@ -5599,13 +5734,15 @@ def _build_html(payload: dict[str, object]) -> str:
       const sourceEndFrame = timelineFrames.length > 0 ? timelineFrames[timelineFrames.length - 1].sourceFrameIndex : sourceStartFrame;
       const sourceStartTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[0].sourceTimeSec) || 0 : 0;
       const sourceEndTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec) || sourceStartTimeSec : sourceStartTimeSec;
-      const durationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
+      const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
+      const durationSec = sourceDurationSec / exportPlaybackSpeed;
       return {{
         schemaVersion: 1,
         kind: "whamBakedSmplMeshPreview",
         title: payload.title,
         bodyModel: meshPayload.bodyModel ?? "smpl",
-        fps: payload.fps,
+        fps: exportFps,
+        playbackSpeed: exportPlaybackSpeed,
         frameCount: frames.length,
         durationSec,
         faces: meshPayload.faces,
@@ -5616,6 +5753,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockPlantedFeet,
           lockPlantedHands,
           invertScene: sceneInverted,
+          playbackSpeed: exportPlaybackSpeed,
           selectedLoopIndex,
           runtimeBaked: true,
           postProcessingApplied: payload.rawWhamPassthrough
@@ -5639,6 +5777,7 @@ def _build_html(payload: dict[str, object]) -> str:
           sourceEndFrame,
           sourceStartTimeSec,
           sourceEndTimeSec,
+          sourceDurationSec,
           durationSec,
           label: currentLoop?.label ?? "Full clip",
         }},
@@ -6023,6 +6162,10 @@ def _build_html(payload: dict[str, object]) -> str:
       if (Object.prototype.hasOwnProperty.call(options, "showBoundsHelper")) {{
         showBoundsHelper = Boolean(options.showBoundsHelper);
       }}
+      if (Number.isFinite(Number(options.playbackSpeed))) {{
+        speed = sanitizedPlaybackSpeed(options.playbackSpeed);
+        speedInput.value = String(speed);
+      }}
       invalidateSceneBoundsCache();
       activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);
       applySceneReframe();
@@ -6122,6 +6265,16 @@ def _build_html(payload: dict[str, object]) -> str:
         description: "Tilts the review camera up or down.",
         useWhen: "Use to keep feet and head visible while preserving movement readability.",
         risk: "Only affects review/export framing, not the underlying motion.",
+      }},
+      {{
+        id: "playbackSpeed",
+        label: "Playback speed",
+        type: "number",
+        defaultValue: 1.0,
+        range: [0.5, 1.5],
+        description: "Changes the exported animation timing without changing the pose geometry.",
+        useWhen: "Use below 1.0 when the rep looks rushed, or above 1.0 when the rep is too slow for a compact Wear animation.",
+        risk: "Too slow can feel sluggish; too fast can hide exercise range or make the loop hard to read.",
       }},
     ];
 
@@ -6608,14 +6761,15 @@ def _build_html(payload: dict[str, object]) -> str:
       const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
       const verticalFov = THREE.MathUtils.degToRad(perspectiveCamera.fov);
       const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * perspectiveCamera.aspect);
-      const fitHeightDistance = height * 0.5 / Math.tan(verticalFov * 0.5);
-      const fitWidthDistance = width * 0.5 / Math.tan(horizontalFov * 0.5);
-      return Math.max(0.7, fitHeightDistance, fitWidthDistance, depth * 1.1);
+      const boundingRadius = Math.sqrt(width * width + height * height + depth * depth) * 0.5;
+      const fitHeightDistance = boundingRadius / Math.tan(verticalFov * 0.5);
+      const fitWidthDistance = boundingRadius / Math.tan(horizontalFov * 0.5);
+      return Math.max(0.7, fitHeightDistance, fitWidthDistance);
     }}
 
     function updateCamera() {{
       const zoomScale = 240 / Math.max(120, zoom);
-      const distance = getCameraFitDistance() * zoomScale * 1.18;
+      const distance = getCameraFitDistance() * zoomScale * 1.28;
       const horizontalDistance = Math.cos(pitch) * distance;
       refreshSceneBasis();
       perspectiveCamera.position.copy(cameraTarget)
@@ -6751,7 +6905,7 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
         const group = jointMotionGroup(jointName);
         const sourceBlend = dominantGroups.has(group)
-          ? 1.0
+          ? 0.0
           : Math.max(0.0, Math.min(1.0, (1.0 - previewNonDominantDamping) * previewResidualScale));
         if (sourceBlend <= 1e-6) {{
           tunedJoints[jointName] = cleaned;

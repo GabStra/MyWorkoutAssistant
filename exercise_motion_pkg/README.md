@@ -38,7 +38,7 @@ Clone and prepare the official WHAM repo locally:
    - `checkpoints/wham_vit_w_3dpw.pth.tar`
    - `checkpoints/hmr2a.ckpt`
    - `checkpoints/vitpose-h-multi-coco.pth`
-   - `checkpoints/yolov8x.pt`
+   - `checkpoints/yolo26x.pt`
    - `dataset/body_models/smpl/SMPL_NEUTRAL.pkl`
 
 Repo defaults:

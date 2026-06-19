@@ -7,9 +7,9 @@ param(
     [string]$BodyModelRoot,
     [string]$WhamPython = "python",
     [switch]$UseWhamDocker,
-    [string]$WhamDockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "8g",
+    [string]$WhamDockerShmSize = "16g",
     [int]$FallbackCandidates = 3,
     [int]$CandidateWorkers = 2,
     [switch]$EstimateLocalOnly,
@@ -29,7 +29,11 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
     [switch]$RankPreviewVariants,
+    [switch]$AdaptivePreviewSettings,
+    [switch]$SkipAdaptivePreviewSettings,
+    [int]$MaxAdaptivePreviewSettings = 1,
     [switch]$SkipPreviewVariantRanking,
+    [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 12,
     [int]$ReviewLlmWorkers = 3,
@@ -179,10 +183,16 @@ $argsList = @(
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
 
-if (-not $SkipPreviewVariantRanking) {
+if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
     $argsList += "--rank-preview-variants"
 }
-if ($SkipSupportDominanceClassification) {
+if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants)) {
+    $argsList += @(
+        "--adaptive-preview-settings",
+        "--max-adaptive-preview-settings", "$MaxAdaptivePreviewSettings"
+    )
+}
+if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification) {
     $argsList += "--no-classify-support-dominance"
 }
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {

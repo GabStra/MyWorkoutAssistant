@@ -9,6 +9,7 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+/classes.jar
 /captures
 .externalNativeBuild
 .cxx
@@ -545,3 +546,6 @@ pytest_tmp*/
 pytest-cache-files-*/
 *.egg-info/
 wearos/src/debug/assets/exercise_motion/
+
+# Local model downloads
+yolo*-pose.pt
