@@ -1,14 +1,45 @@
 from __future__ import annotations
 
 import subprocess
+import time
+from typing import Any
 from dataclasses import dataclass
 from pathlib import Path
+
+
+DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
+DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
+DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
 
 
 @dataclass(frozen=True)
 class WhamRunResult:
     output_dir: Path
     results_pkl: Path
+    stdout_log: Path
+    stderr_log: Path
+    command: list[str]
+    elapsed_seconds: float
+    returncode: int
+    use_docker: bool
+    estimate_local_only: bool
+    run_smplify: bool
+    docker_image: str | None = None
+
+    def timing_payload(self) -> dict[str, Any]:
+        return {
+            "elapsedSeconds": round(self.elapsed_seconds, 3),
+            "returncode": self.returncode,
+            "useDocker": self.use_docker,
+            "estimateLocalOnly": self.estimate_local_only,
+            "runSmplify": self.run_smplify,
+            "dockerImage": self.docker_image if self.use_docker else None,
+            "stdoutLog": str(self.stdout_log),
+            "stderrLog": str(self.stderr_log),
+            "command": self.command,
+            "outputDir": str(self.output_dir),
+            "resultsPkl": str(self.results_pkl),
+        }
 
 
 def run_wham_locally(
@@ -18,12 +49,12 @@ def run_wham_locally(
     output_root: Path,
     logs_dir: Path,
     python_command: str,
-    estimate_local_only: bool = False,
+    estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
     run_smplify: bool = True,
     use_docker: bool = False,
-    docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE,
     docker_gpus: str = "all",
-    docker_shm_size: str = "8g",
+    docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE,
 ) -> WhamRunResult:
     validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -43,6 +74,7 @@ def run_wham_locally(
         docker_gpus=docker_gpus,
         docker_shm_size=docker_shm_size,
     )
+    started = time.perf_counter()
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
         "w",
         encoding="utf-8",
@@ -55,6 +87,7 @@ def run_wham_locally(
             text=True,
             check=False,
         )
+    elapsed = time.perf_counter() - started
     if process.returncode != 0:
         raise RuntimeError(
             "WHAM run failed. Check logs:\n"
@@ -70,7 +103,19 @@ def run_wham_locally(
             f"Expected: {results_pkl}\n"
             f"Logs:\n- {stdout_log}\n- {stderr_log}"
         )
-    return WhamRunResult(output_dir=sequence_dir, results_pkl=results_pkl)
+    return WhamRunResult(
+        output_dir=sequence_dir,
+        results_pkl=results_pkl,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        command=command,
+        elapsed_seconds=elapsed,
+        returncode=process.returncode,
+        use_docker=use_docker,
+        estimate_local_only=estimate_local_only,
+        run_smplify=run_smplify,
+        docker_image=docker_image if use_docker else None,
+    )
 
 
 def build_wham_command(
@@ -82,9 +127,9 @@ def build_wham_command(
     estimate_local_only: bool,
     run_smplify: bool,
     use_docker: bool = False,
-    docker_image: str = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE,
     docker_gpus: str = "all",
-    docker_shm_size: str = "8g",
+    docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE,
 ) -> list[str]:
     if use_docker:
         command = ["docker", "run", "--rm"]
@@ -143,7 +188,7 @@ def validate_wham_repo_layout(wham_repo_path: Path, *, estimate_local_only: bool
         wham_repo_path / "checkpoints" / "wham_vit_w_3dpw.pth.tar",
         wham_repo_path / "checkpoints" / "hmr2a.ckpt",
         wham_repo_path / "checkpoints" / "vitpose-h-multi-coco.pth",
-        wham_repo_path / "checkpoints" / "yolov8x.pt",
+        wham_repo_path / "checkpoints" / "yolo26x.pt",
         wham_repo_path / "dataset" / "body_models" / "smpl" / "SMPL_NEUTRAL.pkl",
     ]
     if not estimate_local_only:

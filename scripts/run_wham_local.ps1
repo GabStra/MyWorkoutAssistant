@@ -12,9 +12,9 @@ param(
     [switch]$EstimateLocalOnly,
     [switch]$RunSmplify,
     [switch]$UseDocker,
-    [string]$DockerImage = "yusun9/wham-vitpose-dpvo-cuda11.3-python3.9:latest",
+    [string]$DockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$DockerGpus = "all",
-    [string]$DockerShmSize = "8g"
+    [string]$DockerShmSize = "16g"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,7 +45,7 @@ $requiredPaths = @(
     (Join-Path $resolvedRepo "checkpoints\wham_vit_w_3dpw.pth.tar"),
     (Join-Path $resolvedRepo "checkpoints\hmr2a.ckpt"),
     (Join-Path $resolvedRepo "checkpoints\vitpose-h-multi-coco.pth"),
-    (Join-Path $resolvedRepo "checkpoints\yolov8x.pt"),
+    (Join-Path $resolvedRepo "checkpoints\yolo26x.pt"),
     (Join-Path $resolvedRepo "dataset\body_models\smpl\SMPL_NEUTRAL.pkl")
 )
 if (-not $EstimateLocalOnly) {
