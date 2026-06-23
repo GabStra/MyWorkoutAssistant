@@ -59,6 +59,8 @@ MAX_SUPPRESSION_CORRECTION_METERS = 0.035
 MAX_TORSO_CORRECTION_METERS = 0.025
 SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
+SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
+SYMMETRY_MAX_POSE_ERROR_BODY_RATIO = 0.16
 ROOT_VERTICAL_MOTION_PRESERVATION_MIN_RANGE_METERS = 0.04
 ROOT_VERTICAL_MOTION_PRESERVATION_RANGE_RATIO = 0.85
 ROOT_VERTICAL_MOTION_JOINTS = ("pelvis", "hips", "root")
@@ -3035,7 +3037,13 @@ def _bilateral_motion_mode(
     right_motion = _joint_group_motion(clip, list(right_joints))
     ratio = min(left_motion, right_motion) / max(max(left_motion, right_motion), 1e-8)
     correlation = _mirrored_chain_motion_correlation(clip, left_end=left_end, right_end=right_end)
-    same_phase = ratio >= SYMMETRY_MIN_RATIO and correlation >= max(0.80, SYMMETRY_MIN_CORRELATION)
+    pose_symmetry = _mirrored_pose_symmetry(
+        clip,
+        joint_pairs=tuple(zip(left_joints, right_joints)),
+    )
+    pose_symmetric = bool(pose_symmetry.get("eligible"))
+    motion_symmetric = ratio >= SYMMETRY_MIN_RATIO and correlation >= max(0.80, SYMMETRY_MIN_CORRELATION)
+    same_phase = motion_symmetric and pose_symmetric
     if same_phase:
         mode = "same_phase_symmetric"
     elif ratio >= SYMMETRY_MIN_RATIO:
@@ -3057,7 +3065,83 @@ def _bilateral_motion_mode(
         "rightMotion": right_motion,
         "motionRatio": ratio,
         "correlation": correlation,
+        "motionSymmetric": motion_symmetric,
+        "poseSymmetry": pose_symmetry,
         "symmetryStrength": symmetry_strength,
+    }
+
+
+def _mirrored_pose_symmetry(
+    clip: MotionClip,
+    *,
+    joint_pairs: tuple[tuple[str, str], ...],
+) -> dict[str, object]:
+    if clip.frame_count == 0:
+        return {
+            "eligible": False,
+            "reason": "empty_clip",
+            "sampleCount": 0,
+        }
+    body_height = _median_body_height(clip)
+    if body_height <= 1e-6:
+        return {
+            "eligible": False,
+            "reason": "invalid_body_height",
+            "sampleCount": 0,
+            "bodyHeight": body_height,
+        }
+    errors: list[float] = []
+    per_pair_errors: dict[str, list[float]] = {
+        f"{left}:{right}": []
+        for left, right in joint_pairs
+    }
+    for frame in clip.frames:
+        body_frame = _body_local_frame(frame)
+        if body_frame is None:
+            continue
+        for left_joint, right_joint in joint_pairs:
+            left_point = frame.joints.get(left_joint)
+            right_point = frame.joints.get(right_joint)
+            if left_point is None or right_point is None:
+                continue
+            left_local = _to_local(left_point, body_frame, body_frame.origin)
+            right_local = _to_local(right_point, body_frame, body_frame.origin)
+            mirrored_left = (-left_local[0], left_local[1], left_local[2])
+            error_ratio = _distance(mirrored_left, right_local) / body_height
+            errors.append(error_ratio)
+            per_pair_errors[f"{left_joint}:{right_joint}"].append(error_ratio)
+    if not errors:
+        return {
+            "eligible": False,
+            "reason": "no_pose_samples",
+            "sampleCount": 0,
+            "bodyHeight": body_height,
+        }
+    median_error = median(errors)
+    max_error = max(errors)
+    eligible = (
+        median_error <= SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO
+        and max_error <= SYMMETRY_MAX_POSE_ERROR_BODY_RATIO
+    )
+    pair_payload = {
+        pair_name: {
+            "medianErrorBodyRatio": median(pair_errors),
+            "maxErrorBodyRatio": max(pair_errors),
+            "sampleCount": len(pair_errors),
+        }
+        for pair_name, pair_errors in per_pair_errors.items()
+        if pair_errors
+    }
+    return {
+        "eligible": eligible,
+        "reason": "mirrored_pose_within_threshold" if eligible else "mirrored_pose_error_too_large",
+        "bodyHeight": body_height,
+        "sampleCount": len(errors),
+        "medianErrorBodyRatio": median_error,
+        "maxErrorBodyRatio": max_error,
+        "maxMedianErrorBodyRatio": SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO,
+        "maxAllowedErrorBodyRatio": SYMMETRY_MAX_POSE_ERROR_BODY_RATIO,
+        "jointPairs": pair_payload,
     }
 
 

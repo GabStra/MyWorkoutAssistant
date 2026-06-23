@@ -37,6 +37,7 @@ LEG_MICRO_MOVEMENT_TOLERANCE = 0.018
 SUPPORT_LOCK_BLEND = 0.75
 SUPPORT_LOCK_XZ_BLEND = 0.7
 SUPPORT_LOCK_Y_BLEND = 0.9
+SUPPORT_GLOBAL_STABILIZATION_BLEND = 1.0
 SEGMENT_ROOT_STABILIZATION_BLEND = 1.0
 SEGMENT_ROOT_STABILIZATION_MIN_FRAMES = 3
 ONE_EURO_MIN_CUTOFF = 0.6
@@ -80,8 +81,14 @@ def cleanup_motion_clip(
     raw_support_states = detect_support_contact_states(trimmed_clip)
     grounded = ground_to_floor(trimmed_clip, support_states=raw_support_states)
     support_states = detect_support_contact_states(grounded)
-    smoothed = smooth_root_translation(
+    support_ground_y = estimate_support_ground_height(grounded, support_states)
+    support_stabilized = stabilize_global_translation_from_support_contacts(
         grounded,
+        contact_states=support_states,
+        support_ground_y=support_ground_y,
+    )
+    smoothed = smooth_root_translation(
+        support_stabilized,
         root_joint=root_joint,
         min_cutoff=one_euro_min_cutoff,
         beta=one_euro_beta,
@@ -104,12 +111,14 @@ def cleanup_motion_clip(
         "oneEuroDerivativeCutoff": one_euro_derivative_cutoff,
         "motionThreshold": motion_threshold,
         "paddingFrames": padding_frames,
-        "smoothingMethod": "one_euro_root_translation_xz",
+        "smoothingMethod": "support_stabilization_plus_one_euro_root_translation_xz",
         "trimmedStartFrames": start_trim,
         "trimmedEndFrames": end_trim,
         "rootJoint": root_joint,
+        "supportGroundY": support_ground_y,
         "appliedPostProcessingSteps": [
             "ground_plane_fitting",
+            "support_global_translation_stabilization",
             "root_translation_one_euro_xz",
             "support_contact_detection",
         ],
@@ -409,6 +418,72 @@ def lift_clip_above_support_ground(
         fps=clip.fps,
         joint_names=clip.joint_names,
         frames=corrected_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    )
+
+
+def stabilize_global_translation_from_support_contacts(
+    clip: MotionClip,
+    *,
+    contact_states: list[dict[str, object]],
+    support_ground_y: float,
+    blend: float = SUPPORT_GLOBAL_STABILIZATION_BLEND,
+) -> MotionClip:
+    if clip.frame_count == 0 or not contact_states or blend <= 0.0:
+        return clip
+
+    blend = min(max(blend, 0.0), 1.0)
+    stabilized_frames: list[MotionFrame] = []
+    support_targets: dict[str, Point3] = {}
+    previous_contacting_joints: set[str] = set()
+    for frame_index, frame in enumerate(clip.frames):
+        state = contact_states[frame_index] if frame_index < len(contact_states) else {}
+        contacting_joints = [
+            joint_name
+            for joint_name in iter_contact_joint_names(state)
+            if joint_name in frame.joints
+        ]
+        if not contacting_joints:
+            previous_contacting_joints = set()
+            stabilized_frames.append(frame)
+            continue
+
+        corrections: list[Point3] = []
+        for joint_name in contacting_joints:
+            current_point = frame.joints[joint_name]
+            target = support_targets.get(joint_name)
+            if target is None or joint_name not in previous_contacting_joints:
+                target = (current_point[0], support_ground_y, current_point[2])
+                support_targets[joint_name] = target
+            corrections.append(
+                (
+                    current_point[0] - target[0],
+                    0.0,
+                    current_point[2] - target[2],
+                )
+            )
+
+        averaged_correction = (
+            sum(item[0] for item in corrections) / len(corrections),
+            sum(item[1] for item in corrections) / len(corrections),
+            sum(item[2] for item in corrections) / len(corrections),
+        )
+        translated_joints = {
+            name: (
+                coords[0] - averaged_correction[0] * blend,
+                coords[1] - averaged_correction[1] * blend,
+                coords[2] - averaged_correction[2] * blend,
+            )
+            for name, coords in frame.joints.items()
+        }
+        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=translated_joints))
+        previous_contacting_joints = set(contacting_joints)
+
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=stabilized_frames,
         source=clip.source,
         metadata=clip.metadata,
     )

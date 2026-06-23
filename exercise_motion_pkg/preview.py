@@ -160,6 +160,11 @@ def write_preview_html(
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
+        "spineposeMotionFusion": (
+            clip.metadata.get("spineposeMotionFusion")
+            if isinstance(clip.metadata, dict) and isinstance(clip.metadata.get("spineposeMotionFusion"), dict)
+            else {}
+        ),
         "comparisonFrames": _build_preview_comparison_frames(clip, preview_clip),
         "rawComparisonFrames": _build_preview_raw_comparison_frames(clip),
         "structuralRefinement": (
@@ -1147,13 +1152,20 @@ def _compute_preview_auto_alignment(
 ) -> list[tuple[tuple[float, float, float], float]]:
     if not frames:
         return []
+    if _classify_torso_alignment_mode(frames) == "horizontal_plane":
+        yaw_rotation = _estimate_support_profile_yaw_rotation(frames)
+        if yaw_rotation is None:
+            yaw_rotation = _estimate_horizontal_spine_yaw_rotation(frames)
+        return [yaw_rotation] if yaw_rotation is not None else []
     dominant_target_axis = _dominant_movement_nearest_world_axis(frames)
     rotations: list[tuple[tuple[float, float, float], float]] = []
     aligned_frames = frames
     spine_rotation = _estimate_upright_spine_alignment_rotation(aligned_frames)
+    large_spine_orientation_correction = False
     if spine_rotation is not None:
         rotations.append(spine_rotation)
         aligned_frames = [_rotate_frame(frame, spine_rotation) for frame in aligned_frames]
+        large_spine_orientation_correction = _is_large_non_yaw_rotation(spine_rotation)
     support_plane_rotation = _estimate_support_plane_alignment_rotation(aligned_frames)
     if (
         support_plane_rotation is not None
@@ -1166,7 +1178,11 @@ def _compute_preview_auto_alignment(
     ):
         rotations.append(support_plane_rotation)
         aligned_frames = [_rotate_frame(frame, support_plane_rotation) for frame in aligned_frames]
-    support_profile_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
+    support_profile_rotation = (
+        None
+        if large_spine_orientation_correction
+        else _estimate_support_profile_yaw_rotation(aligned_frames)
+    )
     if support_profile_rotation is not None:
         rotations.append(support_profile_rotation)
         aligned_frames = [_rotate_frame(frame, support_profile_rotation) for frame in aligned_frames]
@@ -1177,6 +1193,17 @@ def _compute_preview_auto_alignment(
     if movement_axis_rotation is not None and _rotation_preserves_body_orientation(aligned_frames, movement_axis_rotation):
         rotations.append(movement_axis_rotation)
     return rotations
+
+
+def _is_large_non_yaw_rotation(
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    axis, angle = rotation
+    normalized_axis = _normalize(axis)
+    if _vector_length(normalized_axis) <= 1e-6:
+        return False
+    wrapped_angle = abs(math.atan2(math.sin(angle), math.cos(angle)))
+    return abs(normalized_axis[1]) < 0.5 and wrapped_angle >= math.radians(45.0)
 
 
 def _estimate_shoulder_floor_level_rotation(
@@ -3363,10 +3390,6 @@ def _build_html(payload: dict[str, object]) -> str:
           <span>Invert scene</span>
           <input id="sceneInverted" type="checkbox" />
         </label>
-        <label class="control-row" for="showSmplMesh">
-          <span>Show WHAM SMPL mesh</span>
-          <input id="showSmplMesh" type="checkbox" />
-        </label>
         <label class="control-row" for="showComparisonOverlay">
           <span>Show stabilized source-motion overlay</span>
           <input id="showComparisonOverlay" type="checkbox" />
@@ -3413,7 +3436,6 @@ def _build_html(payload: dict[str, object]) -> str:
           <select id="loopSelect"></select>
         </label>
         <button id="downloadWearSkeleton" type="button">Download baked Wear skeleton</button>
-        <button id="downloadSmplMesh" type="button">Download baked WHAM SMPL mesh</button>
         <div class="stat">Source range: <span id="loopCount"></span></div>
         <div class="stat">Active span: <span id="activeLoop">Full clip</span></div>
         <div class="stat">Frames: <span id="frameCount"></span></div>
@@ -3447,7 +3469,6 @@ def _build_html(payload: dict[str, object]) -> str:
     const zoomInput = document.getElementById("zoom");
     const autoWorldAlignmentInput = document.getElementById("autoWorldAlignment");
     const sceneInvertedInput = document.getElementById("sceneInverted");
-    const showSmplMeshInput = document.getElementById("showSmplMesh");
     const showComparisonOverlayInput = document.getElementById("showComparisonOverlay");
     const showRawComparisonOverlayInput = document.getElementById("showRawComparisonOverlay");
     const previewDominantCutoffInput = document.getElementById("previewDominantCutoff");
@@ -3461,7 +3482,6 @@ def _build_html(payload: dict[str, object]) -> str:
     const lockPlantedFeetInput = document.getElementById("lockPlantedFeet");
     const lockPlantedHandsInput = document.getElementById("lockPlantedHands");
     const downloadWearSkeletonButton = document.getElementById("downloadWearSkeleton");
-    const downloadSmplMeshButton = document.getElementById("downloadSmplMesh");
     const loopSelect = document.getElementById("loopSelect");
     const loopCountNode = document.getElementById("loopCount");
     const activeLoopNode = document.getElementById("activeLoop");
@@ -3490,7 +3510,6 @@ def _build_html(payload: dict[str, object]) -> str:
     let pendingReframeHandle = null;
     let autoWorldAlignmentEnabled = Boolean(payload.defaultAutoWorldAlignment);
     let sceneInverted = Boolean(payload.defaultSceneInverted);
-    let showSmplMesh = false;
     let showComparisonOverlay = false;
     let showRawComparisonOverlay = false;
     let previewDominantCutoff = Number(payload.structuralRefinement?.settings?.dominantChainRatio ?? 0.65);
@@ -3518,6 +3537,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const detectedLoops = Array.isArray(payload.detectedLoops) ? payload.detectedLoops : [];
     const comparisonFrames = Array.isArray(payload.comparisonFrames) ? payload.comparisonFrames : [];
     const rawComparisonFrames = Array.isArray(payload.rawComparisonFrames) ? payload.rawComparisonFrames : [];
+    const customModelUsesFusedSpine = Boolean(payload.spineposeMotionFusion && Number(payload.spineposeMotionFusion.appliedFrames) > 0);
     let selectedLoopIndex = -1;
     let customTimeRange = null;
     let currentLoop = null;
@@ -3534,13 +3554,10 @@ def _build_html(payload: dict[str, object]) -> str:
     lockPlantedHandsInput.checked = lockPlantedHands;
     autoWorldAlignmentInput.checked = autoWorldAlignmentEnabled;
     sceneInvertedInput.checked = sceneInverted;
-    showSmplMeshInput.checked = showSmplMesh;
     showComparisonOverlayInput.checked = showComparisonOverlay;
     showComparisonOverlayInput.disabled = comparisonFrames.length === 0;
     showRawComparisonOverlayInput.checked = showRawComparisonOverlay;
     showRawComparisonOverlayInput.disabled = rawComparisonFrames.length === 0;
-    showSmplMeshInput.disabled = !payload.smplMesh;
-    downloadSmplMeshButton.disabled = !payload.smplMesh;
     rootTranslationLabel.textContent = payload.rootTranslationToggleLabel ?? "Lock global root drift";
     loopCountNode.textContent = "Full clip";
     populateLoopSelect();
@@ -3825,7 +3842,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const pelvisMesh = attachOutline(new THREE.Mesh(pelvisGeometry, torsoMaterial), torsoOutlineMaterial);
     const coreShellMesh = attachOutline(new THREE.Mesh(torsoSegmentGeometry.clone(), torsoMaterial), torsoOutlineMaterial);
     coreShellMesh.visible = false;
-    const spineMeshes = [0, 1, 2].map(() => attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial));
+    const spineMeshes = [0, 1, 2, 3].map(() => attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial));
     const abdomenMesh = attachOutline(new THREE.Mesh(torsoSegmentGeometry, torsoMaterial), torsoOutlineMaterial);
     const chestMesh = attachOutline(new THREE.Mesh(ribcageGeometry, torsoMaterial), torsoOutlineMaterial);
     const upperChestMesh = attachOutline(new THREE.Mesh(spineGeometry, torsoMaterial), torsoOutlineMaterial);
@@ -3887,29 +3904,6 @@ def _build_html(payload: dict[str, object]) -> str:
       scene.add(mesh);
       return {{ sourceMesh, mesh }};
     }});
-    const smplMeshMaterial = new THREE.MeshStandardMaterial({{
-      color: 0x102028,
-      emissive: 0x2cecff,
-      emissiveIntensity: 0.36,
-      roughness: 0.42,
-      metalness: 0.06,
-      flatShading: true,
-      side: THREE.DoubleSide,
-    }});
-    const smplMeshObject = new THREE.Mesh(new THREE.BufferGeometry(), smplMeshMaterial);
-    smplMeshObject.visible = false;
-    scene.add(smplMeshObject);
-    let smplMeshGeometry = null;
-    let smplMeshPositionAttribute = null;
-    let smplMeshIndexKey = null;
-    let smplMeshVertexCount = 0;
-    let smplMeshLastFrameKey = null;
-    const smplMeshFrameBySourceIndex = new Map();
-    for (const meshFrame of payload.smplMesh?.frames ?? []) {{
-      if (Number.isInteger(meshFrame?.sourceFrameIndex) && !smplMeshFrameBySourceIndex.has(meshFrame.sourceFrameIndex)) {{
-        smplMeshFrameBySourceIndex.set(meshFrame.sourceFrameIndex, meshFrame);
-      }}
-    }}
     const skeletonLineMaterial = new THREE.LineBasicMaterial({{
       color: 0x64f7ff,
       transparent: true,
@@ -5692,407 +5686,6 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
-    function buildBakedSmplMeshPayload() {{
-      const meshPayload = payload.smplMesh;
-      if (!meshPayload || !Array.isArray(meshPayload.frames) || !Array.isArray(meshPayload.faces)) {{
-        return null;
-      }}
-      const activeFrames = playbackState.frames ?? [];
-      const lockYDrift = Boolean(lockYRootInput.checked);
-      const exportPlaybackSpeed = sanitizedPlaybackSpeed(speed);
-      const exportFps = Math.max(1, Number(payload.fps) * exportPlaybackSpeed);
-      getCachedSceneBounds(fixedRoot);
-      const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
-      const frames = [];
-      activeFrames.forEach((frame, index) => {{
-        const meshFrame = findSmplMeshFrame(frame);
-        if (!meshFrame || !Array.isArray(meshFrame.vertices)) {{
-          return;
-        }}
-        activeRenderFrame = frame;
-        const translation = getFrameBakeTranslation(frame, lockYDrift);
-        const vertices = meshFrame.vertices.map((vertex) => {{
-          const transformed = transformSmplVertex(vertex, frame, translation);
-          return [transformed.x, transformed.y, transformed.z];
-        }});
-        frames.push({{
-          frameIndex: frames.length,
-          sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
-          timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
-          sourceTimeSec: frame.timeSec ?? 0,
-          syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
-          rootTranslationApplied: translation,
-          vertices,
-        }});
-      }});
-      if (!payload.rawWhamPassthrough) {{
-        smoothBakedSmplFrames(frames);
-      }}
-      const sourceTimelineFrames = frames.filter((frame) => !frame.syntheticLoopBridge);
-      const timelineFrames = sourceTimelineFrames.length > 0 ? sourceTimelineFrames : frames;
-      const sourceStartFrame = timelineFrames.length > 0 ? timelineFrames[0].sourceFrameIndex : 0;
-      const sourceEndFrame = timelineFrames.length > 0 ? timelineFrames[timelineFrames.length - 1].sourceFrameIndex : sourceStartFrame;
-      const sourceStartTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[0].sourceTimeSec) || 0 : 0;
-      const sourceEndTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec) || sourceStartTimeSec : sourceStartTimeSec;
-      const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
-      const durationSec = sourceDurationSec / exportPlaybackSpeed;
-      return {{
-        schemaVersion: 1,
-        kind: "whamBakedSmplMeshPreview",
-        title: payload.title,
-        bodyModel: meshPayload.bodyModel ?? "smpl",
-        fps: exportFps,
-        playbackSpeed: exportPlaybackSpeed,
-        frameCount: frames.length,
-        durationSec,
-        faces: meshPayload.faces,
-        bakedPreviewConfiguration: {{
-          autoWorldAlignment: autoWorldAlignmentEnabled,
-          lockGlobalRootDrift: fixedRoot,
-          lockYDrift,
-          lockPlantedFeet,
-          lockPlantedHands,
-          invertScene: sceneInverted,
-          playbackSpeed: exportPlaybackSpeed,
-          selectedLoopIndex,
-          runtimeBaked: true,
-          postProcessingApplied: payload.rawWhamPassthrough
-            ? ["preview_scene_centering"]
-            : [
-                "cleanup_trim",
-                "cleanup_global_translation_delta",
-                "preview_refinement_alignment",
-                "preview_root_lock",
-                "preview_loop_selection",
-                "preview_scene_centering",
-                ...(lockPlantedFeet ? ["preview_leg_ik_vertex_blend"] : []),
-                ...(lockPlantedHands ? ["preview_arm_ik_vertex_blend"] : []),
-              ],
-        }},
-        loop: {{
-          enabled: currentLoop != null,
-          startFrame: 0,
-          endFrame: Math.max(0, frames.length - 1),
-          sourceStartFrame,
-          sourceEndFrame,
-          sourceStartTimeSec,
-          sourceEndTimeSec,
-          sourceDurationSec,
-          durationSec,
-          label: currentLoop?.label ?? "Full clip",
-        }},
-        transforms: {{
-          autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
-          rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
-          sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
-        }},
-        bounds: computeBakedSmplBounds(frames),
-        frames,
-      }};
-    }}
-
-    function smoothBakedSmplFrames(frames) {{
-      if (!Array.isArray(frames) || frames.length < 3) {{
-        return;
-      }}
-      const sourceVertices = frames.map((frame) => frame.vertices ?? []);
-      const weights = [1, 2, 3, 2, 1];
-      const radius = 2;
-      for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {{
-        const vertices = sourceVertices[frameIndex];
-        if (!Array.isArray(vertices) || vertices.length === 0) {{
-          continue;
-        }}
-        const smoothedVertices = vertices.map((vertex, vertexIndex) => {{
-          let totalWeight = 0;
-          const smoothed = [0, 0, 0];
-          for (let offset = -radius; offset <= radius; offset += 1) {{
-            const neighborIndex = frameIndex + offset;
-            if (neighborIndex < 0 || neighborIndex >= sourceVertices.length) {{
-              continue;
-            }}
-            const neighbor = sourceVertices[neighborIndex]?.[vertexIndex];
-            if (!Array.isArray(neighbor) || neighbor.length < 3) {{
-              continue;
-            }}
-            const weight = weights[offset + radius];
-            smoothed[0] += neighbor[0] * weight;
-            smoothed[1] += neighbor[1] * weight;
-            smoothed[2] += neighbor[2] * weight;
-            totalWeight += weight;
-          }}
-          if (totalWeight <= 0) {{
-            return vertex;
-          }}
-          return [
-            smoothed[0] / totalWeight,
-            smoothed[1] / totalWeight,
-            smoothed[2] / totalWeight,
-          ];
-        }});
-        frames[frameIndex] = {{
-          ...frames[frameIndex],
-          vertices: smoothedVertices,
-        }};
-      }}
-    }}
-
-    function computeBakedSmplBounds(frames) {{
-      let minX = Number.POSITIVE_INFINITY;
-      let maxX = Number.NEGATIVE_INFINITY;
-      let minY = Number.POSITIVE_INFINITY;
-      let maxY = Number.NEGATIVE_INFINITY;
-      let minZ = Number.POSITIVE_INFINITY;
-      let maxZ = Number.NEGATIVE_INFINITY;
-      for (const frame of frames) {{
-        for (const vertex of frame.vertices ?? []) {{
-          if (!Array.isArray(vertex) || vertex.length < 3) {{
-            continue;
-          }}
-          minX = Math.min(minX, vertex[0]);
-          maxX = Math.max(maxX, vertex[0]);
-          minY = Math.min(minY, vertex[1]);
-          maxY = Math.max(maxY, vertex[1]);
-          minZ = Math.min(minZ, vertex[2]);
-          maxZ = Math.max(maxZ, vertex[2]);
-        }}
-      }}
-      if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
-        minX = -0.5;
-        maxX = 0.5;
-        minY = -0.5;
-        maxY = 0.5;
-        minZ = -0.5;
-        maxZ = 0.5;
-      }}
-      return {{
-        minX,
-        maxX,
-        minY,
-        maxY,
-        minZ,
-        maxZ,
-        center: [
-          (minX + maxX) * 0.5,
-          (minY + maxY) * 0.5,
-          (minZ + maxZ) * 0.5,
-        ],
-        size: [
-          maxX - minX,
-          maxY - minY,
-          maxZ - minZ,
-        ],
-      }};
-    }}
-
-    function updateSmplMeshForFrame(frame) {{
-      const meshPayload = payload.smplMesh;
-      if (!meshPayload || !Array.isArray(meshPayload.frames) || !Array.isArray(meshPayload.faces)) {{
-        smplMeshObject.visible = false;
-        return;
-      }}
-      if (!showSmplMesh) {{
-        smplMeshObject.visible = false;
-        return;
-      }}
-      const meshFrame = findSmplMeshFrame(frame);
-      if (!meshFrame || !Array.isArray(meshFrame.vertices)) {{
-        smplMeshObject.visible = false;
-        return;
-      }}
-      if (!ensureSmplMeshGeometry(meshPayload, meshFrame.vertices.length)) {{
-        smplMeshObject.visible = false;
-        return;
-      }}
-      const frameTranslation = getFrameTranslation(frame);
-      const cacheKey = [
-        frameFootLockKey(frame),
-        Number(frame?.sourceAlpha ?? 0).toFixed(4),
-        frameTranslation.join(","),
-        lockPlantedFeet,
-        lockPlantedHands,
-        autoWorldAlignmentEnabled,
-        sceneInverted,
-        sceneOriginOffset.x.toFixed(4),
-        sceneOriginOffset.y.toFixed(4),
-        sceneOriginOffset.z.toFixed(4),
-      ].join("|");
-      if (smplMeshLastFrameKey === cacheKey) {{
-        smplMeshObject.visible = true;
-        return;
-      }}
-      smplMeshLastFrameKey = cacheKey;
-      const positions = smplMeshPositionAttribute.array;
-      meshFrame.vertices.forEach((vertex, index) => {{
-        const transformed = transformSmplVertex(vertex, frame, frameTranslation);
-        positions[index * 3] = transformed.x;
-        positions[index * 3 + 1] = transformed.y;
-        positions[index * 3 + 2] = transformed.z;
-      }});
-      smplMeshPositionAttribute.needsUpdate = true;
-      smplMeshGeometry.computeVertexNormals();
-      smplMeshObject.visible = true;
-    }}
-
-    function ensureSmplMeshGeometry(meshPayload, vertexCount) {{
-      const indexKey = `${{meshPayload.faces.length}}|${{vertexCount}}`;
-      if (
-        smplMeshGeometry
-        && smplMeshPositionAttribute
-        && smplMeshIndexKey === indexKey
-        && smplMeshVertexCount === vertexCount
-      ) {{
-        return true;
-      }}
-      if (smplMeshGeometry) {{
-        smplMeshGeometry.dispose();
-      }}
-      const positions = new Float32Array(vertexCount * 3);
-      const indices = new Uint32Array(meshPayload.faces.length * 3);
-      meshPayload.faces.forEach((face, index) => {{
-        indices[index * 3] = Number(face[0]) || 0;
-        indices[index * 3 + 1] = Number(face[1]) || 0;
-        indices[index * 3 + 2] = Number(face[2]) || 0;
-      }});
-      smplMeshGeometry = new THREE.BufferGeometry();
-      smplMeshPositionAttribute = new THREE.BufferAttribute(positions, 3);
-      smplMeshPositionAttribute.setUsage(THREE.DynamicDrawUsage);
-      smplMeshGeometry.setAttribute("position", smplMeshPositionAttribute);
-      smplMeshGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
-      smplMeshObject.geometry = smplMeshGeometry;
-      smplMeshIndexKey = indexKey;
-      smplMeshVertexCount = vertexCount;
-      smplMeshLastFrameKey = null;
-      return true;
-    }}
-
-    function findSmplMeshFrame(frame) {{
-      const frames = payload.smplMesh?.frames ?? [];
-      if (frames.length === 0) {{
-        return null;
-      }}
-      const sourceFrameIndex = Number.isInteger(frame.sourceFrameIndex)
-        ? frame.sourceFrameIndex
-        : Number.isInteger(frame.frameIndex)
-        ? frame.frameIndex
-        : null;
-      if (sourceFrameIndex != null) {{
-        const match = smplMeshFrameBySourceIndex.get(sourceFrameIndex);
-        if (match) {{
-          return match;
-        }}
-      }}
-      const localIndex = Math.max(0, Math.min(frames.length - 1, Math.floor(frameCursor)));
-      return frames[localIndex];
-    }}
-
-    function transformSmplVertex(vertex, frame, frameTranslation) {{
-      const worldPoint = toUncorrectedWorldPoint(vertex, frameTranslation);
-      if (lockPlantedFeet || lockPlantedHands) {{
-        worldPoint.add(computeSmplFootLockCorrection(worldPoint, frame, frameTranslation));
-      }}
-      if (!suppressSceneOriginOffset) {{
-        worldPoint.sub(sceneOriginOffset);
-      }}
-      return worldPoint;
-    }}
-
-    function computeSmplFootLockCorrection(worldPoint, frame, frameTranslation) {{
-      const lockedPositions = computeLockedJointPositions(frame, frameTranslation);
-      if (!lockedPositions || lockedPositions.size === 0) {{
-        return new THREE.Vector3();
-      }}
-      const weightedDelta = new THREE.Vector3();
-      let totalWeight = 0;
-      for (const side of ["left", "right"]) {{
-        const chain = [`${{side}}_hip`, `${{side}}_knee`, `${{side}}_ankle`, `${{side}}_foot`];
-        const points = chain
-          .map((jointName) => {{
-            const source = frame?.joints?.[jointName];
-            if (!Array.isArray(source) || source.length < 3) {{
-              return null;
-            }}
-            return {{
-              jointName,
-              original: toUncorrectedWorldPoint(source, frameTranslation),
-              locked: lockedPositions.get(jointName) ?? null,
-            }};
-          }})
-          .filter((entry) => entry != null && entry.locked != null);
-        for (let index = 0; index < points.length - 1; index += 1) {{
-          const start = points[index];
-          const end = points[index + 1];
-          const distance = pointToSegmentDistance(worldPoint, start.original, end.original);
-          const radius = index === 0 ? 0.18 : 0.16;
-          const normalizedDistance = Math.max(0, Math.min(1, distance / radius));
-          const smoothFalloff = 1 - (normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance));
-          const weight = smoothFalloff * smoothFalloff;
-          if (weight <= 0) {{
-            continue;
-          }}
-          const startDelta = start.locked.clone().sub(start.original);
-          const endDelta = end.locked.clone().sub(end.original);
-          const segmentDelta = startDelta.add(endDelta).multiplyScalar(0.5);
-          weightedDelta.addScaledVector(segmentDelta, weight);
-          totalWeight += weight;
-        }}
-      }}
-      for (const side of ["left", "right"]) {{
-        const chain = [`${{side}}_shoulder`, `${{side}}_elbow`, `${{side}}_wrist`, `${{side}}_hand`];
-        const points = chain
-          .map((jointName) => {{
-            const source = frame?.joints?.[jointName];
-            if (!Array.isArray(source) || source.length < 3) {{
-              return null;
-            }}
-            return {{
-              jointName,
-              original: toUncorrectedWorldPoint(source, frameTranslation),
-              locked: lockedPositions.get(jointName) ?? null,
-            }};
-          }})
-          .filter((entry) => entry != null && entry.locked != null);
-        for (let index = 0; index < points.length - 1; index += 1) {{
-          const start = points[index];
-          const end = points[index + 1];
-          const distance = pointToSegmentDistance(worldPoint, start.original, end.original);
-          const radius = index === 0 ? 0.16 : 0.14;
-          const normalizedDistance = Math.max(0, Math.min(1, distance / radius));
-          const smoothFalloff = 1 - (normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance));
-          const weight = smoothFalloff * smoothFalloff;
-          if (weight <= 0) {{
-            continue;
-          }}
-          const startDelta = start.locked.clone().sub(start.original);
-          const endDelta = end.locked.clone().sub(end.original);
-          const segmentDelta = startDelta.add(endDelta).multiplyScalar(0.5);
-          weightedDelta.addScaledVector(segmentDelta, weight);
-          totalWeight += weight;
-        }}
-      }}
-      if (totalWeight <= 1e-8) {{
-        return new THREE.Vector3();
-      }}
-      const averageDelta = weightedDelta.multiplyScalar(1 / totalWeight);
-      const correction = averageDelta.multiplyScalar(Math.min(1, totalWeight));
-      const maxCorrection = 0.075;
-      if (correction.length() > maxCorrection) {{
-        correction.setLength(maxCorrection);
-      }}
-      return correction;
-    }}
-
-    function pointToSegmentDistance(point, start, end) {{
-      const segment = end.clone().sub(start);
-      const lengthSq = segment.lengthSq();
-      if (lengthSq <= 1e-8) {{
-        return point.distanceTo(start);
-      }}
-      const t = Math.max(0, Math.min(1, point.clone().sub(start).dot(segment) / lengthSq));
-      const projection = start.clone().addScaledVector(segment, t);
-      return point.distanceTo(projection);
-    }}
-
     function downloadBakedWearSkeleton() {{
       const exportPayload = buildBakedWearSkeletonPayload();
       const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
@@ -6104,26 +5697,6 @@ def _build_html(payload: dict[str, object]) -> str:
       const handLabel = lockPlantedHandsInput.checked ? "-lock-hands" : "";
       link.href = url;
       link.download = `${{payload.title}}-${{loopLabel}}${{yLabel}}${{footLabel}}${{handLabel}}.wear-skeleton.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    }}
-
-    function downloadBakedSmplMesh() {{
-      const exportPayload = buildBakedSmplMeshPayload();
-      if (!exportPayload) {{
-        return;
-      }}
-      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const loopLabel = selectedLoopIndex >= 0 ? `loop-${{selectedLoopIndex + 1}}` : "full-clip";
-      const yLabel = lockYRootInput.checked ? "-lock-y" : "";
-      const footLabel = lockPlantedFeetInput.checked ? "-lock-feet" : "";
-      const handLabel = lockPlantedHandsInput.checked ? "-lock-hands" : "";
-      link.href = url;
-      link.download = `${{payload.title}}-${{loopLabel}}${{yLabel}}${{footLabel}}${{handLabel}}.wham-smpl-mesh.json`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -6154,10 +5727,6 @@ def _build_html(payload: dict[str, object]) -> str:
       if (Object.prototype.hasOwnProperty.call(options, "sceneInverted")) {{
         sceneInverted = Boolean(options.sceneInverted);
         sceneInvertedInput.checked = sceneInverted;
-      }}
-      if (Object.prototype.hasOwnProperty.call(options, "showSmplMesh")) {{
-        showSmplMesh = Boolean(options.showSmplMesh) && Boolean(payload.smplMesh);
-        showSmplMeshInput.checked = showSmplMesh;
       }}
       if (Object.prototype.hasOwnProperty.call(options, "showBoundsHelper")) {{
         showBoundsHelper = Boolean(options.showBoundsHelper);
@@ -6700,10 +6269,8 @@ def _build_html(payload: dict[str, object]) -> str:
         comparisonOverlayHidden = false;
         const savedShowComparisonOverlay = showComparisonOverlay;
         const savedShowRawComparisonOverlay = showRawComparisonOverlay;
-        const savedShowSmplMesh = showSmplMesh;
         showComparisonOverlay = false;
         showRawComparisonOverlay = false;
-        showSmplMesh = false;
         updateSceneForFrame(frame);
         for (const entry of comparisonBodyMeshes) {{
           const source = entry.sourceMesh;
@@ -6719,7 +6286,6 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
         showComparisonOverlay = savedShowComparisonOverlay;
         showRawComparisonOverlay = savedShowRawComparisonOverlay;
-        showSmplMesh = savedShowSmplMesh;
         comparisonOverlayHidden = false;
         for (const entry of comparisonLines) {{
           const points = entry.jointNames
@@ -7042,14 +6608,10 @@ def _build_html(payload: dict[str, object]) -> str:
         const frameTranslation = getFrameTranslation(frame);
         hideConnectedSkeleton();
         proceduralBodyMeshes.forEach((mesh) => {{
-          mesh.visible = !showSmplMesh;
+          mesh.visible = true;
         }});
-        updateSmplMeshForFrame(frame);
         updateComparisonOverlay(getInterpolatedComparisonFrame(), frameTranslation);
         activeRenderFrame = frame;
-        if (showSmplMesh && smplMeshObject.visible) {{
-          return;
-        }}
       const pelvisJoint = getFrameJointWorld(frame, frameTranslation, "pelvis");
       const spine1Joint = getFrameJointWorld(frame, frameTranslation, "spine1");
       const spine2Joint = getFrameJointWorld(frame, frameTranslation, "spine2");
@@ -7086,7 +6648,7 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
 
         let coreShellVisible = false;
-        if (pelvisJoint && spine1Joint && spine2Joint && neckJoint && hipAxis && shoulderAxis) {{
+        if (!customModelUsesFusedSpine && pelvisJoint && spine1Joint && spine2Joint && neckJoint && hipAxis && shoulderAxis) {{
           const hipCenter = leftHipJoint && rightHipJoint
             ? leftHipJoint.clone().add(rightHipJoint).multiplyScalar(0.5)
             : pelvisJoint;
@@ -7121,7 +6683,8 @@ def _build_html(payload: dict[str, object]) -> str:
             [pelvisJoint, spine1Joint],
             [spine1Joint, spine2Joint],
             [spine2Joint, spine3Joint ?? neckJoint],
-          ];
+            [spine3Joint, neckJoint],
+          ].filter(([segmentStart, segmentEnd]) => segmentStart && segmentEnd && segmentStart !== segmentEnd);
         const spineLateralAxis = shoulderAxis ?? hipAxis;
         spineSegments.forEach((segment, index) => {{
           const [segmentStart, segmentEnd] = segment;
@@ -7440,10 +7003,6 @@ def _build_html(payload: dict[str, object]) -> str:
       invalidateSceneBoundsCache();
       applySceneReframe();
     }});
-    showSmplMeshInput.addEventListener("change", () => {{
-      showSmplMesh = showSmplMeshInput.checked && Boolean(payload.smplMesh);
-      refreshSceneFrame();
-    }});
     showComparisonOverlayInput.addEventListener("change", () => {{
       showComparisonOverlay = showComparisonOverlayInput.checked && comparisonFrames.length > 0;
       if (!showComparisonOverlay) {{
@@ -7481,9 +7040,6 @@ def _build_html(payload: dict[str, object]) -> str:
     }});
     downloadWearSkeletonButton.addEventListener("click", () => {{
       downloadBakedWearSkeleton();
-    }});
-    downloadSmplMeshButton.addEventListener("click", () => {{
-      downloadBakedSmplMesh();
     }});
     zoomInput.addEventListener("input", () => {{
       cameraTouched = true;
