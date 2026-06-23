@@ -51,10 +51,10 @@ KNOWN_DURATION_HINTS: dict[str, tuple[float, float, str, str]] = {
 def estimate_chunking(
     *,
     exercise_name: str,
-    litert_command: str,
+    litert_command: str = "",
     model: str = DEFAULT_MODEL,
     backend: str = "gpu",
-    use_llm: bool = True,
+    use_llm: bool = False,
 ) -> ChunkEstimate:
     normalized = normalize_exercise_name(exercise_name)
     known = known_duration_hint_for(normalized)
@@ -69,7 +69,7 @@ def estimate_chunking(
             reason=reason,
         )
 
-    if use_llm:
+    if use_llm and litert_command:
         payload = call_litert_for_duration_estimate(
             exercise_name=exercise_name,
             litert_command=litert_command,

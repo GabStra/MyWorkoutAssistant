@@ -12,6 +12,11 @@ from pathlib import Path
 
 import httpx
 
+from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_TEMPERATURE,
+    DEFAULT_LLAMA_CPP_TOP_K,
+    DEFAULT_LLAMA_CPP_TOP_P,
+)
 from exercise_motion_pkg.youtube import sanitize_video_for_processing
 from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
@@ -27,6 +32,9 @@ class DetectionSettings:
     llama_cpp_mmproj: str | None = None
     llama_cpp_backend: str = "gpu"
     llama_cpp_n_predict: int = 768
+    llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
+    llama_cpp_top_p: float | None = DEFAULT_LLAMA_CPP_TOP_P
+    llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
     llama_cpp_image_min_tokens: int | None = None
     llama_cpp_image_max_tokens: int | None = None
     window_seconds: float = 4.0
@@ -207,6 +215,9 @@ def detect_exercise_segment(
             mmproj=settings.llama_cpp_mmproj,
             backend=settings.llama_cpp_backend,
             n_predict=settings.llama_cpp_n_predict,
+            temperature=settings.llama_cpp_temperature,
+            top_p=settings.llama_cpp_top_p,
+            top_k=settings.llama_cpp_top_k,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
             request_timeout_seconds=settings.request_timeout_seconds,
@@ -222,6 +233,9 @@ def detect_exercise_segment(
             settings.base_url,
             settings.model,
             n_predict=settings.llama_cpp_n_predict,
+            temperature=settings.llama_cpp_temperature,
+            top_p=settings.llama_cpp_top_p,
+            top_k=settings.llama_cpp_top_k,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
             request_timeout_seconds=settings.request_timeout_seconds,
@@ -1285,6 +1299,8 @@ class LlamaCppVisionClient:
         backend: str = "gpu",
         n_predict: int = 768,
         temperature: float = 0.2,
+        top_p: float | None = None,
+        top_k: int | None = None,
         disable_reasoning: bool = True,
         image_min_tokens: int | None = None,
         image_max_tokens: int | None = None,
@@ -1297,6 +1313,8 @@ class LlamaCppVisionClient:
         self.backend = backend
         self.n_predict = max(1, n_predict)
         self.temperature = max(0.0, float(temperature))
+        self.top_p = None if top_p is None else max(0.0, min(1.0, float(top_p)))
+        self.top_k = None if top_k is None else max(0, int(top_k))
         self.disable_reasoning = disable_reasoning
         self.image_min_tokens = image_min_tokens
         self.image_max_tokens = image_max_tokens
@@ -1357,13 +1375,17 @@ class LlamaCppVisionClient:
                 "--prompt",
                 prompt,
                 "--temp",
-                "0.2",
+                str(self.temperature),
                 "--n-predict",
                 str(self.n_predict),
                 "--json-schema",
                 "{}",
             ]
         )
+        if self.top_p is not None:
+            command.extend(["--top-p", str(self.top_p)])
+        if self.top_k is not None:
+            command.extend(["--top-k", str(self.top_k)])
         if self.image_min_tokens is not None:
             command.extend(["--image-min-tokens", str(self.image_min_tokens)])
         if self.image_max_tokens is not None:
@@ -1405,6 +1427,10 @@ class LlamaCppVisionClient:
             "max_tokens": self.n_predict,
             "response_format": {"type": "json_object"},
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.top_k is not None:
+            payload["top_k"] = self.top_k
         if self.disable_reasoning:
             payload["reasoning_format"] = "none"
             payload["chat_template_kwargs"] = {"enable_thinking": False}

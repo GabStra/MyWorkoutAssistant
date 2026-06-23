@@ -1,0 +1,5 @@
+DEFAULT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf"
+DEFAULT_LLAMA_CPP_MMPROJ = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf"
+DEFAULT_LLAMA_CPP_TEMPERATURE = 1.0
+DEFAULT_LLAMA_CPP_TOP_P = 0.95
+DEFAULT_LLAMA_CPP_TOP_K = 64
