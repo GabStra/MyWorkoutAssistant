@@ -23,6 +23,9 @@ from exercise_motion_pkg.preview import (
 from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
 
 
+SPINE_MESH_WARP_CHAIN = ("pelvis", "spine1", "spine2", "spine3", "neck")
+
+
 @dataclass(frozen=True)
 class WhamSmplMeshSequence:
     fps: float
@@ -111,6 +114,7 @@ def write_baked_wham_smpl_preview_json(
     sequence: WhamSmplMeshSequence,
     raw_clip: MotionClip,
     cleaned_clip: MotionClip,
+    mesh_reference_clip: MotionClip | None = None,
     title: str,
     selected_loop_index: int | None = None,
     lock_y_drift: bool = False,
@@ -119,6 +123,7 @@ def write_baked_wham_smpl_preview_json(
         sequence=sequence,
         raw_clip=raw_clip,
         cleaned_clip=cleaned_clip,
+        mesh_reference_clip=mesh_reference_clip,
         title=title,
         selected_loop_index=selected_loop_index,
         lock_y_drift=lock_y_drift,
@@ -133,6 +138,7 @@ def build_baked_wham_smpl_preview_payload(
     sequence: WhamSmplMeshSequence,
     raw_clip: MotionClip,
     cleaned_clip: MotionClip,
+    mesh_reference_clip: MotionClip | None = None,
     title: str,
     selected_loop_index: int | None = None,
     lock_y_drift: bool = False,
@@ -150,11 +156,18 @@ def build_baked_wham_smpl_preview_payload(
     active_root_anchor = None if raw_motion_review else _compute_root_anchor(active_frames, root_joint)
     trim_start = _cleanup_trim_start(cleaned_clip)
     raw_root_joint = _find_root_joint(raw_clip)
+    mesh_reference = mesh_reference_clip or raw_clip
+    mesh_warp_stats: list[dict[str, object]] = []
 
     transformed_frames: list[dict[str, object]] = []
     for local_frame_index, preview_frame in enumerate(active_frames, start=active_start_frame):
         raw_frame_index = trim_start + local_frame_index
-        if raw_frame_index < 0 or raw_frame_index >= sequence.frame_count or raw_frame_index >= raw_clip.frame_count:
+        if (
+            raw_frame_index < 0
+            or raw_frame_index >= sequence.frame_count
+            or raw_frame_index >= raw_clip.frame_count
+            or raw_frame_index >= mesh_reference.frame_count
+        ):
             continue
         frame_translation = (
             _fixed_root_translation(
@@ -182,19 +195,15 @@ def build_baked_wham_smpl_preview_payload(
             raw_root_joint=raw_root_joint,
             target_root_joint=root_joint,
         )
-        vertices = [
-            _point_to_list(
-                _apply_rotations_to_point(
-                    (
-                        vertex[0] + motion_delta[0] - frame_translation[0],
-                        vertex[1] + motion_delta[1] - frame_translation[1],
-                        vertex[2] + motion_delta[2] - frame_translation[2],
-                    ),
-                    auto_alignment,
-                )
-            )
-            for vertex in sequence.vertices[raw_frame_index]
-        ]
+        vertices, spine_warp = _transform_mesh_vertices_for_preview_frame(
+            sequence.vertices[raw_frame_index],
+            reference_frame=mesh_reference.frames[raw_frame_index],
+            preview_frame=preview_frame,
+            motion_delta=motion_delta,
+            frame_translation=frame_translation,
+            auto_alignment=auto_alignment,
+        )
+        mesh_warp_stats.append(spine_warp)
         transformed_frames.append(
             {
                 "frameIndex": len(transformed_frames),
@@ -205,6 +214,9 @@ def build_baked_wham_smpl_preview_payload(
                 "rootTranslationApplied": _point_to_list(frame_translation),
                 "cleanupDeltaApplied": _point_to_list(cleanup_delta),
                 "motionDeltaApplied": _point_to_list(motion_delta),
+                "spineMeshWarpApplied": bool(spine_warp["applied"]),
+                "spineMeshWarpMaxDelta": spine_warp["maxDelta"],
+                "spineMeshWarpVertexCount": spine_warp["vertexCount"],
                 "vertices": vertices,
             }
         )
@@ -218,6 +230,21 @@ def build_baked_wham_smpl_preview_payload(
         if len(centered_frames) >= 2
         else 0.0
     )
+    spine_warp_applied = any(bool(stats["applied"]) for stats in mesh_warp_stats)
+    post_processing = (
+        ["preview_scene_centering"]
+        if raw_motion_review
+        else [
+            "cleanup_trim",
+            "cleanup_global_translation_delta",
+            "preview_refinement_alignment",
+            "preview_root_lock",
+            "preview_loop_selection",
+            "preview_scene_centering",
+        ]
+    )
+    if spine_warp_applied:
+        post_processing.insert(-1, "spine_mesh_warp_from_fused_motion")
     return {
         "schemaVersion": 1,
         "kind": "whamBakedSmplMeshPreview",
@@ -230,6 +257,7 @@ def build_baked_wham_smpl_preview_payload(
             "subjectId": sequence.subject_id,
             "coordinateSpace": sequence.coordinate_space,
             "postProcessedFromCleanedMotion": not raw_motion_review,
+            "meshReference": "pre_fusion_wham_motion" if mesh_reference_clip is not None else "raw_motion",
         },
         "fps": sequence.fps,
         "frameCount": len(centered_frames),
@@ -241,18 +269,14 @@ def build_baked_wham_smpl_preview_payload(
             "lockGlobalRootDrift": not raw_motion_review,
             "lockYDrift": lock_y_drift,
             "selectedLoopIndex": resolved_loop_index,
-            "postProcessingApplied": (
-                ["preview_scene_centering"]
-                if raw_motion_review
-                else [
-                    "cleanup_trim",
-                    "cleanup_global_translation_delta",
-                    "preview_refinement_alignment",
-                    "preview_root_lock",
-                    "preview_loop_selection",
-                    "preview_scene_centering",
-                ]
-            ),
+            "postProcessingApplied": post_processing,
+            "spineMeshWarp": {
+                "applied": spine_warp_applied,
+                "reference": "pre_fusion_wham_motion" if mesh_reference_clip is not None else "raw_motion",
+                "chain": list(SPINE_MESH_WARP_CHAIN),
+                "maxDelta": max((float(stats["maxDelta"]) for stats in mesh_warp_stats), default=0.0),
+                "warpedFrameCount": sum(1 for stats in mesh_warp_stats if bool(stats["applied"])),
+            },
         },
         "loop": {
             "enabled": selected_loop is not None,
@@ -271,6 +295,134 @@ def build_baked_wham_smpl_preview_payload(
         "bounds": _serialize_bounds(centered_bounds),
         "frames": centered_frames,
     }
+
+
+def _transform_mesh_vertices_for_preview_frame(
+    vertices: list[Point3],
+    *,
+    reference_frame,
+    preview_frame,
+    motion_delta: Point3,
+    frame_translation: Point3,
+    auto_alignment: list[tuple[tuple[float, float, float], float]],
+) -> tuple[list[list[float]], dict[str, object]]:
+    source_chain = _transformed_spine_chain(
+        reference_frame.joints,
+        motion_delta=motion_delta,
+        frame_translation=frame_translation,
+        auto_alignment=auto_alignment,
+    )
+    target_chain = _transformed_spine_chain(
+        preview_frame.joints,
+        motion_delta=(0.0, 0.0, 0.0),
+        frame_translation=frame_translation,
+        auto_alignment=auto_alignment,
+    )
+    segments = _spine_warp_segments(source_chain, target_chain)
+    transformed_vertices: list[list[float]] = []
+    warped_vertex_count = 0
+    max_delta = 0.0
+    for vertex in vertices:
+        transformed = _apply_rotations_to_point(
+            (
+                vertex[0] + motion_delta[0] - frame_translation[0],
+                vertex[1] + motion_delta[1] - frame_translation[1],
+                vertex[2] + motion_delta[2] - frame_translation[2],
+            ),
+            auto_alignment,
+        )
+        warped, delta_length = _apply_spine_mesh_warp(transformed, segments)
+        if delta_length > 1e-6:
+            warped_vertex_count += 1
+            max_delta = max(max_delta, delta_length)
+        transformed_vertices.append(_point_to_list(warped))
+    return transformed_vertices, {
+        "applied": warped_vertex_count > 0,
+        "vertexCount": warped_vertex_count,
+        "maxDelta": max_delta,
+    }
+
+
+def _transformed_spine_chain(
+    joints: dict[str, Point3],
+    *,
+    motion_delta: Point3,
+    frame_translation: Point3,
+    auto_alignment: list[tuple[tuple[float, float, float], float]],
+) -> dict[str, Point3]:
+    transformed: dict[str, Point3] = {}
+    for joint_name in SPINE_MESH_WARP_CHAIN:
+        point = joints.get(joint_name)
+        if point is None:
+            continue
+        transformed[joint_name] = _apply_rotations_to_point(
+            (
+                point[0] + motion_delta[0] - frame_translation[0],
+                point[1] + motion_delta[1] - frame_translation[1],
+                point[2] + motion_delta[2] - frame_translation[2],
+            ),
+            auto_alignment,
+        )
+    return transformed
+
+
+def _spine_warp_segments(
+    source_chain: dict[str, Point3],
+    target_chain: dict[str, Point3],
+) -> list[tuple[Point3, Point3, Point3, Point3]]:
+    segments: list[tuple[Point3, Point3, Point3, Point3]] = []
+    for start_name, end_name in zip(SPINE_MESH_WARP_CHAIN, SPINE_MESH_WARP_CHAIN[1:], strict=False):
+        source_start = source_chain.get(start_name)
+        source_end = source_chain.get(end_name)
+        target_start = target_chain.get(start_name)
+        target_end = target_chain.get(end_name)
+        if source_start is None or source_end is None or target_start is None or target_end is None:
+            continue
+        if _distance(source_start, source_end) <= 1e-6:
+            continue
+        segments.append((source_start, source_end, target_start, target_end))
+    return segments
+
+
+def _apply_spine_mesh_warp(
+    vertex: Point3,
+    segments: list[tuple[Point3, Point3, Point3, Point3]],
+) -> tuple[Point3, float]:
+    if not segments:
+        return vertex, 0.0
+    weighted_delta = (0.0, 0.0, 0.0)
+    total_weight = 0.0
+    for source_start, source_end, target_start, target_end in segments:
+        closest, progress = _closest_point_on_segment(vertex, source_start, source_end)
+        distance = _distance(vertex, closest)
+        segment_length = _distance(source_start, source_end)
+        radius = max(0.16, min(0.34, segment_length * 0.9))
+        normalized = min(1.0, max(0.0, distance / radius))
+        smooth = 1.0 - normalized * normalized * (3.0 - 2.0 * normalized)
+        weight = smooth * smooth
+        if weight <= 1e-6:
+            continue
+        source_delta = _lerp_point(
+            _subtract_point(target_start, source_start),
+            _subtract_point(target_end, source_end),
+            progress,
+        )
+        weighted_delta = _add_point(weighted_delta, _scale_point(source_delta, weight))
+        total_weight += weight
+    if total_weight <= 1e-6:
+        return vertex, 0.0
+    delta = _scale_point(weighted_delta, 1.0 / total_weight)
+    warped = _add_point(vertex, delta)
+    return warped, _distance(delta, (0.0, 0.0, 0.0))
+
+
+def _closest_point_on_segment(point: Point3, start: Point3, end: Point3) -> tuple[Point3, float]:
+    segment = _subtract_point(end, start)
+    length_sq = _dot(segment, segment)
+    if length_sq <= 1e-12:
+        return start, 0.0
+    progress = max(0.0, min(1.0, _dot(_subtract_point(point, start), segment) / length_sq))
+    return _add_point(start, _scale_point(segment, progress)), progress
 
 
 def _prepare_betas(torch_module: object, betas, *, frame_count: int):
@@ -424,6 +576,38 @@ def _serialize_preview_rotations(
         }
         for axis, angle in rotations
     ]
+
+
+def _add_point(a: Point3, b: Point3) -> Point3:
+    return (float(a[0] + b[0]), float(a[1] + b[1]), float(a[2] + b[2]))
+
+
+def _subtract_point(a: Point3, b: Point3) -> Point3:
+    return (float(a[0] - b[0]), float(a[1] - b[1]), float(a[2] - b[2]))
+
+
+def _scale_point(point: Point3, scale: float) -> Point3:
+    return (float(point[0] * scale), float(point[1] * scale), float(point[2] * scale))
+
+
+def _lerp_point(a: Point3, b: Point3, progress: float) -> Point3:
+    return (
+        float(a[0] + (b[0] - a[0]) * progress),
+        float(a[1] + (b[1] - a[1]) * progress),
+        float(a[2] + (b[2] - a[2]) * progress),
+    )
+
+
+def _dot(a: Point3, b: Point3) -> float:
+    return float(a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
+
+
+def _distance(a: Point3, b: Point3) -> float:
+    return math.sqrt(
+        (a[0] - b[0]) * (a[0] - b[0])
+        + (a[1] - b[1]) * (a[1] - b[1])
+        + (a[2] - b[2]) * (a[2] - b[2])
+    )
 
 
 def _point_to_list(point: Point3) -> list[float]:
