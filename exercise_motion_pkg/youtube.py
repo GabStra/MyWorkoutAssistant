@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -13,11 +14,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from typing import Any, Callable, Iterable
 
 import httpx
-from exercise_motion_pkg.chunking import estimate_chunking, find_default_litert_command, frames_for_chunk_seconds
+from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
+from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_MMPROJ,
+    DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_TEMPERATURE,
+    DEFAULT_LLAMA_CPP_TOP_K,
+    DEFAULT_LLAMA_CPP_TOP_P,
+)
 from exercise_motion_pkg.pose_prefilter import (
     PosePrefilterSettings,
     run_yolo_pose_prefilter,
@@ -79,12 +87,24 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
     raise RuntimeError(f"Download finished but no video file was found in {output_dir}.")
 
 
-def download_youtube_preview(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+def download_youtube_preview(
+    url: str,
+    output_dir: Path,
+    cookies_path: Path | None = None,
+    *,
+    cache_dir: Path | None = None,
+) -> Path:
     resolved_cookies_path: Path | None = None
     if cookies_path is not None:
         resolved_cookies_path = cookies_path.expanduser().resolve()
         if not resolved_cookies_path.exists():
             raise FileNotFoundError(f"YouTube cookies file not found: {resolved_cookies_path}")
+    resolved_cache_dir = cache_dir.expanduser().resolve() if cache_dir is not None else None
+    cache_stem = youtube_preview_cache_stem(url)
+    if resolved_cache_dir is not None:
+        cached = find_cached_youtube_preview(resolved_cache_dir, cache_stem)
+        if cached is not None:
+            return cached
     output_dir.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,
@@ -124,8 +144,49 @@ def download_youtube_preview(url: str, output_dir: Path, cookies_path: Path | No
         raise RuntimeError(f"Preview download failed for {url}: {message}")
     for candidate in sorted(output_dir.glob("candidate.*")):
         if candidate.is_file() and candidate.suffix.lower() != ".part":
-            return sanitize_downloaded_video(candidate)
+            sanitized = sanitize_downloaded_video(candidate)
+            if resolved_cache_dir is not None:
+                return cache_youtube_preview(sanitized, resolved_cache_dir, cache_stem)
+            return sanitized
     raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
+
+
+def youtube_preview_cache_stem(url: str) -> str:
+    parsed = urlparse(url)
+    video_id = ""
+    query_ids = parse_qs(parsed.query).get("v")
+    if query_ids:
+        video_id = str(query_ids[0])
+    elif parsed.netloc.endswith("youtu.be"):
+        video_id = parsed.path.strip("/")
+    digest = hashlib.sha1(url.encode("utf-8", errors="replace")).hexdigest()[:12]
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", video_id).strip("-")[:64]
+    return f"{safe_id}-{digest}" if safe_id else f"preview-{digest}"
+
+
+def find_cached_youtube_preview(cache_dir: Path, cache_stem: str) -> Path | None:
+    if not cache_dir.exists():
+        return None
+    for candidate in sorted(cache_dir.glob(f"{cache_stem}.*")):
+        if (
+            candidate.is_file()
+            and candidate.suffix.lower() != ".part"
+            and candidate.stat().st_size > 0
+        ):
+            return candidate
+    return None
+
+
+def cache_youtube_preview(video_path: Path, cache_dir: Path, cache_stem: str) -> Path:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = video_path.suffix if video_path.suffix else ".mp4"
+    target = cache_dir / f"{cache_stem}{suffix}"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    temp_target = target.with_suffix(target.suffix + ".part")
+    shutil.copy2(video_path, temp_target)
+    temp_target.replace(target)
+    return target
 
 
 def sanitize_video_for_processing(video_path: Path) -> Path:
@@ -343,9 +404,10 @@ class YouTubeRankingSettings:
     results_per_query: int = 10
     youtube_search_empty_retries: int = 5
     youtube_cookies: Path | None = None
+    youtube_preview_cache_dir: Path | None = None
     max_candidates: int = 8
     metadata_candidate_pool_size: int | None = None
-    min_duration_seconds: int = 20
+    min_duration_seconds: int = 10
     max_duration_seconds: int = 120
     use_deepseek_query_planner: bool = False
     deepseek_api_key: str | None = None
@@ -353,16 +415,17 @@ class YouTubeRankingSettings:
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_max_queries: int = 4
     deepseek_timeout_seconds: float = 60.0
-    rank_with_litert: bool = False
+    use_llama_cpp_query_planner: bool = False
+    rank_with_vision: bool = False
     semantic_gate_enabled: bool = False
     semantic_gate_candidates_per_exercise: int | None = None
     semantic_gate_min_score: float = 0.55
-    semantic_gate_timeout_seconds: float = 0.0
     pose_prefilter_enabled: bool = False
     pose_prefilter_model: str = "yolo26x-pose.pt"
     pose_prefilter_candidates_per_exercise: int | None = None
     pose_prefilter_sample_fps: float = 2.0
     pose_prefilter_max_seconds: float = 90.0
+    pose_prefilter_scan_strategy: str = "spread"
     pose_prefilter_window_seconds: float = 8.0
     pose_prefilter_overlap_seconds: float = 4.0
     pose_prefilter_min_score: float = 0.45
@@ -385,28 +448,32 @@ class YouTubeRankingSettings:
     vision_contact_sheet_jpeg_quality: int = 82
     vision_download_workers: int = 3
     vision_llm_workers: int = 3
-    litert_command: str | None = None
-    litert_backend: str = "gpu"
     vision_model: str = "gemma-4-E4B-it"
-    use_litert_server: bool = False
-    litert_server_url: str = "http://127.0.0.1:9379"
-    litert_server_port: int = 9379
-    keep_litert_server: bool = False
     llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
-    llama_cpp_model: str = "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf"
+    llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL
     llama_cpp_command: str | None = None
     llama_cpp_server_command: str | None = None
-    llama_cpp_mmproj: str | None = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+    llama_cpp_mmproj: str | None = DEFAULT_LLAMA_CPP_MMPROJ
     llama_cpp_backend: str = "gpu"
     llama_cpp_n_predict: int = 512
-    llama_cpp_temperature: float = 0.2
+    llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
+    llama_cpp_top_p: float | None = DEFAULT_LLAMA_CPP_TOP_P
+    llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
     llama_cpp_disable_reasoning: bool = True
     llama_cpp_ctx_size: int | None = None
     llama_cpp_batch_size: int | None = None
     llama_cpp_ubatch_size: int | None = None
     llama_cpp_flash_attn: str | None = None
+    llama_cpp_cache_type_k: str | None = None
+    llama_cpp_cache_type_v: str | None = None
+    llama_cpp_parallel: int | None = None
     llama_cpp_threads_http: int | None = None
     llama_cpp_cache_reuse: int | None = None
+    llama_cpp_fit: str | None = None
+    llama_cpp_fit_ctx: int | None = None
+    llama_cpp_fit_target: int | None = None
+    llama_cpp_mmap: bool = True
+    llama_cpp_mlock: bool = False
     llama_cpp_mmproj_offload: bool = True
     llama_cpp_cont_batching: bool = True
     llama_cpp_image_min_tokens: int | None = None
@@ -421,7 +488,7 @@ class YouTubeRankingSettings:
     def resolved_metadata_candidate_pool_size(self) -> int:
         if self.metadata_candidate_pool_size is not None:
             return max(1, self.metadata_candidate_pool_size)
-        if self.rank_with_litert:
+        if self.rank_with_vision:
             return max(24, self.max_candidates, self.vision_candidates_per_exercise)
         if self.pose_prefilter_enabled:
             return max(24, self.max_candidates, self.resolved_pose_prefilter_candidates_per_exercise())
@@ -434,9 +501,15 @@ class YouTubeRankingSettings:
 
     def resolved_semantic_gate_candidates_per_exercise(self) -> int:
         if self.semantic_gate_candidates_per_exercise is not None:
-            return max(1, self.semantic_gate_candidates_per_exercise)
+            explicit = max(1, self.semantic_gate_candidates_per_exercise)
+            if self.pose_prefilter_enabled:
+                return max(explicit, self.resolved_metadata_candidate_pool_size())
+            return explicit
         if self.pose_prefilter_enabled:
-            return self.resolved_pose_prefilter_candidates_per_exercise()
+            return max(
+                self.resolved_pose_prefilter_candidates_per_exercise(),
+                self.resolved_metadata_candidate_pool_size(),
+            )
         return max(self.max_candidates, self.vision_candidates_per_exercise)
 
 
@@ -553,6 +626,17 @@ SEMANTIC_GATE_OTHER_EXERCISE_TERMS = (
 SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE = {
     "barbell bench press": ("bench press", "barbell bench", "panca piana", "flat bench"),
     "bench press": ("bench press", "panca piana", "flat bench"),
+    "bulgarian split squat": (
+        "bulgarian split squat",
+        "bulgarian squat",
+        "rear foot elevated split squat",
+        "rfess",
+    ),
+}
+YOUTUBE_QUERY_EQUIPMENT_ALIASES = {
+    "barbell": ("barbell", "bb"),
+    "dumbbell": ("dumbbell", "dumbbells", "db"),
+    "kettlebell": ("kettlebell", "kettlebells", "kb"),
 }
 YOUTUBE_QUERY_EQUIPMENT_PREFIXES = (
     "barbell",
@@ -567,14 +651,52 @@ EXERCISE_VARIANT_TERMS = (
     "decline",
     "close grip",
     "wide grip",
+    "neutral grip",
+    "mixed grip",
     "reverse grip",
+    "underhand",
+    "overhand",
     "smith machine",
     "machine",
+    "cable",
     "floor",
+    "seated",
+    "standing",
+    "kneeling",
+    "bent over",
+    "chest supported",
+    "supported",
+    "unsupported",
+    "single arm",
+    "one arm",
+    "single leg",
+    "one leg",
+    "front foot elevated",
+    "rear foot elevated",
+    "deficit",
+    "box",
+    "sumo",
+    "conventional",
+    "romanian",
+    "stiff leg",
+    "paused",
+    "tempo",
+    "eccentric",
+    "negative",
+    "isometric",
+    "assisted",
+    "band assisted",
+    "banded",
+    "weighted",
+    "jumping",
+    "kipping",
+    "butterfly",
+    "chest to bar",
+    "chin up",
+    "commando",
     "pin press",
     "board press",
     "spoto",
-    "paused",
     "triceps press",
 )
 SOURCE_ATTEMPT_REASON_CAPS = {
@@ -592,6 +714,10 @@ SOURCE_ATTEMPT_REASON_CAPS = {
     "combine_penalty": 0.67,
 }
 SOURCE_VARIANT_CAP = 0.34
+POSE_QUALITY_REASON_CAPS = {
+    "pose_cropped_body": 0.67,
+}
+SEMANTIC_POSE_BACKFILL_MIN_SCORE = 0.35
 REST_COMPONENT_TYPES = {"rest", "recovery", "break"}
 NON_MOTION_EXERCISE_TYPES = {"countdown"}
 
@@ -734,25 +860,33 @@ def slugify(name: str) -> str:
 
 def build_youtube_queries(exercise_name: str) -> list[str]:
     base = exercise_name.strip()
+    base_term = quote_youtube_search_term(base)
     exclusions = build_youtube_query_exclusion_suffix(base)
     queries = [
-        f'{base} demonstration reps "same camera angle"{exclusions}',
-        f'{base} "proper form" demo "single camera"{exclusions} -mistakes -guide',
-        f"{base} execution demo full movement stable camera{exclusions} -workout -program",
-        f"{base} exercise demonstration full rep single person{exclusions}",
-        f"{base} full body demo reps side view{exclusions}",
-        f"{base} technique demo complete repetition static camera{exclusions}",
+        f"{base_term} exercise demonstration{exclusions}",
+        f"{base_term} exercise demo full rep{exclusions}",
+        f"{base_term} proper form{exclusions}",
+        f"{base_term} side view exercise{exclusions}",
+        f"{base_term} single person exercise demo{exclusions}",
     ]
     for alias in generic_youtube_query_aliases(base):
-        alias_exclusions = build_youtube_query_exclusion_suffix(base)
+        alias_term = quote_youtube_search_term(alias)
         queries.extend(
             [
-                f"{alias} exercise demonstration full rep single person{alias_exclusions}",
-                f"{alias} full body demo reps side view{alias_exclusions}",
-                f'{alias} "same camera angle" reps{alias_exclusions}',
+                f"{alias_term} exercise demonstration{exclusions}",
+                f"{alias_term} exercise demo full rep{exclusions}",
+                f"{alias_term} side view exercise{exclusions}",
             ]
         )
     return merge_youtube_queries(queries)
+
+
+def quote_youtube_search_term(term: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(term)).strip()
+    if not normalized:
+        return ""
+    escaped = normalized.replace('"', "")
+    return f'"{escaped}"'
 
 
 def generic_youtube_query_aliases(exercise_name: str) -> list[str]:
@@ -778,6 +912,13 @@ def build_youtube_query_exclusion_suffix(exercise_name: str) -> str:
         "-competition",
         "-amrap",
         "-1rm",
+        "-workout",
+        "-program",
+        "-music",
+        "-audio",
+        "-song",
+        "-lyrics",
+        "-dance",
     ]
     for term in ("incline", "decline", "machine"):
         normalized_term = normalize_exercise_name(term)
@@ -807,7 +948,93 @@ def normalize_search_query(query: str) -> str:
     normalized = re.sub(r"\s+", " ", str(query)).strip()
     if normalized.startswith(("http://", "https://")):
         return ""
-    return normalized[:180].strip()
+    if len(normalized) <= 180:
+        return normalized
+    parts = normalized.split()
+    trimmed: list[str] = []
+    for part in parts:
+        candidate = " ".join([*trimmed, part])
+        if len(candidate) > 180:
+            break
+        trimmed.append(part)
+    return " ".join(trimmed).strip()
+
+
+def normalize_generated_youtube_query(query: str, *, exercise_name: str) -> str:
+    normalized = normalize_search_query(query)
+    if not normalized:
+        return ""
+    exclusions = build_youtube_query_exclusion_suffix(exercise_name).split() if exercise_name else []
+    existing = {part.casefold() for part in normalized.split()}
+    missing = [item for item in exclusions if item.casefold() not in existing]
+    return normalize_search_query(" ".join([normalized, *missing]))
+
+
+def parse_youtube_query_planner_payload(
+    raw: str,
+    *,
+    exercise_name: str,
+    max_queries: int,
+) -> list[str]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        from exercise_motion_pkg.segment_detection import extract_json_object
+
+        extracted = extract_json_object(raw)
+        payload = extracted if isinstance(extracted, dict) else {}
+    raw_queries = payload.get("queries") if isinstance(payload, dict) else None
+    if not isinstance(raw_queries, list):
+        return []
+    return merge_youtube_queries(
+        [
+            normalize_generated_youtube_query(query, exercise_name=exercise_name)
+            for query in raw_queries
+            if isinstance(query, str)
+        ],
+        limit=max(0, max_queries),
+    )
+
+
+class LlamaCppYouTubeQueryPlanner:
+    def __init__(
+        self,
+        settings: YouTubeRankingSettings,
+        *,
+        shared_ranker: Any | None = None,
+    ) -> None:
+        self.settings = settings
+        self._shared_ranker = shared_ranker
+        self._owned_ranker = None if shared_ranker is not None else LlamaCppVisionRanker(settings)
+
+    @property
+    def _ranker(self) -> Any:
+        ranker = self._shared_ranker or self._owned_ranker
+        if ranker is None:
+            raise RuntimeError("llama.cpp query planner is not initialized.")
+        return ranker
+
+    def __call__(
+        self,
+        exercise: ExerciseEntry,
+        base_queries: list[str],
+        settings: YouTubeRankingSettings,
+    ) -> list[str]:
+        prompt = build_youtube_query_planner_prompt(
+            exercise_name=exercise.name,
+            base_queries=base_queries,
+            max_queries=settings.deepseek_max_queries,
+        )
+        raw = self._ranker.client.caption_images(frame_paths=[], prompt=prompt)
+        return parse_youtube_query_planner_payload(
+            raw,
+            exercise_name=exercise.name,
+            max_queries=settings.deepseek_max_queries,
+        )
+
+    def close(self) -> None:
+        if self._owned_ranker is not None:
+            self._owned_ranker.close()
 
 
 class DeepSeekYouTubeQueryPlanner:
@@ -865,10 +1092,14 @@ class DeepSeekYouTubeQueryPlanner:
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"]
-        return parse_deepseek_query_payload(content, max_queries=settings.deepseek_max_queries)
+        return parse_youtube_query_planner_payload(
+            content,
+            exercise_name=exercise.name,
+            max_queries=settings.deepseek_max_queries,
+        )
 
 
-def build_deepseek_query_planner_prompt(
+def build_youtube_query_planner_prompt(
     *,
     exercise_name: str,
     base_queries: list[str],
@@ -882,24 +1113,35 @@ def build_deepseek_query_planner_prompt(
         "or implement visible, static camera, continuous normal-speed repetitions, no camera cuts, and no "
         "nearby people or obstructions.\n"
         "Use YouTube search syntax when useful, including negative terms like -shorts, -tutorial, -workout, "
-        "or -mistakes. Do not return URLs. Return JSON only: {\"queries\": [\"...\"]}."
+        "or -mistakes.\n"
+        "Prefer exact quoted exercise names and exact common aliases. Avoid broad phrases that can match "
+        "music, challenges, tutorials, commentary, or general workouts.\n"
+        "If the target is a basic exercise name, generate queries for the basic/common version only. Do not add "
+        "variant terms such as chest-to-bar, kipping, butterfly, banded, assisted, jumping, negative, weighted, "
+        "chin-up, grip-specific, machine, incline, decline, seated, supported, single-arm, or single-leg unless "
+        "the target exercise already includes that qualifier.\n"
+        "Do not return URLs. Return JSON only: {\"queries\": [\"...\"]}."
+    )
+
+
+def build_deepseek_query_planner_prompt(
+    *,
+    exercise_name: str,
+    base_queries: list[str],
+    max_queries: int,
+) -> str:
+    return build_youtube_query_planner_prompt(
+        exercise_name=exercise_name,
+        base_queries=base_queries,
+        max_queries=max_queries,
     )
 
 
 def parse_deepseek_query_payload(raw: str, *, max_queries: int) -> list[str]:
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        from exercise_motion_pkg.segment_detection import extract_json_object
-
-        extracted = extract_json_object(raw)
-        payload = extracted if isinstance(extracted, dict) else {}
-    raw_queries = payload.get("queries") if isinstance(payload, dict) else None
-    if not isinstance(raw_queries, list):
-        return []
-    return merge_youtube_queries(
-        [query for query in raw_queries if isinstance(query, str)],
-        limit=max(0, max_queries),
+    return parse_youtube_query_planner_payload(
+        raw,
+        exercise_name="",
+        max_queries=max_queries,
     )
 
 
@@ -1200,10 +1442,20 @@ def vision_review_priority_score(
 def unrequested_variant_terms(candidate_text: str, exercise_name: str) -> list[str]:
     normalized_candidate = normalize_exercise_name(candidate_text)
     normalized_exercise = normalize_exercise_name(exercise_name)
+    allowed_identity_text = " ".join(
+        [
+            normalized_exercise,
+            *semantic_gate_title_aliases(normalized_exercise),
+        ]
+    )
     found: list[str] = []
     for term in EXERCISE_VARIANT_TERMS:
         normalized_term = normalize_exercise_name(term)
-        if normalized_term in normalized_candidate and normalized_term not in normalized_exercise:
+        if not normalized_phrase_in_text(normalized_term, normalized_candidate):
+            continue
+        if normalized_phrase_in_text(normalized_term, allowed_identity_text):
+            continue
+        if normalized_term not in found:
             found.append(term)
     return found
 
@@ -1244,6 +1496,67 @@ def dedupe_reasons(reasons: list[str]) -> list[str]:
             seen.add(reason)
             result.append(reason)
     return result
+
+
+POSE_PREFILTER_HARD_REJECT_ISSUES = {
+    "multiple_people",
+    "no_person_detected",
+    "low_keypoint_coverage",
+    "cropped_body",
+    "camera_or_track_instability",
+    "weak_body_joint_motion",
+    "low_active_chain_visibility",
+}
+
+
+def pose_prefilter_blocking_issues(pose_payload: dict[str, Any]) -> list[str]:
+    value = pose_payload.get("blockingIssues")
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        return []
+    issues: list[str] = []
+    for item in raw_items:
+        text = str(item).strip().lower()
+        if text and text not in issues:
+            issues.append(text)
+    return issues
+
+
+def pose_prefilter_has_hard_reject_issue(pose_payload: dict[str, Any]) -> bool:
+    return any(issue in POSE_PREFILTER_HARD_REJECT_ISSUES for issue in pose_prefilter_blocking_issues(pose_payload))
+
+
+def pose_prefilter_hard_reject_reasons(pose_payload: dict[str, Any]) -> list[str]:
+    issues = [
+        issue
+        for issue in pose_prefilter_blocking_issues(pose_payload)
+        if issue in POSE_PREFILTER_HARD_REJECT_ISSUES
+    ]
+    if not issues:
+        return []
+    return dedupe_reasons(
+        [
+            "pose_prefilter_hard_reject",
+            *[f"pose_prefilter_{issue}_hard_reject" for issue in issues],
+        ]
+    )
+
+
+def candidate_has_pose_prefilter_hard_reject(candidate: YouTubeCandidate) -> bool:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    return isinstance(pose_payload, dict) and pose_prefilter_has_hard_reject_issue(pose_payload)
+
+
+def candidate_pose_prefilter_hard_reject_reasons(candidate: YouTubeCandidate) -> list[str]:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    if not isinstance(pose_payload, dict):
+        return []
+    return pose_prefilter_hard_reject_reasons(pose_payload)
 
 
 def clamp_score(score: float) -> float:
@@ -1297,6 +1610,11 @@ def apply_source_quality_caps(score: float, reasons: list[str]) -> tuple[float, 
             capped = min(capped, cap)
             cap_reasons.append("max_or_competition_attempt_source_cap")
             break
+    for reason, cap in POSE_QUALITY_REASON_CAPS.items():
+        if reason in reasons:
+            capped = min(capped, cap)
+            cap_reasons.append("borderline_full_body_frame_source_cap")
+            break
     return capped, cap_reasons
 
 
@@ -1308,8 +1626,10 @@ def has_source_quality_demoter(reasons: list[str]) -> bool:
     return (
         any(is_unrequested_variant_reason(reason) for reason in reasons)
         or any(reason in SOURCE_ATTEMPT_REASON_CAPS for reason in reasons)
+        or any(reason in POSE_QUALITY_REASON_CAPS for reason in reasons)
         or "unrequested_variant_source_cap" in reasons
         or "max_or_competition_attempt_source_cap" in reasons
+        or "borderline_full_body_frame_source_cap" in reasons
     )
 
 
@@ -1336,6 +1656,12 @@ VISION_HARD_GATE_REASONS = {
     "low_critical_joint_occlusion",
     "reconstruction_suitable",
     "single_person_chunk",
+    "real_human_subject",
+    "movement_start_posture_visible",
+    "primary_effort_phase_visible",
+    "movement_action_path_visible",
+    "movement_end_posture_visible",
+    "no_setup_or_talking_frames",
 }
 
 
@@ -1343,6 +1669,8 @@ def candidate_passes_vision_hard_gates(
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
 ) -> bool:
+    if candidate_has_pose_prefilter_hard_reject(candidate):
+        return False
     if candidate.vision_score is None or candidate.vision_score < settings.vision_early_stop_score:
         return False
     if has_source_quality_demoter(candidate.score_reasons):
@@ -1385,7 +1713,7 @@ def rank_candidates_with_semantic_gate(
         return []
     limit = min(len(ranked), settings.resolved_semantic_gate_candidates_per_exercise())
     candidates_to_review = ranked[:limit]
-    active_gate = semantic_gate or rank_candidate_with_litert_semantic_gate
+    active_gate = semantic_gate or rank_candidate_with_llama_cpp_semantic_gate
     workers = max(1, min(settings.vision_llm_workers, len(candidates_to_review)))
     scored_by_key: dict[str, YouTubeCandidate] = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1399,6 +1727,7 @@ def rank_candidates_with_semantic_gate(
                 semantic_score, semantic_reasons, semantic_payload = normalize_semantic_gate_result(future.result())
                 scored_by_key[candidate.key()] = apply_semantic_gate_score(
                     candidate,
+                    exercise=exercise,
                     semantic_score=semantic_score,
                     semantic_reasons=semantic_reasons,
                     semantic_payload=semantic_payload,
@@ -1407,6 +1736,7 @@ def rank_candidates_with_semantic_gate(
             except Exception as exc:
                 scored_by_key[candidate.key()] = apply_semantic_gate_score(
                     candidate,
+                    exercise=exercise,
                     semantic_score=0.0,
                     semantic_reasons=["semantic_gate_failed"],
                     semantic_payload={
@@ -1418,14 +1748,18 @@ def rank_candidates_with_semantic_gate(
                     settings=settings,
                 )
     reviewed = [scored_by_key.get(candidate.key(), candidate) for candidate in candidates_to_review]
-    passed = [
-        candidate
-        for candidate in reviewed
-        if isinstance(candidate.vision_payload, dict)
-        and isinstance(candidate.vision_payload.get("semanticGate"), dict)
-        and bool(candidate.vision_payload["semanticGate"].get("passed"))
-    ]
-    narrowed = reviewed
+    if settings.pose_prefilter_enabled:
+        narrowed = [
+            candidate
+            for candidate in reviewed
+            if candidate_is_semantic_pose_candidate(candidate, settings=settings)
+        ]
+    else:
+        narrowed = [
+            candidate
+            for candidate in reviewed
+            if candidate_semantic_gate_passed(candidate)
+        ]
     narrowed.sort(key=lambda item: (semantic_gate_score(item), item.metadata_score, item.final_score), reverse=True)
     return narrowed
 
@@ -1433,6 +1767,7 @@ def rank_candidates_with_semantic_gate(
 def apply_semantic_gate_score(
     candidate: YouTubeCandidate,
     *,
+    exercise: ExerciseEntry,
     semantic_score: float,
     semantic_reasons: list[str],
     semantic_payload: dict[str, Any] | None,
@@ -1441,9 +1776,34 @@ def apply_semantic_gate_score(
     clamped_score = clamp_score(semantic_score)
     payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
     semantic_payload = dict(semantic_payload) if isinstance(semantic_payload, dict) else {}
-    passed = bool(semantic_payload.get("passed", clamped_score >= settings.semantic_gate_min_score))
-    if clamped_score < settings.semantic_gate_min_score:
-        passed = False
+    conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
+    deterministic_unrequested_variants = unrequested_variant_terms(candidate.title, exercise.name)
+    model_unrequested_variants = semantic_payload_unrequested_variant_terms(semantic_payload)
+    unrequested_variants = dedupe_reasons([*deterministic_unrequested_variants, *model_unrequested_variants])
+    if unrequested_variants:
+        semantic_payload["unrequestedVariantTerms"] = unrequested_variants
+        conflict_reasons = dedupe_reasons(
+            [
+                *conflict_reasons,
+                *[
+                    f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
+                    for variant in model_unrequested_variants
+                    if slugify(variant)
+                ],
+            ]
+        )
+    if conflict_reasons:
+        clamped_score = min(clamped_score, 0.20)
+        existing_conflicts = semantic_payload.get("textConflictReasons")
+        if isinstance(existing_conflicts, list):
+            semantic_payload["textConflictReasons"] = dedupe_reasons(
+                [str(item) for item in existing_conflicts] + conflict_reasons
+            )
+        else:
+            semantic_payload["textConflictReasons"] = conflict_reasons
+        semantic_reasons = dedupe_reasons([*semantic_reasons, *conflict_reasons])
+    wrong_exercise = bool(semantic_payload.get("wrongExercise"))
+    passed = clamped_score >= settings.semantic_gate_min_score and not wrong_exercise
     semantic_payload.setdefault("enabled", True)
     semantic_payload["passed"] = passed
     semantic_payload["score"] = clamped_score
@@ -1453,7 +1813,7 @@ def apply_semantic_gate_score(
         score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_passed"])
     else:
         score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_rejected"])
-    final_score = clamp_score(candidate.metadata_score * 0.55 + clamped_score * 0.45)
+    final_score = 0.0 if conflict_reasons else clamp_score(candidate.metadata_score * 0.55 + clamped_score * 0.45)
     final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
     return replace_candidate(
         candidate,
@@ -1462,6 +1822,26 @@ def apply_semantic_gate_score(
         score_reasons=dedupe_reasons(score_reasons + cap_reasons),
         vision_payload=payload,
     )
+
+
+def semantic_payload_unrequested_variant_terms(semantic_payload: dict[str, Any]) -> list[str]:
+    raw = semantic_payload.get("unrequestedVariantTerms")
+    if raw is None:
+        raw = semantic_payload.get("unrequested_variant_terms")
+    if raw is None:
+        raw = semantic_payload.get("addedQualifiers")
+    if isinstance(raw, str):
+        raw_items: list[Any] = [raw]
+    elif isinstance(raw, list):
+        raw_items = raw
+    else:
+        return []
+    terms: list[str] = []
+    for item in raw_items:
+        text = normalize_exercise_name(str(item))
+        if text and text not in terms:
+            terms.append(text)
+    return terms
 
 
 def semantic_gate_score(candidate: YouTubeCandidate) -> float:
@@ -1473,84 +1853,58 @@ def semantic_gate_score(candidate: YouTubeCandidate) -> float:
     return clamp_score(float(value)) if isinstance(value, (int, float)) else 0.0
 
 
-def rank_candidate_with_litert_semantic_gate(
+def candidate_semantic_gate_payload(candidate: YouTubeCandidate) -> dict[str, Any] | None:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    semantic_payload = payload.get("semanticGate") if isinstance(payload, dict) else None
+    return semantic_payload if isinstance(semantic_payload, dict) else None
+
+
+def candidate_semantic_gate_passed(candidate: YouTubeCandidate) -> bool:
+    payload = candidate_semantic_gate_payload(candidate)
+    return bool(payload and payload.get("passed"))
+
+
+def candidate_is_semantic_pose_candidate(candidate: YouTubeCandidate, *, settings: YouTubeRankingSettings) -> bool:
+    payload = candidate_semantic_gate_payload(candidate)
+    if payload is None:
+        return False
+    if bool(payload.get("passed")):
+        return True
+    if bool(payload.get("wrongExercise")) or bool(payload.get("wrongEquipment")):
+        return False
+    text_conflicts = payload.get("textConflictReasons")
+    if isinstance(text_conflicts, list) and text_conflicts:
+        return False
+    return semantic_gate_score(candidate) >= min(settings.semantic_gate_min_score, SEMANTIC_POSE_BACKFILL_MIN_SCORE)
+
+
+def rank_candidate_with_llama_cpp_semantic_gate(
     exercise: ExerciseEntry,
     candidate: YouTubeCandidate,
     settings: YouTubeRankingSettings,
 ) -> SemanticGateResult:
-    from exercise_motion_pkg.segment_detection import extract_json_object
-
-    command = settings.litert_command or find_default_litert_command()
-    prompt = build_candidate_semantic_gate_prompt(exercise, candidate)
-    process = subprocess.run(
-        [
-            command,
-            "run",
-            settings.vision_model,
-            "--backend",
-            settings.litert_backend,
-            "--prompt",
-            prompt,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=semantic_gate_subprocess_timeout(settings),
-    )
-    if process.returncode != 0:
-        message = truncate_text(process.stderr or process.stdout or "LiteRT semantic gate failed.", 240)
-        raise RuntimeError(message or "LiteRT semantic gate failed.")
-    payload = extract_json_object(process.stdout)
-    if not isinstance(payload, dict):
-        raise RuntimeError("LiteRT semantic gate returned no JSON object.")
-    score = coerce_float(payload.get("score"))
-    if score is None:
-        score = coerce_float(payload.get("targetExerciseMatch"))
-    if score is None:
-        score = 0.0
-    wrong_exercise = bool(payload.get("wrongExercise"))
-    passed = bool(payload.get("passed", score >= settings.semantic_gate_min_score and not wrong_exercise))
-    reasons = ["semantic_text_match" if passed else "semantic_text_mismatch"]
-    conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
-    if conflict_reasons:
-        passed = False
-        score = min(score, 0.20)
-        reasons.extend(conflict_reasons)
-    if wrong_exercise:
-        reasons.append("semantic_wrong_exercise")
-    if bool(payload.get("wrongEquipment")):
-        reasons.append("semantic_wrong_equipment")
-    return clamp_score(score), reasons, {
-        "enabled": True,
-        "passed": passed,
-        "score": clamp_score(score),
-        "wrongExercise": wrong_exercise,
-        "wrongEquipment": bool(payload.get("wrongEquipment")),
-        "textConflictReasons": conflict_reasons,
-        "matchedExercise": truncate_text(str(payload.get("matchedExercise") or ""), 120),
-        "reason": truncate_text(str(payload.get("reason") or ""), 240),
-    }
-
-
-def semantic_gate_subprocess_timeout(settings: YouTubeRankingSettings) -> float | None:
-    if settings.semantic_gate_timeout_seconds <= 0:
-        return None
-    return max(1.0, settings.semantic_gate_timeout_seconds)
+    gate = LlamaCppSemanticGate(settings)
+    try:
+        return gate(exercise, candidate, settings)
+    finally:
+        gate.close()
 
 
 def semantic_gate_text_conflict_reasons(exercise: ExerciseEntry, candidate: YouTubeCandidate) -> list[str]:
     normalized_exercise = normalize_exercise_name(exercise.name)
     normalized_title = normalize_exercise_name(candidate.title)
     normalized_description = normalize_exercise_name(candidate.description_snippet or "")
+    candidate_text = candidate.title
     reasons: list[str] = []
-    aliases = SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(normalized_exercise)
-    title_has_target = False
-    if aliases:
-        title_has_target = any(normalize_exercise_name(alias) in normalized_title for alias in aliases)
-    else:
-        target_tokens = normalized_exercise.split()
-        title_tokens = set(normalized_title.split())
-        title_has_target = bool(target_tokens) and all(token in title_tokens for token in target_tokens)
+    unrequested_variants = unrequested_variant_terms(candidate_text, exercise.name)
+    if unrequested_variants:
+        reasons.extend(
+            [
+                f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
+                for variant in unrequested_variants
+            ]
+        )
+    title_has_target = semantic_gate_text_contains_target_identity(normalized_exercise, normalized_title)
     other_terms = [
         term
         for term in SEMANTIC_GATE_OTHER_EXERCISE_TERMS
@@ -1560,32 +1914,103 @@ def semantic_gate_text_conflict_reasons(exercise: ExerciseEntry, candidate: YouT
     if other_terms:
         reasons.append("semantic_title_mentions_other_exercise")
     if not title_has_target:
-        target_in_description = False
-        if aliases:
-            target_in_description = any(normalize_exercise_name(alias) in normalized_description for alias in aliases)
-        else:
-            target_tokens = normalized_exercise.split()
-            description_tokens = set(normalized_description.split())
-            target_in_description = bool(target_tokens) and all(token in description_tokens for token in target_tokens)
+        reasons.append("semantic_title_missing_target_identity")
+        target_in_description = semantic_gate_text_contains_target_identity(
+            normalized_exercise,
+            normalized_description,
+        )
         if target_in_description:
             reasons.append("semantic_target_only_in_description")
     return reasons
+
+
+def semantic_gate_text_contains_target_identity(normalized_exercise: str, normalized_text: str) -> bool:
+    aliases = semantic_gate_title_aliases(normalized_exercise)
+    if aliases and any(normalized_phrase_in_text(alias, normalized_text) for alias in aliases):
+        return True
+    equipment_prefix, base_exercise = split_equipment_prefix(normalized_exercise)
+    if equipment_prefix and base_exercise:
+        base_aliases = semantic_gate_title_aliases(base_exercise)
+        equipment_aliases = YOUTUBE_QUERY_EQUIPMENT_ALIASES.get(equipment_prefix, (equipment_prefix,))
+        has_equipment = any(
+            normalized_phrase_in_text(normalize_exercise_name(alias), normalized_text)
+            for alias in equipment_aliases
+        )
+        has_base = any(normalized_phrase_in_text(alias, normalized_text) for alias in base_aliases)
+        if has_equipment and has_base:
+            return True
+    if aliases:
+        return False
+    target_tokens = normalized_exercise.split()
+    text_tokens = set(normalized_text.split())
+    return bool(target_tokens) and all(token in text_tokens for token in target_tokens)
+
+
+def semantic_gate_title_aliases(normalized_exercise: str) -> tuple[str, ...]:
+    aliases = [
+        normalize_exercise_name(alias)
+        for alias in SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(normalized_exercise, ())
+    ]
+    equipment_prefix, base_exercise = split_equipment_prefix(normalized_exercise)
+    if equipment_prefix and base_exercise:
+        base_aliases = SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(base_exercise, ())
+        equipment_aliases = YOUTUBE_QUERY_EQUIPMENT_ALIASES.get(equipment_prefix, ())
+        for base_alias in base_aliases:
+            normalized_base_alias = normalize_exercise_name(base_alias)
+            if not normalized_base_alias:
+                continue
+            for equipment_alias in equipment_aliases:
+                normalized_equipment_alias = normalize_exercise_name(equipment_alias)
+                if not normalized_equipment_alias:
+                    continue
+                aliases.append(f"{normalized_equipment_alias} {normalized_base_alias}")
+                aliases.append(f"{normalized_base_alias} {normalized_equipment_alias}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            seen.add(alias)
+            deduped.append(alias)
+    return tuple(deduped)
+
+
+def split_equipment_prefix(normalized_exercise: str) -> tuple[str | None, str | None]:
+    for equipment_prefix in YOUTUBE_QUERY_EQUIPMENT_PREFIXES:
+        normalized_prefix = normalize_exercise_name(equipment_prefix)
+        if normalized_exercise.startswith(f"{normalized_prefix} "):
+            base_exercise = normalized_exercise[len(normalized_prefix) + 1 :].strip()
+            if base_exercise:
+                return normalized_prefix, base_exercise
+    return None, None
+
+
+def normalized_phrase_in_text(normalized_phrase: str, normalized_text: str) -> bool:
+    if not normalized_phrase:
+        return False
+    return re.search(
+        rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])",
+        normalized_text,
+    ) is not None
 
 
 def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: YouTubeCandidate) -> str:
     description = truncate_text(candidate.description_snippet or "", 800) or ""
     return (
         "You are a fast text-only semantic gate for YouTube exercise source selection.\n"
-        "Decide whether the candidate title/description is plausibly the target exercise. "
+        "Score whether the candidate title/description is the exact target exercise. "
         "Do not inspect video frames. Be strict about the actual movement and equipment. "
-        "Pass only if the candidate is primarily about the target exercise as a source clip or exercise demo. "
-        "Reject videos where the target is only implied by a muscle group, only briefly mentioned in a broader workout, or listed among multiple lifts. "
-        "Reject unrelated exercises, different lifts, warmups, mobility drills, triceps accessories, step-ups, power cleans, deadlifts, curls, and other non-target movements. "
-        "Accept common language aliases and translations when they clearly refer to the same exercise, such as panca piana for flat bench press.\n"
+        "High scores are only for the exact target exercise or a true common alias that preserves all defining qualifiers, equipment, support, stance, body position, and movement path. "
+        "If the target exercise is a basic movement name, treat it as the basic/common version only. Do not accept named variants unless the target exercise itself names that variant. "
+        "Give low scores to related variants that share a base pattern but change stance, support, elevation, implement, grip, machine/free-weight setup, incline/decline angle, unilateral/bilateral setup, tempo emphasis, or movement purpose. "
+        "Examples: chest-to-bar, kipping, butterfly, banded, assisted, jumping, negative, weighted, chin-up, grip-specific, front-foot-elevated, machine, smith-machine, incline, decline, seated, supported, single-arm, or single-leg variants are wrong unless requested. "
+        "Give low scores to broader categories, workout compilations, videos where the target is only implied by a muscle group, videos where the target is only briefly mentioned, and unrelated exercises. "
+        "Return every candidate-added qualifier or named variant that is not present in the target exercise in unrequestedVariantTerms. If that list is non-empty, wrongExercise must be true and passed must be false. "
+        "Accept common language aliases and translations only when they clearly refer to the same exact exercise, such as panca piana for flat bench press.\n"
         "Return JSON only with this schema: "
         "{\"passed\": boolean, \"score\": number, \"wrongExercise\": boolean, \"wrongEquipment\": boolean, "
-        "\"matchedExercise\": string, \"reason\": string}.\n"
-        "Use score 0.0 to 1.0. passed should be true only when score >= 0.55 and wrongExercise is false.\n"
+        "\"unrequestedVariantTerms\": [string], \"matchedExercise\": string, \"reason\": string}.\n"
+        "Use score 0.0 to 1.0 for confidence that the candidate is the exact requested exercise, not for general similarity. "
+        "passed should be true only when score >= 0.55 and wrongExercise is false.\n"
         f"Target exercise: {exercise.name}\n"
         f"Candidate title: {candidate.title}\n"
         f"Candidate channel: {candidate.channel or ''}\n"
@@ -1658,12 +2083,27 @@ def apply_pose_prefilter_score(
     settings: YouTubeRankingSettings,
 ) -> YouTubeCandidate:
     clamped_pose_score = clamp_score(pose_score)
-    passed = clamped_pose_score >= settings.pose_prefilter_min_score
     payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
     pose_payload = dict(pose_payload) if isinstance(pose_payload, dict) else {}
     pose_payload.setdefault("enabled", True)
-    pose_payload.setdefault("passed", passed)
     pose_payload.setdefault("score", clamped_pose_score)
+    existing_quality_issues = pose_payload.get("qualityIssues")
+    quality_issues = [str(item) for item in existing_quality_issues] if isinstance(existing_quality_issues, list) else []
+    blocking_issues = set(pose_prefilter_blocking_issues(pose_payload))
+    for reason in pose_reasons:
+        if not reason.startswith("pose_"):
+            continue
+        if reason.startswith("pose_prefilter_"):
+            continue
+        issue = reason[len("pose_") :].strip().lower()
+        if issue and issue not in blocking_issues and issue not in quality_issues:
+            quality_issues.append(issue)
+    if quality_issues:
+        pose_payload["qualityIssues"] = quality_issues
+    payload_passed = bool(pose_payload.get("passed", clamped_pose_score >= settings.pose_prefilter_min_score))
+    hard_reject = pose_prefilter_has_hard_reject_issue(pose_payload)
+    passed = payload_passed and clamped_pose_score >= settings.pose_prefilter_min_score and not hard_reject
+    pose_payload["passed"] = passed
     payload["posePrefilter"] = pose_payload
     if passed:
         start_seconds = pose_payload.get("bestChunkStartSeconds")
@@ -1675,10 +2115,13 @@ def apply_pose_prefilter_score(
         if "bestChunkScore" not in payload:
             payload["bestChunkScore"] = clamped_pose_score
         payload.setdefault("bestChunkSource", "pose_prefilter")
-    score_reasons = dedupe_reasons(candidate.score_reasons + pose_reasons)
+    pose_quality_reasons = [f"pose_{issue}" for issue in quality_issues]
+    score_reasons = dedupe_reasons(candidate.score_reasons + pose_reasons + pose_quality_reasons)
+    if hard_reject:
+        score_reasons = dedupe_reasons([*score_reasons, *pose_prefilter_hard_reject_reasons(pose_payload)])
     if not passed:
-        score_reasons = dedupe_reasons([*score_reasons, "pose_prefilter_below_threshold"])
-    final_score = clamp_score(candidate.metadata_score * 0.25 + clamped_pose_score * 0.75)
+        score_reasons = dedupe_reasons([*score_reasons, "pose_prefilter_rejected", "pose_prefilter_below_threshold"])
+    final_score = 0.0 if not passed else clamp_score(candidate.metadata_score * 0.25 + clamped_pose_score * 0.75)
     final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
     score_reasons = dedupe_reasons(score_reasons + cap_reasons)
     return replace_candidate(
@@ -1695,8 +2138,26 @@ def pose_prefilter_score(candidate: YouTubeCandidate) -> float:
     pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
     if not isinstance(pose_payload, dict):
         return 0.0
+    if not bool(pose_payload.get("passed")):
+        return 0.0
+    if pose_prefilter_has_hard_reject_issue(pose_payload):
+        return 0.0
     value = pose_payload.get("score")
     return clamp_score(float(value)) if isinstance(value, (int, float)) else 0.0
+
+
+def candidate_pose_prefilter_passed(candidate: YouTubeCandidate) -> bool:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    return isinstance(pose_payload, dict) and bool(pose_payload.get("passed"))
+
+
+def candidate_is_eligible_for_vision_review(candidate: YouTubeCandidate, settings: YouTubeRankingSettings) -> bool:
+    if candidate.status == "rejected":
+        return False
+    if settings.pose_prefilter_enabled:
+        return candidate_pose_prefilter_passed(candidate)
+    return True
 
 
 def rank_candidate_with_yolo_pose(
@@ -1707,13 +2168,19 @@ def rank_candidate_with_yolo_pose(
     del exercise
     temp_dir = tempfile.TemporaryDirectory(prefix="exercise-motion-yolo-pose-")
     try:
-        video_path = download_youtube_preview(candidate.url, Path(temp_dir.name), settings.youtube_cookies)
+        video_path = download_youtube_preview(
+            candidate.url,
+            Path(temp_dir.name),
+            settings.youtube_cookies,
+            cache_dir=settings.youtube_preview_cache_dir,
+        )
         result = run_yolo_pose_prefilter(
             video_path=video_path,
             settings=PosePrefilterSettings(
                 model=settings.pose_prefilter_model,
                 sample_fps=settings.pose_prefilter_sample_fps,
                 max_seconds=settings.pose_prefilter_max_seconds,
+                scan_strategy=settings.pose_prefilter_scan_strategy,
                 window_seconds=settings.pose_prefilter_window_seconds,
                 overlap_seconds=settings.pose_prefilter_overlap_seconds,
                 min_score=settings.pose_prefilter_min_score,
@@ -1727,12 +2194,6 @@ def rank_candidate_with_yolo_pose(
         temp_dir.cleanup()
 
 
-def litert_vision_backend(settings: YouTubeRankingSettings) -> str:
-    if settings.use_litert_server:
-        return "litert-server"
-    return "litert-cli"
-
-
 def vision_backend_name(settings: YouTubeRankingSettings) -> str:
     if settings.llama_cpp_command:
         return "llama-cpp-cli"
@@ -1740,7 +2201,7 @@ def vision_backend_name(settings: YouTubeRankingSettings) -> str:
 
 
 def default_llama_cpp_mmproj_path() -> str:
-    return "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+    return DEFAULT_LLAMA_CPP_MMPROJ
 
 
 def default_llama_cpp_server_path() -> str:
@@ -1774,16 +2235,33 @@ def parse_llama_cpp_base_url(base_url: str | None) -> dict[str, object]:
     return {"host": host, "port": port}
 
 
-def settings_litert_serve_command(settings: YouTubeRankingSettings) -> list[str]:
-    command = settings.litert_command or find_default_litert_command()
-    return [
-        command,
-        "serve",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(settings.litert_server_port),
-    ]
+def llama_cpp_model_basename(model_id: str) -> str:
+    return re.split(r"[\\/]", str(model_id).strip())[-1].casefold()
+
+
+def extract_llama_cpp_server_model_ids(payload: dict[str, Any]) -> list[str]:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    model_ids: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id") or item.get("model")
+        if isinstance(model_id, str) and model_id.strip():
+            model_ids.append(model_id.strip())
+    return model_ids
+
+
+def llama_cpp_server_models_match_expected(payload: dict[str, Any], expected_model: str) -> bool:
+    expected_name = llama_cpp_model_basename(expected_model)
+    if not expected_name:
+        return False
+    for model_id in extract_llama_cpp_server_model_ids(payload):
+        model_name = llama_cpp_model_basename(model_id)
+        if model_name == expected_name:
+            return True
+    return False
 
 
 def discover_and_rank_youtube_candidates(
@@ -1806,14 +2284,31 @@ def discover_and_rank_youtube_candidates(
     exercises = load_workout_plan_exercises(workout_plan_json, include_disabled=settings.include_disabled)
     metadata_candidate_pool_size = settings.resolved_metadata_candidate_pool_size()
     owns_query_planner = False
-    if settings.use_deepseek_query_planner and query_planner is None:
+    query_planner_backend: str | None = None
+    if settings.use_llama_cpp_query_planner and query_planner is None:
+        query_planner = LlamaCppYouTubeQueryPlanner(settings)
+        owns_query_planner = True
+        query_planner_backend = "llama-cpp"
+    elif settings.use_deepseek_query_planner and query_planner is None:
         query_planner = DeepSeekYouTubeQueryPlanner(settings)
         owns_query_planner = True
-    vision_enabled = settings.rank_with_litert
+        query_planner_backend = "deepseek"
+    elif query_planner is not None:
+        query_planner_backend = "custom"
+    vision_enabled = settings.rank_with_vision
     owns_vision_ranker = False
     if vision_enabled and vision_ranker is None:
         vision_ranker = LlamaCppVisionRanker(settings)
         owns_vision_ranker = True
+    owns_semantic_gate = False
+    semantic_gate_ranker: LlamaCppSemanticGate | None = None
+    if settings.semantic_gate_enabled and semantic_gate is None:
+        if isinstance(vision_ranker, LlamaCppVisionRanker):
+            semantic_gate_ranker = LlamaCppSemanticGate(settings, shared_ranker=vision_ranker)
+        else:
+            semantic_gate_ranker = LlamaCppSemanticGate(settings)
+            owns_semantic_gate = True
+        semantic_gate = semantic_gate_ranker
 
     exercise_payloads: list[dict[str, Any]] = []
     try:
@@ -1821,7 +2316,7 @@ def discover_and_rank_youtube_candidates(
             queries = build_youtube_queries(exercise.name)
             query_planning_payload: dict[str, Any] = {
                 "enabled": query_planner is not None,
-                "backend": "deepseek" if owns_query_planner else ("custom" if query_planner is not None else None),
+                "backend": query_planner_backend,
                 "status": "skipped" if query_planner is None else "pending",
                 "addedQueries": [],
             }
@@ -1911,21 +2406,27 @@ def discover_and_rank_youtube_candidates(
 
             if vision_enabled and vision_ranker is not None:
                 vision_started = time.monotonic()
+                vision_candidates = [
+                    candidate
+                    for candidate in ranked
+                    if candidate_is_eligible_for_vision_review(candidate, settings)
+                ]
                 if isinstance(vision_ranker, LlamaCppVisionRanker):
                     reranked = rank_candidates_with_prepared_vision_reviews(
                         exercise=exercise,
-                        ranked=ranked,
+                        ranked=vision_candidates,
                         settings=settings,
                         vision_ranker=vision_ranker,
                     )
                 else:
                     reranked = rank_candidates_with_vision_ranker(
                         exercise=exercise,
-                        ranked=ranked,
+                        ranked=vision_candidates,
                         settings=settings,
                         vision_ranker=vision_ranker,
                     )
-                ranked = reranked
+                reranked_by_key = {candidate.key(): candidate for candidate in reranked}
+                ranked = [reranked_by_key.get(candidate.key(), candidate) for candidate in ranked]
                 vision_elapsed_total += time.monotonic() - vision_started
                 ranked.sort(key=lambda item: (item.vision_score is not None, item.final_score), reverse=True)
             else:
@@ -1946,8 +2447,10 @@ def discover_and_rank_youtube_candidates(
                 }
             )
     finally:
-        if owns_query_planner and isinstance(query_planner, DeepSeekYouTubeQueryPlanner):
+        if owns_query_planner and isinstance(query_planner, (DeepSeekYouTubeQueryPlanner, LlamaCppYouTubeQueryPlanner)):
             query_planner.close()
+        if owns_semantic_gate and semantic_gate_ranker is not None:
+            semantic_gate_ranker.close()
         if owns_vision_ranker and isinstance(vision_ranker, LlamaCppVisionRanker):
             vision_ranker.close()
 
@@ -1969,14 +2472,19 @@ def discover_and_rank_youtube_candidates(
             "metadataEnabled": True,
             "maxCandidates": settings.max_candidates,
             "metadataCandidatePoolSize": metadata_candidate_pool_size,
-            "queryPlanningEnabled": settings.use_deepseek_query_planner,
-            "queryPlannerBackend": "deepseek" if settings.use_deepseek_query_planner else None,
+            "queryPlanningEnabled": settings.use_llama_cpp_query_planner or settings.use_deepseek_query_planner,
+            "queryPlannerBackend": query_planner_backend,
+            "youtubePreviewCacheDir": (
+                str(settings.youtube_preview_cache_dir)
+                if settings.youtube_preview_cache_dir is not None
+                else None
+            ),
             "visionEnabled": vision_enabled,
             "visionBackend": vision_backend_name(settings) if vision_enabled else None,
             "visionCandidatesPerExercise": settings.vision_candidates_per_exercise if vision_enabled else None,
             "semanticGateEnabled": settings.semantic_gate_enabled,
-            "semanticGateBackend": "litert-lm" if settings.semantic_gate_enabled else None,
-            "semanticGateModel": settings.vision_model if settings.semantic_gate_enabled else None,
+            "semanticGateBackend": "llama-cpp" if settings.semantic_gate_enabled else None,
+            "semanticGateModel": settings.llama_cpp_model if settings.semantic_gate_enabled else None,
             "semanticGateCandidatesPerExercise": (
                 settings.resolved_semantic_gate_candidates_per_exercise()
                 if settings.semantic_gate_enabled
@@ -1986,6 +2494,11 @@ def discover_and_rank_youtube_candidates(
             "posePrefilterEnabled": settings.pose_prefilter_enabled,
             "posePrefilterBackend": "yolo-pose" if settings.pose_prefilter_enabled else None,
             "posePrefilterModel": settings.pose_prefilter_model if settings.pose_prefilter_enabled else None,
+            "posePrefilterScanStrategy": (
+                settings.pose_prefilter_scan_strategy
+                if settings.pose_prefilter_enabled
+                else None
+            ),
             "posePrefilterCandidatesPerExercise": (
                 settings.resolved_pose_prefilter_candidates_per_exercise()
                 if settings.pose_prefilter_enabled
@@ -2037,6 +2550,8 @@ class LlamaCppVisionRanker:
             backend=settings.llama_cpp_backend,
             n_predict=settings.llama_cpp_n_predict,
             temperature=settings.llama_cpp_temperature,
+            top_p=settings.llama_cpp_top_p,
+            top_k=settings.llama_cpp_top_k,
             disable_reasoning=settings.llama_cpp_disable_reasoning,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
@@ -2055,11 +2570,14 @@ class LlamaCppVisionRanker:
             self.process.wait(timeout=10.0)
 
     def _ensure_server(self) -> None:
-        if self._is_healthy():
+        server_payload = self._server_models_payload()
+        if server_payload is not None:
+            self._raise_if_server_model_mismatch(server_payload)
             return
         if not self.settings.llama_cpp_auto_start_server:
             response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
             response.raise_for_status()
+            self._raise_if_server_model_mismatch(response.json())
             return
         command = resolve_llama_cpp_server_command(
             configured_command=self.settings.llama_cpp_server_command,
@@ -2085,7 +2603,7 @@ class LlamaCppVisionRanker:
             "--port",
             str(parsed["port"]),
             "--parallel",
-            str(max(1, self.settings.vision_llm_workers)),
+            str(max(1, self.settings.llama_cpp_parallel or self.settings.vision_llm_workers)),
         ]
         if self.settings.llama_cpp_ctx_size is not None:
             args.extend(["--ctx-size", str(max(1, self.settings.llama_cpp_ctx_size))])
@@ -2095,12 +2613,26 @@ class LlamaCppVisionRanker:
             args.extend(["--ubatch-size", str(max(1, self.settings.llama_cpp_ubatch_size))])
         if self.settings.llama_cpp_flash_attn is not None:
             args.extend(["--flash-attn", self.settings.llama_cpp_flash_attn])
+        if self.settings.llama_cpp_cache_type_k is not None:
+            args.extend(["--cache-type-k", self.settings.llama_cpp_cache_type_k])
+        if self.settings.llama_cpp_cache_type_v is not None:
+            args.extend(["--cache-type-v", self.settings.llama_cpp_cache_type_v])
         if self.settings.llama_cpp_disable_reasoning:
             args.extend(["--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0"])
         if self.settings.llama_cpp_threads_http is not None:
             args.extend(["--threads-http", str(max(1, self.settings.llama_cpp_threads_http))])
         if self.settings.llama_cpp_cache_reuse is not None:
             args.extend(["--cache-reuse", str(max(0, self.settings.llama_cpp_cache_reuse))])
+        if self.settings.llama_cpp_fit is not None:
+            args.extend(["--fit", self.settings.llama_cpp_fit])
+        if self.settings.llama_cpp_fit_ctx is not None:
+            args.extend(["--fit-ctx", str(max(1, self.settings.llama_cpp_fit_ctx))])
+        if self.settings.llama_cpp_fit_target is not None:
+            args.extend(["--fit-target", str(max(0, self.settings.llama_cpp_fit_target))])
+        if not self.settings.llama_cpp_mmap:
+            args.append("--no-mmap")
+        if self.settings.llama_cpp_mlock:
+            args.append("--mlock")
         args.append("--mmproj-offload" if self.settings.llama_cpp_mmproj_offload else "--no-mmproj-offload")
         args.append("--cont-batching" if self.settings.llama_cpp_cont_batching else "--no-cont-batching")
         if self.settings.llama_cpp_backend == "gpu":
@@ -2136,6 +2668,30 @@ class LlamaCppVisionRanker:
         except httpx.HTTPError:
             return False
 
+    def _server_models_payload(self) -> dict[str, Any] | None:
+        if self.settings.llama_cpp_base_url is None:
+            return None
+        try:
+            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
+            if response.status_code >= 500:
+                return None
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _raise_if_server_model_mismatch(self, payload: dict[str, Any]) -> None:
+        if llama_cpp_server_models_match_expected(payload, self.settings.llama_cpp_model):
+            return
+        served_models = extract_llama_cpp_server_model_ids(payload)
+        served = ", ".join(served_models) if served_models else "unknown model"
+        expected = Path(self.settings.llama_cpp_model).name
+        raise RuntimeError(
+            f"Existing llama.cpp server at {self.settings.llama_cpp_base_url} is serving {served}, "
+            f"but this run expects {expected}. Stop the existing server or use a different --llama-cpp-base-url."
+        )
+
     def rank_prepared(
         self,
         prepared: PreparedVisionReview,
@@ -2148,99 +2704,71 @@ class LlamaCppVisionRanker:
         )
 
 
-class LiteRtServerVisionRanker:
-    def __init__(self, settings: YouTubeRankingSettings) -> None:
+class LlamaCppSemanticGate:
+    def __init__(
+        self,
+        settings: YouTubeRankingSettings,
+        *,
+        shared_ranker: LlamaCppVisionRanker | None = None,
+    ) -> None:
         self.settings = settings
-        self.base_url = settings.litert_server_url.rstrip("/")
-        self.client = httpx.Client(timeout=600.0)
-        self.process: subprocess.Popen[str] | None = None
-        self._ensure_server()
+        self._shared_ranker = shared_ranker
+        self._owned_ranker = None if shared_ranker is not None else LlamaCppVisionRanker(settings)
+
+    @property
+    def _ranker(self) -> LlamaCppVisionRanker:
+        ranker = self._shared_ranker or self._owned_ranker
+        if ranker is None:
+            raise RuntimeError("llama.cpp semantic gate is not initialized.")
+        return ranker
 
     def __call__(
         self,
         exercise: ExerciseEntry,
         candidate: YouTubeCandidate,
         settings: YouTubeRankingSettings,
-    ) -> VisionRankResult:
-        return rank_candidate_with_vision_client(
-            exercise=exercise,
-            candidate=candidate,
-            settings=settings,
-            caption_images=self.caption_images,
-        )
+    ) -> SemanticGateResult:
+        from exercise_motion_pkg.segment_detection import extract_json_object
 
-    def rank_prepared(
-        self,
-        prepared: PreparedVisionReview,
-        settings: YouTubeRankingSettings,
-    ) -> VisionRankResult:
-        return score_prepared_vision_review(
-            prepared=prepared,
-            settings=settings,
-            caption_images=self.caption_images,
-        )
+        prompt = build_candidate_semantic_gate_prompt(exercise, candidate)
+        raw = self._ranker.client.caption_images(frame_paths=[], prompt=prompt)
+        payload = extract_json_object(raw)
+        if not isinstance(payload, dict):
+            raise RuntimeError("llama.cpp semantic gate returned no JSON object.")
+        score = coerce_float(payload.get("score"))
+        if score is None:
+            score = coerce_float(payload.get("targetExerciseMatch"))
+        if score is None:
+            score = 0.0
+        wrong_exercise = bool(payload.get("wrongExercise"))
+        passed = score >= settings.semantic_gate_min_score and not wrong_exercise
+        reasons = ["semantic_text_match" if passed else "semantic_text_mismatch"]
+        conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
+        if conflict_reasons:
+            passed = False
+            score = min(score, 0.20)
+            reasons.extend(conflict_reasons)
+        if wrong_exercise:
+            reasons.append("semantic_wrong_exercise")
+        if bool(payload.get("wrongEquipment")):
+            reasons.append("semantic_wrong_equipment")
+        return clamp_score(score), reasons, {
+            "enabled": True,
+            "backend": "llama-cpp",
+            "model": settings.llama_cpp_model,
+            "passed": passed,
+            "score": clamp_score(score),
+            "wrongExercise": wrong_exercise,
+            "wrongEquipment": bool(payload.get("wrongEquipment")),
+            "textConflictReasons": conflict_reasons,
+            "unrequestedVariantTerms": semantic_payload_unrequested_variant_terms(payload),
+            "matchedExercise": truncate_text(str(payload.get("matchedExercise") or ""), 120),
+            "reason": truncate_text(str(payload.get("reason") or ""), 240),
+        }
 
     def close(self) -> None:
-        self.client.close()
-        if self.process is None or self.settings.keep_litert_server:
-            return
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=10.0)
-
-    def caption_images(self, *, frame_paths: list[Path], prompt: str) -> str:
-        content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
-        for frame_path in frame_paths:
-            encoded = base64.b64encode(frame_path.read_bytes()).decode("ascii")
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
-                }
-            )
-        payload = {
-            "model": self.settings.vision_model,
-            "messages": [{"role": "user", "content": content}],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
-        }
-        response = self.client.post(f"{self.base_url}/v1/chat/completions", json=payload)
-        if response.status_code >= 400:
-            fallback_payload = dict(payload)
-            fallback_payload.pop("response_format", None)
-            response = self.client.post(f"{self.base_url}/v1/chat/completions", json=fallback_payload)
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
-
-    def _ensure_server(self) -> None:
-        if self._is_healthy():
-            return
-        command = settings_litert_serve_command(self.settings)
-        self.process = subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        deadline = time.monotonic() + 180.0
-        while time.monotonic() < deadline:
-            if self._is_healthy():
-                return
-            if self.process.poll() is not None:
-                break
-            time.sleep(1.0)
-        raise RuntimeError("LiteRT server did not become healthy within 180 seconds.")
-
-    def _is_healthy(self) -> bool:
-        try:
-            response = self.client.get(f"{self.base_url}/v1/models", timeout=5.0)
-            return response.status_code < 500
-        except httpx.HTTPError:
-            return False
+        if self._owned_ranker is not None:
+            self._owned_ranker.close()
 
 
 def rank_candidates_with_vision_ranker(
@@ -2257,7 +2785,7 @@ def rank_candidates_with_vision_ranker(
             vision_score, vision_reasons, vision_payload = normalize_vision_result(
                 vision_ranker(exercise, candidate, settings)
             )
-            reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
+            reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload, settings=settings)
             reranked.append(reviewed)
             if candidate_passes_vision_hard_gates(reviewed, settings):
                 reranked.extend(ranked[index + 1 :])
@@ -2293,14 +2821,11 @@ def rank_candidates_with_prepared_vision_reviews(
                 if index < vision_limit:
                     vision_result = vision_results_by_key.get(candidate.key())
                     if vision_result is None:
-                        reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"])
+                        reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"], settings=settings)
                     else:
                         vision_score, vision_reasons, vision_payload = normalize_vision_result(vision_result)
-                        reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
+                        reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload, settings=settings)
                     reranked.append(reviewed)
-                    if candidate_passes_vision_hard_gates(reviewed, settings):
-                        reranked.extend(ranked[index + 1 :])
-                        break
                 else:
                     reranked.append(candidate)
             return reranked
@@ -2325,12 +2850,12 @@ def rank_candidates_with_prepared_vision_reviews(
                 candidate = ranked[index]
                 prepared = prepared_by_key.get(candidate.key())
                 if prepared is None:
-                    reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"])
+                    reviewed = apply_vision_score(candidate, 0.0, ["vision_review_failed"], settings=settings)
                 else:
                     vision_score, vision_reasons, vision_payload = normalize_vision_result(
                         vision_ranker.rank_prepared(prepared, settings)
                     )
-                    reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload)
+                    reviewed = apply_vision_score(candidate, vision_score, vision_reasons, vision_payload, settings=settings)
                 reranked.append(reviewed)
                 if candidate_passes_vision_hard_gates(reviewed, settings):
                     reranked.extend(ranked[index + 1 :])
@@ -2371,22 +2896,106 @@ def apply_vision_score(
     vision_score: float,
     vision_reasons: list[str],
     vision_payload: dict[str, Any] | None = None,
+    *,
+    settings: YouTubeRankingSettings | None = None,
 ) -> YouTubeCandidate:
-    score_reasons = dedupe_reasons(candidate.score_reasons + vision_reasons)
-    final_score = compose_final_score(candidate.metadata_score, vision_score)
+    hard_reject = candidate_has_pose_prefilter_hard_reject(candidate)
+    effective_vision_score = clamp_score(vision_score)
+    effective_vision_reasons = list(vision_reasons)
+    effective_vision_payload = dict(vision_payload) if isinstance(vision_payload, dict) else {}
+    if semantic_pose_short_demo_fallback_applies(candidate, settings=settings):
+        duration_seconds = float(candidate.duration_seconds or 0.0)
+        advisory_vlm_payload = dict(effective_vision_payload)
+        effective_vision_score = max(effective_vision_score, 0.86)
+        effective_vision_reasons = dedupe_reasons(
+            [
+                "vlm_source_review_advisory",
+                "semantic_pose_short_demo_source_fallback",
+                "source_score",
+            ]
+        )
+        effective_vision_payload = {
+            "advisoryVlmSourceReview": advisory_vlm_payload,
+        }
+        effective_vision_payload.update(
+            {
+                "deterministicSourceFallback": {
+                    "type": "semantic_pose_short_demo",
+                    "score": 0.86,
+                    "reason": (
+                        "Short exact-match source demo passed semantic gate and YOLO source integrity; "
+                        "VLM source review was treated as advisory."
+                    ),
+                },
+                "bestChunkStartSeconds": 0.0,
+                "bestChunkEndSeconds": min(duration_seconds, 20.0),
+                "bestChunkScore": max(coerce_float(effective_vision_payload.get("bestChunkScore")) or 0.0, 0.86),
+                "validChunkCount": max(as_optional_int(effective_vision_payload.get("validChunkCount")) or 0, 1),
+                "validChunkRatio": max(coerce_float(effective_vision_payload.get("validChunkRatio")) or 0.0, 1.0),
+                "scoredChunkCount": max(as_optional_int(effective_vision_payload.get("scoredChunkCount")) or 0, 1),
+                "chunkEvidenceCapApplied": False,
+            }
+        )
+    score_reasons = dedupe_reasons(candidate.score_reasons + effective_vision_reasons)
+    if hard_reject:
+        score_reasons = dedupe_reasons([*score_reasons, *candidate_pose_prefilter_hard_reject_reasons(candidate)])
+    final_score = 0.0 if hard_reject else compose_final_score(candidate.metadata_score, effective_vision_score)
     final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
     score_reasons = dedupe_reasons(score_reasons + cap_reasons)
     merged_payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
-    if vision_payload is not None:
-        merged_payload.update(vision_payload)
+    if effective_vision_payload:
+        merged_payload.update(effective_vision_payload)
     return replace_candidate(
         candidate,
-        vision_score=vision_score,
+        vision_score=effective_vision_score,
         final_score=final_score,
         status=status_for_score(final_score),
         score_reasons=score_reasons,
         vision_payload=merged_payload or None,
     )
+
+
+def semantic_pose_short_demo_fallback_applies(
+    candidate: YouTubeCandidate,
+    *,
+    settings: YouTubeRankingSettings | None,
+) -> bool:
+    if settings is None:
+        return False
+    duration_seconds = candidate.duration_seconds
+    if duration_seconds is None:
+        return False
+    if duration_seconds < settings.min_duration_seconds or duration_seconds > 30:
+        return False
+    if "exercise_name_match" not in candidate.score_reasons:
+        return False
+    if has_source_quality_demoter(candidate.score_reasons):
+        return False
+    semantic_payload = candidate_semantic_gate_payload(candidate)
+    if not semantic_payload or not bool(semantic_payload.get("passed")):
+        return False
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    if not isinstance(pose_payload, dict):
+        return False
+    if not bool(pose_payload.get("passed")) or pose_prefilter_has_hard_reject_issue(pose_payload):
+        return False
+    pose_score = coerce_float(pose_payload.get("score")) or 0.0
+    if pose_score < max(0.85, settings.pose_prefilter_min_score):
+        return False
+    integrity = pose_payload.get("sourceWindowIntegrity")
+    if isinstance(integrity, dict) and not bool(integrity.get("passed")):
+        return False
+    single_person_ratio = coerce_float(pose_payload.get("singlePersonRatio"))
+    if single_person_ratio is not None and single_person_ratio < 0.95:
+        return False
+    keypoint_coverage = coerce_float(pose_payload.get("keypointCoverage"))
+    if keypoint_coverage is not None and keypoint_coverage < 0.85:
+        return False
+    active_chain_visibility = coerce_float(pose_payload.get("activeChainVisibility"))
+    if active_chain_visibility is not None and active_chain_visibility < 0.80:
+        return False
+    return True
 
 
 def prepare_vision_reviews_parallel(
@@ -2432,14 +3041,18 @@ def prepare_vision_review(
     temp_path = Path(temp_dir.name)
     try:
         download_started = time.monotonic()
-        video_path = download_youtube_preview(candidate.url, temp_path, settings.youtube_cookies)
+        video_path = download_youtube_preview(
+            candidate.url,
+            temp_path,
+            settings.youtube_cookies,
+            cache_dir=settings.youtube_preview_cache_dir,
+        )
         preview_download_elapsed = time.monotonic() - download_started
         metadata = read_basic_video_metadata(video_path)
         duration = max(0.5, metadata.duration_seconds)
         chunk_estimate = estimate_chunking(
             exercise_name=exercise.name,
-            litert_command=find_default_litert_command(),
-            use_llm=True,
+            use_llm=False,
         )
         chunk_seconds = settings.vision_chunk_seconds or chunk_estimate.chunk_seconds
         chunk_overlap_seconds = (
@@ -2533,27 +3146,6 @@ def prepare_vision_review(
     except Exception:
         temp_dir.cleanup()
         raise
-
-
-def rank_candidate_with_litert(
-    exercise: ExerciseEntry,
-    candidate: YouTubeCandidate,
-    settings: YouTubeRankingSettings,
-) -> VisionRankResult:
-    from exercise_motion_pkg.segment_detection import LiteRtCliVisionClient
-
-    command = settings.litert_command or find_default_litert_command()
-    client = LiteRtCliVisionClient(
-        command=command,
-        model=settings.vision_model,
-        backend=settings.litert_backend,
-    )
-    return rank_candidate_with_vision_client(
-        exercise=exercise,
-        candidate=candidate,
-        settings=settings,
-        caption_images=client.caption_images,
-    )
 
 
 def rank_candidate_with_llama_cpp(
@@ -2722,6 +3314,8 @@ def score_prepared_vision_review(
         scored_chunk_count=len(chunk_scores),
         valid_chunk_count=valid_chunk_count,
         valid_chunk_ratio=valid_chunk_ratio,
+        best_chunk_score=best_score,
+        candidate_duration_seconds=prepared.candidate.duration_seconds,
     )
     compact_payload = dict(best_payload)
     best_chunk_start, best_chunk_end = (
@@ -2739,6 +3333,7 @@ def score_prepared_vision_review(
     compact_payload["bestChunkStartSeconds"] = best_chunk_start
     compact_payload["bestChunkEndSeconds"] = best_chunk_end
     compact_payload["bestChunkScore"] = best_score
+    compact_payload["bestChunkSource"] = "chunked_source_video_review"
     compact_payload["averageChunkScore"] = average_score
     compact_payload["chunkEvidenceCapApplied"] = final_score < clamp_score((best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio * 0.05))
     compact_payload["failedChunkCount"] = failed_count
@@ -2959,14 +3554,41 @@ def apply_chunk_evidence_caps(
     scored_chunk_count: int,
     valid_chunk_count: int,
     valid_chunk_ratio: float,
+    best_chunk_score: float | None = None,
+    candidate_duration_seconds: int | float | None = None,
 ) -> tuple[float, list[str]]:
     if scored_chunk_count <= 0:
         return score, []
     if valid_chunk_count <= 0:
         return min(score, 0.34), ["no_valid_source_chunk_evidence"]
     if valid_chunk_count < 2 or valid_chunk_ratio < 0.25:
-        return min(score, 0.49), ["low_source_evidence_coverage"]
+        if single_strong_chunk_is_enough(
+            best_chunk_score=best_chunk_score,
+            candidate_duration_seconds=candidate_duration_seconds,
+            valid_chunk_count=valid_chunk_count,
+            valid_chunk_ratio=valid_chunk_ratio,
+        ):
+            return score, []
+        return min(score, 0.34), ["low_source_evidence_coverage"]
     return score, []
+
+
+def single_strong_chunk_is_enough(
+    *,
+    best_chunk_score: float | None,
+    candidate_duration_seconds: int | float | None,
+    valid_chunk_count: int,
+    valid_chunk_ratio: float,
+) -> bool:
+    if valid_chunk_count != 1:
+        return False
+    if valid_chunk_ratio < 0.5:
+        return False
+    if best_chunk_score is None or best_chunk_score < 0.80:
+        return False
+    if candidate_duration_seconds is None:
+        return False
+    return 0.0 < float(candidate_duration_seconds) <= 30.0
 
 
 def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list[str]]:
@@ -2975,6 +3597,12 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         for gate in VISION_HARD_GATE_REASONS
     }
     single_person_chunk = explicit_gate_values.get("single_person_chunk")
+    real_human_subject = explicit_gate_values.get("real_human_subject")
+    start_posture_visible = explicit_gate_values.get("movement_start_posture_visible")
+    primary_effort_phase_visible = explicit_gate_values.get("primary_effort_phase_visible")
+    action_path_visible = explicit_gate_values.get("movement_action_path_visible")
+    end_posture_visible = explicit_gate_values.get("movement_end_posture_visible")
+    no_setup_or_talking_frames = explicit_gate_values.get("no_setup_or_talking_frames")
     target_identity_match = parse_payload_bool(payload, "target_identity_match")
     target_match = parse_score_value(
         payload.get("target_match"),
@@ -3030,6 +3658,18 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         reasons.append("critical_joint_occlusion_penalty")
     if explicit_gate_values.get("reconstruction_suitable") is False:
         reasons.append("poor_reconstruction_suitability_penalty")
+    if real_human_subject is False:
+        reasons.append("animation_or_synthetic_source_penalty")
+    if start_posture_visible is False:
+        reasons.append("missing_movement_start_posture_penalty")
+    if primary_effort_phase_visible is False:
+        reasons.append("missing_primary_effort_phase_penalty")
+    if action_path_visible is False:
+        reasons.append("missing_movement_action_path_penalty")
+    if end_posture_visible is False:
+        reasons.append("missing_movement_end_posture_penalty")
+    if no_setup_or_talking_frames is False:
+        reasons.append("setup_or_talking_penalty")
 
     for issue in blocking_issues:
         if issue != "none":
@@ -3045,7 +3685,14 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
             reasons.append("correct_exercise")
     else:
         reasons.append("wrong_exercise_penalty")
-    if complete_movement >= 0.75:
+    movement_phase_gates_pass = (
+        start_posture_visible is True
+        and primary_effort_phase_visible is True
+        and action_path_visible is True
+        and end_posture_visible is True
+        and no_setup_or_talking_frames is True
+    )
+    if complete_movement >= 0.75 and movement_phase_gates_pass:
         reasons.append("complete_movement")
         if explicit_gate_values.get("complete_repetition_visible") is not False:
             reasons.append("complete_repetition_visible")
@@ -3073,7 +3720,16 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         capture_quality,
         execution_quality,
     )
-    valid_motion_scene = minimum_gate_score >= 0.75 and single_person_chunk is True
+    valid_motion_scene = (
+        minimum_gate_score >= 0.75
+        and single_person_chunk is True
+        and real_human_subject is not False
+        and start_posture_visible is True
+        and primary_effort_phase_visible is True
+        and action_path_visible is True
+        and end_posture_visible is True
+        and no_setup_or_talking_frames is True
+    )
     if valid_motion_scene:
         reasons.append("valid_motion_scene")
 
@@ -3112,6 +3768,7 @@ def default_capture_quality_from_payload(
         explicit_gate_values.get("low_critical_joint_occlusion"),
         explicit_gate_values.get("reconstruction_suitable"),
         explicit_gate_values.get("single_person_chunk"),
+        explicit_gate_values.get("real_human_subject"),
         parse_payload_bool(payload, "implement_path_visible"),
     ]
     known = [value for value in relevant if value is not None]
@@ -3128,6 +3785,11 @@ def default_execution_quality_from_payload(explicit_gate_values: dict[str, bool 
         explicit_gate_values.get("no_step_breakdown"),
         explicit_gate_values.get("no_camera_cuts"),
         explicit_gate_values.get("exercise_only_chunk"),
+        explicit_gate_values.get("movement_start_posture_visible"),
+        explicit_gate_values.get("primary_effort_phase_visible"),
+        explicit_gate_values.get("movement_action_path_visible"),
+        explicit_gate_values.get("movement_end_posture_visible"),
+        explicit_gate_values.get("no_setup_or_talking_frames"),
     ]
     known = [value for value in relevant if value is not None]
     if not known:
@@ -3144,6 +3806,11 @@ def append_execution_gate_reasons(
         "normal_speed_execution",
         "not_broken_into_steps",
         "continuous_motion",
+        "movement_start_posture_visible",
+        "primary_effort_phase_visible",
+        "movement_action_path_visible",
+        "movement_end_posture_visible",
+        "no_setup_or_talking_frames",
         "single_camera_angle",
         "no_step_breakdown",
         "no_camera_cuts",
@@ -3167,14 +3834,19 @@ def apply_explicit_gate_caps(score: float, explicit_gate_values: dict[str, bool 
         "usable_for_motion_extraction": 0.49,
         "complete_repetition_visible": 0.49,
         "exercise_only_chunk": 0.49,
+        "movement_start_posture_visible": 0.34,
+        "primary_effort_phase_visible": 0.34,
+        "movement_action_path_visible": 0.34,
+        "movement_end_posture_visible": 0.34,
+        "no_setup_or_talking_frames": 0.34,
         "normal_speed_execution": 0.49,
         "not_broken_into_steps": 0.49,
         "continuous_motion": 0.49,
-        "athlete_fully_in_frame_throughout": 0.49,
-        "static_camera_throughout": 0.49,
-        "single_camera_angle": 0.49,
+        "athlete_fully_in_frame_throughout": 0.34,
+        "static_camera_throughout": 0.34,
+        "single_camera_angle": 0.34,
         "no_step_breakdown": 0.49,
-        "no_camera_cuts": 0.49,
+        "no_camera_cuts": 0.34,
         "unobstructed_motion": 0.49,
         "key_joints_visible": 0.49,
         "large_body_visible": 0.49,
@@ -3184,6 +3856,7 @@ def apply_explicit_gate_caps(score: float, explicit_gate_values: dict[str, bool 
         "critical_moving_joints_visible": 0.34,
         "low_critical_joint_occlusion": 0.34,
         "reconstruction_suitable": 0.34,
+        "real_human_subject": 0.20,
     }
     capped = score
     for gate, cap in caps.items():
@@ -3256,6 +3929,7 @@ def parse_blocking_issues(value: Any) -> list[str]:
         "poor_reconstruction_suitability",
         "slow_instruction",
         "setup_or_talking",
+        "animation_or_synthetic",
     }
     if isinstance(value, str):
         raw_items = [value]
@@ -3278,9 +3952,9 @@ def parse_blocking_issues(value: Any) -> list[str]:
 def apply_blocking_issue_caps(score: float, blocking_issues: list[str]) -> float:
     caps = {
         "wrong_exercise": 0.20,
-        "partial_movement": 0.49,
-        "camera_motion": 0.49,
-        "cropped_body": 0.49,
+        "partial_movement": 0.34,
+        "camera_motion": 0.34,
+        "cropped_body": 0.34,
         "multiple_people": 0.49,
         "obstruction": 0.49,
         "small_body": 0.49,
@@ -3290,7 +3964,8 @@ def apply_blocking_issue_caps(score: float, blocking_issues: list[str]) -> float
         "critical_joint_occlusion": 0.34,
         "poor_reconstruction_suitability": 0.34,
         "slow_instruction": 0.49,
-        "setup_or_talking": 0.49,
+        "setup_or_talking": 0.34,
+        "animation_or_synthetic": 0.20,
     }
     capped = score
     for issue in blocking_issues:
@@ -3305,8 +3980,12 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         f"Target exercise: {exercise_name}.\n"
         f"Video title: {candidate.title}.\n"
         "Judge only the attached frames/contact sheets from this chunk. Do not infer missing phases from other chunks.\n"
-        "This is source-video selection only; final trim timing is handled later by segment detection.\n"
-        "Good chunks show continuous uninterrupted repetitions. Any angle is acceptable if it stays the same.\n"
+        "The reviewed chunk itself must be usable as the source window for motion extraction. Do not pass a chunk merely because the broader video may contain a good segment elsewhere.\n"
+        "Good chunks show continuous uninterrupted repetitions or at least one complete uninterrupted movement from the start posture, through the main action path, to the end posture.\n"
+        "Reject chunks that only show setup, instruction, hanging/holding/standing/lying idle, walking into position, talking to camera, a title card, or only a partial phase of the movement.\n"
+        "Do not treat a natural start or finish posture as setup/idle merely because the athlete is briefly hanging, standing, lying, holding, or paused there; if that posture is directly connected to the visible movement, it is part of the exercise boundary.\n"
+        "Extra non-exercise frames before or after the movement are a blocking issue for source selection; include setup_or_talking and lower source_score even if a partial rep is visible.\n"
+        "Any angle is acceptable if it stays the same.\n"
         "Treat the target exercise name as the exact movement identity, not just a loose keyword match. Adjacent variations that share words but visibly change the required stance, support, equipment path, body position, or movement pattern are wrong for this target.\n"
         "If the requested exercise name contains qualifiers such as single-leg, split, incline, decline, seated, bent-over, front, back, lateral, supported, unsupported, dumbbell, barbell, cable, machine, or similar variant terms, the visible movement must satisfy those qualifiers.\n"
         "If the source title or visible movement adds an exercise-changing qualifier that is not in the target name, mark target_identity_match false. Examples: incline, decline, seated, supported, machine, smith-machine, close-grip, wide-grip, single-arm, or triceps-focused variants are wrong unless requested by the target exercise name.\n"
@@ -3318,22 +3997,36 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         "Visible motion must come from the athlete body joints, not only from an implement such as a barbell, dumbbell, cable handle, or machine arm.\n"
         "Penalize equipment, plates, bench pads, racks, machines, text overlays, or props that hide the torso, shoulders, elbows, wrists, hips, knees, or ankles during the rep.\n"
         "For source selection, prefer clean repeatable demo repetitions over records, personal records, max attempts, AMRAP tests, competitions, combines, meets, crowds, or event footage. Those event clips are lower-quality motion sources even when the exercise is technically correct.\n"
+        "A usable chunk must be one continuous camera view: no cuts, no edits, no angle changes, no zoom/reframe during the movement, and no switch to a different shot.\n"
         "Set static_camera_throughout false for shaky handheld video, zooming, reframing, camera cuts, or angle changes.\n"
+        "Set single_camera_angle false if any attached sheet shows a different viewpoint, shot, camera position, or edited cut within this chunk.\n"
+        "Set no_camera_cuts false if the chunk appears edited or jumps between shots, even when each individual shot is clear.\n"
+        "Set athlete_fully_in_frame_throughout false if the head, hands, torso, hips, knees, ankles, or feet needed for the movement leave the image or are cropped in any attached sheet.\n"
+        "If static_camera_throughout, single_camera_angle, no_camera_cuts, or athlete_fully_in_frame_throughout is false, set source_score no higher than 0.34 and include camera_motion or cropped_body in blocking_issues.\n"
         "Reject step-by-step demonstrations, setup, talking, title cards, and slow instructional breakdowns.\n"
+        "Set movement_start_posture_visible true only if the chunk visibly includes the beginning posture of a full movement or repetition. Set it false for mid-rep starts, idle setup, or a person only preparing to move.\n"
+        "Set primary_effort_phase_visible true only if the chunk visibly includes the main intended action of the requested exercise, not just the return, lowering, eccentric, negative, reset, or recovery phase. If the target exercise name explicitly requests a negative/eccentric/return-only variation, judge that requested phase as the primary effort.\n"
+        "Set movement_action_path_visible true only if the chunk visibly includes the main joint/body travel of the movement, not just the athlete holding the start/end position.\n"
+        "Set movement_end_posture_visible true only if the chunk visibly reaches the natural end posture of that same movement or repetition. Set it false for clips that stop mid-rep or before the movement resolves.\n"
+        "Set no_setup_or_talking_frames false when any attached sheet is primarily setup, talking, instruction, title-card, walking into position, idle hanging/standing/lying, or reset content rather than the exercise movement. Keep it true when brief boundary postures are directly attached to the full movement.\n"
         "A usable chunk must show exactly one visible human body/person across every attached contact sheet.\n"
+        "Prefer videos where the only visible person in the frame is the athlete performing the exercise.\n"
         "Set single_person_chunk false if a trainer, coach, spotter, second athlete, bystander, reflection, picture-in-picture person, or partial extra human is visible in any sheet.\n"
         "When single_person_chunk is false, include multiple_people in blocking_issues and set source_score to 0.0.\n"
         "Do not return [\"none\"] for blocking_issues when any extra person is visible.\n"
+        "Prefer real camera footage of real people. Penalize animations, cartoons, CGI, 3D renders, game footage, motion-capture previews, skeleton-only demos, mannequins, avatars, or synthetic exercise demos even if the motion is correct.\n"
+        "Set real_human_subject false when the moving subject is animated, rendered, synthetic, mannequin-like, or not clearly a real person captured by a camera.\n"
+        "When real_human_subject is false, include animation_or_synthetic in blocking_issues and set source_score no higher than 0.20.\n"
         "Return boolean values for gate fields and numeric scores from 0.0 to 1.0 for score fields.\n"
         "Use this scale: 1.0 excellent, 0.8 good, 0.6 flawed but maybe usable, 0.4 poor, 0.0 unusable.\n"
         "Score definitions:\n"
         "- target_match: how clearly this chunk shows the requested exercise.\n"
-        "- complete_movement: how clearly this chunk contains a full repetition or movement cycle, not just a partial transition.\n"
+        "- complete_movement: how clearly this exact chunk contains a full movement cycle with visible start posture, main action path, and end posture, not just exercise context or a partial transition.\n"
         "- capture_quality: how suitable the capture is for motion extraction: fixed camera, whole relevant body/equipment visible, one person, no obstructions, readable body scale, pose-friendly angle, visible body-joint motion.\n"
         "- reconstruction_suitability: whether the visible frames are likely to reconstruct into a usable 3D skeleton, with critical moving joints readable rather than inferred through occlusion.\n"
         "- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n"
-        "- source_score: overall usefulness of this chunk as evidence that the video contains a source segment likely to reconstruct into a usable body skeleton.\n"
-        "Before scoring, list all visible blocking issues across every attached contact sheet. Use [] or [\"none\"] only if no blocking issue is visible. If any sheet shows camera zoom/reframing, body cropping, partial movement, obstruction, multiple people, slow instruction, setup, talking, wrong exercise, tiny body, bad pose angle, weak body-joint motion, equipment occlusion, critical joint occlusion, or poor reconstruction suitability, include the matching blocking issue.\n"
+        "- source_score: overall usefulness of this exact chunk as the source segment likely to reconstruct into a usable body skeleton.\n"
+        "Before scoring, list all visible blocking issues across every attached contact sheet. Use [] or [\"none\"] only if no blocking issue is visible. If any sheet shows camera zoom/reframing, body cropping, partial movement, obstruction, multiple people, slow instruction, setup, talking, wrong exercise, tiny body, bad pose angle, weak body-joint motion, equipment occlusion, critical joint occlusion, poor reconstruction suitability, or animated/synthetic rendered content, include the matching blocking issue.\n"
         "Return JSON only with these keys:\n"
         "{"
         '"correct_exercise": boolean, '
@@ -3359,13 +4052,19 @@ def build_candidate_vision_prompt(exercise_name: str, candidate: YouTubeCandidat
         '"low_critical_joint_occlusion": boolean, '
         '"reconstruction_suitable": boolean, '
         '"single_person_chunk": boolean, '
+        '"real_human_subject": boolean, '
+        '"movement_start_posture_visible": boolean, '
+        '"primary_effort_phase_visible": boolean, '
+        '"movement_action_path_visible": boolean, '
+        '"movement_end_posture_visible": boolean, '
+        '"no_setup_or_talking_frames": boolean, '
         '"target_identity_match": boolean, '
         '"target_match": number, '
         '"complete_movement": number, '
         '"capture_quality": number, '
         '"execution_quality": number, '
         '"source_score": number, '
-        '"blocking_issues": ["none|wrong_exercise|partial_movement|camera_motion|cropped_body|multiple_people|obstruction|small_body|bad_pose_angle|weak_body_joint_motion|equipment_occlusion|critical_joint_occlusion|poor_reconstruction_suitability|slow_instruction|setup_or_talking"], '
+        '"blocking_issues": ["none|wrong_exercise|partial_movement|camera_motion|cropped_body|multiple_people|obstruction|small_body|bad_pose_angle|weak_body_joint_motion|equipment_occlusion|critical_joint_occlusion|poor_reconstruction_suitability|slow_instruction|setup_or_talking|animation_or_synthetic"], '
         '"confidence": number, '
         '"reason": string'
         "}"

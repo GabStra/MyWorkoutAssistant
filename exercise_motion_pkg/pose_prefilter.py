@@ -69,6 +69,7 @@ class PosePrefilterSettings:
     model: str = "yolo26x-pose.pt"
     sample_fps: float = 2.0
     max_seconds: float = 90.0
+    scan_strategy: str = "prefix"
     window_seconds: float = 8.0
     overlap_seconds: float = 4.0
     min_score: float = 0.45
@@ -88,6 +89,7 @@ class PoseDetection:
 class PoseSample:
     time_seconds: float
     detections: list[PoseDetection]
+    frame_signature: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,10 +128,8 @@ def run_yolo_pose_prefilter(
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video for YOLO pose prefiltering: {video_path}")
     try:
-        sample_step = max(1, int(round(metadata.fps / max(settings.sample_fps, 0.1))))
-        max_frame = min(metadata.frame_count, int(round(max(0.1, settings.max_seconds) * metadata.fps)))
-        frame_index = 0
-        while frame_index < max_frame:
+        sample_frames, sampled_windows = build_pose_sample_plan(metadata, settings=settings)
+        for frame_index in sample_frames:
             capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
             ok, frame = capture.read()
             if not ok:
@@ -139,13 +139,22 @@ def run_yolo_pose_prefilter(
                 metadata=metadata,
                 min_keypoint_confidence=settings.min_keypoint_confidence,
             )
-            samples.append(PoseSample(time_seconds=frame_index / metadata.fps, detections=detections))
-            frame_index += sample_step
+            samples.append(
+                PoseSample(
+                    time_seconds=frame_index / metadata.fps,
+                    detections=detections,
+                    frame_signature=compute_frame_signature(frame),
+                )
+            )
     finally:
         capture.release()
     result = score_pose_samples(samples, metadata=metadata, settings=settings)
     payload = dict(result.payload)
     payload["resolvedModelPath"] = model_path
+    payload["scanStrategy"] = normalize_pose_scan_strategy(settings.scan_strategy)
+    payload["sampledFrameCount"] = len(samples)
+    payload["sampledWindows"] = sampled_windows
+    payload["sampledWindowCount"] = len(sampled_windows)
     return PosePrefilterResult(
         passed=result.passed,
         score=result.score,
@@ -249,7 +258,11 @@ def score_pose_samples(
         "bestChunkStartSeconds": best["startSeconds"],
         "bestChunkEndSeconds": best["endSeconds"],
         "blockingIssues": blocking_issues,
+        "qualityIssues": best.get("qualityIssues", []),
         "singlePersonRatio": best["singlePersonRatio"],
+        "multiPersonRatio": best["multiPersonRatio"],
+        "noPersonRatio": best["noPersonRatio"],
+        "maxSignificantPersonCount": best["maxSignificantPersonCount"],
         "keypointCoverage": best["keypointCoverage"],
         "bodyScaleRatio": best["bodyScaleRatio"],
         "cropSafety": best["cropSafety"],
@@ -260,14 +273,67 @@ def score_pose_samples(
         "bilateralActiveChainBalance": best["bilateralActiveChainBalance"],
         "activeJoints": best["activeJoints"],
         "activeChains": best["activeChains"],
+        "sourceWindowIntegrity": best["sourceWindowIntegrity"],
         "sampleCount": best["sampleCount"],
         "windowCount": len(scored),
         "model": settings.model,
         "sampleFps": settings.sample_fps,
         "maxSeconds": settings.max_seconds,
         "minScore": settings.min_score,
+        "scanStrategy": normalize_pose_scan_strategy(settings.scan_strategy),
     }
     return PosePrefilterResult(passed=passed, score=score, reasons=dedupe_text(reasons), payload=payload)
+
+
+def normalize_pose_scan_strategy(value: str | None) -> str:
+    strategy = str(value or "").strip().lower()
+    if strategy in {"spread", "distributed", "coverage"}:
+        return "spread"
+    return "prefix"
+
+
+def build_pose_sample_plan(
+    metadata: BasicVideoMetadata,
+    *,
+    settings: PosePrefilterSettings,
+) -> tuple[list[int], list[dict[str, float]]]:
+    sample_step = max(1, int(round(metadata.fps / max(settings.sample_fps, 0.1))))
+    budget_seconds = max(0.1, float(settings.max_seconds))
+    duration_seconds = max(0.0, metadata.duration_seconds)
+    if (
+        normalize_pose_scan_strategy(settings.scan_strategy) != "spread"
+        or duration_seconds <= budget_seconds + 1e-6
+    ):
+        end_frame = min(metadata.frame_count, int(round(budget_seconds * metadata.fps)))
+        frames = list(range(0, max(0, end_frame), sample_step))
+        end_seconds = min(duration_seconds, budget_seconds)
+        return frames, [{"startSeconds": 0.0, "endSeconds": end_seconds}]
+
+    window_seconds = min(max(0.5, float(settings.window_seconds)), duration_seconds)
+    window_count = max(1, int(math.floor(budget_seconds / window_seconds)))
+    max_non_overlapping_windows = max(1, int(math.ceil(duration_seconds / window_seconds)))
+    window_count = min(window_count, max_non_overlapping_windows)
+    max_start = max(0.0, duration_seconds - window_seconds)
+    if window_count <= 1:
+        starts = [max_start * 0.5]
+    else:
+        starts = [max_start * index / (window_count - 1) for index in range(window_count)]
+
+    frames_by_index: dict[int, None] = {}
+    sampled_windows: list[dict[str, float]] = []
+    for start_seconds in starts:
+        end_seconds = min(duration_seconds, start_seconds + window_seconds)
+        start_frame = max(0, min(metadata.frame_count - 1, int(round(start_seconds * metadata.fps))))
+        end_frame = max(start_frame + 1, min(metadata.frame_count, int(round(end_seconds * metadata.fps))))
+        for frame_index in range(start_frame, end_frame, sample_step):
+            frames_by_index[frame_index] = None
+        sampled_windows.append(
+            {
+                "startSeconds": round(float(start_seconds), 3),
+                "endSeconds": round(float(end_seconds), 3),
+            }
+        )
+    return sorted(frames_by_index), sampled_windows
 
 
 def resolve_pose_model_path(model: str) -> str:
@@ -387,11 +453,21 @@ def score_pose_window(
             "activeJoints": [],
             "activeChains": [],
         }
-    single_person_ratio = sum(1 for sample in samples if significant_person_count(sample, metadata=metadata) <= 1) / len(samples)
+    significant_person_counts = [significant_person_count(sample, metadata=metadata) for sample in samples]
+    single_person_ratio = sum(1 for count in significant_person_counts if count == 1) / len(samples)
+    multi_person_ratio = sum(1 for count in significant_person_counts if count > 1) / len(samples)
+    no_person_ratio = sum(1 for count in significant_person_counts if count == 0) / len(samples)
+    max_significant_person_count = max(significant_person_counts) if significant_person_counts else 0
     keypoint_coverage = sum(required_keypoint_coverage(detection) for detection in present) / len(present)
     body_scale = median([body_scale_ratio(detection, metadata=metadata) for detection in present])
-    crop_safety = sum(crop_safety_score(detection, metadata=metadata) for detection in present) / len(present)
+    crop_safety_scores = [crop_safety_score(detection, metadata=metadata) for detection in present]
+    crop_safety = sum(crop_safety_scores) / len(crop_safety_scores)
     camera_stability = camera_stability_score(present, metadata=metadata)
+    source_window_integrity = source_window_integrity_metrics(
+        dominant,
+        samples=samples,
+        metadata=metadata,
+    )
     motion_strength = pose_motion_strength(present, metadata=metadata)
     active_quality = active_motion_reconstruction_quality(present, metadata=metadata)
     score = clamp_unit(
@@ -406,15 +482,20 @@ def score_pose_window(
         + active_quality["bilateralActiveChainBalance"] * 0.04
     )
     blocking_issues: list[str] = []
-    if single_person_ratio < 0.8:
+    if multi_person_ratio > 0.0:
         blocking_issues.append("multiple_people")
+    elif single_person_ratio < 0.8:
+        blocking_issues.append("no_person_detected")
     if keypoint_coverage < 0.65:
         blocking_issues.append("low_keypoint_coverage")
     if body_scale < settings.min_body_scale:
         blocking_issues.append("small_body")
     if crop_safety < 0.65:
         blocking_issues.append("cropped_body")
-    if camera_stability < 0.35:
+    quality_issues: list[str] = []
+    if not source_window_integrity["fullBodyContinuityPassed"]:
+        quality_issues.append("cropped_body")
+    if camera_stability < 0.35 or not source_window_integrity["cameraContinuityPassed"]:
         blocking_issues.append("camera_or_track_instability")
     if motion_strength < 0.20:
         blocking_issues.append("weak_body_joint_motion")
@@ -424,15 +505,19 @@ def score_pose_window(
         blocking_issues.append("low_active_chain_visibility")
     if active_quality["bilateralActiveChainBalance"] < 0.55:
         blocking_issues.append("asymmetric_bilateral_active_chain_visibility")
-    reasons = [f"pose_{issue}" for issue in blocking_issues] or ["pose_good_motion_source"]
+    reasons = [f"pose_{issue}" for issue in [*blocking_issues, *quality_issues]] or ["pose_good_motion_source"]
     return {
         "score": score,
         "sampleCount": len(samples),
         "startSeconds": samples[0].time_seconds,
         "endSeconds": samples[-1].time_seconds,
         "blockingIssues": blocking_issues,
+        "qualityIssues": quality_issues,
         "reasons": reasons,
         "singlePersonRatio": single_person_ratio,
+        "multiPersonRatio": multi_person_ratio,
+        "noPersonRatio": no_person_ratio,
+        "maxSignificantPersonCount": max_significant_person_count,
         "keypointCoverage": keypoint_coverage,
         "bodyScaleRatio": body_scale,
         "cropSafety": crop_safety,
@@ -443,6 +528,7 @@ def score_pose_window(
         "bilateralActiveChainBalance": active_quality["bilateralActiveChainBalance"],
         "activeJoints": active_quality["activeJoints"],
         "activeChains": active_quality["activeChains"],
+        "sourceWindowIntegrity": source_window_integrity,
     }
 
 
@@ -459,8 +545,15 @@ def significant_person_count(sample: PoseSample, *, metadata: BasicVideoMetadata
     if not sample.detections:
         return 0
     dominant_area = max(bbox_area(detection.bbox) for detection in sample.detections)
-    min_area = max(metadata.width * metadata.height * 0.01, dominant_area * 0.35)
-    return sum(1 for detection in sample.detections if bbox_area(detection.bbox) >= min_area)
+    # Source videos must be clean single-person clips. Count smaller background
+    # bodies too; the old dominant-area-relative threshold ignored seated or
+    # farther-away people that are still visible enough to confuse extraction.
+    min_area = max(metadata.width * metadata.height * 0.01, dominant_area * 0.05)
+    return sum(
+        1
+        for detection in sample.detections
+        if bbox_area(detection.bbox) >= min_area and len(detection.keypoints) >= 6
+    )
 
 
 def required_keypoint_coverage(detection: PoseDetection) -> float:
@@ -501,6 +594,97 @@ def camera_stability_score(detections: list[PoseDetection], *, metadata: BasicVi
     median_step = median(center_steps)
     scale_variation = (max(scales) - min(scales)) / max(median(scales), 1e-6)
     return clamp_unit(1.0 - median_step / 0.12 - scale_variation / 1.25)
+
+
+def source_window_integrity_metrics(
+    dominant: list[PoseDetection | None],
+    *,
+    samples: list[PoseSample],
+    metadata: BasicVideoMetadata,
+) -> dict[str, Any]:
+    present = [detection for detection in dominant if detection is not None]
+    if not samples or not present:
+        return {
+            "passed": False,
+            "singlePersonContinuityPassed": False,
+            "fullBodyContinuityPassed": False,
+            "cameraContinuityPassed": False,
+            "singlePersonRatio": 0.0,
+            "fullBodyVisibleRatio": 0.0,
+            "minCropSafety": 0.0,
+            "p10CropSafety": 0.0,
+            "maxCenterJumpRatio": 1.0,
+            "maxScaleJumpRatio": 1.0,
+        }
+    significant_counts = [significant_person_count(sample, metadata=metadata) for sample in samples]
+    single_person_ratio = sum(1 for count in significant_counts if count == 1) / len(significant_counts)
+    crop_scores = [crop_safety_score(detection, metadata=metadata) for detection in present]
+    full_body_visible_ratio = sum(1 for score in crop_scores if score >= 0.90) / len(crop_scores)
+    min_crop_safety = min(crop_scores) if crop_scores else 0.0
+    p10_crop_safety = percentile(crop_scores, 0.10)
+    centers = [bbox_center(detection.bbox) for detection in present]
+    scales = [body_scale_ratio(detection, metadata=metadata) for detection in present]
+    diagonal = max(1.0, math.hypot(metadata.width, metadata.height))
+    center_jumps = [
+        math.hypot(right[0] - left[0], right[1] - left[1]) / diagonal
+        for left, right in zip(centers, centers[1:])
+    ]
+    median_scale = max(median(scales), 1e-6)
+    scale_jumps = [
+        abs(right - left) / median_scale
+        for left, right in zip(scales, scales[1:])
+    ]
+    max_center_jump = max(center_jumps) if center_jumps else 0.0
+    max_scale_jump = max(scale_jumps) if scale_jumps else 0.0
+    frame_signature_jumps = frame_signature_jump_distances(samples)
+    scene_cut_count = sum(1 for value in frame_signature_jumps if value >= 0.34)
+    max_frame_signature_jump = max(frame_signature_jumps) if frame_signature_jumps else 0.0
+    single_person_passed = single_person_ratio >= 0.95
+    full_body_passed = full_body_visible_ratio >= 0.85 and p10_crop_safety >= 0.85 and min_crop_safety >= 0.75
+    camera_passed = max_center_jump <= 0.18 and max_scale_jump <= 0.45 and scene_cut_count == 0
+    return {
+        "passed": single_person_passed and full_body_passed and camera_passed,
+        "singlePersonContinuityPassed": single_person_passed,
+        "fullBodyContinuityPassed": full_body_passed,
+        "cameraContinuityPassed": camera_passed,
+        "singlePersonRatio": single_person_ratio,
+        "fullBodyVisibleRatio": full_body_visible_ratio,
+        "minCropSafety": min_crop_safety,
+        "p10CropSafety": p10_crop_safety,
+        "maxCenterJumpRatio": max_center_jump,
+        "maxScaleJumpRatio": max_scale_jump,
+        "sceneCutCount": scene_cut_count,
+        "maxFrameSignatureJump": max_frame_signature_jump,
+    }
+
+
+def compute_frame_signature(frame: Any) -> tuple[float, ...] | None:
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    try:
+        resized = cv2.resize(frame, (8, 8), interpolation=cv2.INTER_AREA)
+        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [8, 4], [0, 180, 0, 256])
+        values = hist.astype("float32").flatten()
+        total = float(np.sum(values))
+        if total <= 0:
+            return None
+        return tuple(float(value / total) for value in values)
+    except Exception:
+        return None
+
+
+def frame_signature_jump_distances(samples: list[PoseSample]) -> list[float]:
+    signatures = [sample.frame_signature for sample in samples]
+    distances: list[float] = []
+    for left, right in zip(signatures, signatures[1:]):
+        if left is None or right is None or len(left) != len(right):
+            continue
+        distances.append(sum(abs(a - b) for a, b in zip(left, right)) * 0.5)
+    return distances
 
 
 def pose_motion_strength(detections: list[PoseDetection], *, metadata: BasicVideoMetadata) -> float:
@@ -709,6 +893,14 @@ def median(values: list[float]) -> float:
     if len(ordered) % 2 == 1:
         return float(ordered[middle])
     return float((ordered[middle - 1] + ordered[middle]) * 0.5)
+
+
+def percentile(values: list[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, int(math.floor((len(ordered) - 1) * fraction))))
+    return float(ordered[index])
 
 
 def clamp_unit(value: float) -> float:
