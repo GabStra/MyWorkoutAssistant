@@ -6,8 +6,8 @@ param(
     [string]$OutputSlug,
     [string]$Workspace = "build/exercise_motion",
     [string]$LlamaCppCommand = "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-mtmd-cli.exe",
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
     [switch]$UseLlamaCppServer,
@@ -15,6 +15,9 @@ param(
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 768,
+    [double]$LlamaCppTemperature = 1.0,
+    [Nullable[double]]$LlamaCppTopP = 0.95,
+    [Nullable[int]]$LlamaCppTopK = 64,
     [int]$LlamaCppImageMinTokens = 0,
     [int]$LlamaCppImageMaxTokens = 0,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
@@ -205,6 +208,59 @@ function Test-LlamaCppApiReady {
     }
 }
 
+function Get-PathLikeFileName {
+    param([string]$PathValue)
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ""
+    }
+    return [System.IO.Path]::GetFileName(($PathValue -replace '/', '\'))
+}
+
+function Get-LlamaCppServerModelIds {
+    param(
+        [string]$HostAddress,
+        [int]$Port
+    )
+
+    try {
+        $payload = Invoke-RestMethod -Uri "http://$HostAddress`:$Port/v1/models" -UseBasicParsing -TimeoutSec 5
+    } catch {
+        return @()
+    }
+
+    $ids = @()
+    foreach ($item in @($payload.data)) {
+        if ($null -eq $item) {
+            continue
+        }
+        if (-not [string]::IsNullOrWhiteSpace($item.id)) {
+            $ids += [string]$item.id
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($item.model)) {
+            $ids += [string]$item.model
+        }
+    }
+    return $ids
+}
+
+function Assert-LlamaCppServerModelMatches {
+    param(
+        [string]$HostAddress,
+        [int]$Port,
+        [string]$ExpectedModelPath
+    )
+
+    $expectedName = Get-PathLikeFileName $ExpectedModelPath
+    $modelIds = @(Get-LlamaCppServerModelIds -HostAddress $HostAddress -Port $Port)
+    foreach ($modelId in $modelIds) {
+        if ((Get-PathLikeFileName $modelId).Equals($expectedName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+    }
+    $servedModels = if ($modelIds.Count -gt 0) { $modelIds -join ", " } else { "unknown model" }
+    throw "Existing llama-server on port $Port is serving $servedModels, but this run expects $expectedName. Stop the existing server or use a different -LlamaCppServerPort."
+}
+
 $repoRoot = Get-RepoRoot
 $pythonCommand = Get-PythonCommand
 $resolvedVideoPath = Resolve-StrictPath $VideoPath
@@ -306,6 +362,10 @@ if ($UseLiteRt) {
             if (-not (Wait-LlamaCppServer -HostAddress "127.0.0.1" -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
                 throw "Existing llama-server on port $LlamaCppServerPort did not become ready."
             }
+            Assert-LlamaCppServerModelMatches `
+                -HostAddress "127.0.0.1" `
+                -Port $LlamaCppServerPort `
+                -ExpectedModelPath $LlamaCppModel
         }
         $pythonArgs += @(
             "--base-url", $resolvedLlamaCppBaseUrl,
@@ -330,8 +390,15 @@ if (-not [string]::IsNullOrWhiteSpace($ExerciseName)) {
 }
 
 $pythonArgs += @(
-    "--llama-cpp-n-predict", "$LlamaCppNPredict"
+    "--llama-cpp-n-predict", "$LlamaCppNPredict",
+    "--llama-cpp-temperature", "$LlamaCppTemperature"
 )
+if ($LlamaCppTopP.HasValue) {
+    $pythonArgs += @("--llama-cpp-top-p", "$LlamaCppTopP")
+}
+if ($LlamaCppTopK.HasValue) {
+    $pythonArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
+}
 if ($LlamaCppImageMinTokens -gt 0) {
     $pythonArgs += "--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens"
 }

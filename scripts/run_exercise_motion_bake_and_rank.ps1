@@ -16,6 +16,24 @@ param(
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
+    [switch]$SkipSpinePose,
+    [string]$SpinePoseJsonDir,
+    [string]$SpinePoseCommand,
+    [string]$SpinePoseOutputDir,
+    [string]$SpinePoseMode = "large",
+    [string]$SpinePoseModelVersion = "v2",
+    [string]$SpinePoseDevice = "cuda",
+    [switch]$NoReuseSpinePoseCache,
+    [double]$SpinePoseGain = 1.0,
+    [double]$SpinePoseMaxDegrees = 35.0,
+    [ValidateSet(0, 1, 2)]
+    [int]$SpinePoseAxis = 0,
+    [switch]$SpinePoseInvert,
+    [int]$SpinePoseSmoothingWindow = 9,
+    [double]$SpinePoseArmCounterRotation = 1.0,
+    [ValidateSet("motion", "legacy-pkl")]
+    [string]$SpinePoseMergeMode = "motion",
+    [switch]$EnableSpinePose,
     [switch]$SkipSourceSegmentDetection,
     [switch]$ReselectExisting,
     [string]$SegmentBaseUrl,
@@ -28,6 +46,7 @@ param(
     [double]$SegmentEndPaddingSeconds = 0.35,
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
+    [switch]$SkipPreWhamSourceValidation,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
@@ -41,21 +60,34 @@ param(
     [int]$MaxReviewWindows = 3,
     [double]$MinSelectedScore = 0.55,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
     [string]$LlamaCppCommand,
     [string]$LlamaCppServerCommand,
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 768,
-    [double]$LlamaCppTemperature = 0.0,
+    [double]$LlamaCppTemperature = 1.0,
+    [Nullable[double]]$LlamaCppTopP = 0.95,
+    [Nullable[int]]$LlamaCppTopK = 64,
     [bool]$LlamaCppDisableReasoning = $true,
-    [Nullable[int]]$LlamaCppCtxSize = $null,
-    [Nullable[int]]$LlamaCppBatchSize = 2048,
+    [Nullable[int]]$LlamaCppCtxSize = 65536,
+    [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [ValidateSet("on", "off", "auto")]
-    [string]$LlamaCppFlashAttn = "auto",
+    [string]$LlamaCppFlashAttn = "on",
+    [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
+    [string]$LlamaCppCacheTypeK = "q8_0",
+    [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
+    [string]$LlamaCppCacheTypeV = "q8_0",
+    [Nullable[int]]$LlamaCppParallel = 1,
     [Nullable[int]]$LlamaCppThreadsHttp = 6,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
+    [ValidateSet("on", "off")]
+    [string]$LlamaCppFit = "on",
+    [Nullable[int]]$LlamaCppFitCtx = 65536,
+    [Nullable[int]]$LlamaCppFitTarget = 2048,
+    [bool]$LlamaCppMmap = $false,
+    [bool]$LlamaCppMlock = $true,
     [bool]$LlamaCppMmprojOffload = $true,
     [bool]$LlamaCppContBatching = $true,
     [Nullable[int]]$LlamaCppImageMinTokens,
@@ -182,6 +214,12 @@ $argsList = @(
     "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
+if ($null -ne $LlamaCppTopP) {
+    $argsList += @("--llama-cpp-top-p", "$LlamaCppTopP")
+}
+if ($null -ne $LlamaCppTopK) {
+    $argsList += @("--llama-cpp-top-k", "$LlamaCppTopK")
+}
 
 if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
     $argsList += "--rank-preview-variants"
@@ -201,23 +239,47 @@ if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
     $argsList += @("--llama-cpp-server-command", $LlamaCppServerCommand)
 }
-if ($LlamaCppCtxSize.HasValue) {
+if ($null -ne $LlamaCppCtxSize) {
     $argsList += @("--llama-cpp-ctx-size", "$LlamaCppCtxSize")
 }
-if ($LlamaCppBatchSize.HasValue) {
+if ($null -ne $LlamaCppBatchSize) {
     $argsList += @("--llama-cpp-batch-size", "$LlamaCppBatchSize")
 }
-if ($LlamaCppUBatchSize.HasValue) {
+if ($null -ne $LlamaCppUBatchSize) {
     $argsList += @("--llama-cpp-ubatch-size", "$LlamaCppUBatchSize")
 }
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppFlashAttn)) {
     $argsList += @("--llama-cpp-flash-attn", $LlamaCppFlashAttn)
 }
-if ($LlamaCppThreadsHttp.HasValue) {
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppCacheTypeK)) {
+    $argsList += @("--llama-cpp-cache-type-k", $LlamaCppCacheTypeK)
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppCacheTypeV)) {
+    $argsList += @("--llama-cpp-cache-type-v", $LlamaCppCacheTypeV)
+}
+if ($null -ne $LlamaCppParallel) {
+    $argsList += @("--llama-cpp-parallel", "$LlamaCppParallel")
+}
+if ($null -ne $LlamaCppThreadsHttp) {
     $argsList += @("--llama-cpp-threads-http", "$LlamaCppThreadsHttp")
 }
-if ($LlamaCppCacheReuse.HasValue) {
+if ($null -ne $LlamaCppCacheReuse) {
     $argsList += @("--llama-cpp-cache-reuse", "$LlamaCppCacheReuse")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppFit)) {
+    $argsList += @("--llama-cpp-fit", $LlamaCppFit)
+}
+if ($null -ne $LlamaCppFitCtx) {
+    $argsList += @("--llama-cpp-fit-ctx", "$LlamaCppFitCtx")
+}
+if ($null -ne $LlamaCppFitTarget) {
+    $argsList += @("--llama-cpp-fit-target", "$LlamaCppFitTarget")
+}
+if (-not $LlamaCppMmap) {
+    $argsList += "--no-llama-cpp-mmap"
+}
+if ($LlamaCppMlock) {
+    $argsList += "--llama-cpp-mlock"
 }
 if (-not $LlamaCppMmprojOffload) {
     $argsList += "--no-llama-cpp-mmproj-offload"
@@ -225,10 +287,10 @@ if (-not $LlamaCppMmprojOffload) {
 if (-not $LlamaCppContBatching) {
     $argsList += "--no-llama-cpp-cont-batching"
 }
-if ($LlamaCppImageMinTokens.HasValue) {
+if ($null -ne $LlamaCppImageMinTokens) {
     $argsList += @("--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens")
 }
-if ($LlamaCppImageMaxTokens.HasValue) {
+if ($null -ne $LlamaCppImageMaxTokens) {
     $argsList += @("--llama-cpp-image-max-tokens", "$LlamaCppImageMaxTokens")
 }
 if ($NoLlamaCppAutoStartServer) {
@@ -260,6 +322,38 @@ if ($NoReuseWhamCache) {
 if ($SkipMotionTuning) {
     $argsList += "--skip-motion-tuning"
 }
+if ($SkipSpinePose -or -not $EnableSpinePose) {
+    $argsList += "--skip-spinepose"
+}
+else {
+    $argsList += @(
+        "--spinepose-merge-mode", $SpinePoseMergeMode,
+        "--spinepose-mode", $SpinePoseMode,
+        "--spinepose-model-version", $SpinePoseModelVersion,
+        "--spinepose-device", $SpinePoseDevice,
+        "--spinepose-gain", "$SpinePoseGain",
+        "--spinepose-max-degrees", "$SpinePoseMaxDegrees",
+        "--spinepose-axis", "$SpinePoseAxis",
+        "--spinepose-smoothing-window", "$SpinePoseSmoothingWindow",
+        "--spinepose-arm-counter-rotation", "$SpinePoseArmCounterRotation"
+    )
+    $argsList += "--enable-spinepose"
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseJsonDir)) {
+        $argsList += @("--spinepose-json-dir", (Resolve-StrictPath $SpinePoseJsonDir))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseCommand)) {
+        $argsList += @("--spinepose-command", $SpinePoseCommand)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseOutputDir)) {
+        $argsList += @("--spinepose-output-dir", $SpinePoseOutputDir)
+    }
+    if ($SpinePoseInvert) {
+        $argsList += "--spinepose-invert"
+    }
+    if ($NoReuseSpinePoseCache) {
+        $argsList += "--no-spinepose-cache"
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($SegmentBaseUrl)) {
     $argsList += @("--segment-base-url", $SegmentBaseUrl)
 }
@@ -268,6 +362,12 @@ if (-not [string]::IsNullOrWhiteSpace($SegmentModel)) {
 }
 if ($SkipSourceSegmentDetection) {
     $argsList += "--skip-source-segment-detection"
+}
+if (-not $SkipPreWhamSourceValidation) {
+    $argsList += "--pre-wham-source-validation"
+}
+if ($SkipPreWhamSourceValidation) {
+    $argsList += "--skip-pre-wham-source-validation"
 }
 
 & $pythonCommand @argsList

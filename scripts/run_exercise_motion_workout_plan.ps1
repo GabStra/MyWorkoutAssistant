@@ -20,10 +20,9 @@ param(
     [int]$VisionDownloadWorkers = 3,
     [int]$VisionLlmWorkers = 1,
     [switch]$SkipVisionRanking,
-    [switch]$SemanticGateWithLiteRt,
+    [switch]$SemanticGateWithLlamaCpp,
     [Nullable[int]]$SemanticGateCandidatesPerExercise,
     [double]$SemanticGateMinScore = 0.55,
-    [double]$SemanticGateTimeoutSeconds = 0.0,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
@@ -279,14 +278,13 @@ $youtubeArgs = @(
 if (-not $SkipVisionRanking) {
     $youtubeArgs += "--rank-with-vision"
 }
-if ($SemanticGateWithLiteRt) {
+if ($SemanticGateWithLlamaCpp) {
     $youtubeArgs += @(
-        "--semantic-gate-with-litert",
-        "--semantic-gate-min-score", "$SemanticGateMinScore",
-        "--semantic-gate-timeout-seconds", "$SemanticGateTimeoutSeconds"
+        "--semantic-gate-with-llama-cpp",
+        "--semantic-gate-min-score", "$SemanticGateMinScore"
     )
-    if ($SemanticGateCandidatesPerExercise.HasValue) {
-        $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$($SemanticGateCandidatesPerExercise.Value)")
+    if ($null -ne $SemanticGateCandidatesPerExercise) {
+        $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$SemanticGateCandidatesPerExercise")
     }
 }
 if ($UseDeepSeekQueryPlanner) {
@@ -314,8 +312,8 @@ if ($PosePrefilter -and -not $SkipPosePrefilter) {
         "--pose-prefilter-min-score", "$PosePrefilterMinScore",
         "--pose-prefilter-workers", "$PosePrefilterWorkers"
     )
-    if ($PosePrefilterCandidatesPerExercise.HasValue) {
-        $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$($PosePrefilterCandidatesPerExercise.Value)")
+    if ($null -ne $PosePrefilterCandidatesPerExercise) {
+        $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$PosePrefilterCandidatesPerExercise")
     }
 }
 if ($IncludeDisabled) {
@@ -378,13 +376,13 @@ foreach ($exercise in $candidateManifest.exercises) {
     if ($SkipSupportDominanceClassification) {
         $bakeArgs += "--no-classify-support-dominance"
     }
-    if ($SegmentWindowSeconds.HasValue) {
+    if ($null -ne $SegmentWindowSeconds) {
         $bakeArgs += @("--segment-window-seconds", "$SegmentWindowSeconds")
     }
-    if ($SegmentOverlapSeconds.HasValue) {
+    if ($null -ne $SegmentOverlapSeconds) {
         $bakeArgs += @("--segment-overlap-seconds", "$SegmentOverlapSeconds")
     }
-    if ($SegmentFramesPerWindow.HasValue) {
+    if ($null -ne $SegmentFramesPerWindow) {
         $bakeArgs += @("--segment-frames-per-window", "$SegmentFramesPerWindow")
     }
     if (-not $NoWhamDocker) {

@@ -16,6 +16,24 @@ param(
     [switch]$EstimateLocalOnly,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
+    [switch]$SkipSpinePose,
+    [string]$SpinePoseJsonDir,
+    [string]$SpinePoseCommand,
+    [string]$SpinePoseOutputDir,
+    [string]$SpinePoseMode = "large",
+    [string]$SpinePoseModelVersion = "v2",
+    [string]$SpinePoseDevice = "cuda",
+    [switch]$NoReuseSpinePoseCache,
+    [double]$SpinePoseGain = 1.0,
+    [double]$SpinePoseMaxDegrees = 35.0,
+    [ValidateSet(0, 1, 2)]
+    [int]$SpinePoseAxis = 0,
+    [switch]$SpinePoseInvert,
+    [int]$SpinePoseSmoothingWindow = 9,
+    [double]$SpinePoseArmCounterRotation = 1.0,
+    [ValidateSet("motion", "legacy-pkl")]
+    [string]$SpinePoseMergeMode = "motion",
+    [switch]$EnableSpinePose,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
     [switch]$SkipSegmentDetection,
@@ -23,8 +41,8 @@ param(
     [double]$SegmentStartSeconds = -1.0,
     [double]$SegmentEndSeconds = -1.0,
     [string]$LlamaCppCommand = "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-mtmd-cli.exe",
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
     [string]$YouTubeCookies,
@@ -34,6 +52,9 @@ param(
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 768,
+    [double]$LlamaCppTemperature = 1.0,
+    [Nullable[double]]$LlamaCppTopP = 0.95,
+    [Nullable[int]]$LlamaCppTopK = 64,
     [int]$LlamaCppImageMinTokens = 0,
     [int]$LlamaCppImageMaxTokens = 0,
     [double]$SegmentWindowSeconds = 5.0,
@@ -295,6 +316,9 @@ elseif (-not $SkipSegmentDetection) {
         -LlamaCppServerPort $LlamaCppServerPort `
         -LlamaCppBaseUrl $LlamaCppBaseUrl `
         -LlamaCppNPredict $LlamaCppNPredict `
+        -LlamaCppTemperature $LlamaCppTemperature `
+        -LlamaCppTopP $LlamaCppTopP `
+        -LlamaCppTopK $LlamaCppTopK `
         -LlamaCppImageMinTokens $LlamaCppImageMinTokens `
         -LlamaCppImageMaxTokens $LlamaCppImageMaxTokens `
         -WindowSeconds $SegmentWindowSeconds `
@@ -403,6 +427,39 @@ if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
 }
 if ($SkipMotionTuning) {
     $generateArgs += "--skip-motion-tuning"
+}
+if ($SkipSpinePose -or -not $EnableSpinePose) {
+    $generateArgs += "--skip-spinepose"
+}
+else {
+    $generateArgs += @(
+        "--spinepose-merge-mode", $SpinePoseMergeMode,
+        "--spinepose-mode", $SpinePoseMode,
+        "--spinepose-model-version", $SpinePoseModelVersion,
+        "--spinepose-device", $SpinePoseDevice,
+        "--spinepose-gain", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseGain)),
+        "--spinepose-max-degrees", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseMaxDegrees)),
+        "--spinepose-axis", $SpinePoseAxis,
+        "--spinepose-smoothing-window", $SpinePoseSmoothingWindow,
+        "--spinepose-arm-counter-rotation", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseArmCounterRotation))
+    )
+    $generateArgs += "--enable-spinepose"
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseJsonDir)) {
+        $resolvedSpinePoseJsonDir = Resolve-StrictPath $SpinePoseJsonDir
+        $generateArgs += @("--spinepose-json-dir", $resolvedSpinePoseJsonDir)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseCommand)) {
+        $generateArgs += @("--spinepose-command", $SpinePoseCommand)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SpinePoseOutputDir)) {
+        $generateArgs += @("--spinepose-output-dir", $SpinePoseOutputDir)
+    }
+    if ($SpinePoseInvert) {
+        $generateArgs += "--spinepose-invert"
+    }
+    if ($NoReuseSpinePoseCache) {
+        $generateArgs += "--no-spinepose-cache"
+    }
 }
 $generateInterpreter = $WhamPython
 & $generateInterpreter @generateArgs

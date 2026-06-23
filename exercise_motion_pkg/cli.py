@@ -13,6 +13,13 @@ from exercise_motion_pkg.bake_and_rank import (
     run_bake_and_rank_reselection,
 )
 from exercise_motion_pkg.ground import embed_ground_metadata_in_clip, generate_ground_metadata
+from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_MMPROJ,
+    DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_TEMPERATURE,
+    DEFAULT_LLAMA_CPP_TOP_K,
+    DEFAULT_LLAMA_CPP_TOP_P,
+)
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
 from exercise_motion_pkg.physics_bundle import PhysicsBundleConfig, write_physics_bundle
@@ -91,6 +98,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-wham-smplify",
         action="store_true",
         help="Skip WHAM's Temporal SMPLify refinement. SMPLify runs by default.",
+    )
+    generate.add_argument(
+        "--spinepose-json-dir",
+        help="Directory of existing SpinePose frame JSON files. Used only when --enable-spinepose is set.",
+    )
+    generate.add_argument(
+        "--skip-spinepose",
+        action="store_true",
+        help="Keep SpinePose disabled. This is the default unless --enable-spinepose is set.",
+    )
+    generate.add_argument(
+        "--spinepose-command",
+        help=(
+            "Command used to generate SpinePose JSON from the prepared input video. "
+            "Templates may use {video}, {output_dir}, {mode}, {model_version}, and {device}."
+        ),
+    )
+    generate.add_argument("--spinepose-output-dir")
+    generate.add_argument("--spinepose-mode", default="large")
+    generate.add_argument("--spinepose-model-version", default="v2")
+    generate.add_argument("--spinepose-device", default="cuda")
+    generate.add_argument("--no-spinepose-cache", action="store_true")
+    generate.add_argument(
+        "--spinepose-merge-mode",
+        default="motion",
+        choices=("motion", "legacy-pkl"),
+        help="Use safe normalized-motion spine fusion by default; legacy-pkl keeps the old SMPL pose mutation for experiments.",
+    )
+    generate.add_argument("--spinepose-gain", type=float, default=1.0)
+    generate.add_argument("--spinepose-max-degrees", type=float, default=35.0)
+    generate.add_argument("--spinepose-axis", type=int, default=0, choices=(0, 1, 2))
+    generate.add_argument("--spinepose-invert", action="store_true")
+    generate.add_argument("--spinepose-smoothing-window", type=int, default=9)
+    generate.add_argument("--spinepose-arm-counter-rotation", type=float, default=1.0)
+    generate.add_argument(
+        "--enable-spinepose",
+        action="store_true",
+        help="Enable SpinePose source extraction/fusion. Off by default while the fusion path remains experimental.",
     )
     generate.add_argument(
         "--skip-motion-tuning",
@@ -182,6 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--llama-cpp-mmproj")
     detect.add_argument("--llama-cpp-backend", default="gpu")
     detect.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    detect.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
+    detect.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
+    detect.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
     detect.add_argument("--llama-cpp-image-min-tokens", type=int)
     detect.add_argument("--llama-cpp-image-max-tokens", type=int)
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
@@ -217,35 +265,53 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a YouTube cookies.txt file for preview downloads used by YOLO/VLM ranking.",
     )
+    youtube_search.add_argument(
+        "--youtube-preview-cache-dir",
+        type=Path,
+        help="Directory for cached low-resolution YouTube previews shared by YOLO and VLM ranking.",
+    )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
     youtube_search.add_argument("--metadata-candidate-pool-size", type=int)
-    youtube_search.add_argument("--min-duration-seconds", type=int, default=20)
+    youtube_search.add_argument("--min-duration-seconds", type=int, default=10)
     youtube_search.add_argument("--max-duration-seconds", type=int, default=120)
     youtube_search.add_argument(
         "--use-deepseek-query-planner",
         action="store_true",
-        help="Ask DeepSeek for extra YouTube search queries before yt-dlp search. Uses DEEPSEEK_API_KEY unless --deepseek-api-key is supplied.",
+        help="Compatibility option: ask DeepSeek for extra YouTube search queries before yt-dlp search.",
+    )
+    youtube_search.add_argument(
+        "--use-llama-cpp-query-planner",
+        action="store_true",
+        help="Ask the configured local llama.cpp model for extra YouTube search queries before yt-dlp search.",
     )
     youtube_search.add_argument("--deepseek-api-key")
     youtube_search.add_argument("--deepseek-base-url", default="https://api.deepseek.com")
     youtube_search.add_argument("--deepseek-model", default="deepseek-v4-flash")
     youtube_search.add_argument("--deepseek-max-queries", type=int, default=4)
     youtube_search.add_argument("--deepseek-timeout-seconds", type=float, default=60.0)
-    youtube_search.add_argument("--rank-with-litert", action="store_true")
-    youtube_search.add_argument("--rank-with-vision", dest="rank_with_litert", action="store_true")
+    youtube_search.add_argument("--rank-with-vision", action="store_true")
     youtube_search.add_argument(
-        "--semantic-gate-with-litert",
+        "--semantic-gate-with-llama-cpp",
+        dest="semantic_gate_with_llama_cpp",
         action="store_true",
-        help="Use a text-only LiteRT-LM semantic gate before YOLO pose or VLM ranking.",
+        help="Use a text-only llama.cpp semantic gate before YOLO pose or VLM ranking.",
     )
     youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int)
     youtube_search.add_argument("--semantic-gate-min-score", type=float, default=0.55)
-    youtube_search.add_argument("--semantic-gate-timeout-seconds", type=float, default=0.0)
     youtube_search.add_argument("--pose-prefilter", action="store_true", help="Use YOLO pose as a fast visual prefilter before optional VLM ranking.")
     youtube_search.add_argument("--pose-prefilter-model", default="yolo26x-pose.pt")
     youtube_search.add_argument("--pose-prefilter-candidates-per-exercise", type=int)
     youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=2.0)
     youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=90.0)
+    youtube_search.add_argument(
+        "--pose-prefilter-scan-strategy",
+        choices=["prefix", "spread"],
+        default="spread",
+        help=(
+            "YOLO sampling strategy. 'prefix' samples only the start of each video; "
+            "'spread' spends the same sample budget in short windows across the full video."
+        ),
+    )
     youtube_search.add_argument("--pose-prefilter-window-seconds", type=float, default=8.0)
     youtube_search.add_argument("--pose-prefilter-overlap-seconds", type=float, default=4.0)
     youtube_search.add_argument("--pose-prefilter-min-score", type=float, default=0.45)
@@ -253,7 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--pose-prefilter-min-body-scale", type=float, default=0.18)
     youtube_search.add_argument("--pose-prefilter-workers", type=int, default=3)
     youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=8)
-    youtube_search.add_argument("--vision-frames-per-candidate", type=int, default=6)
+    youtube_search.add_argument(
+        "--vision-frames-per-candidate",
+        type=int,
+        help="Frames sampled per source-review window. Omit to use the exercise-duration estimator.",
+    )
     youtube_search.add_argument("--vision-chunk-seconds", type=float)
     youtube_search.add_argument("--vision-chunk-overlap-seconds", type=float)
     youtube_search.add_argument("--vision-max-chunks-per-candidate", type=int, default=5)
@@ -264,26 +334,37 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
     youtube_search.add_argument("--vision-download-workers", type=int, default=3)
     youtube_search.add_argument("--vision-llm-workers", type=int, default=3)
-    youtube_search.add_argument("--litert-command")
-    youtube_search.add_argument("--litert-backend", default="gpu")
     youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
-    youtube_search.add_argument("--llama-cpp-model", default="C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf")
+    youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     youtube_search.add_argument("--llama-cpp-command")
     youtube_search.add_argument("--llama-cpp-server-command")
-    youtube_search.add_argument("--llama-cpp-mmproj", default="C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf")
+    youtube_search.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     youtube_search.add_argument("--llama-cpp-backend", default="gpu")
     youtube_search.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    youtube_search.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
+    youtube_search.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
+    youtube_search.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
     youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
+    youtube_search.add_argument("--llama-cpp-ctx-size", type=int)
+    youtube_search.add_argument("--llama-cpp-batch-size", type=int)
+    youtube_search.add_argument("--llama-cpp-ubatch-size", type=int)
+    youtube_search.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
+    youtube_search.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
+    youtube_search.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
+    youtube_search.add_argument("--llama-cpp-parallel", type=int)
+    youtube_search.add_argument("--llama-cpp-threads-http", type=int)
+    youtube_search.add_argument("--llama-cpp-cache-reuse", type=int)
+    youtube_search.add_argument("--llama-cpp-fit", choices=["on", "off"])
+    youtube_search.add_argument("--llama-cpp-fit-ctx", type=int)
+    youtube_search.add_argument("--llama-cpp-fit-target", type=int)
+    youtube_search.add_argument("--no-llama-cpp-mmap", action="store_true")
+    youtube_search.add_argument("--llama-cpp-mlock", action="store_true")
     youtube_search.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     youtube_search.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
-    youtube_search.add_argument("--no-litert-server", action="store_true")
-    youtube_search.add_argument("--litert-server-url", default="http://127.0.0.1:9379")
-    youtube_search.add_argument("--litert-server-port", type=int, default=9379)
-    youtube_search.add_argument("--keep-litert-server", action="store_true")
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument("--include-disabled", action="store_true")
 
@@ -293,6 +374,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
     bake_and_rank.add_argument("--fallback-candidates", type=int, default=DEFAULT_FALLBACK_CANDIDATES)
+    bake_and_rank.add_argument(
+        "--allow-youtube-candidate-fallback",
+        action="store_true",
+        help="Allow non-recommended YouTube candidates to proceed to WHAM. Disabled by default to avoid baking least-bad sources.",
+    )
     bake_and_rank.add_argument(
         "--candidate-workers",
         type=int,
@@ -361,6 +447,49 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--segment-refinement-frames-per-window", type=int, default=0)
     bake_and_rank.add_argument("--segment-refinement-padding-seconds", type=float, default=1.0)
     bake_and_rank.add_argument("--segment-classification-workers", type=int, default=3)
+    bake_and_rank.add_argument(
+        "--pre-wham-source-validation",
+        action="store_true",
+        help="Validate and tighten source-video movement windows before running WHAM.",
+    )
+    bake_and_rank.add_argument(
+        "--skip-pre-wham-source-validation",
+        action="store_true",
+        help="Skip the source contact-sheet complete-movement gate before running WHAM.",
+    )
+    bake_and_rank.add_argument(
+        "--spinepose-json-dir",
+        help="Directory of existing SpinePose frame JSON files. Used only when --enable-spinepose is set.",
+    )
+    bake_and_rank.add_argument(
+        "--skip-spinepose",
+        action="store_true",
+        help="Keep SpinePose disabled. This is the default unless --enable-spinepose is set.",
+    )
+    bake_and_rank.add_argument(
+        "--spinepose-command",
+        help=(
+            "Command used to generate SpinePose JSON from each prepared candidate video. "
+            "Templates may use {video}, {output_dir}, {mode}, {model_version}, and {device}."
+        ),
+    )
+    bake_and_rank.add_argument("--spinepose-output-dir")
+    bake_and_rank.add_argument("--spinepose-mode", default="large")
+    bake_and_rank.add_argument("--spinepose-model-version", default="v2")
+    bake_and_rank.add_argument("--spinepose-device", default="cuda")
+    bake_and_rank.add_argument("--no-spinepose-cache", action="store_true")
+    bake_and_rank.add_argument("--spinepose-merge-mode", default="motion", choices=("motion", "legacy-pkl"))
+    bake_and_rank.add_argument("--spinepose-gain", type=float, default=1.0)
+    bake_and_rank.add_argument("--spinepose-max-degrees", type=float, default=35.0)
+    bake_and_rank.add_argument("--spinepose-axis", type=int, default=0, choices=(0, 1, 2))
+    bake_and_rank.add_argument("--spinepose-invert", action="store_true")
+    bake_and_rank.add_argument("--spinepose-smoothing-window", type=int, default=9)
+    bake_and_rank.add_argument("--spinepose-arm-counter-rotation", type=float, default=1.0)
+    bake_and_rank.add_argument(
+        "--enable-spinepose",
+        action="store_true",
+        help="Enable SpinePose source extraction/fusion. Off by default while the fusion path remains experimental.",
+    )
     bake_and_rank.add_argument("--review-frames", type=int, default=DEFAULT_REVIEW_FRAMES)
     bake_and_rank.add_argument(
         "--review-llm-workers",
@@ -399,20 +528,30 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--min-selected-score", type=float, default=0.55)
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
-    bake_and_rank.add_argument("--llama-cpp-model", default="C:\\Users\\gabri\\Downloads\\Qwen3VL-8B-Instruct-Q4_K_M.gguf")
+    bake_and_rank.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     bake_and_rank.add_argument("--llama-cpp-command")
     bake_and_rank.add_argument("--llama-cpp-server-command")
-    bake_and_rank.add_argument("--llama-cpp-mmproj", default="C:\\Users\\gabri\\Downloads\\mmproj-Qwen3VL-8B-Instruct-F16.gguf")
+    bake_and_rank.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     bake_and_rank.add_argument("--llama-cpp-backend", default="gpu")
     bake_and_rank.add_argument("--llama-cpp-n-predict", type=int, default=768)
-    bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=0.0)
+    bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
+    bake_and_rank.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
+    bake_and_rank.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
     bake_and_rank.add_argument("--no-llama-cpp-disable-reasoning", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-batch-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-ubatch-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
+    bake_and_rank.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
+    bake_and_rank.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
+    bake_and_rank.add_argument("--llama-cpp-parallel", type=int)
     bake_and_rank.add_argument("--llama-cpp-threads-http", type=int)
     bake_and_rank.add_argument("--llama-cpp-cache-reuse", type=int)
+    bake_and_rank.add_argument("--llama-cpp-fit", choices=["on", "off"])
+    bake_and_rank.add_argument("--llama-cpp-fit-ctx", type=int)
+    bake_and_rank.add_argument("--llama-cpp-fit-target", type=int)
+    bake_and_rank.add_argument("--no-llama-cpp-mmap", action="store_true")
+    bake_and_rank.add_argument("--llama-cpp-mlock", action="store_true")
     bake_and_rank.add_argument("--no-llama-cpp-mmproj-offload", action="store_true")
     bake_and_rank.add_argument("--no-llama-cpp-cont-batching", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-image-min-tokens", type=int)
@@ -568,6 +707,13 @@ def main() -> None:
                 raise ValueError("--source-start-seconds must be >= 0.")
             if args.source_end_seconds <= args.source_start_seconds:
                 raise ValueError("--source-end-seconds must be greater than --source-start-seconds.")
+        spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
+        spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
+        if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
+            raise ValueError(
+                "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
+                "Pass --enable-spinepose to use it."
+            )
         result = run_generation_pipeline(
             GenerateRequest(
                 exercise_slug=args.exercise_slug,
@@ -585,6 +731,21 @@ def main() -> None:
                 wham_docker_shm_size=args.wham_docker_shm_size,
                 wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_wham_smplify,
+                spinepose_enabled=spinepose_enabled,
+                spinepose_json_dir=Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
+                spinepose_command=args.spinepose_command,
+                spinepose_output_dir=Path(args.spinepose_output_dir) if args.spinepose_output_dir else None,
+                spinepose_mode=args.spinepose_mode,
+                spinepose_model_version=args.spinepose_model_version,
+                spinepose_device=args.spinepose_device,
+                spinepose_reuse_cache=not args.no_spinepose_cache,
+                spinepose_gain=args.spinepose_gain,
+                spinepose_max_degrees=args.spinepose_max_degrees,
+                spinepose_axis=args.spinepose_axis,
+                spinepose_invert=args.spinepose_invert,
+                spinepose_smoothing_window=args.spinepose_smoothing_window,
+                spinepose_arm_counter_rotation=args.spinepose_arm_counter_rotation,
+                spinepose_merge_mode=spinepose_merge_mode,
                 normalized_motion_json=Path(args.normalized_motion_json) if args.normalized_motion_json else None,
                 one_euro_min_cutoff=args.one_euro_min_cutoff,
                 one_euro_beta=args.one_euro_beta,
@@ -669,6 +830,9 @@ def main() -> None:
                 llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
+                llama_cpp_temperature=args.llama_cpp_temperature,
+                llama_cpp_top_p=args.llama_cpp_top_p,
+                llama_cpp_top_k=args.llama_cpp_top_k,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
@@ -705,6 +869,9 @@ def main() -> None:
                 llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
+                llama_cpp_temperature=args.llama_cpp_temperature,
+                llama_cpp_top_p=args.llama_cpp_top_p,
+                llama_cpp_top_k=args.llama_cpp_top_k,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
@@ -742,33 +909,37 @@ def main() -> None:
             print(f"Detected span end: {result.detected_span.end_seconds:.3f}")
         return
     if args.command == "find-youtube-videos":
+        out_json = Path(args.out_json)
+        preview_cache_dir = args.youtube_preview_cache_dir or (out_json.parent / "youtube-preview-cache")
         manifest = discover_and_rank_youtube_candidates(
             workout_plan_json=Path(args.workout_plan_json),
-            out_json=Path(args.out_json),
+            out_json=out_json,
             settings=YouTubeRankingSettings(
                 results_per_query=args.results_per_query,
                 youtube_search_empty_retries=args.youtube_search_empty_retries,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
+                youtube_preview_cache_dir=preview_cache_dir,
                 max_candidates=args.max_candidates,
                 metadata_candidate_pool_size=args.metadata_candidate_pool_size,
                 min_duration_seconds=args.min_duration_seconds,
                 max_duration_seconds=args.max_duration_seconds,
                 use_deepseek_query_planner=args.use_deepseek_query_planner,
+                use_llama_cpp_query_planner=args.use_llama_cpp_query_planner,
                 deepseek_api_key=args.deepseek_api_key,
                 deepseek_base_url=args.deepseek_base_url,
                 deepseek_model=args.deepseek_model,
                 deepseek_max_queries=args.deepseek_max_queries,
                 deepseek_timeout_seconds=args.deepseek_timeout_seconds,
-                rank_with_litert=args.rank_with_litert,
-                semantic_gate_enabled=args.semantic_gate_with_litert,
+                rank_with_vision=args.rank_with_vision,
+                semantic_gate_enabled=args.semantic_gate_with_llama_cpp,
                 semantic_gate_candidates_per_exercise=args.semantic_gate_candidates_per_exercise,
                 semantic_gate_min_score=args.semantic_gate_min_score,
-                semantic_gate_timeout_seconds=args.semantic_gate_timeout_seconds,
                 pose_prefilter_enabled=args.pose_prefilter,
                 pose_prefilter_model=args.pose_prefilter_model,
                 pose_prefilter_candidates_per_exercise=args.pose_prefilter_candidates_per_exercise,
                 pose_prefilter_sample_fps=args.pose_prefilter_sample_fps,
                 pose_prefilter_max_seconds=args.pose_prefilter_max_seconds,
+                pose_prefilter_scan_strategy=args.pose_prefilter_scan_strategy,
                 pose_prefilter_window_seconds=args.pose_prefilter_window_seconds,
                 pose_prefilter_overlap_seconds=args.pose_prefilter_overlap_seconds,
                 pose_prefilter_min_score=args.pose_prefilter_min_score,
@@ -787,8 +958,6 @@ def main() -> None:
                 vision_motion_scan_max_seconds=args.vision_motion_scan_max_seconds,
                 vision_download_workers=args.vision_download_workers,
                 vision_llm_workers=args.vision_llm_workers,
-                litert_command=args.litert_command,
-                litert_backend=args.litert_backend,
                 vision_model=args.vision_model,
                 llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
                 llama_cpp_model=args.llama_cpp_model,
@@ -797,8 +966,25 @@ def main() -> None:
                 llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
+                llama_cpp_temperature=args.llama_cpp_temperature,
+                llama_cpp_top_p=args.llama_cpp_top_p,
+                llama_cpp_top_k=args.llama_cpp_top_k,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
+                llama_cpp_ctx_size=args.llama_cpp_ctx_size,
+                llama_cpp_batch_size=args.llama_cpp_batch_size,
+                llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,
+                llama_cpp_flash_attn=args.llama_cpp_flash_attn,
+                llama_cpp_cache_type_k=args.llama_cpp_cache_type_k,
+                llama_cpp_cache_type_v=args.llama_cpp_cache_type_v,
+                llama_cpp_parallel=args.llama_cpp_parallel,
+                llama_cpp_threads_http=args.llama_cpp_threads_http,
+                llama_cpp_cache_reuse=args.llama_cpp_cache_reuse,
+                llama_cpp_fit=args.llama_cpp_fit,
+                llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
+                llama_cpp_fit_target=args.llama_cpp_fit_target,
+                llama_cpp_mmap=not args.no_llama_cpp_mmap,
+                llama_cpp_mlock=args.llama_cpp_mlock,
                 llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
                 llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
                 llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
@@ -810,6 +996,13 @@ def main() -> None:
         print(f"Exercises: {len(manifest['exercises'])}")
         return
     if args.command == "bake-and-rank":
+        spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
+        spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
+        if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
+            raise ValueError(
+                "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
+                "Pass --enable-spinepose to use it."
+            )
         manifest = run_bake_and_rank_pipeline(
             BakeAndRankRequest(
                 candidates_json=Path(args.candidates_json),
@@ -827,6 +1020,21 @@ def main() -> None:
                 wham_docker_shm_size=args.wham_docker_shm_size,
                 wham_estimate_local_only=args.estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_smplify,
+                spinepose_enabled=spinepose_enabled,
+                spinepose_json_dir=Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
+                spinepose_command=args.spinepose_command,
+                spinepose_output_dir=Path(args.spinepose_output_dir) if args.spinepose_output_dir else None,
+                spinepose_mode=args.spinepose_mode,
+                spinepose_model_version=args.spinepose_model_version,
+                spinepose_device=args.spinepose_device,
+                spinepose_reuse_cache=not args.no_spinepose_cache,
+                spinepose_gain=args.spinepose_gain,
+                spinepose_max_degrees=args.spinepose_max_degrees,
+                spinepose_axis=args.spinepose_axis,
+                spinepose_invert=args.spinepose_invert,
+                spinepose_smoothing_window=args.spinepose_smoothing_window,
+                spinepose_arm_counter_rotation=args.spinepose_arm_counter_rotation,
+                spinepose_merge_mode=spinepose_merge_mode,
                 detect_source_segment=not args.skip_source_segment_detection,
                 segment_base_url=args.segment_base_url,
                 segment_model=args.segment_model,
@@ -843,6 +1051,9 @@ def main() -> None:
                 segment_refinement_frames_per_window=args.segment_refinement_frames_per_window,
                 segment_refinement_padding_seconds=args.segment_refinement_padding_seconds,
                 segment_classification_workers=args.segment_classification_workers,
+                pre_wham_source_validation=(
+                    args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
+                ),
                 review_frames=args.review_frames,
                 review_llm_workers=args.review_llm_workers,
                 max_llm_review_items=args.max_llm_review_items,
@@ -861,13 +1072,23 @@ def main() -> None:
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
                 llama_cpp_temperature=args.llama_cpp_temperature,
+                llama_cpp_top_p=args.llama_cpp_top_p,
+                llama_cpp_top_k=args.llama_cpp_top_k,
                 llama_cpp_disable_reasoning=not args.no_llama_cpp_disable_reasoning,
                 llama_cpp_ctx_size=args.llama_cpp_ctx_size,
                 llama_cpp_batch_size=args.llama_cpp_batch_size,
                 llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,
                 llama_cpp_flash_attn=args.llama_cpp_flash_attn,
+                llama_cpp_cache_type_k=args.llama_cpp_cache_type_k,
+                llama_cpp_cache_type_v=args.llama_cpp_cache_type_v,
+                llama_cpp_parallel=args.llama_cpp_parallel,
                 llama_cpp_threads_http=args.llama_cpp_threads_http,
                 llama_cpp_cache_reuse=args.llama_cpp_cache_reuse,
+                llama_cpp_fit=args.llama_cpp_fit,
+                llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
+                llama_cpp_fit_target=args.llama_cpp_fit_target,
+                llama_cpp_mmap=not args.no_llama_cpp_mmap,
+                llama_cpp_mlock=args.llama_cpp_mlock,
                 llama_cpp_mmproj_offload=not args.no_llama_cpp_mmproj_offload,
                 llama_cpp_cont_batching=not args.no_llama_cpp_cont_batching,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
@@ -876,6 +1097,7 @@ def main() -> None:
                 keep_llama_cpp_server=args.keep_llama_cpp_server,
                 llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
                 llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
+                require_recommended_youtube_candidate=not args.allow_youtube_candidate_fallback,
             )
         )
         selection_path = Path(args.workspace) / "selection_manifest.json"
