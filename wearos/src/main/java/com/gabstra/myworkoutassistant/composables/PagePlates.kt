@@ -109,11 +109,9 @@ private fun computeLabelBoundsPx(
     canvasWidthPx: Float,
     viewportWidthPx: Float,
     sleeveLength: Float,
-    extraLogicalOffset: Float,
-    maxLogicalThickness: Float?,
-    currentTotalThickness: Float,
     density: Density,
-    labelTextSizePx: Float
+    labelTextSizePx: Float,
+    labelRightPaddingPx: Float
 ): LabelBoundsPx {
     val shaftLength = with(density) { 20.dp.toPx() }
     val stopperWidth = with(density) { 5.dp.toPx() }
@@ -126,7 +124,6 @@ private fun computeLabelBoundsPx(
     val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
     val labelCollisionPadding = with(density) { 6.dp.toPx() }
     val minPlateWidthPx = with(density) { 4.dp.toPx() }
-    val maxPlateWeight = plateData.maxOfOrNull { it.weight } ?: 25.0
     val textPaint = android.graphics.Paint().apply {
         textSize = labelTextSizePx
         isAntiAlias = true
@@ -134,7 +131,6 @@ private fun computeLabelBoundsPx(
     var topRowRightX = sleeveX - labelCollisionPadding
     var bottomRowRightX = sleeveX - labelCollisionPadding
     var currentX = sleeveX
-    val unboundedMaxLabelCenterX = 1e6f
     var minLeftX = Float.POSITIVE_INFINITY
     plateData.forEachIndexed { plateIndex, plateInfo ->
         val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
@@ -143,7 +139,7 @@ private fun computeLabelBoundsPx(
         val weightText = plateInfo.weight.compact()
         val labelWidth = textPaint.measureText(weightText)
         val minLabelCenterX = sleeveX + (labelWidth / 2f)
-        val maxLabelCenterX = unboundedMaxLabelCenterX
+        val maxLabelCenterX = canvasWidthPx - (labelWidth / 2f) - labelRightPaddingPx
         val isTop = plateIndex % 2 == 0
         val rowRightX = if (isTop) topRowRightX else bottomRowRightX
         val desiredCenterX = plateCenterX.coerceIn(minLabelCenterX, maxLabelCenterX)
@@ -611,32 +607,6 @@ private fun PagePlatesContent(
                 maxThickness.toFloat()
             }
 
-            val allPlateConfigurations = remember(steps, plateChangeResult.previousPlates, plateChangeResult.currentPlates) {
-                buildList {
-                    val workingPlates = plateChangeResult.previousPlates.sortedDescending().toMutableList()
-                    add(workingPlates.toList())
-                    steps.forEach { uiStep ->
-                        uiStep.weights.forEach { weight ->
-                            when (uiStep.action) {
-                                PlateCalculator.Companion.Action.ADD -> workingPlates.add(weight)
-                                PlateCalculator.Companion.Action.REMOVE -> {
-                                    workingPlates.sortDescendingInPlace()
-                                    if (workingPlates.isNotEmpty() && workingPlates.last() == weight) {
-                                        workingPlates.removeAt(workingPlates.lastIndex)
-                                    } else {
-                                        workingPlates.remove(weight)
-                                    }
-                                }
-                            }
-                        }
-                        add(workingPlates.sortedDescending())
-                    }
-                    if (isEmpty() || last() != plateChangeResult.currentPlates.sortedDescending()) {
-                        add(plateChangeResult.currentPlates.sortedDescending())
-                    }
-                }
-            }
-
             val platesBeforeCurrentStep = remember(currentStepIndex, steps, plateChangeResult.previousPlates) {
                 if (currentStepIndex >= 0 && currentStepIndex < steps.size) {
                     applyPlateUiSteps(
@@ -683,7 +653,7 @@ private fun PagePlatesContent(
                 val viewportWidth = maxWidth
                 val density = LocalDensity.current
                 val viewportWidthPx = with(density) { viewportWidth.toPx() }
-                val labelTextSizePx = with(density) { MaterialTheme.typography.bodySmall.fontSize.toPx() }
+                val labelTextSizePx = with(density) { MaterialTheme.typography.labelMedium.fontSize.toPx() }
                 val labelRightPaddingPx = with(density) { 4.dp.toPx() }
                 val barbellStartPx = remember(viewportWidthPx, density) {
                     computeBarbellStartX(
@@ -698,52 +668,40 @@ private fun PagePlatesContent(
                         animatedPlates.sortedDescending()
                     }
                 }
-                val plateDataForWidth = remember(allPlateConfigurations, equipment.availablePlates) {
-                    allPlateConfigurations.map { plateConfiguration ->
-                        plateConfiguration.map { weight ->
-                            val plate = equipment.availablePlates.find { it.weight == weight }
-                            PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
-                        }
+                val plateDataForWidth = remember(platesForDrawing, equipment.availablePlates) {
+                    platesForDrawing.map { weight ->
+                        val plate = equipment.availablePlates.find { it.weight == weight }
+                        PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
                     }
                 }
                 val sleeveLength = equipment.sleeveLength.toFloat()
-                val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
                 val minimumContentWidthPx = viewportWidthPx + barbellStartPx
-                val labelBoundsAcrossConfigurations = remember(
+                val labelBounds = remember(
                     plateDataForWidth,
                     minimumContentWidthPx,
                     viewportWidthPx,
                     sleeveLength,
-                    extraLogicalOffset,
-                    maxLogicalThickness,
                     density,
-                    labelTextSizePx
+                    labelTextSizePx,
+                    labelRightPaddingPx,
                 ) {
-                    plateDataForWidth.map { plateData ->
-                        computeLabelBoundsPx(
-                            plateData = plateData,
-                            canvasWidthPx = minimumContentWidthPx,
-                            viewportWidthPx = viewportWidthPx,
-                            sleeveLength = sleeveLength,
-                            extraLogicalOffset = extraLogicalOffset,
-                            maxLogicalThickness = maxLogicalThickness,
-                            currentTotalThickness = plateData.sumOf { it.thickness }.toFloat(),
-                            density = density,
-                            labelTextSizePx = labelTextSizePx
-                        )
-                    }
-                }
-                val widestLabelBounds = remember(labelBoundsAcrossConfigurations) {
-                    labelBoundsAcrossConfigurations.maxByOrNull { it.width }
-                        ?: LabelBoundsPx(left = 0f, right = viewportWidthPx)
+                    computeLabelBoundsPx(
+                        plateData = plateDataForWidth,
+                        canvasWidthPx = minimumContentWidthPx,
+                        viewportWidthPx = viewportWidthPx,
+                        sleeveLength = sleeveLength,
+                        density = density,
+                        labelTextSizePx = labelTextSizePx,
+                        labelRightPaddingPx = labelRightPaddingPx,
+                    )
                 }
                 val contentWidthPx = maxOf(
                     minimumContentWidthPx,
-                    widestLabelBounds.right + labelRightPaddingPx
+                    labelBounds.right + labelRightPaddingPx
                 )
                 val contentWidth = with(density) { contentWidthPx.toDp() }
                 val maxScrollPx = (contentWidthPx - viewportWidthPx).coerceAtLeast(0f)
-                val labelOverflowPx = (widestLabelBounds.right + labelRightPaddingPx - viewportWidthPx)
+                val labelOverflowPx = (labelBounds.right + labelRightPaddingPx - viewportWidthPx)
                     .coerceAtLeast(0f)
                 val canPanHorizontally = labelOverflowPx > 0f
                 val horizontalPanNestedScrollConnection = remember {
@@ -764,10 +722,14 @@ private fun PagePlatesContent(
                         }
                     }
                 }
-                val initialScrollTargetPx = remember(widestLabelBounds, viewportWidthPx, maxScrollPx) {
-                    (widestLabelBounds.center - (viewportWidthPx / 2f))
-                        .coerceIn(0f, maxScrollPx)
-                        .toInt()
+                val initialScrollTargetPx = remember(labelBounds, viewportWidthPx, maxScrollPx, canPanHorizontally) {
+                    if (canPanHorizontally) {
+                        (labelBounds.center - (viewportWidthPx / 2f))
+                            .coerceIn(0f, maxScrollPx)
+                            .toInt()
+                    } else {
+                        0
+                    }
                 }
                 val scrollState = rememberScrollState()
                 LaunchedEffect(plateChangeResult, contentWidthPx, initialScrollTargetPx) {
