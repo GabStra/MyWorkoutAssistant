@@ -412,6 +412,8 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceInsertedRestSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceRestPauseSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearWorkoutHistorySyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.PhoneToWearMovementVisibilityE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.PhoneToWearZercherMovementVisibilityE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearScheduledAlarmTriggerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearVsLastComparisonE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearAutoRegulationCrossDeviceSyncProducerE2ETest",

@@ -4,10 +4,10 @@ import android.content.Context
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -17,16 +17,16 @@ import java.util.UUID
 
 object SnatchAnimationWorkoutStoreFixture {
     private const val WORKOUT_NAME = "Test Workout"
-    private const val EXERCISE_NAME = "Snatch Arranque"
+    private const val EXERCISE_NAME = "Pull Up"
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
         val movementJson = context.resources
-            .openRawResource(R.raw.youtube_uyumul_g_v0_loop_1_lock_feet)
+            .openRawResource(R.raw.pull_up_preview_skeleton)
             .bufferedReader()
             .use { reader -> reader.readText() }
         val movementRef = ExerciseMovementRef.forWearSkeletonJson(
-            movementId = "snatch-arranque-test",
+            movementId = "pull-up-test",
             json = movementJson,
         )
         ExerciseMovementStorage.writeMovementJson(

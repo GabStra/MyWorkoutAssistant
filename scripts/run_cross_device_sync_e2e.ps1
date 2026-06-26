@@ -1,6 +1,7 @@
 Param(
     [string]$WearTestClass = "WearCrossDeviceSyncProducerE2ETest",
     [string]$WearPhoneToWatchHistoryTestClass = "PhoneToWearWorkoutHistorySyncVerificationE2ETest",
+    [string]$WearPhoneToWatchMovementVisibilityTestClass = "PhoneToWearMovementVisibilityE2ETest",
     [string]$WearVsLastComparisonTestClass = "PhoneToWearVsLastComparisonE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
     [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
@@ -16,6 +17,7 @@ Param(
     [string]$PhoneAvdName,
     [switch]$CleanInstallApps = $false,
     [switch]$SkipWearToPhonePhase = $false,
+    [switch]$MovementVisibilityOnly = $false,
     [switch]$SkipWearRebuildAfterFirstRun = $true,
     [switch]$FastTimeoutProfile = $false,
     [string]$TimingOutputPath
@@ -29,6 +31,16 @@ $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
 $timings["skipWearRebuildAfterFirstRun"] = $SkipWearRebuildAfterFirstRun.IsPresent
 $timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
+$timings["movementVisibilityOnly"] = $MovementVisibilityOnly.IsPresent
+
+if ($MovementVisibilityOnly) {
+    $MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneToWearZercherMovementPreparationTest"
+    $ExpectedWorkoutName = "Zercher Squat Movement Preview"
+    $WearPhoneToWatchHistoryTestClass = ""
+    $WearPhoneToWatchMovementVisibilityTestClass = "PhoneToWearZercherMovementVisibilityE2ETest"
+    $WearVsLastComparisonTestClass = ""
+    $SkipWearToPhonePhase = $true
+}
 
 function Resolve-AdbPath {
     $cmd = Get-Command adb -ErrorAction SilentlyContinue
@@ -614,24 +626,43 @@ try {
     $skipAssemble = $false
     $skipInstall = $false
 
-    Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
-    $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
-    $phase.Stop()
-    $wearClassTimings["phoneToWatchSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    if (-not [string]::IsNullOrWhiteSpace($WearPhoneToWatchHistoryTestClass)) {
+        Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["phoneToWatchSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
 
-    if ($SkipWearRebuildAfterFirstRun) {
-        $skipAssemble = $true
-        $skipInstall = $true
+        if ($SkipWearRebuildAfterFirstRun) {
+            $skipAssemble = $true
+            $skipInstall = $true
+        }
     }
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
-    Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
-    $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-WearRunnerClass -className $WearVsLastComparisonTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_vs_last_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
-    $phase.Stop()
-    $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    if (-not [string]::IsNullOrWhiteSpace($WearPhoneToWatchMovementVisibilityTestClass)) {
+        Write-Host "Running Wear movement visibility verification against phone-loaded movement..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearPhoneToWatchMovementVisibilityTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_movement_visibility_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["phoneToWatchMovementVisibilitySeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+
+        if ($SkipWearRebuildAfterFirstRun) {
+            $skipAssemble = $true
+            $skipInstall = $true
+        }
+    }
+
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    if (-not [string]::IsNullOrWhiteSpace($WearVsLastComparisonTestClass)) {
+        Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearVsLastComparisonTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_vs_last_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    }
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 

@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.e2e.fixtures
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -60,6 +62,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
 
     val WORKOUT_ID: UUID = UUID.fromString("0ed4ca78-a798-4f4a-9ed1-5bd22c2f6f47")
     val WORKOUT_GLOBAL_ID: UUID = UUID.fromString("301e8ea8-b8a8-466b-8f97-9eb54e6b7c8a")
+    val EQUIPMENT_ID: UUID = UUID.fromString("208f3754-d331-4f33-b62a-05620fb3272e")
     val CALIBRATION_WORKOUT_ID: UUID = UUID.fromString("8fd7f6b3-a9f4-4a07-8be8-65b43f3d2de6")
     val CALIBRATION_WORKOUT_GLOBAL_ID: UUID = UUID.fromString("4f1d3f8f-4969-465b-a3c0-eec173919953")
     val EXERCISE_A_ID: UUID = UUID.fromString("5b206aca-7c4f-4cf2-9f8f-3fb0016f8d61")
@@ -112,6 +115,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
         ExerciseMovementRef.forWearSkeletonJson(MOVEMENT_ID, MOVEMENT_JSON.trimIndent())
 
     fun createWorkoutStore(): WorkoutStore {
+        val equipment = createTestBarbell()
         val movementRef = movementRef()
         val exercise = Exercise(
             id = EXERCISE_A_ID,
@@ -127,7 +131,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -151,7 +155,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -174,7 +178,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -200,7 +204,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -241,7 +245,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -272,10 +276,32 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
 
         return WorkoutStore(
             workouts = listOf(workout, calibrationWorkout),
-            equipments = emptyList(),
+            equipments = listOf(equipment),
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0
+        )
+    }
+
+    private fun createTestBarbell(): Barbell {
+        val plates = listOf(
+            Plate(20.0, 20.0),
+            Plate(20.0, 20.0),
+            Plate(10.0, 15.0),
+            Plate(10.0, 15.0),
+            Plate(5.0, 10.0),
+            Plate(5.0, 10.0),
+            Plate(2.5, 5.0),
+            Plate(2.5, 5.0),
+            Plate(1.25, 3.0),
+            Plate(1.25, 3.0)
+        )
+        return Barbell(
+            id = EQUIPMENT_ID,
+            name = "Cross Device Test Barbell",
+            availablePlates = plates,
+            sleeveLength = 200,
+            barWeight = 20.0
         )
     }
 }
