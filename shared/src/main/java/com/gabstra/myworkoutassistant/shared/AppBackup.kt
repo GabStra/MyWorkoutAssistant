@@ -21,5 +21,11 @@ data class AppBackup(
 
 data class ExerciseMovementBackup(
     val movementRef: ExerciseMovementRef,
-    val json: String,
-)
+    val json: String? = null,
+    val compressedJsonBase64: String? = null,
+    val compression: String? = null,
+) {
+    companion object {
+        const val COMPRESSION_GZIP_BASE64 = "gzip+base64"
+    }
+}

@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.motion.resolveMovementJson
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -15,6 +17,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Base64
 import java.util.UUID
 
 class BackupCompatibilityTest {
@@ -156,6 +159,75 @@ class BackupCompatibilityTest {
         val reparsed = fromJSONtoAppBackup(fromAppBackupToJSON(backup))
 
         assertEquals(listOf(108, 112, 115), reparsed.WorkoutHistories.single().heartBeatRecords)
+    }
+
+    @Test
+    fun `app backup json round trip preserves exercise movement backups`() {
+        val movementJson = """{"fps":30,"frames":[]}"""
+        val movementRef = ExerciseMovementRef.forWearSkeletonJson(
+            movementId = "test-movement",
+            json = movementJson
+        )
+        val backup = AppBackup(
+            WorkoutStore = WorkoutStore(
+                workouts = emptyList(),
+                birthDateYear = 1990,
+                weightKg = 80.0,
+                progressionPercentageAmount = 0.0
+            ),
+            WorkoutHistories = emptyList(),
+            SetHistories = emptyList(),
+            ExerciseInfos = emptyList(),
+            WorkoutSchedules = emptyList(),
+            WorkoutRecords = emptyList(),
+            ExerciseSessionProgressions = emptyList(),
+            ExerciseMovements = listOf(
+                ExerciseMovementBackup(
+                    movementRef = movementRef,
+                    json = movementJson
+                )
+            )
+        )
+
+        val reparsed = fromJSONtoAppBackup(fromAppBackupToJSON(backup))
+
+        assertEquals(backup.ExerciseMovements, reparsed.ExerciseMovements)
+    }
+
+    @Test
+    fun `app backup json round trip preserves compressed exercise movement backups`() {
+        val movementJson = """{"fps":30,"frames":[{"joints":{"pelvis":[0,1,0]}}]}"""
+        val movementRef = ExerciseMovementRef.forWearSkeletonJson(
+            movementId = "compressed-test-movement",
+            json = movementJson
+        )
+        val backup = AppBackup(
+            WorkoutStore = WorkoutStore(
+                workouts = emptyList(),
+                birthDateYear = 1990,
+                weightKg = 80.0,
+                progressionPercentageAmount = 0.0
+            ),
+            WorkoutHistories = emptyList(),
+            SetHistories = emptyList(),
+            ExerciseInfos = emptyList(),
+            WorkoutSchedules = emptyList(),
+            WorkoutRecords = emptyList(),
+            ExerciseSessionProgressions = emptyList(),
+            ExerciseMovements = listOf(
+                ExerciseMovementBackup(
+                    movementRef = movementRef,
+                    compressedJsonBase64 = Base64.getEncoder().encodeToString(compressString(movementJson)),
+                    compression = ExerciseMovementBackup.COMPRESSION_GZIP_BASE64
+                )
+            )
+        )
+
+        val reparsedMovement = fromJSONtoAppBackup(fromAppBackupToJSON(backup)).ExerciseMovements!!.single()
+
+        assertNull(reparsedMovement.json)
+        assertEquals(ExerciseMovementBackup.COMPRESSION_GZIP_BASE64, reparsedMovement.compression)
+        assertEquals(movementJson, reparsedMovement.resolveMovementJson())
     }
 
     @Suppress("UNCHECKED_CAST")

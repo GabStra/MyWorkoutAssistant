@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.ErrorLog
+import com.gabstra.myworkoutassistant.shared.ExerciseMovementBackup
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.RestHistory
@@ -38,7 +39,12 @@ class AppBackupAdapter : JsonDeserializer<AppBackup> {
             RestHistories = deserializeNullableList(jsonObject.get("RestHistories"), context, RestHistory::class.java),
             LiteRtLmModelSourceUri = jsonObject.get("LiteRtLmModelSourceUri")
                 ?.takeUnless { it.isJsonNull }
-                ?.asString
+                ?.asString,
+            ExerciseMovements = deserializeNullableList(
+                jsonObject.get("ExerciseMovements"),
+                context,
+                ExerciseMovementBackup::class.java
+            )
         )
     }
 
