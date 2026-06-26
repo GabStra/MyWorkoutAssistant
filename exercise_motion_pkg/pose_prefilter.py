@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from typing import Any
+from typing import Any, Iterable
 from urllib.request import urlretrieve
 
 from exercise_motion_pkg.video_utils import BasicVideoMetadata, read_basic_video_metadata
@@ -62,20 +62,33 @@ JOINT_CHAIN_BY_NAME = {
     for chain_name, chain_joints in SIDE_CHAINS.items()
     for joint in chain_joints
 }
+FRONTAL_VIEW_SHOULDER_WIDTH_LOW = 0.14
+FRONTAL_VIEW_SHOULDER_WIDTH_HIGH = 0.22
+FRONTAL_VIEW_HIP_WIDTH_LOW = 0.08
+FRONTAL_VIEW_HIP_WIDTH_HIGH = 0.15
+FRONTAL_VIEW_QUALITY_ISSUE_THRESHOLD = 0.55
+CLEAR_VALID_CHUNK_MIN_SCORE = 0.68
+DEFAULT_YOLO_BATCH_SIZE = 16
+
+
+class YoloDeviceUnavailableError(RuntimeError):
+    """Raised when YOLO is configured for GPU execution but CUDA is unavailable."""
 
 
 @dataclass(frozen=True)
 class PosePrefilterSettings:
     model: str = "yolo26x-pose.pt"
-    sample_fps: float = 2.0
-    max_seconds: float = 90.0
-    scan_strategy: str = "prefix"
+    sample_fps: float = 0.0
+    max_seconds: float = 0.0
+    scan_strategy: str = "full"
     window_seconds: float = 8.0
     overlap_seconds: float = 4.0
     min_score: float = 0.45
     min_keypoint_confidence: float = 0.35
     min_body_scale: float = 0.18
     max_candidates: int = 8
+    batch_size: int = DEFAULT_YOLO_BATCH_SIZE
+    device: str | None = "cuda"
 
 
 @dataclass(frozen=True)
@@ -123,27 +136,40 @@ def run_yolo_pose_prefilter(
         return empty_pose_prefilter_result("pose_prefilter_no_video_metadata")
     model_path = resolve_pose_model_path(settings.model)
     model = YOLO(model_path)
+    device = resolve_yolo_device(settings.device)
     samples: list[PoseSample] = []
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video for YOLO pose prefiltering: {video_path}")
     try:
         sample_frames, sampled_windows = build_pose_sample_plan(metadata, settings=settings)
-        for frame_index in sample_frames:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-            ok, frame = capture.read()
-            if not ok:
-                break
-            detections = detections_from_yolo_result(
-                model(frame, verbose=False),
-                metadata=metadata,
-                min_keypoint_confidence=settings.min_keypoint_confidence,
-            )
-            samples.append(
-                PoseSample(
-                    time_seconds=frame_index / metadata.fps,
-                    detections=detections,
-                    frame_signature=compute_frame_signature(frame),
+        batch_indices: list[int] = []
+        batch_frames: list[Any] = []
+        for frame_index, frame in iter_sampled_video_frames(capture, sample_frames):
+            batch_indices.append(frame_index)
+            batch_frames.append(frame)
+            if len(batch_frames) >= max(1, settings.batch_size):
+                samples.extend(
+                    pose_samples_from_yolo_batch(
+                        model,
+                        frame_indices=batch_indices,
+                        frames=batch_frames,
+                        metadata=metadata,
+                        min_keypoint_confidence=settings.min_keypoint_confidence,
+                        device=device,
+                    )
+                )
+                batch_indices = []
+                batch_frames = []
+        if batch_frames:
+            samples.extend(
+                pose_samples_from_yolo_batch(
+                    model,
+                    frame_indices=batch_indices,
+                    frames=batch_frames,
+                    metadata=metadata,
+                    min_keypoint_confidence=settings.min_keypoint_confidence,
+                    device=device,
                 )
             )
     finally:
@@ -155,12 +181,100 @@ def run_yolo_pose_prefilter(
     payload["sampledFrameCount"] = len(samples)
     payload["sampledWindows"] = sampled_windows
     payload["sampledWindowCount"] = len(sampled_windows)
+    payload["device"] = device or "auto"
+    payload["batchSize"] = settings.batch_size
     return PosePrefilterResult(
         passed=result.passed,
         score=result.score,
         reasons=result.reasons,
         payload=payload,
     )
+
+
+def resolve_yolo_device(configured_device: str | None) -> str | None:
+    if configured_device is not None and str(configured_device).strip():
+        device = str(configured_device).strip()
+        if device.lower() in {"cuda", "gpu", "0"} and not torch_cuda_available():
+            raise YoloDeviceUnavailableError(
+                "YOLO pose prefilter is configured for CUDA, but the selected Python environment "
+                "has CPU-only Torch or cannot see the NVIDIA GPU. Use a CUDA Torch Python, or pass "
+                "--pose-prefilter-device cpu only for an explicit slow debug run."
+            )
+        return "0" if device.lower() in {"cuda", "gpu"} else device
+    if torch_cuda_available():
+        return "0"
+    raise YoloDeviceUnavailableError(
+        "YOLO pose prefilter requires a CUDA-capable Torch environment by default. "
+        "The selected Python environment cannot see CUDA. Use a CUDA Torch Python, or pass "
+        "--pose-prefilter-device cpu only for an explicit slow debug run."
+    )
+
+
+def torch_cuda_available() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def iter_sampled_video_frames(
+    capture: Any,
+    sample_frames: list[int],
+) -> Iterable[tuple[int, Any]]:
+    sorted_frames = sorted({int(frame) for frame in sample_frames if int(frame) >= 0})
+    if not sorted_frames:
+        return
+    current_frame = sorted_frames[0]
+    capture.set(1, current_frame)
+    for target_frame in sorted_frames:
+        if target_frame < current_frame:
+            capture.set(1, target_frame)
+            current_frame = target_frame
+        while current_frame < target_frame:
+            ok, _ = capture.read()
+            if not ok:
+                return
+            current_frame += 1
+        ok, frame = capture.read()
+        if not ok:
+            return
+        yield target_frame, frame
+        current_frame = target_frame + 1
+
+
+def pose_samples_from_yolo_batch(
+    model: Any,
+    *,
+    frame_indices: list[int],
+    frames: list[Any],
+    metadata: BasicVideoMetadata,
+    min_keypoint_confidence: float,
+    device: str | None,
+) -> list[PoseSample]:
+    predict_kwargs: dict[str, Any] = {"verbose": False}
+    if device:
+        predict_kwargs["device"] = device
+    results = model(frames, **predict_kwargs)
+    result_list = results if isinstance(results, list) else [results]
+    samples: list[PoseSample] = []
+    for frame_index, frame, result in zip(frame_indices, frames, result_list):
+        detections = detections_from_yolo_result(
+            result,
+            metadata=metadata,
+            min_keypoint_confidence=min_keypoint_confidence,
+        )
+        samples.append(
+            PoseSample(
+                time_seconds=frame_index / metadata.fps,
+                detections=detections,
+                frame_signature=compute_frame_signature(frame),
+            )
+        )
+    return samples
 
 
 def detections_from_yolo_result(
@@ -241,15 +355,39 @@ def score_pose_samples(
     if not samples:
         return empty_pose_prefilter_result("pose_prefilter_no_samples")
     windows = build_pose_windows(samples, settings=settings)
-    scored = [score_pose_window(window, metadata=metadata, settings=settings) for window in windows]
+    scored = []
+    for window_index, window in enumerate(windows):
+        item = score_pose_window(window, metadata=metadata, settings=settings)
+        item["windowIndex"] = window_index
+        scored.append(item)
     scored = [item for item in scored if item["sampleCount"] > 0]
     if not scored:
         return empty_pose_prefilter_result("pose_prefilter_no_windows")
-    best = max(scored, key=lambda item: float(item["score"]))
+    eligible = [
+        item
+        for item in scored
+        if float(item["score"]) >= settings.min_score and not item.get("blockingIssues")
+    ]
+    best = max(eligible or scored, key=lambda item: float(item["score"]))
+    valid_chunk_score_threshold = max(settings.min_score, CLEAR_VALID_CHUNK_MIN_SCORE)
+    valid_chunks = pose_valid_chunks_from_scored_windows(
+        scored,
+        min_score=valid_chunk_score_threshold,
+        max_chunks=settings.max_candidates,
+    )
     score = float(best["score"])
-    blocking_issues = best.get("blockingIssues", [])
+    blocking_issues = list(best.get("blockingIssues", []))
+    quality_issues = list(best.get("qualityIssues", []))
+    scan_strategy = normalize_pose_scan_strategy(settings.scan_strategy)
+    timeline_integrity = source_window_integrity_metrics(
+        [select_dominant_detection(sample, metadata=metadata) for sample in samples],
+        samples=samples,
+        metadata=metadata,
+    )
+    blocking_issues = dedupe_text(blocking_issues)
+    quality_issues = dedupe_text(quality_issues)
     passed = score >= settings.min_score and not blocking_issues
-    reasons = list(best.get("reasons", []))
+    reasons = [f"pose_{issue}" for issue in [*blocking_issues, *quality_issues]] or list(best.get("reasons", []))
     reasons.append("pose_prefilter_passed" if passed else "pose_prefilter_below_threshold")
     payload = {
         "enabled": True,
@@ -257,13 +395,23 @@ def score_pose_samples(
         "score": score,
         "bestChunkStartSeconds": best["startSeconds"],
         "bestChunkEndSeconds": best["endSeconds"],
+        "validChunks": valid_chunks,
+        "validChunkCount": len(valid_chunks),
+        "validChunkScoreThreshold": valid_chunk_score_threshold,
         "blockingIssues": blocking_issues,
-        "qualityIssues": best.get("qualityIssues", []),
+        "qualityIssues": quality_issues,
         "singlePersonRatio": best["singlePersonRatio"],
         "multiPersonRatio": best["multiPersonRatio"],
         "noPersonRatio": best["noPersonRatio"],
         "maxSignificantPersonCount": best["maxSignificantPersonCount"],
         "keypointCoverage": best["keypointCoverage"],
+        "wholeMovementJointVisibility": best["wholeMovementJointVisibility"],
+        "requiredJointAverageCoverage": best["requiredJointAverageCoverage"],
+        "requiredJointMinCoverage": best["requiredJointMinCoverage"],
+        "requiredJointP10Coverage": best["requiredJointP10Coverage"],
+        "allRequiredJointsVisibleRatio": best["allRequiredJointsVisibleRatio"],
+        "minRequiredJointsVisible": best["minRequiredJointsVisible"],
+        "p10RequiredJointsVisible": best["p10RequiredJointsVisible"],
         "bodyScaleRatio": best["bodyScaleRatio"],
         "cropSafety": best["cropSafety"],
         "cameraStability": best["cameraStability"],
@@ -271,22 +419,75 @@ def score_pose_samples(
         "activeJointVisibility": best["activeJointVisibility"],
         "activeChainVisibility": best["activeChainVisibility"],
         "bilateralActiveChainBalance": best["bilateralActiveChainBalance"],
+        "reconstructionViewQuality": best["reconstructionViewQuality"],
+        "frontalOrBackViewEvidence": best["frontalOrBackViewEvidence"],
+        "shoulderWidthBodyRatio": best["shoulderWidthBodyRatio"],
+        "hipWidthBodyRatio": best["hipWidthBodyRatio"],
+        "viewQualitySampleCount": best["viewQualitySampleCount"],
         "activeJoints": best["activeJoints"],
         "activeChains": best["activeChains"],
         "sourceWindowIntegrity": best["sourceWindowIntegrity"],
+        "timelineSourceIntegrity": timeline_integrity,
+        "timelineIntegrityRequired": False,
+        "sourceWindowIntegrityRequired": True,
         "sampleCount": best["sampleCount"],
+        "timelineSampleCount": len(samples),
         "windowCount": len(scored),
         "model": settings.model,
         "sampleFps": settings.sample_fps,
         "maxSeconds": settings.max_seconds,
         "minScore": settings.min_score,
-        "scanStrategy": normalize_pose_scan_strategy(settings.scan_strategy),
+        "scanStrategy": scan_strategy,
     }
     return PosePrefilterResult(passed=passed, score=score, reasons=dedupe_text(reasons), payload=payload)
 
 
+def pose_valid_chunks_from_scored_windows(
+    scored_windows: list[dict[str, Any]],
+    *,
+    min_score: float,
+    max_chunks: int,
+) -> list[dict[str, Any]]:
+    valid = [
+        window
+        for window in scored_windows
+        if float(window.get("score", 0.0)) >= min_score and not window.get("blockingIssues")
+    ]
+    valid.sort(
+        key=lambda item: (
+            float(item.get("score", 0.0)),
+            float(item.get("wholeMovementJointVisibility", 0.0)),
+            float(item.get("allRequiredJointsVisibleRatio", 0.0)),
+        ),
+        reverse=True,
+    )
+    chunks: list[dict[str, Any]] = []
+    for window in valid[: max(0, max_chunks)]:
+        chunks.append(
+            {
+                "index": int(window.get("windowIndex", len(chunks))),
+                "startSeconds": float(window["startSeconds"]),
+                "endSeconds": float(window["endSeconds"]),
+                "score": float(window["score"]),
+                "sampleCount": int(window.get("sampleCount", 0)),
+                "wholeMovementJointVisibility": float(window.get("wholeMovementJointVisibility", 0.0)),
+                "requiredJointAverageCoverage": float(window.get("requiredJointAverageCoverage", 0.0)),
+                "requiredJointMinCoverage": float(window.get("requiredJointMinCoverage", 0.0)),
+                "requiredJointP10Coverage": float(window.get("requiredJointP10Coverage", 0.0)),
+                "allRequiredJointsVisibleRatio": float(window.get("allRequiredJointsVisibleRatio", 0.0)),
+                "minRequiredJointsVisible": int(window.get("minRequiredJointsVisible", 0)),
+                "p10RequiredJointsVisible": float(window.get("p10RequiredJointsVisible", 0.0)),
+                "sourceWindowIntegrity": window.get("sourceWindowIntegrity"),
+                "qualityIssues": list(window.get("qualityIssues", [])),
+            }
+        )
+    return chunks
+
+
 def normalize_pose_scan_strategy(value: str | None) -> str:
     strategy = str(value or "").strip().lower()
+    if strategy in {"full", "all", "whole", "entire"}:
+        return "full"
     if strategy in {"spread", "distributed", "coverage"}:
         return "spread"
     return "prefix"
@@ -297,11 +498,20 @@ def build_pose_sample_plan(
     *,
     settings: PosePrefilterSettings,
 ) -> tuple[list[int], list[dict[str, float]]]:
-    sample_step = max(1, int(round(metadata.fps / max(settings.sample_fps, 0.1))))
-    budget_seconds = max(0.1, float(settings.max_seconds))
+    sample_step = pose_sample_frame_step(metadata, settings=settings)
     duration_seconds = max(0.0, metadata.duration_seconds)
+    strategy = normalize_pose_scan_strategy(settings.scan_strategy)
+    if strategy == "full":
+        frames = list(range(0, max(0, metadata.frame_count), sample_step))
+        return frames, [{"startSeconds": 0.0, "endSeconds": duration_seconds}]
+
+    budget_seconds = (
+        duration_seconds
+        if float(settings.max_seconds) <= 0.0
+        else max(0.1, min(duration_seconds, float(settings.max_seconds)))
+    )
     if (
-        normalize_pose_scan_strategy(settings.scan_strategy) != "spread"
+        strategy != "spread"
         or duration_seconds <= budget_seconds + 1e-6
     ):
         end_frame = min(metadata.frame_count, int(round(budget_seconds * metadata.fps)))
@@ -334,6 +544,16 @@ def build_pose_sample_plan(
             }
         )
     return sorted(frames_by_index), sampled_windows
+
+
+def pose_sample_frame_step(
+    metadata: BasicVideoMetadata,
+    *,
+    settings: PosePrefilterSettings,
+) -> int:
+    if settings.sample_fps <= 0.0:
+        return 1
+    return max(1, int(round(metadata.fps / max(settings.sample_fps, 0.1))))
 
 
 def resolve_pose_model_path(model: str) -> str:
@@ -443,6 +663,13 @@ def score_pose_window(
             "reasons": ["pose_no_person_detected"],
             "singlePersonRatio": 0.0,
             "keypointCoverage": 0.0,
+            "wholeMovementJointVisibility": 0.0,
+            "requiredJointAverageCoverage": 0.0,
+            "requiredJointMinCoverage": 0.0,
+            "requiredJointP10Coverage": 0.0,
+            "allRequiredJointsVisibleRatio": 0.0,
+            "minRequiredJointsVisible": 0,
+            "p10RequiredJointsVisible": 0.0,
             "bodyScaleRatio": 0.0,
             "cropSafety": 0.0,
             "cameraStability": 0.0,
@@ -450,6 +677,8 @@ def score_pose_window(
             "activeJointVisibility": 0.0,
             "activeChainVisibility": 0.0,
             "bilateralActiveChainBalance": 1.0,
+            "reconstructionViewQuality": 0.0,
+            "frontalOrBackViewEvidence": 0.0,
             "activeJoints": [],
             "activeChains": [],
         }
@@ -459,6 +688,7 @@ def score_pose_window(
     no_person_ratio = sum(1 for count in significant_person_counts if count == 0) / len(samples)
     max_significant_person_count = max(significant_person_counts) if significant_person_counts else 0
     keypoint_coverage = sum(required_keypoint_coverage(detection) for detection in present) / len(present)
+    joint_visibility = required_joint_visibility_metrics(dominant)
     body_scale = median([body_scale_ratio(detection, metadata=metadata) for detection in present])
     crop_safety_scores = [crop_safety_score(detection, metadata=metadata) for detection in present]
     crop_safety = sum(crop_safety_scores) / len(crop_safety_scores)
@@ -470,15 +700,17 @@ def score_pose_window(
     )
     motion_strength = pose_motion_strength(present, metadata=metadata)
     active_quality = active_motion_reconstruction_quality(present, metadata=metadata)
+    view_quality = pose_reconstruction_view_quality(present, metadata=metadata)
     score = clamp_unit(
-        single_person_ratio * 0.16
-        + keypoint_coverage * 0.17
-        + clamp_unit(body_scale / max(settings.min_body_scale, 1e-6)) * 0.12
-        + crop_safety * 0.12
+        single_person_ratio * 0.15
+        + keypoint_coverage * 0.08
+        + joint_visibility["wholeMovementJointVisibility"] * 0.14
+        + clamp_unit(body_scale / max(settings.min_body_scale, 1e-6)) * 0.11
+        + crop_safety * 0.11
         + camera_stability * 0.08
         + motion_strength * 0.12
-        + active_quality["activeJointVisibility"] * 0.11
-        + active_quality["activeChainVisibility"] * 0.08
+        + active_quality["activeJointVisibility"] * 0.10
+        + active_quality["activeChainVisibility"] * 0.07
         + active_quality["bilateralActiveChainBalance"] * 0.04
     )
     blocking_issues: list[str] = []
@@ -488,13 +720,20 @@ def score_pose_window(
         blocking_issues.append("no_person_detected")
     if keypoint_coverage < 0.65:
         blocking_issues.append("low_keypoint_coverage")
+    if joint_visibility["wholeMovementJointVisibility"] < 0.60 or joint_visibility["requiredJointP10Coverage"] < 0.58:
+        blocking_issues.append("low_required_joint_visibility")
     if body_scale < settings.min_body_scale:
         blocking_issues.append("small_body")
     if crop_safety < 0.65:
         blocking_issues.append("cropped_body")
     quality_issues: list[str] = []
+    if not source_window_integrity["singlePersonContinuityPassed"]:
+        if source_window_integrity.get("maxSignificantPersonCount", 0) > 1:
+            blocking_issues.append("multiple_people")
+        else:
+            blocking_issues.append("no_person_detected")
     if not source_window_integrity["fullBodyContinuityPassed"]:
-        quality_issues.append("cropped_body")
+        blocking_issues.append("cropped_body")
     if camera_stability < 0.35 or not source_window_integrity["cameraContinuityPassed"]:
         blocking_issues.append("camera_or_track_instability")
     if motion_strength < 0.20:
@@ -505,6 +744,10 @@ def score_pose_window(
         blocking_issues.append("low_active_chain_visibility")
     if active_quality["bilateralActiveChainBalance"] < 0.55:
         blocking_issues.append("asymmetric_bilateral_active_chain_visibility")
+    if view_quality["frontalOrBackViewEvidence"] >= FRONTAL_VIEW_QUALITY_ISSUE_THRESHOLD:
+        quality_issues.append("frontal_or_back_view")
+    blocking_issues = dedupe_text(blocking_issues)
+    quality_issues = dedupe_text(quality_issues)
     reasons = [f"pose_{issue}" for issue in [*blocking_issues, *quality_issues]] or ["pose_good_motion_source"]
     return {
         "score": score,
@@ -519,6 +762,7 @@ def score_pose_window(
         "noPersonRatio": no_person_ratio,
         "maxSignificantPersonCount": max_significant_person_count,
         "keypointCoverage": keypoint_coverage,
+        **joint_visibility,
         "bodyScaleRatio": body_scale,
         "cropSafety": crop_safety,
         "cameraStability": camera_stability,
@@ -526,6 +770,11 @@ def score_pose_window(
         "activeJointVisibility": active_quality["activeJointVisibility"],
         "activeChainVisibility": active_quality["activeChainVisibility"],
         "bilateralActiveChainBalance": active_quality["bilateralActiveChainBalance"],
+        "reconstructionViewQuality": view_quality["reconstructionViewQuality"],
+        "frontalOrBackViewEvidence": view_quality["frontalOrBackViewEvidence"],
+        "shoulderWidthBodyRatio": view_quality["shoulderWidthBodyRatio"],
+        "hipWidthBodyRatio": view_quality["hipWidthBodyRatio"],
+        "viewQualitySampleCount": view_quality["viewQualitySampleCount"],
         "activeJoints": active_quality["activeJoints"],
         "activeChains": active_quality["activeChains"],
         "sourceWindowIntegrity": source_window_integrity,
@@ -558,6 +807,45 @@ def significant_person_count(sample: PoseSample, *, metadata: BasicVideoMetadata
 
 def required_keypoint_coverage(detection: PoseDetection) -> float:
     return sum(1 for joint in REQUIRED_JOINTS if joint in detection.keypoints) / len(REQUIRED_JOINTS)
+
+
+def required_joint_visibility_metrics(dominant: list[PoseDetection | None]) -> dict[str, float]:
+    if not dominant:
+        return {
+            "wholeMovementJointVisibility": 0.0,
+            "requiredJointAverageCoverage": 0.0,
+            "requiredJointMinCoverage": 0.0,
+            "requiredJointP10Coverage": 0.0,
+            "allRequiredJointsVisibleRatio": 0.0,
+            "minRequiredJointsVisible": 0.0,
+            "p10RequiredJointsVisible": 0.0,
+        }
+    required_count = len(REQUIRED_JOINTS)
+    visible_counts = [
+        sum(1 for joint in REQUIRED_JOINTS if detection is not None and joint in detection.keypoints)
+        for detection in dominant
+    ]
+    coverages = [count / required_count for count in visible_counts]
+    average_coverage = sum(coverages) / len(coverages)
+    min_coverage = min(coverages)
+    p10_coverage = percentile(coverages, 0.10)
+    all_visible_ratio = sum(1 for coverage in coverages if coverage >= 0.999) / len(coverages)
+    p10_visible_count = percentile([float(count) for count in visible_counts], 0.10)
+    whole_movement_score = clamp_unit(
+        average_coverage * 0.35
+        + p10_coverage * 0.35
+        + min_coverage * 0.15
+        + all_visible_ratio * 0.15
+    )
+    return {
+        "wholeMovementJointVisibility": whole_movement_score,
+        "requiredJointAverageCoverage": average_coverage,
+        "requiredJointMinCoverage": min_coverage,
+        "requiredJointP10Coverage": p10_coverage,
+        "allRequiredJointsVisibleRatio": all_visible_ratio,
+        "minRequiredJointsVisible": float(min(visible_counts)),
+        "p10RequiredJointsVisible": p10_visible_count,
+    }
 
 
 def body_scale_ratio(detection: PoseDetection, *, metadata: BasicVideoMetadata) -> float:
@@ -608,17 +896,36 @@ def source_window_integrity_metrics(
             "passed": False,
             "singlePersonContinuityPassed": False,
             "fullBodyContinuityPassed": False,
+            "jointVisibilityContinuityPassed": False,
             "cameraContinuityPassed": False,
             "singlePersonRatio": 0.0,
             "fullBodyVisibleRatio": 0.0,
+            "wholeMovementJointVisibility": 0.0,
+            "requiredJointAverageCoverage": 0.0,
+            "requiredJointMinCoverage": 0.0,
+            "requiredJointP10Coverage": 0.0,
+            "allRequiredJointsVisibleRatio": 0.0,
+            "minRequiredJointsVisible": 0,
+            "p10RequiredJointsVisible": 0.0,
             "minCropSafety": 0.0,
             "p10CropSafety": 0.0,
             "maxCenterJumpRatio": 1.0,
             "maxScaleJumpRatio": 1.0,
+            "sceneCutCount": 0,
+            "maxFrameSignatureJump": 0.0,
+            "sampleCount": len(samples),
+            "presentSampleRatio": 0.0,
+            "multiPersonRatio": 0.0,
+            "noPersonRatio": 1.0 if samples else 0.0,
+            "maxSignificantPersonCount": 0,
         }
     significant_counts = [significant_person_count(sample, metadata=metadata) for sample in samples]
     single_person_ratio = sum(1 for count in significant_counts if count == 1) / len(significant_counts)
+    multi_person_ratio = sum(1 for count in significant_counts if count > 1) / len(significant_counts)
+    no_person_ratio = sum(1 for count in significant_counts if count == 0) / len(significant_counts)
+    max_significant_person_count = max(significant_counts) if significant_counts else 0
     crop_scores = [crop_safety_score(detection, metadata=metadata) for detection in present]
+    joint_visibility = required_joint_visibility_metrics(dominant)
     full_body_visible_ratio = sum(1 for score in crop_scores if score >= 0.90) / len(crop_scores)
     min_crop_safety = min(crop_scores) if crop_scores else 0.0
     p10_crop_safety = percentile(crop_scores, 0.10)
@@ -641,20 +948,31 @@ def source_window_integrity_metrics(
     max_frame_signature_jump = max(frame_signature_jumps) if frame_signature_jumps else 0.0
     single_person_passed = single_person_ratio >= 0.95
     full_body_passed = full_body_visible_ratio >= 0.85 and p10_crop_safety >= 0.85 and min_crop_safety >= 0.75
+    joint_visibility_passed = (
+        joint_visibility["wholeMovementJointVisibility"] >= 0.60
+        and joint_visibility["requiredJointP10Coverage"] >= 0.58
+    )
     camera_passed = max_center_jump <= 0.18 and max_scale_jump <= 0.45 and scene_cut_count == 0
     return {
-        "passed": single_person_passed and full_body_passed and camera_passed,
+        "passed": single_person_passed and full_body_passed and joint_visibility_passed and camera_passed,
         "singlePersonContinuityPassed": single_person_passed,
         "fullBodyContinuityPassed": full_body_passed,
+        "jointVisibilityContinuityPassed": joint_visibility_passed,
         "cameraContinuityPassed": camera_passed,
         "singlePersonRatio": single_person_ratio,
         "fullBodyVisibleRatio": full_body_visible_ratio,
+        **joint_visibility,
         "minCropSafety": min_crop_safety,
         "p10CropSafety": p10_crop_safety,
         "maxCenterJumpRatio": max_center_jump,
         "maxScaleJumpRatio": max_scale_jump,
         "sceneCutCount": scene_cut_count,
         "maxFrameSignatureJump": max_frame_signature_jump,
+        "sampleCount": len(samples),
+        "presentSampleRatio": len(present) / len(samples),
+        "multiPersonRatio": multi_person_ratio,
+        "noPersonRatio": no_person_ratio,
+        "maxSignificantPersonCount": max_significant_person_count,
     }
 
 
@@ -777,6 +1095,74 @@ def active_motion_reconstruction_quality(
         "activeJoints": active_joints,
         "activeChains": active_chain_names,
     }
+
+
+def pose_reconstruction_view_quality(
+    detections: list[PoseDetection],
+    *,
+    metadata: BasicVideoMetadata,
+) -> dict[str, Any]:
+    shoulder_widths: list[float] = []
+    hip_widths: list[float] = []
+    for detection in detections:
+        body_height = max(1.0, detection.bbox[3] - detection.bbox[1])
+        shoulder_width = normalized_joint_pair_distance(
+            detection,
+            "left_shoulder",
+            "right_shoulder",
+            body_height=body_height,
+        )
+        hip_width = normalized_joint_pair_distance(
+            detection,
+            "left_hip",
+            "right_hip",
+            body_height=body_height,
+        )
+        if shoulder_width is not None:
+            shoulder_widths.append(shoulder_width)
+        if hip_width is not None:
+            hip_widths.append(hip_width)
+
+    shoulder_width_body_ratio = median(shoulder_widths) if shoulder_widths else None
+    hip_width_body_ratio = median(hip_widths) if hip_widths else None
+    shoulder_evidence = ramp_unit(
+        shoulder_width_body_ratio or 0.0,
+        low=FRONTAL_VIEW_SHOULDER_WIDTH_LOW,
+        high=FRONTAL_VIEW_SHOULDER_WIDTH_HIGH,
+    )
+    hip_evidence = ramp_unit(
+        hip_width_body_ratio or 0.0,
+        low=FRONTAL_VIEW_HIP_WIDTH_LOW,
+        high=FRONTAL_VIEW_HIP_WIDTH_HIGH,
+    )
+    frontal_or_back_view_evidence = clamp_unit(shoulder_evidence * 0.55 + hip_evidence * 0.45)
+    return {
+        "reconstructionViewQuality": clamp_unit(1.0 - frontal_or_back_view_evidence),
+        "frontalOrBackViewEvidence": frontal_or_back_view_evidence,
+        "shoulderWidthBodyRatio": shoulder_width_body_ratio,
+        "hipWidthBodyRatio": hip_width_body_ratio,
+        "viewQualitySampleCount": max(len(shoulder_widths), len(hip_widths)),
+    }
+
+
+def normalized_joint_pair_distance(
+    detection: PoseDetection,
+    first_joint: str,
+    second_joint: str,
+    *,
+    body_height: float,
+) -> float | None:
+    first = detection.keypoints.get(first_joint)
+    second = detection.keypoints.get(second_joint)
+    if first is None or second is None:
+        return None
+    return math.hypot(first[0] - second[0], first[1] - second[1]) / max(body_height, 1.0)
+
+
+def ramp_unit(value: float, *, low: float, high: float) -> float:
+    if high <= low:
+        return 0.0
+    return clamp_unit((value - low) / (high - low))
 
 
 def normalized_joint_tracks(detections: list[PoseDetection]) -> dict[str, list[tuple[float, float]]]:
