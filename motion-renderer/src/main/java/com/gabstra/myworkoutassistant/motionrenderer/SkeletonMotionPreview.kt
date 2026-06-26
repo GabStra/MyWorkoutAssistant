@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.Choreographer
 import android.view.Surface
 import android.view.SurfaceView
+import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -58,6 +59,9 @@ private const val FilamentVertexStrideBytes = FilamentVertexFloatCount * 4
 private const val FilamentPositionOffsetBytes = 0
 private const val FilamentColorOffsetBytes = 3 * 4
 private const val KneeAndHipJointCapRadius = 0.060f
+private const val AnkleJointCapRadius = 0.042f
+private const val VisibleShoeAnkleJointCapRadius = 0.026f
+private const val SkeletonPreviewContentDescription = "Exercise movement preview"
 private val SkeletonTintLightDirection = WearSkeletonVec3(-0.42f, 0.72f, 0.55f).normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
 
 private val SkeletonFallbackBackground = Color.Black
@@ -77,6 +81,30 @@ private fun createSkeletonPalette(primaryFill: Color): SkeletonPalette {
         headFill = primaryFill,
         jointFill = MediumGray,
         grid = primaryFill,
+    )
+}
+
+private fun SkeletonPalette.withVisibility(
+    visibility: Float,
+    backgroundColor: Color,
+): SkeletonPalette {
+    val amount = visibility.coerceIn(0f, 1f)
+    return SkeletonPalette(
+        limbFill = limbFill.blendToward(backgroundColor, amount),
+        coreFill = coreFill.blendToward(backgroundColor, amount),
+        headFill = headFill.blendToward(backgroundColor, amount),
+        jointFill = jointFill.blendToward(backgroundColor, amount),
+        grid = grid.blendToward(backgroundColor, amount),
+    )
+}
+
+private fun Color.blendToward(backgroundColor: Color, amount: Float): Color {
+    val resolvedAmount = amount.coerceIn(0f, 1f)
+    return Color(
+        red = backgroundColor.red + (red - backgroundColor.red) * resolvedAmount,
+        green = backgroundColor.green + (green - backgroundColor.green) * resolvedAmount,
+        blue = backgroundColor.blue + (blue - backgroundColor.blue) * resolvedAmount,
+        alpha = alpha,
     )
 }
 
@@ -103,6 +131,12 @@ private data class WearSkeleton(
     val fps: Float,
     val frames: List<WearSkeletonFrame>,
     val bounds: WearSkeletonBounds,
+    val display: WearSkeletonDisplay,
+)
+
+private data class WearSkeletonDisplay(
+    val viewYawDegrees: Float? = null,
+    val viewPitchDegrees: Float? = null,
 )
 
 private data class WearSkeletonBounds(
@@ -116,6 +150,12 @@ private data class WearSkeletonBounds(
 
 private data class WearSkeletonFrame(
     val joints: Map<String, WearSkeletonVec3>,
+)
+
+private data class SkeletonLoopPlayback(
+    val frameIndex: Int,
+    val visibility: Float,
+    val motionElapsedSeconds: Double,
 )
 
 private data class WearSkeletonVec3(
@@ -197,29 +237,46 @@ fun SkeletonMotionPreview(
     viewYawDegrees: Float = -28f,
     viewPitchDegrees: Float = 15f,
     orbitView: Boolean = false,
+    loopRestartFadeMillis: Int = 0,
 ) {
     val skeleton = remember(skeletonJson) {
         parseWearSkeleton(skeletonJson)
     }
+    val baseViewYawDegrees = skeleton.display.viewYawDegrees ?: viewYawDegrees
+    val baseViewPitchDegrees = skeleton.display.viewPitchDegrees ?: viewPitchDegrees
     val palette = remember(primaryFill) { createSkeletonPalette(primaryFill) }
+    var playbackVisibility by remember(skeleton.frames.size) { mutableFloatStateOf(1f) }
     var frameIndex by remember(skeleton.frames.size) { mutableIntStateOf(if (animated) 0 else min(12, skeleton.frames.lastIndex)) }
-    var orbitYawDegrees by remember(viewYawDegrees) { mutableFloatStateOf(viewYawDegrees) }
+    var orbitYawDegrees by remember(baseViewYawDegrees) { mutableFloatStateOf(baseViewYawDegrees) }
 
-    LaunchedEffect(animated, orbitView, skeleton.fps, skeleton.frames.size, viewYawDegrees) {
+    LaunchedEffect(animated, orbitView, skeleton.fps, skeleton.frames.size, baseViewYawDegrees, loopRestartFadeMillis) {
         if (!animated && !orbitView) {
+            playbackVisibility = 1f
             return@LaunchedEffect
         }
+        var startTimeNanos: Long? = null
         while (true) {
             val frameTimeNanos = withFrameNanos { it }
-            val seconds = frameTimeNanos / 1_000_000_000.0
+            val startedAt = startTimeNanos ?: frameTimeNanos.also { startTimeNanos = it }
+            val seconds = (frameTimeNanos - startedAt) / 1_000_000_000.0
+            var orbitSeconds = seconds
             if (animated && skeleton.frames.isNotEmpty()) {
-                val nextFrameIndex = ((seconds * skeleton.fps).toInt()).floorMod(skeleton.frames.size)
-                if (frameIndex != nextFrameIndex) {
-                    frameIndex = nextFrameIndex
+                val playback = resolveLoopPlayback(
+                    elapsedSeconds = seconds,
+                    frameCount = skeleton.frames.size,
+                    fps = skeleton.fps,
+                    loopRestartFadeMillis = loopRestartFadeMillis,
+                )
+                orbitSeconds = playback.motionElapsedSeconds
+                if (frameIndex != playback.frameIndex) {
+                    frameIndex = playback.frameIndex
+                }
+                if (playbackVisibility != playback.visibility) {
+                    playbackVisibility = playback.visibility
                 }
             }
             if (orbitView) {
-                orbitYawDegrees = viewYawDegrees + ((seconds * OrbitDegreesPerSecond) % 360.0).toFloat()
+                orbitYawDegrees = baseViewYawDegrees + ((orbitSeconds * OrbitDegreesPerSecond) % 360.0).toFloat()
             }
         }
     }
@@ -227,18 +284,72 @@ fun SkeletonMotionPreview(
     val resolvedYawDegrees = if (orbitView) {
         orbitYawDegrees
     } else {
-        viewYawDegrees
+        baseViewYawDegrees
+    }
+    val visiblePalette = remember(palette, backgroundColor, playbackVisibility) {
+        palette.withVisibility(playbackVisibility, backgroundColor)
     }
 
     WearSkeletonRenderer(
         skeleton = skeleton,
         frameIndex = frameIndex,
         viewYawDegrees = resolvedYawDegrees,
-        viewPitchDegrees = viewPitchDegrees,
-        palette = palette,
+        viewPitchDegrees = baseViewPitchDegrees,
+        palette = visiblePalette,
         backgroundColor = backgroundColor,
         modifier = modifier,
     )
+}
+
+private fun resolveLoopPlayback(
+    elapsedSeconds: Double,
+    frameCount: Int,
+    fps: Float,
+    loopRestartFadeMillis: Int,
+): SkeletonLoopPlayback {
+    if (frameCount <= 0) {
+        return SkeletonLoopPlayback(frameIndex = 0, visibility = 1f, motionElapsedSeconds = elapsedSeconds)
+    }
+    val safeFps = fps.coerceAtLeast(1f).toDouble()
+    val fadeSeconds = if (loopRestartFadeMillis > 0 && frameCount > 1) {
+        loopRestartFadeMillis / 1_000.0
+    } else {
+        0.0
+    }
+    if (fadeSeconds <= 0.0) {
+        return SkeletonLoopPlayback(
+            frameIndex = ((elapsedSeconds * safeFps).toInt()).floorMod(frameCount),
+            visibility = 1f,
+            motionElapsedSeconds = elapsedSeconds,
+        )
+    }
+
+    val motionSeconds = frameCount / safeFps
+    val cycleSeconds = motionSeconds + fadeSeconds * 2.0
+    val phaseSeconds = elapsedSeconds % cycleSeconds
+    val completedCycles = kotlin.math.floor(elapsedSeconds / cycleSeconds)
+    val motionElapsedSeconds = completedCycles * motionSeconds + min(phaseSeconds, motionSeconds)
+    return when {
+        phaseSeconds < motionSeconds -> SkeletonLoopPlayback(
+            frameIndex = min((phaseSeconds * safeFps).toInt(), frameCount - 1),
+            visibility = 1f,
+            motionElapsedSeconds = motionElapsedSeconds,
+        )
+
+        phaseSeconds < motionSeconds + fadeSeconds -> SkeletonLoopPlayback(
+            frameIndex = frameCount - 1,
+            visibility = (1.0 - ((phaseSeconds - motionSeconds) / fadeSeconds)).toFloat()
+                .coerceIn(0f, 1f),
+            motionElapsedSeconds = motionElapsedSeconds,
+        )
+
+        else -> SkeletonLoopPlayback(
+            frameIndex = 0,
+            visibility = ((phaseSeconds - motionSeconds - fadeSeconds) / fadeSeconds).toFloat()
+                .coerceIn(0f, 1f),
+            motionElapsedSeconds = motionElapsedSeconds,
+        )
+    }
 }
 
 @Composable
@@ -255,7 +366,7 @@ private fun WearSkeletonRenderer(
         modifier = modifier
             .fillMaxSize()
             .background(backgroundColor)
-            .semantics { contentDescription = "Exercise movement preview" },
+            .semantics { contentDescription = SkeletonPreviewContentDescription },
         factory = { context ->
             WearSkeletonFilamentView(context).apply {
                 updateSkeletonState(
@@ -295,6 +406,8 @@ private class WearSkeletonFilamentView(
 
     init {
         setBackgroundColor(SkeletonFallbackBackground.toArgb())
+        contentDescription = SkeletonPreviewContentDescription
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         addView(
             surfaceView,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
@@ -1000,14 +1113,28 @@ private fun buildSingleLowPolyMesh(
     }
     addMeshSegmentFromNames(mesh, joints, "left_wrist", "left_hand", bodyAxes, 0.050f, 0.056f, 0.32f, palette.jointFill)
     addMeshSegmentFromNames(mesh, joints, "right_wrist", "right_hand", bodyAxes, 0.050f, 0.056f, 0.32f, palette.jointFill)
-    addShoeBlockFromNames(mesh, joints, "left_ankle", "left_foot", bodyAxes, footScale, palette)
-    addShoeBlockFromNames(mesh, joints, "right_ankle", "right_foot", bodyAxes, footScale, palette)
+    val leftShoeAdded = addShoeBlockFromNames(mesh, joints, "left_ankle", "left_foot", bodyAxes, footScale, palette)
+    val rightShoeAdded = addShoeBlockFromNames(mesh, joints, "right_ankle", "right_foot", bodyAxes, footScale, palette)
     addJointCapAtNames(mesh, joints, "left_elbow", bodyAxes, 0.046f, palette.jointFill)
     addJointCapAtNames(mesh, joints, "right_elbow", bodyAxes, 0.046f, palette.jointFill)
     addJointCapAtNames(mesh, joints, "left_knee", bodyAxes, KneeAndHipJointCapRadius, palette.jointFill)
     addJointCapAtNames(mesh, joints, "right_knee", bodyAxes, KneeAndHipJointCapRadius, palette.jointFill)
-    addJointCapAtNames(mesh, joints, "left_ankle", bodyAxes, 0.042f, palette.jointFill)
-    addJointCapAtNames(mesh, joints, "right_ankle", bodyAxes, 0.042f, palette.jointFill)
+    addJointCapAtNames(
+        mesh = mesh,
+        joints = joints,
+        jointName = "left_ankle",
+        bodyAxes = bodyAxes,
+        radius = if (leftShoeAdded) VisibleShoeAnkleJointCapRadius else AnkleJointCapRadius,
+        fill = palette.jointFill,
+    )
+    addJointCapAtNames(
+        mesh = mesh,
+        joints = joints,
+        jointName = "right_ankle",
+        bodyAxes = bodyAxes,
+        radius = if (rightShoeAdded) VisibleShoeAnkleJointCapRadius else AnkleJointCapRadius,
+        fill = palette.jointFill,
+    )
     return mesh
 }
 
@@ -1043,6 +1170,11 @@ private fun jointCapClearance(
     }
 }
 
+private data class ShoeProfilePoint(
+    val center: WearSkeletonVec3,
+    val halfWidthScale: Float,
+)
+
 private fun addShoeBlockFromNames(
     mesh: GeneratedLowPolyMesh,
     joints: Map<String, WearSkeletonVec3>,
@@ -1051,9 +1183,9 @@ private fun addShoeBlockFromNames(
     bodyAxes: BodyAxes,
     footScale: Float,
     palette: SkeletonPalette,
-) {
-    val ankle = joints[ankleName] ?: return
-    val foot = joints[footName] ?: return
+): Boolean {
+    val ankle = joints[ankleName] ?: return false
+    val foot = joints[footName] ?: return false
     val worldUp = WearSkeletonVec3(0f, 1f, 0f)
     val footVector = foot - ankle
     val horizontalFoot = footVector - worldUp * footVector.dot(worldUp)
@@ -1066,20 +1198,41 @@ private fun addShoeBlockFromNames(
         stableForward
     }
     val footSide = (bodyAxes.side - worldUp * bodyAxes.side.dot(worldUp)).normalizedOr(bodyAxes.side)
-    val length = max(horizontalLength * 1.64f, footScale * 0.70f)
-    val halfWidth = footScale * 0.29f
-    val height = footScale * 0.34f
+    val shoeUp = bodyAxes.up
+    val length = max(horizontalLength * 1.72f, footScale * 0.86f)
+    val halfWidth = footScale * 0.42f
+    val height = footScale * 0.52f
     val profile = listOf(
-        ankle + footForward * (length * 0.04f) - worldUp * (height * 0.58f),
-        ankle + footForward * (length * 0.88f) - worldUp * (height * 0.58f),
-        ankle + footForward * (length * 0.74f) - worldUp * (height * 0.12f),
-        ankle + footForward * (length * 0.16f) - worldUp * (height * 0.12f),
+        ShoeProfilePoint(
+            center = ankle - footForward * (length * 0.04f) - shoeUp * (height * 0.38f),
+            halfWidthScale = 0.70f,
+        ),
+        ShoeProfilePoint(
+            center = ankle + footForward * (length * 0.14f) - shoeUp * (height * 0.62f),
+            halfWidthScale = 0.95f,
+        ),
+        ShoeProfilePoint(
+            center = ankle + footForward * (length * 0.84f) - shoeUp * (height * 0.62f),
+            halfWidthScale = 1.00f,
+        ),
+        ShoeProfilePoint(
+            center = ankle + footForward * (length * 1.02f) - shoeUp * (height * 0.30f),
+            halfWidthScale = 0.78f,
+        ),
+        ShoeProfilePoint(
+            center = ankle + footForward * (length * 0.82f) + shoeUp * (height * 0.10f),
+            halfWidthScale = 0.88f,
+        ),
+        ShoeProfilePoint(
+            center = ankle + footForward * (length * 0.08f) + shoeUp * (height * 0.12f),
+            halfWidthScale = 0.74f,
+        ),
     )
     val outerSide = profile.map { point ->
-        addMeshVertex(mesh, point + footSide * halfWidth)
+        addMeshVertex(mesh, point.center + footSide * (halfWidth * point.halfWidthScale))
     }
     val innerSide = profile.map { point ->
-        addMeshVertex(mesh, point - footSide * halfWidth)
+        addMeshVertex(mesh, point.center - footSide * (halfWidth * point.halfWidthScale))
     }
 
     val fill = palette.limbFill
@@ -1092,6 +1245,7 @@ private fun addShoeBlockFromNames(
             fill,
         )
     }
+    return true
 }
 
 private fun addJointCapAtNames(
@@ -1472,6 +1626,21 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
         fps = root.get("fps")?.asFloat ?: 30f,
         bounds = boundsObject.toWearSkeletonBounds(),
         frames = frames,
+        display = root.toWearSkeletonDisplay(),
+    )
+}
+
+private fun JsonObject.toWearSkeletonDisplay(): WearSkeletonDisplay {
+    val wearDisplay = optionalJsonObject("wearDisplay")
+    val selectedPreviewSettings = optionalJsonObject("selectedPreviewSettings")
+    val bakedPreviewConfiguration = optionalJsonObject("bakedPreviewConfiguration")
+    return WearSkeletonDisplay(
+        viewYawDegrees = wearDisplay?.optionalFloat("viewYawDegrees")
+            ?: selectedPreviewSettings?.optionalFloat("cameraYawDegrees")
+            ?: bakedPreviewConfiguration?.optionalFloat("cameraYawDegrees"),
+        viewPitchDegrees = wearDisplay?.optionalFloat("viewPitchDegrees")
+            ?: selectedPreviewSettings?.optionalFloat("cameraPitchDegrees")
+            ?: bakedPreviewConfiguration?.optionalFloat("cameraPitchDegrees"),
     )
 }
 
@@ -1483,6 +1652,19 @@ private fun JsonObject.toWearSkeletonBounds(): WearSkeletonBounds = WearSkeleton
     minZ = get("minZ").asFloat,
     maxZ = get("maxZ").asFloat,
 )
+
+private fun JsonObject.optionalJsonObject(name: String): JsonObject? {
+    val element = get(name) ?: return null
+    return if (element.isJsonObject) element.asJsonObject else null
+}
+
+private fun JsonObject.optionalFloat(name: String): Float? {
+    val element = get(name) ?: return null
+    if (!element.isJsonPrimitive) {
+        return null
+    }
+    return runCatching { element.asFloat }.getOrNull()
+}
 
 private fun Int.floorMod(modulus: Int): Int = ((this % modulus) + modulus) % modulus
 
