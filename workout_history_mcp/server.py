@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -21,11 +22,12 @@ from .tool_errors import ToolFailure
 
 
 def _load_store_or_failure() -> WorkoutHistoryStore | ToolFailure:
-    path = backup_path_from_env()
     try:
+        path = backup_path_from_env()
         return load_store(path)
     except Exception as exc:
-        return ToolFailure.from_load_exception(exc, path)
+        shown_path = Path(os.environ.get("MYWORKOUT_BACKUP_PATH") or "MYWORKOUT_BACKUP_PATH")
+        return ToolFailure.from_load_exception(exc, shown_path)
 
 
 def _with_store_str(factory: Callable[[WorkoutHistoryStore], str], *, label: str) -> str:

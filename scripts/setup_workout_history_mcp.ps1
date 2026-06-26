@@ -93,11 +93,14 @@ try {
         }
         $env:MYWORKOUT_BACKUP_PATH = $resolvedBackupPath
     } else {
-        $defaultBackupPath = Join-Path $repoRoot "merged_workout_store_backup.json"
-        if (Test-Path -LiteralPath $defaultBackupPath) {
-            $env:MYWORKOUT_BACKUP_PATH = $defaultBackupPath
-            $resolvedBackupPath = $defaultBackupPath
+        if ([string]::IsNullOrWhiteSpace($env:MYWORKOUT_BACKUP_PATH)) {
+            throw "Backup path is required. Pass -BackupPath or set MYWORKOUT_BACKUP_PATH before running this script."
         }
+        $resolvedBackupPath = Resolve-RepoPath $env:MYWORKOUT_BACKUP_PATH
+        if (-not (Test-Path -LiteralPath $resolvedBackupPath)) {
+            throw "Backup file not found: $resolvedBackupPath"
+        }
+        $env:MYWORKOUT_BACKUP_PATH = $resolvedBackupPath
     }
 
     $env:MYWORKOUT_MCP_HOST = $HostName

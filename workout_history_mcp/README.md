@@ -10,7 +10,8 @@ The easiest setup path is the PowerShell script:
 
 ```powershell
 cd C:\Users\gabri\Documents\MyWorkoutAssistant
-.\scripts\setup_workout_history_mcp.ps1
+.\scripts\setup_workout_history_mcp.ps1 `
+  -BackupPath "C:\Users\gabri\Downloads\workout_store_backup_2026-04-26_18-30-00.json"
 ```
 
 That creates `.venv` if needed, installs the MCP package, and prints the local connector URL.
@@ -46,13 +47,7 @@ To install only runtime dependencies, without pytest:
 
 Configuration is read from environment variables in the shell that starts the server. The setup script sets these variables for its own PowerShell process before it starts the server. There is no config file for v1.
 
-If you do nothing, the server reads this repo file:
-
-```text
-C:\Users\gabri\Documents\MyWorkoutAssistant\merged_workout_store_backup.json
-```
-
-To use a different phone-generated `AppBackup` JSON, set `MYWORKOUT_BACKUP_PATH` before starting the server:
+Set `MYWORKOUT_BACKUP_PATH` before starting the server, or pass `-BackupPath` to the setup script:
 
 ```powershell
 $env:MYWORKOUT_BACKUP_PATH = "C:\Users\gabri\Downloads\workout_store_backup_2026-04-26_18-30-00.json"
