@@ -7,11 +7,15 @@ param(
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
     [string]$YouTubeCookiesPath,
-    [string]$PythonCommand = "python",
-    [int]$ResultsPerQuery = 25,
+    [string]$YouTubePreviewCacheDir,
+    [string]$PythonCommand = "",
+    [int]$ResultsPerQuery = 100,
     [int]$YoutubeSearchEmptyRetries = 5,
     [int]$MaxCandidates = 12,
     [int]$MetadataCandidatePoolSize = 36,
+    [int]$CandidateReviewBatchSize = 12,
+    [int]$CandidateReviewTargetSuitableCount = 1,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
     [switch]$UseDeepSeekQueryPlanner,
@@ -21,33 +25,37 @@ param(
     [int]$DeepSeekMaxQueries = 4,
     [int]$VisionCandidatesPerExercise = 12,
     [int]$VisionFramesPerCandidate = 0,
-    [int]$VisionMaxChunksPerCandidate = 5,
-    [int]$VisionDownloadWorkers = 3,
-    [int]$VisionLlmWorkers = 3,
+    [int]$VisionMaxChunksPerCandidate = 0,
+    [int]$VisionDownloadWorkers = 8,
+    [int]$VisionLlmWorkers = 4,
     [switch]$SkipVisionRanking,
     [switch]$SemanticGateWithLlamaCpp,
     [switch]$SkipSemanticGate,
     [Nullable[int]]$SemanticGateCandidatesPerExercise = 24,
+    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200,
     [double]$SemanticGateMinScore = 0.55,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
     [Nullable[int]]$PosePrefilterCandidatesPerExercise = 24,
-    [double]$PosePrefilterSampleFps = 1.0,
-    [double]$PosePrefilterMaxSeconds = 32.0,
-    [ValidateSet("prefix", "spread")]
-    [string]$PosePrefilterScanStrategy = "spread",
+    [double]$PosePrefilterSampleFps = 0.0,
+    [double]$PosePrefilterMaxSeconds = 0.0,
+    [ValidateSet("prefix", "spread", "full")]
+    [string]$PosePrefilterScanStrategy = "full",
     [double]$PosePrefilterWindowSeconds = 8.0,
     [double]$PosePrefilterOverlapSeconds = 4.0,
     [double]$PosePrefilterMinScore = 0.45,
     [int]$PosePrefilterWorkers = 3,
-    [switch]$AllowYoutubeCandidateFallback,
+    [string]$PosePrefilterDevice = "cuda",
+    [int]$PosePrefilterBatchSize = 16,
     [switch]$ThoroughYoutubeRetry,
     [switch]$SkipThoroughYoutubeRetry,
-    [double]$ThoroughPosePrefilterMaxSeconds = 90.0,
-    [int]$ThoroughVisionMaxChunksPerCandidate = 10,
+    [double]$ThoroughPosePrefilterMaxSeconds = 0.0,
+    [int]$ThoroughVisionMaxChunksPerCandidate = 0,
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
-    [int]$FallbackCandidates = 5,
+    [int]$FallbackCandidates = 12,
+    [int]$MaxSelectedResults = 1,
+    [int]$CandidateWorkers = 2,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
@@ -56,6 +64,7 @@ param(
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
+    [switch]$ExportWhamSmplPreview,
     [switch]$SkipSpinePose,
     [string]$SpinePoseJsonDir,
     [string]$SpinePoseCommand,
@@ -94,6 +103,7 @@ param(
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 6,
+    [int]$ReviewLlmWorkers = 4,
     [int]$MaxReviewWindows = 3,
     [double]$MinSelectedScore = 0.55,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
@@ -106,17 +116,17 @@ param(
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
-    [Nullable[int]]$LlamaCppCtxSize = 65536,
+    [Nullable[int]]$LlamaCppCtxSize = 24576,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 1,
+    [Nullable[int]]$LlamaCppParallel = 4,
     [Nullable[int]]$LlamaCppThreadsHttp = 6,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 65536,
+    [Nullable[int]]$LlamaCppFitCtx = 24576,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
     [bool]$LlamaCppMmap = $false,
     [bool]$LlamaCppMlock = $true,
@@ -124,7 +134,9 @@ param(
     [Nullable[int]]$LlamaCppImageMaxTokens,
     [switch]$NoLlamaCppAutoStartServer,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 90.0
+    [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [ValidateSet("debug", "full")]
+    [string]$ArtifactRetention = "debug"
 )
 
 $ErrorActionPreference = "Stop"
@@ -148,6 +160,21 @@ function ConvertTo-Slug {
     return $slug
 }
 
+function Resolve-MotionPythonCommand {
+    param([string]$ConfiguredCommand)
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
+        return $ConfiguredCommand
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:EXERCISE_MOTION_PYTHON)) {
+        return $env:EXERCISE_MOTION_PYTHON
+    }
+    $cudaPython = "C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
+    if (Test-Path -LiteralPath $cudaPython) {
+        return $cudaPython
+    }
+    return "python"
+}
+
 function Invoke-PythonModule {
     param([string[]]$Arguments)
     & $PythonCommand @Arguments
@@ -156,7 +183,71 @@ function Invoke-PythonModule {
     }
 }
 
+function Set-ArgumentValue {
+    param(
+        [string[]]$Arguments,
+        [string]$Name,
+        [string]$Value
+    )
+    $result = @()
+    $found = $false
+    for ($index = 0; $index -lt $Arguments.Count; $index += 1) {
+        $argument = $Arguments[$index]
+        if ($argument -eq $Name) {
+            $result += @($Name, $Value)
+            $found = $true
+            $index += 1
+            continue
+        }
+        $result += $argument
+    }
+    if (-not $found) {
+        $result += @($Name, $Value)
+    }
+    return [string[]]$result
+}
+
+function Get-SelectionManifest {
+    param([string]$SelectionPath)
+    if (-not (Test-Path -LiteralPath $SelectionPath)) {
+        return $null
+    }
+    return Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-Json
+}
+
+function Get-SelectedResultCount {
+    param([object]$Selection)
+    if (-not $Selection) {
+        return 0
+    }
+    if ($Selection.PSObject.Properties.Name -contains "selectedResults" -and $Selection.selectedResults) {
+        return @($Selection.selectedResults).Count
+    }
+    if ($Selection.selected) {
+        return 1
+    }
+    return 0
+}
+
+function Assert-SelectedWearSkeletonContract {
+    param([object]$Selection)
+    $selectedOptions = if ($Selection.PSObject.Properties.Name -contains "selectedResults" -and $Selection.selectedResults) {
+        @($Selection.selectedResults)
+    } else {
+        @($Selection.selected)
+    }
+    $optionIndex = 1
+    foreach ($option in $selectedOptions) {
+        if ($option.wearSkeletonSettingsBaked -ne $true) {
+            $contractJson = $option.wearSkeletonPreviewSettingsContract | ConvertTo-Json -Depth 8
+            throw "Selected Wear skeleton option $optionIndex does not contain the baked preview settings required by Wear. Contract: $contractJson"
+        }
+        $optionIndex += 1
+    }
+}
+
 $repoRoot = Get-RepoRoot
+$PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 $slug = ConvertTo-Slug $ExerciseName
 if ([string]::IsNullOrWhiteSpace($ExerciseId)) {
     $ExerciseId = $slug
@@ -248,12 +339,32 @@ function Get-RecommendationCounts {
 if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
     $YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
 }
+if ($MaxSelectedResults -lt 1) {
+    throw "MaxSelectedResults must be at least 1."
+}
+$resolvedMaxCandidateReviewTargetSuitableCount = if ($null -ne $MaxCandidateReviewTargetSuitableCount) {
+    [Math]::Max([int]$MaxCandidateReviewTargetSuitableCount, $MaxSelectedResults)
+} else {
+    [Math]::Max($FallbackCandidates, $CandidateReviewTargetSuitableCount, $MaxSelectedResults)
+}
+if ($CandidateReviewTargetSuitableCount -lt 1) {
+    throw "CandidateReviewTargetSuitableCount must be at least 1."
+}
+$initialTargetSuitableCount = [Math]::Max($CandidateReviewTargetSuitableCount, $MaxSelectedResults)
+if ($resolvedMaxCandidateReviewTargetSuitableCount -lt $initialTargetSuitableCount) {
+    throw "MaxCandidateReviewTargetSuitableCount must be greater than or equal to CandidateReviewTargetSuitableCount and MaxSelectedResults."
+}
 $exerciseWorkspace = Join-Path $WorkspaceRoot "$slug-e2e"
 $bakeWorkspace = Join-Path $exerciseWorkspace "bake-final"
 $planPath = Join-Path $exerciseWorkspace "$slug-plan.json"
 $candidatesPath = Join-Path $exerciseWorkspace "youtube_candidates.json"
-$previewCachePath = Join-Path $exerciseWorkspace "youtube-preview-cache"
+$previewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
+    Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
+} else {
+    $YouTubePreviewCacheDir
+}
 New-Item -ItemType Directory -Force -Path $exerciseWorkspace | Out-Null
+New-Item -ItemType Directory -Force -Path $previewCachePath | Out-Null
 
 $planPayload = @{
     exercises = @(
@@ -275,11 +386,15 @@ $youtubeArgs = @(
     "--youtube-search-empty-retries", "$YoutubeSearchEmptyRetries",
     "--max-candidates", "$MaxCandidates",
     "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
+    "--candidate-review-batch-size", "$CandidateReviewBatchSize",
+    "--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
-    "--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers"
 )
+if ($VisionMaxChunksPerCandidate -gt 0) {
+    $youtubeArgs += @("--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate")
+}
 if (-not $SkipVisionRanking) {
     $youtubeArgs += "--rank-with-vision"
 }
@@ -298,6 +413,9 @@ if ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate) {
     )
     if ($null -ne $SemanticGateCandidatesPerExercise) {
         $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$SemanticGateCandidatesPerExercise")
+    }
+    if ($null -ne $SemanticGateMaxCandidatesPerExercise) {
+        $youtubeArgs += @("--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise")
     }
 }
 if ($LlamaCppRequestTimeoutSeconds -gt 0) {
@@ -359,31 +477,16 @@ if ($PosePrefilter -or -not $SkipPosePrefilter) {
         "--pose-prefilter-window-seconds", "$PosePrefilterWindowSeconds",
         "--pose-prefilter-overlap-seconds", "$PosePrefilterOverlapSeconds",
         "--pose-prefilter-min-score", "$PosePrefilterMinScore",
-        "--pose-prefilter-workers", "$PosePrefilterWorkers"
+        "--pose-prefilter-workers", "$PosePrefilterWorkers",
+        "--pose-prefilter-device", $PosePrefilterDevice,
+        "--pose-prefilter-batch-size", "$PosePrefilterBatchSize"
     )
     if ($null -ne $PosePrefilterCandidatesPerExercise) {
         $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$PosePrefilterCandidatesPerExercise")
     }
 }
 
-Invoke-PythonModule -Arguments $youtubeArgs
-
-$recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
-if ($recommendationCounts.Recommended -le 0 -and $ThoroughYoutubeRetry -and -not $SkipThoroughYoutubeRetry) {
-    Write-Host "No recommended YouTube candidates found; rerunning discovery with deeper per-video scan limits."
-    $thoroughYoutubeArgs = @($youtubeArgs)
-    $thoroughYoutubeArgs += @(
-        "--pose-prefilter-max-seconds", "$ThoroughPosePrefilterMaxSeconds",
-        "--vision-max-chunks-per-candidate", "$ThoroughVisionMaxChunksPerCandidate",
-        "--vision-motion-scan-max-seconds", "$ThoroughVisionMotionScanMaxSeconds"
-    )
-    Invoke-PythonModule -Arguments $thoroughYoutubeArgs
-    $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
-}
-
-if ($recommendationCounts.Recommended -le 0 -and -not $AllowYoutubeCandidateFallback) {
-    throw "No recommended YouTube candidate found after discovery. Refusing to bake fallback candidate(s). Inspect $candidatesPath or rerun with -AllowYoutubeCandidateFallback."
-}
+$youtubeBaseArgs = [string[]]$youtubeArgs
 
 $resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
@@ -392,6 +495,8 @@ $bakeArgs = @(
     "bake-and-rank",
     "--candidates-json", $candidatesPath,
     "--fallback-candidates", "$FallbackCandidates",
+    "--max-selected-results", "$MaxSelectedResults",
+    "--candidate-workers", "$CandidateWorkers",
     "--workspace", $bakeWorkspace,
     "--wham-repo-path", $resolvedWhamRepoPath,
     "--body-model-root", $resolvedBodyModelRoot,
@@ -402,6 +507,7 @@ $bakeArgs = @(
     "--segment-min-seconds", "$SegmentMinSeconds",
     "--segment-max-seconds", "$SegmentMaxSeconds",
     "--review-frames", "$ReviewFrames",
+    "--review-llm-workers", "$ReviewLlmWorkers",
     "--max-review-windows", "$MaxReviewWindows",
     "--min-selected-score", "$MinSelectedScore",
     "--llama-cpp-base-url", $LlamaCppBaseUrl,
@@ -410,11 +516,9 @@ $bakeArgs = @(
     "--llama-cpp-backend", $LlamaCppBackend,
     "--llama-cpp-n-predict", "$LlamaCppNPredict",
     "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
-    "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
+    "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
+    "--artifact-retention", $ArtifactRetention
 )
-if ($AllowYoutubeCandidateFallback) {
-    $bakeArgs += "--allow-youtube-candidate-fallback"
-}
 $bakeArgs += @("--llama-cpp-temperature", "$LlamaCppTemperature")
 if ($null -ne $LlamaCppTopP) {
     $bakeArgs += @("--llama-cpp-top-p", "$LlamaCppTopP")
@@ -482,6 +586,9 @@ if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
 if ($SkipMotionTuning) {
     $bakeArgs += "--skip-motion-tuning"
 }
+if ($ExportWhamSmplPreview) {
+    $bakeArgs += "--export-wham-smpl-preview"
+}
 if ($SkipSpinePose -or -not $EnableSpinePose) {
     $bakeArgs += "--skip-spinepose"
 }
@@ -530,18 +637,109 @@ if ($SkipPreWhamSourceValidation) {
     $bakeArgs += "--skip-pre-wham-source-validation"
 }
 
-Invoke-PythonModule -Arguments $bakeArgs
-
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"
-$selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+$bakeBaseArgs = [string[]]$bakeArgs
+$currentTargetSuitableCount = [Math]::Max(1, $initialTargetSuitableCount)
+$attemptIndex = 1
+$selection = $null
+
+while ($true) {
+    $attemptMaxCandidates = [Math]::Max($MaxCandidates, $currentTargetSuitableCount)
+    $attemptVisionCandidates = [Math]::Max($VisionCandidatesPerExercise, $currentTargetSuitableCount)
+    $attemptYoutubeArgs = Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count" -Value "$currentTargetSuitableCount"
+    $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
+    $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+
+    Write-Host "YouTube discovery attempt ${attemptIndex}: target suitable candidates $currentTargetSuitableCount (max $resolvedMaxCandidateReviewTargetSuitableCount)."
+    Invoke-PythonModule -Arguments $attemptYoutubeArgs
+
+    $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
+    if ($recommendationCounts.Recommended -le 0 -and $ThoroughYoutubeRetry -and -not $SkipThoroughYoutubeRetry) {
+        Write-Host "No recommended YouTube candidates found; rerunning discovery with deeper per-video scan limits."
+        $thoroughYoutubeArgs = @($attemptYoutubeArgs)
+        $thoroughYoutubeArgs += @(
+            "--pose-prefilter-max-seconds", "$ThoroughPosePrefilterMaxSeconds",
+            "--vision-motion-scan-max-seconds", "$ThoroughVisionMotionScanMaxSeconds"
+        )
+        if ($ThoroughVisionMaxChunksPerCandidate -gt 0) {
+            $thoroughYoutubeArgs += @("--vision-max-chunks-per-candidate", "$ThoroughVisionMaxChunksPerCandidate")
+        }
+        Invoke-PythonModule -Arguments $thoroughYoutubeArgs
+        $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
+    }
+
+    if ($recommendationCounts.Recommended -le 0) {
+        if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+            throw "No recommended YouTube candidate found after discovery. Refusing to bake non-recommended candidates. Inspect $candidatesPath and fix discovery/ranking."
+        }
+        $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
+        $attemptIndex += 1
+        Write-Host "No recommended candidates yet; expanding YouTube review target to $currentTargetSuitableCount."
+        continue
+    }
+
+    Write-Host "Bake attempt ${attemptIndex}: baking $($recommendationCounts.Recommended) recommended candidate(s)."
+    & $PythonCommand @bakeBaseArgs
+    $bakeExitCode = $LASTEXITCODE
+
+    $selection = Get-SelectionManifest -SelectionPath $selectionPath
+    $selectedResultCount = Get-SelectedResultCount -Selection $selection
+    if ($selection -and $selection.selected -and $selectedResultCount -gt 0) {
+        Assert-SelectedWearSkeletonContract -Selection $selection
+        if ($selectedResultCount -ge $MaxSelectedResults) {
+            break
+        }
+        if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+            Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); max YouTube review target reached, keeping valid partial output."
+            break
+        }
+        $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
+        $attemptIndex += 1
+        Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); expanding YouTube review target to $currentTargetSuitableCount."
+        continue
+    }
+    if ($bakeExitCode -ne 0 -and -not $selection) {
+        throw "python bake-and-rank command failed with exit code $bakeExitCode and did not write $selectionPath."
+    }
+    if ($bakeExitCode -ne 0) {
+        Write-Host "Bake-and-rank returned exit code $bakeExitCode after writing a no-selection manifest; continuing with the next YouTube review target."
+    }
+
+    Write-Host "Bake-and-rank completed without selecting a Wear skeleton at target $currentTargetSuitableCount."
+    if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+        throw "Bake-and-rank completed without selecting a Wear skeleton after reviewing up to $resolvedMaxCandidateReviewTargetSuitableCount suitable YouTube candidate(s). Inspect $selectionPath."
+    }
+    $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
+    $attemptIndex += 1
+    Write-Host "No final selected motion; expanding YouTube review target to $currentTargetSuitableCount."
+}
+
 Write-Host "Plan JSON: $((Resolve-Path -LiteralPath $planPath).Path)"
 Write-Host "YouTube candidates JSON: $((Resolve-Path -LiteralPath $candidatesPath).Path)"
 Write-Host "Selection manifest: $((Resolve-Path -LiteralPath $selectionPath).Path)"
 if ($selection.selected) {
     Write-Host "Wear skeleton JSON: $($selection.selected.selectedWearSkeletonPath)"
+    if ($selection.PSObject.Properties.Name -contains "selectedResults" -and @($selection.selectedResults).Count -gt 1) {
+        Write-Host "Selected result options: $(@($selection.selectedResults).Count)"
+        $optionIndex = 1
+        foreach ($option in @($selection.selectedResults)) {
+            Write-Host "  Option ${optionIndex}: $($option.selectedWearSkeletonPath)"
+            if ($option.PSObject.Properties.Name -contains "selectedReviewVideoPath" -and $option.selectedReviewVideoPath) {
+                Write-Host "    Preview video: $($option.selectedReviewVideoPath)"
+            }
+            if ($option.PSObject.Properties.Name -contains "selectedPreviewHtmlPath" -and $option.selectedPreviewHtmlPath) {
+                Write-Host "    Preview HTML: $($option.selectedPreviewHtmlPath)"
+            }
+            $optionIndex += 1
+        }
+    }
+    if ($selection.selected.PSObject.Properties.Name -contains "wearSkeletonSettingsBaked") {
+        Write-Host "Wear skeleton settings baked: $($selection.selected.wearSkeletonSettingsBaked)"
+    }
     if ($selection.selectedPreviewHtmlPath) {
         Write-Host "Preview HTML: $($selection.selectedPreviewHtmlPath)"
     }
 } else {
     Write-Host "Selected Wear skeleton: none"
+    throw "Bake-and-rank completed without selecting a Wear skeleton. Inspect $selectionPath."
 }

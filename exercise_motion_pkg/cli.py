@@ -30,7 +30,11 @@ from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_wha
 from exercise_motion_pkg.trim_selector import TrimSelectorRequest, run_trim_selector
 from exercise_motion_pkg.video_utils import trim_video
 from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_DOCKER_IMAGE, DEFAULT_WHAM_DOCKER_SHM_SIZE
-from exercise_motion_pkg.youtube import YouTubeRankingSettings, discover_and_rank_youtube_candidates
+from exercise_motion_pkg.youtube import (
+    YouTubeRankingSettings,
+    discover_and_rank_youtube_candidates,
+    load_workout_plan_exercises,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,6 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-motion-tuning",
         action="store_true",
         help="Pass raw camera-space WHAM motion through as the final artifact without cleanup, grounding, or structural tuning.",
+    )
+    generate.add_argument(
+        "--export-wham-smpl-preview",
+        action="store_true",
+        help="Also export the legacy baked WHAM SMPL mesh preview JSON. Disabled by default because the main preview and Wear output use the custom skeleton.",
     )
     generate.add_argument(
         "--normalized-motion-json",
@@ -256,8 +265,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Find and rank YouTube candidate videos for exercises in a workout plan JSON.",
     )
     youtube_search.add_argument("--workout-plan-json", required=True)
+    youtube_search.add_argument(
+        "--equipment-json",
+        "--equipment-export-json",
+        type=Path,
+        help="Optional equipment export JSON used to resolve equipment ids before searching.",
+    )
     youtube_search.add_argument("--out-json", required=True)
-    youtube_search.add_argument("--results-per-query", type=int, default=10)
+    youtube_search.add_argument("--results-per-query", type=int, default=100)
     youtube_search.add_argument("--youtube-search-empty-retries", type=int, default=5)
     youtube_search.add_argument(
         "--youtube-cookies",
@@ -272,6 +287,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
     youtube_search.add_argument("--metadata-candidate-pool-size", type=int)
+    youtube_search.add_argument(
+        "--candidate-review-batch-size",
+        type=int,
+        default=12,
+        help="Review YouTube candidates through semantic/YOLO/VLM stages in batches of this size.",
+    )
+    youtube_search.add_argument(
+        "--candidate-review-target-suitable-count",
+        type=int,
+        default=1,
+        help="Stop batched YouTube candidate review once this many suitable reviewed candidates are found.",
+    )
     youtube_search.add_argument("--min-duration-seconds", type=int, default=10)
     youtube_search.add_argument("--max-duration-seconds", type=int, default=120)
     youtube_search.add_argument(
@@ -297,19 +324,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use a text-only llama.cpp semantic gate before YOLO pose or VLM ranking.",
     )
     youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int)
+    youtube_search.add_argument("--semantic-gate-max-candidates-per-exercise", type=int, default=200)
     youtube_search.add_argument("--semantic-gate-min-score", type=float, default=0.55)
     youtube_search.add_argument("--pose-prefilter", action="store_true", help="Use YOLO pose as a fast visual prefilter before optional VLM ranking.")
     youtube_search.add_argument("--pose-prefilter-model", default="yolo26x-pose.pt")
     youtube_search.add_argument("--pose-prefilter-candidates-per-exercise", type=int)
-    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=2.0)
-    youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=90.0)
+    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=0.0)
+    youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=0.0)
     youtube_search.add_argument(
         "--pose-prefilter-scan-strategy",
-        choices=["prefix", "spread"],
-        default="spread",
+        choices=["prefix", "spread", "full"],
+        default="full",
         help=(
-            "YOLO sampling strategy. 'prefix' samples only the start of each video; "
-            "'spread' spends the same sample budget in short windows across the full video."
+            "YOLO sampling strategy. 'full' scans the whole video timeline; "
+            "'prefix' samples only the start of each video; 'spread' spends a fixed sample budget "
+            "in short windows across the full video."
         ),
     )
     youtube_search.add_argument("--pose-prefilter-window-seconds", type=float, default=8.0)
@@ -318,6 +347,8 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--pose-prefilter-min-keypoint-confidence", type=float, default=0.35)
     youtube_search.add_argument("--pose-prefilter-min-body-scale", type=float, default=0.18)
     youtube_search.add_argument("--pose-prefilter-workers", type=int, default=3)
+    youtube_search.add_argument("--pose-prefilter-device", default="cuda")
+    youtube_search.add_argument("--pose-prefilter-batch-size", type=int, default=16)
     youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=8)
     youtube_search.add_argument(
         "--vision-frames-per-candidate",
@@ -326,14 +357,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--vision-chunk-seconds", type=float)
     youtube_search.add_argument("--vision-chunk-overlap-seconds", type=float)
-    youtube_search.add_argument("--vision-max-chunks-per-candidate", type=int, default=5)
+    youtube_search.add_argument(
+        "--vision-max-chunks-per-candidate",
+        type=int,
+        help="Maximum source-review chunks per candidate. Omit or pass 0 to review the full candidate timeline.",
+    )
     youtube_search.add_argument("--no-vision-adaptive-chunk-review", action="store_true")
     youtube_search.add_argument("--vision-initial-chunks-per-candidate", type=int, default=3)
     youtube_search.add_argument("--vision-expand-chunks-per-candidate", type=int, default=2)
     youtube_search.add_argument("--vision-motion-scan-sample-fps", type=float, default=0.5)
     youtube_search.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
-    youtube_search.add_argument("--vision-download-workers", type=int, default=3)
-    youtube_search.add_argument("--vision-llm-workers", type=int, default=3)
+    youtube_search.add_argument("--vision-download-workers", type=int, default=8)
+    youtube_search.add_argument("--vision-llm-workers", type=int, default=4)
     youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
@@ -348,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
     youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
-    youtube_search.add_argument("--llama-cpp-ctx-size", type=int)
+    youtube_search.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
     youtube_search.add_argument("--llama-cpp-batch-size", type=int)
     youtube_search.add_argument("--llama-cpp-ubatch-size", type=int)
     youtube_search.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
@@ -358,7 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-threads-http", type=int)
     youtube_search.add_argument("--llama-cpp-cache-reuse", type=int)
     youtube_search.add_argument("--llama-cpp-fit", choices=["on", "off"])
-    youtube_search.add_argument("--llama-cpp-fit-ctx", type=int)
+    youtube_search.add_argument("--llama-cpp-fit-ctx", type=int, default=24576)
     youtube_search.add_argument("--llama-cpp-fit-target", type=int)
     youtube_search.add_argument("--no-llama-cpp-mmap", action="store_true")
     youtube_search.add_argument("--llama-cpp-mlock", action="store_true")
@@ -368,17 +403,26 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument("--include-disabled", action="store_true")
 
+    list_plan_exercises = subparsers.add_parser(
+        "list-workout-plan-exercises",
+        help="Extract motion-generatable exercises from a workout plan JSON.",
+    )
+    list_plan_exercises.add_argument("--workout-plan-json", required=True)
+    list_plan_exercises.add_argument(
+        "--equipment-json",
+        "--equipment-export-json",
+        type=Path,
+        help="Optional equipment export JSON used to resolve equipment ids before searching.",
+    )
+    list_plan_exercises.add_argument("--out-json", required=True)
+    list_plan_exercises.add_argument("--include-disabled", action="store_true")
+
     bake_and_rank = subparsers.add_parser(
         "bake-and-rank",
         help="Run WHAM, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
     bake_and_rank.add_argument("--fallback-candidates", type=int, default=DEFAULT_FALLBACK_CANDIDATES)
-    bake_and_rank.add_argument(
-        "--allow-youtube-candidate-fallback",
-        action="store_true",
-        help="Allow non-recommended YouTube candidates to proceed to WHAM. Disabled by default to avoid baking least-bad sources.",
-    )
     bake_and_rank.add_argument(
         "--candidate-workers",
         type=int,
@@ -430,6 +474,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-motion-tuning",
         action="store_true",
         help="Pass raw camera-space WHAM motion through before preview baking and review ranking.",
+    )
+    bake_and_rank.add_argument(
+        "--export-wham-smpl-preview",
+        action="store_true",
+        help="Also export the legacy baked WHAM SMPL mesh preview JSON for debug comparisons. Disabled by default.",
     )
     bake_and_rank.add_argument("--skip-source-segment-detection", action="store_true")
     bake_and_rank.add_argument("--segment-base-url")
@@ -494,7 +543,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--review-llm-workers",
         type=int,
-        default=3,
+        default=4,
         help="Maximum concurrent visual review requests for baked review items.",
     )
     bake_and_rank.add_argument(
@@ -508,6 +557,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_REVIEW_WINDOWS,
         help="Maximum skeleton-prefiltered preview chunks to send to the visual ranker per baked item. Use 0 to review all chunks.",
+    )
+    bake_and_rank.add_argument(
+        "--max-selected-results",
+        type=int,
+        default=1,
+        help="Maximum accepted final motion results to keep for manual review. The best result remains available as selected.",
     )
     bake_and_rank.add_argument(
         "--rank-preview-variants",
@@ -538,7 +593,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     bake_and_rank.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
     bake_and_rank.add_argument("--no-llama-cpp-disable-reasoning", action="store_true")
-    bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int)
+    bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
     bake_and_rank.add_argument("--llama-cpp-batch-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-ubatch-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
@@ -548,7 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-threads-http", type=int)
     bake_and_rank.add_argument("--llama-cpp-cache-reuse", type=int)
     bake_and_rank.add_argument("--llama-cpp-fit", choices=["on", "off"])
-    bake_and_rank.add_argument("--llama-cpp-fit-ctx", type=int)
+    bake_and_rank.add_argument("--llama-cpp-fit-ctx", type=int, default=24576)
     bake_and_rank.add_argument("--llama-cpp-fit-target", type=int)
     bake_and_rank.add_argument("--no-llama-cpp-mmap", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-mlock", action="store_true")
@@ -564,6 +619,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     bake_and_rank.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
+    bake_and_rank.add_argument(
+        "--artifact-retention",
+        choices=("debug", "full"),
+        default="debug",
+        help=(
+            "debug keeps final preview/Wear/debug evidence and prunes raw WHAM/frame/source intermediates; "
+            "full keeps all generated files."
+        ),
+    )
 
     reselect_baked = subparsers.add_parser(
         "reselect-baked",
@@ -577,6 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     reselect_baked.add_argument("--min-selected-score", type=float)
     reselect_baked.add_argument("--review-frames", type=int)
     reselect_baked.add_argument("--max-review-windows", type=int)
+    reselect_baked.add_argument("--max-selected-results", type=int)
 
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
@@ -756,6 +821,7 @@ def main() -> None:
                 non_dominant_damping=args.non_dominant_damping,
                 non_dominant_radius_scale=args.non_dominant_radius_scale,
                 motion_tuning_enabled=not args.skip_motion_tuning,
+                export_wham_smpl_preview=args.export_wham_smpl_preview,
                 source_start_seconds=args.source_start_seconds,
                 source_end_seconds=args.source_end_seconds,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
@@ -908,11 +974,36 @@ def main() -> None:
             print(f"Detected span start: {result.detected_span.start_seconds:.3f}")
             print(f"Detected span end: {result.detected_span.end_seconds:.3f}")
         return
+    if args.command == "list-workout-plan-exercises":
+        out_json = Path(args.out_json)
+        exercises = load_workout_plan_exercises(
+            Path(args.workout_plan_json),
+            include_disabled=args.include_disabled,
+            equipment_path=Path(args.equipment_json) if args.equipment_json else None,
+        )
+        payload = {
+            "schemaVersion": 1,
+            "sourceWorkoutPlanPath": str(Path(args.workout_plan_json)),
+            "equipmentJsonPath": str(Path(args.equipment_json)) if args.equipment_json else None,
+            "exercises": [
+                {
+                    "exerciseId": exercise.exercise_id,
+                    "exerciseName": exercise.name,
+                    "slug": exercise.slug,
+                }
+                for exercise in exercises
+            ],
+        }
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Wrote {len(exercises)} workout-plan exercise(s) to {out_json}")
+        return
     if args.command == "find-youtube-videos":
         out_json = Path(args.out_json)
         preview_cache_dir = args.youtube_preview_cache_dir or (out_json.parent / "youtube-preview-cache")
         manifest = discover_and_rank_youtube_candidates(
             workout_plan_json=Path(args.workout_plan_json),
+            equipment_json=Path(args.equipment_json) if args.equipment_json else None,
             out_json=out_json,
             settings=YouTubeRankingSettings(
                 results_per_query=args.results_per_query,
@@ -921,6 +1012,8 @@ def main() -> None:
                 youtube_preview_cache_dir=preview_cache_dir,
                 max_candidates=args.max_candidates,
                 metadata_candidate_pool_size=args.metadata_candidate_pool_size,
+                candidate_review_batch_size=args.candidate_review_batch_size,
+                candidate_review_target_suitable_count=args.candidate_review_target_suitable_count,
                 min_duration_seconds=args.min_duration_seconds,
                 max_duration_seconds=args.max_duration_seconds,
                 use_deepseek_query_planner=args.use_deepseek_query_planner,
@@ -933,6 +1026,7 @@ def main() -> None:
                 rank_with_vision=args.rank_with_vision,
                 semantic_gate_enabled=args.semantic_gate_with_llama_cpp,
                 semantic_gate_candidates_per_exercise=args.semantic_gate_candidates_per_exercise,
+                semantic_gate_max_candidates_per_exercise=args.semantic_gate_max_candidates_per_exercise,
                 semantic_gate_min_score=args.semantic_gate_min_score,
                 pose_prefilter_enabled=args.pose_prefilter,
                 pose_prefilter_model=args.pose_prefilter_model,
@@ -946,6 +1040,8 @@ def main() -> None:
                 pose_prefilter_min_keypoint_confidence=args.pose_prefilter_min_keypoint_confidence,
                 pose_prefilter_min_body_scale=args.pose_prefilter_min_body_scale,
                 pose_prefilter_workers=args.pose_prefilter_workers,
+                pose_prefilter_device=args.pose_prefilter_device,
+                pose_prefilter_batch_size=args.pose_prefilter_batch_size,
                 vision_candidates_per_exercise=args.vision_candidates_per_exercise,
                 vision_frames_per_candidate=args.vision_frames_per_candidate,
                 vision_chunk_seconds=args.vision_chunk_seconds,
@@ -1035,6 +1131,7 @@ def main() -> None:
                 spinepose_smoothing_window=args.spinepose_smoothing_window,
                 spinepose_arm_counter_rotation=args.spinepose_arm_counter_rotation,
                 spinepose_merge_mode=spinepose_merge_mode,
+                export_wham_smpl_preview=args.export_wham_smpl_preview,
                 detect_source_segment=not args.skip_source_segment_detection,
                 segment_base_url=args.segment_base_url,
                 segment_model=args.segment_model,
@@ -1058,6 +1155,7 @@ def main() -> None:
                 review_llm_workers=args.review_llm_workers,
                 max_llm_review_items=args.max_llm_review_items,
                 max_review_windows=args.max_review_windows,
+                max_selected_results=args.max_selected_results,
                 rank_preview_variants=args.rank_preview_variants,
                 adaptive_preview_settings=args.adaptive_preview_settings,
                 max_adaptive_preview_settings=args.max_adaptive_preview_settings,
@@ -1097,7 +1195,7 @@ def main() -> None:
                 keep_llama_cpp_server=args.keep_llama_cpp_server,
                 llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
                 llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
-                require_recommended_youtube_candidate=not args.allow_youtube_candidate_fallback,
+                artifact_retention=args.artifact_retention,
             )
         )
         selection_path = Path(args.workspace) / "selection_manifest.json"
@@ -1105,11 +1203,18 @@ def main() -> None:
         selected = manifest.get("selected")
         if selected:
             print(f"Wear skeleton JSON: {selected['selectedWearSkeletonPath']}")
+            selected_results = manifest.get("selectedResults")
+            if isinstance(selected_results, list) and len(selected_results) > 1:
+                print(f"Selected result options: {len(selected_results)}")
+                for index, option in enumerate(selected_results, start=1):
+                    if isinstance(option, dict):
+                        print(f"  Option {index}: {option.get('selectedWearSkeletonPath')}")
             selected_preview = manifest.get("selectedPreviewHtmlPath")
             if selected_preview:
                 print(f"Preview HTML: {Path(selected_preview).resolve()}")
         else:
             print("Selected Wear skeleton: none")
+            raise SystemExit(1)
         return
     if args.command == "reselect-baked":
         manifest = run_bake_and_rank_reselection(
@@ -1117,17 +1222,25 @@ def main() -> None:
             min_selected_score=args.min_selected_score,
             review_frames=args.review_frames,
             max_review_windows=args.max_review_windows,
+            max_selected_results=args.max_selected_results,
         )
         selection_path = Path(args.workspace) / "selection_manifest.json"
         print(f"Selection manifest: {selection_path.resolve()}")
         selected = manifest.get("selected")
         if selected:
             print(f"Wear skeleton JSON: {selected['selectedWearSkeletonPath']}")
+            selected_results = manifest.get("selectedResults")
+            if isinstance(selected_results, list) and len(selected_results) > 1:
+                print(f"Selected result options: {len(selected_results)}")
+                for index, option in enumerate(selected_results, start=1):
+                    if isinstance(option, dict):
+                        print(f"  Option {index}: {option.get('selectedWearSkeletonPath')}")
             selected_preview = manifest.get("selectedPreviewHtmlPath")
             if selected_preview:
                 print(f"Preview HTML: {Path(selected_preview).resolve()}")
         else:
             print("Selected Wear skeleton: none")
+            raise SystemExit(1)
         return
     if args.command == "trim-video":
         output_path = trim_video(

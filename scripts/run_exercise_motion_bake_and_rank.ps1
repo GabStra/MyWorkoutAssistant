@@ -10,12 +10,14 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
-    [int]$FallbackCandidates = 3,
+    [int]$FallbackCandidates = 12,
+    [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 2,
     [switch]$EstimateLocalOnly,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
+    [switch]$ExportWhamSmplPreview,
     [switch]$SkipSpinePose,
     [string]$SpinePoseJsonDir,
     [string]$SpinePoseCommand,
@@ -55,7 +57,7 @@ param(
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 12,
-    [int]$ReviewLlmWorkers = 3,
+    [int]$ReviewLlmWorkers = 4,
     [int]$MaxLlmReviewItems = 2,
     [int]$MaxReviewWindows = 3,
     [double]$MinSelectedScore = 0.55,
@@ -70,7 +72,7 @@ param(
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
     [bool]$LlamaCppDisableReasoning = $true,
-    [Nullable[int]]$LlamaCppCtxSize = 65536,
+    [Nullable[int]]$LlamaCppCtxSize = 24576,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [ValidateSet("on", "off", "auto")]
@@ -79,12 +81,12 @@ param(
     [string]$LlamaCppCacheTypeK = "q8_0",
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 1,
+    [Nullable[int]]$LlamaCppParallel = 4,
     [Nullable[int]]$LlamaCppThreadsHttp = 6,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 65536,
+    [Nullable[int]]$LlamaCppFitCtx = 24576,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
     [bool]$LlamaCppMmap = $false,
     [bool]$LlamaCppMlock = $true,
@@ -95,7 +97,9 @@ param(
     [switch]$NoLlamaCppAutoStartServer,
     [bool]$KeepLlamaCppServer = $true,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 90.0
+    [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [ValidateSet("debug", "full")]
+    [string]$ArtifactRetention = "debug"
 )
 
 $ErrorActionPreference = "Stop"
@@ -127,6 +131,10 @@ function Get-PythonCommand {
         }
         return $env:EXERCISE_MOTION_PYTHON
     }
+    $cudaPython = "C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
+    if ((Test-Path -LiteralPath $cudaPython) -and (Test-PythonRuntime $cudaPython)) {
+        return $cudaPython
+    }
     $pythonCommand = Get-Command python -ErrorAction Stop
     $pythonPath = if ($pythonCommand.Source) { $pythonCommand.Source } else { $pythonCommand.Path }
     if (-not (Test-PythonRuntime $pythonPath)) {
@@ -139,6 +147,10 @@ function Get-BasicPythonCommand {
     if (-not [string]::IsNullOrWhiteSpace($env:EXERCISE_MOTION_PYTHON)) {
         return $env:EXERCISE_MOTION_PYTHON
     }
+    $cudaPython = "C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
+    if (Test-Path -LiteralPath $cudaPython) {
+        return $cudaPython
+    }
     $pythonCommand = Get-Command python -ErrorAction Stop
     if ($pythonCommand.Source) {
         return $pythonCommand.Source
@@ -148,6 +160,9 @@ function Get-BasicPythonCommand {
 
 $repoRoot = Get-RepoRoot
 $resolvedCandidatesJson = Resolve-StrictPath $CandidatesJson
+if ($MaxSelectedResults -lt 1) {
+    throw "MaxSelectedResults must be at least 1."
+}
 
 if ($ReselectExisting) {
     $pythonCommand = Get-BasicPythonCommand
@@ -157,7 +172,8 @@ if ($ReselectExisting) {
         "--workspace", $Workspace,
         "--min-selected-score", "$MinSelectedScore",
         "--review-frames", "$ReviewFrames",
-        "--max-review-windows", "$MaxReviewWindows"
+        "--max-review-windows", "$MaxReviewWindows",
+        "--max-selected-results", "$MaxSelectedResults"
     )
     & $pythonCommand @argsList
     if ($LASTEXITCODE -ne 0) {
@@ -187,6 +203,7 @@ $argsList = @(
     "bake-and-rank",
     "--candidates-json", $resolvedCandidatesJson,
     "--fallback-candidates", "$FallbackCandidates",
+    "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--workspace", $Workspace,
     "--wham-repo-path", $resolvedWhamRepoPath,
@@ -212,7 +229,8 @@ $argsList = @(
     "--llama-cpp-n-predict", "$LlamaCppNPredict",
     "--llama-cpp-temperature", "$LlamaCppTemperature",
     "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
-    "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
+    "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
+    "--artifact-retention", $ArtifactRetention
 )
 if ($null -ne $LlamaCppTopP) {
     $argsList += @("--llama-cpp-top-p", "$LlamaCppTopP")
@@ -322,6 +340,9 @@ if ($NoReuseWhamCache) {
 if ($SkipMotionTuning) {
     $argsList += "--skip-motion-tuning"
 }
+if ($ExportWhamSmplPreview) {
+    $argsList += "--export-wham-smpl-preview"
+}
 if ($SkipSpinePose -or -not $EnableSpinePose) {
     $argsList += "--skip-spinepose"
 }
@@ -373,4 +394,39 @@ if ($SkipPreWhamSourceValidation) {
 & $pythonCommand @argsList
 if ($LASTEXITCODE -ne 0) {
     throw "exercise motion bake-and-rank failed with exit code $LASTEXITCODE."
+}
+
+$selectionPath = Join-Path $Workspace "selection_manifest.json"
+if (Test-Path -LiteralPath $selectionPath) {
+    $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+    if ($selection.selected) {
+        Write-Host "Wear skeleton JSON: $($selection.selected.selectedWearSkeletonPath)"
+        if ($selection.PSObject.Properties.Name -contains "selectedResults" -and @($selection.selectedResults).Count -gt 1) {
+            Write-Host "Selected result options: $(@($selection.selectedResults).Count)"
+            $optionIndex = 1
+            foreach ($option in @($selection.selectedResults)) {
+                Write-Host "  Option ${optionIndex}: $($option.selectedWearSkeletonPath)"
+                $optionIndex += 1
+            }
+        }
+        if ($selection.selected.PSObject.Properties.Name -contains "wearSkeletonSettingsBaked") {
+            Write-Host "Wear skeleton settings baked: $($selection.selected.wearSkeletonSettingsBaked)"
+        }
+        $selectedOptions = if ($selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
+            @($selection.selectedResults)
+        } else {
+            @($selection.selected)
+        }
+        $optionIndex = 1
+        foreach ($option in $selectedOptions) {
+            if ($option.wearSkeletonSettingsBaked -ne $true) {
+                $contractJson = $option.wearSkeletonPreviewSettingsContract | ConvertTo-Json -Depth 8
+                throw "Selected Wear skeleton option $optionIndex does not contain the baked preview settings required by Wear. Contract: $contractJson"
+            }
+            $optionIndex += 1
+        }
+    } else {
+        Write-Host "Selected Wear skeleton: none"
+        throw "Bake-and-rank completed without selecting a Wear skeleton. Inspect $selectionPath."
+    }
 }

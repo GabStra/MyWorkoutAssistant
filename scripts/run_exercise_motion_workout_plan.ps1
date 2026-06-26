@@ -2,13 +2,19 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$WorkoutPlanJson,
 
+    [string]$EquipmentJson,
     [string]$WorkspaceRoot = "build/exercise_motion/workout-plan",
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
-    [string]$PythonCommand = "python",
-    [int]$ResultsPerQuery = 10,
+    [string]$YouTubeCookiesPath,
+    [string]$YouTubePreviewCacheDir,
+    [string]$PythonCommand = "",
+    [int]$ResultsPerQuery = 100,
     [int]$MaxCandidates = 8,
     [int]$MetadataCandidatePoolSize = 24,
+    [int]$CandidateReviewBatchSize = 12,
+    [int]$CandidateReviewTargetSuitableCount = 1,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
     [switch]$UseDeepSeekQueryPlanner,
     [string]$DeepSeekApiKey,
     [string]$DeepSeekBaseUrl = "https://api.deepseek.com",
@@ -16,25 +22,33 @@ param(
     [int]$DeepSeekMaxQueries = 4,
     [int]$VisionCandidatesPerExercise = 8,
     [int]$VisionFramesPerCandidate = 6,
-    [int]$VisionMaxChunksPerCandidate = 5,
-    [int]$VisionDownloadWorkers = 3,
+    [int]$VisionMaxChunksPerCandidate = 0,
+    [int]$VisionDownloadWorkers = 8,
     [int]$VisionLlmWorkers = 1,
     [switch]$SkipVisionRanking,
     [switch]$SemanticGateWithLlamaCpp,
-    [Nullable[int]]$SemanticGateCandidatesPerExercise,
+    [switch]$SkipSemanticGate,
+    [Nullable[int]]$SemanticGateCandidatesPerExercise = 24,
+    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200,
     [double]$SemanticGateMinScore = 0.55,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
     [Nullable[int]]$PosePrefilterCandidatesPerExercise,
-    [double]$PosePrefilterSampleFps = 2.0,
-    [double]$PosePrefilterMaxSeconds = 90.0,
+    [double]$PosePrefilterSampleFps = 0.0,
+    [double]$PosePrefilterMaxSeconds = 0.0,
+    [ValidateSet("prefix", "spread", "full")]
+    [string]$PosePrefilterScanStrategy = "full",
     [double]$PosePrefilterWindowSeconds = 8.0,
     [double]$PosePrefilterOverlapSeconds = 4.0,
     [double]$PosePrefilterMinScore = 0.45,
-    [int]$PosePrefilterWorkers = 3,
+    [int]$PosePrefilterWorkers = 2,
+    [string]$PosePrefilterDevice = "cuda",
+    [int]$PosePrefilterBatchSize = 16,
     [int]$ExerciseWorkers = 2,
-    [int]$FallbackCandidates = 3,
+    [int]$FallbackCandidates = 12,
+    [int]$MaxSelectedResults = 1,
+    [int]$CandidateWorkers = 2,
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
@@ -56,12 +70,18 @@ param(
     [double]$SegmentMaxSeconds = 20.0,
     [int]$SegmentClassificationWorkers = 3,
     [switch]$RankPreviewVariants,
+    [switch]$AdaptivePreviewSettings,
+    [switch]$SkipAdaptivePreviewSettings,
+    [int]$MaxAdaptivePreviewSettings = 1,
     [switch]$SkipPreviewVariantRanking,
+    [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 6,
     [int]$MaxReviewWindows = 3,
     [double]$MinSelectedScore = 0.55,
     [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [ValidateSet("debug", "full")]
+    [string]$ArtifactRetention = "debug",
     [int]$ProgressIntervalSeconds = 15
 )
 
@@ -84,6 +104,21 @@ function ConvertTo-Slug {
         return "exercise"
     }
     return $slug
+}
+
+function Resolve-MotionPythonCommand {
+    param([string]$ConfiguredCommand)
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
+        return $ConfiguredCommand
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:EXERCISE_MOTION_PYTHON)) {
+        return $env:EXERCISE_MOTION_PYTHON
+    }
+    $cudaPython = "C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
+    if (Test-Path -LiteralPath $cudaPython) {
+        return $cudaPython
+    }
+    return "python"
 }
 
 function Invoke-PythonModule {
@@ -109,6 +144,54 @@ function New-ExerciseCandidateManifest {
     $manifest | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $OutPath -Encoding UTF8
 }
 
+function New-OneExercisePlanJson {
+    param(
+        [object]$Exercise,
+        [string]$OutPath
+    )
+    $plan = [ordered]@{
+        schemaVersion = 1
+        sourcePlanPath = $resolvedWorkoutPlanJson
+        exercises = @(
+            [ordered]@{
+                id = [string]($Exercise.exerciseId ?? $Exercise.id ?? $Exercise.slug ?? $Exercise.exerciseName ?? "exercise")
+                name = [string]($Exercise.exerciseName ?? $Exercise.name ?? $Exercise.id ?? "exercise")
+            }
+        )
+    }
+    $plan | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $OutPath -Encoding UTF8
+}
+
+function Copy-SelectedFile {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationDirectory,
+        [string]$DestinationFileName
+    )
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath)) {
+        return $null
+    }
+    New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
+    $destinationPath = Join-Path $DestinationDirectory $DestinationFileName
+    Copy-Item -LiteralPath $SourcePath -Destination $destinationPath -Force
+    return $destinationPath
+}
+
+function Remove-ExerciseIntermediateArtifacts {
+    param([object]$WorkItem)
+
+    foreach ($path in @($WorkItem.bakeWorkspace)) {
+        if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
+    foreach ($path in @($WorkItem.exercisePlanPath, $WorkItem.exerciseCandidatesPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+}
+
 function Start-BakeJob {
     param([object]$WorkItem)
 
@@ -116,18 +199,174 @@ function Start-BakeJob {
     $job = Start-Job -Name $WorkItem.exerciseSlug -ScriptBlock {
         param(
             [string]$PythonCommand,
-            [string[]]$Arguments,
-            [string]$LogPath
+            [string[]]$DiscoveryArguments,
+            [string[]]$BakeArguments,
+            [string]$LogPath,
+            [string]$CandidatesPath,
+            [string]$BakeWorkspace,
+            [int]$InitialTargetSuitableCount,
+            [int]$MaxTargetSuitableCount,
+            [int]$BaseMaxCandidates,
+            [int]$BaseVisionCandidates,
+            [int]$MaxSelectedResults
         )
 
         $ErrorActionPreference = "Continue"
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-        & $PythonCommand @Arguments *> $LogPath
-        [pscustomobject]@{
-            exitCode = $LASTEXITCODE
-            logPath = $LogPath
+
+        function Set-ArgumentValue {
+            param(
+                [string[]]$Arguments,
+                [string]$Name,
+                [string]$Value
+            )
+            $result = @()
+            $found = $false
+            for ($index = 0; $index -lt $Arguments.Count; $index += 1) {
+                $argument = $Arguments[$index]
+                if ($argument -eq $Name) {
+                    $result += @($Name, $Value)
+                    $found = $true
+                    $index += 1
+                    continue
+                }
+                $result += $argument
+            }
+            if (-not $found) {
+                $result += @($Name, $Value)
+            }
+            return [string[]]$result
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath
+
+        function Get-RecommendedCandidateCount {
+            param([string]$Path)
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return 0
+            }
+            try {
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $recommended = 0
+                foreach ($exercise in @($payload.exercises)) {
+                    foreach ($item in @($exercise.candidates)) {
+                        if ("$($item.status)".ToLowerInvariant() -eq "recommended") {
+                            $recommended += 1
+                        }
+                    }
+                }
+                return $recommended
+            } catch {
+                return 0
+            }
+        }
+
+        function Get-SelectedResultCount {
+            param([string]$Workspace)
+            $selectionPath = Join-Path $Workspace "selection_manifest.json"
+            if (-not (Test-Path -LiteralPath $selectionPath)) {
+                return 0
+            }
+            try {
+                $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+                if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
+                    return @($selection.selectedResults).Count
+                }
+                if ($selection -and $selection.selected) {
+                    return 1
+                }
+                return 0
+            } catch {
+                return 0
+            }
+        }
+
+        function Test-SelectionManifest {
+            param([string]$Workspace)
+            return (Test-Path -LiteralPath (Join-Path $Workspace "selection_manifest.json"))
+        }
+
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+        "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $attemptIndex = 1
+        while ($true) {
+            $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
+            $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
+            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
+            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
+            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+
+            "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
+            $discoveryExitCode = $LASTEXITCODE
+            if ($discoveryExitCode -ne 0) {
+                [pscustomobject]@{
+                    exitCode = $discoveryExitCode
+                    stage = "discovery"
+                    logPath = $LogPath
+                }
+                return
+            }
+
+            $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
+            if ($recommendedCount -le 0) {
+                if ($targetSuitableCount -ge $MaxTargetSuitableCount) {
+                    [pscustomobject]@{
+                        exitCode = 0
+                        stage = "discovery_no_recommended"
+                        logPath = $LogPath
+                    }
+                    return
+                }
+                $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+                $attemptIndex += 1
+                "[$(Get-Date -Format o)] no recommended candidates; expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                continue
+            }
+
+            "[$(Get-Date -Format o)] bake attempt $attemptIndex started with $recommendedCount recommended candidate(s)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            & $PythonCommand @BakeArguments *>> $LogPath
+            $bakeExitCode = $LASTEXITCODE
+
+            $selectedResultCount = Get-SelectedResultCount -Workspace $BakeWorkspace
+            if ($selectedResultCount -gt 0) {
+                if ($selectedResultCount -lt $MaxSelectedResults -and $targetSuitableCount -lt $MaxTargetSuitableCount) {
+                    $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+                    $attemptIndex += 1
+                    "[$(Get-Date -Format o)] selected $selectedResultCount/$MaxSelectedResults result(s); expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    continue
+                }
+                [pscustomobject]@{
+                    exitCode = 0
+                    stage = "bake"
+                    logPath = $LogPath
+                }
+                return
+            }
+            if ($bakeExitCode -ne 0 -and -not (Test-SelectionManifest -Workspace $BakeWorkspace)) {
+                [pscustomobject]@{
+                    exitCode = $bakeExitCode
+                    stage = "bake"
+                    logPath = $LogPath
+                }
+                return
+            }
+            if ($bakeExitCode -ne 0) {
+                "[$(Get-Date -Format o)] bake returned exit code $bakeExitCode after writing a no-selection manifest; expanding review target if possible" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            }
+
+            if ($targetSuitableCount -ge $MaxTargetSuitableCount) {
+                [pscustomobject]@{
+                    exitCode = 0
+                    stage = "bake_no_selection"
+                    logPath = $LogPath
+                }
+                return
+            }
+
+            $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+            $attemptIndex += 1
+            "[$(Get-Date -Format o)] no selected Wear skeleton; expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        }
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
 }
@@ -155,7 +394,8 @@ function Complete-BakeJob {
     if ($status -eq "completed" -and (-not $jobResult -or $jobResult.exitCode -ne 0)) {
         $status = "failed"
         $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
-        $errorMessage = "python command failed with exit code $exitCode. See log: $($workItem.logPath)"
+        $stage = if ($jobResult -and $jobResult.stage) { $jobResult.stage } else { "unknown" }
+        $errorMessage = "python $stage command failed with exit code $exitCode. See log: $($workItem.logPath)"
     }
 
     if ($status -eq "failed") {
@@ -168,17 +408,151 @@ function Complete-BakeJob {
         $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
     }
     $selected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
-    if ($status -eq "completed" -and -not $selected) {
+    $selectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
+        @($selection.selectedResults)
+    } elseif ($selected) {
+        @($selected)
+    } else {
+        @()
+    }
+    if ($status -eq "completed" -and $selectedOptions.Count -eq 0) {
         $status = "no_selection"
         $errorMessage = "No Wear skeleton was selected."
     }
+    if ($status -eq "completed") {
+        $optionIndex = 1
+        foreach ($option in $selectedOptions) {
+            if ($option.wearSkeletonSettingsBaked -ne $true) {
+                $status = "failed"
+                $errorMessage = "Selected Wear skeleton option $optionIndex does not contain baked preview settings required by Wear."
+                break
+            }
+            $optionIndex += 1
+        }
+    }
+
+    $candidateCount = $workItem.candidateCount
+    if (Test-Path -LiteralPath $workItem.exerciseCandidatesPath) {
+        try {
+            $exerciseCandidateManifest = Get-Content -LiteralPath $workItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+            if ($exerciseCandidateManifest.exercises -and $exerciseCandidateManifest.exercises.Count -gt 0) {
+                $candidateCount = @($exerciseCandidateManifest.exercises[0].candidates).Count
+            }
+        } catch {
+            if ($null -eq $candidateCount) {
+                $candidateCount = 0
+            }
+        }
+    }
+
+    $selectedOutputDir = Join-Path $workItem.exerciseWorkspace "selected"
+    $selectedWearSkeletonPath = $null
+    $selectedPreviewVideoPath = $null
+    $selectedInputVideoPath = $null
+    $selectedInputVideoSourcePath = $null
+    $selectedInputVideoMissing = $false
+    $selectedSelectionManifestPath = $null
+    $selectedDebugDir = Join-Path $selectedOutputDir "debug"
+    $selectedCandidateDebugPath = $null
+    $selectedCandidateDecisionsPath = $null
+    $selectedResultOutputs = @()
+    if ($status -eq "completed" -and $selectedOptions.Count -gt 0) {
+        $selectedFilePrefix = $workItem.exerciseSlug -replace "-", "_"
+        $selectedSelectionManifestPath = Copy-SelectedFile `
+            -SourcePath $selectionPath `
+            -DestinationDirectory $selectedOutputDir `
+            -DestinationFileName "selection_manifest.json"
+        $selectedCandidateDebugPath = Copy-SelectedFile `
+            -SourcePath $workItem.exerciseCandidatesPath `
+            -DestinationDirectory $selectedDebugDir `
+            -DestinationFileName "youtube_candidates.full.json"
+        $candidateDecisionsPath = Join-Path (Split-Path -Parent $workItem.exerciseCandidatesPath) "candidate_decisions.jsonl"
+        $selectedCandidateDecisionsPath = Copy-SelectedFile `
+            -SourcePath $candidateDecisionsPath `
+            -DestinationDirectory $selectedDebugDir `
+            -DestinationFileName "candidate_decisions.jsonl"
+        $optionIndex = 1
+        foreach ($option in $selectedOptions) {
+            $optionSuffix = if ($optionIndex -eq 1) { "" } else { "_option_{0:D2}" -f $optionIndex }
+            $optionWearSkeletonPath = Copy-SelectedFile `
+                -SourcePath $option.selectedWearSkeletonPath `
+                -DestinationDirectory $selectedOutputDir `
+                -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_wear_skeleton.json"
+            $optionPreviewVideoPath = $null
+            if ($option.selectedReviewVideoPath) {
+                $optionPreviewVideoPath = Copy-SelectedFile `
+                    -SourcePath $option.selectedReviewVideoPath `
+                    -DestinationDirectory $selectedOutputDir `
+                    -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_preview.webm"
+            }
+            $optionInputVideoSourcePath = if ($option.PSObject.Properties.Name -contains "selectedInputVideoPath") {
+                $option.selectedInputVideoPath
+            } elseif ($option.PSObject.Properties.Name -contains "copiedInputVideoPath") {
+                $option.copiedInputVideoPath
+            } else {
+                $null
+            }
+            $optionInputVideoPath = $null
+            $optionInputVideoMissing = $false
+            if ($optionInputVideoSourcePath) {
+                $optionInputVideoPath = Copy-SelectedFile `
+                    -SourcePath $optionInputVideoSourcePath `
+                    -DestinationDirectory $selectedOutputDir `
+                    -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_input.mp4"
+                if (-not $optionInputVideoPath) {
+                    $optionInputVideoMissing = $true
+                    Write-Warning "Selected input video option $optionIndex was not copied for '$($workItem.exerciseName)': $optionInputVideoSourcePath"
+                }
+            }
+            $optionPreviewHtmlPath = $null
+            if ($option.PSObject.Properties.Name -contains "selectedPreviewHtmlPath" -and $option.selectedPreviewHtmlPath) {
+                $optionPreviewHtmlPath = Copy-SelectedFile `
+                    -SourcePath $option.selectedPreviewHtmlPath `
+                    -DestinationDirectory $selectedOutputDir `
+                    -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_preview.html"
+            }
+            $selectedResultOutputs += [ordered]@{
+                optionIndex = $optionIndex
+                label = if ($option.PSObject.Properties.Name -contains "manualSelectionLabel") { $option.manualSelectionLabel } else { "Option $optionIndex" }
+                selectedWearSkeletonPath = $optionWearSkeletonPath
+                selectedPreviewVideoPath = $optionPreviewVideoPath
+                selectedPreviewHtmlPath = $optionPreviewHtmlPath
+                selectedSourceVideoPath = $optionInputVideoPath
+                selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
+                selectedSourceVideoMissing = $optionInputVideoMissing
+                selectionScore = if ($option.PSObject.Properties.Name -contains "selectionScore") { $option.selectionScore } else { $null }
+                candidateTitle = if ($option.PSObject.Properties.Name -contains "candidateTitle") { $option.candidateTitle } else { $null }
+            }
+            if ($optionIndex -eq 1) {
+                $selectedWearSkeletonPath = $optionWearSkeletonPath
+                $selectedPreviewVideoPath = $optionPreviewVideoPath
+                $selectedInputVideoPath = $optionInputVideoPath
+                $selectedInputVideoSourcePath = $optionInputVideoSourcePath
+                $selectedInputVideoMissing = $optionInputVideoMissing
+            }
+            $optionIndex += 1
+        }
+        Remove-ExerciseIntermediateArtifacts -WorkItem $workItem
+    }
 
     Write-Host "[$status] $($workItem.exerciseName)"
-    if ($selected -and $selected.selectedWearSkeletonPath) {
-        Write-Host "  Wear skeleton JSON: $($selected.selectedWearSkeletonPath)"
+    if ($selectedWearSkeletonPath) {
+        Write-Host "  Wear skeleton JSON: $selectedWearSkeletonPath"
+        if ($selected.PSObject.Properties.Name -contains "wearSkeletonSettingsBaked") {
+            Write-Host "  Wear skeleton settings baked: $($selected.wearSkeletonSettingsBaked)"
+        }
     }
-    if ($selection -and $selection.selectedPreviewHtmlPath) {
-        Write-Host "  Preview HTML: $($selection.selectedPreviewHtmlPath)"
+    if ($selectedPreviewVideoPath) {
+        Write-Host "  Selected preview video: $selectedPreviewVideoPath"
+    }
+    if ($selectedInputVideoPath) {
+        Write-Host "  Selected input video: $selectedInputVideoPath"
+    }
+    if ($selectedResultOutputs.Count -gt 1) {
+        Write-Host "  Selected result options: $($selectedResultOutputs.Count)"
+        foreach ($option in $selectedResultOutputs) {
+            Write-Host "    Option $($option.optionIndex): $($option.selectedWearSkeletonPath)"
+        }
     }
 
     return [ordered]@{
@@ -186,13 +560,18 @@ function Complete-BakeJob {
         exerciseName = $workItem.exerciseName
         status = $status
         error = $errorMessage
-        candidateCount = $workItem.candidateCount
-        candidatesJsonPath = $workItem.exerciseCandidatesPath
-        selectionManifestPath = $selectionPath
+        candidateCount = $candidateCount
+        candidatesJsonPath = if ($status -eq "completed") { $null } else { $workItem.exerciseCandidatesPath }
+        selectionManifestPath = if ($status -eq "completed") { $selectedSelectionManifestPath } else { $selectionPath }
         logPath = $workItem.logPath
-        selectedWearSkeletonPath = if ($selected) { $selected.selectedWearSkeletonPath } else { $null }
-        selectedPreviewHtmlPath = if ($selection) { $selection.selectedPreviewHtmlPath } else { $null }
-        selectedSourceVideoPath = if ($selected) { $selected.copiedInputVideoPath } else { $null }
+        selectedWearSkeletonPath = $selectedWearSkeletonPath
+        selectedPreviewVideoPath = $selectedPreviewVideoPath
+        selectedSourceVideoPath = $selectedInputVideoPath
+        selectedSourceVideoOriginalPath = $selectedInputVideoSourcePath
+        selectedSourceVideoMissing = $selectedInputVideoMissing
+        selectedResults = $selectedResultOutputs
+        selectedCandidateDebugPath = $selectedCandidateDebugPath
+        selectedCandidateDecisionsPath = $selectedCandidateDecisionsPath
     }
 }
 
@@ -235,12 +614,34 @@ function Write-ProgressSnapshot {
 }
 
 $repoRoot = Get-RepoRoot
+$PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 $resolvedWorkoutPlanJson = Resolve-StrictPath $WorkoutPlanJson
+if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+    $EquipmentJson = Resolve-StrictPath $EquipmentJson
+}
+if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+    $YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
+}
 if ($ExerciseWorkers -lt 1) {
     throw "ExerciseWorkers must be at least 1."
 }
 if ($ProgressIntervalSeconds -lt 1) {
     throw "ProgressIntervalSeconds must be at least 1."
+}
+if ($CandidateReviewTargetSuitableCount -lt 1) {
+    throw "CandidateReviewTargetSuitableCount must be at least 1."
+}
+if ($MaxSelectedResults -lt 1) {
+    throw "MaxSelectedResults must be at least 1."
+}
+$resolvedMaxCandidateReviewTargetSuitableCount = if ($null -ne $MaxCandidateReviewTargetSuitableCount) {
+    [Math]::Max([int]$MaxCandidateReviewTargetSuitableCount, $MaxSelectedResults)
+} else {
+    [Math]::Max($FallbackCandidates, $CandidateReviewTargetSuitableCount, $MaxSelectedResults)
+}
+$initialTargetSuitableCount = [Math]::Max($CandidateReviewTargetSuitableCount, $MaxSelectedResults)
+if ($resolvedMaxCandidateReviewTargetSuitableCount -lt $initialTargetSuitableCount) {
+    throw "MaxCandidateReviewTargetSuitableCount must be greater than or equal to CandidateReviewTargetSuitableCount and MaxSelectedResults."
 }
 
 if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
@@ -258,79 +659,105 @@ $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
-$candidatesPath = Join-Path $resolvedWorkspaceRoot "youtube_candidates.json"
+$sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
+    Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
+} else {
+    $YouTubePreviewCacheDir
+}
+New-Item -ItemType Directory -Force -Path $sharedPreviewCachePath | Out-Null
+$exerciseListPath = Join-Path $resolvedWorkspaceRoot "workout_plan_exercises.json"
 $summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
 
-$youtubeArgs = @(
+$listArgs = @(
+    "-m", "exercise_motion_pkg.cli",
+    "list-workout-plan-exercises",
+    "--workout-plan-json", $resolvedWorkoutPlanJson,
+    "--out-json", $exerciseListPath
+)
+if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+    $listArgs += @("--equipment-json", $EquipmentJson)
+}
+if ($IncludeDisabled) {
+    $listArgs += "--include-disabled"
+}
+Invoke-PythonModule -Arguments $listArgs
+
+$exerciseList = Get-Content -LiteralPath $exerciseListPath -Raw | ConvertFrom-Json
+if (-not $exerciseList.exercises -or $exerciseList.exercises.Count -eq 0) {
+    throw "No exercises were found in the workout plan: $resolvedWorkoutPlanJson"
+}
+
+$youtubeBaseArgs = @(
     "-m", "exercise_motion_pkg.cli",
     "find-youtube-videos",
-    "--workout-plan-json", $resolvedWorkoutPlanJson,
-    "--out-json", $candidatesPath,
     "--results-per-query", "$ResultsPerQuery",
     "--max-candidates", "$MaxCandidates",
     "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
+    "--candidate-review-batch-size", "$CandidateReviewBatchSize",
+    "--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
-    "--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
-if (-not $SkipVisionRanking) {
-    $youtubeArgs += "--rank-with-vision"
+if ($VisionMaxChunksPerCandidate -gt 0) {
+    $youtubeBaseArgs += @("--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate")
 }
-if ($SemanticGateWithLlamaCpp) {
-    $youtubeArgs += @(
+if (-not $SkipVisionRanking) {
+    $youtubeBaseArgs += "--rank-with-vision"
+}
+if ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate) {
+    $youtubeBaseArgs += @(
         "--semantic-gate-with-llama-cpp",
         "--semantic-gate-min-score", "$SemanticGateMinScore"
     )
     if ($null -ne $SemanticGateCandidatesPerExercise) {
-        $youtubeArgs += @("--semantic-gate-candidates-per-exercise", "$SemanticGateCandidatesPerExercise")
+        $youtubeBaseArgs += @("--semantic-gate-candidates-per-exercise", "$SemanticGateCandidatesPerExercise")
+    }
+    if ($null -ne $SemanticGateMaxCandidatesPerExercise) {
+        $youtubeBaseArgs += @("--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise")
     }
 }
 if ($UseDeepSeekQueryPlanner) {
-    $youtubeArgs += @(
+    $youtubeBaseArgs += @(
         "--use-deepseek-query-planner",
         "--deepseek-base-url", $DeepSeekBaseUrl,
         "--deepseek-model", $DeepSeekModel,
         "--deepseek-max-queries", "$DeepSeekMaxQueries"
     )
     if (-not [string]::IsNullOrWhiteSpace($DeepSeekApiKey)) {
-        $youtubeArgs += @("--deepseek-api-key", $DeepSeekApiKey)
+        $youtubeBaseArgs += @("--deepseek-api-key", $DeepSeekApiKey)
     }
 }
 if ($VisionFramesPerCandidate -gt 0) {
-    $youtubeArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
+    $youtubeBaseArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
+}
+if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+    $youtubeBaseArgs += @("--youtube-cookies", $YouTubeCookiesPath)
 }
 if ($PosePrefilter -and -not $SkipPosePrefilter) {
-    $youtubeArgs += @(
+    $youtubeBaseArgs += @(
         "--pose-prefilter",
         "--pose-prefilter-model", $PosePrefilterModel,
         "--pose-prefilter-sample-fps", "$PosePrefilterSampleFps",
         "--pose-prefilter-max-seconds", "$PosePrefilterMaxSeconds",
+        "--pose-prefilter-scan-strategy", $PosePrefilterScanStrategy,
         "--pose-prefilter-window-seconds", "$PosePrefilterWindowSeconds",
         "--pose-prefilter-overlap-seconds", "$PosePrefilterOverlapSeconds",
         "--pose-prefilter-min-score", "$PosePrefilterMinScore",
-        "--pose-prefilter-workers", "$PosePrefilterWorkers"
+        "--pose-prefilter-workers", "$PosePrefilterWorkers",
+        "--pose-prefilter-device", $PosePrefilterDevice,
+        "--pose-prefilter-batch-size", "$PosePrefilterBatchSize"
     )
     if ($null -ne $PosePrefilterCandidatesPerExercise) {
-        $youtubeArgs += @("--pose-prefilter-candidates-per-exercise", "$PosePrefilterCandidatesPerExercise")
+        $youtubeBaseArgs += @("--pose-prefilter-candidates-per-exercise", "$PosePrefilterCandidatesPerExercise")
     }
-}
-if ($IncludeDisabled) {
-    $youtubeArgs += "--include-disabled"
-}
-
-Invoke-PythonModule -Arguments $youtubeArgs
-
-$candidateManifest = Get-Content -LiteralPath $candidatesPath -Raw | ConvertFrom-Json
-if (-not $candidateManifest.exercises -or $candidateManifest.exercises.Count -eq 0) {
-    throw "No exercises were found in the workout plan candidate manifest: $candidatesPath"
 }
 
 $workItems = @()
 $usedSlugs = @{}
 $exerciseIndex = 0
-foreach ($exercise in $candidateManifest.exercises) {
+foreach ($exercise in $exerciseList.exercises) {
     $exerciseName = [string]($exercise.exerciseName ?? $exercise.name ?? $exercise.id ?? "exercise")
     $exerciseId = [string]($exercise.exerciseId ?? $exercise.id ?? (ConvertTo-Slug $exerciseName))
     $slugSource = [string]($exercise.slug ?? $exerciseId ?? $exerciseName)
@@ -342,19 +769,29 @@ foreach ($exercise in $candidateManifest.exercises) {
         $usedSlugs[$exerciseSlug] = 1
     }
     $exerciseWorkspace = Join-Path $resolvedWorkspaceRoot $exerciseSlug
+    $exercisePlanPath = Join-Path $exerciseWorkspace "exercise_plan.json"
     $exerciseCandidatesPath = Join-Path $exerciseWorkspace "youtube_candidates.json"
+    $previewCachePath = $sharedPreviewCachePath
     $bakeWorkspace = Join-Path $exerciseWorkspace "bake"
     $logPath = Join-Path $exerciseWorkspace "bake.log"
-    $candidateCount = if ($exercise.candidates) { @($exercise.candidates).Count } else { 0 }
 
     New-Item -ItemType Directory -Force -Path $exerciseWorkspace | Out-Null
-    New-ExerciseCandidateManifest -Exercise $exercise -OutPath $exerciseCandidatesPath
+    New-OneExercisePlanJson -Exercise $exercise -OutPath $exercisePlanPath
+
+    $discoveryArgs = @($youtubeBaseArgs)
+    $discoveryArgs += @(
+        "--workout-plan-json", $exercisePlanPath,
+        "--out-json", $exerciseCandidatesPath,
+        "--youtube-preview-cache-dir", $previewCachePath
+    )
 
     $bakeArgs = @(
         "-m", "exercise_motion_pkg.cli",
         "bake-and-rank",
         "--candidates-json", $exerciseCandidatesPath,
         "--fallback-candidates", "$FallbackCandidates",
+        "--max-selected-results", "$MaxSelectedResults",
+        "--candidate-workers", "$CandidateWorkers",
         "--workspace", $bakeWorkspace,
         "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
@@ -368,12 +805,19 @@ foreach ($exercise in $candidateManifest.exercises) {
         "--review-frames", "$ReviewFrames",
         "--max-review-windows", "$MaxReviewWindows",
         "--min-selected-score", "$MinSelectedScore",
-        "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
+        "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
+        "--artifact-retention", $ArtifactRetention
     )
-    if (-not $SkipPreviewVariantRanking) {
+    if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
         $bakeArgs += "--rank-preview-variants"
     }
-    if ($SkipSupportDominanceClassification) {
+    if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants)) {
+        $bakeArgs += @(
+            "--adaptive-preview-settings",
+            "--max-adaptive-preview-settings", "$MaxAdaptivePreviewSettings"
+        )
+    }
+    if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification) {
         $bakeArgs += "--no-classify-support-dominance"
     }
     if ($null -ne $SegmentWindowSeconds) {
@@ -411,16 +855,28 @@ foreach ($exercise in $candidateManifest.exercises) {
     if ($SkipSourceSegmentDetection) {
         $bakeArgs += "--skip-source-segment-detection"
     }
+    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+        $bakeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
+    }
 
     $workItems += [pscustomobject]@{
         index = $exerciseIndex
         exerciseId = $exerciseId
         exerciseName = $exerciseName
         exerciseSlug = $exerciseSlug
-        candidateCount = $candidateCount
+        candidateCount = $null
+        exerciseWorkspace = $exerciseWorkspace
+        exercisePlanPath = $exercisePlanPath
         exerciseCandidatesPath = $exerciseCandidatesPath
+        previewCachePath = $previewCachePath
         bakeWorkspace = $bakeWorkspace
         logPath = $logPath
+        candidateReviewTargetSuitableCount = $initialTargetSuitableCount
+        maxCandidateReviewTargetSuitableCount = $resolvedMaxCandidateReviewTargetSuitableCount
+        maxSelectedResults = $MaxSelectedResults
+        maxCandidates = $MaxCandidates
+        visionCandidatesPerExercise = $VisionCandidatesPerExercise
+        discoveryArgs = [string[]]$discoveryArgs
         bakeArgs = [string[]]$bakeArgs
     }
     $exerciseIndex += 1
@@ -472,12 +928,14 @@ $summary = [ordered]@{
     schemaVersion = 1
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
+    equipmentJsonPath = if ([string]::IsNullOrWhiteSpace($EquipmentJson)) { $null } else { $EquipmentJson }
     workspaceRoot = $resolvedWorkspaceRoot
-    youtubeCandidatesJsonPath = $candidatesPath
+    exerciseListJsonPath = $exerciseListPath
+    maxSelectedResults = $MaxSelectedResults
     exercises = $summaryItems
 }
 $summary | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 
 Write-Host "Workout plan JSON: $resolvedWorkoutPlanJson"
-Write-Host "YouTube candidates JSON: $candidatesPath"
+Write-Host "Workout-plan exercises JSON: $exerciseListPath"
 Write-Host "Summary JSON: $summaryPath"
