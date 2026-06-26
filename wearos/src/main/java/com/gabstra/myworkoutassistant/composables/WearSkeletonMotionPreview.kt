@@ -16,6 +16,7 @@ fun WearSkeletonMotionPreview(
     viewPitchDegrees: Float = 15f,
     orbitView: Boolean = true,
     loopRestartFadeMillis: Int = WearMovementLoopRestartFadeMillis,
+    dragRotationEnabled: Boolean = true,
 ) {
     SkeletonMotionPreview(
         skeletonJson = skeletonJson,
@@ -27,5 +28,6 @@ fun WearSkeletonMotionPreview(
         viewPitchDegrees = viewPitchDegrees,
         orbitView = orbitView,
         loopRestartFadeMillis = loopRestartFadeMillis,
+        dragRotationEnabled = dragRotationEnabled,
     )
 }

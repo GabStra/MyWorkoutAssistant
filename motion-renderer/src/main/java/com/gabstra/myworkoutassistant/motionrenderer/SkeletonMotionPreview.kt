@@ -7,6 +7,9 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -18,11 +21,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.viewinterop.AndroidView
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.google.android.filament.Camera
@@ -61,6 +69,7 @@ private const val FilamentColorOffsetBytes = 3 * 4
 private const val KneeAndHipJointCapRadius = 0.060f
 private const val AnkleJointCapRadius = 0.042f
 private const val VisibleShoeAnkleJointCapRadius = 0.026f
+private const val DragRotationDegreesPerPixel = 0.45f
 private const val SkeletonPreviewContentDescription = "Exercise movement preview"
 private val SkeletonTintLightDirection = WearSkeletonVec3(-0.42f, 0.72f, 0.55f).normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
 
@@ -238,6 +247,8 @@ fun SkeletonMotionPreview(
     viewPitchDegrees: Float = 15f,
     orbitView: Boolean = false,
     loopRestartFadeMillis: Int = 0,
+    dragRotationEnabled: Boolean = false,
+    dragRotationDegreesPerPixel: Float = DragRotationDegreesPerPixel,
 ) {
     val skeleton = remember(skeletonJson) {
         parseWearSkeleton(skeletonJson)
@@ -248,6 +259,38 @@ fun SkeletonMotionPreview(
     var playbackVisibility by remember(skeleton.frames.size) { mutableFloatStateOf(1f) }
     var frameIndex by remember(skeleton.frames.size) { mutableIntStateOf(if (animated) 0 else min(12, skeleton.frames.lastIndex)) }
     var orbitYawDegrees by remember(baseViewYawDegrees) { mutableFloatStateOf(baseViewYawDegrees) }
+    var dragYawOffsetDegrees by remember(skeletonJson, baseViewYawDegrees) { mutableFloatStateOf(0f) }
+    val dragRotationState = rememberDraggableState { delta ->
+        dragYawOffsetDegrees += delta * dragRotationDegreesPerPixel
+    }
+    val horizontalDragNestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                return Offset(x = available.x, y = 0f)
+            }
+
+            override suspend fun onPostFling(
+                consumed: Velocity,
+                available: Velocity,
+            ): Velocity {
+                return Velocity(x = available.x, y = 0f)
+            }
+        }
+    }
+    val dragRotationModifier = if (dragRotationEnabled) {
+        Modifier
+            .nestedScroll(horizontalDragNestedScrollConnection)
+            .draggable(
+                state = dragRotationState,
+                orientation = Orientation.Horizontal,
+            )
+    } else {
+        Modifier
+    }
 
     LaunchedEffect(animated, orbitView, skeleton.fps, skeleton.frames.size, baseViewYawDegrees, loopRestartFadeMillis) {
         if (!animated && !orbitView) {
@@ -285,20 +328,29 @@ fun SkeletonMotionPreview(
         orbitYawDegrees
     } else {
         baseViewYawDegrees
-    }
+    } + dragYawOffsetDegrees
     val visiblePalette = remember(palette, backgroundColor, playbackVisibility) {
         palette.withVisibility(playbackVisibility, backgroundColor)
     }
 
-    WearSkeletonRenderer(
-        skeleton = skeleton,
-        frameIndex = frameIndex,
-        viewYawDegrees = resolvedYawDegrees,
-        viewPitchDegrees = baseViewPitchDegrees,
-        palette = visiblePalette,
-        backgroundColor = backgroundColor,
-        modifier = modifier,
-    )
+    Box(modifier = modifier.fillMaxSize()) {
+        WearSkeletonRenderer(
+            skeleton = skeleton,
+            frameIndex = frameIndex,
+            viewYawDegrees = resolvedYawDegrees,
+            viewPitchDegrees = baseViewPitchDegrees,
+            palette = visiblePalette,
+            backgroundColor = backgroundColor,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (dragRotationEnabled) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(dragRotationModifier),
+            )
+        }
+    }
 }
 
 private fun resolveLoopPlayback(
