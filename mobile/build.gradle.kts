@@ -115,6 +115,7 @@ android {
         }
         named("androidTest") {
             kotlin.directories.add("src/androidTest/java")
+            assets.directories.add(rootProject.file("testdata/e2e-movement-assets").path)
         }
         named("test") {
             kotlin.directories.add("src/test/java")
@@ -156,10 +157,10 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
 
     // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
 
     // Google / Wear
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
@@ -172,12 +173,12 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")
-    implementation("com.openai:openai-java:4.39.1")
+    implementation("com.openai:openai-java:4.41.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
     implementation("com.google.code.gson:gson:2.14.0")
-    implementation("com.patrykandpatrick.vico:compose:3.2.2")
+    implementation("com.patrykandpatrick.vico:compose:3.2.3")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
@@ -186,7 +187,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-rc01")
     androidTestImplementation("androidx.concurrent:concurrent-futures:1.3.0")
     androidTestImplementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
 
