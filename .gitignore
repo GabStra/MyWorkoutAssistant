@@ -30,6 +30,9 @@ repomix-output.xml
 mobile/release/baselineProfiles/0/mobile-release.dm
 mobile/release/
 test_output.txt
+dump.txt
+MUJOCO_LOG.TXT
+merged_workout_store_backup.json
 wearos/wearos/build/e2e-logs/
 .env
 .env.*
@@ -542,10 +545,18 @@ scripts/ingest_specstory_to_pieces_mcp.py
 # Python test artifacts
 .pytest_cache/
 .pytest_tmp/
+.pytest_base*/
 pytest_tmp*/
 pytest-cache-files-*/
 *.egg-info/
 wearos/src/debug/assets/exercise_motion/
+
+# Local scratch outputs
+/.agents/
+/tmp/
+/$inputDir/
+.git-group*.patch
+tmp*.tmp*
 
 # Local model downloads
 yolo*-pose.pt
