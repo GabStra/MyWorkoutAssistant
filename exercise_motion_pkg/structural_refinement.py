@@ -61,6 +61,10 @@ SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
 SYMMETRY_MAX_POSE_ERROR_BODY_RATIO = 0.16
+ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO = 0.70
+ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION = 0.90
+ARM_MOTION_DRIVEN_SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.20
+ARM_MOTION_DRIVEN_SYMMETRY_MAX_POSE_ERROR_BODY_RATIO = 0.38
 ROOT_VERTICAL_MOTION_PRESERVATION_MIN_RANGE_METERS = 0.04
 ROOT_VERTICAL_MOTION_PRESERVATION_RANGE_RATIO = 0.85
 ROOT_VERTICAL_MOTION_JOINTS = ("pelvis", "hips", "root")
@@ -3041,7 +3045,13 @@ def _bilateral_motion_mode(
         clip,
         joint_pairs=tuple(zip(left_joints, right_joints)),
     )
-    pose_symmetric = bool(pose_symmetry.get("eligible"))
+    motion_driven_pose_acceptance = _motion_driven_pose_symmetry_acceptance(
+        group_name=group_name,
+        motion_ratio=ratio,
+        correlation=correlation,
+        pose_symmetry=pose_symmetry,
+    )
+    pose_symmetric = bool(pose_symmetry.get("eligible")) or bool(motion_driven_pose_acceptance.get("accepted"))
     motion_symmetric = ratio >= SYMMETRY_MIN_RATIO and correlation >= max(0.80, SYMMETRY_MIN_CORRELATION)
     same_phase = motion_symmetric and pose_symmetric
     if same_phase:
@@ -3067,7 +3077,51 @@ def _bilateral_motion_mode(
         "correlation": correlation,
         "motionSymmetric": motion_symmetric,
         "poseSymmetry": pose_symmetry,
+        "motionDrivenPoseSymmetryAcceptance": motion_driven_pose_acceptance,
         "symmetryStrength": symmetry_strength,
+    }
+
+
+def _motion_driven_pose_symmetry_acceptance(
+    *,
+    group_name: str,
+    motion_ratio: float,
+    correlation: float,
+    pose_symmetry: dict[str, object],
+) -> dict[str, object]:
+    if group_name != "arms":
+        return {"accepted": False, "reason": "only_applies_to_arms"}
+    if motion_ratio < ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO:
+        return {
+            "accepted": False,
+            "reason": "arm_motion_ratio_too_low",
+            "minMotionRatio": ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO,
+        }
+    if correlation < ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION:
+        return {
+            "accepted": False,
+            "reason": "arm_motion_correlation_too_low",
+            "minCorrelation": ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION,
+        }
+    median_error = _optional_float(pose_symmetry.get("medianErrorBodyRatio"))
+    max_error = _optional_float(pose_symmetry.get("maxErrorBodyRatio"))
+    if median_error is None or max_error is None:
+        return {"accepted": False, "reason": "missing_pose_error_metrics"}
+    accepted = (
+        median_error <= ARM_MOTION_DRIVEN_SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO
+        and max_error <= ARM_MOTION_DRIVEN_SYMMETRY_MAX_POSE_ERROR_BODY_RATIO
+    )
+    return {
+        "accepted": accepted,
+        "reason": "same_phase_arm_motion_overrides_moderate_pose_asymmetry"
+        if accepted
+        else "arm_pose_asymmetry_too_large",
+        "medianErrorBodyRatio": median_error,
+        "maxErrorBodyRatio": max_error,
+        "maxMedianErrorBodyRatio": ARM_MOTION_DRIVEN_SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO,
+        "maxAllowedErrorBodyRatio": ARM_MOTION_DRIVEN_SYMMETRY_MAX_POSE_ERROR_BODY_RATIO,
+        "minMotionRatio": ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO,
+        "minCorrelation": ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION,
     }
 
 
@@ -3143,6 +3197,15 @@ def _mirrored_pose_symmetry(
         "maxAllowedErrorBodyRatio": SYMMETRY_MAX_POSE_ERROR_BODY_RATIO,
         "jointPairs": pair_payload,
     }
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    return None
 
 
 def _dominant_local_target_offset(

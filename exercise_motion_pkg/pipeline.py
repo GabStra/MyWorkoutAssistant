@@ -104,6 +104,7 @@ class GenerateRequest:
     non_dominant_damping: float = 1.0
     non_dominant_radius_scale: float = 1.0
     motion_tuning_enabled: bool = True
+    export_wham_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
     youtube_cookies: Path | None = None
@@ -297,13 +298,17 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             coordinate_space=WHAM_COORDINATE_SPACE,
         )
         record_timing("exportWhamRetargetSourceSeconds", stage_started)
-        stage_started = time.perf_counter()
-        smpl_preview_sequence = load_wham_smpl_mesh_sequence(
-            wham_results_pkl=wham_results_pkl,
-            body_model_root=request.body_model_root.expanduser().resolve(),
-            coordinate_space=WHAM_COORDINATE_SPACE,
-        )
-        record_timing("loadWhamSmplMeshSeconds", stage_started)
+        if request.export_wham_smpl_preview:
+            stage_started = time.perf_counter()
+            smpl_preview_sequence = load_wham_smpl_mesh_sequence(
+                wham_results_pkl=wham_results_pkl,
+                body_model_root=request.body_model_root.expanduser().resolve(),
+                coordinate_space=WHAM_COORDINATE_SPACE,
+            )
+            record_timing("loadWhamSmplMeshSeconds", stage_started)
+        else:
+            timings["loadWhamSmplMeshSeconds"] = 0.0
+            timings["whamSmplPreview"] = {"enabled": False, "status": "disabled"}
 
     if active_spinepose_json_dir is not None and request.spinepose_merge_mode == "motion":
         stage_started = time.perf_counter()

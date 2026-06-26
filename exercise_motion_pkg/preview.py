@@ -400,6 +400,10 @@ def build_wear_skeleton_payload(
     bounds = _compute_transformed_joint_bounds(transformed_frames)
     scene_origin = _bounds_center(bounds)
     centered_frames = _subtract_scene_origin_from_frames(transformed_frames, scene_origin)
+    centered_frames, wear_coordinate_normalization = _normalize_wear_skeleton_export_coordinates(
+        centered_frames,
+        remove_scene_inversion=False,
+    )
     centered_bounds = _compute_transformed_joint_bounds(centered_frames)
     active_duration = (
         active_frames[-1].time_sec - active_frames[0].time_sec
@@ -427,6 +431,8 @@ def build_wear_skeleton_payload(
             "lockGlobalRootDrift": not raw_motion_review,
             "lockYDrift": lock_y_drift,
             "invertScene": False,
+            "canonicalWorldUp": True,
+            "wearCoordinateNormalization": wear_coordinate_normalization,
             "selectedLoopIndex": resolved_loop_index,
             "rawWhamPassthrough": raw_motion_review,
         },
@@ -667,6 +673,44 @@ def _subtract_scene_origin_from_frames(
         centered_frame["joints"] = centered_joints
         centered_frames.append(centered_frame)
     return centered_frames
+
+
+def _normalize_wear_skeleton_export_coordinates(
+    frames: list[dict[str, object]],
+    *,
+    remove_scene_inversion: bool,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    if not remove_scene_inversion:
+        return frames, {
+            "canonicalWorldUp": True,
+            "sceneInversionRemoved": False,
+            "transform": "none",
+        }
+
+    normalized_frames: list[dict[str, object]] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        normalized_joints = {}
+        if isinstance(joints, dict):
+            normalized_joints = {
+                joint_name: [
+                    float(point[0]),
+                    -float(point[1]),
+                    -float(point[2]),
+                ]
+                for joint_name, point in joints.items()
+                if _is_serialized_point(point)
+            }
+        normalized_frame = dict(frame)
+        normalized_frame["joints"] = normalized_joints
+        normalized_frames.append(normalized_frame)
+
+    return normalized_frames, {
+        "canonicalWorldUp": True,
+        "sceneInversionRemoved": True,
+        "transform": "rotate_x_pi",
+        "reason": "removed_display_scene_inversion_from_wear_coordinates",
+    }
 
 
 def _serialize_bounds(bounds: dict[str, float]) -> dict[str, object]:
@@ -5188,6 +5232,44 @@ def _build_html(payload: dict[str, object]) -> str:
       return ["left_wrist", "right_wrist", "left_hand", "right_hand"].filter((jointName) => payload.jointNames.includes(jointName));
     }}
 
+    function isFootLockTarget(target) {{
+      return lockPlantedFeet
+        && typeof target?.jointName === "string"
+        && (target.jointName === "left_ankle" || target.jointName === "right_ankle");
+    }}
+
+    function computeLockedFootBodyTranslation(activeTargets, basePositions) {{
+      if (!lockPlantedFeet || !Array.isArray(activeTargets) || activeTargets.length === 0) {{
+        return null;
+      }}
+      const weightedTranslation = new THREE.Vector3();
+      let totalWeight = 0;
+      for (const target of activeTargets) {{
+        if (!isFootLockTarget(target) || !basePositions.has(target.jointName)) {{
+          continue;
+        }}
+        const targetWeight = Math.max(0, Math.min(1, Number(target.weight) || 0));
+        if (targetWeight <= 0) {{
+          continue;
+        }}
+        const currentPoint = basePositions.get(target.jointName);
+        const targetPoint = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ);
+        const desiredTranslation = targetPoint.sub(currentPoint);
+        desiredTranslation.y = 0;
+        desiredTranslation.multiplyScalar(targetWeight);
+        weightedTranslation.addScaledVector(desiredTranslation, targetWeight);
+        totalWeight += targetWeight;
+      }}
+      if (totalWeight <= 1e-6) {{
+        return null;
+      }}
+      weightedTranslation.multiplyScalar(1 / totalWeight);
+      if (weightedTranslation.lengthSq() <= 1e-10) {{
+        return null;
+      }}
+      return weightedTranslation;
+    }}
+
     function footSampleForFrame(frame, jointName) {{
       const point = frame?.joints?.[jointName];
       if (!Array.isArray(point) || point.length < 3) {{
@@ -5355,6 +5437,14 @@ def _build_html(payload: dict[str, object]) -> str:
         const point = frame.joints[jointName];
         if (Array.isArray(point) && point.length >= 3) {{
           basePositions.set(jointName, toUncorrectedWorldPoint(point, frameTranslation));
+        }}
+      }}
+      const bodyTranslation = computeLockedFootBodyTranslation(activeTargets, basePositions);
+      if (bodyTranslation) {{
+        for (const [jointName, point] of basePositions.entries()) {{
+          const translatedPoint = point.clone().add(bodyTranslation);
+          basePositions.set(jointName, translatedPoint);
+          lockedJointPositions.set(jointName, translatedPoint.clone());
         }}
       }}
       for (const side of ["left", "right"]) {{
@@ -5577,14 +5667,62 @@ def _build_html(payload: dict[str, object]) -> str:
       return Math.max(0.5, Math.min(1.5, parsed));
     }}
 
+    function normalizeBakedWearSkeletonCoordinates(frames, removeSceneInversion) {{
+      if (!removeSceneInversion) {{
+        return {{
+          frames,
+          metadata: {{
+            canonicalWorldUp: true,
+            sceneInversionRemoved: false,
+            transform: "none",
+          }},
+        }};
+      }}
+      const normalizedFrames = frames.map((frame) => {{
+        const joints = {{}};
+        for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          joints[jointName] = [point[0], -point[1], -point[2]];
+        }}
+        return {{
+          ...frame,
+          joints,
+        }};
+      }});
+      return {{
+        frames: normalizedFrames,
+        metadata: {{
+          canonicalWorldUp: true,
+          sceneInversionRemoved: true,
+          transform: "rotate_x_pi",
+          reason: "removed_display_scene_inversion_from_wear_coordinates",
+        }},
+      }};
+    }}
+
     function buildBakedWearSkeletonPayload() {{
       const activeFrames = playbackState.frames ?? [];
       const lockYDrift = Boolean(lockYRootInput.checked);
       const exportPlaybackSpeed = sanitizedPlaybackSpeed(speed);
       const exportFps = Math.max(1, Number(payload.fps) * exportPlaybackSpeed);
+      const exportCameraYawDegrees = yaw * 180 / Math.PI;
+      const exportCameraPitchDegrees = pitch * 180 / Math.PI;
+      const selectedPreviewSettings = {{
+        fixedRoot,
+        autoWorldAlignment: autoWorldAlignmentEnabled,
+        lockYDrift,
+        lockPlantedFeet,
+        lockPlantedHands,
+        sceneInverted,
+        cameraYawDegrees: exportCameraYawDegrees,
+        cameraPitchDegrees: exportCameraPitchDegrees,
+        playbackSpeed: exportPlaybackSpeed,
+      }};
       getCachedSceneBounds(fixedRoot);
       const firstSourceTime = activeFrames.length > 0 ? activeFrames[0].timeSec : 0;
-      const frames = activeFrames.map((frame, index) => {{
+      let frames = activeFrames.map((frame, index) => {{
         activeRenderFrame = frame;
         const translation = getFrameBakeTranslation(frame, lockYDrift);
         const joints = {{}};
@@ -5606,6 +5744,11 @@ def _build_html(payload: dict[str, object]) -> str:
           joints,
         }};
       }});
+      const wearCoordinateNormalization = normalizeBakedWearSkeletonCoordinates(
+        frames,
+        selectedPreviewSettings.sceneInverted
+      );
+      frames = wearCoordinateNormalization.frames;
       const sourceTimelineFrames = frames.filter((frame) => !frame.syntheticLoopBridge);
       const timelineFrames = sourceTimelineFrames.length > 0 ? sourceTimelineFrames : frames;
       const sourceStartFrame = timelineFrames.length > 0 ? timelineFrames[0].sourceFrameIndex : 0;
@@ -5630,16 +5773,26 @@ def _build_html(payload: dict[str, object]) -> str:
         durationSec,
         jointNames: payload.jointNames,
         rootJoint: payload.rootJoint,
+        selectedPreviewSettings,
         bakedPreviewConfiguration: {{
-          autoWorldAlignment: autoWorldAlignmentEnabled,
-          lockGlobalRootDrift: fixedRoot,
-          lockYDrift,
-          lockPlantedFeet,
-          lockPlantedHands,
-          invertScene: sceneInverted,
-          playbackSpeed: exportPlaybackSpeed,
+          autoWorldAlignment: selectedPreviewSettings.autoWorldAlignment,
+          lockGlobalRootDrift: selectedPreviewSettings.fixedRoot,
+          lockYDrift: selectedPreviewSettings.lockYDrift,
+          lockPlantedFeet: selectedPreviewSettings.lockPlantedFeet,
+          lockPlantedHands: selectedPreviewSettings.lockPlantedHands,
+          invertScene: selectedPreviewSettings.sceneInverted,
+          canonicalWorldUp: true,
+          wearCoordinateNormalization: wearCoordinateNormalization.metadata,
+          cameraYawDegrees: selectedPreviewSettings.cameraYawDegrees,
+          cameraPitchDegrees: selectedPreviewSettings.cameraPitchDegrees,
+          playbackSpeed: selectedPreviewSettings.playbackSpeed,
           selectedLoopIndex,
           rawWhamPassthrough: Boolean(payload.rawWhamPassthrough),
+        }},
+        wearDisplay: {{
+          viewYawDegrees: selectedPreviewSettings.cameraYawDegrees,
+          viewPitchDegrees: selectedPreviewSettings.cameraPitchDegrees,
+          source: "selected_preview_camera",
         }},
         loop: {{
           enabled: currentLoop != null,
