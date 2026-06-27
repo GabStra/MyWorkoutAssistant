@@ -14,7 +14,7 @@ param(
     [int]$MaxCandidates = 12,
     [int]$MetadataCandidatePoolSize = 36,
     [int]$CandidateReviewBatchSize = 12,
-    [int]$CandidateReviewTargetSuitableCount = 1,
+    [int]$CandidateReviewTargetSuitableCount = 3,
     [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
@@ -25,7 +25,7 @@ param(
     [int]$DeepSeekMaxQueries = 4,
     [int]$VisionCandidatesPerExercise = 12,
     [int]$VisionFramesPerCandidate = 0,
-    [int]$VisionMaxChunksPerCandidate = 0,
+    [int]$VisionMaxChunksPerCandidate = 5,
     [int]$VisionDownloadWorkers = 8,
     [int]$VisionLlmWorkers = 4,
     [switch]$SkipVisionRanking,
@@ -54,8 +54,9 @@ param(
     [int]$ThoroughVisionMaxChunksPerCandidate = 0,
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
     [int]$FallbackCandidates = 12,
+    [int]$MaxSourceWindowAttempts = 1,
     [int]$MaxSelectedResults = 1,
-    [int]$CandidateWorkers = 2,
+    [int]$CandidateWorkers = 1,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
@@ -95,6 +96,7 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
     [switch]$SkipPreWhamSourceValidation,
+    [switch]$NoPreWhamSourceContract,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
@@ -133,6 +135,7 @@ param(
     [Nullable[int]]$LlamaCppImageMinTokens,
     [Nullable[int]]$LlamaCppImageMaxTokens,
     [switch]$NoLlamaCppAutoStartServer,
+    [bool]$KeepLlamaCppServer = $true,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
     [double]$LlamaCppRequestTimeoutSeconds = 90.0,
     [ValidateSet("debug", "full")]
@@ -443,6 +446,9 @@ if ($null -ne $LlamaCppImageMaxTokens) {
 if ($NoLlamaCppAutoStartServer) {
     $youtubeArgs += "--no-llama-cpp-auto-start-server"
 }
+if ($KeepLlamaCppServer) {
+    $youtubeArgs += "--keep-llama-cpp-server"
+}
 $youtubeArgs = Add-LlamaCppTuningArgs -Arguments $youtubeArgs
 if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
     $youtubeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
@@ -495,6 +501,7 @@ $bakeArgs = @(
     "bake-and-rank",
     "--candidates-json", $candidatesPath,
     "--fallback-candidates", "$FallbackCandidates",
+    "--max-source-window-attempts", "$MaxSourceWindowAttempts",
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--workspace", $bakeWorkspace,
@@ -552,6 +559,9 @@ if ($null -ne $LlamaCppImageMaxTokens) {
 }
 if ($NoLlamaCppAutoStartServer) {
     $bakeArgs += "--no-llama-cpp-auto-start-server"
+}
+if ($KeepLlamaCppServer) {
+    $bakeArgs += "--keep-llama-cpp-server"
 }
 $bakeArgs = Add-LlamaCppTuningArgs -Arguments $bakeArgs
 if ($null -ne $SegmentWindowSeconds) {
@@ -635,6 +645,9 @@ if (-not $SkipPreWhamSourceValidation) {
 }
 if ($SkipPreWhamSourceValidation) {
     $bakeArgs += "--skip-pre-wham-source-validation"
+}
+if ($NoPreWhamSourceContract) {
+    $bakeArgs += "--no-pre-wham-source-contract"
 }
 
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"

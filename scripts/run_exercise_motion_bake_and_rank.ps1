@@ -11,8 +11,9 @@ param(
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
     [int]$FallbackCandidates = 12,
+    [int]$MaxSourceWindowAttempts = 1,
     [int]$MaxSelectedResults = 1,
-    [int]$CandidateWorkers = 2,
+    [int]$CandidateWorkers = 1,
     [switch]$EstimateLocalOnly,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
@@ -49,6 +50,7 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
     [switch]$SkipPreWhamSourceValidation,
+    [switch]$NoPreWhamSourceContract,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
@@ -203,6 +205,7 @@ $argsList = @(
     "bake-and-rank",
     "--candidates-json", $resolvedCandidatesJson,
     "--fallback-candidates", "$FallbackCandidates",
+    "--max-source-window-attempts", "$MaxSourceWindowAttempts",
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--workspace", $Workspace,
@@ -389,6 +392,9 @@ if (-not $SkipPreWhamSourceValidation) {
 }
 if ($SkipPreWhamSourceValidation) {
     $argsList += "--skip-pre-wham-source-validation"
+}
+if ($NoPreWhamSourceContract) {
+    $argsList += "--no-pre-wham-source-contract"
 }
 
 & $pythonCommand @argsList
