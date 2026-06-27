@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import statistics
+import threading
 import traceback
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -46,11 +47,15 @@ from exercise_motion_pkg.segment_detection import (
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import (
+    ExerciseEntry,
     MIN_MOVING_SUBJECT_REALISM_SCORE,
     POSE_PREFILTER_HARD_REJECT_ISSUES,
     LlamaCppVisionRanker,
     YouTubeRankingSettings,
+    build_exercise_motion_contract_prompt,
     download_youtube,
+    exercise_motion_contract_for_prompt,
+    normalize_exercise_motion_contract,
     pose_prefilter_blocking_issues,
     slugify,
 )
@@ -206,6 +211,13 @@ SOURCE_GATE_MIN_SCORED_CHUNKS_FOR_COVERAGE = 3
 BAKED_MOTION_MIN_STRENGTH_SCORE = 0.15
 BAKED_MOTION_MIN_PRIMARY_RANGE_RATIO = 0.06
 MOVEMENT_CUT_MIN_SOURCE_MOTION_COVERAGE_RATIO = 0.75
+MOVEMENT_CUT_MIN_TARGET_REGION_MOTION_RANGE_RATIO = 0.08
+MOVEMENT_CUT_DISTAL_DOMINANCE_MIN_RATIO = 1.35
+MOVEMENT_CUT_DISTAL_DOMINANCE_MAX_TARGET_TO_DISTAL_RATIO = 0.55
+MOVEMENT_CUT_HARD_MOTION_REJECTION_REASONS = {
+    "movement_cut_low_target_region_motion",
+    "movement_cut_distal_setup_motion_dominates",
+}
 FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO = 0.55
 FULL_REPETITION_PHASE_COMPLETENESS_EDGE_MARGIN_RATIO = 0.12
@@ -729,8 +741,11 @@ def expand_ranked_candidates_for_source_windows(
     request: BakeAndRankRequest,
 ) -> list[RankedCandidate]:
     variant_groups: list[list[RankedCandidate]] = []
+    max_source_window_attempts = max(0, int(request.max_source_window_attempts or 0))
     for ranked_candidate in candidates:
         variants = collect_source_window_variants(ranked_candidate, request=request)
+        if max_source_window_attempts > 0:
+            variants = variants[:max_source_window_attempts]
         if not variants:
             variant_groups.append([ranked_candidate])
             continue
@@ -906,6 +921,7 @@ class BakeAndRankRequest:
     body_model_root: Path | None
     youtube_cookies: Path | None = None
     fallback_candidates: int = DEFAULT_FALLBACK_CANDIDATES
+    max_source_window_attempts: int = 1
     max_selected_results: int = 1
     candidate_workers: int = 1
     wham_python_command: str = "python"
@@ -948,10 +964,12 @@ class BakeAndRankRequest:
     segment_refinement_padding_seconds: float = 1.0
     segment_classification_workers: int = 3
     pre_wham_source_validation: bool = False
+    pre_wham_source_contract_enabled: bool = True
     review_frames: int = DEFAULT_REVIEW_FRAMES
     review_llm_workers: int = 3
     max_llm_review_items: int = 4
     max_review_windows: int = DEFAULT_MAX_REVIEW_WINDOWS
+    movement_cut_exercise_contract_enabled: bool = True
     max_loop_seconds: float = DEFAULT_MAX_LOOP_SECONDS
     min_selected_score: float = DEFAULT_MIN_SELECTED_SCORE
     motion_tuning_enabled: bool = True
@@ -999,6 +1017,7 @@ class BakeAndRankRequest:
 
 PreviewBaker = Callable[..., list[BakedLoopArtifact]]
 LoopRanker = Callable[[list[ReviewItem], BakeAndRankRequest], list[LoopRanking]]
+SourceContractResolver = Callable[[RankedCandidate], dict[str, Any] | None]
 SelectedArtifact = tuple[ReviewItem, LoopRanking | None]
 
 
@@ -1322,7 +1341,7 @@ def max_selected_results_for_request(request: BakeAndRankRequest) -> int:
 
 
 def ready_candidate_target_for_request(request: BakeAndRankRequest) -> int:
-    return max_selected_results_for_request(request)
+    return max(1, int(request.fallback_candidates), max_selected_results_for_request(request))
 
 
 def selected_artifact_sort_key(selected: SelectedArtifact) -> tuple[float, int, int, int]:
@@ -1335,6 +1354,21 @@ def selected_artifact_sort_key(selected: SelectedArtifact) -> tuple[float, int, 
     )
 
 
+MATERIALIZATION_BLOCKING_RANKING_REASONS = {
+    "movement_cut_target_motion_gate_failed",
+}
+
+
+def ranking_blocks_materialization(ranking: LoopRanking | None) -> bool:
+    if ranking is None:
+        return False
+    ranking_reasons = {str(reason) for reason in ranking.reasons}
+    if ranking_reasons.intersection(MATERIALIZATION_BLOCKING_RANKING_REASONS):
+        return True
+    payload = ranking.payload if isinstance(ranking.payload, dict) else {}
+    return parse_optional_bool(payload.get("movementCutTargetMotionGateFailed")) is True
+
+
 def materialize_selection_candidate(
     original: SelectedArtifact,
     *,
@@ -1343,6 +1377,8 @@ def materialize_selection_candidate(
 ) -> tuple[SelectedArtifact | None, SelectedArtifact | None]:
     item, ranking = original
     if ranking is not None and ranking.score < request.min_selected_score and "llm_review_skipped_by_prefilter" in ranking.reasons:
+        return None, original
+    if ranking is not None and ranking.score < request.min_selected_score and ranking_blocks_materialization(ranking):
         return None, original
 
     materialized = refresh_materialized_selection_ranking(
@@ -2299,6 +2335,22 @@ def exercise_requires_lower_body_motion(exercise_name: str) -> bool:
     return any(term in normalized for term in LOWER_BODY_DOMINANT_EXERCISE_TERMS)
 
 
+def exercise_allows_distal_lower_body_target_motion(exercise_name: str) -> bool:
+    normalized = normalize_exercise_name(exercise_name)
+    return any(
+        term in normalized
+        for term in (
+            "calf",
+            "leg extension",
+            "leg curl",
+            "hamstring curl",
+            "ankle",
+            "toe raise",
+            "tibialis",
+        )
+    )
+
+
 def focused_motion_adjustment_for_exercise(
     exercise_name: str,
     motion_metrics: dict[str, Any],
@@ -2643,6 +2695,8 @@ def compute_motion_strength_metrics_from_payload(
     joint_vertical_range_ratios: list[float] = []
     root_relative_joint_range_ratios: list[float] = []
     lower_body_root_relative_range_ratios: list[float] = []
+    lower_body_proximal_root_relative_range_ratios: list[float] = []
+    lower_body_distal_root_relative_range_ratios: list[float] = []
     upper_body_root_relative_range_ratios: list[float] = []
     root_vertical_range_ratio = 0.0
     root_travel_range_ratio = 0.0
@@ -2677,6 +2731,10 @@ def compute_motion_strength_metrics_from_payload(
             root_relative_joint_range_ratios.append(root_relative_range_ratio)
             if is_lower_body_joint(joint_name):
                 lower_body_root_relative_range_ratios.append(root_relative_range_ratio)
+            if is_lower_body_proximal_joint(joint_name):
+                lower_body_proximal_root_relative_range_ratios.append(root_relative_range_ratio)
+            if is_lower_body_distal_joint(joint_name):
+                lower_body_distal_root_relative_range_ratios.append(root_relative_range_ratio)
             if is_upper_body_joint(joint_name):
                 upper_body_root_relative_range_ratios.append(root_relative_range_ratio)
 
@@ -2695,6 +2753,8 @@ def compute_motion_strength_metrics_from_payload(
     )
     root_relative_articulation_range_ratio = max(root_relative_joint_range_ratios, default=0.0)
     lower_body_articulation_range_ratio = max(lower_body_root_relative_range_ratios, default=0.0)
+    lower_body_proximal_articulation_range_ratio = max(lower_body_proximal_root_relative_range_ratios, default=0.0)
+    lower_body_distal_articulation_range_ratio = max(lower_body_distal_root_relative_range_ratios, default=0.0)
     upper_body_articulation_range_ratio = max(upper_body_root_relative_range_ratios, default=0.0)
     motion_strength_score = clamp_unit(
         max(
@@ -2718,6 +2778,8 @@ def compute_motion_strength_metrics_from_payload(
         "primaryMotionRangeRatio": primary_motion_range_ratio,
         "rootRelativeArticulationRangeRatio": root_relative_articulation_range_ratio,
         "lowerBodyRootRelativeRangeRatio": lower_body_articulation_range_ratio,
+        "lowerBodyProximalRootRelativeRangeRatio": lower_body_proximal_articulation_range_ratio,
+        "lowerBodyDistalRootRelativeRangeRatio": lower_body_distal_articulation_range_ratio,
         "upperBodyRootRelativeRangeRatio": upper_body_articulation_range_ratio,
         "frameCount": len(frames),
     }
@@ -2736,6 +2798,8 @@ def empty_motion_strength_metrics(*, body_height: float = 0.0) -> dict[str, Any]
         "primaryMotionRangeRatio": 0.0,
         "rootRelativeArticulationRangeRatio": 0.0,
         "lowerBodyRootRelativeRangeRatio": 0.0,
+        "lowerBodyProximalRootRelativeRangeRatio": 0.0,
+        "lowerBodyDistalRootRelativeRangeRatio": 0.0,
         "upperBodyRootRelativeRangeRatio": 0.0,
         "frameCount": 0,
     }
@@ -2860,6 +2924,20 @@ def is_lower_body_joint(joint_name: str) -> bool:
     return any(
         token in joint_name
         for token in ("hip", "knee", "ankle", "foot")
+    )
+
+
+def is_lower_body_proximal_joint(joint_name: str) -> bool:
+    return any(
+        token in joint_name
+        for token in ("hip", "knee")
+    )
+
+
+def is_lower_body_distal_joint(joint_name: str) -> bool:
+    return any(
+        token in joint_name
+        for token in ("ankle", "foot", "toe", "heel")
     )
 
 
@@ -4382,6 +4460,77 @@ def build_vision_client_settings(request: BakeAndRankRequest) -> YouTubeRankingS
     )
 
 
+def build_pre_wham_source_contract_resolver(
+    *,
+    request: BakeAndRankRequest,
+    caption_images: Callable[..., str] | None,
+) -> SourceContractResolver | None:
+    if not request.pre_wham_source_validation or not request.pre_wham_source_contract_enabled:
+        return None
+    cache: dict[str, dict[str, Any] | None] = {}
+    cache_lock = threading.Lock()
+
+    def resolve(ranked_candidate: RankedCandidate) -> dict[str, Any] | None:
+        candidate_contract = exercise_motion_contract_from_candidate(ranked_candidate.candidate)
+        if candidate_contract is not None:
+            return {
+                **candidate_contract,
+                "preWhamSourceContractStatus": "reused_candidate_contract",
+            }
+        if caption_images is None:
+            return None
+        key = normalize_exercise_name(ranked_candidate.exercise_name)
+        with cache_lock:
+            if key not in cache:
+                cache[key] = generate_pre_wham_source_contract(
+                    ranked_candidate=ranked_candidate,
+                    request=request,
+                    caption_images=caption_images,
+                )
+            return cache[key]
+
+    return resolve
+
+
+def generate_pre_wham_source_contract(
+    *,
+    ranked_candidate: RankedCandidate,
+    request: BakeAndRankRequest,
+    caption_images: Callable[..., str],
+) -> dict[str, Any]:
+    exercise = ExerciseEntry(
+        exercise_id=ranked_candidate.exercise_id,
+        name=ranked_candidate.exercise_name,
+        slug=ranked_candidate.exercise_slug,
+    )
+    started = time.perf_counter()
+    try:
+        raw = caption_images(
+            frame_paths=[],
+            prompt=build_exercise_motion_contract_prompt(exercise),
+        )
+        payload = extract_json_object(raw)
+        if not isinstance(payload, dict):
+            raise RuntimeError("pre-WHAM exercise contract generator returned no JSON object.")
+        contract = normalize_exercise_motion_contract(payload, exercise=exercise, source="pre_wham_llm")
+        contract["model"] = request.llama_cpp_model
+        contract["generationElapsedSeconds"] = elapsed_seconds(started)
+        contract["preWhamSourceContractStatus"] = "generated_on_demand"
+        return contract
+    except Exception as exc:
+        return {
+            "schemaVersion": 1,
+            "enabled": True,
+            "status": "failed",
+            "source": "pre_wham_llm",
+            "exerciseName": ranked_candidate.exercise_name,
+            "model": request.llama_cpp_model,
+            "error": str(exc)[:240],
+            "generationElapsedSeconds": elapsed_seconds(started),
+            "preWhamSourceContractStatus": "generation_failed",
+        }
+
+
 def run_bake_and_rank_pipeline(
     request: BakeAndRankRequest,
     *,
@@ -4392,6 +4541,7 @@ def run_bake_and_rank_pipeline(
     pipeline_timings: dict[str, Any] = {
         "candidateWorkers": request.candidate_workers,
         "fallbackCandidates": request.fallback_candidates,
+        "maxSourceWindowAttempts": request.max_source_window_attempts,
         "maxSelectedResults": max_selected_results_for_request(request),
         "readyCandidateTarget": ready_candidate_target_for_request(request),
         "rankPreviewVariants": request.rank_preview_variants,
@@ -4456,6 +4606,10 @@ def run_bake_and_rank_pipeline(
             if request.pre_wham_source_validation and vision_ranker is not None
             else None
         )
+        source_cut_contract_resolver = build_pre_wham_source_contract_resolver(
+            request=request,
+            caption_images=source_cut_caption_images,
+        )
         candidate_processing_started = time.perf_counter()
         if request.candidate_workers <= 1:
             (
@@ -4475,6 +4629,7 @@ def run_bake_and_rank_pipeline(
                 effective_ranker=effective_ranker,
                 support_dominance_classifier=support_dominance_classifier,
                 source_cut_caption_images=source_cut_caption_images,
+                source_cut_contract_resolver=source_cut_contract_resolver,
             )
             pipeline_timings["candidateSelectionMode"] = "incremental_queue_until_final_selection"
             pipeline_timings["candidateSelectionAttempts"] = selection_attempts
@@ -4486,6 +4641,7 @@ def run_bake_and_rank_pipeline(
                 preview_baker=preview_baker,
                 support_dominance_classifier=support_dominance_classifier,
                 source_cut_caption_images=source_cut_caption_images,
+                source_cut_contract_resolver=source_cut_contract_resolver,
             )
             pipeline_timings["candidateSelectionMode"] = "parallel_ready_candidate_batch_then_selection"
             if review_items:
@@ -4715,6 +4871,7 @@ def bake_and_rank_request_from_selection_manifest(
 ) -> BakeAndRankRequest:
     source_candidates = manifest.get("sourceCandidatesJson")
     candidates_json = Path(str(source_candidates)) if source_candidates else workspace / "youtube_candidates.json"
+    manifest_max_source_window_attempts = parse_optional_int(manifest.get("maxSourceWindowAttempts"))
     return BakeAndRankRequest(
         candidates_json=candidates_json,
         workspace=workspace,
@@ -4724,7 +4881,18 @@ def bake_and_rank_request_from_selection_manifest(
         max_review_windows=max_review_windows
         if max_review_windows is not None
         else int(manifest.get("maxReviewWindows") or DEFAULT_MAX_REVIEW_WINDOWS),
+        pre_wham_source_contract_enabled=bool(
+            manifest.get("preWhamSourceContractEnabled", True)
+        ),
+        movement_cut_exercise_contract_enabled=bool(
+            manifest.get("movementCutExerciseContractEnabled", True)
+        ),
         max_loop_seconds=float(manifest.get("maxLoopSeconds") or DEFAULT_MAX_LOOP_SECONDS),
+        max_source_window_attempts=(
+            max(0, manifest_max_source_window_attempts)
+            if manifest_max_source_window_attempts is not None
+            else 1
+        ),
         min_selected_score=min_selected_score
         if min_selected_score is not None
         else float(manifest.get("minSelectedScore") or DEFAULT_MIN_SELECTED_SCORE),
@@ -5149,6 +5317,7 @@ def process_ranked_candidates_until_final_selection(
     effective_ranker: LoopRanker | None,
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None = None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[ReviewItem],
@@ -5209,15 +5378,17 @@ def process_ranked_candidates_until_final_selection(
 
         local_review_items: list[ReviewItem] = []
         local_review_item_entries: list[dict[str, Any]] = []
-        result = process_ranked_candidate(
-            ranked_candidate,
-            request=request,
-            preview_baker=preview_baker,
-            review_items=local_review_items,
-            review_item_entries=local_review_item_entries,
-            support_dominance_classifier=support_dominance_classifier,
-            source_cut_caption_images=source_cut_caption_images,
-        )
+        process_kwargs: dict[str, Any] = {
+            "request": request,
+            "preview_baker": preview_baker,
+            "review_items": local_review_items,
+            "review_item_entries": local_review_item_entries,
+            "support_dominance_classifier": support_dominance_classifier,
+            "source_cut_caption_images": source_cut_caption_images,
+        }
+        if source_cut_contract_resolver is not None:
+            process_kwargs["source_cut_contract_resolver"] = source_cut_contract_resolver
+        result = process_ranked_candidate(ranked_candidate, **process_kwargs)
         result.setdefault("exerciseIndex", ranked_candidate.exercise_index)
         result.setdefault("candidateRank", ranked_candidate.candidate_rank)
         result.setdefault("exerciseId", ranked_candidate.exercise_id)
@@ -5383,13 +5554,10 @@ def process_ranked_candidates_for_selection(
     preview_baker: PreviewBaker,
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None = None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> tuple[list[dict[str, Any]], list[ReviewItem], list[dict[str, Any]]]:
     fallback_ready_target = ready_candidate_target_for_request(request)
-    candidate_attempt_limit = (
-        max(fallback_ready_target, max(1, request.fallback_candidates))
-        if request.pre_wham_source_validation
-        else fallback_ready_target
-    )
+    candidate_attempt_limit = fallback_ready_target
     candidates_to_process, skipped_by_original_index = ranked_candidates_to_process_with_previous_terminal_skips(
         candidates,
         request=request,
@@ -5411,15 +5579,17 @@ def process_ranked_candidates_for_selection(
         for original_index, ranked_candidate in candidates_to_process:
             local_review_items: list[ReviewItem] = []
             local_review_item_entries: list[dict[str, Any]] = []
-            result = process_ranked_candidate(
-                ranked_candidate,
-                request=request,
-                preview_baker=preview_baker,
-                review_items=local_review_items,
-                review_item_entries=local_review_item_entries,
-                support_dominance_classifier=support_dominance_classifier,
-                source_cut_caption_images=source_cut_caption_images,
-            )
+            process_kwargs = {
+                "request": request,
+                "preview_baker": preview_baker,
+                "review_items": local_review_items,
+                "review_item_entries": local_review_item_entries,
+                "support_dominance_classifier": support_dominance_classifier,
+                "source_cut_caption_images": source_cut_caption_images,
+            }
+            if source_cut_contract_resolver is not None:
+                process_kwargs["source_cut_contract_resolver"] = source_cut_contract_resolver
+            result = process_ranked_candidate(ranked_candidate, **process_kwargs)
             processed_by_original_index[original_index] = (result, local_review_items, local_review_item_entries)
             if result.get("status") == "ready_for_selection":
                 ready_candidate_count += 1
@@ -5442,14 +5612,19 @@ def process_ranked_candidates_for_selection(
             and ready_candidate_capacity_in_launched_prefix(results_by_index, next_index) < fallback_ready_target
         ):
             _original_index, ranked_candidate = candidates_to_process[next_index]
+            isolated_args = [
+                ranked_candidate,
+                request,
+                preview_baker,
+                support_dominance_classifier,
+                source_cut_caption_images,
+            ]
+            if source_cut_contract_resolver is not None:
+                isolated_args.append(source_cut_contract_resolver)
             futures[
                 executor.submit(
                     process_ranked_candidate_isolated,
-                    ranked_candidate,
-                    request,
-                    preview_baker,
-                    support_dominance_classifier,
-                    source_cut_caption_images,
+                    *isolated_args,
                 )
             ] = next_index
             next_index += 1
@@ -5475,14 +5650,19 @@ def process_ranked_candidates_for_selection(
                     )
                 ):
                     _original_index, ranked_candidate = candidates_to_process[next_index]
+                    isolated_args = [
+                        ranked_candidate,
+                        request,
+                        preview_baker,
+                        support_dominance_classifier,
+                        source_cut_caption_images,
+                    ]
+                    if source_cut_contract_resolver is not None:
+                        isolated_args.append(source_cut_contract_resolver)
                     futures[
                         executor.submit(
                             process_ranked_candidate_isolated,
-                            ranked_candidate,
-                            request,
-                            preview_baker,
-                            support_dominance_classifier,
-                            source_cut_caption_images,
+                            *isolated_args,
                         )
                     ] = next_index
                     next_index += 1
@@ -5564,18 +5744,21 @@ def process_ranked_candidate_isolated(
     preview_baker: PreviewBaker,
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> tuple[dict[str, Any], list[ReviewItem], list[dict[str, Any]]]:
     review_items: list[ReviewItem] = []
     review_item_entries: list[dict[str, Any]] = []
-    result = process_ranked_candidate(
-        ranked_candidate,
-        request=request,
-        preview_baker=preview_baker,
-        review_items=review_items,
-        review_item_entries=review_item_entries,
-        support_dominance_classifier=support_dominance_classifier,
-        source_cut_caption_images=source_cut_caption_images,
-    )
+    process_kwargs = {
+        "request": request,
+        "preview_baker": preview_baker,
+        "review_items": review_items,
+        "review_item_entries": review_item_entries,
+        "support_dominance_classifier": support_dominance_classifier,
+        "source_cut_caption_images": source_cut_caption_images,
+    }
+    if source_cut_contract_resolver is not None:
+        process_kwargs["source_cut_contract_resolver"] = source_cut_contract_resolver
+    result = process_ranked_candidate(ranked_candidate, **process_kwargs)
     return result, review_items, review_item_entries
 
 
@@ -5588,6 +5771,7 @@ def process_ranked_candidate(
     review_item_entries: list[dict[str, Any]],
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None = None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> dict[str, Any]:
     candidate_started = time.perf_counter()
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
@@ -5616,11 +5800,13 @@ def process_ranked_candidate(
             write_candidate_bake_manifest(candidate_workspace, result_payload)
             return result_payload
         stage_started = time.perf_counter()
-        generate_result = generate_candidate_motion(
-            ranked_candidate,
-            request=request,
-            source_cut_caption_images=source_cut_caption_images,
-        )
+        generate_kwargs: dict[str, Any] = {
+            "request": request,
+            "source_cut_caption_images": source_cut_caption_images,
+        }
+        if source_cut_contract_resolver is not None:
+            generate_kwargs["source_cut_contract_resolver"] = source_cut_contract_resolver
+        generate_result = generate_candidate_motion(ranked_candidate, **generate_kwargs)
         record_timing_seconds(result_payload, "generationSeconds", stage_started)
         result_payload.update(generation_to_manifest(generate_result))
         if generate_result.timings is not None:
@@ -5782,12 +5968,14 @@ def generate_candidate_motion(
     *,
     request: BakeAndRankRequest,
     source_cut_caption_images: Callable[..., str] | None = None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> GenerateResult:
     source_started = time.perf_counter()
     video_path = prepare_candidate_input_video(
         ranked_candidate,
         request=request,
         source_cut_caption_images=source_cut_caption_images,
+        source_cut_contract_resolver=source_cut_contract_resolver,
     )
     source_preparation_seconds = elapsed_seconds(source_started)
     generation_started = time.perf_counter()
@@ -5912,6 +6100,7 @@ def prepare_candidate_input_video(
     *,
     request: BakeAndRankRequest,
     source_cut_caption_images: Callable[..., str] | None = None,
+    source_cut_contract_resolver: SourceContractResolver | None = None,
 ) -> Path:
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
     source_dir = candidate_workspace / "source"
@@ -5922,6 +6111,11 @@ def prepare_candidate_input_video(
     )
     source_chunk_hint = ranked_candidate.source_chunk_hint
     pre_wham_caption_images = source_cut_caption_images if request.pre_wham_source_validation else None
+    pre_wham_source_contract = (
+        source_cut_contract_resolver(ranked_candidate)
+        if pre_wham_caption_images is not None and source_cut_contract_resolver is not None
+        else None
+    )
     if not request.detect_source_segment:
         if source_chunk_hint is not None:
             return trim_ranked_source_chunk_hint(
@@ -5940,6 +6134,7 @@ def prepare_candidate_input_video(
         and cached_source_selection_matches_validation_mode(
             cached_segment_selection,
             pre_wham_source_validation=pre_wham_caption_images is not None,
+            pre_wham_source_contract_enabled=request.pre_wham_source_contract_enabled,
         )
     ):
         return cached_selected_segment
@@ -5958,6 +6153,7 @@ def prepare_candidate_input_video(
                 detection_source_offset_seconds=0.0,
                 source_chunk_hint=source_chunk_hint,
                 caption_images=pre_wham_caption_images,
+                exercise_motion_contract=pre_wham_source_contract,
             )
         return trim_ranked_source_chunk_hint(
             ranked_candidate=ranked_candidate,
@@ -6073,6 +6269,7 @@ def prepare_candidate_input_video(
             detection_source_offset_seconds=detection_source_offset_seconds,
             source_chunk_hint=source_chunk_hint,
             caption_images=pre_wham_caption_images,
+            exercise_motion_contract=pre_wham_source_contract,
             source_detection_result=detection_result,
             source_chunk_estimate=chunk_estimate,
             segment_settings={
@@ -6154,6 +6351,7 @@ def cached_source_selection_matches_validation_mode(
     segment_selection_path: Path,
     *,
     pre_wham_source_validation: bool,
+    pre_wham_source_contract_enabled: bool,
 ) -> bool:
     if not pre_wham_source_validation:
         return True
@@ -6161,7 +6359,14 @@ def cached_source_selection_matches_validation_mode(
         payload = json.loads(segment_selection_path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return bool(payload.get("preWhamSourceValidationEnabled")) or str(payload.get("sourcePrepReason")) == "pre_wham_source_window_choice"
+    if not (
+        bool(payload.get("preWhamSourceValidationEnabled"))
+        or str(payload.get("sourcePrepReason")) == "pre_wham_source_window_choice"
+    ):
+        return False
+    if pre_wham_source_contract_enabled and not bool(payload.get("preWhamSourceContractEnabled")):
+        return False
+    return True
 
 
 def choose_pre_wham_source_cut_or_reject(
@@ -6174,6 +6379,7 @@ def choose_pre_wham_source_cut_or_reject(
     detection_source_offset_seconds: float,
     source_chunk_hint: SourceChunkHint | None,
     caption_images: Callable[..., str],
+    exercise_motion_contract: dict[str, Any] | None = None,
     source_detection_result: Any | None = None,
     source_chunk_estimate: Any | None = None,
     segment_settings: dict[str, Any] | None = None,
@@ -6193,6 +6399,7 @@ def choose_pre_wham_source_cut_or_reject(
         output_dir=selection_dir,
         frame_count=max(12, min(DEFAULT_LLM_REVIEW_FRAMES, frames_for_chunk_seconds(max(0.5, source_window.end_seconds - source_window.start_seconds)))),
         caption_images=caption_images,
+        exercise_motion_contract=exercise_motion_contract,
     )
     if source_choice is None:
         write_pre_wham_source_selection_manifest(
@@ -6206,6 +6413,7 @@ def choose_pre_wham_source_cut_or_reject(
             ranking=None,
             render_seconds=0.0,
             vlm_seconds=0.0,
+            exercise_motion_contract=exercise_motion_contract,
             source_detection_result=source_detection_result,
             chunk_estimate=chunk_estimate,
             segment_settings=segment_settings,
@@ -6223,6 +6431,7 @@ def choose_pre_wham_source_cut_or_reject(
         ranking=ranking,
         render_seconds=render_seconds,
         vlm_seconds=vlm_seconds,
+        exercise_motion_contract=exercise_motion_contract,
         source_detection_result=source_detection_result,
         chunk_estimate=chunk_estimate,
         segment_settings=segment_settings,
@@ -6257,6 +6466,7 @@ def write_pre_wham_source_selection_manifest(
     ranking: LoopRanking | None,
     render_seconds: float,
     vlm_seconds: float,
+    exercise_motion_contract: dict[str, Any] | None,
     source_detection_result: Any | None,
     chunk_estimate: Any,
     segment_settings: dict[str, Any] | None,
@@ -6326,6 +6536,8 @@ def write_pre_wham_source_selection_manifest(
         "sourceCutRanking": None if ranking is None else ranking_to_manifest(ranking),
         "sourceCutRenderSeconds": render_seconds,
         "sourceCutVlmSeconds": vlm_seconds,
+        "preWhamSourceContractEnabled": exercise_motion_contract is not None,
+        "preWhamSourceContract": exercise_motion_contract,
     }
     if source_detection_result is not None:
         manifest["sourceDetectionSpan"] = {
@@ -9012,15 +9224,18 @@ def build_source_cut_candidate_choice_prompt(
     exercise_name: str,
     candidate_title: str,
     candidates: list[SourceCutCandidate],
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> str:
     candidate_lines = [
         f"- Candidate {candidate.candidate_id}: {candidate.window.start_seconds:.2f}s to {candidate.window.end_seconds:.2f}s."
         for candidate in candidates
     ]
+    contract_section = build_pre_wham_source_contract_prompt_section(exercise_motion_contract)
     return (
         "You are choosing a source-video cut for an exercise animation.\n"
         f"Target exercise: {exercise_name}.\n"
         f"Candidate video title: {candidate_title}.\n"
+        f"{contract_section}"
         "Each attached chronological contact sheet is one candidate source-video window. "
         "Attachments are in this exact order:\n"
         + "\n".join(candidate_lines)
@@ -9052,6 +9267,18 @@ def build_source_cut_candidate_choice_prompt(
     )
 
 
+def build_pre_wham_source_contract_prompt_section(contract: dict[str, Any] | None) -> str:
+    prompt_contract = exercise_motion_contract_for_prompt(contract)
+    if prompt_contract is None:
+        return ""
+    return (
+        "Exercise-specific source identity contract. Apply this generated contract literally when judging whether a source window is the requested exercise. "
+        "Reject windows that violate rejectIf, show a common wrong variant, or miss a required phase. "
+        "Use it as visible movement identity evidence only; do not add camera, crop, person-count, or exact timestamp duties.\n"
+        f"{json.dumps(prompt_contract, ensure_ascii=False, indent=2)}\n"
+    )
+
+
 def normalize_source_cut_candidate_id(value: object) -> str:
     text = str(value or "").strip().upper()
     if text.startswith("CANDIDATE "):
@@ -9064,24 +9291,68 @@ def build_movement_cut_candidate_choice_prompt(
     exercise_name: str,
     candidate_title: str,
     candidates: list[SourceCutCandidate],
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> str:
     candidate_lines = [
         f"- Candidate {candidate.candidate_id}: {candidate.window.start_seconds:.2f}s to {candidate.window.end_seconds:.2f}s."
         for candidate in candidates
     ]
+    contract_section = build_movement_cut_exercise_contract_prompt_section(exercise_motion_contract)
     return (
         "Choose the movement cut from the attached source-video contact sheets.\n"
+        f"Target exercise: {exercise_name}.\n"
+        f"Candidate video title: {candidate_title}.\n"
+        + contract_section
+        +
         "Each attachment is one chronological candidate window. "
         "Attachments are in this exact order:\n"
         + "\n".join(candidate_lines)
-        + "\n\nPick the tightest candidate that contains one complete clean movement: meaningful start position, full action, and controlled finish. "
+        + "\n\nPick the tightest candidate that contains one complete clean target-exercise movement: meaningful start position, full action, and controlled finish. "
+        "The visible movement must match the target exercise, not merely use related equipment or look athletic. "
+        "If you would describe the visible motion as a different exercise, choose null or mark wrong_exercise. "
         "Reject partial one-way fragments, setup-only/reset-only clips, and longer clips with unnecessary setup, idle frames, reset, or the start of another repetition. "
         "Do not require the first and last pose to match; this is a clean movement clip, not necessarily a loop. "
         "Do not invent timestamps; choose one candidate id from the list or null. "
         "Choose null if no candidate contains a complete clean movement.\n"
         "Score cut quality from 0 to 100: 90-100 excellent, 75-89 usable, 50-74 borderline, below 50 incomplete or poorly bounded. "
-        "Return JSON only with keys: {\"selected_candidate_id\": string|null, \"score\": integer_0_to_100, \"valid_movement_cut\": boolean, \"complete_movement\": boolean, \"clean_boundaries\": boolean, \"includes_setup_or_reset\": boolean, \"reason\": string}."
+        "Return JSON only with keys: {\"selected_candidate_id\": string|null, \"score\": integer_0_to_100, \"valid_movement_cut\": boolean, \"complete_movement\": boolean, \"clean_boundaries\": boolean, \"includes_setup_or_reset\": boolean, \"target_exercise_match_score\": number_0_to_1, \"target_exercise_match_reason\": string, \"blocking_issues\": [\"none|wrong_exercise|partial_movement|setup_or_talking|unclear\"], \"reason\": string}."
     )
+
+
+def build_movement_cut_exercise_contract_prompt_section(contract: dict[str, Any] | None) -> str:
+    prompt_contract = exercise_motion_contract_for_prompt(contract)
+    if prompt_contract is None:
+        return ""
+    return (
+        "Movement-cut exercise contract. Use this exercise-specific contract to decide whether a candidate window contains the actual full target movement. "
+        "A valid cut should include the required phase sequence and visible target regions. "
+        "Reject windows that only show setup, only one phase, or any listed wrong variant/reject condition. "
+        "If no candidate window satisfies the contract, choose null.\n"
+        f"{json.dumps(prompt_contract, ensure_ascii=False, indent=2)}\n"
+    )
+
+
+def exercise_motion_contract_from_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    candidate_contract = candidate.get("exerciseMotionContract")
+    prompt_contract = exercise_motion_contract_for_prompt(candidate_contract if isinstance(candidate_contract, dict) else None)
+    if prompt_contract is not None:
+        return prompt_contract
+
+    payload = candidate.get("visionPayload")
+    if not isinstance(payload, dict):
+        return None
+    for key in ("exerciseMotionContract",):
+        contract = payload.get(key)
+        prompt_contract = exercise_motion_contract_for_prompt(contract if isinstance(contract, dict) else None)
+        if prompt_contract is not None:
+            return prompt_contract
+    advisory_payload = payload.get("advisoryVlmSourceReview")
+    if isinstance(advisory_payload, dict):
+        contract = advisory_payload.get("exerciseMotionContract")
+        prompt_contract = exercise_motion_contract_for_prompt(contract if isinstance(contract, dict) else None)
+        if prompt_contract is not None:
+            return prompt_contract
+    return None
 
 
 def source_cut_candidates_payload(candidates: list[SourceCutCandidate]) -> list[dict[str, Any]]:
@@ -9236,6 +9507,93 @@ def source_cut_candidate_passes_visual_integrity(candidate: SourceCutCandidate) 
     return bool(candidate.visual_integrity.get("passed"))
 
 
+def movement_cut_target_motion_gate_metrics(
+    *,
+    exercise_name: str,
+    candidate_metrics: dict[str, Any],
+    candidate_phase_metrics: dict[str, Any] | None,
+    chunk_estimate: Any | None = None,
+) -> dict[str, Any]:
+    complexity = movement_complexity_for_validation(
+        exercise_name,
+        chunk_estimate=chunk_estimate,
+    ).strip().lower()
+    required = complexity in {"simple", "compound"}
+    lower_body_target = exercise_requires_lower_body_motion(exercise_name)
+    target_region = "lower_body" if lower_body_target else "upper_body"
+    root_vertical_range = parse_optional_float(candidate_metrics.get("rootVerticalRangeRatio"))
+    lower_body_proximal_range = parse_optional_float(candidate_metrics.get("lowerBodyProximalRootRelativeRangeRatio"))
+    lower_body_distal_range = parse_optional_float(candidate_metrics.get("lowerBodyDistalRootRelativeRangeRatio"))
+    upper_body_range = parse_optional_float(candidate_metrics.get("upperBodyRootRelativeRangeRatio"))
+    distal_allowed = exercise_allows_distal_lower_body_target_motion(exercise_name)
+    if lower_body_target:
+        distal_target_range = (lower_body_distal_range or 0.0) if distal_allowed else 0.0
+        target_range = max(
+            root_vertical_range or 0.0,
+            lower_body_proximal_range or 0.0,
+            distal_target_range,
+        )
+    else:
+        target_range = upper_body_range
+
+    dominant_joint = None
+    if candidate_phase_metrics is not None:
+        dominant_joint_value = candidate_phase_metrics.get("dominantJoint")
+        dominant_joint = str(dominant_joint_value) if dominant_joint_value is not None else None
+    distal_lower_body_dominant = (
+        dominant_joint is not None
+        and is_lower_body_distal_joint(dominant_joint)
+        and not distal_allowed
+    )
+    target_to_distal_ratio = None
+    if lower_body_distal_range is not None and lower_body_distal_range > 1e-6 and target_range is not None:
+        target_to_distal_ratio = target_range / lower_body_distal_range
+    distal_dominates_target = (
+        distal_lower_body_dominant
+        and lower_body_distal_range is not None
+        and lower_body_distal_range >= MOVEMENT_CUT_MIN_TARGET_REGION_MOTION_RANGE_RATIO
+        and target_range is not None
+        and (
+            lower_body_distal_range >= target_range * MOVEMENT_CUT_DISTAL_DOMINANCE_MIN_RATIO
+            or target_to_distal_ratio <= MOVEMENT_CUT_DISTAL_DOMINANCE_MAX_TARGET_TO_DISTAL_RATIO
+        )
+    )
+
+    rejection_reasons: list[str] = []
+    skipped_reasons: list[str] = []
+    if not required:
+        skipped_reasons.append("movement_cut_target_motion_gate_not_required_for_complexity")
+    elif target_range is None:
+        skipped_reasons.append("movement_cut_target_motion_range_missing")
+    else:
+        if target_range < MOVEMENT_CUT_MIN_TARGET_REGION_MOTION_RANGE_RATIO:
+            rejection_reasons.append("movement_cut_low_target_region_motion")
+        if distal_dominates_target:
+            rejection_reasons.append("movement_cut_distal_setup_motion_dominates")
+
+    return {
+        "required": required,
+        "passed": not rejection_reasons,
+        "rejectionReasons": rejection_reasons,
+        "skippedReasons": skipped_reasons,
+        "exerciseName": exercise_name,
+        "movementComplexity": complexity,
+        "targetMotionRegion": target_region,
+        "targetMotionRangeRatio": target_range,
+        "minTargetMotionRangeRatio": MOVEMENT_CUT_MIN_TARGET_REGION_MOTION_RANGE_RATIO,
+        "rootVerticalRangeRatio": root_vertical_range,
+        "lowerBodyProximalRootRelativeRangeRatio": lower_body_proximal_range,
+        "lowerBodyDistalRootRelativeRangeRatio": lower_body_distal_range,
+        "upperBodyRootRelativeRangeRatio": upper_body_range,
+        "dominantPhaseJoint": dominant_joint,
+        "distalLowerBodyDominant": distal_lower_body_dominant,
+        "distalLowerBodyTargetAllowed": distal_allowed,
+        "targetToDistalMotionRatio": target_to_distal_ratio,
+        "distalDominanceMinRatio": MOVEMENT_CUT_DISTAL_DOMINANCE_MIN_RATIO,
+        "maxTargetToDistalMotionRatio": MOVEMENT_CUT_DISTAL_DOMINANCE_MAX_TARGET_TO_DISTAL_RATIO,
+    }
+
+
 def movement_cut_candidate_motion_coverage_metrics(
     *,
     item: ReviewItem,
@@ -9331,6 +9689,21 @@ def movement_cut_candidate_motion_coverage_metrics(
         ]
         coverage_satisfied_by_complete_phase = True
 
+    target_motion_gate = movement_cut_target_motion_gate_metrics(
+        exercise_name=item.exercise_name,
+        candidate_metrics=candidate_metrics,
+        candidate_phase_metrics=candidate_phase_metrics,
+        chunk_estimate=chunk_estimate,
+    )
+    rejection_reasons.extend(
+        str(reason)
+        for reason in target_motion_gate.get("rejectionReasons", [])
+    )
+    skipped_reasons.extend(
+        str(reason)
+        for reason in target_motion_gate.get("skippedReasons", [])
+    )
+
     payload = {
         "passed": not rejection_reasons,
         "rejectionReasons": rejection_reasons,
@@ -9345,6 +9718,7 @@ def movement_cut_candidate_motion_coverage_metrics(
         "parentMotionStrengthMetrics": parent_metrics,
         "candidateMotionStrengthMetrics": candidate_metrics,
         "motionCoverageSatisfiedByCompleteRepetitionPhase": coverage_satisfied_by_complete_phase,
+        "targetMotionGate": target_motion_gate,
     }
     if parent_phase_metrics is not None:
         payload["parentFullRepetitionPhaseCompletenessMetrics"] = parent_phase_metrics
@@ -9359,11 +9733,28 @@ def movement_cut_candidate_passes_motion_coverage(candidate: SourceCutCandidate)
     return bool(candidate.motion_coverage.get("passed", True))
 
 
+def movement_cut_candidate_hard_motion_rejection_reasons(candidate: SourceCutCandidate) -> list[str]:
+    rejection_reasons = candidate.motion_coverage.get("rejectionReasons") if candidate.motion_coverage else None
+    if not isinstance(rejection_reasons, list):
+        return []
+    return [
+        str(reason)
+        for reason in rejection_reasons
+        if str(reason) in MOVEMENT_CUT_HARD_MOTION_REJECTION_REASONS
+    ]
+
+
+def movement_cut_candidate_has_hard_motion_rejection(candidate: SourceCutCandidate) -> bool:
+    return bool(movement_cut_candidate_hard_motion_rejection_reasons(candidate))
+
+
 SOURCE_CUT_REQUIRED_TRUE_FIELDS: dict[str, str] = {}
 
 SOURCE_CUT_TARGET_EXERCISE_MATCH_MIN_SCORE = 0.75
 SOURCE_CUT_MIN_SELECTED_SCORE = 0.50
 SOURCE_CUT_MIN_MOVING_SUBJECT_REALISM_SCORE = MIN_MOVING_SUBJECT_REALISM_SCORE
+MOVEMENT_CUT_DETERMINISTIC_DIRECT_MIN_COVERAGE_RATIO = 0.90
+MOVEMENT_CUT_DETERMINISTIC_DIRECT_SCORE = 0.86
 
 SOURCE_CUT_OPTIONAL_FALSE_FIELDS: dict[str, str] = {}
 
@@ -9523,19 +9914,19 @@ def parse_movement_cut_candidate_choice(raw: str, candidates: list[SourceCutCand
     selected = candidates_by_id.get(selected_id)
     if selected is None:
         return None
-    valid_cut = next(
-        (
-            value
-            for value in (
-                parse_optional_bool(payload.get("valid_movement_cut")),
-                parse_optional_bool(payload.get("complete_movement")),
-                parse_optional_bool(payload.get("valid_single_movement")),
-            )
-            if value is not None
-        ),
-        None,
-    )
-    if valid_cut is False:
+    validity_values = [
+        parse_optional_bool(payload.get("valid_movement_cut")),
+        parse_optional_bool(payload.get("complete_movement")),
+        parse_optional_bool(payload.get("valid_single_movement")),
+    ]
+    if any(value is False for value in validity_values) or not any(value is True for value in validity_values):
+        return None
+    if parse_optional_bool(payload.get("clean_boundaries")) is False:
+        return None
+    if parse_optional_bool(payload.get("includes_setup_or_reset")) is True:
+        return None
+    rejection_reasons = source_cut_choice_rejection_reasons(payload)
+    if rejection_reasons:
         return None
     score = parse_optional_float(payload.get("score"))
     if score is None:
@@ -9550,6 +9941,8 @@ def parse_movement_cut_candidate_choice(raw: str, candidates: list[SourceCutCand
     if parse_optional_bool(payload.get("clean_boundaries")) is False:
         reasons.append("movement_cut_boundaries_not_clean")
     ranking_payload = dict(payload)
+    ranking_payload["target_exercise_match_score"] = parse_source_cut_target_exercise_match_score(payload)
+    ranking_payload["movementCutRejectionReasons"] = rejection_reasons
     ranking_payload["selectedCandidateId"] = selected.candidate_id
     ranking_payload["selected_section_start_seconds"] = selected.window.start_seconds
     ranking_payload["selected_section_end_seconds"] = selected.window.end_seconds
@@ -9564,6 +9957,93 @@ def parse_movement_cut_candidate_choice(raw: str, candidates: list[SourceCutCand
     )
 
 
+def movement_cut_candidate_source_motion_coverage_ratio(candidate: SourceCutCandidate) -> float:
+    if not candidate.motion_coverage:
+        return 1.0
+    value = parse_optional_float(candidate.motion_coverage.get("sourceMotionCoverageRatio"))
+    return 1.0 if value is None else clamp_unit(value)
+
+
+def movement_cut_candidate_has_complete_phase(candidate: SourceCutCandidate) -> bool:
+    metrics = candidate.motion_coverage.get("candidateFullRepetitionPhaseCompletenessMetrics") if candidate.motion_coverage else None
+    return isinstance(metrics, dict) and bool(metrics.get("required")) and bool(metrics.get("passed"))
+
+
+def movement_cut_candidate_target_motion_score(candidate: SourceCutCandidate) -> float:
+    metrics = candidate.motion_coverage.get("targetMotionGate") if candidate.motion_coverage else None
+    if not isinstance(metrics, dict):
+        return 1.0
+    value = parse_optional_float(metrics.get("targetMotionRangeRatio"))
+    minimum = parse_optional_float(metrics.get("minTargetMotionRangeRatio"))
+    if value is None or minimum is None or minimum <= 1e-6:
+        return 1.0
+    return clamp_unit(value / minimum)
+
+
+def movement_cut_candidate_confidence_key(candidate: SourceCutCandidate) -> tuple[int, float, float, float]:
+    duration = max(0.0, candidate.window.end_seconds - candidate.window.start_seconds)
+    return (
+        1 if movement_cut_candidate_has_complete_phase(candidate) else 0,
+        movement_cut_candidate_source_motion_coverage_ratio(candidate),
+        movement_cut_candidate_target_motion_score(candidate),
+        -duration,
+    )
+
+
+def deterministic_movement_cut_ranking_if_confident(
+    *,
+    candidates: list[SourceCutCandidate],
+    all_candidates: list[SourceCutCandidate],
+    visual_candidate_count: int,
+    motion_coverage_fallback: bool,
+    hard_motion_rejected_count: int,
+    use_exercise_motion_contract: bool,
+    exercise_motion_contract: dict[str, Any] | None,
+) -> LoopRanking | None:
+    if motion_coverage_fallback or not candidates:
+        return None
+    ranked = sorted(candidates, key=movement_cut_candidate_confidence_key, reverse=True)
+    selected = ranked[0]
+    selected_coverage = movement_cut_candidate_source_motion_coverage_ratio(selected)
+    selected_complete_phase = movement_cut_candidate_has_complete_phase(selected)
+    if len(ranked) > 1 and not (
+        selected_complete_phase
+        and selected_coverage >= MOVEMENT_CUT_DETERMINISTIC_DIRECT_MIN_COVERAGE_RATIO
+    ):
+        return None
+
+    score = MOVEMENT_CUT_DETERMINISTIC_DIRECT_SCORE
+    payload = {
+        "score": score,
+        "modelScore": score,
+        "selectedCandidateId": selected.candidate_id,
+        "selected_section_start_seconds": selected.window.start_seconds,
+        "selected_section_end_seconds": selected.window.end_seconds,
+        "movementCutCandidates": source_cut_candidates_payload(all_candidates),
+        "movementCutVlmInputCandidates": [],
+        "movementCutVisualIntegrityFilteredCount": len(all_candidates) - visual_candidate_count,
+        "movementCutMotionCoverageFilteredCount": visual_candidate_count - len(candidates),
+        "movementCutMotionCoverageFallback": False,
+        "movementCutHardMotionRejectedCount": hard_motion_rejected_count,
+        "movementCutExerciseMotionContractEnabled": use_exercise_motion_contract,
+        "movementCutDeterministicDirectSelection": True,
+        "movementCutSelectedCoverageRatio": selected_coverage,
+        "movementCutSelectedCompletePhase": selected_complete_phase,
+        "finalCutResponsibility": "deterministic_movement_window_selection",
+    }
+    if exercise_motion_contract is not None:
+        payload["movementCutExerciseMotionContract"] = exercise_motion_contract
+    return LoopRanking(
+        score=score,
+        reasons=[
+            "movement_cut_deterministic_direct_selection",
+            "movement_cut_candidate_window_choice",
+        ],
+        payload=payload,
+        model_score=score,
+    )
+
+
 def rank_movement_cut_candidates_with_caption_images(
     *,
     item: ReviewItem,
@@ -9572,6 +10052,7 @@ def rank_movement_cut_candidates_with_caption_images(
     output_dir: Path,
     frame_count: int,
     caption_images: Callable[..., str],
+    use_exercise_motion_contract: bool = True,
 ) -> tuple[LoopRanking, float, float] | None:
     candidate_windows = build_source_cut_candidate_windows(
         window=timeline_window,
@@ -9631,13 +10112,63 @@ def rank_movement_cut_candidates_with_caption_images(
             render_seconds,
             0.0,
         )
+    exercise_motion_contract = (
+        exercise_motion_contract_from_candidate(item.candidate)
+        if use_exercise_motion_contract
+        else None
+    )
     coverage_candidates = [
         candidate
         for candidate in candidates
         if movement_cut_candidate_passes_motion_coverage(candidate)
     ]
+    hard_motion_rejected_count = sum(
+        1
+        for candidate in candidates
+        if movement_cut_candidate_has_hard_motion_rejection(candidate)
+    )
     motion_coverage_fallback = not coverage_candidates
-    vlm_candidates = coverage_candidates if coverage_candidates else candidates
+    if coverage_candidates:
+        vlm_candidates = coverage_candidates
+    else:
+        vlm_candidates = [
+            candidate
+            for candidate in candidates
+            if not movement_cut_candidate_has_hard_motion_rejection(candidate)
+        ]
+        if not vlm_candidates:
+            return (
+                LoopRanking(
+                    score=0.0,
+                    reasons=["movement_cut_candidate_window_choice_failed", "movement_cut_target_motion_gate_failed"],
+                    payload={
+                        "score": 0.0,
+                        "modelScore": 0.0,
+                        "movementCutCandidates": source_cut_candidates_payload(all_candidates),
+                        "movementCutVlmInputCandidates": [],
+                        "movementCutMotionCoverageFilteredCount": len(candidates),
+                        "movementCutMotionCoverageFallback": False,
+                        "movementCutHardMotionRejectedCount": hard_motion_rejected_count,
+                        "movementCutTargetMotionGateFailed": True,
+                        "movementCutExerciseMotionContractEnabled": use_exercise_motion_contract,
+                        "finalCutResponsibility": "movement_window_selection_only",
+                    },
+                    model_score=0.0,
+                ),
+                render_seconds,
+                0.0,
+            )
+    deterministic_ranking = deterministic_movement_cut_ranking_if_confident(
+        candidates=vlm_candidates,
+        all_candidates=all_candidates,
+        visual_candidate_count=len(candidates),
+        motion_coverage_fallback=motion_coverage_fallback,
+        hard_motion_rejected_count=hard_motion_rejected_count,
+        use_exercise_motion_contract=use_exercise_motion_contract,
+        exercise_motion_contract=exercise_motion_contract,
+    )
+    if deterministic_ranking is not None:
+        return deterministic_ranking, render_seconds, 0.0
     vlm_started = time.perf_counter()
     raw = caption_images(
         frame_paths=[path for candidate in vlm_candidates for path in candidate.frame_paths],
@@ -9645,6 +10176,7 @@ def rank_movement_cut_candidates_with_caption_images(
             exercise_name=item.exercise_name,
             candidate_title=item.candidate_title,
             candidates=vlm_candidates,
+            exercise_motion_contract=exercise_motion_contract,
         ),
     )
     vlm_seconds = elapsed_seconds(vlm_started)
@@ -9662,7 +10194,14 @@ def rank_movement_cut_candidates_with_caption_images(
                     "movementCutVlmInputCandidates": source_cut_candidates_payload(vlm_candidates),
                     "movementCutMotionCoverageFilteredCount": len(candidates) - len(vlm_candidates),
                     "movementCutMotionCoverageFallback": motion_coverage_fallback,
+                    "movementCutHardMotionRejectedCount": hard_motion_rejected_count,
                     "movementCutChoiceInvalidResponse": True,
+                    "movementCutExerciseMotionContractEnabled": use_exercise_motion_contract,
+                    **(
+                        {"movementCutExerciseMotionContract": exercise_motion_contract}
+                        if exercise_motion_contract is not None
+                        else {}
+                    ),
                     "finalCutResponsibility": "movement_window_selection_only",
                 },
                 model_score=0.0,
@@ -9677,6 +10216,10 @@ def rank_movement_cut_candidates_with_caption_images(
     ranking_payload["movementCutVisualIntegrityFallback"] = visual_integrity_fallback
     ranking_payload["movementCutMotionCoverageFilteredCount"] = len(candidates) - len(vlm_candidates)
     ranking_payload["movementCutMotionCoverageFallback"] = motion_coverage_fallback
+    ranking_payload["movementCutHardMotionRejectedCount"] = hard_motion_rejected_count
+    ranking_payload["movementCutExerciseMotionContractEnabled"] = use_exercise_motion_contract
+    if exercise_motion_contract is not None:
+        ranking_payload["movementCutExerciseMotionContract"] = exercise_motion_contract
     ranking_payload["finalCutResponsibility"] = "movement_window_selection_only"
     ranking = replace(
         ranking,
@@ -9695,6 +10238,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     output_dir: Path,
     frame_count: int,
     caption_images: Callable[..., str],
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> tuple[LoopRanking, float, float] | None:
     candidate_windows = build_source_cut_candidate_windows(
         window=timeline_window,
@@ -9735,6 +10279,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "modelScore": 0.0,
                     "sourceCutCandidates": source_cut_candidates_payload(all_candidates),
                     "sourceCutDeterministicVisualIntegrityFailed": True,
+                    "preWhamSourceContract": exercise_motion_contract,
                 },
                 model_score=0.0,
             ),
@@ -9748,6 +10293,7 @@ def rank_source_video_cut_candidates_with_caption_images(
             exercise_name=exercise_name,
             candidate_title=candidate_title,
             candidates=candidates,
+            exercise_motion_contract=exercise_motion_contract,
         ),
     )
     vlm_seconds = elapsed_seconds(vlm_started)
@@ -9764,6 +10310,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "sourceCutCandidates": source_cut_candidates_payload(all_candidates),
                     "sourceCutVlmInputCandidates": source_cut_candidates_payload(candidates),
                     "sourceChoiceInvalidResponse": True,
+                    "preWhamSourceContract": exercise_motion_contract,
                 },
                 model_score=0.0,
             ),
@@ -9773,6 +10320,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     ranking_payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
     ranking_payload["sourceCutCandidates"] = source_cut_candidates_payload(all_candidates)
     ranking_payload["sourceCutVlmInputCandidates"] = source_cut_candidates_payload(candidates)
+    ranking_payload["preWhamSourceContract"] = exercise_motion_contract
     ranking = replace(
         ranking,
         payload=ranking_payload,
@@ -9981,6 +10529,7 @@ def rank_review_item_with_caption_images(
                 output_dir=frames_dir / f"chunk_{video_window.index:04d}",
                 frame_count=frames_per_chunk,
                 caption_images=caption_images,
+                use_exercise_motion_contract=request.movement_cut_exercise_contract_enabled,
             )
         except Exception as exc:
             rankings.append(
@@ -10122,6 +10671,7 @@ def build_deterministic_section_fallback_ranking(
         chunk_count=chunk_count,
         original_chunk_count=original_chunk_count,
         deterministic_window=deterministic_window,
+        active_motion_window=active_motion_window,
         chunk_estimate=chunk_estimate,
         review_frame_source=review_frame_source,
         review_frame_count=review_frame_count,
@@ -10223,14 +10773,14 @@ def build_loop_ranking_prompt(
     )
     motion_tuning_enabled = item.settings_variant_id != "raw-wham"
     loop_continuity_required = False
-    review_goal = "choose the cleanest complete exercise movement section inside this chunk for a Wear OS exercise animation"
+    review_goal = "score this deterministically bounded exercise movement candidate for a Wear OS exercise animation"
     boundary_instruction = (
-        "The selected section should be cut to the actual exercise movement, not merely to the whole reviewed chunk. For a rep-based lift, start near the first frame where the loaded movement begins, include the full eccentric and concentric phases, and end shortly after the rep completes at the stable finish pose. For multi-phase lifts, include the complete phase sequence through controlled finish/stabilization. Exclude setup, unracking, walking in/out, long pauses before the first moving frame, long holds after completion, and reset footage. Only select the entire chunk when its first and last frames are already the true movement boundaries.\n"
+        "Score boundary_quality by whether this deterministic chunk is cut to the actual exercise movement, not merely to a broad preview span. For a rep-based lift, the chunk should start near the first frame where the loaded movement begins, include the full eccentric and concentric phases, and end shortly after the rep completes at the stable finish pose. For multi-phase lifts, it should include the complete phase sequence through controlled finish/stabilization. Penalize setup, unracking, walking in/out, long pauses before the first moving frame, long holds after completion, and reset footage. Treat the full chunk as good only when its first and last frames are already the true movement boundaries.\n"
     )
     movement_boundary_instruction = (
-        "First identify the movement start and movement end from the chronological frames. Prefer a tight cut around the complete exercise movement over a full-chunk cut that includes setup, reset, or extra holds. Do not require the start and end poses to match; clean movement coverage is more important than loopability.\n"
+        "First judge whether the deterministic chunk boundaries already cover a tight complete exercise movement rather than setup, reset, or extra holds. Do not require the start and end poses to match; clean movement coverage is more important than loopability.\n"
     )
-    section_cut_instruction = "Judge only the attached chunk frames and pick exact start/end seconds for the complete movement section that should be cut as a one-shot exercise animation clip.\n"
+    section_cut_instruction = "Judge only the attached chunk frames. Do not invent or return exact start/end seconds; deterministic code owns timing and this review only scores the bounded one-shot exercise animation clip.\n"
     score_instruction = (
         "Score 0 to 1 for the proposed cut using these criteria: correct exercise, complete movement coverage, recognizability, smoothness, stable planted feet when appropriate, stable paired hand spacing for barbell/dumbbell press-like motion, no impossible joints, clear start/end boundaries, controlled finish, and readability on a small Wear display. Do not penalize a valid movement merely because the final pose differs from the starting pose.\n"
     )
@@ -10253,7 +10803,7 @@ def build_loop_ranking_prompt(
             if includes_source_context
             else f"The attached image is a chronological contact sheet rendered directly from the generated interactive preview with {review_frame_count} evenly sampled frames and visible preview timeline labels; read it left-to-right, top-to-bottom.\n"
         )
-        + "Use the chunk boundaries as the search space. Return selected section seconds in the full preview timeline, and keep them inside this chunk.\n"
+        + "Use the chunk boundaries as fixed deterministic input. Do not return selected section seconds.\n"
         f"Chunk sizing came from the shared estimate: {json.dumps({'repDurationMinSec': getattr(chunk_estimate, 'rep_duration_min_sec', None), 'repDurationMaxSec': getattr(chunk_estimate, 'rep_duration_max_sec', None), 'movementComplexity': getattr(chunk_estimate, 'movement_complexity', None), 'chunkSeconds': getattr(chunk_estimate, 'chunk_seconds', None), 'chunkOverlapSeconds': getattr(chunk_estimate, 'chunk_overlap_seconds', None), 'source': getattr(chunk_estimate, 'source', None)})}.\n"
         "Loop continuity required for final acceptance: false. Prefer a clean complete movement clip over a seamless loop.\n"
         f"Current preview option variant: {item.settings_variant_id} ({item.settings_variant_label}).\n"
@@ -10269,7 +10819,7 @@ def build_loop_ranking_prompt(
         f"{settings_instruction}"
         f"{score_instruction}"
         "Strongly penalize wrong or unclear movement, shallow or partial reps when a stronger full rep is visible, jitter, foot sliding, broken limbs, visible popping, arm distortion, lost elbow range, broken paired-hand spacing, bad section boundaries, and poses that would be confusing on a watch.\n"
-        "Return JSON only with keys: {\"score\": number, \"correctness\": number, \"full_rep_motion\": number, \"recognizability\": number, \"smoothness\": number, \"stable_feet\": number, \"joint_plausibility\": number, \"loop_continuity\": number, \"wear_readability\": number, \"selected_section_start_seconds\": number|null, \"selected_section_end_seconds\": number|null, \"needs_another_iteration\": boolean, \"reasons\": [string]}."
+        "Return JSON only with keys: {\"score\": number, \"correctness\": number, \"full_rep_motion\": number, \"boundary_quality\": number, \"recognizability\": number, \"smoothness\": number, \"stable_feet\": number, \"joint_plausibility\": number, \"loop_continuity\": number, \"wear_readability\": number, \"needs_another_iteration\": boolean, \"reasons\": [string]}."
     )
 
 
@@ -10309,6 +10859,9 @@ def build_selection_manifest(
         ),
         "maxLoopSeconds": request.max_loop_seconds,
         "maxReviewWindows": request.max_review_windows,
+        "maxSourceWindowAttempts": request.max_source_window_attempts,
+        "preWhamSourceContractEnabled": request.pre_wham_source_contract_enabled,
+        "movementCutExerciseContractEnabled": request.movement_cut_exercise_contract_enabled,
         "minSelectedScore": request.min_selected_score,
         "maxSelectedResults": max_selected_results_for_request(request),
         "motionTuningEnabled": request.motion_tuning_enabled,

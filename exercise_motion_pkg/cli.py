@@ -33,6 +33,7 @@ from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_DOCKER_IMAGE, DEFAULT_W
 from exercise_motion_pkg.youtube import (
     YouTubeRankingSettings,
     discover_and_rank_youtube_candidates,
+    load_youtube_candidate_exclusion_keys,
     load_workout_plan_exercises,
 )
 
@@ -370,6 +371,11 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--vision-download-workers", type=int, default=8)
     youtube_search.add_argument("--vision-llm-workers", type=int, default=4)
     youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
+    youtube_search.add_argument(
+        "--no-exercise-motion-contract",
+        action="store_true",
+        help="Disable the generated exercise-specific motion contract used by source-review prompts.",
+    )
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
     youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
@@ -398,9 +404,33 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--no-llama-cpp-mmap", action="store_true")
     youtube_search.add_argument("--llama-cpp-mlock", action="store_true")
     youtube_search.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
+    youtube_search.add_argument(
+        "--keep-llama-cpp-server",
+        action="store_true",
+        help="Leave an auto-started llama.cpp server running after YouTube discovery so later stages can reuse it.",
+    )
     youtube_search.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
+    youtube_search.add_argument(
+        "--exclude-youtube-candidates-json",
+        action="append",
+        default=[],
+        type=Path,
+        help="Previous YouTube candidate/selection manifest whose video ids should be skipped during discovery.",
+    )
+    youtube_search.add_argument(
+        "--exclude-youtube-video-id",
+        action="append",
+        default=[],
+        help="YouTube video id to skip during discovery. Can be passed multiple times.",
+    )
+    youtube_search.add_argument(
+        "--exclude-youtube-url",
+        action="append",
+        default=[],
+        help="YouTube URL to skip during discovery. Can be passed multiple times.",
+    )
     youtube_search.add_argument("--include-disabled", action="store_true")
 
     list_plan_exercises = subparsers.add_parser(
@@ -423,6 +453,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
     bake_and_rank.add_argument("--fallback-candidates", type=int, default=DEFAULT_FALLBACK_CANDIDATES)
+    bake_and_rank.add_argument(
+        "--max-source-window-attempts",
+        type=int,
+        default=1,
+        help=(
+            "Maximum source-window variants to try per ranked video before moving on. "
+            "Use 0 to try every reviewed source window."
+        ),
+    )
     bake_and_rank.add_argument(
         "--candidate-workers",
         type=int,
@@ -507,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the source contact-sheet complete-movement gate before running WHAM.",
     )
     bake_and_rank.add_argument(
+        "--no-pre-wham-source-contract",
+        action="store_true",
+        help="Do not generate/use an exercise-specific motion contract in the pre-WHAM source gate.",
+    )
+    bake_and_rank.add_argument(
         "--spinepose-json-dir",
         help="Directory of existing SpinePose frame JSON files. Used only when --enable-spinepose is set.",
     )
@@ -557,6 +601,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_REVIEW_WINDOWS,
         help="Maximum skeleton-prefiltered preview chunks to send to the visual ranker per baked item. Use 0 to review all chunks.",
+    )
+    bake_and_rank.add_argument(
+        "--no-movement-cut-exercise-contract",
+        action="store_true",
+        help="Do not include the generated exercise-motion contract in movement-cut source-window prompts.",
     )
     bake_and_rank.add_argument(
         "--max-selected-results",
@@ -1001,6 +1050,11 @@ def main() -> None:
     if args.command == "find-youtube-videos":
         out_json = Path(args.out_json)
         preview_cache_dir = args.youtube_preview_cache_dir or (out_json.parent / "youtube-preview-cache")
+        excluded_candidate_keys = load_youtube_candidate_exclusion_keys(
+            candidates_json_paths=args.exclude_youtube_candidates_json,
+            video_ids=args.exclude_youtube_video_id,
+            urls=args.exclude_youtube_url,
+        )
         manifest = discover_and_rank_youtube_candidates(
             workout_plan_json=Path(args.workout_plan_json),
             equipment_json=Path(args.equipment_json) if args.equipment_json else None,
@@ -1010,6 +1064,7 @@ def main() -> None:
                 youtube_search_empty_retries=args.youtube_search_empty_retries,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
                 youtube_preview_cache_dir=preview_cache_dir,
+                excluded_candidate_keys=excluded_candidate_keys,
                 max_candidates=args.max_candidates,
                 metadata_candidate_pool_size=args.metadata_candidate_pool_size,
                 candidate_review_batch_size=args.candidate_review_batch_size,
@@ -1055,6 +1110,7 @@ def main() -> None:
                 vision_download_workers=args.vision_download_workers,
                 vision_llm_workers=args.vision_llm_workers,
                 vision_model=args.vision_model,
+                exercise_motion_contract_enabled=not args.no_exercise_motion_contract,
                 llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
                 llama_cpp_model=args.llama_cpp_model,
                 llama_cpp_command=args.llama_cpp_command,
@@ -1082,6 +1138,7 @@ def main() -> None:
                 llama_cpp_mmap=not args.no_llama_cpp_mmap,
                 llama_cpp_mlock=args.llama_cpp_mlock,
                 llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
+                keep_llama_cpp_server=args.keep_llama_cpp_server,
                 llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
                 llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
                 include_disabled=args.include_disabled,
@@ -1107,6 +1164,7 @@ def main() -> None:
                 body_model_root=Path(args.body_model_root),
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
                 fallback_candidates=args.fallback_candidates,
+                max_source_window_attempts=args.max_source_window_attempts,
                 candidate_workers=args.candidate_workers,
                 wham_python_command=args.wham_python,
                 reuse_wham_cache=not args.no_reuse_wham_cache,
@@ -1151,10 +1209,12 @@ def main() -> None:
                 pre_wham_source_validation=(
                     args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
                 ),
+                pre_wham_source_contract_enabled=not args.no_pre_wham_source_contract,
                 review_frames=args.review_frames,
                 review_llm_workers=args.review_llm_workers,
                 max_llm_review_items=args.max_llm_review_items,
                 max_review_windows=args.max_review_windows,
+                movement_cut_exercise_contract_enabled=not args.no_movement_cut_exercise_contract,
                 max_selected_results=args.max_selected_results,
                 rank_preview_variants=args.rank_preview_variants,
                 adaptive_preview_settings=args.adaptive_preview_settings,

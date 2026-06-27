@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import subprocess
+import json
+import os
+import tempfile
 import time
+from contextlib import contextmanager
 from typing import Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +14,9 @@ from pathlib import Path
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
+WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
+WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS"
+DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class WhamRunResult:
     estimate_local_only: bool
     run_smplify: bool
     docker_image: str | None = None
+    docker_lock_wait_seconds: float = 0.0
 
     def timing_payload(self) -> dict[str, Any]:
         return {
@@ -39,6 +47,7 @@ class WhamRunResult:
             "command": self.command,
             "outputDir": str(self.output_dir),
             "resultsPkl": str(self.results_pkl),
+            "dockerLockWaitSeconds": round(self.docker_lock_wait_seconds, 3) if self.use_docker else 0.0,
         }
 
 
@@ -75,18 +84,20 @@ def run_wham_locally(
         docker_shm_size=docker_shm_size,
     )
     started = time.perf_counter()
+    lock_wait_seconds = 0.0
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
         "w",
         encoding="utf-8",
     ) as stderr_handle:
-        process = subprocess.run(
-            command,
-            cwd=str(wham_repo_path),
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            text=True,
-            check=False,
-        )
+        with wham_docker_run_lock(enabled=use_docker) as lock_wait_seconds:
+            process = subprocess.run(
+                command,
+                cwd=str(wham_repo_path),
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                text=True,
+                check=False,
+            )
     elapsed = time.perf_counter() - started
     if process.returncode != 0:
         raise RuntimeError(
@@ -115,7 +126,107 @@ def run_wham_locally(
         estimate_local_only=estimate_local_only,
         run_smplify=run_smplify,
         docker_image=docker_image if use_docker else None,
+        docker_lock_wait_seconds=lock_wait_seconds,
     )
+
+
+@contextmanager
+def wham_docker_run_lock(*, enabled: bool):
+    if not enabled:
+        yield 0.0
+        return
+
+    lock_path = wham_docker_lock_path()
+    timeout_seconds = wham_docker_lock_timeout_seconds()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    lock_handle: int | None = None
+    while True:
+        try:
+            lock_handle = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            payload = {
+                "pid": os.getpid(),
+                "createdAt": time.time(),
+            }
+            os.write(lock_handle, json.dumps(payload).encode("utf-8"))
+            break
+        except FileExistsError:
+            if wham_docker_lock_is_stale(lock_path, timeout_seconds=timeout_seconds):
+                try:
+                    lock_path.unlink()
+                    continue
+                except OSError:
+                    pass
+            elapsed = time.perf_counter() - started
+            if elapsed >= timeout_seconds:
+                raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}")
+            time.sleep(2.0)
+    try:
+        yield time.perf_counter() - started
+    finally:
+        if lock_handle is not None:
+            os.close(lock_handle)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def wham_docker_lock_path() -> Path:
+    configured = os.environ.get(WHAM_DOCKER_LOCK_ENV_VAR)
+    if configured:
+        return Path(configured).expanduser()
+    return Path(tempfile.gettempdir()) / "myworkoutassistant-wham-docker.lock"
+
+
+def wham_docker_lock_timeout_seconds() -> float:
+    raw = os.environ.get(WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is None:
+        return float(DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS)
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return float(DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS)
+
+
+def wham_docker_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
+    try:
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return lock_age_seconds(lock_path) > timeout_seconds
+    pid = payload.get("pid") if isinstance(payload, dict) else None
+    if isinstance(pid, int) and pid > 0 and not process_is_running(pid):
+        return True
+    return lock_age_seconds(lock_path) > timeout_seconds
+
+
+def lock_age_seconds(lock_path: Path) -> float:
+    try:
+        return max(0.0, time.time() - lock_path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
+def process_is_running(pid: int) -> bool:
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return True
+        output = result.stdout.lower()
+        return str(pid) in output and "no tasks are running" not in output
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def build_wham_command(
