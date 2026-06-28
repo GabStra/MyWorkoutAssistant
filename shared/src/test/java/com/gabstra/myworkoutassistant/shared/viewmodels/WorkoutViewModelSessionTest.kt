@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
@@ -545,7 +546,82 @@ class WorkoutViewModelSessionTest {
     }
 
     @Test
-    fun finishWorkoutEarly_onFinalRemainingSet_stores_finished_early_and_does_not_update_last_successful_session() = runTest(testDispatcher) {
+    fun finishWorkoutEarly_afterCompletedExercise_updatesOnlyCompletedExerciseProgression() = runTest(testDispatcher) {
+        val completedSetId = UUID.randomUUID()
+        val skippedExerciseId = UUID.randomUUID()
+        val skippedSetId = UUID.randomUUID()
+        val completedExercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(completedSetId, 8, 90.0)),
+            name = "Bench Press"
+        )
+        val skippedExercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(skippedSetId, 10, 70.0)),
+            name = "Barbell Row"
+        ).copy(id = skippedExerciseId)
+        val workout = createTestWorkout(listOf(completedExercise, skippedExercise))
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        val firstState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(firstState)
+        assertEquals(completedExercise.id, firstState?.exerciseId)
+        firstState!!.startTime = LocalDateTime.now()
+        viewModel.storeSetData()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val secondState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(secondState)
+        assertEquals(skippedExercise.id, secondState?.exerciseId)
+
+        viewModel.finishWorkoutEarly(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val completedHistory = database.workoutHistoryDao()
+            .getLatestWorkoutHistoryByWorkoutId(testWorkoutId, isDone = true)
+        assertEquals(
+            com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.FINISHED_EARLY,
+            completedHistory?.endReason
+        )
+
+        val completedInfo = database.exerciseInfoDao().getExerciseInfoById(completedExercise.id)
+        assertNotNull("Completed exercise should update progression state", completedInfo)
+        assertEquals(1u, completedInfo?.successfulSessionCounter)
+        assertEquals(0u, completedInfo?.sessionFailedCounter)
+        assertEquals(
+            completedSetId,
+            completedInfo?.lastSuccessfulSession?.sets?.singleOrNull()?.setId
+        )
+
+        val skippedInfo = database.exerciseInfoDao().getExerciseInfoById(skippedExercise.id)
+        assertNull("Skipped exercise should not create exercise progression state", skippedInfo)
+
+        val progressions = database.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
+        assertNotNull(
+            "Completed exercise should get a session progression row",
+            progressions.firstOrNull { it.exerciseId == completedExercise.id }
+        )
+        assertNull(
+            "Skipped exercise should not get a session progression row",
+            progressions.firstOrNull { it.exerciseId == skippedExercise.id }
+        )
+    }
+
+    @Test
+    fun finishWorkoutEarly_onIncompleteExercise_stores_finished_early_and_keeps_existing_progression_state() = runTest(testDispatcher) {
         val firstSetId = UUID.randomUUID()
         val carriedSetId = UUID.randomUUID()
         val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
@@ -605,11 +681,17 @@ class WorkoutViewModelSessionTest {
 
         val exerciseInfo = database.exerciseInfoDao().getExerciseInfoById(testExerciseId)
         assertNotNull(exerciseInfo)
-        assertEquals(0u, exerciseInfo?.successfulSessionCounter)
-        assertEquals(1u, exerciseInfo?.sessionFailedCounter)
+        assertEquals(1u, exerciseInfo?.successfulSessionCounter)
+        assertEquals(0u, exerciseInfo?.sessionFailedCounter)
         assertEquals(
             previousSet.setId,
             exerciseInfo?.lastSuccessfulSession?.sets?.singleOrNull()?.setId
+        )
+
+        val progressions = database.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
+        assertNull(
+            "Incomplete exercise should not get a session progression row",
+            progressions.firstOrNull { it.exerciseId == testExerciseId }
         )
     }
 

@@ -393,6 +393,15 @@ internal class WorkoutPersistenceCoordinator(
                 val currentSessionSnapshot = sessionMerge.snapshot
                 val preparedSetHistories = sessionMerge.preparedSetHistories
 
+                if (!hasCompletedAllTrackableWorkSets(currentSessionSnapshot)) {
+                    Log.d(
+                        tag,
+                        "Skipping progression update for incomplete exercise ${exercise.id} " +
+                            "in workout history ${workoutHistoryForThisPush.id}"
+                    )
+                    return@forEach
+                }
+
                 val exerciseId = entry.key
                 val exerciseInfo = exerciseInfoDaoRef.getExerciseInfoById(exerciseId)
                 val today = LocalDate.now()
@@ -451,16 +460,14 @@ internal class WorkoutPersistenceCoordinator(
                 val expectedVolume = expectedSets.sumOf { it.weight * it.reps }
                 val executedVolume = executedSets.sumOf { it.weight * it.reps }
 
-                val finishedEarly = snapshot.endReason == WorkoutSessionEndReason.FINISHED_EARLY
-
                 if (exerciseInfo == null) {
                     val newExerciseInfo = com.gabstra.myworkoutassistant.shared.ExerciseInfo(
                         id = exerciseId,
                         bestSession = currentSessionSnapshot,
-                        lastSuccessfulSession = if (finishedEarly) ExerciseSessionSnapshot() else currentSessionSnapshot,
-                        successfulSessionCounter = if (isDeloadSession || finishedEarly) 0u else 1u,
-                        sessionFailedCounter = if (finishedEarly) 1u else 0u,
-                        completedSessionsSinceDeload = if (isDeloadSession || finishedEarly) 0u else 1u,
+                        lastSuccessfulSession = currentSessionSnapshot,
+                        successfulSessionCounter = if (isDeloadSession) 0u else 1u,
+                        sessionFailedCounter = 0u,
+                        completedSessionsSinceDeload = if (isDeloadSession) 0u else 1u,
                         timesCompletedInAWeek = weeklyCount,
                         weeklyCompletionUpdateDate = today,
                         lastSessionWasDeload = isDeloadSession,
@@ -475,12 +482,6 @@ internal class WorkoutPersistenceCoordinator(
                             successfulSessionCounter = 0u,
                             completedSessionsSinceDeload = 0u,
                             lastSessionWasDeload = true
-                        )
-                    } else if (finishedEarly) {
-                        updatedInfo = updatedInfo.copy(
-                            successfulSessionCounter = 0u,
-                            sessionFailedCounter = updatedInfo.sessionFailedCounter.inc(),
-                            lastSessionWasDeload = false
                         )
                     } else {
                         updatedInfo = updatedInfo.copy(
@@ -683,6 +684,23 @@ internal class WorkoutPersistenceCoordinator(
         }
 
         return emptyList()
+    }
+
+    private fun hasCompletedAllTrackableWorkSets(snapshot: ExerciseSessionSnapshot): Boolean {
+        val workSets = snapshot.sets.filter { sessionSet ->
+            isTrackableWorkSet(sessionSet.set)
+        }
+        return workSets.isNotEmpty() && workSets.all { it.wasExecuted && !it.wasSkipped }
+    }
+
+    private fun isTrackableWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
+        is WeightSet -> set.subCategory != SetSubCategory.RestPauseSet &&
+            set.subCategory != SetSubCategory.CalibrationSet &&
+            set.subCategory != SetSubCategory.WarmupSet
+        is BodyWeightSet -> set.subCategory != SetSubCategory.RestPauseSet &&
+            set.subCategory != SetSubCategory.CalibrationSet &&
+            set.subCategory != SetSubCategory.WarmupSet
+        else -> false
     }
 
     private fun cloneSetHistories(setHistories: List<SetHistory>): List<SetHistory> {
