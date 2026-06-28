@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
@@ -108,28 +110,64 @@ fun WorkoutDetailScreen(
         Manifest.permission.POST_NOTIFICATIONS
     )
 
-    val permissionLauncherStart = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    fun hasAllWorkoutPermissions(): Boolean =
+        basePermissions.all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+
+    fun navigateToWorkout() {
+        navController.navigate(Screen.Workout.route) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    fun startWorkoutAfterPermissions() {
         if (hasWorkoutRecord) viewModel.deleteWorkoutRecord()
         viewModel.startWorkout()
         val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
         prefs.edit { putBoolean("isWorkoutInProgress", true) }
         viewModel.clearRecoveryCheckpoint()
 
-        navController.navigate(Screen.Workout.route)
+        navigateToWorkout()
         viewModel.consumeStartWorkout()
+    }
+
+    fun resumeWorkoutAfterPermissions() {
+        viewModel.resumeWorkoutFromRecord()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
+        navigateToWorkout()
+        viewModel.consumeStartWorkout()
+    }
+
+    val permissionLauncherStart = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        startWorkoutAfterPermissions()
     }
 
     val permissionLauncherResume = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        viewModel.resumeWorkoutFromRecord()
-        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+        resumeWorkoutAfterPermissions()
+    }
 
-        navController.navigate(Screen.Workout.route)
-        viewModel.consumeStartWorkout()
+    fun requestPermissionsOrStartWorkout() {
+        if (hasAllWorkoutPermissions()) {
+            startWorkoutAfterPermissions()
+        } else {
+            permissionLauncherStart.launch(basePermissions.toTypedArray())
+        }
+    }
+
+    fun requestPermissionsOrResumeWorkout() {
+        if (hasAllWorkoutPermissions()) {
+            resumeWorkoutAfterPermissions()
+        } else {
+            permissionLauncherResume.launch(basePermissions.toTypedArray())
+        }
     }
 
     LaunchedEffect(
@@ -140,9 +178,9 @@ fun WorkoutDetailScreen(
     ) {
         if (viewModel.executeStartWorkout.value != null && !showLoading && !isCheckingWorkoutRecord) {
             if (hasWorkoutRecord) {
-                permissionLauncherResume.launch(basePermissions.toTypedArray())
+                requestPermissionsOrResumeWorkout()
             } else {
-                permissionLauncherStart.launch(basePermissions.toTypedArray())
+                requestPermissionsOrStartWorkout()
             }
         }
     }
@@ -243,7 +281,7 @@ fun WorkoutDetailScreen(
                                 if (hasWorkoutRecord) {
                                     showStartConfirmationDialog = true
                                 } else {
-                                    permissionLauncherStart.launch(basePermissions.toTypedArray())
+                                    requestPermissionsOrStartWorkout()
                                 }
                             },
                         )
@@ -260,7 +298,7 @@ fun WorkoutDetailScreen(
                                 text = "Resume",
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
-                                    permissionLauncherResume.launch(basePermissions.toTypedArray())
+                                    requestPermissionsOrResumeWorkout()
                                 }
                             )
                         }
@@ -329,13 +367,17 @@ fun WorkoutDetailScreen(
         message = IncompleteWorkoutStrings.START_NEW_WORKOUT_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            permissionLauncherStart.launch(basePermissions.toTypedArray())
+            showStartConfirmationDialog = false
+            requestPermissionsOrStartWorkout()
         },
         handleNoClick = {
             showStartConfirmationDialog = false
             hapticsViewModel.doGentleVibration()
         },
-        handleOnAutomaticClose = { },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showStartConfirmationDialog = false
+        },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)
