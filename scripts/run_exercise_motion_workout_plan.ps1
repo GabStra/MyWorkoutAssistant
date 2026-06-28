@@ -23,6 +23,8 @@ param(
     [int]$CandidateReviewBatchSize = 12,
     [int]$CandidateReviewTargetSuitableCount = 3,
     [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
+    [switch]$UseLlamaCppQueryPlanner,
+    [switch]$SkipLlamaCppQueryPlanner,
     [switch]$UseDeepSeekQueryPlanner,
     [string]$DeepSeekApiKey,
     [string]$DeepSeekBaseUrl = "https://api.deepseek.com",
@@ -33,6 +35,7 @@ param(
     [int]$VisionMaxChunksPerCandidate = 5,
     [int]$VisionDownloadWorkers = 8,
     [int]$VisionLlmWorkers = 4,
+    [switch]$NoExerciseNameRewrite,
     [switch]$NoExerciseMotionContract,
     [switch]$SkipVisionRanking,
     [switch]$SemanticGateWithLlamaCpp,
@@ -59,6 +62,7 @@ param(
     [int]$MaxSourceWindowAttempts = 1,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
+    [switch]$ReuseExistingSelected,
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
@@ -93,8 +97,31 @@ param(
     [switch]$NoPreWhamSourceContract,
     [switch]$NoMovementCutExerciseContract,
     [double]$MinSelectedScore = 0.55,
+    [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
+    [string]$LlamaCppModel,
+    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppMmproj,
+    [double]$LlamaCppTemperature = 1.0,
+    [Nullable[double]]$LlamaCppTopP = 0.95,
+    [Nullable[int]]$LlamaCppTopK = 64,
+    [Nullable[int]]$LlamaCppCtxSize = 24576,
+    [Nullable[int]]$LlamaCppBatchSize,
+    [Nullable[int]]$LlamaCppUBatchSize,
+    [string]$LlamaCppFlashAttn,
+    [string]$LlamaCppCacheTypeK,
+    [string]$LlamaCppCacheTypeV,
     [Nullable[int]]$LlamaCppParallel = 4,
+    [Nullable[int]]$LlamaCppThreadsHttp,
+    [Nullable[int]]$LlamaCppCacheReuse,
+    [string]$LlamaCppFit,
+    [Nullable[int]]$LlamaCppFitCtx = 24576,
+    [Nullable[int]]$LlamaCppFitTarget,
+    [bool]$LlamaCppMmap = $true,
+    [bool]$LlamaCppMlock = $false,
+    [Nullable[int]]$LlamaCppReasoningBudget = 64,
+    [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [bool]$KeepLlamaCppServer = $true,
+    [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
     [double]$LlamaCppRequestTimeoutSeconds = 90.0,
     [ValidateSet("debug", "full")]
     [string]$ArtifactRetention = "debug",
@@ -133,6 +160,51 @@ function ConvertTo-StringSet {
         }
     }
     return $set
+}
+
+function Add-LlamaCppTuningArgs {
+    param([string[]]$Arguments)
+    $result = @($Arguments)
+    if ($null -ne $LlamaCppCtxSize) {
+        $result += @("--llama-cpp-ctx-size", "$LlamaCppCtxSize")
+    }
+    if ($null -ne $LlamaCppBatchSize) {
+        $result += @("--llama-cpp-batch-size", "$LlamaCppBatchSize")
+    }
+    if ($null -ne $LlamaCppUBatchSize) {
+        $result += @("--llama-cpp-ubatch-size", "$LlamaCppUBatchSize")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppFlashAttn)) {
+        $result += @("--llama-cpp-flash-attn", $LlamaCppFlashAttn)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppCacheTypeK)) {
+        $result += @("--llama-cpp-cache-type-k", $LlamaCppCacheTypeK)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppCacheTypeV)) {
+        $result += @("--llama-cpp-cache-type-v", $LlamaCppCacheTypeV)
+    }
+    if ($null -ne $LlamaCppThreadsHttp) {
+        $result += @("--llama-cpp-threads-http", "$LlamaCppThreadsHttp")
+    }
+    if ($null -ne $LlamaCppCacheReuse) {
+        $result += @("--llama-cpp-cache-reuse", "$LlamaCppCacheReuse")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppFit)) {
+        $result += @("--llama-cpp-fit", $LlamaCppFit)
+    }
+    if ($null -ne $LlamaCppFitCtx) {
+        $result += @("--llama-cpp-fit-ctx", "$LlamaCppFitCtx")
+    }
+    if ($null -ne $LlamaCppFitTarget) {
+        $result += @("--llama-cpp-fit-target", "$LlamaCppFitTarget")
+    }
+    if (-not $LlamaCppMmap) {
+        $result += "--no-llama-cpp-mmap"
+    }
+    if ($LlamaCppMlock) {
+        $result += "--llama-cpp-mlock"
+    }
+    return $result
 }
 
 function ConvertTo-SlugSet {
@@ -276,15 +348,19 @@ function New-OneExercisePlanJson {
         [object]$Exercise,
         [string]$OutPath
     )
+    $exerciseRecord = [ordered]@{
+        id = [string]($Exercise.exerciseId ?? $Exercise.id ?? $Exercise.slug ?? $Exercise.exerciseName ?? "exercise")
+        name = [string]($Exercise.exerciseName ?? $Exercise.name ?? $Exercise.id ?? "exercise")
+    }
+    foreach ($propertyName in @("sourceExerciseName", "equipmentQualifiedExerciseName", "exerciseNameRewrite")) {
+        if ($Exercise.PSObject.Properties.Name -contains $propertyName) {
+            $exerciseRecord[$propertyName] = $Exercise.$propertyName
+        }
+    }
     $plan = [ordered]@{
         schemaVersion = 1
         sourcePlanPath = $resolvedWorkoutPlanJson
-        exercises = @(
-            [ordered]@{
-                id = [string]($Exercise.exerciseId ?? $Exercise.id ?? $Exercise.slug ?? $Exercise.exerciseName ?? "exercise")
-                name = [string]($Exercise.exerciseName ?? $Exercise.name ?? $Exercise.id ?? "exercise")
-            }
-        )
+        exercises = @($exerciseRecord)
     }
     $plan | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $OutPath -Encoding UTF8
 }
@@ -316,6 +392,91 @@ function Remove-ExerciseIntermediateArtifacts {
         if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
             Remove-Item -LiteralPath $path -Force
         }
+    }
+}
+
+function Get-ExistingSelectedSummary {
+    param([object]$WorkItem)
+
+    $selectedOutputDir = Join-Path $WorkItem.exerciseWorkspace "selected"
+    $selectionPath = Join-Path $selectedOutputDir "selection_manifest.json"
+    if (-not (Test-Path -LiteralPath $selectionPath)) {
+        return $null
+    }
+
+    $selectedFilePrefix = $WorkItem.exerciseSlug -replace "-", "_"
+    $wearSkeletonFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_wear_skeleton.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($wearSkeletonFiles.Count -eq 0) {
+        return $null
+    }
+
+    $previewFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.webm" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $inputFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_input.mp4" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $previewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $debugDir = Join-Path $selectedOutputDir "debug"
+    $candidateDebugPath = Join-Path $debugDir "youtube_candidates.full.json"
+    $candidateDecisionsPath = Join-Path $debugDir "candidate_decisions.jsonl"
+
+    $selection = $null
+    try {
+        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+    } catch {
+        $selection = $null
+    }
+    $manifestSelected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
+    $manifestSelectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
+        @($selection.selectedResults)
+    } elseif ($manifestSelected) {
+        @($manifestSelected)
+    } else {
+        @()
+    }
+
+    $selectedResultOutputs = @()
+    for ($index = 0; $index -lt $wearSkeletonFiles.Count; $index += 1) {
+        $manifestOption = if ($index -lt $manifestSelectedOptions.Count) { $manifestSelectedOptions[$index] } else { $null }
+        $selectedResultOutputs += [ordered]@{
+            optionIndex = $index + 1
+            label = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "manualSelectionLabel") { $manifestOption.manualSelectionLabel } else { "Option $($index + 1)" }
+            selectedWearSkeletonPath = $wearSkeletonFiles[$index].FullName
+            selectedPreviewVideoPath = if ($index -lt $previewFiles.Count) { $previewFiles[$index].FullName } else { $null }
+            selectedPreviewHtmlPath = if ($index -lt $previewHtmlFiles.Count) { $previewHtmlFiles[$index].FullName } else { $null }
+            selectedSourceVideoPath = if ($index -lt $inputFiles.Count) { $inputFiles[$index].FullName } else { $null }
+            selectedSourceVideoOriginalPath = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestOption.selectedInputVideoPath } else { $null }
+            selectedSourceVideoMissing = $false
+            selectionScore = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "selectionScore") { $manifestOption.selectionScore } else { $null }
+            candidateTitle = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "candidateTitle") { $manifestOption.candidateTitle } else { $null }
+        }
+    }
+
+    Write-Host "[reused] $($WorkItem.exerciseName)"
+    Write-Host "  Wear skeleton JSON: $($wearSkeletonFiles[0].FullName)"
+    if ($previewFiles.Count -gt 0) {
+        Write-Host "  Selected preview video: $($previewFiles[0].FullName)"
+    }
+    if ($inputFiles.Count -gt 0) {
+        Write-Host "  Selected input video: $($inputFiles[0].FullName)"
+    }
+
+    return [ordered]@{
+        exerciseId = $WorkItem.exerciseId
+        exerciseName = $WorkItem.exerciseName
+        status = "completed"
+        reusedExistingSelected = $true
+        error = $null
+        candidateCount = $WorkItem.candidateCount
+        excludeCandidateJsonPaths = $WorkItem.excludeCandidateJsonPaths
+        candidatesJsonPath = $null
+        selectionManifestPath = $selectionPath
+        logPath = $WorkItem.logPath
+        selectedWearSkeletonPath = $wearSkeletonFiles[0].FullName
+        selectedPreviewVideoPath = if ($previewFiles.Count -gt 0) { $previewFiles[0].FullName } else { $null }
+        selectedSourceVideoPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { $null }
+        selectedSourceVideoOriginalPath = if ($manifestSelected -and $manifestSelected.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestSelected.selectedInputVideoPath } else { $null }
+        selectedSourceVideoMissing = $false
+        selectedResults = $selectedResultOutputs
+        selectedCandidateDebugPath = if (Test-Path -LiteralPath $candidateDebugPath) { $candidateDebugPath } else { $null }
+        selectedCandidateDecisionsPath = if (Test-Path -LiteralPath $candidateDecisionsPath) { $candidateDecisionsPath } else { $null }
     }
 }
 
@@ -410,6 +571,26 @@ function Start-BakeJob {
             return (Test-Path -LiteralPath (Join-Path $Workspace "selection_manifest.json"))
         }
 
+        function Save-AttemptCandidateSnapshot {
+            param(
+                [string]$Path,
+                [int]$AttemptIndex
+            )
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return $null
+            }
+            try {
+                $snapshotDir = Join-Path (Split-Path -Parent $Path) "attempt_exclusions"
+                New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
+                $snapshotPath = Join-Path $snapshotDir ("youtube_candidates.attempt-{0:D2}.json" -f $AttemptIndex)
+                Copy-Item -LiteralPath $Path -Destination $snapshotPath -Force
+                return $snapshotPath
+            } catch {
+                "[$(Get-Date -Format o)] failed to snapshot attempt $AttemptIndex candidates for retry exclusion: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                return $null
+            }
+        }
+
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
         "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
         $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
@@ -441,7 +622,10 @@ function Start-BakeJob {
 
             $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
             if (Test-Path -LiteralPath $CandidatesPath) {
-                $previousAttemptCandidateJsonPaths += $CandidatesPath
+                $attemptCandidateSnapshotPath = Save-AttemptCandidateSnapshot -Path $CandidatesPath -AttemptIndex $attemptIndex
+                if (-not [string]::IsNullOrWhiteSpace($attemptCandidateSnapshotPath)) {
+                    $previousAttemptCandidateJsonPaths += $attemptCandidateSnapshotPath
+                }
             }
             if ($recommendedCount -le 0) {
                 if ($targetSuitableCount -ge $MaxTargetSuitableCount) {
@@ -855,10 +1039,31 @@ $youtubeBaseArgs = @(
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers",
+    "--llama-cpp-base-url", $LlamaCppBaseUrl,
+    "--llama-cpp-temperature", "$LlamaCppTemperature",
+    "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
 )
+if ($null -ne $LlamaCppTopP) {
+    $youtubeBaseArgs += @("--llama-cpp-top-p", "$LlamaCppTopP")
+}
+if ($null -ne $LlamaCppTopK) {
+    $youtubeBaseArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppModel)) {
+    $youtubeBaseArgs += @("--llama-cpp-model", $LlamaCppModel)
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
+    $youtubeBaseArgs += @("--llama-cpp-server-command", $LlamaCppServerCommand)
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj)) {
+    $youtubeBaseArgs += @("--llama-cpp-mmproj", $LlamaCppMmproj)
+}
 if ($VisionMaxChunksPerCandidate -gt 0) {
     $youtubeBaseArgs += @("--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate")
+}
+if ($NoExerciseNameRewrite) {
+    $youtubeBaseArgs += "--no-exercise-name-rewrite"
 }
 if ($NoExerciseMotionContract) {
     $youtubeBaseArgs += "--no-exercise-motion-contract"
@@ -889,8 +1094,18 @@ if ($UseDeepSeekQueryPlanner) {
         $youtubeBaseArgs += @("--deepseek-api-key", $DeepSeekApiKey)
     }
 }
+if (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner) {
+    $youtubeBaseArgs += "--use-llama-cpp-query-planner"
+}
 if ($null -ne $LlamaCppParallel) {
     $youtubeBaseArgs += @("--llama-cpp-parallel", "$LlamaCppParallel")
+}
+$youtubeBaseArgs = Add-LlamaCppTuningArgs -Arguments $youtubeBaseArgs
+if ($null -ne $LlamaCppReasoningBudget) {
+    $youtubeBaseArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+    $youtubeBaseArgs += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
 }
 if ($KeepLlamaCppServer) {
     $youtubeBaseArgs += "--keep-llama-cpp-server"
@@ -926,6 +1141,8 @@ $exerciseIndex = 0
 foreach ($exercise in $exerciseList.exercises) {
     $exerciseName = [string]($exercise.exerciseName ?? $exercise.name ?? $exercise.id ?? "exercise")
     $exerciseId = [string]($exercise.exerciseId ?? $exercise.id ?? (ConvertTo-Slug $exerciseName))
+    $sourceExerciseName = [string]($exercise.sourceExerciseName ?? "")
+    $equipmentQualifiedExerciseName = [string]($exercise.equipmentQualifiedExerciseName ?? "")
     $slugSource = [string]($exercise.slug ?? $exerciseId ?? $exerciseName)
     $exerciseSlug = ConvertTo-Slug $slugSource
     if ($usedSlugs.ContainsKey($exerciseSlug)) {
@@ -936,11 +1153,34 @@ foreach ($exercise in $exerciseList.exercises) {
     }
     if ($hasExerciseFilter) {
         $exerciseIdKey = $exerciseId.Trim().ToLowerInvariant()
-        $exerciseNameKey = $exerciseName.Trim().ToLowerInvariant()
+        $exerciseNameKeys = @($exerciseName, $sourceExerciseName, $equipmentQualifiedExerciseName) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.Trim().ToLowerInvariant() }
+        $exerciseSlugKeys = @($exerciseSlug)
+        foreach ($slugAliasSource in @($sourceExerciseName, $equipmentQualifiedExerciseName)) {
+            if (-not [string]::IsNullOrWhiteSpace($slugAliasSource)) {
+                $exerciseSlugKeys += ConvertTo-Slug $slugAliasSource
+            }
+        }
+        $exerciseSlugKeys = @($exerciseSlugKeys | Select-Object -Unique)
+        $matchesExerciseName = $false
+        foreach ($exerciseNameKey in @($exerciseNameKeys)) {
+            if ($onlyExerciseNameSet.ContainsKey($exerciseNameKey)) {
+                $matchesExerciseName = $true
+                break
+            }
+        }
+        $matchesExerciseSlug = $false
+        foreach ($exerciseSlugKey in @($exerciseSlugKeys)) {
+            if ($onlyExerciseSlugSet.ContainsKey($exerciseSlugKey)) {
+                $matchesExerciseSlug = $true
+                break
+            }
+        }
         if (
-            -not $onlyExerciseSlugSet.ContainsKey($exerciseSlug) -and
+            -not $matchesExerciseSlug -and
             -not $onlyExerciseIdSet.ContainsKey($exerciseIdKey) -and
-            -not $onlyExerciseNameSet.ContainsKey($exerciseNameKey)
+            -not $matchesExerciseName
         ) {
             continue
         }
@@ -1001,11 +1241,36 @@ foreach ($exercise in $exerciseList.exercises) {
         "--review-llm-workers", "$ReviewLlmWorkers",
         "--max-review-windows", "$MaxReviewWindows",
         "--min-selected-score", "$MinSelectedScore",
+        "--llama-cpp-base-url", $LlamaCppBaseUrl,
+        "--llama-cpp-temperature", "$LlamaCppTemperature",
+        "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
         "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
         "--artifact-retention", $ArtifactRetention
     )
+    if ($null -ne $LlamaCppTopP) {
+        $bakeArgs += @("--llama-cpp-top-p", "$LlamaCppTopP")
+    }
+    if ($null -ne $LlamaCppTopK) {
+        $bakeArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppModel)) {
+        $bakeArgs += @("--llama-cpp-model", $LlamaCppModel)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
+        $bakeArgs += @("--llama-cpp-server-command", $LlamaCppServerCommand)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj)) {
+        $bakeArgs += @("--llama-cpp-mmproj", $LlamaCppMmproj)
+    }
     if ($null -ne $LlamaCppParallel) {
         $bakeArgs += @("--llama-cpp-parallel", "$LlamaCppParallel")
+    }
+    $bakeArgs = Add-LlamaCppTuningArgs -Arguments $bakeArgs
+    if ($null -ne $LlamaCppReasoningBudget) {
+        $bakeArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+        $bakeArgs += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
     }
     if ($KeepLlamaCppServer) {
         $bakeArgs += "--keep-llama-cpp-server"
@@ -1104,14 +1369,20 @@ if ($workItems.Count -eq 0) {
     throw "No exercises were queued for movement generation."
 }
 
+$summaryByIndex = @{}
+$completedCount = 0
 $pendingWorkItems = [System.Collections.Queue]::new()
 foreach ($workItem in $workItems) {
+    $existingSummary = if ($ReuseExistingSelected) { Get-ExistingSelectedSummary -WorkItem $workItem } else { $null }
+    if ($existingSummary) {
+        $summaryByIndex[$workItem.index] = $existingSummary
+        $completedCount += 1
+        continue
+    }
     $pendingWorkItems.Enqueue($workItem)
 }
 
 $runningJobs = @()
-$summaryByIndex = @{}
-$completedCount = 0
 $lastProgressAt = [datetime]::MinValue
 Write-Host "Generating movements with $ExerciseWorkers exercise worker(s)."
 while ($pendingWorkItems.Count -gt 0 -or $runningJobs.Count -gt 0) {

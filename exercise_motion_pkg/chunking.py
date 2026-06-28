@@ -28,7 +28,18 @@ class ChunkEstimate:
 
 KNOWN_DURATION_HINTS: dict[str, tuple[float, float, str, str]] = {
     "pull up": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
+    "pull ups": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
     "pull-up": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
+    "pull-ups": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
+    "chin up": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
+    "chin ups": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
+    "chin-up": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
+    "chin-ups": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
+    "dip": (2.0, 6.0, "simple", "A dip is usually a short supported vertical pressing repetition."),
+    "dips": (2.0, 6.0, "simple", "A dip is usually a short supported vertical pressing repetition."),
+    "triceps pushdown": (2.0, 6.0, "simple", "A triceps pushdown is usually a short elbow-extension repetition."),
+    "tricep pushdown": (2.0, 6.0, "simple", "A triceps pushdown is usually a short elbow-extension repetition."),
+    "pushdown": (2.0, 6.0, "simple", "A pushdown is usually a short elbow-extension repetition."),
     "push up": (2.0, 6.0, "simple", "A push-up is usually a short controlled bodyweight repetition."),
     "push-up": (2.0, 6.0, "simple", "A push-up is usually a short controlled bodyweight repetition."),
     "squat": (3.0, 8.0, "compound", "A squat needs enough time for descent, bottom position, and ascent."),

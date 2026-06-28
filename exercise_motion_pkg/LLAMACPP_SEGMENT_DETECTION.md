@@ -4,7 +4,7 @@
 
 - Model: `C:\Users\gabri\Downloads\Qwen3VL-8B-Instruct-Q4_K_M.gguf`
 - mmproj: `C:\Users\gabri\Downloads\mmproj-Qwen3VL-8B-Instruct-F16.gguf`
-- CLI binary: `C:\Users\gabri\Downloads\llama-b9555-bin-win-cuda-13.3-x64\llama-mtmd-cli.exe`
+- Server binary: `C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe`
 - Backend: `gpu`
 
 These are now the defaults in:
@@ -82,14 +82,11 @@ pwsh ./scripts/run_exercise_motion_generation.ps1 `
 
 ## Known-good command-line flags
 
-- `--llama-cpp-command`
-- `--llama-cpp-model`
-- `--llama-cpp-mmproj`
 - `--llama-cpp-backend`
 - `--llama-cpp-n-predict`
 - `--llama-cpp-image-min-tokens`
 - `--llama-cpp-image-max-tokens`
-- `--base-url` (server mode; run one `llama-server` and reuse process)
+- `--base-url` (the wrapper starts or reuses one `llama-server`)
 - detection tuning:
   - `--window-seconds`
   - `--overlap-seconds`
@@ -111,7 +108,7 @@ pwsh ./scripts/run_exercise_motion_generation.ps1 `
 
 ## Speed profile switches
 
-- `-UseLlamaCppServer` in `run_exercise_segment_detection.ps1` starts/uses `llama-server` instead of launching `llama-mtmd-cli` per window.
+- `run_exercise_segment_detection.ps1` starts/uses `llama-server` for every llama.cpp run.
 - `-LlamaCppNPredict`, `-LlamaCppImageMinTokens`, `-LlamaCppImageMaxTokens` let you tune prompt runtime and vision token budget when quality still holds.
 
 ## Fastest practical profile (trade-off aware)
@@ -122,7 +119,6 @@ On local tests with RTX 4070 SUPER + Qwen3VL-8B-Q4_K_M, the fastest settings tha
 pwsh ./scripts/run_exercise_segment_detection.ps1 `
   -VideoPath "C:\path\to\cat_cow.mp4" `
   -ExerciseName "cat cow" `
-  -UseLlamaCppServer `
   -LlamaCppNPredict 128 `
   -LlamaCppImageMinTokens 512 `
   -LlamaCppImageMaxTokens 1024 `

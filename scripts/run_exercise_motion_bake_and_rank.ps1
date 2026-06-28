@@ -65,15 +65,16 @@ param(
     [double]$MinSelectedScore = 0.55,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppCommand,
-    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
     [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 768,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
-    [bool]$LlamaCppDisableReasoning = $true,
+    [bool]$LlamaCppDisableReasoning = $false,
+    [Nullable[int]]$LlamaCppReasoningBudget = 64,
+    [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [Nullable[int]]$LlamaCppCtxSize = 24576,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
@@ -254,9 +255,6 @@ if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $R
 if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification) {
     $argsList += "--no-classify-support-dominance"
 }
-if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
-    $argsList += @("--llama-cpp-command", $LlamaCppCommand)
-}
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
     $argsList += @("--llama-cpp-server-command", $LlamaCppServerCommand)
 }
@@ -317,8 +315,14 @@ if ($null -ne $LlamaCppImageMaxTokens) {
 if ($NoLlamaCppAutoStartServer) {
     $argsList += "--no-llama-cpp-auto-start-server"
 }
-if (-not $LlamaCppDisableReasoning) {
-    $argsList += "--no-llama-cpp-disable-reasoning"
+if ($LlamaCppDisableReasoning) {
+    $argsList += "--llama-cpp-disable-reasoning"
+}
+if ($null -ne $LlamaCppReasoningBudget) {
+    $argsList += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+    $argsList += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
 }
 if ($KeepLlamaCppServer) {
     $argsList += "--keep-llama-cpp-server"

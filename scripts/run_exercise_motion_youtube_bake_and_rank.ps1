@@ -110,14 +110,16 @@ param(
     [double]$MinSelectedScore = 0.55,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppCommand,
-    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
     [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 768,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
+    [bool]$LlamaCppDisableReasoning = $false,
+    [Nullable[int]]$LlamaCppReasoningBudget = 64,
+    [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [Nullable[int]]$LlamaCppCtxSize = 24576,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
@@ -431,11 +433,17 @@ if ($null -ne $LlamaCppTopP) {
 if ($null -ne $LlamaCppTopK) {
     $youtubeArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
 }
-if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
-    $youtubeArgs += @("--llama-cpp-command", $LlamaCppCommand)
-}
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
     $youtubeArgs += @("--llama-cpp-server-command", $LlamaCppServerCommand)
+}
+if ($LlamaCppDisableReasoning) {
+    $youtubeArgs += "--llama-cpp-disable-reasoning"
+}
+if ($null -ne $LlamaCppReasoningBudget) {
+    $youtubeArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+    $youtubeArgs += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
 }
 if ($null -ne $LlamaCppImageMinTokens) {
     $youtubeArgs += @("--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens")
@@ -453,7 +461,7 @@ $youtubeArgs = Add-LlamaCppTuningArgs -Arguments $youtubeArgs
 if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
     $youtubeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
 }
-if ($UseLlamaCppQueryPlanner -and -not $SkipLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner) {
+if (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner) {
     $youtubeArgs += @(
         "--use-llama-cpp-query-planner",
         "--deepseek-max-queries", "$DeepSeekMaxQueries"
@@ -545,11 +553,17 @@ if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $R
 if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification) {
     $bakeArgs += "--no-classify-support-dominance"
 }
-if (-not [string]::IsNullOrWhiteSpace($LlamaCppCommand)) {
-    $bakeArgs += @("--llama-cpp-command", $LlamaCppCommand)
-}
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
     $bakeArgs += @("--llama-cpp-server-command", $LlamaCppServerCommand)
+}
+if ($LlamaCppDisableReasoning) {
+    $bakeArgs += "--llama-cpp-disable-reasoning"
+}
+if ($null -ne $LlamaCppReasoningBudget) {
+    $bakeArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
+}
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+    $bakeArgs += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
 }
 if ($null -ne $LlamaCppImageMinTokens) {
     $bakeArgs += @("--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens")

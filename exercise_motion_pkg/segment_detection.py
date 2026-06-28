@@ -27,14 +27,12 @@ class DetectionSettings:
     model: str = "local-vision"
     litert_command: str | None = None
     litert_backend: str = "gpu"
-    llama_cpp_command: str | None = None
-    llama_cpp_model: str | None = None
-    llama_cpp_mmproj: str | None = None
     llama_cpp_backend: str = "gpu"
     llama_cpp_n_predict: int = 768
     llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
     llama_cpp_top_p: float | None = DEFAULT_LLAMA_CPP_TOP_P
     llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
+    llama_cpp_disable_reasoning: bool = False
     llama_cpp_image_min_tokens: int | None = None
     llama_cpp_image_max_tokens: int | None = None
     window_seconds: float = 4.0
@@ -203,26 +201,7 @@ def detect_exercise_segment(
 ) -> DetectionResult:
     sanitized_video_path = sanitize_video_for_processing(video_path)
     metadata = read_video_metadata(sanitized_video_path)
-    if settings.llama_cpp_command:
-        if not settings.llama_cpp_model:
-            raise ValueError("llama-cpp command mode requires --llama-cpp-model.")
-        if not settings.llama_cpp_mmproj:
-            raise ValueError("llama-cpp command mode requires --llama-cpp-mmproj.")
-        client = LlamaCppVisionClient(
-            base_url=None,
-            model=settings.llama_cpp_model,
-            command=settings.llama_cpp_command,
-            mmproj=settings.llama_cpp_mmproj,
-            backend=settings.llama_cpp_backend,
-            n_predict=settings.llama_cpp_n_predict,
-            temperature=settings.llama_cpp_temperature,
-            top_p=settings.llama_cpp_top_p,
-            top_k=settings.llama_cpp_top_k,
-            image_min_tokens=settings.llama_cpp_image_min_tokens,
-            image_max_tokens=settings.llama_cpp_image_max_tokens,
-            request_timeout_seconds=settings.request_timeout_seconds,
-        )
-    elif settings.litert_command:
+    if settings.litert_command:
         client = LiteRtCliVisionClient(
             command=settings.litert_command,
             model=settings.model,
@@ -236,6 +215,7 @@ def detect_exercise_segment(
             temperature=settings.llama_cpp_temperature,
             top_p=settings.llama_cpp_top_p,
             top_k=settings.llama_cpp_top_k,
+            disable_reasoning=settings.llama_cpp_disable_reasoning,
             image_min_tokens=settings.llama_cpp_image_min_tokens,
             image_max_tokens=settings.llama_cpp_image_max_tokens,
             request_timeout_seconds=settings.request_timeout_seconds,
@@ -1294,8 +1274,6 @@ class LlamaCppVisionClient:
         base_url: str | None,
         model: str,
         *,
-        command: str | None = None,
-        mmproj: str | None = None,
         backend: str = "gpu",
         n_predict: int = 768,
         temperature: float = 0.2,
@@ -1308,8 +1286,6 @@ class LlamaCppVisionClient:
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url is not None else None
         self.model = model
-        self.command = command
-        self.mmproj = mmproj
         self.backend = backend
         self.n_predict = max(1, n_predict)
         self.temperature = max(0.0, float(temperature))
@@ -1355,62 +1331,18 @@ class LlamaCppVisionClient:
             frame_paths=[str(path) for path in frame_paths],
         )
 
-    def caption_images(self, *, frame_paths: list[Path], prompt: str) -> str:
-        if self.command is not None:
-            return self._caption_images_via_cli(frame_paths=frame_paths, prompt=prompt)
+    def caption_images(self, *, frame_paths: list[Path], prompt: str, max_tokens: int | None = None) -> str:
         if self.base_url is None:
-            raise RuntimeError("llama-cpp vision mode requires either a command path or base URL.")
-        return self._caption_images_via_server(frame_paths=frame_paths, prompt=prompt)
+            raise RuntimeError("llama-cpp vision mode requires a base URL.")
+        return self._caption_images_via_server(frame_paths=frame_paths, prompt=prompt, max_tokens=max_tokens)
 
-    def _caption_images_via_cli(self, *, frame_paths: list[Path], prompt: str) -> str:
-        command = [
-            self.command,
-            "-m",
-            self.model,
-        ]
-        if self.mmproj:
-            command.extend(["--mmproj", self.mmproj])
-        command.extend(
-            [
-                "--prompt",
-                prompt,
-                "--temp",
-                str(self.temperature),
-                "--n-predict",
-                str(self.n_predict),
-                "--json-schema",
-                "{}",
-            ]
-        )
-        if self.top_p is not None:
-            command.extend(["--top-p", str(self.top_p)])
-        if self.top_k is not None:
-            command.extend(["--top-k", str(self.top_k)])
-        if self.image_min_tokens is not None:
-            command.extend(["--image-min-tokens", str(self.image_min_tokens)])
-        if self.image_max_tokens is not None:
-            command.extend(["--image-max-tokens", str(self.image_max_tokens)])
-        if self.backend == "gpu":
-            command.extend(["--gpu-layers", "all"])
-        else:
-            command.extend(["--gpu-layers", "0"])
-        command.extend(["--image", ",".join(str(frame_path) for frame_path in frame_paths)])
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=self.request_timeout_seconds,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout or "").strip()
-            raise RuntimeError(
-                f"llama-mtmd-cli failed with exit code {result.returncode}. "
-                f"Command: {' '.join(command)}.\n"
-                f"llama output:\n{message}"
-            )
-        return result.stdout.strip()
-
-    def _caption_images_via_server(self, *, frame_paths: list[Path], prompt: str) -> str:
+    def _caption_images_via_server(
+        self,
+        *,
+        frame_paths: list[Path],
+        prompt: str,
+        max_tokens: int | None = None,
+    ) -> str:
         content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
         for frame_path in frame_paths:
             encoded = base64.b64encode(frame_path.read_bytes()).decode("ascii")
@@ -1424,7 +1356,7 @@ class LlamaCppVisionClient:
             "model": self.model,
             "messages": [{"role": "user", "content": content}],
             "temperature": self.temperature,
-            "max_tokens": self.n_predict,
+            "max_tokens": self.n_predict if max_tokens is None else max(1, int(max_tokens)),
             "response_format": {"type": "json_object"},
         }
         if self.top_p is not None:
@@ -1434,6 +1366,9 @@ class LlamaCppVisionClient:
         if self.disable_reasoning:
             payload["reasoning_format"] = "none"
             payload["chat_template_kwargs"] = {"enable_thinking": False}
+        else:
+            payload["reasoning_format"] = "deepseek"
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
         if self.base_url is None:
             raise RuntimeError("llama-cpp server mode requires base URL.")
         response = self.client.post(f"{self.base_url}/v1/chat/completions", json=payload)

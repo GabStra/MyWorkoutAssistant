@@ -16,6 +16,8 @@ from exercise_motion_pkg.ground import embed_ground_metadata_in_clip, generate_g
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_REASONING_BUDGET,
+    DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -232,14 +234,13 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--out-json", required=True)
     detect.add_argument("--frames-dir", required=True)
     detect.add_argument("--exercise-name")
-    detect.add_argument("--llama-cpp-command")
-    detect.add_argument("--llama-cpp-model")
-    detect.add_argument("--llama-cpp-mmproj")
     detect.add_argument("--llama-cpp-backend", default="gpu")
     detect.add_argument("--llama-cpp-n-predict", type=int, default=768)
     detect.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     detect.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     detect.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
+    detect.add_argument("--llama-cpp-disable-reasoning", dest="llama_cpp_disable_reasoning", action="store_true")
+    detect.set_defaults(llama_cpp_disable_reasoning=False)
     detect.add_argument("--llama-cpp-image-min-tokens", type=int)
     detect.add_argument("--llama-cpp-image-max-tokens", type=int)
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
@@ -312,6 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ask the configured local llama.cpp model for extra YouTube search queries before yt-dlp search.",
     )
+    youtube_search.add_argument(
+        "--no-exercise-name-rewrite",
+        action="store_true",
+        help="Disable the LLM-backed exercise-name rewrite step before YouTube search.",
+    )
     youtube_search.add_argument("--deepseek-api-key")
     youtube_search.add_argument("--deepseek-base-url", default="https://api.deepseek.com")
     youtube_search.add_argument("--deepseek-model", default="deepseek-v4-flash")
@@ -379,7 +385,6 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
     youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
-    youtube_search.add_argument("--llama-cpp-command")
     youtube_search.add_argument("--llama-cpp-server-command")
     youtube_search.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     youtube_search.add_argument("--llama-cpp-backend", default="gpu")
@@ -387,6 +392,13 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     youtube_search.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     youtube_search.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
+    youtube_search.add_argument("--llama-cpp-disable-reasoning", dest="llama_cpp_disable_reasoning", action="store_true")
+    youtube_search.set_defaults(llama_cpp_disable_reasoning=False)
+    youtube_search.add_argument("--llama-cpp-reasoning-budget", type=int, default=DEFAULT_LLAMA_CPP_REASONING_BUDGET)
+    youtube_search.add_argument(
+        "--llama-cpp-reasoning-budget-message",
+        default=DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
+    )
     youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
@@ -633,7 +645,6 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     bake_and_rank.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
-    bake_and_rank.add_argument("--llama-cpp-command")
     bake_and_rank.add_argument("--llama-cpp-server-command")
     bake_and_rank.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     bake_and_rank.add_argument("--llama-cpp-backend", default="gpu")
@@ -641,7 +652,13 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     bake_and_rank.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     bake_and_rank.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
-    bake_and_rank.add_argument("--no-llama-cpp-disable-reasoning", action="store_true")
+    bake_and_rank.add_argument("--llama-cpp-disable-reasoning", dest="llama_cpp_disable_reasoning", action="store_true")
+    bake_and_rank.set_defaults(llama_cpp_disable_reasoning=False)
+    bake_and_rank.add_argument("--llama-cpp-reasoning-budget", type=int, default=DEFAULT_LLAMA_CPP_REASONING_BUDGET)
+    bake_and_rank.add_argument(
+        "--llama-cpp-reasoning-budget-message",
+        default=DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
+    )
     bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
     bake_and_rank.add_argument("--llama-cpp-batch-size", type=int)
     bake_and_rank.add_argument("--llama-cpp-ubatch-size", type=int)
@@ -940,14 +957,12 @@ def main() -> None:
             raise ValueError("--llama-cpp-n-predict must be greater than 0.")
         if args.fast_segment_profile:
             settings = DetectionSettings(
-                llama_cpp_command=args.llama_cpp_command,
-                llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
                 llama_cpp_temperature=args.llama_cpp_temperature,
                 llama_cpp_top_p=args.llama_cpp_top_p,
                 llama_cpp_top_k=args.llama_cpp_top_k,
+                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
@@ -979,14 +994,12 @@ def main() -> None:
             )
         else:
             settings = DetectionSettings(
-                llama_cpp_command=args.llama_cpp_command,
-                llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
                 llama_cpp_temperature=args.llama_cpp_temperature,
                 llama_cpp_top_p=args.llama_cpp_top_p,
                 llama_cpp_top_k=args.llama_cpp_top_k,
+                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
@@ -1039,6 +1052,12 @@ def main() -> None:
                     "exerciseId": exercise.exercise_id,
                     "exerciseName": exercise.name,
                     "slug": exercise.slug,
+                    "sourceExerciseName": exercise.source_name,
+                    "equipmentQualifiedExerciseName": exercise.equipment_qualified_name,
+                    "exerciseNameRewrite": {
+                        "applied": exercise.name_was_rewritten,
+                        "reason": exercise.name_rewrite_reason,
+                    },
                 }
                 for exercise in exercises
             ],
@@ -1073,6 +1092,7 @@ def main() -> None:
                 max_duration_seconds=args.max_duration_seconds,
                 use_deepseek_query_planner=args.use_deepseek_query_planner,
                 use_llama_cpp_query_planner=args.use_llama_cpp_query_planner,
+                exercise_name_rewrite_enabled=not args.no_exercise_name_rewrite,
                 deepseek_api_key=args.deepseek_api_key,
                 deepseek_base_url=args.deepseek_base_url,
                 deepseek_model=args.deepseek_model,
@@ -1113,7 +1133,6 @@ def main() -> None:
                 exercise_motion_contract_enabled=not args.no_exercise_motion_contract,
                 llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
                 llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_command=args.llama_cpp_command,
                 llama_cpp_server_command=args.llama_cpp_server_command,
                 llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
@@ -1121,6 +1140,9 @@ def main() -> None:
                 llama_cpp_temperature=args.llama_cpp_temperature,
                 llama_cpp_top_p=args.llama_cpp_top_p,
                 llama_cpp_top_k=args.llama_cpp_top_k,
+                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
+                llama_cpp_reasoning_budget=args.llama_cpp_reasoning_budget,
+                llama_cpp_reasoning_budget_message=args.llama_cpp_reasoning_budget_message,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 llama_cpp_ctx_size=args.llama_cpp_ctx_size,
@@ -1224,7 +1246,6 @@ def main() -> None:
                 classify_support_dominance=not args.no_classify_support_dominance,
                 llama_cpp_base_url=args.llama_cpp_base_url,
                 llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_command=args.llama_cpp_command,
                 llama_cpp_server_command=args.llama_cpp_server_command,
                 llama_cpp_mmproj=args.llama_cpp_mmproj,
                 llama_cpp_backend=args.llama_cpp_backend,
@@ -1232,7 +1253,9 @@ def main() -> None:
                 llama_cpp_temperature=args.llama_cpp_temperature,
                 llama_cpp_top_p=args.llama_cpp_top_p,
                 llama_cpp_top_k=args.llama_cpp_top_k,
-                llama_cpp_disable_reasoning=not args.no_llama_cpp_disable_reasoning,
+                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
+                llama_cpp_reasoning_budget=args.llama_cpp_reasoning_budget,
+                llama_cpp_reasoning_budget_message=args.llama_cpp_reasoning_budget_message,
                 llama_cpp_ctx_size=args.llama_cpp_ctx_size,
                 llama_cpp_batch_size=args.llama_cpp_batch_size,
                 llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,

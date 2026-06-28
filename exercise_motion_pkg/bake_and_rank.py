@@ -24,6 +24,8 @@ from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_REASONING_BUDGET,
+    DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -44,6 +46,14 @@ from exercise_motion_pkg.segment_detection import (
     extract_window_frames,
     iter_detection_windows,
     save_detection_result,
+)
+from exercise_motion_pkg.target_motion import (
+    DISTAL_LEG_VERTICAL_RAISE_PROFILE_KEY,
+    TARGET_MOTION_MATERIALIZED_REJECTION_REASON,
+    observable_motion_spec_for_contract,
+    observable_motion_spec_mentions_lower_body,
+    observable_motion_spec_requires_return,
+    target_motion_profile_for_exercise,
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import (
@@ -141,27 +151,78 @@ PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO = 0.18
 PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION = 0.45
 LOOP_BRIDGE_ARTIFACT_SCORE_CAP = 0.49
 NON_LOOPING_MOVEMENT_COMPLEXITIES = {"multi_phase", "long_duration"}
-LOWER_BODY_DOMINANT_EXERCISE_TERMS = (
-    "squat",
-    "lunge",
-    "split squat",
-    "step up",
-    "deadlift",
-    "hinge",
-    "good morning",
-    "hip thrust",
-    "glute bridge",
-    "leg press",
-    "leg extension",
-    "leg curl",
-    "calf raise",
-    "clean",
-    "snatch",
-    "jerk",
-    "jump",
-    "burpee",
-    "kettlebell swing",
+LOWER_BODY_CONTRACT_TERMS = (
+    "hip",
+    "hips",
+    "knee",
+    "knees",
+    "ankle",
+    "ankles",
+    "leg",
+    "legs",
+    "thigh",
+    "thighs",
+    "foot",
+    "feet",
+    "heel",
+    "heels",
+    "toe",
+    "toes",
+    "glute",
+    "glutes",
+    "quad",
+    "quads",
+    "hamstring",
+    "hamstrings",
+    "calf",
+    "calves",
+    "lower body",
 )
+LOWER_BODY_MOTION_CONTRACT_PRIMARY_KEYS = ("primaryMotionRegions",)
+LOWER_BODY_MOTION_CONTRACT_CONTEXT_KEYS = ("requiredPhases", "reviewNotes")
+LOWER_BODY_MOTION_ACTION_TERMS = (
+    "move",
+    "moves",
+    "moving",
+    "motion",
+    "travel",
+    "travels",
+    "traveling",
+    "bend",
+    "bends",
+    "bending",
+    "flex",
+    "flexes",
+    "flexion",
+    "extend",
+    "extends",
+    "extension",
+    "lower",
+    "lowers",
+    "lowering",
+    "lift",
+    "lifts",
+    "lifting",
+    "raise",
+    "raises",
+    "raising",
+    "squat",
+    "squats",
+    "squatting",
+    "lunge",
+    "lunges",
+    "lunging",
+    "step",
+    "steps",
+    "stepping",
+    "curl",
+    "curls",
+    "curling",
+    "return",
+    "returns",
+    "returning",
+)
+LOWER_BODY_MOTION_ACTION_MAX_TOKEN_DISTANCE = 3
 LOOP_BRIDGE_ENDPOINT_BODY_RATIO = 0.10
 LOOP_BRIDGE_ENDPOINT_SEVERE_BODY_RATIO = 0.15
 LOOP_BRIDGE_STEP_RATIO = 2.5
@@ -981,7 +1042,6 @@ class BakeAndRankRequest:
     classify_support_dominance: bool = True
     llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
     llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL
-    llama_cpp_command: str | None = None
     llama_cpp_server_command: str | None = None
     llama_cpp_mmproj: str | None = DEFAULT_LLAMA_CPP_MMPROJ
     llama_cpp_backend: str = "gpu"
@@ -989,7 +1049,9 @@ class BakeAndRankRequest:
     llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
     llama_cpp_top_p: float | None = DEFAULT_LLAMA_CPP_TOP_P
     llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
-    llama_cpp_disable_reasoning: bool = True
+    llama_cpp_disable_reasoning: bool = False
+    llama_cpp_reasoning_budget: int | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET
+    llama_cpp_reasoning_budget_message: str | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE
     llama_cpp_ctx_size: int | None = None
     llama_cpp_batch_size: int | None = None
     llama_cpp_ubatch_size: int | None = None
@@ -1900,6 +1962,18 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
             reason="materialized_phase_completeness_metrics_unavailable",
         )
         skipped_reasons.append("materialized_phase_completeness_metrics_unavailable")
+    try:
+        target_motion_metrics = materialized_target_motion_observability_metrics_from_payload(
+            export_payload if export_payload is not None else {},
+            exercise_name=item.exercise_name,
+            ranking_payload=ranking.payload if isinstance(ranking.payload, dict) else None,
+        )
+    except Exception:
+        target_motion_metrics = empty_materialized_target_motion_observability_metrics(
+            required=False,
+            reason="materialized_target_motion_observability_metrics_unavailable",
+        )
+        skipped_reasons.append("materialized_target_motion_observability_metrics_unavailable")
 
     motion_score = parse_optional_float(motion_metrics.get("motionStrengthScore"))
     selected_motion_range = parse_optional_float(motion_metrics.get("primaryMotionRangeRatio"))
@@ -1923,8 +1997,8 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
                 item.source_skeleton_path,
                 exercise_name=item.exercise_name,
                 ranking_payload=ranking.payload if isinstance(ranking.payload, dict) else None,
-                start_seconds=None,
-                end_seconds=None,
+                start_seconds=source_range[0] if source_range is not None else None,
+                end_seconds=source_range[1] if source_range is not None else None,
                 fallback_to_full=True,
             )
         except Exception:
@@ -1979,6 +2053,17 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
         and not bool(phase_metrics.get("passed", True))
     ):
         rejection_reasons.append("materialized_incomplete_repetition_phase")
+    if (
+        source_phase_metrics is not None
+        and bool(source_phase_metrics.get("required"))
+        and not bool(source_phase_metrics.get("passed", True))
+    ):
+        rejection_reasons.append("materialized_source_incomplete_repetition_phase")
+    if (
+        bool(target_motion_metrics.get("required"))
+        and not bool(target_motion_metrics.get("passed", True))
+    ):
+        rejection_reasons.append(TARGET_MOTION_MATERIALIZED_REJECTION_REASON)
 
     payload: dict[str, Any] = {
         "passed": not rejection_reasons,
@@ -1989,6 +2074,7 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
         "kinematicPlausibilityMetrics": kinematic_metrics,
         "sceneOrientationMetrics": orientation_metrics,
         "fullRepetitionPhaseCompletenessMetrics": phase_metrics,
+        "targetMotionObservabilityMetrics": target_motion_metrics,
         "sourceMotionReferenceRange": (
             {"startSeconds": source_range[0], "endSeconds": source_range[1]}
             if source_range is not None
@@ -2003,6 +2089,560 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
     if source_phase_metrics is not None:
         payload["sourceFullRepetitionPhaseCompletenessMetrics"] = source_phase_metrics
     return payload
+
+
+def materialized_target_motion_observability_metrics_from_payload(
+    payload: dict[str, Any],
+    *,
+    exercise_name: str,
+    ranking_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    contract = target_motion_contract_from_ranking_payload(ranking_payload)
+    profile = target_motion_profile_for_exercise(exercise_name, contract=contract)
+    observable_spec = observable_motion_spec_for_contract(contract)
+    if profile is None and observable_spec is None:
+        return empty_materialized_target_motion_observability_metrics(
+            required=False,
+            reason="no_target_motion_profile",
+        )
+    frames = motion_frames_from_export_payload(payload)
+    if len(frames) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return {
+            "required": True,
+            "passed": False,
+            "profile": profile.get("profile") if isinstance(profile, dict) else None,
+            "target": profile.get("target") if isinstance(profile, dict) else None,
+            "observableMotionSpec": observable_spec,
+            "failureReasons": ["too_few_skeleton_frames"],
+            "frameCount": len(frames),
+        }
+    profile_key = str(profile.get("profile") or "") if isinstance(profile, dict) else ""
+    if profile is not None and profile_key not in {"distal_leg_vertical_raise", "hinged_upper_limb_pull"}:
+        return empty_materialized_target_motion_observability_metrics(
+            required=False,
+            reason="unsupported_target_motion_profile",
+            profile=profile,
+        )
+
+    body_spans = [body_span_for_frame(frame) for frame in frames]
+    body_spans = [value for value in body_spans if value > 1e-6]
+    body_span = statistics.median(body_spans) if body_spans else 0.0
+    if body_span <= 1e-6:
+        return {
+            "required": True,
+            "passed": False,
+            "profile": profile.get("profile") if isinstance(profile, dict) else None,
+            "target": profile.get("target") if isinstance(profile, dict) else None,
+            "observableMotionSpec": observable_spec,
+            "failureReasons": ["invalid_body_span"],
+            "frameCount": len(frames),
+        }
+    if profile is None:
+        return materialized_observable_motion_spec_metrics(
+            frames,
+            spec=observable_spec or {},
+            body_span=body_span,
+        )
+    if profile_key == "hinged_upper_limb_pull":
+        return materialized_hinged_upper_limb_pull_observability_metrics(
+            frames,
+            profile=profile,
+            body_span=body_span,
+        )
+
+    distal_vertical_range = max(
+        representative_joint_y_motion_ratio(frames, names, body_span=body_span) or 0.0
+        for names in (
+            ("left_foot", "left_ankle"),
+            ("right_foot", "right_ankle"),
+            ("left_ankle",),
+            ("right_ankle",),
+        )
+    )
+    distal_articulation_range = max(
+        representative_joint_relative_y_motion_ratio(frames, distal, anchor, body_span=body_span)
+        for distal, anchor in (
+            (("left_foot",), ("left_ankle",)),
+            (("right_foot",), ("right_ankle",)),
+            (("left_foot", "left_ankle"), ("left_knee",)),
+            (("right_foot", "right_ankle"), ("right_knee",)),
+            (("left_ankle",), ("left_knee",)),
+            (("right_ankle",), ("right_knee",)),
+        )
+    )
+    proximal_vertical_range = max(
+        representative_joint_y_motion_ratio(frames, names, body_span=body_span) or 0.0
+        for names in (
+            ("left_knee",),
+            ("right_knee",),
+            ("left_hip",),
+            ("right_hip",),
+            ("pelvis",),
+        )
+    )
+    motion_metrics = compute_motion_strength_metrics_from_payload(payload, frames_override=frames)
+    lower_body_distal_root_relative_range = parse_optional_float(
+        motion_metrics.get("lowerBodyDistalRootRelativeRangeRatio")
+    ) or 0.0
+    upper_body_root_relative_range = parse_optional_float(
+        motion_metrics.get("upperBodyRootRelativeRangeRatio")
+    ) or 0.0
+    dominance_metric_values = {
+        "distalVerticalRangeRatio": distal_vertical_range,
+        "distalArticulationRangeRatio": distal_articulation_range,
+        "proximalVerticalRangeRatio": proximal_vertical_range,
+        "lowerBodyDistalRootRelativeRangeRatio": lower_body_distal_root_relative_range,
+        "upperBodyRootRelativeRangeRatio": upper_body_root_relative_range,
+    }
+    target_motion_reference_range = max(
+        (
+            dominance_metric_values.get(str(metric_key), 0.0)
+            for metric_key in profile.get("targetMotionDominanceMetricKeys", [])
+        ),
+        default=max(distal_vertical_range, distal_articulation_range),
+    )
+    min_distal_vertical = float(profile["minSkeletonDistalVerticalRangeRatio"])
+    min_distal_articulation = float(profile["minSkeletonDistalArticulationRangeRatio"])
+    failure_reasons: list[str] = []
+    if distal_vertical_range < min_distal_vertical and distal_articulation_range < min_distal_articulation:
+        failure_reasons.append("weak_target_distal_motion")
+    failure_reasons.extend(
+        non_target_motion_dominance_failure_reasons(
+            profile,
+            dominance_metric_values=dominance_metric_values,
+            target_motion_reference_range=target_motion_reference_range,
+        )
+    )
+    return {
+        "required": True,
+        "passed": not failure_reasons,
+        "profile": profile["profile"],
+        "target": profile["target"],
+        "description": profile["description"],
+        "failureReasons": failure_reasons,
+        "frameCount": len(frames),
+        "bodySpan": body_span,
+        "distalVerticalRangeRatio": distal_vertical_range,
+        "minDistalVerticalRangeRatio": min_distal_vertical,
+        "distalArticulationRangeRatio": distal_articulation_range,
+        "minDistalArticulationRangeRatio": min_distal_articulation,
+        "proximalVerticalRangeRatio": proximal_vertical_range,
+        "lowerBodyDistalRootRelativeRangeRatio": lower_body_distal_root_relative_range,
+        "upperBodyRootRelativeRangeRatio": upper_body_root_relative_range,
+        "targetMotionReferenceRangeRatio": target_motion_reference_range,
+    }
+
+
+GENERIC_OBSERVABLE_MOTION_MIN_RANGE_RATIO = 0.035
+GENERIC_OBSERVABLE_MOTION_MIN_FLEXION_RANGE_RATIO = 0.08
+GENERIC_OBSERVABLE_MOTION_REFERENCE_PATTERNS = {
+    "body_toward_anchor",
+    "body_away_from_anchor",
+    "limb_toward_body",
+    "limb_away_from_body",
+}
+
+
+def materialized_observable_motion_spec_metrics(
+    frames: list[dict[str, Any]],
+    *,
+    spec: dict[str, Any],
+    body_span: float,
+) -> dict[str, Any]:
+    primary_regions = [str(region) for region in spec.get("primaryMovingRegions", [])]
+    reference_regions = [str(region) for region in spec.get("referenceRegions", [])]
+    axis = str(spec.get("primaryAxis") or "any")
+    pattern = str(spec.get("motionPattern") or "other")
+    moving_groups = skeleton_joint_groups_for_observable_regions(primary_regions)
+    reference_groups = skeleton_joint_groups_for_observable_regions(reference_regions)
+    primary_motion_range = max(
+        (
+            representative_joint_axis_motion_ratio(
+                frames,
+                group,
+                body_span=body_span,
+                axis=axis,
+            )
+            for group in moving_groups
+        ),
+        default=0.0,
+    )
+    relative_motion_range = max(
+        (
+            representative_joint_relative_axis_motion_ratio(
+                frames,
+                moving_group,
+                reference_group,
+                body_span=body_span,
+                axis=axis,
+            )
+            for moving_group in moving_groups
+            for reference_group in reference_groups
+        ),
+        default=0.0,
+    )
+    flexion_range = observable_motion_flexion_range(frames, primary_regions)
+    target_motion_range = max(primary_motion_range, relative_motion_range, flexion_range)
+    min_motion_range = (
+        GENERIC_OBSERVABLE_MOTION_MIN_FLEXION_RANGE_RATIO
+        if pattern == "joint_flex_extend" and flexion_range >= primary_motion_range
+        else GENERIC_OBSERVABLE_MOTION_MIN_RANGE_RATIO
+    )
+    failure_reasons: list[str] = []
+    if not moving_groups:
+        failure_reasons.append("missing_observable_primary_moving_region")
+    if pattern in GENERIC_OBSERVABLE_MOTION_REFERENCE_PATTERNS and reference_regions and not reference_groups:
+        failure_reasons.append("missing_observable_reference_region")
+    if target_motion_range < min_motion_range:
+        failure_reasons.append("weak_observable_target_motion")
+    return {
+        "required": True,
+        "passed": not failure_reasons,
+        "profile": None,
+        "target": "observable_motion_spec",
+        "observableMotionSpec": spec,
+        "failureReasons": failure_reasons,
+        "frameCount": len(frames),
+        "bodySpan": body_span,
+        "primaryMotionRegions": primary_regions,
+        "referenceRegions": reference_regions,
+        "primaryAxis": axis,
+        "motionPattern": pattern,
+        "primaryMotionRangeRatio": primary_motion_range,
+        "relativeMotionRangeRatio": relative_motion_range,
+        "flexionRangeRatio": flexion_range,
+        "targetMotionReferenceRangeRatio": target_motion_range,
+        "minTargetMotionRangeRatio": min_motion_range,
+    }
+
+
+def skeleton_joint_groups_for_observable_regions(regions: Iterable[str]) -> list[tuple[str, ...]]:
+    groups: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for region in regions:
+        for group in skeleton_joint_groups_for_observable_region(str(region)):
+            if group not in seen:
+                groups.append(group)
+                seen.add(group)
+    return groups
+
+
+def skeleton_joint_groups_for_observable_region(region: str) -> list[tuple[str, ...]]:
+    if region == "torso":
+        return [
+            ("spine3", "spine2", "chest", "neck", "left_shoulder", "right_shoulder"),
+            ("pelvis", "root", "hips", "left_hip", "right_hip"),
+        ]
+    if region == "head":
+        return [("head", "neck")]
+    if region == "shoulders":
+        return [("left_shoulder", "right_shoulder")]
+    if region == "upper_limb":
+        return [
+            ("left_hand", "left_wrist", "left_elbow"),
+            ("right_hand", "right_wrist", "right_elbow"),
+        ]
+    if region == "elbows":
+        return [("left_elbow",), ("right_elbow",)]
+    if region == "hands":
+        return [("left_hand", "left_wrist"), ("right_hand", "right_wrist")]
+    if region == "hips":
+        return [("pelvis", "root", "hips", "left_hip", "right_hip")]
+    if region == "lower_limb":
+        return [
+            ("left_foot", "left_ankle", "left_knee"),
+            ("right_foot", "right_ankle", "right_knee"),
+        ]
+    if region == "knees":
+        return [("left_knee",), ("right_knee",)]
+    if region == "feet":
+        return [("left_foot", "left_ankle"), ("right_foot", "right_ankle")]
+    return []
+
+
+def representative_joint_axis_motion_ratio(
+    frames: list[dict[str, Any]],
+    names: tuple[str, ...],
+    *,
+    body_span: float,
+    axis: str,
+) -> float:
+    if axis == "vertical":
+        return representative_joint_y_motion_ratio(frames, names, body_span=body_span) or 0.0
+    points = representative_joint_points(frames, names)
+    if len(points) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT or body_span <= 1e-6:
+        return 0.0
+    if axis == "horizontal":
+        return (max(point[0] for point in points) - min(point[0] for point in points)) / body_span
+    if axis == "depth":
+        return (max(point[2] for point in points) - min(point[2] for point in points)) / body_span
+    return representative_joint_motion_ratio(frames, names, body_span=body_span) or 0.0
+
+
+def representative_joint_relative_axis_motion_ratio(
+    frames: list[dict[str, Any]],
+    names: tuple[str, ...],
+    anchor_names: tuple[str, ...],
+    *,
+    body_span: float,
+    axis: str,
+) -> float:
+    if body_span <= 1e-6:
+        return 0.0
+    values: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        point = representative_joint_center(joints, names)
+        anchor = representative_joint_center(joints, anchor_names)
+        if point is None or anchor is None:
+            continue
+        delta = [point[index] - anchor[index] for index in range(3)]
+        if axis == "vertical":
+            values.append(delta[1])
+        elif axis == "horizontal":
+            values.append(delta[0])
+        elif axis == "depth":
+            values.append(delta[2])
+        else:
+            values.append(vector3_length(delta))
+    if len(values) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return (max(values) - min(values)) / body_span
+
+
+def observable_motion_flexion_range(frames: list[dict[str, Any]], regions: list[str]) -> float:
+    ranges: list[float] = []
+    if any(region in {"upper_limb", "elbows", "hands"} for region in regions):
+        ranges.extend(elbow_flexion_range_ratio(frames, side=side) for side in ("left", "right"))
+    if any(region in {"lower_limb", "knees", "feet"} for region in regions):
+        ranges.extend(knee_flexion_range_ratio(frames, side=side) for side in ("left", "right"))
+    return max(ranges, default=0.0)
+
+
+def materialized_hinged_upper_limb_pull_observability_metrics(
+    frames: list[dict[str, Any]],
+    *,
+    profile: dict[str, Any],
+    body_span: float,
+) -> dict[str, Any]:
+    torso_lean_degrees = torso_lean_degrees_for_frames(frames)
+    hand_torso_distance_range = max(
+        hand_torso_distance_range_ratio(frames, side=side, body_span=body_span)
+        for side in ("left", "right")
+    )
+    elbow_flexion_range = max(
+        elbow_flexion_range_ratio(frames, side=side)
+        for side in ("left", "right")
+    )
+    min_torso_lean_degrees = float(profile["minSkeletonTorsoLeanDegrees"])
+    min_hand_torso_distance_range = float(profile["minSkeletonHandTorsoDistanceRangeRatio"])
+    min_elbow_flexion_range = float(profile["minSkeletonElbowFlexionRangeRatio"])
+    failure_reasons: list[str] = []
+    if torso_lean_degrees < min_torso_lean_degrees:
+        failure_reasons.append("weak_target_torso_hinge")
+    if (
+        hand_torso_distance_range < min_hand_torso_distance_range
+        and elbow_flexion_range < min_elbow_flexion_range
+    ):
+        failure_reasons.append("weak_target_upper_limb_pull")
+    target_motion_reference_range = max(hand_torso_distance_range, elbow_flexion_range)
+    return {
+        "required": True,
+        "passed": not failure_reasons,
+        "profile": profile["profile"],
+        "target": profile["target"],
+        "description": profile["description"],
+        "failureReasons": failure_reasons,
+        "frameCount": len(frames),
+        "bodySpan": body_span,
+        "torsoLeanDegrees": torso_lean_degrees,
+        "minTorsoLeanDegrees": min_torso_lean_degrees,
+        "handTorsoDistanceRangeRatio": hand_torso_distance_range,
+        "minHandTorsoDistanceRangeRatio": min_hand_torso_distance_range,
+        "elbowFlexionRangeRatio": elbow_flexion_range,
+        "minElbowFlexionRangeRatio": min_elbow_flexion_range,
+        "targetMotionReferenceRangeRatio": target_motion_reference_range,
+    }
+
+
+def torso_lean_degrees_for_frames(frames: list[dict[str, Any]]) -> float:
+    lean_degrees: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        upper = representative_joint_center(
+            joints,
+            ("head", "neck", "spine3", "left_shoulder", "right_shoulder"),
+        )
+        lower = representative_joint_center(
+            joints,
+            ("pelvis", "root", "hips", "left_hip", "right_hip"),
+        )
+        if upper is None or lower is None:
+            continue
+        vector = [upper[axis] - lower[axis] for axis in range(3)]
+        length = vector3_length(vector)
+        if length <= 1e-6:
+            continue
+        vertical_cosine = max(-1.0, min(1.0, abs(vector[1]) / length))
+        lean_degrees.append(math.degrees(math.acos(vertical_cosine)))
+    if len(lean_degrees) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return statistics.median(lean_degrees)
+
+
+def hand_torso_distance_range_ratio(
+    frames: list[dict[str, Any]],
+    *,
+    side: str,
+    body_span: float,
+) -> float:
+    if body_span <= 1e-6:
+        return 0.0
+    distances: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        torso = representative_joint_center(
+            joints,
+            ("spine3", "spine2", "chest", "neck", "left_shoulder", "right_shoulder"),
+        )
+        hand = representative_joint_center(
+            joints,
+            (f"{side}_hand", f"{side}_wrist"),
+        )
+        if torso is None or hand is None:
+            continue
+        distances.append(vector3_length([hand[axis] - torso[axis] for axis in range(3)]))
+    if len(distances) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return (max(distances) - min(distances)) / body_span
+
+
+def elbow_flexion_range_ratio(frames: list[dict[str, Any]], *, side: str) -> float:
+    angles: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        angle = joint_angle_from_payload(
+            joints,
+            f"{side}_shoulder",
+            f"{side}_elbow",
+            f"{side}_wrist",
+        )
+        if angle is not None:
+            angles.append(angle)
+    if len(angles) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return (max(angles) - min(angles)) / 180.0
+
+
+def knee_flexion_range_ratio(frames: list[dict[str, Any]], *, side: str) -> float:
+    angles: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        angle = joint_angle_from_payload(
+            joints,
+            f"{side}_hip",
+            f"{side}_knee",
+            f"{side}_ankle",
+        )
+        if angle is not None:
+            angles.append(angle)
+    if len(angles) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return (max(angles) - min(angles)) / 180.0
+
+
+
+def non_target_motion_dominance_failure_reasons(
+    profile: dict[str, Any],
+    *,
+    dominance_metric_values: dict[str, float],
+    target_motion_reference_range: float,
+) -> list[str]:
+    failures: list[str] = []
+    if target_motion_reference_range <= 1e-6:
+        return failures
+    rules = profile.get("nonTargetMotionDominanceRules")
+    if not isinstance(rules, list):
+        return failures
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        metric_key = str(rule.get("metricKey") or "")
+        if not metric_key:
+            continue
+        non_target_range = dominance_metric_values.get(metric_key, 0.0)
+        min_range = parse_optional_float(rule.get("minRangeRatio")) or 0.0
+        max_ratio = parse_optional_float(rule.get("maxRatioToTargetMotion")) or 0.0
+        if max_ratio <= 0.0:
+            continue
+        if non_target_range < min_range:
+            continue
+        if non_target_range > target_motion_reference_range * max_ratio:
+            failures.append(str(rule.get("failureReason") or "non_target_motion_dominates_target_motion"))
+    return dedupe_text(failures)
+
+
+def empty_materialized_target_motion_observability_metrics(
+    *,
+    required: bool,
+    reason: str,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "required": required,
+        "passed": True,
+        "profile": profile.get("profile") if isinstance(profile, dict) else None,
+        "target": profile.get("target") if isinstance(profile, dict) else None,
+        "skippedReasons": [reason],
+    }
+
+
+def target_motion_contract_from_ranking_payload(ranking_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(ranking_payload, dict):
+        return None
+    for key in (
+        "preWhamSourceContract",
+        "movementCutExerciseMotionContract",
+        "exerciseMotionContract",
+    ):
+        value = ranking_payload.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def representative_joint_relative_y_motion_ratio(
+    frames: list[dict[str, Any]],
+    names: tuple[str, ...],
+    anchor_names: tuple[str, ...],
+    *,
+    body_span: float,
+) -> float:
+    if body_span <= 1e-6:
+        return 0.0
+    values: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        point = representative_joint_center(joints, names)
+        anchor = representative_joint_center(joints, anchor_names)
+        if point is None or anchor is None:
+            continue
+        values.append(point[1] - anchor[1])
+    if len(values) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        return 0.0
+    return (max(values) - min(values)) / body_span
 
 
 def materialized_source_motion_reference_range(
@@ -2080,7 +2720,17 @@ def full_repetition_phase_completeness_metrics_from_payload(
         ranking_payload=ranking_payload,
         chunk_estimate=chunk_estimate,
     ).strip().lower()
-    required = complexity in {"simple", "compound"}
+    motion_contract = target_motion_contract_from_ranking_payload(ranking_payload)
+    target_motion_profile = target_motion_profile_for_exercise(
+        exercise_name,
+        contract=motion_contract,
+    )
+    observable_spec = observable_motion_spec_for_contract(motion_contract)
+    required = (
+        complexity in {"simple", "compound"}
+        or target_motion_profile is not None
+        or observable_motion_spec_requires_return(motion_contract)
+    )
     if not required:
         return empty_full_repetition_phase_completeness_metrics(
             required=False,
@@ -2129,7 +2779,11 @@ def full_repetition_phase_completeness_metrics_from_payload(
             frame_count=len(frames),
             movement_complexity=complexity,
         )
-    preferred_joint_region = "lower_body" if exercise_requires_lower_body_motion(exercise_name) else None
+    preferred_joint_region = (
+        "lower_body"
+        if exercise_requires_lower_body_motion(exercise_name, contract=motion_contract)
+        else None
+    )
     dominant = dominant_root_relative_axis_track(
         frames,
         joint_names=joint_names,
@@ -2159,6 +2813,8 @@ def full_repetition_phase_completeness_metrics_from_payload(
             "passed": True,
             "reason": "dominant_motion_too_small_for_phase_gate",
             "movementComplexity": complexity,
+            "targetMotionProfile": target_motion_profile.get("profile") if target_motion_profile is not None else None,
+            "observableMotionSpec": observable_spec,
             "frameCount": len(frames),
             "sampleCount": len(values),
             "bodyHeight": body_height,
@@ -2188,6 +2844,8 @@ def full_repetition_phase_completeness_metrics_from_payload(
         "passed": passed,
         "reason": "full_repetition_phase_return_detected" if passed else "one_way_partial_repetition_phase",
         "movementComplexity": complexity,
+        "targetMotionProfile": target_motion_profile.get("profile") if target_motion_profile is not None else None,
+        "observableMotionSpec": observable_spec,
         "frameCount": len(frames),
         "sampleCount": sample_count,
         "bodyHeight": body_height,
@@ -2330,25 +2988,77 @@ def movement_complexity_for_validation(
     return "unknown"
 
 
-def exercise_requires_lower_body_motion(exercise_name: str) -> bool:
-    normalized = normalize_exercise_name(exercise_name)
-    return any(term in normalized for term in LOWER_BODY_DOMINANT_EXERCISE_TERMS)
-
-
-def exercise_allows_distal_lower_body_target_motion(exercise_name: str) -> bool:
-    normalized = normalize_exercise_name(exercise_name)
-    return any(
-        term in normalized
-        for term in (
-            "calf",
-            "leg extension",
-            "leg curl",
-            "hamstring curl",
-            "ankle",
-            "toe raise",
-            "tibialis",
-        )
+def exercise_motion_contract_mentions_lower_body(contract: dict[str, Any] | None) -> bool:
+    if not isinstance(contract, dict):
+        return False
+    if observable_motion_spec_mentions_lower_body(contract):
+        return True
+    target_motion_profile = target_motion_profile_for_exercise(None, contract=contract)
+    target_motion_profile_key = (
+        str(target_motion_profile.get("profile"))
+        if isinstance(target_motion_profile, dict) and target_motion_profile.get("profile")
+        else None
     )
+    if target_motion_profile_key == DISTAL_LEG_VERTICAL_RAISE_PROFILE_KEY:
+        return True
+
+    def contract_text_segments_for_keys(keys: Iterable[str]) -> list[str]:
+        segments: list[str] = []
+        for key in keys:
+            value = contract.get(key)
+            if isinstance(value, str):
+                segments.append(value.casefold())
+            elif isinstance(value, list):
+                segments.extend(str(item).casefold() for item in value)
+        return segments
+
+    def text_mentions_lower_body(text: str) -> bool:
+        tokens = set(re.findall(r"[a-z0-9]+", text))
+        token_terms = {term for term in LOWER_BODY_CONTRACT_TERMS if " " not in term}
+        return "lower body" in text or bool(tokens.intersection(token_terms))
+
+    def text_mentions_lower_body_motion(text: str) -> bool:
+        tokens = re.findall(r"[a-z0-9]+", text)
+        token_terms = {term for term in LOWER_BODY_CONTRACT_TERMS if " " not in term}
+        lower_body_indices = [
+            index
+            for index, token in enumerate(tokens)
+            if token in token_terms
+        ]
+        if "lower body" in text:
+            lower_body_indices.extend(
+                index
+                for index, token in enumerate(tokens)
+                if token == "lower"
+                and index + 1 < len(tokens)
+                and tokens[index + 1] == "body"
+            )
+        action_indices = [
+            index
+            for index, token in enumerate(tokens)
+            if token in LOWER_BODY_MOTION_ACTION_TERMS
+        ]
+        return any(
+            abs(lower_body_index - action_index) <= LOWER_BODY_MOTION_ACTION_MAX_TOKEN_DISTANCE
+            for lower_body_index in lower_body_indices
+            for action_index in action_indices
+        )
+
+    primary_segments = contract_text_segments_for_keys(LOWER_BODY_MOTION_CONTRACT_PRIMARY_KEYS)
+    if any(text_mentions_lower_body(segment) for segment in primary_segments):
+        return True
+
+    context_segments = contract_text_segments_for_keys(LOWER_BODY_MOTION_CONTRACT_CONTEXT_KEYS)
+    return any(text_mentions_lower_body_motion(segment) for segment in context_segments)
+
+
+def exercise_requires_lower_body_motion(
+    exercise_name: str,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> bool:
+    del exercise_name
+    return exercise_motion_contract_mentions_lower_body(contract)
 
 
 def focused_motion_adjustment_for_exercise(
@@ -2356,8 +3066,9 @@ def focused_motion_adjustment_for_exercise(
     motion_metrics: dict[str, Any],
     *,
     base_motion_score: float,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> tuple[float, list[str], dict[str, Any]]:
-    if not exercise_requires_lower_body_motion(exercise_name):
+    if not exercise_requires_lower_body_motion(exercise_name, contract=exercise_motion_contract):
         return base_motion_score, [], {
             "requiresLowerBodyMotion": False,
         }
@@ -2388,6 +3099,7 @@ def apply_loop_continuity_adjustment(item: ReviewItem, ranking: LoopRanking) -> 
             item.exercise_name,
             motion_metrics,
             base_motion_score=base_motion_score,
+            exercise_motion_contract=target_motion_contract_from_ranking_payload(payload),
         )
         adjusted_score = ranking.score
         if focused_motion_score < base_motion_score:
@@ -2439,6 +3151,9 @@ def apply_loop_continuity_adjustment(item: ReviewItem, ranking: LoopRanking) -> 
         item.exercise_name,
         motion_metrics,
         base_motion_score=motion_score,
+        exercise_motion_contract=target_motion_contract_from_ranking_payload(
+            ranking.payload if isinstance(ranking.payload, dict) else None
+        ),
     )
     motion_score = focused_motion_score
     model_full_rep_motion = parse_optional_float((ranking.payload or {}).get("full_rep_motion") if isinstance(ranking.payload, dict) else None)
@@ -9513,20 +10228,41 @@ def movement_cut_target_motion_gate_metrics(
     candidate_metrics: dict[str, Any],
     candidate_phase_metrics: dict[str, Any] | None,
     chunk_estimate: Any | None = None,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     complexity = movement_complexity_for_validation(
         exercise_name,
         chunk_estimate=chunk_estimate,
     ).strip().lower()
-    required = complexity in {"simple", "compound"}
-    lower_body_target = exercise_requires_lower_body_motion(exercise_name)
-    target_region = "lower_body" if lower_body_target else "upper_body"
+    target_motion_profile = target_motion_profile_for_exercise(
+        exercise_name,
+        contract=exercise_motion_contract,
+    )
+    target_profile_key = (
+        str(target_motion_profile.get("profile"))
+        if isinstance(target_motion_profile, dict) and target_motion_profile.get("profile")
+        else None
+    )
+    observable_spec = observable_motion_spec_for_contract(exercise_motion_contract)
+    required = (
+        complexity in {"simple", "compound"}
+        or target_motion_profile is not None
+        or observable_spec is not None
+    )
+    lower_body_target = exercise_requires_lower_body_motion(
+        exercise_name,
+        contract=exercise_motion_contract,
+    )
     root_vertical_range = parse_optional_float(candidate_metrics.get("rootVerticalRangeRatio"))
     lower_body_proximal_range = parse_optional_float(candidate_metrics.get("lowerBodyProximalRootRelativeRangeRatio"))
     lower_body_distal_range = parse_optional_float(candidate_metrics.get("lowerBodyDistalRootRelativeRangeRatio"))
     upper_body_range = parse_optional_float(candidate_metrics.get("upperBodyRootRelativeRangeRatio"))
-    distal_allowed = exercise_allows_distal_lower_body_target_motion(exercise_name)
-    if lower_body_target:
+    distal_allowed = target_profile_key == "distal_leg_vertical_raise"
+    if distal_allowed:
+        target_region = "lower_body_distal"
+        target_range = lower_body_distal_range
+    elif lower_body_target:
+        target_region = "lower_body"
         distal_target_range = (lower_body_distal_range or 0.0) if distal_allowed else 0.0
         target_range = max(
             root_vertical_range or 0.0,
@@ -9534,6 +10270,7 @@ def movement_cut_target_motion_gate_metrics(
             distal_target_range,
         )
     else:
+        target_region = "upper_body"
         target_range = upper_body_range
 
     dominant_joint = None
@@ -9578,6 +10315,8 @@ def movement_cut_target_motion_gate_metrics(
         "skippedReasons": skipped_reasons,
         "exerciseName": exercise_name,
         "movementComplexity": complexity,
+        "targetMotionProfile": target_profile_key,
+        "observableMotionSpec": observable_spec,
         "targetMotionRegion": target_region,
         "targetMotionRangeRatio": target_range,
         "minTargetMotionRangeRatio": MOVEMENT_CUT_MIN_TARGET_REGION_MOTION_RANGE_RATIO,
@@ -9600,6 +10339,7 @@ def movement_cut_candidate_motion_coverage_metrics(
     parent_window: DetectionWindow,
     candidate_window: DetectionWindow,
     chunk_estimate: Any | None = None,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not item.skeleton_path.exists():
         return {
@@ -9646,7 +10386,7 @@ def movement_cut_candidate_motion_coverage_metrics(
         parent_phase_metrics = full_repetition_phase_completeness_metrics_from_skeleton_path(
             item.skeleton_path,
             exercise_name=item.exercise_name,
-            ranking_payload=None,
+            ranking_payload={"exerciseMotionContract": exercise_motion_contract},
             chunk_estimate=chunk_estimate,
             start_seconds=parent_window.start_seconds,
             end_seconds=parent_window.end_seconds,
@@ -9655,7 +10395,7 @@ def movement_cut_candidate_motion_coverage_metrics(
         candidate_phase_metrics = full_repetition_phase_completeness_metrics_from_skeleton_path(
             item.skeleton_path,
             exercise_name=item.exercise_name,
-            ranking_payload=None,
+            ranking_payload={"exerciseMotionContract": exercise_motion_contract},
             chunk_estimate=chunk_estimate,
             start_seconds=candidate_window.start_seconds,
             end_seconds=candidate_window.end_seconds,
@@ -9694,6 +10434,7 @@ def movement_cut_candidate_motion_coverage_metrics(
         candidate_metrics=candidate_metrics,
         candidate_phase_metrics=candidate_phase_metrics,
         chunk_estimate=chunk_estimate,
+        exercise_motion_contract=exercise_motion_contract,
     )
     rejection_reasons.extend(
         str(reason)
@@ -10060,6 +10801,11 @@ def rank_movement_cut_candidates_with_caption_images(
     )
     if not candidate_windows:
         return None
+    exercise_motion_contract = (
+        exercise_motion_contract_from_candidate(item.candidate)
+        if use_exercise_motion_contract
+        else None
+    )
     render_started = time.perf_counter()
     candidates: list[SourceCutCandidate] = []
     all_candidates: list[SourceCutCandidate] = []
@@ -10086,6 +10832,7 @@ def rank_movement_cut_candidates_with_caption_images(
                     parent_window=timeline_window,
                     candidate_window=candidate_window,
                     chunk_estimate=chunk_estimate,
+                    exercise_motion_contract=exercise_motion_contract,
                 ),
             )
             all_candidates.append(candidate)
@@ -10112,11 +10859,6 @@ def rank_movement_cut_candidates_with_caption_images(
             render_seconds,
             0.0,
         )
-    exercise_motion_contract = (
-        exercise_motion_contract_from_candidate(item.candidate)
-        if use_exercise_motion_contract
-        else None
-    )
     coverage_candidates = [
         candidate
         for candidate in candidates
@@ -10456,7 +11198,6 @@ def build_llama_cpp_vision_settings(request: BakeAndRankRequest) -> YouTubeRanki
         vision_llm_workers=max(1, request.review_llm_workers),
         llama_cpp_base_url=request.llama_cpp_base_url,
         llama_cpp_model=request.llama_cpp_model,
-        llama_cpp_command=request.llama_cpp_command,
         llama_cpp_server_command=request.llama_cpp_server_command,
         llama_cpp_mmproj=request.llama_cpp_mmproj,
         llama_cpp_backend=request.llama_cpp_backend,
@@ -10465,6 +11206,8 @@ def build_llama_cpp_vision_settings(request: BakeAndRankRequest) -> YouTubeRanki
         llama_cpp_top_p=request.llama_cpp_top_p,
         llama_cpp_top_k=request.llama_cpp_top_k,
         llama_cpp_disable_reasoning=request.llama_cpp_disable_reasoning,
+        llama_cpp_reasoning_budget=request.llama_cpp_reasoning_budget,
+        llama_cpp_reasoning_budget_message=request.llama_cpp_reasoning_budget_message,
         llama_cpp_ctx_size=request.llama_cpp_ctx_size,
         llama_cpp_batch_size=request.llama_cpp_batch_size,
         llama_cpp_ubatch_size=request.llama_cpp_ubatch_size,

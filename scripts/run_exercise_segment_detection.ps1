@@ -5,19 +5,20 @@ param(
     [string]$ExerciseName,
     [string]$OutputSlug,
     [string]$Workspace = "build/exercise_motion",
-    [string]$LlamaCppCommand = "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-mtmd-cli.exe",
     [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
     [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [switch]$UseLlamaCppServer,
-    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-c1a1c8ee-cuda13.3-sm89-win-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 768,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
+    [bool]$LlamaCppDisableReasoning = $false,
+    [Nullable[int]]$LlamaCppReasoningBudget = 64,
+    [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [int]$LlamaCppImageMinTokens = 0,
     [int]$LlamaCppImageMaxTokens = 0,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
@@ -71,31 +72,13 @@ function Get-LiteRtCommand {
     return "litert-lm"
 }
 
-function Get-LlamaCppCommand {
-    param([string]$ConfiguredCommand)
-
-    if ([string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
-        return "llama-mtmd-cli"
-    }
-    return $ConfiguredCommand
-}
-
 function Get-LlamaCppServerCommand {
-    param(
-        [string]$ConfiguredCommand,
-        [string]$PrimaryCommand
-    )
+    param([string]$ConfiguredCommand)
 
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    if (-not [string]::IsNullOrWhiteSpace($PrimaryCommand)) {
-        $inferred = Join-Path (Split-Path -Parent $PrimaryCommand) "llama-server.exe"
-        if (Test-Path -LiteralPath $inferred) {
-            return $inferred
-        }
-    }
-    $fallback = "C:\Users\gabri\Downloads\llama-b9555-bin-win-cuda-13.3-x64\llama-server.exe"
+    $fallback = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }
@@ -110,7 +93,10 @@ function Resolve-LlamaCppServerProcess {
         [string]$Backend,
         [string]$HostAddress,
         [int]$Port,
-        [int]$ParallelSlots
+        [int]$ParallelSlots,
+        [bool]$DisableReasoning,
+        [Nullable[int]]$ReasoningBudget,
+        [string]$ReasoningBudgetMessage
     )
 
     $args = @(
@@ -125,6 +111,18 @@ function Resolve-LlamaCppServerProcess {
     )
     if ($ParallelSlots -gt 1) {
         $args += @("--parallel", "$ParallelSlots")
+    }
+    if ($DisableReasoning) {
+        $args += @("--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0")
+    }
+    else {
+        $args += @("--reasoning", "on", "--reasoning-format", "deepseek")
+        if ($null -ne $ReasoningBudget) {
+            $args += @("--reasoning-budget", "$ReasoningBudget")
+            if ($ReasoningBudget -ge 0 -and -not [string]::IsNullOrWhiteSpace($ReasoningBudgetMessage)) {
+                $args += @("--reasoning-budget-message", $ReasoningBudgetMessage)
+            }
+        }
     }
     if ($Backend -eq "gpu") {
         $args += @("--gpu-layers", "all")
@@ -320,69 +318,55 @@ if ($UseLiteRt) {
     if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj) -and -not (Test-Path -LiteralPath $LlamaCppMmproj)) {
         throw "Could not find Llama.cpp mmproj file '$LlamaCppMmproj'."
     }
-    if ($UseLlamaCppServer) {
-        if ($LlamaCppServerPort -lt 1 -or $LlamaCppServerPort -gt 65535) {
-            throw "LlamaCppServerPort must be between 1 and 65535."
+    if ($LlamaCppServerPort -lt 1 -or $LlamaCppServerPort -gt 65535) {
+        throw "LlamaCppServerPort must be between 1 and 65535."
+    }
+    $llamaCppServerCommand = Get-LlamaCppServerCommand -ConfiguredCommand $LlamaCppServerCommand
+    if (-not (Test-Path -LiteralPath $llamaCppServerCommand)) {
+        throw "Could not find llama-server binary '$llamaCppServerCommand'."
+    }
+    if (-not (Test-PortInUse -Port $LlamaCppServerPort)) {
+        $serverHost = "127.0.0.1"
+        $resolvedLlamaCppBaseUrl = "http://$serverHost`:$LlamaCppServerPort"
+        $parallelSlots = $LlamaCppServerParallel
+        if ($parallelSlots -le 0) {
+            $parallelSlots = $ClassificationWorkers
         }
-        if ([string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
-            $llamaCppServerCommand = Get-LlamaCppServerCommand -ConfiguredCommand $LlamaCppServerCommand -PrimaryCommand $LlamaCppCommand
+        Write-Host "Starting llama-server: $llamaCppServerCommand ..."
+        $llamaCppServerProcess = Resolve-LlamaCppServerProcess `
+            -Command $llamaCppServerCommand `
+            -ModelPath $LlamaCppModel `
+            -MmprojPath $LlamaCppMmproj `
+            -Backend $LlamaCppBackend `
+            -HostAddress $serverHost `
+            -Port $LlamaCppServerPort `
+            -ParallelSlots $parallelSlots `
+            -DisableReasoning $LlamaCppDisableReasoning `
+            -ReasoningBudget $LlamaCppReasoningBudget `
+            -ReasoningBudgetMessage $LlamaCppReasoningBudgetMessage
+        $cleanupLlamaCppServer = $true
+        if (-not $llamaCppServerProcess -or $llamaCppServerProcess.HasExited) {
+            throw "Failed to start llama-server process."
         }
-        else {
-            $llamaCppServerCommand = $LlamaCppServerCommand
+        if (-not (Wait-LlamaCppServer -HostAddress $serverHost -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
+            throw "Timed out waiting for llama-server startup on port $LlamaCppServerPort."
         }
-        if (-not (Test-Path -LiteralPath $llamaCppServerCommand)) {
-            throw "Could not find llama-server binary '$llamaCppServerCommand'."
-        }
-        if (-not (Test-PortInUse -Port $LlamaCppServerPort)) {
-            $serverHost = "127.0.0.1"
-            $resolvedLlamaCppBaseUrl = "http://$serverHost`:$LlamaCppServerPort"
-            $parallelSlots = $LlamaCppServerParallel
-            if ($parallelSlots -le 0) {
-                $parallelSlots = $ClassificationWorkers
-            }
-            Write-Host "Starting llama-server: $llamaCppServerCommand ..."
-            $llamaCppServerProcess = Resolve-LlamaCppServerProcess `
-                -Command $llamaCppServerCommand `
-                -ModelPath $LlamaCppModel `
-                -MmprojPath $LlamaCppMmproj `
-                -Backend $LlamaCppBackend `
-                -HostAddress $serverHost `
-                -Port $LlamaCppServerPort `
-                -ParallelSlots $parallelSlots
-            $cleanupLlamaCppServer = $true
-            if (-not $llamaCppServerProcess -or $llamaCppServerProcess.HasExited) {
-                throw "Failed to start llama-server process."
-            }
-            if (-not (Wait-LlamaCppServer -HostAddress $serverHost -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
-                throw "Timed out waiting for llama-server startup on port $LlamaCppServerPort."
-            }
-        }
-        else {
-            Write-Host "Using existing server on port $LlamaCppServerPort."
-            if (-not (Wait-LlamaCppServer -HostAddress "127.0.0.1" -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
-                throw "Existing llama-server on port $LlamaCppServerPort did not become ready."
-            }
-            Assert-LlamaCppServerModelMatches `
-                -HostAddress "127.0.0.1" `
-                -Port $LlamaCppServerPort `
-                -ExpectedModelPath $LlamaCppModel
-        }
-        $pythonArgs += @(
-            "--base-url", $resolvedLlamaCppBaseUrl,
-            "--model", $LlamaCppModel,
-            "--llama-cpp-backend", $LlamaCppBackend
-        )
     }
     else {
-        $pythonArgs += @(
-            "--llama-cpp-command", (Get-LlamaCppCommand -ConfiguredCommand $LlamaCppCommand),
-            "--llama-cpp-model", $LlamaCppModel,
-            "--llama-cpp-backend", $LlamaCppBackend
-        )
-        if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj)) {
-            $pythonArgs += "--llama-cpp-mmproj", $LlamaCppMmproj
+        Write-Host "Using existing server on port $LlamaCppServerPort."
+        if (-not (Wait-LlamaCppServer -HostAddress "127.0.0.1" -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
+            throw "Existing llama-server on port $LlamaCppServerPort did not become ready."
         }
+        Assert-LlamaCppServerModelMatches `
+            -HostAddress "127.0.0.1" `
+            -Port $LlamaCppServerPort `
+            -ExpectedModelPath $LlamaCppModel
     }
+    $pythonArgs += @(
+        "--base-url", $resolvedLlamaCppBaseUrl,
+        "--model", $LlamaCppModel,
+        "--llama-cpp-backend", $LlamaCppBackend
+    )
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ExerciseName)) {
@@ -398,6 +382,9 @@ if ($LlamaCppTopP.HasValue) {
 }
 if ($LlamaCppTopK.HasValue) {
     $pythonArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
+}
+if ($LlamaCppDisableReasoning) {
+    $pythonArgs += "--llama-cpp-disable-reasoning"
 }
 if ($LlamaCppImageMinTokens -gt 0) {
     $pythonArgs += "--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens"

@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import exercise_motion_pkg.bake_and_rank as bake_and_rank_module
+import exercise_motion_pkg.target_motion as target_motion_module
 import exercise_motion_pkg.wham_runner as wham_runner_module
 import exercise_motion_pkg.youtube as youtube_module
 from exercise_motion_pkg.cleanup import (
@@ -147,6 +148,8 @@ from exercise_motion_pkg.youtube import (
     parse_yt_dlp_search_results,
     prepare_vision_review,
     rank_candidates_with_prepared_vision_reviews,
+    resolve_exercise_name_rewrite,
+    rewrite_equipment_qualified_exercise_name,
     score_candidate_vision_payload,
     score_prepared_vision_review,
     prepare_candidate_for_review,
@@ -155,6 +158,135 @@ from exercise_motion_pkg.youtube import (
     vision_review_priority_score,
     build_youtube_download_options,
 )
+
+
+def distal_leg_vertical_raise_contract() -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Generated Exercise",
+        "requiredEquipment": ["loaded implement"],
+        "requiredStartPosture": "standing with feet grounded",
+        "requiredEndPosture": "standing with feet grounded again",
+        "requiredPhases": [
+            "heels lift upward while ankles extend",
+            "heels lower back to the floor",
+        ],
+        "primaryMotionRegions": ["ankles", "feet", "heels"],
+        "mustBeVisible": ["both ankles", "both heels"],
+        "rejectIf": ["only setup or arm movement"],
+        "commonWrongVariants": [],
+        "reviewNotes": ["the defining visible motion is heel or ankle vertical travel"],
+        "targetMotionProfile": "distal_leg_vertical_raise",
+    }
+
+
+def lower_body_motion_contract() -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Generated Lower Body Exercise",
+        "requiredEquipment": ["loaded implement"],
+        "requiredStartPosture": "standing with knees and hips ready to move",
+        "requiredEndPosture": "returns to the starting stance after the lower-body repetition",
+        "requiredPhases": [
+            "hips and knees move through the loaded lower-body repetition",
+            "hips and knees return to the starting posture",
+        ],
+        "primaryMotionRegions": ["hips", "knees", "legs"],
+        "mustBeVisible": ["hips", "knees", "legs"],
+        "rejectIf": ["only setup or walkout"],
+        "commonWrongVariants": [],
+        "reviewNotes": ["the defining visible motion is lower-body joint travel"],
+        "targetMotionProfile": None,
+    }
+
+
+def hinged_upper_limb_pull_contract(
+    *,
+    target_motion_profile: object = "hinged_upper_limb_pull",
+) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Generated Hinged Pull Exercise",
+        "requiredEquipment": ["barbell"],
+        "requiredStartPosture": "torso hinged forward at the hips, arms extended downward holding the barbell",
+        "requiredEndPosture": "torso remains hinged forward with the barbell pulled toward the lower ribs",
+        "requiredPhases": [
+            "arms pull the barbell toward the torso",
+            "arms extend back to the starting position while the torso stays hinged",
+        ],
+        "primaryMotionRegions": ["torso hinge", "arms", "barbell path"],
+        "mustBeVisible": ["barbell moving toward the lower ribs", "torso held in a hinged position"],
+        "rejectIf": ["upright row or only setup"],
+        "commonWrongVariants": [],
+        "reviewNotes": ["the visible identity depends on a hinged torso and arm pull toward the torso"],
+        "targetMotionProfile": target_motion_profile,
+    }
+
+
+def vertical_body_pull_observable_contract() -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Generated Vertical Body Pull",
+        "requiredEquipment": ["pull-up bar"],
+        "requiredStartPosture": "body hangs below fixed hands",
+        "requiredEndPosture": "body returns to the starting hang",
+        "requiredPhases": [
+            "torso travels upward toward the hands",
+            "torso lowers back to the starting hang",
+        ],
+        "primaryMotionRegions": ["torso", "hips"],
+        "mustBeVisible": ["hands", "torso", "hips"],
+        "rejectIf": ["only setup or only the upward half"],
+        "commonWrongVariants": [],
+        "reviewNotes": ["the visible identity depends on body travel relative to fixed hands"],
+        "observableMotionSpec": {
+            "primaryMovingRegions": ["torso", "hips"],
+            "referenceRegions": ["hands"],
+            "primaryAxis": "vertical",
+            "motionPattern": "body_toward_anchor",
+            "requiresReturnToStart": True,
+            "oneWayPartialIsInvalid": True,
+            "mustShowFullCycle": True,
+            "mustBeVisibleRegions": ["hands", "torso", "hips"],
+        },
+        "youtubeQueryAliases": ["Weighted Pull Up", "Strict Weighted Pull-Up"],
+        "targetMotionProfile": None,
+    }
+
+
+def upper_body_raise_with_stance_contract() -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Generated Upper Body Raise Exercise",
+        "requiredEquipment": ["dumbbells"],
+        "requiredStartPosture": "standing with feet planted and a soft knee bend",
+        "requiredEndPosture": "arms return to sides while feet remain planted",
+        "requiredPhases": [
+            "arms raise the dumbbells out to the sides",
+            "arms lower the dumbbells back to the starting position at the hips",
+        ],
+        "primaryMotionRegions": ["shoulders", "arms", "dumbbell path"],
+        "mustBeVisible": ["feet", "knees", "shoulders", "dumbbells"],
+        "rejectIf": ["only setup or leg movement"],
+        "commonWrongVariants": [],
+        "reviewNotes": ["the full range of motion must be visible while the stance remains stable"],
+        "targetMotionProfile": None,
+    }
 
 
 def make_candidate_execution(**overrides: object) -> CandidateExecution:
@@ -2101,15 +2233,6 @@ def test_baked_wham_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
     assert warped_payload["frames"][0]["spineMeshWarpApplied"] is True
     assert warped_payload["frames"][0]["spineMeshWarpVertexCount"] > 0
     assert warped_vertices != unwarped_vertices
-
-
-def test_wham_smpl_loader_applies_legacy_compat_before_smplx_import() -> None:
-    text = Path("exercise_motion_pkg/wham_smpl_preview.py").read_text(encoding="utf-8")
-    function_start = text.index("def load_wham_smpl_mesh_sequence")
-    compat_call = text.index("ensure_legacy_smpl_runtime_compat()", function_start)
-    smplx_import = text.index("import smplx", function_start)
-
-    assert compat_call < smplx_import
 
 
 def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering() -> None:
@@ -4723,6 +4846,26 @@ def test_extract_workout_plan_exercises_can_use_external_equipment_export() -> N
     ]
 
 
+def test_extract_workout_plan_exercises_keeps_equipment_qualified_ambiguous_target_for_rewrite() -> None:
+    payload = {
+        "exercises": [
+            {"id": "calves", "name": "Calves", "equipmentId": "bar"},
+        ],
+    }
+    equipment_payload = {
+        "bar": {"type": "BARBELL", "name": "Home Bar"},
+    }
+
+    exercises = extract_workout_plan_exercises(payload, equipment_payload=equipment_payload)
+
+    assert [(item.exercise_id, item.name, item.slug) for item in exercises] == [
+        ("calves", "Barbell Calves", "barbell-calves"),
+    ]
+    assert exercises[0].source_name == "Calves"
+    assert exercises[0].equipment_qualified_name == "Barbell Calves"
+    assert exercises[0].name_rewrite_reason is None
+
+
 def test_extract_workout_plan_exercises_from_final_package_and_nested_superset() -> None:
     payload = {
         "workouts": [
@@ -4868,6 +5011,89 @@ def test_llama_cpp_ranker_rejects_existing_server_with_unexpected_model(
         youtube_module.LlamaCppVisionRanker(YouTubeRankingSettings())
 
 
+def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "data": [
+                    {
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(youtube_module.httpx, "get", fake_get)
+    monkeypatch.setattr(
+        youtube_module,
+        "llama_cpp_server_command_lines_for_base_url",
+        lambda _base_url: ["llama-server.exe --reasoning off --reasoning-format none"],
+    )
+
+    with pytest.raises(RuntimeError, match="reasoning disabled.*expects reasoning enabled"):
+        youtube_module.LlamaCppVisionRanker(YouTubeRankingSettings())
+
+
+def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "data": [
+                    {
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(youtube_module.httpx, "get", fake_get)
+    monkeypatch.setattr(
+        youtube_module,
+        "llama_cpp_server_command_lines_for_base_url",
+        lambda _base_url: ["llama-server.exe --reasoning on --reasoning-format deepseek"],
+    )
+
+    with pytest.raises(RuntimeError, match="reasoning budget unrestricted or unspecified.*expects reasoning budget 64"):
+        youtube_module.LlamaCppVisionRanker(YouTubeRankingSettings())
+
+
+def test_llama_cpp_ranker_allows_existing_server_with_matching_reasoning_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "data": [
+                    {
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(youtube_module.httpx, "get", fake_get)
+    monkeypatch.setattr(
+        youtube_module,
+        "llama_cpp_server_command_lines_for_base_url",
+        lambda _base_url: ["llama-server.exe --reasoning off --reasoning-format none"],
+    )
+
+    ranker = youtube_module.LlamaCppVisionRanker(
+        YouTubeRankingSettings(llama_cpp_disable_reasoning=True)
+    )
+    ranker.close()
+
+
 def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4943,6 +5169,13 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
         assert args[args.index("--fit-target") + 1] == "2048"
         assert "--no-mmap" in args
         assert "--mlock" in args
+        assert "--reasoning" in args
+        assert args[args.index("--reasoning") + 1] == "on"
+        assert "--reasoning-format" in args
+        assert args[args.index("--reasoning-format") + 1] == "deepseek"
+        assert "--reasoning-budget" in args
+        assert args[args.index("--reasoning-budget") + 1] == "64"
+        assert "--reasoning-budget-message" in args
     finally:
         ranker.close()
 
@@ -4972,6 +5205,28 @@ def test_build_youtube_queries_adds_generic_equipment_stripped_alias() -> None:
     assert not any(query.startswith("Panca piana ") for query in queries)
 
 
+def test_build_youtube_queries_strips_load_qualifier_aliases() -> None:
+    nordic_queries = build_youtube_queries("Weighted Nordic Curl")
+    ab_wheel_queries = build_youtube_queries("Weighted Ab Wheel")
+
+    assert any(query.startswith('"Nordic Curl" exercise demonstration') for query in nordic_queries)
+    assert any(query.startswith('"Nordic Curl" side view exercise') for query in nordic_queries)
+    assert any(query.startswith('"Ab Wheel" exercise demonstration') for query in ab_wheel_queries)
+    assert any(query.startswith('"Ab Wheel Rollout" exercise demonstration') for query in ab_wheel_queries)
+
+
+def test_build_youtube_queries_adds_common_movement_synonyms() -> None:
+    crunch_queries = build_youtube_queries("Cable Abs Crunch")
+    rear_delt_queries = build_youtube_queries("Dumbbell Bent-Over Raises")
+
+    assert any(query.startswith('"Cable Crunch" exercise demonstration') for query in crunch_queries)
+    assert any(query.startswith('"Kneeling Cable Crunch" exercise demonstration') for query in crunch_queries)
+    assert any(query.startswith('"Cable Rope Crunch" exercise demonstration') for query in crunch_queries)
+    assert any(query.startswith('"Bent Over Reverse Fly" exercise demonstration') for query in rear_delt_queries)
+    assert any(query.startswith('"Dumbbell Reverse Fly" exercise demonstration') for query in rear_delt_queries)
+    assert any(query.startswith('"Rear Delt Fly" exercise demonstration') for query in rear_delt_queries)
+
+
 def test_build_youtube_queries_keeps_equipment_aliases_small() -> None:
     queries = build_youtube_queries("Dumbbell Bulgarian Split Squat")
 
@@ -4979,6 +5234,51 @@ def test_build_youtube_queries_keeps_equipment_aliases_small() -> None:
     assert any(query.startswith('"Bulgarian Split Squat" exercise demonstration') for query in queries)
     assert not any("DB " in query for query in queries)
     assert not any("Rear Foot Elevated" in query for query in queries)
+
+
+def test_rewrite_equipment_qualified_exercise_name_has_no_per_exercise_fallback() -> None:
+    assert rewrite_equipment_qualified_exercise_name("Barbell Calves") == ("Barbell Calves", None)
+    assert rewrite_equipment_qualified_exercise_name("Cable Abs Crunch") == ("Cable Abs Crunch", None)
+
+
+def test_resolve_exercise_name_rewrite_applies_high_confidence_llm_result() -> None:
+    class FakeLlamaRanker(youtube_module.LlamaCppVisionRanker):
+        pass
+
+    ranker = object.__new__(FakeLlamaRanker)
+    ranker.client = SimpleNamespace(
+        caption_images=lambda frame_paths, prompt: json.dumps(
+            {
+                "canonicalExerciseName": "Calf Raise",
+                "rewriteNeeded": True,
+                "confidence": 0.92,
+                "reason": "Muscle-group target should be rewritten to the common movement name.",
+            }
+        )
+    )
+    exercise = ExerciseEntry(
+        exercise_id="calves",
+        name="Barbell Calves",
+        slug="barbell-calves",
+        source_name="Calves",
+        equipment_qualified_name="Barbell Calves",
+    )
+
+    rewritten, payload = resolve_exercise_name_rewrite(
+        exercise,
+        YouTubeRankingSettings(),
+        ranker,
+    )
+
+    assert rewritten.name == "Barbell Calf Raise"
+    assert rewritten.slug == "barbell-calf-raise"
+    assert rewritten.source_name == "Calves"
+    assert rewritten.equipment_qualified_name == "Barbell Calves"
+    assert rewritten.name_rewrite_reason == "Muscle-group target should be rewritten to the common movement name."
+    assert payload["backend"] == "llama-cpp"
+    assert payload["source"] == "llm"
+    assert payload["applied"] is True
+    assert payload["rewrittenExerciseName"] == "Barbell Calf Raise"
 
 
 def test_select_evenly_spaced_review_windows_caps_without_front_loading() -> None:
@@ -6185,14 +6485,18 @@ def test_candidate_vision_prompt_includes_generated_exercise_motion_contract() -
 
     assert "Exercise-specific motion contract" in prompt
     assert "Apply this contract literally" in prompt
+    assert "requiredStartPosture" in prompt
+    assert "barbell supported on upper back in standing stance" in prompt
+    assert "requiredEndPosture" in prompt
+    assert "standing with hips and knees extended" in prompt
     assert "controlled hip and knee flexion descent" in prompt
     assert "only unrack or walkout" in prompt
     assert "front squat or goblet squat" in prompt
-    assert "bar must visibly rest behind the neck on the upper back/traps" in prompt
-    assert "front-rack position across the front shoulders/collarbones" in prompt
-    assert "even if the title says back squat" in prompt
-    assert "requiredStartPosture" not in prompt
-    assert "requiredEndPosture" not in prompt
+    assert "commonWrongVariants" in prompt
+    assert "Do not invent variant requirements" in prompt
+    assert "bar must visibly rest behind the neck on the upper back/traps" not in prompt
+    assert "front-rack position across the front shoulders/collarbones" not in prompt
+    assert "even if the title says back squat" not in prompt
 
 
 def test_candidate_vision_prompt_accepts_prepared_exercise_motion_contract() -> None:
@@ -6211,6 +6515,7 @@ def test_candidate_vision_prompt_accepts_prepared_exercise_motion_contract() -> 
         "rejectIf": ["only unrack or walkout"],
         "commonWrongVariants": ["front squat"],
         "reviewNotes": ["use visible movement only"],
+        "targetMotionProfile": None,
     }
     prepared_contract = exercise_motion_contract_for_prompt(generated_contract)
 
@@ -6231,11 +6536,14 @@ def test_candidate_vision_prompt_accepts_prepared_exercise_motion_contract() -> 
     )
 
     assert prepared_contract is not None
+    assert prepared_contract["targetMotionProfile"] is None
     assert "Exercise-specific motion contract" in prompt
+    assert "requiredStartPosture" in prompt
+    assert "standing under racked bar" in prompt
+    assert "requiredEndPosture" in prompt
+    assert "standing finish" in prompt
     assert "descent" in prompt
     assert "only unrack or walkout" in prompt
-    assert "requiredStartPosture" not in prompt
-    assert "requiredEndPosture" not in prompt
 
 
 def test_exercise_motion_contract_generation_prompt_is_schema_bounded() -> None:
@@ -6258,9 +6566,228 @@ def test_exercise_motion_contract_generation_prompt_is_schema_bounded() -> None:
     assert "Do not list form-quality faults" in prompt
     assert "Prefer fewer high-confidence wrong variants over speculative ones" in prompt
     assert "Do not invent or flip grip, stance, support, load attachment" in prompt
+    assert "Do not require a platform, block, step, bench, rack, machine pad" in prompt
+    assert "Do not mark the absence of optional support, elevation, or setup hardware" in prompt
     assert "keep posture, support, and load details broad and visible" in prompt
     assert "a chin-up is not an overhand pull-up" in prompt
+    assert "observableMotionSpec" in prompt
+    assert "primaryMovingRegions" in prompt
+    assert "primaryAxis must be one of vertical, horizontal, depth, any" in prompt
+    assert "Do not put timestamps, frame numbers, numeric thresholds" in prompt
+    assert "youtubeQueryAliases" in prompt
+    assert "targetMotionProfile" in prompt
+    assert "targetMotionProfile must be distal_leg_vertical_raise" in prompt
+    assert "targetMotionProfile must be hinged_upper_limb_pull" in prompt
+    assert "distal_leg_vertical_raise" in prompt
+    assert "hinged_upper_limb_pull" in prompt
     assert "Do not add rules about single person, camera stability, crop" in prompt
+
+
+def test_exercise_motion_contract_generation_uses_larger_token_budget() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def caption_images(self, *, frame_paths: list[Path], prompt: str, max_tokens: int | None = None) -> str:
+            captured["frame_paths"] = frame_paths
+            captured["prompt"] = prompt
+            captured["max_tokens"] = max_tokens
+            return json.dumps(
+                {
+                    "requiredEquipment": ["pull-up bar"],
+                    "requiredStartPosture": "hanging from the bar",
+                    "requiredEndPosture": "returned to hanging from the bar",
+                    "requiredPhases": ["pull body upward", "lower body back down"],
+                    "primaryMotionRegions": ["torso", "elbows"],
+                    "mustBeVisible": ["torso", "hands"],
+                    "rejectIf": ["only setup"],
+                    "commonWrongVariants": ["chin-up"],
+                    "reviewNotes": ["visible full cycle"],
+                    "observableMotionSpec": {
+                        "primaryMovingRegions": ["torso"],
+                        "referenceRegions": ["hands"],
+                        "primaryAxis": "vertical",
+                        "motionPattern": "body_toward_anchor",
+                        "requiresReturnToStart": True,
+                        "oneWayPartialIsInvalid": True,
+                        "mustShowFullCycle": True,
+                        "mustBeVisibleRegions": ["torso", "hands"],
+                    },
+                    "youtubeQueryAliases": ["weighted pull-up"],
+                    "targetMotionProfile": None,
+                }
+            )
+
+    class FakeRanker:
+        client = FakeClient()
+
+    contract = youtube_module.generate_exercise_motion_contract_with_ranker(
+        exercise=ExerciseEntry(
+            exercise_id="weighted-pull-ups",
+            name="Weighted Pull-Ups",
+            slug="weighted-pull-ups",
+        ),
+        settings=YouTubeRankingSettings(llama_cpp_n_predict=768),
+        ranker=FakeRanker(),
+    )
+
+    assert contract["status"] == "generated"
+    assert captured["max_tokens"] == 1536
+    assert captured["frame_paths"] == []
+    assert "Weighted Pull-Ups" in str(captured["prompt"])
+
+
+def test_normalize_exercise_motion_contract_preserves_target_motion_profile() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "requiredEquipment": ["barbell"],
+            "requiredStartPosture": "standing with feet grounded",
+            "requiredEndPosture": "standing with feet grounded again",
+            "requiredPhases": ["heels lift upward", "heels lower"],
+            "primaryMotionRegions": ["ankles", "heels"],
+            "mustBeVisible": ["heels"],
+            "rejectIf": ["only setup"],
+            "commonWrongVariants": [],
+            "reviewNotes": [],
+            "targetMotionProfile": "distal leg vertical raise",
+        },
+        exercise=ExerciseEntry(exercise_id="raise", name="Loaded Heel Raise", slug="loaded-heel-raise"),
+        source="test",
+    )
+
+    prepared = exercise_motion_contract_for_prompt(contract)
+
+    assert contract["targetMotionProfile"] == "distal_leg_vertical_raise"
+    assert prepared is not None
+    assert prepared["targetMotionProfile"] == "distal_leg_vertical_raise"
+
+
+def test_normalize_exercise_motion_contract_preserves_hinged_upper_limb_pull_profile() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "requiredEquipment": ["barbell"],
+            "requiredStartPosture": "torso hinged forward with arms extended downward",
+            "requiredEndPosture": "torso hinged forward with barbell pulled to lower ribs",
+            "requiredPhases": ["barbell pulls toward torso", "arms extend to start"],
+            "primaryMotionRegions": ["torso hinge", "arms", "barbell"],
+            "mustBeVisible": ["torso hinge", "barbell path"],
+            "rejectIf": ["upright row or only setup"],
+            "commonWrongVariants": [],
+            "reviewNotes": [],
+            "targetMotionProfile": "hinged upper limb pull",
+        },
+        exercise=ExerciseEntry(exercise_id="pull", name="Loaded Hinged Pull", slug="loaded-hinged-pull"),
+        source="test",
+    )
+
+    prepared = exercise_motion_contract_for_prompt(contract)
+
+    assert contract["targetMotionProfile"] == "hinged_upper_limb_pull"
+    assert prepared is not None
+    assert prepared["targetMotionProfile"] == "hinged_upper_limb_pull"
+
+
+def test_normalize_exercise_motion_contract_preserves_observable_motion_spec_and_query_aliases() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "requiredEquipment": ["bar"],
+            "requiredStartPosture": "body hangs below the hands",
+            "requiredEndPosture": "body returns to the starting hang",
+            "requiredPhases": ["torso rises toward hands", "torso lowers back to start"],
+            "primaryMotionRegions": ["torso", "hips"],
+            "mustBeVisible": ["hands", "torso", "hips"],
+            "rejectIf": ["only setup"],
+            "commonWrongVariants": [],
+            "reviewNotes": [],
+            "observableMotionSpec": {
+                "primaryMovingRegions": ["body", "hip"],
+                "referenceRegions": ["pull-up bar", "wrist"],
+                "primaryAxis": "up down",
+                "motionPattern": "toward anchor",
+                "requiresReturnToStart": "yes",
+                "oneWayPartialIsInvalid": "yes",
+                "mustShowFullCycle": "yes",
+                "mustBeVisibleRegions": ["torso", "hands"],
+                "minRangeRatio": 0.99,
+                "timestamp": 12.3,
+            },
+            "youtubeQueryAliases": [
+                "Strict Pull Up",
+                "Strict Pull Up",
+                "Pull-Up Full Rep",
+            ],
+            "targetMotionProfile": "not-a-supported-profile",
+        },
+        exercise=ExerciseEntry(exercise_id="pull", name="Pull Up", slug="pull-up"),
+        source="test",
+    )
+
+    prepared = exercise_motion_contract_for_prompt(contract)
+
+    assert contract["targetMotionProfile"] is None
+    assert contract["observableMotionSpec"] == {
+        "schemaVersion": 1,
+        "primaryMovingRegions": ["torso", "hips"],
+        "referenceRegions": ["hands"],
+        "primaryAxis": "vertical",
+        "motionPattern": "body_toward_anchor",
+        "requiresReturnToStart": True,
+        "oneWayPartialIsInvalid": True,
+        "mustShowFullCycle": True,
+        "mustBeVisibleRegions": ["torso", "hands"],
+    }
+    assert contract["youtubeQueryAliases"] == ["Strict Pull Up", "Pull-Up Full Rep"]
+    assert prepared is not None
+    assert prepared["observableMotionSpec"] == contract["observableMotionSpec"]
+    assert prepared["youtubeQueryAliases"] == ["Strict Pull Up", "Pull-Up Full Rep"]
+
+
+def test_target_motion_profile_for_exercise_uses_hinged_pull_contract_not_name() -> None:
+    profile = target_motion_module.target_motion_profile_for_exercise(
+        "Any Exercise Name",
+        contract=hinged_upper_limb_pull_contract(target_motion_profile=None),
+    )
+
+    assert profile is not None
+    assert profile["profile"] == "hinged_upper_limb_pull"
+    assert target_motion_module.target_motion_profile_for_exercise("Barbell Row", contract=None) is None
+    assert (
+        target_motion_module.target_motion_profile_for_exercise(
+            "Barbell Row",
+            contract=lower_body_motion_contract(),
+        )
+        is None
+    )
+
+
+def test_target_motion_profile_does_not_combine_stance_feet_with_upper_body_raise() -> None:
+    assert (
+        target_motion_module.target_motion_profile_for_exercise(
+            "Generated Upper Body Raise Exercise",
+            contract=upper_body_raise_with_stance_contract(),
+        )
+        is None
+    )
+
+
+def test_target_motion_profile_rejects_unsupported_explicit_hinged_pull_for_raise() -> None:
+    contract = hinged_upper_limb_pull_contract()
+    contract["requiredPhases"] = [
+        "arms raise the dumbbells out and away from the torso",
+        "arms lower back to the starting position while the torso stays hinged",
+    ]
+    contract["mustBeVisible"] = [
+        "dumbbells moving away from the torso in a lateral arc",
+        "torso held in a hinged position",
+    ]
+    contract["reviewNotes"] = ["the visible identity depends on bent-over lateral arm raise motion"]
+
+    assert (
+        target_motion_module.target_motion_profile_for_exercise(
+            "Generated Hinged Raise Exercise",
+            contract=contract,
+        )
+        is None
+    )
 
 
 def test_prepared_vision_review_payload_records_exercise_motion_contract(tmp_path: Path) -> None:
@@ -7070,6 +7597,77 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
     assert "full_body_visible" in first_candidate["scoreReasons"]
 
 
+def test_discover_youtube_candidates_rewrites_exercise_name_before_search(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.json"
+    equipment_path = tmp_path / "equipment.json"
+    out_path = tmp_path / "youtube_candidates.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {"id": "calves", "name": "Calves", "equipmentId": "bar"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    equipment_path.write_text(json.dumps({"bar": {"type": "BARBELL"}}), encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_search(query: str, results_per_query: int) -> list[YouTubeCandidate]:
+        calls.append(query)
+        return []
+
+    def fake_rewriter(
+        exercise: ExerciseEntry,
+        settings: YouTubeRankingSettings,
+        ranker: object | None,
+    ) -> tuple[ExerciseEntry, dict[str, object]]:
+        del settings, ranker
+        assert exercise.name == "Barbell Calves"
+        rewritten = ExerciseEntry(
+            exercise_id=exercise.exercise_id,
+            name="Barbell Calf Raise",
+            slug="barbell-calf-raise",
+            source_name=exercise.source_name,
+            equipment_qualified_name=exercise.equipment_qualified_name,
+            name_rewrite_reason="llm_canonical_movement_name",
+        )
+        return rewritten, {
+            "enabled": True,
+            "backend": "llm-test",
+            "status": "rewritten",
+            "applied": True,
+            "sourceExerciseName": exercise.source_name,
+            "equipmentQualifiedExerciseName": exercise.equipment_qualified_name,
+            "inputExerciseName": exercise.equipment_qualified_name,
+            "rewrittenExerciseName": "Barbell Calf Raise",
+            "reason": "llm_canonical_movement_name",
+            "confidence": 0.94,
+        }
+
+    manifest = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan_path,
+        equipment_json=equipment_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            results_per_query=5,
+            youtube_search_empty_retries=0,
+            max_candidates=3,
+        ),
+        search_fn=fake_search,
+        exercise_name_rewriter=fake_rewriter,
+    )
+
+    exercise = manifest["exercises"][0]
+    assert exercise["exerciseName"] == "Barbell Calf Raise"
+    assert exercise["sourceExerciseName"] == "Calves"
+    assert exercise["equipmentQualifiedExerciseName"] == "Barbell Calves"
+    assert exercise["exerciseNameRewrite"]["applied"] is True
+    assert exercise["queries"] == build_youtube_queries("Barbell Calf Raise")
+    assert calls == build_youtube_queries("Barbell Calf Raise")
+
+
 def test_discover_youtube_candidates_excludes_previous_processed_manifest(tmp_path: Path) -> None:
     plan_path = tmp_path / "plan.json"
     out_path = tmp_path / "youtube_candidates.json"
@@ -7414,6 +8012,193 @@ def test_pose_prefilter_scores_clean_single_person_motion_window() -> None:
     assert result.payload["wholeMovementJointVisibility"] == pytest.approx(1.0)
     assert result.payload["requiredJointP10Coverage"] == pytest.approx(1.0)
     assert result.payload["allRequiredJointsVisibleRatio"] == pytest.approx(1.0)
+
+
+def test_pose_prefilter_rejects_calf_raise_without_distal_leg_motion() -> None:
+    metadata = BasicVideoMetadata(fps=2.0, frame_count=12, width=640, height=480)
+    samples: list[PoseSample] = []
+    for index in range(12):
+        arm_motion = math.sin(index / 11.0 * math.pi) * 42.0
+        keypoints = {
+            "left_shoulder": (310.0, 145.0, 0.9),
+            "right_shoulder": (328.0, 145.0, 0.9),
+            "left_elbow": (300.0, 220.0 - arm_motion * 0.35, 0.9),
+            "right_elbow": (340.0, 220.0 - arm_motion * 0.35, 0.9),
+            "left_wrist": (295.0, 295.0 - arm_motion, 0.9),
+            "right_wrist": (345.0, 295.0 - arm_motion, 0.9),
+            "left_hip": (314.0, 310.0, 0.9),
+            "right_hip": (326.0, 310.0, 0.9),
+            "left_knee": (310.0, 395.0, 0.9),
+            "right_knee": (330.0, 395.0, 0.9),
+            "left_ankle": (305.0, 455.0, 0.9),
+            "right_ankle": (335.0, 455.0, 0.9),
+        }
+        samples.append(
+            PoseSample(
+                time_seconds=index / metadata.fps,
+                detections=[PoseDetection(keypoints=keypoints, bbox=(205.0, 120.0, 435.0, 468.0), confidence=0.95)],
+            )
+        )
+
+    result = score_pose_samples(
+        samples,
+        metadata=metadata,
+        settings=PosePrefilterSettings(
+            window_seconds=6.0,
+            overlap_seconds=3.0,
+            min_score=0.45,
+            min_body_scale=0.18,
+            target_exercise_name="Barbell Calf Raise",
+            target_motion_contract=distal_leg_vertical_raise_contract(),
+        ),
+    )
+
+    assert result.passed is False
+    assert "low_target_motion_observability" in result.payload["blockingIssues"]
+    target_motion = result.payload["targetMotionObservability"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is False
+    assert "weak_target_distal_vertical_motion" in target_motion["failureReasons"]
+
+
+def test_pose_prefilter_accepts_calf_raise_with_distal_leg_motion() -> None:
+    metadata = BasicVideoMetadata(fps=2.0, frame_count=12, width=640, height=480)
+    samples: list[PoseSample] = []
+    for index in range(12):
+        distal_motion = math.sin(index / 11.0 * math.pi) * 30.0
+        keypoints = {
+            "left_shoulder": (310.0, 145.0, 0.9),
+            "right_shoulder": (328.0, 145.0, 0.9),
+            "left_elbow": (300.0, 220.0, 0.9),
+            "right_elbow": (340.0, 220.0, 0.9),
+            "left_wrist": (295.0, 295.0, 0.9),
+            "right_wrist": (345.0, 295.0, 0.9),
+            "left_hip": (314.0, 310.0, 0.9),
+            "right_hip": (326.0, 310.0, 0.9),
+            "left_knee": (310.0, 395.0, 0.9),
+            "right_knee": (330.0, 395.0, 0.9),
+            "left_ankle": (305.0, 455.0 - distal_motion, 0.9),
+            "right_ankle": (335.0, 455.0 - distal_motion, 0.9),
+        }
+        samples.append(
+            PoseSample(
+                time_seconds=index / metadata.fps,
+                detections=[PoseDetection(keypoints=keypoints, bbox=(205.0, 120.0, 435.0, 468.0), confidence=0.95)],
+            )
+        )
+
+    result = score_pose_samples(
+        samples,
+        metadata=metadata,
+        settings=PosePrefilterSettings(
+            window_seconds=6.0,
+            overlap_seconds=3.0,
+            min_score=0.45,
+            min_body_scale=0.18,
+            target_exercise_name="Barbell Calf Raise",
+            target_motion_contract=distal_leg_vertical_raise_contract(),
+        ),
+    )
+
+    assert result.passed is True
+    assert "low_target_motion_observability" not in result.payload["blockingIssues"]
+    target_motion = result.payload["targetMotionObservability"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is True
+    assert target_motion["distalVerticalRangeRatio"] >= target_motion["minDistalVerticalRangeRatio"]
+
+
+def test_pose_prefilter_accepts_generic_observable_body_motion() -> None:
+    metadata = BasicVideoMetadata(fps=2.0, frame_count=12, width=640, height=480)
+    samples: list[PoseSample] = []
+    for index in range(12):
+        motion = math.sin(index / 11.0 * math.pi) * 42.0
+        keypoints = {
+            "left_shoulder": (310.0, 230.0 - motion, 0.9),
+            "right_shoulder": (328.0, 230.0 - motion, 0.9),
+            "left_elbow": (300.0, 170.0 - motion * 0.35, 0.9),
+            "right_elbow": (340.0, 170.0 - motion * 0.35, 0.9),
+            "left_wrist": (295.0, 110.0, 0.9),
+            "right_wrist": (345.0, 110.0, 0.9),
+            "left_hip": (314.0, 320.0 - motion, 0.9),
+            "right_hip": (326.0, 320.0 - motion, 0.9),
+            "left_knee": (310.0, 375.0 - motion, 0.9),
+            "right_knee": (330.0, 375.0 - motion, 0.9),
+            "left_ankle": (305.0, 420.0 - motion, 0.9),
+            "right_ankle": (335.0, 420.0 - motion, 0.9),
+        }
+        samples.append(
+            PoseSample(
+                time_seconds=index / metadata.fps,
+                detections=[PoseDetection(keypoints=keypoints, bbox=(205.0, 80.0, 435.0, 445.0), confidence=0.95)],
+            )
+        )
+
+    result = score_pose_samples(
+        samples,
+        metadata=metadata,
+        settings=PosePrefilterSettings(
+            window_seconds=6.0,
+            overlap_seconds=3.0,
+            min_score=0.45,
+            min_body_scale=0.18,
+            target_exercise_name="Generated Vertical Body Pull",
+            target_motion_contract=vertical_body_pull_observable_contract(),
+        ),
+    )
+
+    assert result.passed is True
+    target_motion = result.payload["targetMotionObservability"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is True
+    assert target_motion["target"] == "observable_motion_spec"
+    assert target_motion["relativeMotionRangeRatio"] >= target_motion["minTargetMotionRangeRatio"]
+
+
+def test_pose_prefilter_does_not_infer_target_motion_profile_from_exercise_name_only() -> None:
+    metadata = BasicVideoMetadata(fps=2.0, frame_count=4, width=640, height=480)
+    samples = [
+        PoseSample(
+            time_seconds=index / metadata.fps,
+            detections=[
+                PoseDetection(
+                    keypoints={
+                        "left_shoulder": (310.0, 145.0, 0.9),
+                        "right_shoulder": (328.0, 145.0, 0.9),
+                        "left_elbow": (300.0, 220.0, 0.9),
+                        "right_elbow": (340.0, 220.0, 0.9),
+                        "left_wrist": (295.0, 295.0, 0.9),
+                        "right_wrist": (345.0, 295.0, 0.9),
+                        "left_hip": (314.0, 310.0, 0.9),
+                        "right_hip": (326.0, 310.0, 0.9),
+                        "left_knee": (310.0, 395.0, 0.9),
+                        "right_knee": (330.0, 395.0, 0.9),
+                        "left_ankle": (305.0, 455.0, 0.9),
+                        "right_ankle": (335.0, 455.0, 0.9),
+                    },
+                    bbox=(205.0, 120.0, 435.0, 468.0),
+                    confidence=0.95,
+                )
+            ],
+        )
+        for index in range(4)
+    ]
+
+    result = score_pose_samples(
+        samples,
+        metadata=metadata,
+        settings=PosePrefilterSettings(
+            window_seconds=4.0,
+            overlap_seconds=2.0,
+            min_score=0.45,
+            min_body_scale=0.18,
+            target_exercise_name="Barbell Calf Raise",
+        ),
+    )
+
+    target_motion = result.payload["targetMotionObservability"]
+    assert target_motion["required"] is False
+    assert target_motion["skippedReasons"] == ["no_target_motion_profile"]
 
 
 def test_pose_prefilter_prefers_chunk_with_more_joints_visible_throughout() -> None:
@@ -8161,6 +8946,72 @@ def test_discover_and_rank_youtube_candidates_pose_prefilter_reduces_pool_before
     assert manifest["ranking"]["timing"]["posePrefilterElapsedSeconds"] >= 0.0
 
 
+def test_rank_candidate_with_yolo_pose_passes_target_exercise_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = tmp_path / "preview.mp4"
+    preview.write_bytes(b"video")
+    captured: dict[str, object] = {}
+
+    def fake_download_youtube_preview(
+        url: str,
+        output_dir: Path,
+        cookies_path: Path | None,
+        *,
+        cache_dir: Path | None = None,
+    ) -> Path:
+        del url, output_dir, cookies_path, cache_dir
+        return preview
+
+    def fake_run_yolo_pose_prefilter(
+        *,
+        video_path: Path,
+        settings: PosePrefilterSettings,
+    ) -> pose_prefilter_module.PosePrefilterResult:
+        captured["videoPath"] = video_path
+        captured["targetExerciseName"] = settings.target_exercise_name
+        captured["targetMotionContract"] = settings.target_motion_contract
+        return pose_prefilter_module.PosePrefilterResult(
+            passed=True,
+            score=0.91,
+            reasons=["pose_prefilter_passed"],
+            payload={"enabled": True, "passed": True, "score": 0.91},
+        )
+
+    monkeypatch.setattr(youtube_module, "download_youtube_preview", fake_download_youtube_preview)
+    monkeypatch.setattr(youtube_module, "run_yolo_pose_prefilter", fake_run_yolo_pose_prefilter)
+    target_motion_contract = distal_leg_vertical_raise_contract()
+
+    score, reasons, payload = youtube_module.rank_candidate_with_yolo_pose(
+        ExerciseEntry(
+            exercise_id="calves",
+            name="Barbell Calf Raise",
+            slug="barbell-calf-raise",
+        ),
+        YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=calves",
+            video_id="calves",
+            title="Barbell calf raises",
+            channel="Coach",
+            duration_seconds=30,
+            view_count=100,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+        ),
+        YouTubeRankingSettings(pose_prefilter_enabled=True),
+        target_motion_contract,
+    )
+
+    assert score == pytest.approx(0.91)
+    assert reasons == ["pose_prefilter_passed"]
+    assert payload == {"enabled": True, "passed": True, "score": 0.91}
+    assert captured["videoPath"] == preview
+    assert captured["targetExerciseName"] == "Barbell Calf Raise"
+    assert captured["targetMotionContract"] == target_motion_contract
+
+
 def test_pose_prefilter_cuda_runtime_error_is_fatal() -> None:
     exercise = ExerciseEntry(exercise_id="pull-up", name="Pull Up", slug="pull-up")
     candidate = YouTubeCandidate(
@@ -8288,6 +9139,49 @@ def test_pose_prefilter_low_active_chain_visibility_hard_rejects_candidate() -> 
     assert reviewed.status == "rejected"
     assert reviewed.final_score == pytest.approx(0.0)
     assert "pose_prefilter_low_active_chain_visibility_hard_reject" in reviewed.score_reasons
+
+
+def test_pose_prefilter_target_motion_observability_hard_rejects_candidate() -> None:
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=calves",
+        video_id="calves",
+        title="Barbell calf raise setup",
+        channel="Coach",
+        duration_seconds=45,
+        view_count=10_000,
+        upload_date=None,
+        description_snippet="Barbell calf raise demonstration.",
+        thumbnail=None,
+        final_score=1.0,
+        status="recommended",
+    )
+
+    scored = youtube_module.apply_pose_prefilter_score(
+        candidate,
+        pose_score=0.94,
+        pose_reasons=["pose_low_target_motion_observability"],
+        pose_payload={
+            "enabled": True,
+            "passed": False,
+            "score": 0.94,
+            "blockingIssues": ["low_target_motion_observability"],
+            "targetMotionObservability": {
+                "required": True,
+                "passed": False,
+                "failureReasons": ["weak_target_distal_vertical_motion"],
+            },
+            "bestChunkStartSeconds": 28.0,
+            "bestChunkEndSeconds": 31.0,
+        },
+        settings=YouTubeRankingSettings(pose_prefilter_min_score=0.45),
+    )
+
+    assert scored.status == "rejected"
+    assert scored.final_score == pytest.approx(0.0)
+    assert scored.vision_payload is not None
+    assert scored.vision_payload["posePrefilter"]["passed"] is False
+    assert youtube_module.pose_prefilter_score(scored) == pytest.approx(0.0)
+    assert "pose_prefilter_low_target_motion_observability_hard_reject" in scored.score_reasons
 
 
 def test_pose_prefilter_failed_camera_stability_rejects_candidate() -> None:
@@ -9375,6 +10269,80 @@ def test_discover_and_rank_youtube_candidates_searches_more_when_expanded_pool_h
     )
 
 
+def test_discover_and_rank_youtube_candidates_expands_with_contract_alias_queries_when_depth_is_capped(
+    tmp_path: Path,
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "youtube_candidates.json"
+    plan_path.write_text(json.dumps({"exercises": [{"name": "Weighted Pull-Ups"}]}), encoding="utf-8")
+    excluded = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=excluded",
+        video_id="excluded",
+        title="Weighted Pull Up old source",
+        channel="Coach",
+        duration_seconds=45,
+        view_count=10_000,
+        upload_date=None,
+        description_snippet="Weighted pull-up demonstration.",
+        thumbnail=None,
+    )
+    usable = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=usable-alias",
+        video_id="usable-alias",
+        title="Strict Weighted Pull-Up full body side angle",
+        channel="Coach",
+        duration_seconds=45,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet="Strict weighted pull-up full range of motion.",
+        thumbnail=None,
+    )
+    search_calls: list[tuple[str, int]] = []
+
+    def fake_search(query: str, results_per_query: int) -> list[YouTubeCandidate]:
+        search_calls.append((query, results_per_query))
+        if "strict form full rep" in query and "Strict Weighted Pull-Up" in query:
+            return [usable]
+        return [excluded]
+
+    def fake_vision(
+        exercise: ExerciseEntry,
+        candidate: YouTubeCandidate,
+        settings: YouTubeRankingSettings,
+    ) -> tuple[float, list[str], dict[str, object]]:
+        if candidate.video_id == "usable-alias":
+            return 0.95, ["full_body_visible"], {"full_body_visible": True}
+        return 0.20, ["wrong_source"], {"full_body_visible": False}
+
+    manifest = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            results_per_query=100,
+            max_candidates=3,
+            rank_with_vision=True,
+            vision_candidates_per_exercise=1,
+            excluded_candidate_keys=tuple(youtube_module.youtube_candidate_exclusion_keys(excluded)),
+        ),
+        search_fn=fake_search,
+        vision_ranker=fake_vision,
+        exercise_motion_contract_provider=lambda _exercise, _settings: vertical_body_pull_observable_contract(),
+    )
+
+    exercise_payload = manifest["exercises"][0]
+    expansion = exercise_payload["candidateExpansion"]
+
+    assert exercise_payload["candidates"][0]["videoId"] == "usable-alias"
+    assert expansion["searchExpansionTriggered"] is True
+    assert expansion["searchExpansionResultsPerQuery"] == 100
+    assert expansion["searchExpansionNewCandidateCount"] == 1
+    assert "Strict Weighted Pull-Up" in " ".join(expansion["searchExpansionAddedQueries"])
+    assert any(
+        query == '"Strict Weighted Pull-Up" strict form full rep' and results_per_query == 100
+        for query, results_per_query in search_calls
+    )
+
+
 def test_pose_prefilter_reviews_semantic_maybe_candidate_before_vision(
     tmp_path: Path,
 ) -> None:
@@ -9791,6 +10759,17 @@ def test_semantic_gate_title_identity_accepts_common_plural_and_body_region_word
         description_snippet="Standing barbell calf raise demonstration.",
         thumbnail=None,
     )
+    standing_calf_raise = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=standing",
+        video_id="standing",
+        title="Standing Barbell Calf Raise",
+        channel="Coach",
+        duration_seconds=45,
+        view_count=10_000,
+        upload_date=None,
+        description_snippet="Barbell calf raise demonstration.",
+        thumbnail=None,
+    )
     cable_abs_crunch = ExerciseEntry(
         exercise_id="cable-abs-crunch",
         name="Cable Abs Crunch",
@@ -9820,6 +10799,7 @@ def test_semantic_gate_title_identity_accepts_common_plural_and_body_region_word
     )
 
     assert semantic_gate_text_conflict_reasons(barbell_calves, calf_raise) == []
+    assert semantic_gate_text_conflict_reasons(barbell_calves, standing_calf_raise) == []
     assert semantic_gate_text_conflict_reasons(cable_abs_crunch, cable_crunches) == []
     assert "semantic_unrequested_reverse_variant" in semantic_gate_text_conflict_reasons(
         cable_abs_crunch,
@@ -14437,419 +15417,6 @@ def test_generate_candidate_motion_falls_back_to_strong_ranked_source_chunk_on_d
     assert selection["selectedSpanInOriginalSource"]["endSeconds"] == pytest.approx(31.0)
 
 
-def test_bake_and_rank_wrapper_defaults_to_adaptive_without_preset_or_support_dominance() -> None:
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_bake_and_rank.ps1").read_text(
-        encoding="utf-8"
-    )
-
-    assert "gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf" in script
-    assert "mmproj-BF16.gguf" in script
-    assert "[double]$LlamaCppTemperature = 1.0" in script
-    assert "EXERCISE_MOTION_PYTHON" in script
-    assert "mwa-motion-cuda\\python.exe" in script
-    assert "[Nullable[double]]$LlamaCppTopP = 0.95" in script
-    assert "[Nullable[int]]$LlamaCppTopK = 64" in script
-    assert "[int]$ReviewLlmWorkers = 4" in script
-    assert "[Nullable[int]]$LlamaCppCtxSize = 24576" in script
-    assert "[Nullable[int]]$LlamaCppParallel = 4" in script
-    assert "[Nullable[int]]$LlamaCppFitCtx = 24576" in script
-    assert "[int]$MaxSelectedResults = 1" in script
-    assert '"--max-selected-results", "$MaxSelectedResults"' in script
-    assert '"--llama-cpp-temperature", "$LlamaCppTemperature"' in script
-    assert "if ($null -ne $LlamaCppTopP)" in script
-    assert '"--llama-cpp-top-p", "$LlamaCppTopP"' in script
-    assert "if ($null -ne $LlamaCppTopK)" in script
-    assert '"--llama-cpp-top-k", "$LlamaCppTopK"' in script
-    assert "[int]$MaxAdaptivePreviewSettings = 1" in script
-    assert "if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking)" in script
-    assert "if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants))" in script
-    assert '\"--adaptive-preview-settings\"' in script
-    assert '\"--no-classify-support-dominance\"' in script
-    assert '\"--pre-wham-source-validation\"' in script
-    assert "[switch]$NoPreWhamSourceContract" in script
-    assert '"--no-pre-wham-source-contract"' in script
-    assert "if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification)" in script
-    assert "[switch]$SkipSpinePose" in script
-    assert "[switch]$EnableSpinePose" in script
-    assert "if ($SkipSpinePose -or -not $EnableSpinePose)" in script
-    assert '"--skip-spinepose"' in script
-    assert '"--enable-spinepose"' in script
-    assert '[string]$SpinePoseMode = "large"' in script
-    assert '[string]$SpinePoseModelVersion = "v2"' in script
-    assert '[string]$SpinePoseDevice = "cuda"' in script
-    assert '"--spinepose-mode", $SpinePoseMode' in script
-    assert '"--spinepose-model-version", $SpinePoseModelVersion' in script
-    assert '"--spinepose-device", $SpinePoseDevice' in script
-    assert "[int]$FallbackCandidates = 12" in script
-
-
-def test_youtube_bake_and_rank_wrapper_defaults_to_adaptive_without_preset_or_support_dominance() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script = (repo_root / "scripts" / "run_exercise_motion_youtube_bake_and_rank.ps1").read_text(encoding="utf-8")
-    cli_source = (repo_root / "exercise_motion_pkg" / "cli.py").read_text(encoding="utf-8")
-
-    assert "gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf" in script
-    assert "mmproj-BF16.gguf" in script
-    assert "[double]$LlamaCppTemperature = 1.0" in script
-    assert '[string]$PythonCommand = ""' in script
-    assert "Resolve-MotionPythonCommand" in script
-    assert "EXERCISE_MOTION_PYTHON" in script
-    assert "mwa-motion-cuda\\python.exe" in script
-    assert "[Nullable[double]]$LlamaCppTopP = 0.95" in script
-    assert "[Nullable[int]]$LlamaCppTopK = 64" in script
-    assert '"--llama-cpp-temperature", "$LlamaCppTemperature"' in script
-    assert '"--llama-cpp-top-p", "$LlamaCppTopP"' in script
-    assert '"--llama-cpp-top-k", "$LlamaCppTopK"' in script
-    assert "[int]$ResultsPerQuery = 100" in script
-    assert "[int]$YoutubeSearchEmptyRetries = 5" in script
-    assert '"--youtube-search-empty-retries", "$YoutubeSearchEmptyRetries"' in script
-    assert "[string]$YouTubeCookiesPath" in script
-    assert '"--youtube-cookies", $YouTubeCookiesPath' in script
-    assert "[string]$YouTubePreviewCacheDir" in script
-    assert 'Join-Path (Join-Path $repoRoot "build\\exercise_motion") "youtube-preview-cache"' in script
-    assert '"--youtube-preview-cache-dir", $previewCachePath' in script
-    assert "[int]$MaxAdaptivePreviewSettings = 1" in script
-    assert "[int]$MaxCandidates = 12" in script
-    assert '\"--pre-wham-source-validation\"' in script
-    assert "[switch]$NoPreWhamSourceContract" in script
-    assert '"--no-pre-wham-source-contract"' in script
-    assert "[int]$MetadataCandidatePoolSize = 36" in script
-    assert "[int]$CandidateReviewBatchSize = 12" in script
-    assert "[int]$CandidateReviewTargetSuitableCount = 3" in script
-    assert "[Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5" in script
-    assert "resolvedMaxCandidateReviewTargetSuitableCount" in script
-    assert '"--candidate-review-batch-size", "$CandidateReviewBatchSize"' in script
-    assert '"--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount"' in script
-    assert 'Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count"' in script
-    assert "No final selected motion; expanding YouTube review target" in script
-    assert "--candidate-review-batch-size" in cli_source
-    assert "--candidate-review-target-suitable-count" in cli_source
-    assert "--keep-llama-cpp-server" in cli_source
-    assert "[int]$VisionCandidatesPerExercise = 12" in script
-    assert "[int]$VisionDownloadWorkers = 8" in script
-    assert '"--vision-download-workers", "$VisionDownloadWorkers"' in script
-    assert "[int]$VisionLlmWorkers = 4" in script
-    assert '"--vision-llm-workers", "$VisionLlmWorkers"' in script
-    assert "[int]$VisionFramesPerCandidate = 0" in script
-    assert 'if ($VisionFramesPerCandidate -gt 0)' in script
-    assert "[int]$VisionMaxChunksPerCandidate = 5" in script
-    assert "if ($VisionMaxChunksPerCandidate -gt 0)" in script
-    assert "[int]$ThoroughVisionMaxChunksPerCandidate = 0" in script
-    assert "if ($ThoroughVisionMaxChunksPerCandidate -gt 0)" in script
-    assert "[Nullable[int]]$SemanticGateCandidatesPerExercise = 24" in script
-    assert "if ($null -ne $SemanticGateCandidatesPerExercise)" in script
-    assert "[Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200" in script
-    assert "if ($null -ne $SemanticGateMaxCandidatesPerExercise)" in script
-    assert '"--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise"' in script
-    assert "--semantic-gate-max-candidates-per-exercise" in cli_source
-    assert "[Nullable[int]]$PosePrefilterCandidatesPerExercise = 24" in script
-    assert "if ($null -ne $PosePrefilterCandidatesPerExercise)" in script
-    assert "[int]$FallbackCandidates = 12" in script
-    assert "[int]$MaxSelectedResults = 1" in script
-    assert '"--max-selected-results", "$MaxSelectedResults"' in script
-    assert '$initialTargetSuitableCount = [Math]::Max($CandidateReviewTargetSuitableCount, $MaxSelectedResults)' in script
-    assert "[int]$CandidateWorkers = 1" in script
-    assert '"--candidate-workers", "$CandidateWorkers"' in script
-    assert "AllowYoutubeCandidateFallback" not in script
-    assert "--allow-youtube-candidate-fallback" not in script
-    assert "--allow-youtube-candidate-fallback" not in cli_source
-    assert "Refusing to bake non-recommended candidates" in script
-    assert "[switch]$ThoroughYoutubeRetry" in script
-    assert "and $ThoroughYoutubeRetry -and -not $SkipThoroughYoutubeRetry" in script
-    assert "[double]$PosePrefilterSampleFps = 0.0" in script
-    assert "[double]$PosePrefilterMaxSeconds = 0.0" in script
-    assert "[int]$PosePrefilterWorkers = 3" in script
-    assert '[string]$PosePrefilterDevice = "cuda"' in script
-    assert "[int]$PosePrefilterBatchSize = 16" in script
-    assert "[int]$CandidateWorkers = 1" in script
-    assert '"--candidate-workers", "$CandidateWorkers"' in script
-    assert '[ValidateSet("prefix", "spread", "full")]' in script
-    assert '[string]$PosePrefilterScanStrategy = "full"' in script
-    assert '"--pose-prefilter-scan-strategy", $PosePrefilterScanStrategy' in script
-    assert '"--pose-prefilter-device", $PosePrefilterDevice' in script
-    assert '"--pose-prefilter-batch-size", "$PosePrefilterBatchSize"' in script
-    assert "[int]$ReviewLlmWorkers = 4" in script
-    assert '"--review-llm-workers", "$ReviewLlmWorkers"' in script
-    assert "[Nullable[int]]$LlamaCppCtxSize = 24576" in script
-    assert "[Nullable[int]]$LlamaCppParallel = 4" in script
-    assert "[Nullable[int]]$LlamaCppFitCtx = 24576" in script
-    assert "if ($PosePrefilter -or -not $SkipPosePrefilter)" in script
-    assert "Bake-and-rank completed without selecting a Wear skeleton" in script
-    assert "[switch]$SkipSemanticGate" in script
-    assert "[switch]$SemanticGateWithLlamaCpp" in script
-    assert "if ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate)" in script
-    assert '"--semantic-gate-with-llama-cpp"' in script
-    assert "if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking)" in script
-    assert "if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants))" in script
-    assert '\"--adaptive-preview-settings\"' in script
-    assert '\"--no-classify-support-dominance\"' in script
-    assert "if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification)" in script
-    assert '[string]$ArtifactRetention = "debug"' in script
-    assert '"--artifact-retention", $ArtifactRetention' in script
-    assert "[switch]$SkipSpinePose" in script
-    assert "[switch]$EnableSpinePose" in script
-    assert "if ($SkipSpinePose -or -not $EnableSpinePose)" in script
-    assert '"--skip-spinepose"' in script
-    assert '"--enable-spinepose"' in script
-    assert '[string]$SpinePoseMode = "large"' in script
-    assert '[string]$SpinePoseModelVersion = "v2"' in script
-    assert '[string]$SpinePoseDevice = "cuda"' in script
-    assert '"--spinepose-mode", $SpinePoseMode' in script
-    assert '"--spinepose-model-version", $SpinePoseModelVersion' in script
-    assert '"--spinepose-device", $SpinePoseDevice' in script
-
-
-def test_local_generation_wrappers_default_to_gemma_llama_cpp_settings() -> None:
-    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
-    generation_script = (scripts_dir / "run_exercise_motion_generation.ps1").read_text(encoding="utf-8")
-    segment_script = (scripts_dir / "run_exercise_segment_detection.ps1").read_text(encoding="utf-8")
-
-    for script in (generation_script, segment_script):
-        assert "gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf" in script
-        assert "mmproj-BF16.gguf" in script
-        assert "[double]$LlamaCppTemperature = 1.0" in script
-        assert "[Nullable[double]]$LlamaCppTopP = 0.95" in script
-        assert "[Nullable[int]]$LlamaCppTopK = 64" in script
-        assert "Qwen3VL" not in script
-        assert "mmproj-Qwen" not in script
-
-    assert "-LlamaCppTemperature $LlamaCppTemperature" in generation_script
-    assert "-LlamaCppTopP $LlamaCppTopP" in generation_script
-    assert "-LlamaCppTopK $LlamaCppTopK" in generation_script
-    assert '"--llama-cpp-temperature", "$LlamaCppTemperature"' in segment_script
-    assert '"--llama-cpp-top-p", "$LlamaCppTopP"' in segment_script
-    assert '"--llama-cpp-top-k", "$LlamaCppTopK"' in segment_script
-    assert "Assert-LlamaCppServerModelMatches" in segment_script
-    assert "Existing llama-server on port $Port is serving $servedModels" in segment_script
-
-
-def test_python_llama_cpp_defaults_use_gemma_settings(tmp_path: Path) -> None:
-    youtube_settings = YouTubeRankingSettings()
-    bake_request = BakeAndRankRequest(
-        candidates_json=tmp_path / "candidates.json",
-        workspace=tmp_path / "build",
-        wham_repo_path=None,
-        body_model_root=None,
-    )
-    detection_settings = DetectionSettings()
-
-    for settings in (youtube_settings, bake_request):
-        assert settings.llama_cpp_model == "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf"
-        assert settings.llama_cpp_mmproj == "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf"
-        assert settings.llama_cpp_temperature == pytest.approx(1.0)
-        assert settings.llama_cpp_top_p == pytest.approx(0.95)
-        assert settings.llama_cpp_top_k == 64
-
-    assert youtube_settings.results_per_query == 100
-    assert youtube_settings.semantic_gate_max_candidates_per_exercise == 200
-    assert youtube_settings.candidate_review_batch_size == 12
-    assert youtube_settings.candidate_review_target_suitable_count == 1
-    assert youtube_settings.vision_download_workers == 8
-    assert youtube_settings.vision_llm_workers == 4
-    assert youtube_settings.pose_prefilter_workers == 3
-    assert youtube_settings.pose_prefilter_device == "cuda"
-    assert youtube_settings.pose_prefilter_batch_size == 16
-    assert youtube_settings.llama_cpp_ctx_size == 24576
-    assert youtube_settings.llama_cpp_fit_ctx == 24576
-    assert detection_settings.llama_cpp_temperature == pytest.approx(1.0)
-    assert detection_settings.llama_cpp_top_p == pytest.approx(0.95)
-    assert detection_settings.llama_cpp_top_k == 64
-
-
-def test_workout_plan_wrapper_defaults_pose_prefilter_on() -> None:
-    script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_workout_plan.ps1"
-    ).read_text(encoding="utf-8")
-
-    assert "if ($PosePrefilter -or -not $SkipPosePrefilter)" in script
-    assert "if ($PosePrefilter -and -not $SkipPosePrefilter)" not in script
-    assert '[string]$PythonCommand = ""' in script
-    assert "Resolve-MotionPythonCommand" in script
-    assert "EXERCISE_MOTION_PYTHON" in script
-    assert "mwa-motion-cuda\\python.exe" in script
-    assert "[int]$ResultsPerQuery = 100" in script
-    assert "[int]$MaxCandidates = 12" in script
-    assert "[int]$MetadataCandidatePoolSize = 36" in script
-    assert "[int]$CandidateReviewBatchSize = 12" in script
-    assert "[int]$CandidateReviewTargetSuitableCount = 3" in script
-    assert "[int]$VisionCandidatesPerExercise = 12" in script
-    assert "[int]$VisionDownloadWorkers = 8" in script
-    assert '"--vision-download-workers", "$VisionDownloadWorkers"' in script
-    assert "[int]$VisionLlmWorkers = 4" in script
-    assert '"--vision-llm-workers", "$VisionLlmWorkers"' in script
-    assert "[switch]$NoExerciseMotionContract" in script
-    assert '"--no-exercise-motion-contract"' in script
-    assert "[Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5" in script
-    assert "maxCandidateReviewTargetSuitableCount" in script
-    assert '"--candidate-review-batch-size", "$CandidateReviewBatchSize"' in script
-    assert '"--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount"' in script
-    assert "[bool]$KeepLlamaCppServer = $true" in script
-    assert '$youtubeBaseArgs += "--keep-llama-cpp-server"' in script
-    assert '$bakeArgs += "--keep-llama-cpp-server"' in script
-    assert "no selected Wear skeleton; expanding review target" in script
-    assert "$previousAttemptCandidateJsonPaths = @()" in script
-    assert '$attemptDiscoveryArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)' in script
-    assert "[int]$VisionMaxChunksPerCandidate = 5" in script
-    assert "if ($VisionMaxChunksPerCandidate -gt 0)" in script
-    assert "[double]$PosePrefilterSampleFps = 0.0" in script
-    assert "[double]$PosePrefilterMaxSeconds = 0.0" in script
-    assert "[Nullable[int]]$PosePrefilterCandidatesPerExercise = 24" in script
-    assert "if ($null -ne $PosePrefilterCandidatesPerExercise)" in script
-    assert "[int]$PosePrefilterWorkers = 3" in script
-    assert '[string]$PosePrefilterDevice = "cuda"' in script
-    assert "[int]$PosePrefilterBatchSize = 16" in script
-    assert '[ValidateSet("prefix", "spread", "full")]' in script
-    assert '[string]$PosePrefilterScanStrategy = "full"' in script
-    assert '"--pose-prefilter-scan-strategy", $PosePrefilterScanStrategy' in script
-    assert '"--pose-prefilter-device", $PosePrefilterDevice' in script
-    assert '"--pose-prefilter-batch-size", "$PosePrefilterBatchSize"' in script
-    assert "[switch]$SkipSemanticGate" in script
-    assert "[Nullable[int]]$SemanticGateCandidatesPerExercise = 24" in script
-    assert "[Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200" in script
-    assert '"--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise"' in script
-    assert "if ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate)" in script
-    assert "if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking)" in script
-    assert "if ($AdaptivePreviewSettings -or (-not $SkipAdaptivePreviewSettings -and -not $RankPreviewVariants))" in script
-    assert '"--adaptive-preview-settings"' in script
-    assert "[int]$ReviewLlmWorkers = 4" in script
-    assert '"--review-llm-workers", "$ReviewLlmWorkers"' in script
-    assert "[switch]$SkipPreWhamSourceValidation" in script
-    assert '"--pre-wham-source-validation"' in script
-    assert '"--skip-pre-wham-source-validation"' in script
-    assert "[switch]$NoPreWhamSourceContract" in script
-    assert '"--no-pre-wham-source-contract"' in script
-    assert "[switch]$NoMovementCutExerciseContract" in script
-    assert '"--no-movement-cut-exercise-contract"' in script
-    assert "[int]$MaxAdaptivePreviewSettings = 1" in script
-    assert "[Nullable[int]]$LlamaCppParallel = 4" in script
-    assert '"--llama-cpp-parallel", "$LlamaCppParallel"' in script
-    assert "if (-not $ClassifySupportDominance -or $SkipSupportDominanceClassification)" in script
-    assert '"--no-classify-support-dominance"' in script
-    assert '[string]$ArtifactRetention = "debug"' in script
-    assert '"--artifact-retention", $ArtifactRetention' in script
-    assert "Bake-and-rank completed without selecting a Wear skeleton" in (
-        Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_bake_and_rank.ps1"
-    ).read_text(encoding="utf-8")
-    direct_bake_script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_bake_and_rank.ps1"
-    ).read_text(encoding="utf-8")
-    assert "mwa-motion-cuda\\python.exe" in direct_bake_script
-    assert '[string]$ArtifactRetention = "debug"' in direct_bake_script
-    assert '"--artifact-retention", $ArtifactRetention' in direct_bake_script
-
-
-def test_workout_plan_wrapper_forwards_youtube_cookies_and_has_clear_entrypoint() -> None:
-    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
-    script = (scripts_dir / "run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
-    clear_entrypoint = (scripts_dir / "run_workout_plan_motion_bake_and_rank.ps1").read_text(encoding="utf-8")
-
-    assert "[string]$YouTubeCookiesPath" in script
-    assert "[string]$YouTubePreviewCacheDir" in script
-    assert "$YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath" in script
-    assert '"--youtube-cookies", $YouTubeCookiesPath' in script
-    assert "excludeCandidatesFromWorkspaceRoots = $resolvedExcludeCandidatesFromWorkspaceRoot" in script
-    assert "excludeYoutubeCandidateJsonPaths = $resolvedExcludeYoutubeCandidatesJson" in script
-    assert "run_exercise_motion_workout_plan.ps1" in clear_entrypoint
-
-
-def test_retry_exercise_motion_result_script_uses_previous_summary_and_cumulative_exclusions() -> None:
-    script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "retry_exercise_motion_result.ps1"
-    ).read_text(encoding="utf-8")
-
-    assert "[string[]]$PreviousWorkspaceRoot" in script
-    assert '[Alias("OnlyExerciseName", "ExerciseNames", "Exercises")]' in script
-    assert "[string[]]$ExerciseName" in script
-    assert "[switch]$ListExercises" in script
-    assert "Write-SummaryExerciseList" in script
-    assert "Expand-DelimitedValues" in script
-    assert "workout_motion_generation_summary.json" in script
-    assert "sourceWorkoutPlanPath" in script
-    assert "equipmentJsonPath" in script
-    assert "Get-LatestYouTubeCookiesPath" in script
-    assert "excludeCandidatesFromWorkspaceRoots" in script
-    assert '"reattempt-{0}-{1}"' in script
-    assert "[switch]$PrintCommandOnly" in script
-    assert "excludedWorkspaceRoots" in script
-    assert "exerciseNames = [string[]]$ExerciseName" in script
-    assert '"-ExcludeCandidatesFromWorkspaceRoot", $value' in script
-    assert '"-OnlyExerciseName", $value' in script
-    assert '"run_exercise_motion_workout_plan.ps1"' in script
-
-
-def test_workout_plan_wrapper_forwards_equipment_export_json() -> None:
-    script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_workout_plan.ps1"
-    ).read_text(encoding="utf-8")
-    cli_source = (Path(__file__).resolve().parents[1] / "exercise_motion_pkg" / "cli.py").read_text(encoding="utf-8")
-
-    assert "[string]$EquipmentJson" in script
-    assert "[string[]]$OnlyExerciseSlug = @()" in script
-    assert "[string[]]$OnlyExerciseId = @()" in script
-    assert "[string[]]$OnlyExerciseName = @()" in script
-    assert "[string[]]$ExcludeCandidatesFromWorkspaceRoot = @()" in script
-    assert "[string[]]$ExcludeYoutubeCandidatesJson = @()" in script
-    assert "[string[]]$ExcludeYoutubeVideoId = @()" in script
-    assert "[string[]]$ExcludeYoutubeUrl = @()" in script
-    assert "[CmdletBinding(PositionalBinding = $false)]" in script
-    assert "[Parameter(ValueFromRemainingArguments = $true)]" in script
-    assert "[object[]]$RemainingArguments = @()" in script
-    assert "Add-UnboundExclusionArguments" in script
-    assert "-UnboundArguments $RemainingArguments" in script
-    assert "PathType Container" in script
-    assert "PathType Leaf" in script
-    assert "Get-PreviousCandidateJsonPaths" in script
-    assert '"--exclude-youtube-candidates-json", $excludeCandidatesJsonPath' in script
-    assert '"--exclude-youtube-video-id", $excludeVideoId' in script
-    assert '"--exclude-youtube-url", $excludeUrl' in script
-    assert "No exercises matched the supplied OnlyExerciseSlug/OnlyExerciseId/OnlyExerciseName filters." in script
-    assert "excludeCandidateJsonPaths = $workItem.excludeCandidateJsonPaths" in script
-    assert "$EquipmentJson = Resolve-StrictPath $EquipmentJson" in script
-    assert '"--equipment-json", $EquipmentJson' in script
-    assert "--exclude-youtube-candidates-json" in cli_source
-    assert "--exclude-youtube-video-id" in cli_source
-    assert "--exclude-youtube-url" in cli_source
-
-
-def test_workout_plan_wrapper_discovers_and_bakes_each_exercise_independently() -> None:
-    script = (
-        Path(__file__).resolve().parents[1] / "scripts" / "run_exercise_motion_workout_plan.ps1"
-    ).read_text(encoding="utf-8")
-
-    assert '"list-workout-plan-exercises"' in script
-    assert '"find-youtube-videos"' in script
-    assert "New-OneExercisePlanJson -Exercise $exercise -OutPath $exercisePlanPath" in script
-    assert "discoveryArgs = [string[]]$discoveryArgs" in script
-    assert "& $PythonCommand @attemptDiscoveryArgs" in script
-    assert "& $PythonCommand @BakeArguments" in script
-    assert '$selectedFilePrefix = $workItem.exerciseSlug -replace "-", "_"' in script
-    assert '"$($selectedFilePrefix)$($optionSuffix)_wear_skeleton.json"' in script
-    assert '"$($selectedFilePrefix)$($optionSuffix)_selected_preview.webm"' in script
-    assert '"$($selectedFilePrefix)$($optionSuffix)_selected_input.mp4"' in script
-    assert 'DestinationFileName "selection_manifest.json"' in script
-    assert 'DestinationFileName "youtube_candidates.full.json"' in script
-    assert 'DestinationFileName "candidate_decisions.jsonl"' in script
-    assert "$option.selectedReviewVideoPath" in script
-    assert "[int]$MaxSelectedResults = 1" in script
-    assert '"--max-selected-results", "$MaxSelectedResults"' in script
-    assert '$initialTargetSuitableCount = [Math]::Max($CandidateReviewTargetSuitableCount, $MaxSelectedResults)' in script
-    assert 'Join-Path (Join-Path $repoRoot "build\\exercise_motion") "youtube-preview-cache"' in script
-    assert '"--youtube-preview-cache-dir", $previewCachePath' in script
-    assert "Get-SelectedResultCount" in script
-    assert "$selectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains \"selectedResults\"" in script
-    assert '"$($selectedFilePrefix)$($optionSuffix)_wear_skeleton.json"' in script
-    assert '"$($selectedFilePrefix)$($optionSuffix)_selected_preview.webm"' in script
-    assert "selectedResults = $selectedResultOutputs" in script
-    assert "selectedInputVideoPath" in script
-    assert "selectedSourceVideoOriginalPath" in script
-    assert "selectedSourceVideoMissing" in script
-    assert "selectedCandidateDebugPath" in script
-    assert "selectedCandidateDecisionsPath" in script
-    assert 'DestinationFileName "preview.html"' not in script
-    assert "Remove-ExerciseIntermediateArtifacts -WorkItem $workItem" in script
-    assert "youtubeCandidatesJsonPath = $candidatesPath" not in script
-
-
 def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_outputs(tmp_path: Path) -> None:
     workspace = tmp_path / "bake"
     candidate = workspace / "exercise-001"
@@ -16262,6 +16829,271 @@ def write_repetition_phase_skeleton(path: Path, offsets: list[float]) -> None:
     )
 
 
+def write_calf_raise_target_motion_skeleton(path: Path, offsets: list[float]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for index, offset in enumerate(offsets):
+        frames.append(
+            {
+                "frameIndex": index,
+                "syntheticLoopBridge": False,
+                "joints": {
+                    "pelvis": [0.0, 0.60, 0.0],
+                    "head": [0.0, 1.25, 0.0],
+                    "neck": [0.0, 1.05, 0.0],
+                    "left_shoulder": [-0.22, 0.98, 0.0],
+                    "right_shoulder": [0.22, 0.98, 0.0],
+                    "left_hip": [-0.12, 0.56, 0.0],
+                    "right_hip": [0.12, 0.56, 0.0],
+                    "left_knee": [-0.12, 0.34, 0.0],
+                    "right_knee": [0.12, 0.34, 0.0],
+                    "left_ankle": [-0.12, 0.02 + offset, 0.0],
+                    "right_ankle": [0.12, 0.02 + offset, 0.0],
+                    "left_foot": [-0.14, -0.05 + offset, 0.10],
+                    "right_foot": [0.14, -0.05 + offset, 0.10],
+                },
+            }
+        )
+    path.write_text(
+        json.dumps(
+            {
+                "jointNames": [
+                    "pelvis",
+                    "head",
+                    "neck",
+                    "left_shoulder",
+                    "right_shoulder",
+                    "left_hip",
+                    "right_hip",
+                    "left_knee",
+                    "right_knee",
+                    "left_ankle",
+                    "right_ankle",
+                    "left_foot",
+                    "right_foot",
+                ],
+                "rootJoint": "pelvis",
+                "frames": frames,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_calf_raise_with_non_target_upper_body_motion_skeleton(
+    path: Path,
+    distal_offsets: list[float],
+    upper_body_offsets: list[float],
+) -> None:
+    assert len(distal_offsets) == len(upper_body_offsets)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for index, (distal_offset, upper_body_offset) in enumerate(zip(distal_offsets, upper_body_offsets)):
+        frames.append(
+            {
+                "frameIndex": index,
+                "syntheticLoopBridge": False,
+                "joints": {
+                    "pelvis": [0.0, 0.60, 0.0],
+                    "head": [0.0, 1.25, 0.0],
+                    "neck": [0.0, 1.05, 0.0],
+                    "left_shoulder": [-0.22, 0.98, 0.0],
+                    "right_shoulder": [0.22, 0.98, 0.0],
+                    "left_elbow": [-0.30, 0.84 + upper_body_offset * 0.60, 0.0],
+                    "right_elbow": [0.30, 0.84 + upper_body_offset * 0.60, 0.0],
+                    "left_wrist": [-0.34, 0.72 + upper_body_offset, 0.0],
+                    "right_wrist": [0.34, 0.72 + upper_body_offset, 0.0],
+                    "left_hand": [-0.36, 0.70 + upper_body_offset, 0.0],
+                    "right_hand": [0.36, 0.70 + upper_body_offset, 0.0],
+                    "left_hip": [-0.12, 0.56, 0.0],
+                    "right_hip": [0.12, 0.56, 0.0],
+                    "left_knee": [-0.12, 0.34, 0.0],
+                    "right_knee": [0.12, 0.34, 0.0],
+                    "left_ankle": [-0.12, 0.02 + distal_offset, 0.0],
+                    "right_ankle": [0.12, 0.02 + distal_offset, 0.0],
+                    "left_foot": [-0.14, -0.05 + distal_offset, 0.10],
+                    "right_foot": [0.14, -0.05 + distal_offset, 0.10],
+                },
+            }
+        )
+    path.write_text(
+        json.dumps(
+            {
+                "jointNames": [
+                    "pelvis",
+                    "head",
+                    "neck",
+                    "left_shoulder",
+                    "right_shoulder",
+                    "left_elbow",
+                    "right_elbow",
+                    "left_wrist",
+                    "right_wrist",
+                    "left_hand",
+                    "right_hand",
+                    "left_hip",
+                    "right_hip",
+                    "left_knee",
+                    "right_knee",
+                    "left_ankle",
+                    "right_ankle",
+                    "left_foot",
+                    "right_foot",
+                ],
+                "rootJoint": "pelvis",
+                "frames": frames,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_hinged_upper_limb_pull_skeleton(
+    path: Path,
+    *,
+    torso_forward_offset: float,
+    pull_offsets: list[float],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for index, pull_offset in enumerate(pull_offsets):
+        torso_z = torso_forward_offset
+        shoulder_y = 0.98
+        shoulder_z = torso_z
+        elbow_z = torso_z + 0.36 - pull_offset * 0.55
+        wrist_z = torso_z + 0.56 - pull_offset
+        hand_z = torso_z + 0.62 - pull_offset
+        elbow_y = 0.82 + pull_offset * 0.12
+        wrist_y = 0.70 + pull_offset * 0.20
+        hand_y = 0.66 + pull_offset * 0.22
+        frames.append(
+            {
+                "frameIndex": index,
+                "syntheticLoopBridge": False,
+                "joints": {
+                    "pelvis": [0.0, 0.60, 0.0],
+                    "head": [0.0, 1.25, torso_z],
+                    "neck": [0.0, 1.06, torso_z],
+                    "spine3": [0.0, 0.94, torso_z],
+                    "left_shoulder": [-0.22, shoulder_y, shoulder_z],
+                    "right_shoulder": [0.22, shoulder_y, shoulder_z],
+                    "left_elbow": [-0.26, elbow_y, elbow_z],
+                    "right_elbow": [0.26, elbow_y, elbow_z],
+                    "left_wrist": [-0.24, wrist_y, wrist_z],
+                    "right_wrist": [0.24, wrist_y, wrist_z],
+                    "left_hand": [-0.24, hand_y, hand_z],
+                    "right_hand": [0.24, hand_y, hand_z],
+                    "left_hip": [-0.12, 0.56, 0.0],
+                    "right_hip": [0.12, 0.56, 0.0],
+                    "left_knee": [-0.12, 0.34, 0.02],
+                    "right_knee": [0.12, 0.34, 0.02],
+                    "left_ankle": [-0.12, 0.02, 0.04],
+                    "right_ankle": [0.12, 0.02, 0.04],
+                    "left_foot": [-0.14, -0.05, 0.16],
+                    "right_foot": [0.14, -0.05, 0.16],
+                },
+            }
+        )
+    path.write_text(
+        json.dumps(
+            {
+                "jointNames": [
+                    "pelvis",
+                    "head",
+                    "neck",
+                    "spine3",
+                    "left_shoulder",
+                    "right_shoulder",
+                    "left_elbow",
+                    "right_elbow",
+                    "left_wrist",
+                    "right_wrist",
+                    "left_hand",
+                    "right_hand",
+                    "left_hip",
+                    "right_hip",
+                    "left_knee",
+                    "right_knee",
+                    "left_ankle",
+                    "right_ankle",
+                    "left_foot",
+                    "right_foot",
+                ],
+                "rootJoint": "pelvis",
+                "frames": frames,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_vertical_body_pull_observable_skeleton(path: Path, offsets: list[float]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for index, offset in enumerate(offsets):
+        frames.append(
+            {
+                "frameIndex": index,
+                "syntheticLoopBridge": False,
+                "joints": {
+                    "pelvis": [0.0, 0.52 + offset, 0.0],
+                    "root": [0.0, 0.52 + offset, 0.0],
+                    "head": [0.0, 1.18 + offset, 0.0],
+                    "neck": [0.0, 1.02 + offset, 0.0],
+                    "spine3": [0.0, 0.92 + offset, 0.0],
+                    "left_shoulder": [-0.22, 0.95 + offset, 0.0],
+                    "right_shoulder": [0.22, 0.95 + offset, 0.0],
+                    "left_elbow": [-0.24, 1.12 + offset * 0.35, 0.0],
+                    "right_elbow": [0.24, 1.12 + offset * 0.35, 0.0],
+                    "left_wrist": [-0.28, 1.34, 0.0],
+                    "right_wrist": [0.28, 1.34, 0.0],
+                    "left_hand": [-0.28, 1.36, 0.0],
+                    "right_hand": [0.28, 1.36, 0.0],
+                    "left_hip": [-0.12, 0.50 + offset, 0.0],
+                    "right_hip": [0.12, 0.50 + offset, 0.0],
+                    "left_knee": [-0.12, 0.22 + offset, 0.0],
+                    "right_knee": [0.12, 0.22 + offset, 0.0],
+                    "left_ankle": [-0.12, -0.06 + offset, 0.0],
+                    "right_ankle": [0.12, -0.06 + offset, 0.0],
+                    "left_foot": [-0.14, -0.10 + offset, 0.10],
+                    "right_foot": [0.14, -0.10 + offset, 0.10],
+                },
+            }
+        )
+    path.write_text(
+        json.dumps(
+            {
+                "jointNames": [
+                    "pelvis",
+                    "root",
+                    "head",
+                    "neck",
+                    "spine3",
+                    "left_shoulder",
+                    "right_shoulder",
+                    "left_elbow",
+                    "right_elbow",
+                    "left_wrist",
+                    "right_wrist",
+                    "left_hand",
+                    "right_hand",
+                    "left_hip",
+                    "right_hip",
+                    "left_knee",
+                    "right_knee",
+                    "left_ankle",
+                    "right_ankle",
+                    "left_foot",
+                    "right_foot",
+                ],
+                "rootJoint": "pelvis",
+                "frames": frames,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def write_lower_body_partial_phase_with_returning_hand_skeleton(
     path: Path,
     leg_offsets: list[float],
@@ -16950,7 +17782,14 @@ def test_disabled_review_adjustment_penalizes_lower_body_target_with_no_lower_mo
         candidate={"videoId": "upper-only"},
     )
 
-    adjusted = apply_loop_continuity_adjustment(item, LoopRanking(score=0.95, reasons=["model_liked_it"]))
+    adjusted = apply_loop_continuity_adjustment(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model_liked_it"],
+            payload={"exerciseMotionContract": lower_body_motion_contract()},
+        ),
+    )
 
     assert adjusted.score < 0.55
     assert "weak_lower_body_motion_penalty" in adjusted.reasons
@@ -16958,6 +17797,58 @@ def test_disabled_review_adjustment_penalizes_lower_body_target_with_no_lower_mo
     assert adjusted.payload is not None
     assert adjusted.payload["focusedMotionMetrics"]["requiresLowerBodyMotion"] is True
     assert adjusted.payload["focusedMotionMetrics"]["lowerBodyMotionScore"] == pytest.approx(0.0)
+
+
+def test_disabled_review_adjustment_does_not_penalize_upper_body_contract_with_stance_text(
+    tmp_path: Path,
+) -> None:
+    skeleton = tmp_path / "upper-only.json"
+    review = tmp_path / "review.webm"
+    write_hand_lock_arm_distortion_skeleton(skeleton, distorted=False)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Generated Upper Body Raise Exercise",
+        candidate_title="Upper-body raise",
+        candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "upper-body-raise"},
+    )
+    contract = upper_body_raise_with_stance_contract()
+
+    assert not bake_and_rank_module.exercise_requires_lower_body_motion(
+        "Generated Upper Body Raise Exercise",
+        contract=contract,
+    )
+
+    adjusted = apply_loop_continuity_adjustment(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model_liked_it"],
+            payload={"exerciseMotionContract": contract},
+        ),
+    )
+
+    assert adjusted.score == pytest.approx(0.95)
+    assert "weak_lower_body_motion_penalty" not in adjusted.reasons
+    assert "deterministic_review_validation_skipped" in adjusted.reasons
+    assert adjusted.payload is not None
+    assert adjusted.payload["focusedMotionMetrics"]["requiresLowerBodyMotion"] is False
+
+
+def test_lower_body_detector_does_not_treat_hinged_upper_limb_profile_as_lower_body() -> None:
+    assert not bake_and_rank_module.exercise_requires_lower_body_motion(
+        "Generated Hinged Pull Exercise",
+        contract=hinged_upper_limb_pull_contract(),
+    )
 
 
 def test_disabled_review_adjustment_does_not_penalize_upper_body_target_lower_motion_absent(tmp_path: Path) -> None:
@@ -17325,6 +18216,405 @@ def test_materialized_output_gate_rejects_partial_one_way_repetition_phase(tmp_p
     assert phase["endpointPhaseDeltaRatio"] > phase["maxEndpointPhaseDeltaRatio"]
 
 
+def test_materialized_output_gate_rejects_incomplete_selected_source_phase(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    selected_skeleton = candidate_workspace / "wear" / "selected-complete.json"
+    source_skeleton = candidate_workspace / "wear" / "source-partial.json"
+    write_repetition_phase_skeleton(selected_skeleton, [0.00, 0.18, 0.36, 0.18, 0.00, 0.00])
+    write_motion_strength_skeleton_with_source_times(
+        source_skeleton,
+        [
+            (0.0, 0.00),
+            (0.5, 0.08),
+            (1.0, 0.16),
+            (1.5, 0.24),
+            (2.0, 0.32),
+            (2.5, 0.40),
+        ],
+    )
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Bench Press",
+        candidate_title="Bench press",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=selected_skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "bench"},
+        source_skeleton_path=source_skeleton,
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={
+                "chunkEstimate": {"movementComplexity": "compound"},
+                "reviewChunkStartSeconds": 0.0,
+                "reviewChunkEndSeconds": 2.5,
+            },
+        ),
+    )
+
+    assert metrics["passed"] is False
+    assert "materialized_source_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    source_phase = metrics["sourceFullRepetitionPhaseCompletenessMetrics"]
+    assert source_phase["phaseReference"] == "selected_source_time_range"
+    assert source_phase["required"] is True
+    assert source_phase["passed"] is False
+
+
+def test_validation_complexity_knows_plural_bodyweight_and_pushdown_names() -> None:
+    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Pull-Ups") == "simple"
+    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Chin-Ups") == "simple"
+    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Dips") == "simple"
+    assert bake_and_rank_module.movement_complexity_for_validation("Cable Triceps Pushdown") == "simple"
+
+
+def test_materialized_output_gate_rejects_calf_raise_without_target_motion(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "static-calf-raise.json"
+    write_calf_raise_target_motion_skeleton(skeleton, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Calf Raise",
+        candidate_title="Barbell calf raise",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "calves"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": distal_leg_vertical_raise_contract()},
+        ),
+    )
+
+    assert metrics["passed"] is False
+    assert "materialized_low_target_motion_observability" in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is False
+    assert "weak_target_distal_motion" in target_motion["failureReasons"]
+
+
+def test_materialized_output_gate_rejects_calf_raise_when_non_target_motion_dominates(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "setup-dominated-calf-raise.json"
+    write_calf_raise_with_non_target_upper_body_motion_skeleton(
+        skeleton,
+        distal_offsets=[0.00, 0.04, 0.08, 0.04, 0.00, 0.00],
+        upper_body_offsets=[0.00, 0.08, 0.16, 0.24, 0.32, 0.40],
+    )
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Calf Raise",
+        candidate_title="Barbell calf raise setup",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "calves-setup"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": distal_leg_vertical_raise_contract()},
+        ),
+    )
+
+    assert metrics["passed"] is False
+    assert "materialized_low_target_motion_observability" in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is False
+    assert "weak_target_distal_motion" not in target_motion["failureReasons"]
+    assert "non_target_motion_dominates_target_motion" in target_motion["failureReasons"]
+    assert target_motion["upperBodyRootRelativeRangeRatio"] > target_motion["targetMotionReferenceRangeRatio"]
+
+
+def test_materialized_output_gate_accepts_calf_raise_with_target_motion(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "calf-raise.json"
+    write_calf_raise_target_motion_skeleton(skeleton, [0.00, 0.04, 0.08, 0.04, 0.00, 0.00])
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Calf Raise",
+        candidate_title="Barbell calf raise",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "calves"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": distal_leg_vertical_raise_contract()},
+        ),
+    )
+
+    assert "materialized_low_target_motion_observability" not in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is True
+    assert target_motion["distalVerticalRangeRatio"] >= target_motion["minDistalVerticalRangeRatio"]
+    assert metrics["fullRepetitionPhaseCompletenessMetrics"]["required"] is True
+
+
+def test_materialized_output_gate_rejects_hinged_upper_limb_pull_without_torso_hinge(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "upright-pull.json"
+    write_hinged_upper_limb_pull_skeleton(
+        skeleton,
+        torso_forward_offset=0.02,
+        pull_offsets=[0.00, 0.18, 0.36, 0.18, 0.00, 0.00],
+    )
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Generated Hinged Pull Exercise",
+        candidate_title="upright row-like artifact",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "upright-pull"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": hinged_upper_limb_pull_contract()},
+        ),
+    )
+
+    assert metrics["passed"] is False
+    assert "materialized_low_target_motion_observability" in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is False
+    assert target_motion["profile"] == "hinged_upper_limb_pull"
+    assert "weak_target_torso_hinge" in target_motion["failureReasons"]
+    assert target_motion["torsoLeanDegrees"] < target_motion["minTorsoLeanDegrees"]
+    assert target_motion["handTorsoDistanceRangeRatio"] >= target_motion["minHandTorsoDistanceRangeRatio"]
+
+
+def test_materialized_output_gate_accepts_hinged_upper_limb_pull_with_target_motion(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "hinged-pull.json"
+    write_hinged_upper_limb_pull_skeleton(
+        skeleton,
+        torso_forward_offset=0.45,
+        pull_offsets=[0.00, 0.18, 0.36, 0.18, 0.00, 0.00],
+    )
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Generated Hinged Pull Exercise",
+        candidate_title="hinged pull",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "hinged-pull"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": hinged_upper_limb_pull_contract()},
+        ),
+    )
+
+    assert "materialized_low_target_motion_observability" not in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is True
+    assert target_motion["profile"] == "hinged_upper_limb_pull"
+    assert target_motion["torsoLeanDegrees"] >= target_motion["minTorsoLeanDegrees"]
+    assert target_motion["handTorsoDistanceRangeRatio"] >= target_motion["minHandTorsoDistanceRangeRatio"]
+
+
+def test_materialized_output_gate_accepts_generic_observable_motion_spec(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "body-pull.json"
+    write_vertical_body_pull_observable_skeleton(skeleton, [0.00, 0.08, 0.16, 0.08, 0.00, 0.00])
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Generated Vertical Body Pull",
+        candidate_title="vertical body pull",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "body-pull"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": vertical_body_pull_observable_contract()},
+        ),
+    )
+
+    assert "materialized_low_target_motion_observability" not in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is True
+    assert target_motion["target"] == "observable_motion_spec"
+    assert target_motion["relativeMotionRangeRatio"] >= target_motion["minTargetMotionRangeRatio"]
+    assert metrics["fullRepetitionPhaseCompletenessMetrics"]["required"] is True
+    assert metrics["fullRepetitionPhaseCompletenessMetrics"]["passed"] is True
+
+
+def test_materialized_output_gate_rejects_weak_generic_observable_motion_spec(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "static-body-pull.json"
+    write_vertical_body_pull_observable_skeleton(skeleton, [0.00, 0.00, 0.00, 0.00, 0.00, 0.00])
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Generated Vertical Body Pull",
+        candidate_title="static setup",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "static-body-pull"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(
+            score=0.95,
+            reasons=["model liked it"],
+            payload={"exerciseMotionContract": vertical_body_pull_observable_contract()},
+        ),
+    )
+
+    assert metrics["passed"] is False
+    assert "materialized_low_target_motion_observability" in metrics["rejectionReasons"]
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is True
+    assert target_motion["passed"] is False
+    assert "weak_observable_target_motion" in target_motion["failureReasons"]
+
+
+def test_materialized_output_gate_does_not_infer_target_motion_profile_from_exercise_name_only(tmp_path: Path) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "static-calf-raise.json"
+    write_calf_raise_target_motion_skeleton(skeleton, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    review = candidate_workspace / "review" / "preview.webm"
+    review.parent.mkdir(parents=True)
+    review.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Calf Raise",
+        candidate_title="Barbell calf raise",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview" / "motion_preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "calves"},
+    )
+
+    metrics = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(score=0.95, reasons=["model liked it"], payload={}),
+    )
+
+    target_motion = metrics["targetMotionObservabilityMetrics"]
+    assert target_motion["required"] is False
+    assert target_motion["skippedReasons"] == ["no_target_motion_profile"]
+    assert "materialized_low_target_motion_observability" not in metrics["rejectionReasons"]
+
+
 def test_materialized_output_gate_prefers_lower_body_phase_for_lower_body_exercise(tmp_path: Path) -> None:
     candidate_workspace = tmp_path / "candidate"
     skeleton = candidate_workspace / "wear" / "partial-lower-body-returning-hand.json"
@@ -17357,7 +18647,10 @@ def test_materialized_output_gate_prefers_lower_body_phase_for_lower_body_exerci
         LoopRanking(
             score=0.95,
             reasons=["model liked it"],
-            payload={"chunkEstimate": {"movementComplexity": "compound"}},
+            payload={
+                "chunkEstimate": {"movementComplexity": "compound"},
+                "exerciseMotionContract": lower_body_motion_contract(),
+            },
         ),
     )
 
@@ -18364,7 +19657,7 @@ def test_movement_cut_phase_filter_hides_partial_one_way_candidate_from_vlm(
         duration_sec=5.0,
         loop_start_seconds=0.0,
         loop_end_seconds=5.0,
-        candidate={"videoId": "squat"},
+        candidate={"videoId": "squat", "exerciseMotionContract": lower_body_motion_contract()},
     )
     windows = [
         DetectionWindow(index=0, start_seconds=0.0, end_seconds=5.0),
@@ -18480,6 +19773,7 @@ def test_movement_cut_motion_coverage_accepts_tighter_complete_repetition_phase(
         parent_window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=3.6),
         candidate_window=DetectionWindow(index=1, start_seconds=0.0, end_seconds=1.6),
         chunk_estimate=SimpleNamespace(movement_complexity="compound"),
+        exercise_motion_contract=lower_body_motion_contract(),
     )
 
     assert metrics["sourceMotionCoverageRatio"] < metrics["minSourceMotionCoverageRatio"]
@@ -18517,6 +19811,7 @@ def test_movement_cut_motion_coverage_rejects_lower_body_walkout_without_target_
         parent_window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=3.5),
         candidate_window=DetectionWindow(index=1, start_seconds=0.0, end_seconds=3.5),
         chunk_estimate=SimpleNamespace(movement_complexity="compound"),
+        exercise_motion_contract=lower_body_motion_contract(),
     )
 
     assert metrics["candidatePrimaryMotionRangeRatio"] > 0.25

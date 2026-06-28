@@ -40,21 +40,22 @@ param(
     [switch]$UseSourceAsIs,
     [double]$SegmentStartSeconds = -1.0,
     [double]$SegmentEndSeconds = -1.0,
-    [string]$LlamaCppCommand = "C:\\Users\\gabri\\Downloads\\llama-b9555-bin-win-cuda-13.3-x64\\llama-mtmd-cli.exe",
     [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
     [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
     [string]$YouTubeCookies,
     [string]$YouTubeCookiesPath,
-    [switch]$UseLlamaCppServer,
-    [string]$LlamaCppServerCommand,
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-c1a1c8ee-cuda13.3-sm89-win-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 768,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
+    [bool]$LlamaCppDisableReasoning = $false,
+    [Nullable[int]]$LlamaCppReasoningBudget = 64,
+    [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [int]$LlamaCppImageMinTokens = 0,
     [int]$LlamaCppImageMaxTokens = 0,
     [double]$SegmentWindowSeconds = 5.0,
@@ -307,11 +308,9 @@ elseif (-not $SkipSegmentDetection) {
         -OutputSlug $ExerciseSlug `
         -Workspace $Workspace `
         -UseLiteRt:$UseLiteRt.IsPresent `
-        -LlamaCppCommand $LlamaCppCommand `
         -LlamaCppModel $LlamaCppModel `
         -LlamaCppMmproj $LlamaCppMmproj `
         -LlamaCppBackend $LlamaCppBackend `
-        -UseLlamaCppServer:$UseLlamaCppServer.IsPresent `
         -LlamaCppServerCommand $LlamaCppServerCommand `
         -LlamaCppServerPort $LlamaCppServerPort `
         -LlamaCppBaseUrl $LlamaCppBaseUrl `
@@ -319,6 +318,9 @@ elseif (-not $SkipSegmentDetection) {
         -LlamaCppTemperature $LlamaCppTemperature `
         -LlamaCppTopP $LlamaCppTopP `
         -LlamaCppTopK $LlamaCppTopK `
+        -LlamaCppDisableReasoning $LlamaCppDisableReasoning `
+        -LlamaCppReasoningBudget $LlamaCppReasoningBudget `
+        -LlamaCppReasoningBudgetMessage $LlamaCppReasoningBudgetMessage `
         -LlamaCppImageMinTokens $LlamaCppImageMinTokens `
         -LlamaCppImageMaxTokens $LlamaCppImageMaxTokens `
         -WindowSeconds $SegmentWindowSeconds `

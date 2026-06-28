@@ -9,6 +9,11 @@ import time
 from typing import Any, Iterable
 from urllib.request import urlretrieve
 
+from exercise_motion_pkg.target_motion import (
+    TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
+    observable_motion_spec_for_contract,
+    target_motion_profile_for_exercise,
+)
 from exercise_motion_pkg.video_utils import BasicVideoMetadata, read_basic_video_metadata
 
 
@@ -89,6 +94,8 @@ class PosePrefilterSettings:
     max_candidates: int = 8
     batch_size: int = DEFAULT_YOLO_BATCH_SIZE
     device: str | None = "cuda"
+    target_exercise_name: str | None = None
+    target_motion_contract: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -426,6 +433,7 @@ def score_pose_samples(
         "viewQualitySampleCount": best["viewQualitySampleCount"],
         "activeJoints": best["activeJoints"],
         "activeChains": best["activeChains"],
+        "targetMotionObservability": best["targetMotionObservability"],
         "sourceWindowIntegrity": best["sourceWindowIntegrity"],
         "timelineSourceIntegrity": timeline_integrity,
         "timelineIntegrityRequired": False,
@@ -478,6 +486,7 @@ def pose_valid_chunks_from_scored_windows(
                 "minRequiredJointsVisible": int(window.get("minRequiredJointsVisible", 0)),
                 "p10RequiredJointsVisible": float(window.get("p10RequiredJointsVisible", 0.0)),
                 "sourceWindowIntegrity": window.get("sourceWindowIntegrity"),
+                "targetMotionObservability": window.get("targetMotionObservability"),
                 "qualityIssues": list(window.get("qualityIssues", [])),
             }
         )
@@ -681,6 +690,10 @@ def score_pose_window(
             "frontalOrBackViewEvidence": 0.0,
             "activeJoints": [],
             "activeChains": [],
+            "targetMotionObservability": empty_target_pose_motion_observability(
+                settings.target_exercise_name,
+                contract=settings.target_motion_contract,
+            ),
         }
     significant_person_counts = [significant_person_count(sample, metadata=metadata) for sample in samples]
     single_person_ratio = sum(1 for count in significant_person_counts if count == 1) / len(samples)
@@ -700,6 +713,12 @@ def score_pose_window(
     )
     motion_strength = pose_motion_strength(present, metadata=metadata)
     active_quality = active_motion_reconstruction_quality(present, metadata=metadata)
+    target_motion = target_pose_motion_observability(
+        dominant,
+        metadata=metadata,
+        exercise_name=settings.target_exercise_name,
+        contract=settings.target_motion_contract,
+    )
     view_quality = pose_reconstruction_view_quality(present, metadata=metadata)
     score = clamp_unit(
         single_person_ratio * 0.15
@@ -744,6 +763,8 @@ def score_pose_window(
         blocking_issues.append("low_active_chain_visibility")
     if active_quality["bilateralActiveChainBalance"] < 0.55:
         blocking_issues.append("asymmetric_bilateral_active_chain_visibility")
+    if bool(target_motion.get("required")) and not bool(target_motion.get("passed", True)):
+        blocking_issues.append(TARGET_MOTION_PREFILTER_BLOCKING_ISSUE)
     if view_quality["frontalOrBackViewEvidence"] >= FRONTAL_VIEW_QUALITY_ISSUE_THRESHOLD:
         quality_issues.append("frontal_or_back_view")
     blocking_issues = dedupe_text(blocking_issues)
@@ -777,6 +798,7 @@ def score_pose_window(
         "viewQualitySampleCount": view_quality["viewQualitySampleCount"],
         "activeJoints": active_quality["activeJoints"],
         "activeChains": active_quality["activeChains"],
+        "targetMotionObservability": target_motion,
         "sourceWindowIntegrity": source_window_integrity,
     }
 
@@ -1095,6 +1117,329 @@ def active_motion_reconstruction_quality(
         "activeJoints": active_joints,
         "activeChains": active_chain_names,
     }
+
+
+def target_pose_motion_observability(
+    dominant: list[PoseDetection | None],
+    *,
+    metadata: BasicVideoMetadata,
+    exercise_name: str | None,
+    contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = target_motion_profile_for_exercise(exercise_name, contract=contract)
+    observable_spec = observable_motion_spec_for_contract(contract)
+    if profile is None and observable_spec is not None:
+        return target_pose_observable_motion_spec_observability(
+            dominant,
+            metadata=metadata,
+            spec=observable_spec,
+        )
+    if profile is None:
+        return empty_target_pose_motion_observability(exercise_name, contract=contract)
+    present = [detection for detection in dominant if detection is not None]
+    if len(present) < 3:
+        return {
+            "required": True,
+            "passed": False,
+            "profile": profile["profile"],
+            "target": profile["target"],
+            "failureReasons": ["too_few_pose_samples"],
+            "sampleCount": len(present),
+            "requiredJointMinVisibility": 0.0,
+            "distalVerticalRangeRatio": 0.0,
+            "distalRelativeVerticalRangeRatio": 0.0,
+            "proximalVerticalRangeRatio": 0.0,
+        }
+    if profile.get("profile") != "distal_leg_vertical_raise":
+        return {
+            "required": False,
+            "passed": True,
+            "profile": profile.get("profile"),
+            "target": profile.get("target"),
+            "skippedReasons": ["unsupported_target_motion_profile"],
+            "sampleCount": len(present),
+        }
+
+    body_height = max(1.0, median([detection.bbox[3] - detection.bbox[1] for detection in present]))
+    visibility_by_joint = joint_visibility_scores(present)
+    required_joints = [str(joint) for joint in profile.get("requiredPoseJoints", [])]
+    required_joint_min_visibility = min(
+        (visibility_by_joint.get(joint, 0.0) for joint in required_joints),
+        default=0.0,
+    )
+    distal_vertical_range = max(
+        joint_vertical_range_ratio(present, joint, body_height=body_height)
+        for joint in ("left_ankle", "right_ankle")
+    )
+    distal_relative_vertical_range = max(
+        joint_relative_vertical_range_ratio(present, distal, anchor, body_height=body_height)
+        for distal, anchor in (
+            ("left_ankle", "left_knee"),
+            ("right_ankle", "right_knee"),
+            ("left_ankle", "left_hip"),
+            ("right_ankle", "right_hip"),
+        )
+    )
+    proximal_vertical_range = max(
+        joint_vertical_range_ratio(present, joint, body_height=body_height)
+        for joint in ("left_knee", "right_knee", "left_hip", "right_hip")
+    )
+    min_visibility = float(profile["minPoseRequiredJointVisibility"])
+    min_distal_range = float(profile["minPoseDistalVerticalRangeRatio"])
+    min_relative_range = float(profile["minPoseDistalRelativeVerticalRangeRatio"])
+    failure_reasons: list[str] = []
+    if required_joint_min_visibility < min_visibility:
+        failure_reasons.append("low_required_target_joint_visibility")
+    if distal_vertical_range < min_distal_range and distal_relative_vertical_range < min_relative_range:
+        failure_reasons.append("weak_target_distal_vertical_motion")
+    return {
+        "required": True,
+        "passed": not failure_reasons,
+        "profile": profile["profile"],
+        "target": profile["target"],
+        "description": profile["description"],
+        "failureReasons": failure_reasons,
+        "sampleCount": len(present),
+        "requiredJointMinVisibility": required_joint_min_visibility,
+        "minRequiredJointVisibility": min_visibility,
+        "distalVerticalRangeRatio": distal_vertical_range,
+        "minDistalVerticalRangeRatio": min_distal_range,
+        "distalRelativeVerticalRangeRatio": distal_relative_vertical_range,
+        "minDistalRelativeVerticalRangeRatio": min_relative_range,
+        "proximalVerticalRangeRatio": proximal_vertical_range,
+    }
+
+
+GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO = 0.035
+
+
+def target_pose_observable_motion_spec_observability(
+    dominant: list[PoseDetection | None],
+    *,
+    metadata: BasicVideoMetadata,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    del metadata
+    present = [detection for detection in dominant if detection is not None]
+    if len(present) < 3:
+        return {
+            "required": True,
+            "passed": False,
+            "profile": None,
+            "target": "observable_motion_spec",
+            "observableMotionSpec": spec,
+            "failureReasons": ["too_few_pose_samples"],
+            "sampleCount": len(present),
+        }
+    body_height = max(1.0, median([detection.bbox[3] - detection.bbox[1] for detection in present]))
+    primary_regions = [str(region) for region in spec.get("primaryMovingRegions", [])]
+    reference_regions = [str(region) for region in spec.get("referenceRegions", [])]
+    axis = str(spec.get("primaryAxis") or "any")
+    pattern = str(spec.get("motionPattern") or "other")
+    moving_groups = pose_joint_groups_for_observable_regions(primary_regions)
+    reference_groups = pose_joint_groups_for_observable_regions(reference_regions)
+    primary_motion_range = max(
+        (
+            pose_joint_axis_range_ratio(present, group, body_height=body_height, axis=axis)
+            for group in moving_groups
+        ),
+        default=0.0,
+    )
+    relative_motion_range = max(
+        (
+            pose_joint_relative_axis_range_ratio(
+                present,
+                moving_group,
+                reference_group,
+                body_height=body_height,
+                axis=axis,
+            )
+            for moving_group in moving_groups
+            for reference_group in reference_groups
+        ),
+        default=0.0,
+    )
+    target_motion_range = max(primary_motion_range, relative_motion_range)
+    failure_reasons: list[str] = []
+    if not moving_groups:
+        failure_reasons.append("missing_observable_primary_moving_region")
+    if target_motion_range < GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO:
+        failure_reasons.append("weak_observable_target_motion")
+    return {
+        "required": True,
+        "passed": not failure_reasons,
+        "profile": None,
+        "target": "observable_motion_spec",
+        "observableMotionSpec": spec,
+        "failureReasons": failure_reasons,
+        "sampleCount": len(present),
+        "primaryMotionRegions": primary_regions,
+        "referenceRegions": reference_regions,
+        "primaryAxis": axis,
+        "motionPattern": pattern,
+        "primaryMotionRangeRatio": primary_motion_range,
+        "relativeMotionRangeRatio": relative_motion_range,
+        "targetMotionRangeRatio": target_motion_range,
+        "minTargetMotionRangeRatio": GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO,
+    }
+
+
+def pose_joint_groups_for_observable_regions(regions: Iterable[str]) -> list[tuple[str, ...]]:
+    groups: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for region in regions:
+        for group in pose_joint_groups_for_observable_region(str(region)):
+            if group not in seen:
+                groups.append(group)
+                seen.add(group)
+    return groups
+
+
+def pose_joint_groups_for_observable_region(region: str) -> list[tuple[str, ...]]:
+    if region == "torso":
+        return [
+            ("left_shoulder", "right_shoulder"),
+            ("left_hip", "right_hip"),
+        ]
+    if region == "head":
+        return [("nose",)]
+    if region == "shoulders":
+        return [("left_shoulder", "right_shoulder")]
+    if region == "upper_limb":
+        return [("left_wrist", "left_elbow"), ("right_wrist", "right_elbow")]
+    if region == "elbows":
+        return [("left_elbow",), ("right_elbow",)]
+    if region == "hands":
+        return [("left_wrist",), ("right_wrist",)]
+    if region == "hips":
+        return [("left_hip", "right_hip")]
+    if region == "lower_limb":
+        return [("left_ankle", "left_knee"), ("right_ankle", "right_knee")]
+    if region == "knees":
+        return [("left_knee",), ("right_knee",)]
+    if region == "feet":
+        return [("left_ankle",), ("right_ankle",)]
+    return []
+
+
+def pose_joint_axis_range_ratio(
+    detections: list[PoseDetection],
+    joints: tuple[str, ...],
+    *,
+    body_height: float,
+    axis: str,
+) -> float:
+    points = pose_joint_centers(detections, joints)
+    if len(points) < 3 or body_height <= 1e-6:
+        return 0.0
+    if axis == "vertical":
+        values = [point[1] for point in points]
+    elif axis == "horizontal":
+        values = [point[0] for point in points]
+    else:
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        return math.sqrt((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) / body_height
+    return (max(values) - min(values)) / body_height
+
+
+def pose_joint_relative_axis_range_ratio(
+    detections: list[PoseDetection],
+    joints: tuple[str, ...],
+    anchor_joints: tuple[str, ...],
+    *,
+    body_height: float,
+    axis: str,
+) -> float:
+    if body_height <= 1e-6:
+        return 0.0
+    values: list[float] = []
+    for detection in detections:
+        point = pose_joint_center(detection, joints)
+        anchor = pose_joint_center(detection, anchor_joints)
+        if point is None or anchor is None:
+            continue
+        dx = point[0] - anchor[0]
+        dy = point[1] - anchor[1]
+        if axis == "vertical":
+            values.append(dy)
+        elif axis == "horizontal":
+            values.append(dx)
+        else:
+            values.append(math.sqrt(dx * dx + dy * dy))
+    if len(values) < 3:
+        return 0.0
+    return (max(values) - min(values)) / body_height
+
+
+def pose_joint_centers(
+    detections: list[PoseDetection],
+    joints: tuple[str, ...],
+) -> list[tuple[float, float]]:
+    centers: list[tuple[float, float]] = []
+    for detection in detections:
+        center = pose_joint_center(detection, joints)
+        if center is not None:
+            centers.append(center)
+    return centers
+
+
+def pose_joint_center(
+    detection: PoseDetection,
+    joints: tuple[str, ...],
+) -> tuple[float, float] | None:
+    points = [detection.keypoints[joint] for joint in joints if joint in detection.keypoints]
+    if not points:
+        return None
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
+
+
+def empty_target_pose_motion_observability(
+    exercise_name: str | None,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = target_motion_profile_for_exercise(exercise_name, contract=contract)
+    return {
+        "required": False,
+        "passed": True,
+        "profile": profile.get("profile") if profile is not None else None,
+        "target": profile.get("target") if profile is not None else None,
+        "skippedReasons": ["no_target_motion_profile"],
+    }
+
+
+def joint_vertical_range_ratio(
+    detections: list[PoseDetection],
+    joint: str,
+    *,
+    body_height: float,
+) -> float:
+    values = [point[1] for detection in detections if (point := detection.keypoints.get(joint)) is not None]
+    if len(values) < 3 or body_height <= 1e-6:
+        return 0.0
+    return (max(values) - min(values)) / body_height
+
+
+def joint_relative_vertical_range_ratio(
+    detections: list[PoseDetection],
+    joint: str,
+    anchor: str,
+    *,
+    body_height: float,
+) -> float:
+    values = [
+        point[1] - anchor_point[1]
+        for detection in detections
+        if (point := detection.keypoints.get(joint)) is not None
+        and (anchor_point := detection.keypoints.get(anchor)) is not None
+    ]
+    if len(values) < 3 or body_height <= 1e-6:
+        return 0.0
+    return (max(values) - min(values)) / body_height
 
 
 def pose_reconstruction_view_quality(
