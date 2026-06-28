@@ -65,7 +65,6 @@ import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -297,9 +296,6 @@ fun WorkoutSelectionScreen(
         }
     ) { contentPadding ->
         Box {
-            // Sync status badge (non-blocking)
-            SyncStatusBadge(viewModel = viewModel)
-            
             TransformingLazyColumn(
                 contentPadding = contentPadding,
                 state = state
