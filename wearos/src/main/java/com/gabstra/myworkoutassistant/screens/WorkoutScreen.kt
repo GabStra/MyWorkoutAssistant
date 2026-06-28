@@ -47,7 +47,6 @@ import com.gabstra.myworkoutassistant.composables.HeartRateExternal
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.HrStatusBadge
-import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
 import com.gabstra.myworkoutassistant.composables.TopOverlayHost
@@ -714,7 +713,6 @@ fun WorkoutScreen(
             //SyncStatusBadge(viewModel = viewModel)
 
             // HR target indicators (non-blocking)
-            HrTargetGlowEffect(isVisible = hrStatus != null)
             HrStatusBadge(hrStatus = hrStatus)
 
             TopOverlayHost(controller = topOverlayController)

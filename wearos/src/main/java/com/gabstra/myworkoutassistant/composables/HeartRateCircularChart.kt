@@ -2,11 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,21 +41,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.min
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -97,97 +87,6 @@ enum class HeartRateStatus {
     HIGHER_THAN_TARGET,
     LOWER_THAN_TARGET,
     OUT_OF_MAX,
-}
-
-@Composable
-fun HrTargetGlowEffect(
-    isVisible: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val density = LocalDensity.current
-    val infiniteTransition = rememberInfiniteTransition(label = "glow")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, delayMillis = 0),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
-    val visibilityAlpha by animateFloatAsState(
-        targetValue = if (isVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 300),
-        label = "visibilityAlpha"
-    )
-
-    if (isVisible || visibilityAlpha > 0f) {
-        BoxWithConstraints(
-            modifier = modifier
-                .fillMaxSize()
-        ) {
-            val diameter = min(maxWidth, maxHeight)
-            val radiusPx = with(density) { (diameter / 2f).toPx() }
-            val center = Offset(radiusPx, radiusPx)
-            val glowWidth = with(density) { 15.dp.toPx() }
-
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(visibilityAlpha)
-            ) {
-                if (isVisible) {
-                    // Draw circular glow border with radial fade inward
-                    val outerRadius = radiusPx
-                    val fadeDistance = glowWidth * 1.5f // Fade distance proportional to glow width
-                    val innerRadius = (outerRadius - fadeDistance).coerceAtLeast(0f)
-                    
-                    // Calculate gradient stops (0.0 = center, 1.0 = edge)
-                    // We want red at the outer edge and transparent at inner radius
-                    val innerStop = if (outerRadius > 0f) innerRadius / outerRadius else 0f
-                    val redColor = Red.copy(alpha = glowAlpha * visibilityAlpha)
-                    
-                    // Create radial gradient: red at outer edge, transparent at inner radius
-                    val gradient = Brush.radialGradient(
-                        innerStop to Color.Transparent,
-                        1.0f to redColor,
-                        center = center,
-                        radius = outerRadius
-                    )
-                    
-                    // Draw ring shape using path
-                    val ringPath = Path().apply {
-                        // Outer circle
-                        addOval(
-                            Rect(
-                                center.x - outerRadius,
-                                center.y - outerRadius,
-                                center.x + outerRadius,
-                                center.y + outerRadius
-                            )
-                        )
-                        // Inner circle (counter-clockwise to create hole)
-                        addOval(
-                            Rect(
-                                center.x - innerRadius,
-                                center.y - innerRadius,
-                                center.x + innerRadius,
-                                center.y + innerRadius
-                            )
-                        )
-                        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
-                    }
-                    
-                    // Draw the ring with radial gradient
-                    drawPath(
-                        path = ringPath,
-                        brush = gradient
-                    )
-                }
-            }
-        }
-    }
 }
 
 @Composable
