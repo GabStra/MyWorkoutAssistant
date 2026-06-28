@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -212,7 +214,11 @@ fun WeightSetScreen(
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val typography = MaterialTheme.typography
-    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
+    val itemStyle = remember(typography) {
+        typography.numeralSmall
+            .compactExerciseSetValueStyle()
+            .copy(fontWeight = FontWeight.Medium)
+    }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -519,7 +525,8 @@ fun WeightSetScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(if (isInEditMode) 0f else 1f),
+                    .alpha(if (isInEditMode) 0f else 1f)
+                    .verticalScroll(rememberScrollState(), enabled = !isInEditMode),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Top
             ) {
@@ -567,7 +574,7 @@ fun WeightSetScreen(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 SetScreen(
                     customModifier = Modifier
                 )

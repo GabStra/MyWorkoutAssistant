@@ -4,6 +4,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -144,7 +146,9 @@ fun EnduranceSetScreen (
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle =  MaterialTheme.typography.numeralSmall
+    val itemStyle = remember(typography) {
+        typography.numeralSmall.compactExerciseSetValueStyle()
+    }
 
     fun pauseRunningTimerForEditMode() {
         val setData = state.currentSetData as? EnduranceSetData ?: return
@@ -598,7 +602,9 @@ fun EnduranceSetScreen (
                 )
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Column(
@@ -622,6 +628,7 @@ fun EnduranceSetScreen (
             message = "End this timed set now?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
+                showStopDialog = false
                 markSetExecuted()
                 onTimerDisabled()
                 onTimerEnd()
@@ -631,7 +638,11 @@ fun EnduranceSetScreen (
                 showStopDialog = false
                 startTimer()
             },
-            handleOnAutomaticClose = {},
+            closeTimerInMillis = 5000,
+            handleOnAutomaticClose = {
+                showStopDialog = false
+                startTimer()
+            },
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)
