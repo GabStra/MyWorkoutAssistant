@@ -76,21 +76,60 @@ fun CustomDialogYesOnLongPress(
     var confirmHoldJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberWearCoroutineScope()
     val holdProgress = remember { Animatable(0f) }
+    val latestHandleNoClick by rememberUpdatedState(handleNoClick)
     val latestHandleYesClick by rememberUpdatedState(handleYesClick)
+    val latestHandleOnAutomaticClose by rememberUpdatedState(handleOnAutomaticClose)
 
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
+    var hasHandledDialogAction by remember { mutableStateOf(false) }
+
+    fun cancelAutomaticCloseTimer() {
+        closeDialogJob?.cancel()
+        closeDialogJob = null
+    }
+
+    fun cancelConfirmHold() {
+        confirmHoldJob?.cancel()
+        confirmHoldJob = null
+    }
+
+    fun runNoClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
+        latestHandleNoClick()
+    }
+
+    fun runAutomaticClose() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelConfirmHold()
+        latestHandleOnAutomaticClose()
+    }
+
+    fun runYesClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        latestHandleYesClick()
+    }
 
     fun startAutomaticCloseTimer() {
-        closeDialogJob?.cancel()
+        cancelAutomaticCloseTimer()
         closeDialogJob = coroutineScope.launch {
             delay(closeTimerInMillis)
-            handleOnAutomaticClose()
+            runAutomaticClose()
         }
     }
 
     LaunchedEffect(show) {
         if (show) {
             hasBeenShownOnce = true
+            hasHandledDialogAction = false
+        } else {
+            cancelAutomaticCloseTimer()
+            cancelConfirmHold()
         }
 
         if (hasBeenShownOnce) {
@@ -107,8 +146,8 @@ fun CustomDialogYesOnLongPress(
     }
 
     fun startConfirmHold() {
-        closeDialogJob?.cancel()
-        confirmHoldJob?.cancel()
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
         hasBeenPressedLongEnough = false
         confirmHoldJob = coroutineScope.launch {
             holdProgress.snapTo(0f)
@@ -122,7 +161,7 @@ fun CustomDialogYesOnLongPress(
 
             if (show && !hasBeenPressedLongEnough) {
                 hasBeenPressedLongEnough = true
-                latestHandleYesClick()
+                runYesClick()
                 holdProgress.snapTo(0f)
             }
         }
@@ -212,8 +251,7 @@ fun CustomDialogYesOnLongPress(
                                 buttonSize = 50.dp,
                                 hitBoxScale = 1.25f,
                                 onClick = {
-                                    closeDialogJob?.cancel()
-                                    handleNoClick()
+                                    runNoClick()
                                 },
                                 buttonModifier = Modifier.clip(CircleShape)
                             ) {
