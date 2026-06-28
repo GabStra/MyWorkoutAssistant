@@ -2,10 +2,12 @@ package com.gabstra.myworkoutassistant.data
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattConnectionSettings
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
@@ -129,6 +131,7 @@ private class WhoopBleClient(
 ) : HrBpmSource {
     companion object {
         private const val TAG = "WhoopBleClient"
+        private const val GATT_CONNECTION_SETTINGS_API = 37
         private val HEART_RATE_SERVICE_UUID =
             UUID.fromString("0000180D-0000-1000-8000-00805F9B34FB")
         private val HEART_RATE_MEASUREMENT_UUID =
@@ -247,7 +250,34 @@ private class WhoopBleClient(
 
     @SuppressLint("MissingPermission")
     private fun connectGatt(device: BluetoothDevice): BluetoothGatt? {
-        return device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        return if (Build.VERSION.SDK_INT >= GATT_CONNECTION_SETTINGS_API) {
+            connectGattWithConnectionSettings(device)
+        } else {
+            connectGattLegacy(device)
+        }
+    }
+
+    @TargetApi(GATT_CONNECTION_SETTINGS_API)
+    @SuppressLint("MissingPermission")
+    private fun connectGattWithConnectionSettings(device: BluetoothDevice): BluetoothGatt? {
+        val settings = BluetoothGattConnectionSettings.Builder()
+            .setAutoConnectEnabled(false)
+            .setTransport(BluetoothDevice.TRANSPORT_LE)
+            .build()
+        return device.connectGatt(settings, context.mainExecutor, gattCallback)
+    }
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission")
+    private fun connectGattLegacy(device: BluetoothDevice): BluetoothGatt? {
+        return device.connectGatt(
+            context,
+            false,
+            gattCallback,
+            BluetoothDevice.TRANSPORT_LE,
+            BluetoothDevice.PHY_LE_1M_MASK,
+            handler
+        )
     }
 
     @SuppressLint("MissingPermission")
