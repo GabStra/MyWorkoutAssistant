@@ -188,6 +188,5 @@ abstract class BaseExternalHeartRateViewModel(
 
     override fun onCleared() {
         releaseDeviceConnection()
-        super.onCleared()
     }
 }

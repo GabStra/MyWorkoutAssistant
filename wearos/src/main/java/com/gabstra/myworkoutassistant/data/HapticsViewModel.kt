@@ -140,7 +140,9 @@ class HapticsViewModel(
         }
     }
 
-    override fun onCleared() { super.onCleared(); haptics.release() }
+    override fun onCleared() {
+        haptics.release()
+    }
 }
 
 class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvider.Factory {
