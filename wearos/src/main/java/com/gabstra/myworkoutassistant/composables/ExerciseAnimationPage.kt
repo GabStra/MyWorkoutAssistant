@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.compose.material3.MaterialTheme
@@ -39,6 +40,16 @@ fun ExerciseAnimationPage(
 
     val context = LocalContext.current
     val isInspectionMode = LocalInspectionMode.current
+    if (isInspectionMode) {
+        WearSkeletonMotionPreview(
+            skeletonJson = rememberInspectionSkeletonJson(),
+            modifier = modifier.fillMaxSize(),
+            animated = true,
+            orbitView = true,
+        )
+        return
+    }
+
     val movementJson by produceState<String?>(initialValue = null, movementRef) {
         while (true) {
             val loadedJson = withContext(Dispatchers.IO) {
@@ -62,15 +73,6 @@ fun ExerciseAnimationPage(
             )
         }
 
-        isInspectionMode -> {
-            WearSkeletonMotionPreview(
-                skeletonJson = rememberInspectionSkeletonJson(),
-                modifier = modifier.fillMaxSize(),
-                animated = true,
-                orbitView = true,
-            )
-        }
-
         else -> {
             MovementStatusMessage(
                 text = "Movement syncing",
@@ -82,10 +84,10 @@ fun ExerciseAnimationPage(
 
 @Composable
 private fun rememberInspectionSkeletonJson(): String {
-    val context = LocalContext.current
-    return remember(context) {
+    val resources = LocalResources.current
+    return remember(resources) {
         runCatching {
-            context.resources.openRawResource(R.raw.pull_up_preview_skeleton)
+            resources.openRawResource(R.raw.pull_up_preview_skeleton)
                 .bufferedReader()
                 .use { it.readText() }
         }.getOrDefault(InspectionSkeletonJson)
