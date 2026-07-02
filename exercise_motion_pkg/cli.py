@@ -235,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--frames-dir", required=True)
     detect.add_argument("--exercise-name")
     detect.add_argument("--llama-cpp-backend", default="gpu")
-    detect.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    detect.add_argument("--llama-cpp-n-predict", type=int, default=512)
     detect.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     detect.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     detect.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
@@ -288,7 +288,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for cached low-resolution YouTube previews shared by YOLO and VLM ranking.",
     )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
-    youtube_search.add_argument("--metadata-candidate-pool-size", type=int)
     youtube_search.add_argument(
         "--candidate-review-batch-size",
         type=int,
@@ -301,8 +300,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Stop batched YouTube candidate review once this many suitable reviewed candidates are found.",
     )
-    youtube_search.add_argument("--min-duration-seconds", type=int, default=10)
+    youtube_search.add_argument(
+        "--min-duration-seconds",
+        type=int,
+        default=0,
+        help="Minimum YouTube video duration in seconds. 0 disables the lower duration filter.",
+    )
     youtube_search.add_argument("--max-duration-seconds", type=int, default=120)
+    youtube_search.add_argument(
+        "--single-exercise-name-query",
+        action="store_true",
+        help="Search YouTube with exactly one query: the resolved exercise name.",
+    )
     youtube_search.add_argument(
         "--use-deepseek-query-planner",
         action="store_true",
@@ -333,15 +342,29 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int)
     youtube_search.add_argument("--semantic-gate-max-candidates-per-exercise", type=int, default=200)
     youtube_search.add_argument("--semantic-gate-min-score", type=float, default=0.55)
+    youtube_search.add_argument(
+        "--semantic-gate-duration-rank-weight",
+        type=float,
+        default=0.15,
+        help=(
+            "Weight of the short-video duration preference in semantic-gate ranking. "
+            "0 disables duration ranking; pass/fail still uses the raw semantic score."
+        ),
+    )
+    youtube_search.add_argument(
+        "--semantic-gate-llm-workers",
+        type=int,
+        help="Parallel llama.cpp workers for the text-only semantic gate. Defaults to min(--vision-llm-workers, 4).",
+    )
     youtube_search.add_argument("--pose-prefilter", action="store_true", help="Use YOLO pose as a fast visual prefilter before optional VLM ranking.")
     youtube_search.add_argument("--pose-prefilter-model", default="yolo26x-pose.pt")
     youtube_search.add_argument("--pose-prefilter-candidates-per-exercise", type=int)
-    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=0.0)
-    youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=0.0)
+    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=2.0)
+    youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=32.0)
     youtube_search.add_argument(
         "--pose-prefilter-scan-strategy",
         choices=["prefix", "spread", "full"],
-        default="full",
+        default="spread",
         help=(
             "YOLO sampling strategy. 'full' scans the whole video timeline; "
             "'prefix' samples only the start of each video; 'spread' spends a fixed sample budget "
@@ -353,8 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--pose-prefilter-min-score", type=float, default=0.45)
     youtube_search.add_argument("--pose-prefilter-min-keypoint-confidence", type=float, default=0.35)
     youtube_search.add_argument("--pose-prefilter-min-body-scale", type=float, default=0.18)
-    youtube_search.add_argument("--pose-prefilter-workers", type=int, default=3)
-    youtube_search.add_argument("--pose-prefilter-device", default="cuda")
+    youtube_search.add_argument("--pose-prefilter-workers", type=int, default=1)
+    youtube_search.add_argument(
+        "--pose-prefilter-device",
+        default="cuda",
+        help="CUDA device selector for YOLO pose prefiltering. CPU/off are not supported; use --skip-pose-prefilter to disable it.",
+    )
     youtube_search.add_argument("--pose-prefilter-batch-size", type=int, default=16)
     youtube_search.add_argument("--vision-candidates-per-exercise", type=int, default=8)
     youtube_search.add_argument(
@@ -371,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--no-vision-adaptive-chunk-review", action="store_true")
     youtube_search.add_argument("--vision-initial-chunks-per-candidate", type=int, default=3)
-    youtube_search.add_argument("--vision-expand-chunks-per-candidate", type=int, default=2)
+    youtube_search.add_argument("--vision-expand-chunks-per-candidate", type=int, default=5)
     youtube_search.add_argument("--vision-motion-scan-sample-fps", type=float, default=0.5)
     youtube_search.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
     youtube_search.add_argument("--vision-download-workers", type=int, default=8)
@@ -388,7 +415,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-server-command")
     youtube_search.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     youtube_search.add_argument("--llama-cpp-backend", default="gpu")
-    youtube_search.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    youtube_search.add_argument("--llama-cpp-n-predict", type=int, default=512)
     youtube_search.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     youtube_search.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     youtube_search.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
@@ -401,6 +428,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
+    youtube_search.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int)
     youtube_search.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
     youtube_search.add_argument("--llama-cpp-batch-size", type=int)
     youtube_search.add_argument("--llama-cpp-ubatch-size", type=int)
@@ -495,6 +523,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a YouTube cookies.txt file for source downloads.",
     )
     bake_and_rank.add_argument(
+        "--youtube-source-cache-dir",
+        type=Path,
+        help=(
+            "Directory for cached low-resolution YouTube source downloads used by bake retries. "
+            "Defaults to a youtube-source-cache folder next to the candidates JSON."
+        ),
+    )
+    bake_and_rank.add_argument(
+        "--youtube-preview-cache-dir",
+        type=Path,
+        help="Directory for cached low-resolution YouTube previews populated by discovery.",
+    )
+    bake_and_rank.add_argument(
         "--no-reuse-wham-cache",
         action="store_true",
         help="Run WHAM even when raw/wham/<input-video-stem>/wham_output.pkl already exists.",
@@ -506,6 +547,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--wham-docker-gpus", default="all")
     bake_and_rank.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    bake_and_rank.add_argument(
+        "--warm-wham-worker",
+        action="store_true",
+        help="Submit WHAM jobs to a pre-started warm WHAM worker instead of launching demo.py per candidate.",
+    )
+    bake_and_rank.add_argument(
+        "--wham-worker-session-dir",
+        type=Path,
+        help="Host session directory mounted into the warm WHAM worker.",
+    )
+    bake_and_rank.add_argument(
+        "--wham-worker-mount-root",
+        type=Path,
+        help="Host workspace root mounted as /workspace inside the warm WHAM worker.",
+    )
+    bake_and_rank.add_argument(
+        "--wham-worker-timeout-seconds",
+        type=float,
+        help="Maximum seconds to wait for one warm WHAM worker job.",
+    )
     bake_and_rank.add_argument(
         "--estimate-local-only",
         action="store_true",
@@ -558,9 +619,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the source contact-sheet complete-movement gate before running WHAM.",
     )
     bake_and_rank.add_argument(
-        "--no-pre-wham-source-contract",
+        "--no-exercise-motion-contract",
         action="store_true",
-        help="Do not generate/use an exercise-specific motion contract in the pre-WHAM source gate.",
+        help="Do not generate/use the exercise-specific motion contract for source and skeleton validation.",
     )
     bake_and_rank.add_argument(
         "--spinepose-json-dir",
@@ -615,11 +676,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum skeleton-prefiltered preview chunks to send to the visual ranker per baked item. Use 0 to review all chunks.",
     )
     bake_and_rank.add_argument(
-        "--no-movement-cut-exercise-contract",
-        action="store_true",
-        help="Do not include the generated exercise-motion contract in movement-cut source-window prompts.",
-    )
-    bake_and_rank.add_argument(
         "--max-selected-results",
         type=int,
         default=1,
@@ -642,13 +698,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum VLM-suggested preview settings variants to bake in --adaptive-preview-settings mode. The baseline is always included.",
     )
     bake_and_rank.add_argument("--min-selected-score", type=float, default=0.55)
+    bake_and_rank.add_argument(
+        "--final-output-validation",
+        action="store_true",
+        help="Run a final VLM validation pass on the actual selected Wear preview before accepting it.",
+    )
+    bake_and_rank.add_argument(
+        "--skip-final-output-validation",
+        action="store_true",
+        help="Disable final VLM validation even if a wrapper enables it by default.",
+    )
+    bake_and_rank.add_argument(
+        "--final-output-validation-min-score",
+        type=float,
+        default=0.70,
+        help="Minimum final-output validator score required for automatic acceptance.",
+    )
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     bake_and_rank.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     bake_and_rank.add_argument("--llama-cpp-server-command")
     bake_and_rank.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
     bake_and_rank.add_argument("--llama-cpp-backend", default="gpu")
-    bake_and_rank.add_argument("--llama-cpp-n-predict", type=int, default=768)
+    bake_and_rank.add_argument("--llama-cpp-n-predict", type=int, default=512)
     bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
     bake_and_rank.add_argument("--llama-cpp-top-p", type=float, default=DEFAULT_LLAMA_CPP_TOP_P)
     bake_and_rank.add_argument("--llama-cpp-top-k", type=int, default=DEFAULT_LLAMA_CPP_TOP_K)
@@ -677,6 +749,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--no-llama-cpp-cont-batching", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-image-min-tokens", type=int)
     bake_and_rank.add_argument("--llama-cpp-image-max-tokens", type=int)
+    bake_and_rank.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int)
     bake_and_rank.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     bake_and_rank.add_argument(
         "--keep-llama-cpp-server",
@@ -1085,11 +1158,11 @@ def main() -> None:
                 youtube_preview_cache_dir=preview_cache_dir,
                 excluded_candidate_keys=excluded_candidate_keys,
                 max_candidates=args.max_candidates,
-                metadata_candidate_pool_size=args.metadata_candidate_pool_size,
                 candidate_review_batch_size=args.candidate_review_batch_size,
                 candidate_review_target_suitable_count=args.candidate_review_target_suitable_count,
                 min_duration_seconds=args.min_duration_seconds,
                 max_duration_seconds=args.max_duration_seconds,
+                single_exercise_name_query=args.single_exercise_name_query,
                 use_deepseek_query_planner=args.use_deepseek_query_planner,
                 use_llama_cpp_query_planner=args.use_llama_cpp_query_planner,
                 exercise_name_rewrite_enabled=not args.no_exercise_name_rewrite,
@@ -1103,6 +1176,8 @@ def main() -> None:
                 semantic_gate_candidates_per_exercise=args.semantic_gate_candidates_per_exercise,
                 semantic_gate_max_candidates_per_exercise=args.semantic_gate_max_candidates_per_exercise,
                 semantic_gate_min_score=args.semantic_gate_min_score,
+                semantic_gate_duration_rank_weight=args.semantic_gate_duration_rank_weight,
+                semantic_gate_llm_workers=args.semantic_gate_llm_workers,
                 pose_prefilter_enabled=args.pose_prefilter,
                 pose_prefilter_model=args.pose_prefilter_model,
                 pose_prefilter_candidates_per_exercise=args.pose_prefilter_candidates_per_exercise,
@@ -1145,6 +1220,7 @@ def main() -> None:
                 llama_cpp_reasoning_budget_message=args.llama_cpp_reasoning_budget_message,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
+                llama_cpp_mtmd_batch_max_tokens=args.llama_cpp_mtmd_batch_max_tokens,
                 llama_cpp_ctx_size=args.llama_cpp_ctx_size,
                 llama_cpp_batch_size=args.llama_cpp_batch_size,
                 llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,
@@ -1185,6 +1261,8 @@ def main() -> None:
                 wham_repo_path=Path(args.wham_repo_path),
                 body_model_root=Path(args.body_model_root),
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
+                youtube_source_cache_dir=args.youtube_source_cache_dir,
+                youtube_preview_cache_dir=args.youtube_preview_cache_dir,
                 fallback_candidates=args.fallback_candidates,
                 max_source_window_attempts=args.max_source_window_attempts,
                 candidate_workers=args.candidate_workers,
@@ -1194,6 +1272,10 @@ def main() -> None:
                 wham_docker_image=args.wham_docker_image,
                 wham_docker_gpus=args.wham_docker_gpus,
                 wham_docker_shm_size=args.wham_docker_shm_size,
+                use_warm_wham_worker=args.warm_wham_worker,
+                wham_worker_session_dir=args.wham_worker_session_dir,
+                wham_worker_mount_root=args.wham_worker_mount_root,
+                wham_worker_timeout_seconds=args.wham_worker_timeout_seconds,
                 wham_estimate_local_only=args.estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_smplify,
                 spinepose_enabled=spinepose_enabled,
@@ -1231,17 +1313,20 @@ def main() -> None:
                 pre_wham_source_validation=(
                     args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
                 ),
-                pre_wham_source_contract_enabled=not args.no_pre_wham_source_contract,
+                exercise_motion_contract_enabled=not args.no_exercise_motion_contract,
                 review_frames=args.review_frames,
                 review_llm_workers=args.review_llm_workers,
                 max_llm_review_items=args.max_llm_review_items,
                 max_review_windows=args.max_review_windows,
-                movement_cut_exercise_contract_enabled=not args.no_movement_cut_exercise_contract,
                 max_selected_results=args.max_selected_results,
                 rank_preview_variants=args.rank_preview_variants,
                 adaptive_preview_settings=args.adaptive_preview_settings,
                 max_adaptive_preview_settings=args.max_adaptive_preview_settings,
                 min_selected_score=args.min_selected_score,
+                final_output_validation=(
+                    args.final_output_validation and not args.skip_final_output_validation
+                ),
+                final_output_validation_min_score=args.final_output_validation_min_score,
                 motion_tuning_enabled=not args.skip_motion_tuning,
                 classify_support_dominance=not args.no_classify_support_dominance,
                 llama_cpp_base_url=args.llama_cpp_base_url,
@@ -1274,6 +1359,7 @@ def main() -> None:
                 llama_cpp_cont_batching=not args.no_llama_cpp_cont_batching,
                 llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
+                llama_cpp_mtmd_batch_max_tokens=args.llama_cpp_mtmd_batch_max_tokens,
                 llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
                 keep_llama_cpp_server=args.keep_llama_cpp_server,
                 llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,

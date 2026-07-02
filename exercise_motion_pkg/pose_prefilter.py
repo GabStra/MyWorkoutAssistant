@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import threading
 import time
 from typing import Any, Iterable
 from urllib.request import urlretrieve
@@ -71,21 +72,38 @@ FRONTAL_VIEW_SHOULDER_WIDTH_LOW = 0.14
 FRONTAL_VIEW_SHOULDER_WIDTH_HIGH = 0.22
 FRONTAL_VIEW_HIP_WIDTH_LOW = 0.08
 FRONTAL_VIEW_HIP_WIDTH_HIGH = 0.15
-FRONTAL_VIEW_QUALITY_ISSUE_THRESHOLD = 0.55
 CLEAR_VALID_CHUNK_MIN_SCORE = 0.68
 DEFAULT_YOLO_BATCH_SIZE = 16
+_YOLO_MODEL_THREAD_LOCAL = threading.local()
 
 
 class YoloDeviceUnavailableError(RuntimeError):
     """Raised when YOLO is configured for GPU execution but CUDA is unavailable."""
 
 
+def normalize_yolo_cuda_device(configured_device: str | None) -> str:
+    device = "cuda" if configured_device is None else str(configured_device).strip()
+    if not device:
+        device = "cuda"
+    lowered = device.lower()
+    if lowered in {"cuda", "gpu"}:
+        return "cuda"
+    if lowered == "0":
+        return "0"
+    if lowered.startswith("cuda:") and lowered[5:].isdigit():
+        return lowered
+    raise ValueError(
+        "YOLO pose prefilter must use CUDA. Set --pose-prefilter-device cuda or cuda:0, "
+        "or disable the prefilter with --skip-pose-prefilter."
+    )
+
+
 @dataclass(frozen=True)
 class PosePrefilterSettings:
     model: str = "yolo26x-pose.pt"
-    sample_fps: float = 0.0
-    max_seconds: float = 0.0
-    scan_strategy: str = "full"
+    sample_fps: float = 1.0
+    max_seconds: float = 32.0
+    scan_strategy: str = "spread"
     window_seconds: float = 8.0
     overlap_seconds: float = 4.0
     min_score: float = 0.45
@@ -96,6 +114,9 @@ class PosePrefilterSettings:
     device: str | None = "cuda"
     target_exercise_name: str | None = None
     target_motion_contract: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "device", normalize_yolo_cuda_device(self.device))
 
 
 @dataclass(frozen=True)
@@ -131,19 +152,12 @@ def run_yolo_pose_prefilter(
         raise RuntimeError(
             "opencv-python is required for YOLO pose prefiltering. Install with: pip install -e .[motion]"
         ) from exc
-    try:
-        from ultralytics import YOLO  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError(
-            "ultralytics is required for YOLO pose prefiltering. Install with: pip install -e .[motion]"
-        ) from exc
-
     metadata = read_basic_video_metadata(video_path)
     if metadata.fps <= 0 or metadata.frame_count <= 0:
         return empty_pose_prefilter_result("pose_prefilter_no_video_metadata")
     model_path = resolve_pose_model_path(settings.model)
-    model = YOLO(model_path)
     device = resolve_yolo_device(settings.device)
+    model = load_thread_local_yolo_pose_model(model_path)
     samples: list[PoseSample] = []
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -186,6 +200,8 @@ def run_yolo_pose_prefilter(
     payload["resolvedModelPath"] = model_path
     payload["scanStrategy"] = normalize_pose_scan_strategy(settings.scan_strategy)
     payload["sampledFrameCount"] = len(samples)
+    payload["dominantPoseSamples"] = dominant_pose_samples_payload(samples, metadata=metadata)
+    payload["dominantPoseSampleCoordinateSpace"] = "normalized_image_xy"
     payload["sampledWindows"] = sampled_windows
     payload["sampledWindowCount"] = len(sampled_windows)
     payload["device"] = device or "auto"
@@ -198,22 +214,77 @@ def run_yolo_pose_prefilter(
     )
 
 
+def dominant_pose_samples_payload(
+    samples: list[PoseSample],
+    *,
+    metadata: BasicVideoMetadata,
+) -> list[dict[str, Any]]:
+    width = max(1.0, float(metadata.width))
+    height = max(1.0, float(metadata.height))
+    payload: list[dict[str, Any]] = []
+    for sample in samples:
+        detection = select_dominant_detection(sample, metadata=metadata)
+        if detection is None:
+            continue
+        keypoints: dict[str, list[float]] = {}
+        for name, point in detection.keypoints.items():
+            if len(point) < 3:
+                continue
+            keypoints[str(name)] = [
+                clamp_unit(float(point[0]) / width),
+                clamp_unit(float(point[1]) / height),
+                clamp_unit(float(point[2])),
+            ]
+        if not keypoints:
+            continue
+        x1, y1, x2, y2 = detection.bbox
+        payload.append(
+            {
+                "timeSeconds": float(sample.time_seconds),
+                "confidence": clamp_unit(float(detection.confidence)),
+                "bbox": [
+                    clamp_unit(float(x1) / width),
+                    clamp_unit(float(y1) / height),
+                    clamp_unit(float(x2) / width),
+                    clamp_unit(float(y2) / height),
+                ],
+                "keypoints": keypoints,
+            }
+        )
+    return payload
+
+
+def load_thread_local_yolo_pose_model(model_path: str) -> Any:
+    key = str(model_path)
+    cache = getattr(_YOLO_MODEL_THREAD_LOCAL, "models", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        _YOLO_MODEL_THREAD_LOCAL.models = cache
+    model = cache.get(key)
+    if model is None:
+        model = construct_yolo_pose_model(key)
+        cache[key] = model
+    return model
+
+
+def construct_yolo_pose_model(model_path: str) -> Any:
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "ultralytics is required for YOLO pose prefiltering. Install with: pip install -e .[motion]"
+        ) from exc
+    return YOLO(model_path)
+
+
 def resolve_yolo_device(configured_device: str | None) -> str | None:
-    if configured_device is not None and str(configured_device).strip():
-        device = str(configured_device).strip()
-        if device.lower() in {"cuda", "gpu", "0"} and not torch_cuda_available():
-            raise YoloDeviceUnavailableError(
-                "YOLO pose prefilter is configured for CUDA, but the selected Python environment "
-                "has CPU-only Torch or cannot see the NVIDIA GPU. Use a CUDA Torch Python, or pass "
-                "--pose-prefilter-device cpu only for an explicit slow debug run."
-            )
-        return "0" if device.lower() in {"cuda", "gpu"} else device
+    device = normalize_yolo_cuda_device(configured_device)
     if torch_cuda_available():
-        return "0"
+        return "0" if device == "cuda" else device
     raise YoloDeviceUnavailableError(
-        "YOLO pose prefilter requires a CUDA-capable Torch environment by default. "
-        "The selected Python environment cannot see CUDA. Use a CUDA Torch Python, or pass "
-        "--pose-prefilter-device cpu only for an explicit slow debug run."
+        "YOLO pose prefilter requires a CUDA-capable Torch environment. "
+        "The selected Python environment cannot see CUDA. Use a CUDA Torch Python, "
+        "or disable the prefilter with --skip-pose-prefilter."
     )
 
 
@@ -765,8 +836,6 @@ def score_pose_window(
         blocking_issues.append("asymmetric_bilateral_active_chain_visibility")
     if bool(target_motion.get("required")) and not bool(target_motion.get("passed", True)):
         blocking_issues.append(TARGET_MOTION_PREFILTER_BLOCKING_ISSUE)
-    if view_quality["frontalOrBackViewEvidence"] >= FRONTAL_VIEW_QUALITY_ISSUE_THRESHOLD:
-        quality_issues.append("frontal_or_back_view")
     blocking_issues = dedupe_text(blocking_issues)
     quality_issues = dedupe_text(quality_issues)
     reasons = [f"pose_{issue}" for issue in [*blocking_issues, *quality_issues]] or ["pose_good_motion_source"]

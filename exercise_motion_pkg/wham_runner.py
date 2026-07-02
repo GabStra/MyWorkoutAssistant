@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Any
 from dataclasses import dataclass
@@ -16,7 +17,11 @@ DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
 WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
 WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS"
+WHAM_WARM_WORKER_SESSION_DIR_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_SESSION_DIR"
+WHAM_WARM_WORKER_MOUNT_ROOT_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_MOUNT_ROOT"
+WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_TIMEOUT_SECONDS"
 DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
+DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS = 6 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,9 @@ class WhamRunResult:
     run_smplify: bool
     docker_image: str | None = None
     docker_lock_wait_seconds: float = 0.0
+    warm_worker: bool = False
+    warm_worker_job_id: str | None = None
+    warm_worker_session_dir: Path | None = None
 
     def timing_payload(self) -> dict[str, Any]:
         return {
@@ -42,6 +50,9 @@ class WhamRunResult:
             "estimateLocalOnly": self.estimate_local_only,
             "runSmplify": self.run_smplify,
             "dockerImage": self.docker_image if self.use_docker else None,
+            "warmWorker": self.warm_worker,
+            "warmWorkerJobId": self.warm_worker_job_id,
+            "warmWorkerSessionDir": str(self.warm_worker_session_dir) if self.warm_worker_session_dir is not None else None,
             "stdoutLog": str(self.stdout_log),
             "stderrLog": str(self.stderr_log),
             "command": self.command,
@@ -64,6 +75,10 @@ def run_wham_locally(
     docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE,
     docker_gpus: str = "all",
     docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE,
+    use_warm_worker: bool = False,
+    warm_worker_session_dir: Path | None = None,
+    warm_worker_mount_root: Path | None = None,
+    warm_worker_timeout_seconds: float | None = None,
 ) -> WhamRunResult:
     validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -71,6 +86,21 @@ def run_wham_locally(
 
     stdout_log = logs_dir / "wham.stdout.log"
     stderr_log = logs_dir / "wham.stderr.log"
+    if use_warm_worker:
+        return run_wham_with_warm_worker(
+            input_video=input_video,
+            output_root=output_root,
+            logs_dir=logs_dir,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+            estimate_local_only=estimate_local_only,
+            run_smplify=run_smplify,
+            use_docker=use_docker,
+            docker_image=docker_image,
+            warm_worker_session_dir=warm_worker_session_dir,
+            warm_worker_mount_root=warm_worker_mount_root,
+            timeout_seconds=warm_worker_timeout_seconds,
+        )
     command = build_wham_command(
         wham_repo_path=wham_repo_path,
         input_video=input_video,
@@ -128,6 +158,158 @@ def run_wham_locally(
         docker_image=docker_image if use_docker else None,
         docker_lock_wait_seconds=lock_wait_seconds,
     )
+
+
+def run_wham_with_warm_worker(
+    *,
+    input_video: Path,
+    output_root: Path,
+    logs_dir: Path,
+    stdout_log: Path,
+    stderr_log: Path,
+    estimate_local_only: bool,
+    run_smplify: bool,
+    use_docker: bool,
+    docker_image: str,
+    warm_worker_session_dir: Path | None,
+    warm_worker_mount_root: Path | None,
+    timeout_seconds: float | None,
+) -> WhamRunResult:
+    if not use_docker:
+        raise ValueError("Warm WHAM worker mode currently requires Docker WHAM execution.")
+    session_dir = resolve_warm_worker_session_dir(warm_worker_session_dir)
+    mount_root = resolve_warm_worker_mount_root(warm_worker_mount_root)
+    timeout = resolve_warm_worker_timeout_seconds(timeout_seconds)
+    jobs_dir = session_dir / "jobs"
+    results_dir = session_dir / "results"
+    job_logs_dir = session_dir / "job_logs"
+    for path in (jobs_dir, results_dir, job_logs_dir):
+        path.mkdir(parents=True, exist_ok=True)
+    ready_path = session_dir / "ready.json"
+    if not ready_path.exists():
+        raise RuntimeError(f"Warm WHAM worker is not ready: {ready_path}")
+
+    job_id = uuid.uuid4().hex
+    container_input_video = path_inside_worker_mount(input_video, mount_root=mount_root)
+    container_output_root = path_inside_worker_mount(output_root, mount_root=mount_root)
+    job_payload = {
+        "jobId": job_id,
+        "video": container_input_video,
+        "outputRoot": container_output_root,
+        "estimateLocalOnly": estimate_local_only,
+        "runSmplify": run_smplify,
+    }
+    job_path = jobs_dir / f"{job_id}.json"
+    tmp_job_path = jobs_dir / f"{job_id}.json.tmp"
+    result_path = results_dir / f"{job_id}.json"
+    started = time.perf_counter()
+    lock_wait_seconds = 0.0
+    with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
+        tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
+        tmp_job_path.replace(job_path)
+        result_payload = wait_for_warm_worker_result(result_path, timeout_seconds=timeout)
+    elapsed = time.perf_counter() - started
+    worker_stdout_log = job_logs_dir / f"{job_id}.stdout.log"
+    worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
+    copy_worker_log(worker_stdout_log, stdout_log)
+    copy_worker_log(worker_stderr_log, stderr_log)
+    if result_payload.get("status") != "completed":
+        error = result_payload.get("error") or "unknown warm worker failure"
+        raise RuntimeError(
+            "Warm WHAM worker run failed. Check logs:\n"
+            f"- {stdout_log}\n"
+            f"- {stderr_log}\n"
+            f"Error: {error}"
+        )
+    sequence_dir = output_root / input_video.stem
+    results_pkl = sequence_dir / "wham_output.pkl"
+    if not results_pkl.exists():
+        raise RuntimeError(
+            "Warm WHAM worker completed but no wham_output.pkl was found.\n"
+            f"Expected: {results_pkl}\n"
+            f"Worker result: {result_path}\n"
+            f"Logs:\n- {stdout_log}\n- {stderr_log}"
+        )
+    return WhamRunResult(
+        output_dir=sequence_dir,
+        results_pkl=results_pkl,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        command=["wham-warm-worker", job_id],
+        elapsed_seconds=elapsed,
+        returncode=0,
+        use_docker=True,
+        estimate_local_only=estimate_local_only,
+        run_smplify=run_smplify,
+        docker_image=docker_image,
+        docker_lock_wait_seconds=lock_wait_seconds,
+        warm_worker=True,
+        warm_worker_job_id=job_id,
+        warm_worker_session_dir=session_dir,
+    )
+
+
+def resolve_warm_worker_session_dir(configured: Path | None) -> Path:
+    if configured is not None:
+        return configured.expanduser().resolve()
+    raw = os.environ.get(WHAM_WARM_WORKER_SESSION_DIR_ENV_VAR)
+    if raw:
+        return Path(raw).expanduser().resolve()
+    raise ValueError(
+        "Warm WHAM worker mode requires a session directory. "
+        f"Pass --wham-worker-session-dir or set {WHAM_WARM_WORKER_SESSION_DIR_ENV_VAR}."
+    )
+
+
+def resolve_warm_worker_mount_root(configured: Path | None) -> Path:
+    if configured is not None:
+        return configured.expanduser().resolve()
+    raw = os.environ.get(WHAM_WARM_WORKER_MOUNT_ROOT_ENV_VAR)
+    if raw:
+        return Path(raw).expanduser().resolve()
+    raise ValueError(
+        "Warm WHAM worker mode requires the host mount root. "
+        f"Pass --wham-worker-mount-root or set {WHAM_WARM_WORKER_MOUNT_ROOT_ENV_VAR}."
+    )
+
+
+def resolve_warm_worker_timeout_seconds(configured: float | None) -> float:
+    if configured is not None:
+        return max(1.0, float(configured))
+    raw = os.environ.get(WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is not None:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            pass
+    return float(DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS)
+
+
+def path_inside_worker_mount(path: Path, *, mount_root: Path) -> str:
+    resolved_path = path.expanduser().resolve()
+    resolved_root = mount_root.expanduser().resolve()
+    try:
+        relative = resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"Path is outside the warm WHAM worker mount root: {resolved_path} not under {resolved_root}") from exc
+    return "/workspace" if str(relative) == "." else "/workspace/" + relative.as_posix()
+
+
+def wait_for_warm_worker_result(path: Path, *, timeout_seconds: float) -> dict[str, Any]:
+    started = time.perf_counter()
+    while True:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+        if time.perf_counter() - started >= timeout_seconds:
+            raise TimeoutError(f"Timed out waiting for warm WHAM worker result: {path}")
+        time.sleep(0.5)
+
+
+def copy_worker_log(source: Path, destination: Path) -> None:
+    if source.exists():
+        destination.write_text(source.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    else:
+        destination.write_text("", encoding="utf-8")
 
 
 @contextmanager

@@ -77,6 +77,10 @@ class GenerateRequest:
     wham_docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE
     wham_docker_gpus: str = "all"
     wham_docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE
+    use_warm_wham_worker: bool = False
+    wham_worker_session_dir: Path | None = None
+    wham_worker_mount_root: Path | None = None
+    wham_worker_timeout_seconds: float | None = None
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     spinepose_enabled: bool = False
@@ -240,6 +244,10 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
                 docker_image=request.wham_docker_image,
                 docker_gpus=request.wham_docker_gpus,
                 docker_shm_size=request.wham_docker_shm_size,
+                use_warm_worker=request.use_warm_wham_worker,
+                warm_worker_session_dir=request.wham_worker_session_dir,
+                warm_worker_mount_root=request.wham_worker_mount_root,
+                warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
             )
             record_timing("whamRunSeconds", stage_started)
             timings["wham"] = wham_result.timing_payload()

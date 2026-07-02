@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
@@ -28,7 +29,7 @@ class DetectionSettings:
     litert_command: str | None = None
     litert_backend: str = "gpu"
     llama_cpp_backend: str = "gpu"
-    llama_cpp_n_predict: int = 768
+    llama_cpp_n_predict: int = 512
     llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
     llama_cpp_top_p: float | None = DEFAULT_LLAMA_CPP_TOP_P
     llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
@@ -45,6 +46,7 @@ class DetectionSettings:
     refinement_contact_sheet_tile_width: int = 480
     contact_sheet_frames_per_sheet: int = 8
     contact_sheet_jpeg_quality: int = 90
+    contact_sheet_sequence_labels: bool = True
     incomplete_movement_penalty: float = 0.20
     duration_penalty_per_second: float = 0.02
     max_candidate_camera_variation: float = 0.15
@@ -233,6 +235,7 @@ def detect_exercise_segment(
             contact_sheet_tile_width=settings.contact_sheet_tile_width,
             contact_sheet_frames_per_sheet=settings.contact_sheet_frames_per_sheet,
             contact_sheet_jpeg_quality=settings.contact_sheet_jpeg_quality,
+            contact_sheet_sequence_labels=settings.contact_sheet_sequence_labels,
             output_dir=tier_dir / f"window_{window.index:04d}",
         )
         return client.detect_window(
@@ -365,6 +368,7 @@ def build_support_dominance_prompt(*, exercise_name: str | None) -> str:
         f"{exercise_clause}"
         "Goal: choose the dominant support mode.\n"
         "Use only the visible frames.\n"
+        f"{CONTACT_SHEET_READING_INSTRUCTIONS}"
         "Rules:\n"
         '- "foot_dominant": primary support and propulsion come from feet/legs.\n'
         '- "hand_dominant": primary support and propulsion come from hands/arms.\n'
@@ -558,6 +562,7 @@ def refine_detected_span_with_smaller_windows(
         contact_sheet_tile_width=settings.refinement_contact_sheet_tile_width,
         contact_sheet_frames_per_sheet=settings.contact_sheet_frames_per_sheet,
         contact_sheet_jpeg_quality=settings.contact_sheet_jpeg_quality,
+        contact_sheet_sequence_labels=settings.contact_sheet_sequence_labels,
         output_dir=output_dir / "window_0000",
     )
     refinement_detections.append(
@@ -633,6 +638,7 @@ def refine_detected_span_with_active_search(
                 contact_sheet_tile_width=settings.refinement_contact_sheet_tile_width,
                 contact_sheet_frames_per_sheet=settings.contact_sheet_frames_per_sheet,
                 contact_sheet_jpeg_quality=settings.contact_sheet_jpeg_quality,
+                contact_sheet_sequence_labels=settings.contact_sheet_sequence_labels,
                 output_dir=output_dir / f"round_{round_index:02d}" / f"window_{window.index:04d}",
             )
             return client.detect_window(
@@ -1062,6 +1068,7 @@ def extract_window_frames(
     contact_sheet_tile_width: int = 480,
     contact_sheet_frames_per_sheet: int = 8,
     contact_sheet_jpeg_quality: int = 90,
+    contact_sheet_sequence_labels: bool = False,
     output_dir: Path,
 ) -> list[Path]:
     try:
@@ -1112,6 +1119,7 @@ def extract_window_frames(
             tile_width=contact_sheet_tile_width,
             frames_per_sheet=contact_sheet_frames_per_sheet,
             jpeg_quality=contact_sheet_jpeg_quality,
+            sequence_labels=contact_sheet_sequence_labels,
         )
         if contact_sheet_paths:
             return contact_sheet_paths
@@ -1175,6 +1183,7 @@ def build_frame_contact_sheets(
     tile_width: int,
     frames_per_sheet: int,
     jpeg_quality: int,
+    sequence_labels: bool = False,
 ) -> list[Path]:
     frames_per_sheet = max(1, frames_per_sheet)
     contact_sheets: list[Path] = []
@@ -1188,6 +1197,9 @@ def build_frame_contact_sheets(
             columns=columns,
             tile_width=tile_width,
             jpeg_quality=jpeg_quality,
+            sequence_labels=sequence_labels,
+            sequence_label_offset=start_index,
+            sequence_label_total=len(frame_paths),
         )
         if sheet_path is not None:
             contact_sheets.append(sheet_path)
@@ -1202,6 +1214,9 @@ def build_frame_contact_sheet(
     columns: int,
     tile_width: int,
     jpeg_quality: int,
+    sequence_labels: bool = False,
+    sequence_label_offset: int = 0,
+    sequence_label_total: int | None = None,
 ) -> Path | None:
     try:
         import cv2
@@ -1227,17 +1242,13 @@ def build_frame_contact_sheet(
         elif target_height != tile_height:
             resized = cv2.resize(resized, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
         timestamp = timestamps[index] if index < len(timestamps) else 0.0
-        label = f"t={timestamp:.2f}s"
-        cv2.rectangle(resized, (0, 0), (150, 34), (0, 0, 0), thickness=-1)
-        cv2.putText(
+        draw_contact_sheet_tile_label(
+            cv2,
             resized,
-            label,
-            (8, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
+            frame_number=sequence_label_offset + index + 1,
+            total_frames=sequence_label_total or len(frame_paths),
+            timestamp_seconds=timestamp,
+            sequence_labels=sequence_labels,
         )
         tiles.append(resized)
     if not tiles or tile_height is None:
@@ -1255,6 +1266,71 @@ def build_frame_contact_sheet(
     if not ok or not output_path.exists() or output_path.stat().st_size <= 0:
         return None
     return output_path
+
+
+def draw_contact_sheet_tile_label(
+    cv2: object,
+    image: object,
+    *,
+    frame_number: int,
+    total_frames: int,
+    timestamp_seconds: float,
+    sequence_labels: bool,
+) -> None:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    if not sequence_labels:
+        label = f"t={timestamp_seconds:.2f}s"
+        cv2.rectangle(image, (0, 0), (150, 34), (0, 0, 0), thickness=-1)
+        cv2.putText(
+            image,
+            label,
+            (8, 24),
+            font,
+            0.65,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return
+
+    marker = ""
+    if total_frames <= 1 and frame_number == 1:
+        marker = " START END"
+    elif frame_number == 1:
+        marker = " START"
+    elif frame_number == total_frames:
+        marker = " END"
+    sequence_label = f"{frame_number}{marker}"
+    timestamp_label = f"t={timestamp_seconds:.2f}s"
+    (sequence_width, sequence_height), sequence_baseline = cv2.getTextSize(sequence_label, font, 0.78, 2)
+    (time_width, time_height), time_baseline = cv2.getTextSize(timestamp_label, font, 0.48, 1)
+    padding = 6
+    badge_width = max(sequence_width, time_width) + padding * 2
+    badge_height = sequence_height + sequence_baseline + time_height + time_baseline + padding * 3
+    image_height, image_width = image.shape[:2]
+    badge_width = min(image_width, badge_width)
+    badge_height = min(image_height, badge_height)
+    cv2.rectangle(image, (0, 0), (badge_width, badge_height), (0, 0, 0), thickness=-1)
+    cv2.putText(
+        image,
+        sequence_label,
+        (padding, padding + sequence_height),
+        font,
+        0.78,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        image,
+        timestamp_label,
+        (padding, badge_height - padding - time_baseline),
+        font,
+        0.48,
+        (220, 220, 220),
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def linspace_times(start_seconds: float, end_seconds: float, count: int) -> list[float]:
@@ -1275,7 +1351,7 @@ class LlamaCppVisionClient:
         model: str,
         *,
         backend: str = "gpu",
-        n_predict: int = 768,
+        n_predict: int = 512,
         temperature: float = 0.2,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -1311,7 +1387,14 @@ class LlamaCppVisionClient:
             end_seconds=window.end_seconds,
             require_complete_execution=require_complete_execution,
         )
-        raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
+        try:
+            raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
+        except Exception as exc:
+            return build_unusable_window_detection(
+                window=window,
+                frame_paths=frame_paths,
+                reason=f"vlm_exception:{type(exc).__name__}:{exc}",
+            )
         try:
             payload = parse_detection_payload(raw, window=window)
         except RuntimeError:
@@ -1331,10 +1414,32 @@ class LlamaCppVisionClient:
             frame_paths=[str(path) for path in frame_paths],
         )
 
-    def caption_images(self, *, frame_paths: list[Path], prompt: str, max_tokens: int | None = None) -> str:
+    def caption_images(
+        self,
+        *,
+        frame_paths: list[Path],
+        prompt: str,
+        max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
+        disable_reasoning: bool | None = None,
+        json_response: bool = True,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> str:
         if self.base_url is None:
             raise RuntimeError("llama-cpp vision mode requires a base URL.")
-        return self._caption_images_via_server(frame_paths=frame_paths, prompt=prompt, max_tokens=max_tokens)
+        return self._caption_images_via_server(
+            frame_paths=frame_paths,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            request_timeout_seconds=request_timeout_seconds,
+            disable_reasoning=disable_reasoning,
+            json_response=json_response,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+        )
 
     def _caption_images_via_server(
         self,
@@ -1342,6 +1447,12 @@ class LlamaCppVisionClient:
         frame_paths: list[Path],
         prompt: str,
         max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
+        disable_reasoning: bool | None = None,
+        json_response: bool = True,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> str:
         content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
         for frame_path in frame_paths:
@@ -1355,15 +1466,19 @@ class LlamaCppVisionClient:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": content}],
-            "temperature": self.temperature,
+            "temperature": self.temperature if temperature is None else max(0.0, float(temperature)),
             "max_tokens": self.n_predict if max_tokens is None else max(1, int(max_tokens)),
-            "response_format": {"type": "json_object"},
         }
-        if self.top_p is not None:
-            payload["top_p"] = self.top_p
-        if self.top_k is not None:
-            payload["top_k"] = self.top_k
-        if self.disable_reasoning:
+        if json_response:
+            payload["response_format"] = {"type": "json_object"}
+        effective_top_p = self.top_p if top_p is None else max(0.0, min(1.0, float(top_p)))
+        effective_top_k = self.top_k if top_k is None else max(0, int(top_k))
+        if effective_top_p is not None:
+            payload["top_p"] = effective_top_p
+        if effective_top_k is not None:
+            payload["top_k"] = effective_top_k
+        use_disable_reasoning = self.disable_reasoning if disable_reasoning is None else disable_reasoning
+        if use_disable_reasoning:
             payload["reasoning_format"] = "none"
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         else:
@@ -1371,16 +1486,33 @@ class LlamaCppVisionClient:
             payload["chat_template_kwargs"] = {"enable_thinking": True}
         if self.base_url is None:
             raise RuntimeError("llama-cpp server mode requires base URL.")
-        response = self.client.post(f"{self.base_url}/v1/chat/completions", json=payload)
+        image_count = len(frame_paths)
+        image_bytes = sum(frame_path.stat().st_size for frame_path in frame_paths if frame_path.exists())
+        request_timeout = None if request_timeout_seconds is None else max(1.0, float(request_timeout_seconds))
+        request_kwargs: dict[str, object] = {"json": payload}
+        if request_timeout is not None:
+            request_kwargs["timeout"] = request_timeout
+        response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
         if response.status_code >= 400:
             fallback_payload = dict(payload)
             fallback_payload.pop("response_format", None)
             fallback_payload.pop("reasoning_format", None)
             fallback_payload.pop("chat_template_kwargs", None)
-            response = self.client.post(f"{self.base_url}/v1/chat/completions", json=fallback_payload)
-        response.raise_for_status()
+            fallback_request_kwargs: dict[str, object] = {"json": fallback_payload}
+            if request_timeout is not None:
+                fallback_request_kwargs["timeout"] = request_timeout
+            response = self.client.post(f"{self.base_url}/v1/chat/completions", **fallback_request_kwargs)
+        if response.status_code >= 400:
+            body = response.text.strip()
+            if len(body) > 1200:
+                body = body[:1200] + "...[truncated]"
+            raise RuntimeError(
+                "llama-cpp vision request failed "
+                f"status={response.status_code} images={image_count} "
+                f"imageBytes={image_bytes} promptChars={len(prompt)} body={body}"
+            )
         data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        return strip_empty_llama_cpp_thought_prefix(data["choices"][0]["message"]["content"])
 
 
 class VisionClient:
@@ -1508,8 +1640,7 @@ def build_window_prompt(
         "- unclear: not enough visual evidence.\n"
         "Rules:\n"
         "- Use only the visible frames.\n"
-        "- If frames are packed into strips, read each strip left-to-right, and read strips in attachment order.\n"
-        "- read them in frame-number order, left-to-right within each row and then top-to-bottom across rows.\n"
+        f"{CONTACT_SHEET_READING_INSTRUCTIONS}"
         "- Ignore instructional text, logos, title cards, and still demonstration poses unless movement is visible.\n"
         "- Accept only a fixed-camera, single-subject, unobstructed, fully-in-frame movement as usable.\n"
         "- The usable athlete must be the actual person in the video scene, not an embedded picture/video on a monitor, phone, TV, poster, or thumbnail.\n"
@@ -1831,10 +1962,16 @@ def extract_json_object(raw: str) -> dict | None:
 
 def normalize_json_like_model_output(raw: str) -> str:
     text = raw.strip()
+    text = strip_empty_llama_cpp_thought_prefix(text)
     fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.IGNORECASE | re.DOTALL)
     if fence_match:
         text = fence_match.group(1).strip()
     return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def strip_empty_llama_cpp_thought_prefix(raw: str) -> str:
+    text = raw.strip()
+    return re.sub(r"^(?:<\|channel>thought\s*<channel\|>\s*)+", "", text)
 
 
 def extract_detection_payload_loose(raw: str) -> dict[str, object] | None:
@@ -2118,6 +2255,7 @@ def select_best_candidate_window_with_vlm(
         "Reject a candidate if it is only a similar body position, a different exercise, a hold, a setup transition, a stretch, or only part of the movement.",
         "Reject a candidate if the first part is a title, instruction, embedded-preview, monitor, TV, phone, or thumbnail screen even if later frames contain a real demonstration.",
         "Use only the visible frames in the attached contact sheets. Do not infer missing phases from other chunks.",
+        CONTACT_SHEET_READING_INSTRUCTIONS.strip(),
         "Attachments are grouped by candidate in the order listed below.",
     ]
     attachment_index = 1
@@ -2179,6 +2317,7 @@ def refine_selected_chunk_boundaries(
         contact_sheet_tile_width=settings.refinement_contact_sheet_tile_width,
         contact_sheet_frames_per_sheet=settings.contact_sheet_frames_per_sheet,
         contact_sheet_jpeg_quality=settings.contact_sheet_jpeg_quality,
+        contact_sheet_sequence_labels=settings.contact_sheet_sequence_labels,
         output_dir=output_dir / "window_0000",
     )
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2292,6 +2431,7 @@ def build_boundary_refinement_prompt(
         "Do not return a partial transition, static hold, mid-rep to mid-rep shortcut, different exercise, setup-only segment, or recovery-only segment.\n"
         "If there is no clean loop inside the chunk, choose the best approximate loop that includes the complete movement and explain why.\n"
         "Use only the visible contact-sheet frames and their displayed source timestamps.\n"
+        f"{CONTACT_SHEET_READING_INSTRUCTIONS}"
         "Return valid JSON only:\n"
         '{"start_time_sec": number, "end_time_sec": number, "reason": "short reason"}'
     )
