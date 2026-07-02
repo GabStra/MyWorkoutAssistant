@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.ExerciseMovementBackup
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -21,6 +22,7 @@ class WorkoutPlanPackageAdapter : JsonDeserializer<WorkoutPlanPackage> {
         val workoutsType = object : TypeToken<List<Workout>>() {}.type
         val equipmentsType = object : TypeToken<List<WeightLoadedEquipment>>() {}.type
         val accessoryEquipmentsType = object : TypeToken<List<AccessoryEquipment>>() {}.type
+        val exerciseMovementsType = object : TypeToken<List<ExerciseMovementBackup>>() {}.type
 
         val name = jsonObject.get("name")?.takeUnless { it.isJsonNull }?.asString ?: ""
         val workouts = jsonObject.get("workouts")?.let {
@@ -32,12 +34,21 @@ class WorkoutPlanPackageAdapter : JsonDeserializer<WorkoutPlanPackage> {
         val accessoryEquipments = jsonObject.get("accessoryEquipments")?.let {
             if (it.isJsonNull) emptyList<AccessoryEquipment>() else context.deserialize(it, accessoryEquipmentsType)
         } ?: emptyList()
+        val exerciseMovementsElement = when {
+            jsonObject.has("exerciseMovements") -> jsonObject.get("exerciseMovements")
+            jsonObject.has("ExerciseMovements") -> jsonObject.get("ExerciseMovements")
+            else -> null
+        }
+        val exerciseMovements = exerciseMovementsElement?.let {
+            if (it.isJsonNull) emptyList<ExerciseMovementBackup>() else context.deserialize(it, exerciseMovementsType)
+        } ?: emptyList()
 
         return WorkoutPlanPackage(
             name = name,
             workouts = workouts,
             equipments = equipments,
             accessoryEquipments = accessoryEquipments,
+            exerciseMovements = exerciseMovements,
         )
     }
 }

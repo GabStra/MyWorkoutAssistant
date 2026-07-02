@@ -8,4 +8,5 @@ data class WorkoutPlanPackage(
     val workouts: List<Workout> = emptyList(),
     val equipments: List<WeightLoadedEquipment> = emptyList(),
     val accessoryEquipments: List<AccessoryEquipment> = emptyList(),
+    val exerciseMovements: List<ExerciseMovementBackup> = emptyList(),
 )

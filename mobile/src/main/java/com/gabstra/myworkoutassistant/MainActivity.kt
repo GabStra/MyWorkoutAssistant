@@ -599,6 +599,7 @@ fun MyWorkoutAssistantNavHost(
                                 val existingWorkoutsCount = appViewModel.workouts.size
                                 val existingEquipmentCount = appViewModel.equipments.size
                                 val existingAccessoriesCount = appViewModel.accessoryEquipments.size
+                                val importedMovementCount = importedWorkoutPlanPackage.exerciseMovements.size
 
                                 val newPlanId = java.util.UUID.randomUUID()
                                 val nextOrder =
@@ -621,6 +622,13 @@ fun MyWorkoutAssistantNavHost(
                                     workoutPlans = listOf(newPlan)
                                 )
 
+                                withContext(Dispatchers.IO) {
+                                    restoreExerciseMovementBackups(
+                                        context = context,
+                                        movementBackups = importedWorkoutPlanPackage.exerciseMovements
+                                    )
+                                }
+
                                 appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
 
                                 workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
@@ -637,6 +645,7 @@ fun MyWorkoutAssistantNavHost(
                                     append("\n$addedWorkouts workout(s)")
                                     if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
                                     if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
+                                    if (importedMovementCount > 0) append(", $importedMovementCount movement(s)")
                                 }
 
                                 importPlanResultMessage = message
