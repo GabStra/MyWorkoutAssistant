@@ -24,13 +24,27 @@ from urllib.parse import urlencode
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_BATCH_SIZE,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_V,
+    DEFAULT_LLAMA_CPP_CTX_SIZE,
+    DEFAULT_LLAMA_CPP_FIT,
+    DEFAULT_LLAMA_CPP_FIT_CTX,
+    DEFAULT_LLAMA_CPP_FIT_TARGET,
+    DEFAULT_LLAMA_CPP_FLASH_ATTN,
+    DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_MLOCK,
+    DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_PARALLEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
+    DEFAULT_LLAMA_CPP_UBATCH_SIZE,
 )
 from exercise_motion_pkg.pipeline import GenerateRequest, GenerateResult, run_generation_pipeline
 from exercise_motion_pkg.wham_runner import (
@@ -105,6 +119,7 @@ FIXED_PREVIEW_CAMERA_PITCH_DEGREES = 30.0
 DEFAULT_RANK_FRAME_WIDTH = 640
 DEFAULT_MIN_SELECTED_SCORE = 0.55
 DEFAULT_FALLBACK_CANDIDATES = 12
+DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS = 3
 ARTIFACT_RETENTION_DEBUG = "debug"
 ARTIFACT_RETENTION_FULL = "full"
 ARTIFACT_RETENTION_MODES = frozenset((ARTIFACT_RETENTION_DEBUG, ARTIFACT_RETENTION_FULL))
@@ -290,6 +305,11 @@ BAKED_MOTION_MIN_PRIMARY_RANGE_RATIO = 0.06
 SOURCE_CUT_REFINEMENT_MIN_SECONDS = 0.75
 SOURCE_CUT_REFINEMENT_MIN_ABSOLUTE_IMPROVEMENT_SECONDS = 0.10
 SOURCE_CUT_REFINEMENT_MIN_RELATIVE_IMPROVEMENT = 0.05
+SOURCE_CUT_PROGRESSIVE_SHRINK_FACTOR = 0.85
+SOURCE_CUT_PROGRESSIVE_STRIDE_RATIO = 0.20
+SOURCE_CUT_PROGRESSIVE_MAX_WINDOWS_PER_LEVEL = 9
+SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_SIZE = 2
+SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_OVERLAP_RATIO = 0.25
 SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 3.0
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.5
@@ -305,15 +325,16 @@ CUT_CANDIDATE_VLM_MAX_TOKENS = 384
 CUT_CANDIDATE_VLM_TEMPERATURE = 0.0
 CUT_CANDIDATE_VLM_TOP_P = 1.0
 CUT_CANDIDATE_VLM_DISABLE_REASONING = True
+CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = 0.0
 SOURCE_CUT_CANDIDATE_VLM_MAX_TOKENS = 256
-SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = 180.0
+SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS
 SOURCE_CUT_MAX_VLM_WORKERS = 4
 SEGMENT_DETECTION_VLM_MAX_TOKENS = 384
 SEGMENT_DETECTION_VLM_TEMPERATURE = 0.0
 SEGMENT_DETECTION_VLM_TOP_P = 1.0
 SEGMENT_DETECTION_VLM_DISABLE_REASONING = True
 CUT_CANDIDATE_DURATION_BUCKET_SECONDS = 0.05
-DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.70
+DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
 FINAL_OUTPUT_VALIDATION_MIN_EXERCISE_MATCH_SCORE = 0.70
 FINAL_OUTPUT_VALIDATION_MIN_FULL_MOVEMENT_SCORE = 0.65
 FINAL_OUTPUT_VALIDATION_MIN_WEAR_READABILITY_SCORE = 0.55
@@ -1133,6 +1154,13 @@ class SourceCutCandidate:
     visual_integrity: dict[str, Any] = field(default_factory=dict)
     pose_prefilter: dict[str, Any] = field(default_factory=dict)
     motion_coverage: dict[str, Any] = field(default_factory=dict)
+    chunking: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SourceWindowCandidateSpec:
+    window: DetectionWindow
+    chunking: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1168,7 +1196,7 @@ class BakeAndRankRequest:
     youtube_source_cache_dir: Path | None = None
     youtube_preview_cache_dir: Path | None = None
     fallback_candidates: int = DEFAULT_FALLBACK_CANDIDATES
-    max_source_window_attempts: int = 1
+    max_source_window_attempts: int = DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS
     max_selected_results: int = 1
     candidate_workers: int = 1
     wham_python_command: str = "python"
@@ -1181,6 +1209,7 @@ class BakeAndRankRequest:
     wham_worker_session_dir: Path | None = None
     wham_worker_mount_root: Path | None = None
     wham_worker_timeout_seconds: float | None = None
+    wham_timeout_seconds: float | None = None
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     spinepose_enabled: bool = False
@@ -1243,25 +1272,25 @@ class BakeAndRankRequest:
     llama_cpp_disable_reasoning: bool = False
     llama_cpp_reasoning_budget: int | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET
     llama_cpp_reasoning_budget_message: str | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE
-    llama_cpp_ctx_size: int | None = None
-    llama_cpp_batch_size: int | None = None
-    llama_cpp_ubatch_size: int | None = None
-    llama_cpp_flash_attn: str | None = None
-    llama_cpp_cache_type_k: str | None = None
-    llama_cpp_cache_type_v: str | None = None
-    llama_cpp_parallel: int | None = None
+    llama_cpp_ctx_size: int | None = DEFAULT_LLAMA_CPP_CTX_SIZE
+    llama_cpp_batch_size: int | None = DEFAULT_LLAMA_CPP_BATCH_SIZE
+    llama_cpp_ubatch_size: int | None = DEFAULT_LLAMA_CPP_UBATCH_SIZE
+    llama_cpp_flash_attn: str | None = DEFAULT_LLAMA_CPP_FLASH_ATTN
+    llama_cpp_cache_type_k: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_K
+    llama_cpp_cache_type_v: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_V
+    llama_cpp_parallel: int | None = DEFAULT_LLAMA_CPP_PARALLEL
     llama_cpp_threads_http: int | None = None
     llama_cpp_cache_reuse: int | None = None
-    llama_cpp_fit: str | None = None
-    llama_cpp_fit_ctx: int | None = None
-    llama_cpp_fit_target: int | None = None
-    llama_cpp_mmap: bool = True
-    llama_cpp_mlock: bool = False
+    llama_cpp_fit: str | None = DEFAULT_LLAMA_CPP_FIT
+    llama_cpp_fit_ctx: int | None = DEFAULT_LLAMA_CPP_FIT_CTX
+    llama_cpp_fit_target: int | None = DEFAULT_LLAMA_CPP_FIT_TARGET
+    llama_cpp_mmap: bool = DEFAULT_LLAMA_CPP_MMAP
+    llama_cpp_mlock: bool = DEFAULT_LLAMA_CPP_MLOCK
     llama_cpp_mmproj_offload: bool = True
     llama_cpp_cont_batching: bool = True
     llama_cpp_image_min_tokens: int | None = None
-    llama_cpp_image_max_tokens: int | None = None
-    llama_cpp_mtmd_batch_max_tokens: int | None = None
+    llama_cpp_image_max_tokens: int | None = DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS
+    llama_cpp_mtmd_batch_max_tokens: int | None = DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS
     llama_cpp_auto_start_server: bool = True
     keep_llama_cpp_server: bool = False
     llama_cpp_server_startup_timeout_seconds: float = 180.0
@@ -6136,7 +6165,10 @@ def call_caption_images_json(
         request_timeout_seconds is not None
         and callable_accepts_keyword(caption_images, "request_timeout_seconds")
     ):
-        kwargs["request_timeout_seconds"] = max(1.0, float(request_timeout_seconds))
+        requested_timeout = float(request_timeout_seconds)
+        kwargs["request_timeout_seconds"] = (
+            0.0 if requested_timeout <= 0.0 else max(1.0, requested_timeout)
+        )
     if disable_reasoning is not None and callable_accepts_keyword(caption_images, "disable_reasoning"):
         kwargs["disable_reasoning"] = bool(disable_reasoning)
     if json_response is not None and callable_accepts_keyword(caption_images, "json_response"):
@@ -6345,6 +6377,7 @@ def run_bake_and_rank_pipeline(
         "useWarmWhamWorker": request.use_warm_wham_worker,
         "whamWorkerSessionDir": str(request.wham_worker_session_dir) if request.wham_worker_session_dir is not None else None,
         "whamWorkerMountRoot": str(request.wham_worker_mount_root) if request.wham_worker_mount_root is not None else None,
+        "whamTimeoutSeconds": request.wham_timeout_seconds,
     }
     candidates = load_ranked_candidates_manifest(
         request.candidates_json,
@@ -6800,7 +6833,7 @@ def bake_and_rank_request_from_selection_manifest(
         max_source_window_attempts=(
             max(0, manifest_max_source_window_attempts)
             if manifest_max_source_window_attempts is not None
-            else 1
+            else DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS
         ),
         min_selected_score=min_selected_score
         if min_selected_score is not None
@@ -8005,6 +8038,7 @@ def generate_candidate_motion(
             wham_worker_session_dir=request.wham_worker_session_dir,
             wham_worker_mount_root=request.wham_worker_mount_root,
             wham_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+            wham_timeout_seconds=request.wham_timeout_seconds,
             wham_estimate_local_only=request.wham_estimate_local_only,
             wham_run_smplify=request.wham_run_smplify,
             spinepose_enabled=request.spinepose_enabled,
@@ -11365,7 +11399,7 @@ def build_source_video_pyramid_candidate_windows(
     window: DetectionWindow,
     chunk_estimate: Any,
     min_duration_floor_seconds: float,
-) -> list[DetectionWindow]:
+) -> list[SourceWindowCandidateSpec]:
     duration = max(0.0, window.end_seconds - window.start_seconds)
     if duration <= 0.5:
         return []
@@ -11381,24 +11415,36 @@ def build_source_video_pyramid_candidate_windows(
     if rep_max is not None and rep_max > 0:
         robust_floor = min(duration, max(robust_floor, min(rep_max, duration) * 0.55))
 
-    target_durations = [
-        duration,
-        duration * 0.75,
-        duration * 0.60,
-        duration * 0.50,
-        robust_floor,
-    ]
+    target_durations: list[float] = []
+    candidate_duration = duration
+    while candidate_duration > robust_floor + 0.10:
+        target_durations.append(candidate_duration)
+        next_duration = candidate_duration * SOURCE_CUT_PROGRESSIVE_SHRINK_FACTOR
+        if next_duration >= candidate_duration - 0.05:
+            break
+        candidate_duration = next_duration
+    target_durations.append(robust_floor)
     unique_durations: list[float] = []
     for candidate_duration in target_durations:
         rounded = round(min(duration, max(robust_floor, candidate_duration)), 2)
         if all(abs(rounded - existing) > 0.1 for existing in unique_durations):
             unique_durations.append(rounded)
-    unique_durations.sort()
+    unique_durations.sort(reverse=True)
 
-    windows: list[DetectionWindow] = []
+    specs: list[SourceWindowCandidateSpec] = []
     seen: set[tuple[float, float]] = set()
 
-    def append_window(start: float, end: float) -> None:
+    def append_window(
+        start: float,
+        end: float,
+        *,
+        level_index: int,
+        level_duration: float,
+        level_ratio: float,
+        stride_seconds: float,
+        position_index: int,
+        position_count: int,
+    ) -> None:
         start = max(window.start_seconds, min(window.end_seconds, start))
         end = max(start, min(window.end_seconds, end))
         if end - start + 1e-6 < robust_floor:
@@ -11407,19 +11453,75 @@ def build_source_video_pyramid_candidate_windows(
         if key in seen:
             return
         seen.add(key)
-        windows.append(DetectionWindow(index=len(windows), start_seconds=key[0], end_seconds=key[1]))
+        specs.append(
+            SourceWindowCandidateSpec(
+                window=DetectionWindow(index=len(specs), start_seconds=key[0], end_seconds=key[1]),
+                chunking={
+                    "strategy": "progressive_multiscale_sliding",
+                    "levelIndex": level_index,
+                    "levelDurationSeconds": round(level_duration, 3),
+                    "levelRatio": round(level_ratio, 4),
+                    "shrinkFactor": SOURCE_CUT_PROGRESSIVE_SHRINK_FACTOR,
+                    "strideSeconds": round(stride_seconds, 3),
+                    "strideRatio": SOURCE_CUT_PROGRESSIVE_STRIDE_RATIO,
+                    "maxWindowsPerLevel": SOURCE_CUT_PROGRESSIVE_MAX_WINDOWS_PER_LEVEL,
+                    "positionIndex": position_index,
+                    "positionCount": position_count,
+                    "parentStartSeconds": window.start_seconds,
+                    "parentEndSeconds": window.end_seconds,
+                    "parentDurationSeconds": round(duration, 3),
+                    "minDurationFloorSeconds": round(robust_floor, 3),
+                },
+            )
+        )
 
-    for candidate_duration in unique_durations:
+    for level_index, candidate_duration in enumerate(unique_durations):
         available = max(0.0, duration - candidate_duration)
-        offsets = [0.0] if available <= 1e-6 else [0.0, available * 0.5, available]
+        level_ratio = candidate_duration / duration if duration > 0.0 else 1.0
+        if available <= 1e-6:
+            offsets = [0.0]
+            stride_seconds = 0.0
+        else:
+            requested_stride = max(0.25, candidate_duration * SOURCE_CUT_PROGRESSIVE_STRIDE_RATIO)
+            capped_stride = max(
+                requested_stride,
+                available / max(1, SOURCE_CUT_PROGRESSIVE_MAX_WINDOWS_PER_LEVEL - 1),
+            )
+            stride_seconds = min(available, capped_stride)
+            offsets = []
+            offset = 0.0
+            while offset < available - 1e-6:
+                offsets.append(offset)
+                offset += stride_seconds
+            offsets.append(available)
+        deduped_offsets: list[float] = []
         for offset in offsets:
+            rounded_offset = round(max(0.0, min(available, offset)), 2)
+            if rounded_offset not in deduped_offsets:
+                deduped_offsets.append(rounded_offset)
+        for position_index, offset in enumerate(deduped_offsets):
             start = window.start_seconds + offset
-            append_window(start, start + candidate_duration)
+            append_window(
+                start,
+                start + candidate_duration,
+                level_index=level_index,
+                level_duration=candidate_duration,
+                level_ratio=level_ratio,
+                stride_seconds=stride_seconds,
+                position_index=position_index,
+                position_count=len(deduped_offsets),
+            )
 
-    append_window(window.start_seconds, window.end_seconds)
     return [
-        DetectionWindow(index=index, start_seconds=candidate.start_seconds, end_seconds=candidate.end_seconds)
-        for index, candidate in enumerate(windows)
+        SourceWindowCandidateSpec(
+            window=DetectionWindow(
+                index=index,
+                start_seconds=spec.window.start_seconds,
+                end_seconds=spec.window.end_seconds,
+            ),
+            chunking=spec.chunking,
+        )
+        for index, spec in enumerate(specs)
     ]
 
 
@@ -11821,6 +11923,7 @@ def source_cut_candidates_payload(candidates: list[SourceCutCandidate]) -> list[
             "visualIntegrity": candidate.visual_integrity,
             "posePrefilter": candidate.pose_prefilter,
             "motionCoverage": candidate.motion_coverage,
+            **({"chunking": candidate.chunking} if candidate.chunking else {}),
         }
         for candidate in candidates
     ]
@@ -11946,6 +12049,7 @@ def build_source_cut_candidate(
     contact_sheet_paths: list[Path],
     output_dir: Path,
     pose_prefilter: dict[str, Any] | None = None,
+    chunking: dict[str, Any] | None = None,
 ) -> SourceCutCandidate | None:
     if not contact_sheet_paths:
         return None
@@ -11958,6 +12062,7 @@ def build_source_cut_candidate(
         sample_frame_paths=sample_frame_paths,
         visual_integrity=visual_integrity,
         pose_prefilter=pose_prefilter or {},
+        chunking=chunking or {},
     )
 
 
@@ -13212,8 +13317,8 @@ def build_source_cut_scorecard_ranking(
         score = float(row["score"])
         passing.append(
             (
+                source_cut_candidate_duration(candidate),
                 -score,
-                -source_cut_candidate_duration(candidate),
                 -float(candidate.window.end_seconds),
                 candidate,
                 row,
@@ -13225,7 +13330,7 @@ def build_source_cut_scorecard_ranking(
         "sourceCutScorecardThresholds": thresholds,
         "sourceCutScorecardContractPresent": has_contract,
         "sourceCutScorecardCandidates": rows,
-        "sourceCutSelectionPolicy": "highest_score_then_largest_padded_scorecard",
+        "sourceCutSelectionPolicy": "progressive_multiscale_stable_level_then_score",
         "sourceCutCandidates": source_cut_candidates_payload(candidates),
     }
     if not passing:
@@ -13241,7 +13346,7 @@ def build_source_cut_scorecard_ranking(
             model_score=0.0,
         )
 
-    negative_score, _negative_duration, _negative_end, selected, selected_row = min(passing)
+    _duration, negative_score, _negative_end, selected, selected_row = min(passing)
     score = -negative_score
     note = str(selected_row.get("note") or "source_candidate_scorecard_passed")
     return LoopRanking(
@@ -13534,7 +13639,7 @@ def cut_candidates_with_ids(candidates: list[SourceCutCandidate], candidate_ids:
 def cut_candidate_vlm_caption_kwargs(
     *,
     max_tokens: int = CUT_CANDIDATE_VLM_MAX_TOKENS,
-    request_timeout_seconds: float | None = None,
+    request_timeout_seconds: float | None = CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     kwargs = {
         "max_tokens": max(1, int(max_tokens)),
@@ -13544,7 +13649,10 @@ def cut_candidate_vlm_caption_kwargs(
         "json_response": True,
     }
     if request_timeout_seconds is not None:
-        kwargs["request_timeout_seconds"] = max(1.0, float(request_timeout_seconds))
+        requested_timeout = float(request_timeout_seconds)
+        kwargs["request_timeout_seconds"] = (
+            0.0 if requested_timeout <= 0.0 else max(1.0, requested_timeout)
+        )
     return kwargs
 
 
@@ -13604,54 +13712,7 @@ def combine_cut_candidate_batch_results(results: Iterable[CutCandidateBatchResul
     )
 
 
-def rank_cut_candidate_batch_with_caption_images(
-    *,
-    candidates: list[SourceCutCandidate],
-    caption_images: Callable[..., str],
-    prompt_builder: Callable[[list[SourceCutCandidate]], str],
-    parser: Callable[[str, list[SourceCutCandidate]], LoopRanking | None],
-    caption_image_kwargs: dict[str, Any] | None = None,
-) -> CutCandidateBatchResult:
-    if not candidates:
-        return empty_cut_candidate_batch_result()
-    if len(candidates) > 1:
-        return combine_cut_candidate_batch_results(
-            [
-                rank_cut_candidate_batch_with_caption_images(
-                    candidates=[candidate],
-                    caption_images=caption_images,
-                    prompt_builder=prompt_builder,
-                    parser=parser,
-                    caption_image_kwargs=caption_image_kwargs,
-                )
-                for candidate in candidates
-            ]
-        )
-    candidate_ids = [candidate.candidate_id for candidate in candidates]
-    try:
-        request_kwargs = dict(caption_image_kwargs or {})
-        raw = caption_images(
-            frame_paths=[path for candidate in candidates for path in candidate.frame_paths],
-            prompt=prompt_builder(candidates),
-            **request_kwargs,
-        )
-    except Exception as exc:
-        return CutCandidateBatchResult(
-            rankings=[],
-            raw_responses=[],
-            errors=[cut_candidate_error_payload(candidate_ids, exc, split_attempted=False)],
-            reviewed_candidate_ids=candidate_ids,
-        )
-    ranking = parser(raw, candidates)
-    return CutCandidateBatchResult(
-        rankings=[ranking] if ranking is not None else [],
-        raw_responses=[raw],
-        errors=[],
-        reviewed_candidate_ids=candidate_ids,
-    )
-
-
-def rank_cut_candidates_shortest_first_with_caption_images(
+def rank_cut_candidate_batches_with_caption_images(
     *,
     candidates: list[SourceCutCandidate],
     caption_images: Callable[..., str],
@@ -13659,17 +13720,9 @@ def rank_cut_candidates_shortest_first_with_caption_images(
     parser: Callable[[str, list[SourceCutCandidate]], LoopRanking | None],
     max_candidates_per_request: int = CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
     max_workers: int = 1,
-    prefer_later_equal_duration: bool = False,
-    prefer_largest_padded_candidate: bool = False,
     caption_image_kwargs: dict[str, Any] | None = None,
-) -> CutCandidateBatchChoice:
-    started = time.perf_counter()
-    ordered_candidates = [
-        candidate
-        for duration_group in cut_candidate_duration_groups(candidates)
-        for candidate in duration_group
-    ]
-    batches = chunk_cut_candidates(ordered_candidates, max_candidates_per_request)
+) -> tuple[CutCandidateBatchResult, int]:
+    batches = chunk_cut_candidates(candidates, max_candidates_per_request)
     if max(1, int(max_workers)) <= 1 or len(batches) <= 1:
         batch_results = [
             rank_cut_candidate_batch_with_caption_images(
@@ -13718,7 +13771,484 @@ def rank_cut_candidates_shortest_first_with_caption_images(
             for result in batch_results_by_index
             if result is not None
         ]
-    combined = combine_cut_candidate_batch_results(batch_results)
+    return combine_cut_candidate_batch_results(batch_results), len(batches)
+
+
+def selected_candidate_id_from_cut_ranking(ranking: LoopRanking) -> str:
+    payload = ranking.payload if isinstance(ranking.payload, dict) else {}
+    return normalize_source_cut_candidate_id(
+        payload.get("selectedCandidateId")
+        or payload.get("selected_candidate_id")
+        or payload.get("candidateId")
+        or payload.get("id")
+    )
+
+
+def candidate_for_cut_ranking(
+    ranking: LoopRanking,
+    candidates_by_id: dict[str, SourceCutCandidate],
+    candidates: list[SourceCutCandidate],
+) -> SourceCutCandidate | None:
+    candidate_id = selected_candidate_id_from_cut_ranking(ranking)
+    if candidate_id:
+        candidate = candidates_by_id.get(candidate_id)
+        if candidate is not None:
+            return candidate
+    selected_window = selected_window_from_cut_ranking(ranking)
+    if selected_window is None:
+        return None
+    for candidate in candidates:
+        if (
+            abs(candidate.window.start_seconds - selected_window.start_seconds) <= 0.02
+            and abs(candidate.window.end_seconds - selected_window.end_seconds) <= 0.02
+        ):
+            return candidate
+    return None
+
+
+def source_cut_progressive_level_index(candidate: SourceCutCandidate) -> int:
+    level_index = parse_optional_float(candidate.chunking.get("levelIndex")) if candidate.chunking else None
+    if level_index is None:
+        return 0
+    return max(0, int(level_index))
+
+
+def source_cut_progressive_level_stable_candidate_ids(
+    *,
+    level_candidates: list[SourceCutCandidate],
+    passing_candidates: list[SourceCutCandidate],
+) -> set[str]:
+    if not passing_candidates:
+        return set()
+    passing_ids = {candidate.candidate_id for candidate in passing_candidates}
+    if len(level_candidates) <= 2:
+        return passing_ids
+
+    passing_sorted = sorted(passing_candidates, key=lambda candidate: candidate.window.start_seconds)
+    clusters: list[list[SourceCutCandidate]] = []
+    current: list[SourceCutCandidate] = []
+    previous: SourceCutCandidate | None = None
+    for candidate in passing_sorted:
+        if previous is None:
+            current = [candidate]
+        else:
+            overlap = max(
+                0.0,
+                min(previous.window.end_seconds, candidate.window.end_seconds)
+                - max(previous.window.start_seconds, candidate.window.start_seconds),
+            )
+            min_duration = max(
+                1e-6,
+                min(source_cut_candidate_duration(previous), source_cut_candidate_duration(candidate)),
+            )
+            if overlap / min_duration >= SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_OVERLAP_RATIO:
+                current.append(candidate)
+            else:
+                if current:
+                    clusters.append(current)
+                current = [candidate]
+        previous = candidate
+    if current:
+        clusters.append(current)
+
+    stable_clusters = [
+        cluster
+        for cluster in clusters
+        if len(cluster) >= SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_SIZE
+    ]
+    if not stable_clusters:
+        return set()
+    best_cluster = max(
+        stable_clusters,
+        key=lambda cluster: (
+            len(cluster),
+            -min(candidate.window.start_seconds for candidate in cluster),
+        ),
+    )
+    return {candidate.candidate_id for candidate in best_cluster}
+
+
+def progressive_source_cut_stable_levels(
+    rankings: list[LoopRanking],
+    candidates: list[SourceCutCandidate],
+    *,
+    stop_at_first_unstable_after_stable: bool = True,
+) -> tuple[list[dict[str, Any]], int | None]:
+    candidates_by_id = {
+        normalize_source_cut_candidate_id(candidate.candidate_id): candidate
+        for candidate in candidates
+    }
+    ranking_by_candidate_id: dict[str, LoopRanking] = {}
+    for ranking in rankings:
+        candidate = candidate_for_cut_ranking(ranking, candidates_by_id, candidates)
+        if candidate is None or selected_window_from_cut_ranking(ranking) is None:
+            continue
+        ranking_by_candidate_id[candidate.candidate_id] = ranking
+
+    if not ranking_by_candidate_id:
+        return [], None
+
+    candidates_by_level: dict[int, list[SourceCutCandidate]] = {}
+    for candidate in candidates:
+        candidates_by_level.setdefault(source_cut_progressive_level_index(candidate), []).append(candidate)
+
+    stable_levels: list[dict[str, Any]] = []
+    stopped_at_unstable_level: int | None = None
+    for level_index in sorted(candidates_by_level):
+        level_candidates = sorted(
+            candidates_by_level[level_index],
+            key=lambda candidate: (candidate.window.start_seconds, candidate.window.end_seconds),
+        )
+        passing_candidates = [
+            candidate
+            for candidate in level_candidates
+            if candidate.candidate_id in ranking_by_candidate_id
+        ]
+        stable_candidate_ids = source_cut_progressive_level_stable_candidate_ids(
+            level_candidates=level_candidates,
+            passing_candidates=passing_candidates,
+        )
+        if not stable_candidate_ids:
+            if stable_levels:
+                if stopped_at_unstable_level is None:
+                    stopped_at_unstable_level = level_index
+                if stop_at_first_unstable_after_stable:
+                    break
+            continue
+
+        eligible_rankings = [
+            (ranking_by_candidate_id[candidate.candidate_id], candidate)
+            for candidate in passing_candidates
+            if candidate.candidate_id in stable_candidate_ids
+        ]
+        if not eligible_rankings:
+            continue
+        best_ranking, best_candidate = min(
+            eligible_rankings,
+            key=lambda item: (
+                -item[0].score,
+                item[1].window.start_seconds,
+                item[1].window.end_seconds,
+            ),
+        )
+        stable_levels.append(
+            {
+                "levelIndex": level_index,
+                "candidateCount": len(level_candidates),
+                "passingCandidateCount": len(passing_candidates),
+                "stablePassingCandidateCount": len(stable_candidate_ids),
+                "selectedCandidateId": best_candidate.candidate_id,
+                "selectedStartSeconds": best_candidate.window.start_seconds,
+                "selectedEndSeconds": best_candidate.window.end_seconds,
+                "selectedDurationSeconds": source_cut_candidate_duration(best_candidate),
+                "levelDurationSeconds": best_candidate.chunking.get("levelDurationSeconds")
+                if best_candidate.chunking
+                else source_cut_candidate_duration(best_candidate),
+                "levelRatio": best_candidate.chunking.get("levelRatio") if best_candidate.chunking else None,
+                "ranking": best_ranking,
+            }
+        )
+
+    return stable_levels, stopped_at_unstable_level
+
+
+def select_progressive_source_cut_ranking(
+    rankings: list[LoopRanking],
+    candidates: list[SourceCutCandidate],
+    *,
+    pad_one_stable_level: bool = True,
+    stop_at_first_unstable_after_stable: bool = True,
+) -> LoopRanking | None:
+    stable_levels, stopped_at_unstable_level = progressive_source_cut_stable_levels(
+        rankings,
+        candidates,
+        stop_at_first_unstable_after_stable=stop_at_first_unstable_after_stable,
+    )
+    if not stable_levels:
+        return None
+
+    all_stable_to_floor = stopped_at_unstable_level is None
+    selected_level = (
+        stable_levels[-2]
+        if pad_one_stable_level and len(stable_levels) >= 2
+        else stable_levels[-2]
+        if all_stable_to_floor and len(stable_levels) >= 2
+        else stable_levels[-1]
+    )
+    ranking = selected_level["ranking"]
+    payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
+    payload["sourceCutProgressiveSelection"] = {
+        "strategy": "progressive_multiscale_sliding_stable_level",
+        "selectedLevelIndex": selected_level["levelIndex"],
+        "deepestStableLevelIndex": stable_levels[-1]["levelIndex"],
+        "stoppedAtUnstableLevelIndex": stopped_at_unstable_level,
+        "allStableToFloor": all_stable_to_floor,
+        "stableLevels": [
+            {
+                key: value
+                for key, value in level.items()
+                if key != "ranking"
+            }
+            for level in stable_levels
+        ],
+    }
+    payload["sourceCutSelectionPolicy"] = "progressive_multiscale_stable_level_then_score"
+    return replace(
+        ranking,
+        payload=payload,
+        reasons=dedupe_text([*ranking.reasons, "progressive_source_cut_stable_level_selection"]),
+    )
+
+
+def rank_cut_candidate_batch_with_caption_images(
+    *,
+    candidates: list[SourceCutCandidate],
+    caption_images: Callable[..., str],
+    prompt_builder: Callable[[list[SourceCutCandidate]], str],
+    parser: Callable[[str, list[SourceCutCandidate]], LoopRanking | None],
+    caption_image_kwargs: dict[str, Any] | None = None,
+) -> CutCandidateBatchResult:
+    if not candidates:
+        return empty_cut_candidate_batch_result()
+    if len(candidates) > 1:
+        return combine_cut_candidate_batch_results(
+            [
+                rank_cut_candidate_batch_with_caption_images(
+                    candidates=[candidate],
+                    caption_images=caption_images,
+                    prompt_builder=prompt_builder,
+                    parser=parser,
+                    caption_image_kwargs=caption_image_kwargs,
+                )
+                for candidate in candidates
+            ]
+        )
+    candidate_ids = [candidate.candidate_id for candidate in candidates]
+    try:
+        request_kwargs = dict(caption_image_kwargs or {})
+        raw = caption_images(
+            frame_paths=[path for candidate in candidates for path in candidate.frame_paths],
+            prompt=prompt_builder(candidates),
+            **request_kwargs,
+        )
+    except Exception as exc:
+        return CutCandidateBatchResult(
+            rankings=[],
+            raw_responses=[],
+            errors=[cut_candidate_error_payload(candidate_ids, exc, split_attempted=False)],
+            reviewed_candidate_ids=candidate_ids,
+        )
+    ranking = parser(raw, candidates)
+    return CutCandidateBatchResult(
+        rankings=[ranking] if ranking is not None else [],
+        raw_responses=[raw],
+        errors=[],
+        reviewed_candidate_ids=candidate_ids,
+    )
+
+
+def annotate_progressive_source_cut_review_payload(
+    ranking: LoopRanking,
+    *,
+    all_level_indices: list[int],
+    reviewed_level_indices: list[int],
+    level_candidate_counts: dict[int, int],
+    early_stopped: bool,
+) -> LoopRanking:
+    payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
+    selection_payload = payload.get("sourceCutProgressiveSelection")
+    selection = dict(selection_payload) if isinstance(selection_payload, dict) else {}
+    reviewed_set = set(reviewed_level_indices)
+    selection.update(
+        {
+            "reviewOrder": "smallest_windows_first",
+            "stopRule": "first_stable_level_plus_next_wider_stable_level",
+            "earlyStopped": bool(early_stopped),
+            "reviewedLevelIndices": reviewed_level_indices,
+            "unreviewedLevelIndices": [
+                level_index
+                for level_index in all_level_indices
+                if level_index not in reviewed_set
+            ],
+            "levelCandidateCounts": {
+                str(level_index): count
+                for level_index, count in sorted(level_candidate_counts.items())
+            },
+        }
+    )
+    payload["sourceCutProgressiveSelection"] = selection
+    reasons = [*ranking.reasons]
+    reasons.append(
+        "progressive_source_cut_early_stop"
+        if early_stopped
+        else "progressive_source_cut_exhausted_levels"
+    )
+    return replace(
+        ranking,
+        payload=payload,
+        reasons=dedupe_text(reasons),
+    )
+
+
+def rank_progressive_source_cut_candidates_with_caption_images(
+    *,
+    candidates: list[SourceCutCandidate],
+    caption_images: Callable[..., str],
+    prompt_builder: Callable[[list[SourceCutCandidate]], str],
+    parser: Callable[[str, list[SourceCutCandidate]], LoopRanking | None],
+    max_candidates_per_request: int = SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
+    max_workers: int = 1,
+    caption_image_kwargs: dict[str, Any] | None = None,
+) -> CutCandidateBatchChoice:
+    started = time.perf_counter()
+    if not candidates:
+        return CutCandidateBatchChoice(
+            ranking=None,
+            raw_responses=[],
+            errors=[],
+            reviewed_candidate_ids=[],
+            reviewed_batch_count=0,
+            elapsed_seconds=elapsed_seconds(started),
+            rankings=[],
+        )
+
+    candidates_by_level: dict[int, list[SourceCutCandidate]] = {}
+    for candidate in candidates:
+        candidates_by_level.setdefault(source_cut_progressive_level_index(candidate), []).append(candidate)
+    all_level_indices = sorted(candidates_by_level)
+    review_level_indices = sorted(candidates_by_level, reverse=True)
+    level_candidate_counts = {
+        level_index: len(level_candidates)
+        for level_index, level_candidates in candidates_by_level.items()
+    }
+
+    reviewed_level_indices: list[int] = []
+    partial_results: list[CutCandidateBatchResult] = []
+    reviewed_batch_count = 0
+
+    for level_index in review_level_indices:
+        level_candidates = sorted(
+            candidates_by_level[level_index],
+            key=lambda candidate: (
+                candidate.window.start_seconds,
+                candidate.window.end_seconds,
+                candidate.candidate_id,
+            ),
+        )
+        result, batch_count = rank_cut_candidate_batches_with_caption_images(
+            candidates=level_candidates,
+            caption_images=caption_images,
+            prompt_builder=prompt_builder,
+            parser=parser,
+            max_candidates_per_request=max_candidates_per_request,
+            max_workers=max_workers,
+            caption_image_kwargs=caption_image_kwargs,
+        )
+        partial_results.append(result)
+        reviewed_batch_count += batch_count
+        reviewed_level_indices.append(level_index)
+        combined = combine_cut_candidate_batch_results(partial_results)
+        stable_levels, _stopped_at_unstable_level = progressive_source_cut_stable_levels(
+            combined.rankings,
+            candidates,
+            stop_at_first_unstable_after_stable=False,
+        )
+        if len(stable_levels) < 2:
+            continue
+        best_ranking = select_progressive_source_cut_ranking(
+            combined.rankings,
+            candidates,
+            pad_one_stable_level=True,
+            stop_at_first_unstable_after_stable=False,
+        )
+        if best_ranking is None:
+            continue
+        return CutCandidateBatchChoice(
+            ranking=annotate_progressive_source_cut_review_payload(
+                best_ranking,
+                all_level_indices=all_level_indices,
+                reviewed_level_indices=reviewed_level_indices,
+                level_candidate_counts=level_candidate_counts,
+                early_stopped=True,
+            ),
+            raw_responses=combined.raw_responses,
+            errors=combined.errors,
+            reviewed_candidate_ids=combined.reviewed_candidate_ids,
+            reviewed_batch_count=max(
+                reviewed_batch_count,
+                len(combined.raw_responses) + len(combined.errors),
+            ),
+            elapsed_seconds=elapsed_seconds(started),
+            rankings=combined.rankings,
+        )
+
+    combined = combine_cut_candidate_batch_results(partial_results)
+    best_ranking = select_progressive_source_cut_ranking(
+        combined.rankings,
+        candidates,
+        pad_one_stable_level=True,
+        stop_at_first_unstable_after_stable=False,
+    )
+    if best_ranking is not None:
+        best_ranking = annotate_progressive_source_cut_review_payload(
+            best_ranking,
+            all_level_indices=all_level_indices,
+            reviewed_level_indices=reviewed_level_indices,
+            level_candidate_counts=level_candidate_counts,
+            early_stopped=False,
+        )
+    return CutCandidateBatchChoice(
+        ranking=best_ranking,
+        raw_responses=combined.raw_responses,
+        errors=combined.errors,
+        reviewed_candidate_ids=combined.reviewed_candidate_ids,
+        reviewed_batch_count=max(
+            reviewed_batch_count,
+            len(combined.raw_responses) + len(combined.errors),
+        ),
+        elapsed_seconds=elapsed_seconds(started),
+        rankings=combined.rankings,
+    )
+
+
+def rank_cut_candidates_shortest_first_with_caption_images(
+    *,
+    candidates: list[SourceCutCandidate],
+    caption_images: Callable[..., str],
+    prompt_builder: Callable[[list[SourceCutCandidate]], str],
+    parser: Callable[[str, list[SourceCutCandidate]], LoopRanking | None],
+    max_candidates_per_request: int = CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
+    max_workers: int = 1,
+    prefer_later_equal_duration: bool = False,
+    prefer_largest_padded_candidate: bool = False,
+    progressive_source_selection: bool = False,
+    caption_image_kwargs: dict[str, Any] | None = None,
+) -> CutCandidateBatchChoice:
+    started = time.perf_counter()
+    if progressive_source_selection:
+        return rank_progressive_source_cut_candidates_with_caption_images(
+            candidates=candidates,
+            caption_images=caption_images,
+            prompt_builder=prompt_builder,
+            parser=parser,
+            max_candidates_per_request=max_candidates_per_request,
+            max_workers=max_workers,
+            caption_image_kwargs=caption_image_kwargs,
+        )
+    ordered_candidates = [
+        candidate
+        for duration_group in cut_candidate_duration_groups(candidates)
+        for candidate in duration_group
+    ]
+    combined, batch_count = rank_cut_candidate_batches_with_caption_images(
+        candidates=ordered_candidates,
+        caption_images=caption_images,
+        prompt_builder=prompt_builder,
+        parser=parser,
+        max_candidates_per_request=max_candidates_per_request,
+        max_workers=max_workers,
+        caption_image_kwargs=caption_image_kwargs,
+    )
     def ranking_selection_key(ranking: LoopRanking) -> tuple[float, float, float]:
         selected_window = selected_window_from_cut_ranking(ranking)
         duration = (
@@ -13753,7 +14283,7 @@ def rank_cut_candidates_shortest_first_with_caption_images(
         raw_responses=combined.raw_responses,
         errors=combined.errors,
         reviewed_candidate_ids=combined.reviewed_candidate_ids,
-        reviewed_batch_count=max(len(batches), len(combined.raw_responses) + len(combined.errors)),
+        reviewed_batch_count=max(batch_count, len(combined.raw_responses) + len(combined.errors)),
         elapsed_seconds=elapsed_seconds(started),
         rankings=combined.rankings,
     )
@@ -14091,6 +14621,7 @@ def rank_movement_cut_candidates_with_caption_images(
                     "movementCutVlmReviewedCandidateCount": len(reviewed_vlm_candidates),
                     "movementCutVlmReviewedBatchCount": batch_choice.reviewed_batch_count,
                     "movementCutVlmBatchSize": CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
+                    "movementCutVlmRequestTimeoutSeconds": CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS,
                     "movementCutMinSelectedDurationSeconds": min_selected_duration_seconds,
                     "movementCutVlmBatchErrors": batch_choice.errors,
                     "exerciseMotionContractEnabled": use_exercise_motion_contract,
@@ -14117,6 +14648,7 @@ def rank_movement_cut_candidates_with_caption_images(
     ranking_payload["movementCutVlmReviewedCandidateCount"] = len(reviewed_vlm_candidates)
     ranking_payload["movementCutVlmReviewedBatchCount"] = batch_choice.reviewed_batch_count
     ranking_payload["movementCutVlmBatchSize"] = CUT_CANDIDATE_MAX_VLM_BATCH_SIZE
+    ranking_payload["movementCutVlmRequestTimeoutSeconds"] = CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS
     ranking_payload["movementCutMinSelectedDurationSeconds"] = min_selected_duration_seconds
     ranking_payload["movementCutVlmBatchErrors"] = batch_choice.errors
     ranking_payload["movementCutUnreviewedCandidateCount"] = max(0, len(vlm_candidates) - len(reviewed_vlm_candidates))
@@ -14191,17 +14723,18 @@ def rank_source_video_cut_candidates_with_caption_images(
         chunk_estimate=chunk_estimate,
         exercise_motion_contract=exercise_motion_contract,
     )
-    candidate_windows = build_source_video_pyramid_candidate_windows(
+    candidate_window_specs = build_source_video_pyramid_candidate_windows(
         window=timeline_window,
         chunk_estimate=chunk_estimate,
         min_duration_floor_seconds=min_duration_floor_seconds,
     )
-    if not candidate_windows:
+    if not candidate_window_specs:
         return None
     render_started = time.perf_counter()
     candidates: list[SourceCutCandidate] = []
     all_candidates: list[SourceCutCandidate] = []
-    for index, candidate_window in enumerate(candidate_windows):
+    for index, candidate_spec in enumerate(candidate_window_specs):
+        candidate_window = candidate_spec.window
         candidate_id = source_cut_candidate_id_for_index(index)
         candidate_output_dir = output_dir / f"source_candidate_{candidate_id}"
         frame_paths = render_video_window_contact_sheet(
@@ -14220,6 +14753,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                 pose_payload=source_pose_prefilter_payload,
                 source_offset_seconds=source_pose_offset_seconds,
             ),
+            chunking=candidate_spec.chunking,
         )
         if candidate is not None:
             candidate = replace(
@@ -14300,7 +14834,8 @@ def rank_source_video_cut_candidates_with_caption_images(
         ),
         max_candidates_per_request=SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
         max_workers=effective_source_cut_vlm_workers,
-        prefer_largest_padded_candidate=True,
+        prefer_largest_padded_candidate=False,
+        progressive_source_selection=True,
         caption_image_kwargs=source_cut_vlm_caption_kwargs(),
     )
     vlm_seconds = batch_choice.elapsed_seconds
@@ -14340,6 +14875,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "sourceCutVlmReviewedCandidateCount": len(reviewed_vlm_candidates),
                     "sourceCutVlmReviewedBatchCount": batch_choice.reviewed_batch_count,
                     "sourceCutVlmBatchSize": SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
+                    "sourceCutVlmRequestTimeoutSeconds": SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS,
                     "sourceCutMaxVlmWorkers": SOURCE_CUT_MAX_VLM_WORKERS,
                     "sourceCutEffectiveVlmWorkers": effective_source_cut_vlm_workers,
                     "sourceCutVlmBatchErrors": batch_choice.errors,
@@ -14379,6 +14915,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     ranking_payload["sourceCutVlmReviewedCandidateCount"] = len(reviewed_vlm_candidates)
     ranking_payload["sourceCutVlmReviewedBatchCount"] = batch_choice.reviewed_batch_count
     ranking_payload["sourceCutVlmBatchSize"] = SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE
+    ranking_payload["sourceCutVlmRequestTimeoutSeconds"] = SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS
     ranking_payload["sourceCutMaxVlmWorkers"] = SOURCE_CUT_MAX_VLM_WORKERS
     ranking_payload["sourceCutEffectiveVlmWorkers"] = effective_source_cut_vlm_workers
     ranking_payload["sourceCutVlmBatchErrors"] = batch_choice.errors

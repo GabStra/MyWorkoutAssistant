@@ -15,13 +15,15 @@ from pathlib import Path
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
+DEFAULT_WHAM_TIMEOUT_SECONDS = 200.0
 WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
 WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS"
+WHAM_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_TIMEOUT_SECONDS"
 WHAM_WARM_WORKER_SESSION_DIR_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_SESSION_DIR"
 WHAM_WARM_WORKER_MOUNT_ROOT_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_MOUNT_ROOT"
 WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_TIMEOUT_SECONDS"
 DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
-DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS = 6 * 60 * 60
+DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS = DEFAULT_WHAM_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class WhamRunResult:
     run_smplify: bool
     docker_image: str | None = None
     docker_lock_wait_seconds: float = 0.0
+    timeout_seconds: float | None = None
     warm_worker: bool = False
     warm_worker_job_id: str | None = None
     warm_worker_session_dir: Path | None = None
@@ -50,6 +53,7 @@ class WhamRunResult:
             "estimateLocalOnly": self.estimate_local_only,
             "runSmplify": self.run_smplify,
             "dockerImage": self.docker_image if self.use_docker else None,
+            "timeoutSeconds": round(self.timeout_seconds, 3) if self.timeout_seconds is not None else None,
             "warmWorker": self.warm_worker,
             "warmWorkerJobId": self.warm_worker_job_id,
             "warmWorkerSessionDir": str(self.warm_worker_session_dir) if self.warm_worker_session_dir is not None else None,
@@ -79,6 +83,7 @@ def run_wham_locally(
     warm_worker_session_dir: Path | None = None,
     warm_worker_mount_root: Path | None = None,
     warm_worker_timeout_seconds: float | None = None,
+    timeout_seconds: float | None = None,
 ) -> WhamRunResult:
     validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -99,8 +104,10 @@ def run_wham_locally(
             docker_image=docker_image,
             warm_worker_session_dir=warm_worker_session_dir,
             warm_worker_mount_root=warm_worker_mount_root,
-            timeout_seconds=warm_worker_timeout_seconds,
+            timeout_seconds=warm_worker_timeout_seconds if warm_worker_timeout_seconds is not None else timeout_seconds,
         )
+    timeout = resolve_wham_timeout_seconds(timeout_seconds)
+    docker_container_name = f"mwa-wham-job-{uuid.uuid4().hex}" if use_docker else None
     command = build_wham_command(
         wham_repo_path=wham_repo_path,
         input_video=input_video,
@@ -112,6 +119,7 @@ def run_wham_locally(
         docker_image=docker_image,
         docker_gpus=docker_gpus,
         docker_shm_size=docker_shm_size,
+        docker_container_name=docker_container_name,
     )
     started = time.perf_counter()
     lock_wait_seconds = 0.0
@@ -120,16 +128,16 @@ def run_wham_locally(
         encoding="utf-8",
     ) as stderr_handle:
         with wham_docker_run_lock(enabled=use_docker) as lock_wait_seconds:
-            process = subprocess.run(
+            returncode = run_wham_process(
                 command,
                 cwd=str(wham_repo_path),
                 stdout=stdout_handle,
                 stderr=stderr_handle,
-                text=True,
-                check=False,
+                timeout_seconds=timeout,
+                docker_container_name=docker_container_name,
             )
     elapsed = time.perf_counter() - started
-    if process.returncode != 0:
+    if returncode != 0:
         raise RuntimeError(
             "WHAM run failed. Check logs:\n"
             f"- {stdout_log}\n"
@@ -151,12 +159,13 @@ def run_wham_locally(
         stderr_log=stderr_log,
         command=command,
         elapsed_seconds=elapsed,
-        returncode=process.returncode,
+        returncode=returncode,
         use_docker=use_docker,
         estimate_local_only=estimate_local_only,
         run_smplify=run_smplify,
         docker_image=docker_image if use_docker else None,
         docker_lock_wait_seconds=lock_wait_seconds,
+        timeout_seconds=timeout,
     )
 
 
@@ -243,6 +252,7 @@ def run_wham_with_warm_worker(
         run_smplify=run_smplify,
         docker_image=docker_image,
         docker_lock_wait_seconds=lock_wait_seconds,
+        timeout_seconds=timeout,
         warm_worker=True,
         warm_worker_job_id=job_id,
         warm_worker_session_dir=session_dir,
@@ -275,14 +285,68 @@ def resolve_warm_worker_mount_root(configured: Path | None) -> Path:
 
 def resolve_warm_worker_timeout_seconds(configured: float | None) -> float:
     if configured is not None:
-        return max(1.0, float(configured))
+        return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(configured)))
     raw = os.environ.get(WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR)
     if raw is not None:
         try:
-            return max(1.0, float(raw))
+            return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(raw)))
         except ValueError:
             pass
     return float(DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS)
+
+
+def resolve_wham_timeout_seconds(configured: float | None) -> float:
+    if configured is not None:
+        return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(configured)))
+    raw = os.environ.get(WHAM_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is not None:
+        try:
+            return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(raw)))
+        except ValueError:
+            pass
+    return float(DEFAULT_WHAM_TIMEOUT_SECONDS)
+
+
+def run_wham_process(
+    command: list[str],
+    *,
+    cwd: str,
+    stdout: Any,
+    stderr: Any,
+    timeout_seconds: float,
+    docker_container_name: str | None,
+) -> int:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=stdout,
+        stderr=stderr,
+        text=True,
+    )
+    try:
+        return process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        if docker_container_name is not None:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", docker_container_name],
+                    stdout=stderr,
+                    stderr=stderr,
+                    text=True,
+                    check=False,
+                    timeout=20,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait()
+        raise TimeoutError(
+            f"WHAM run exceeded the {timeout_seconds:.0f}s timeout. "
+            f"Logs may contain partial output for command: {' '.join(command)}"
+        ) from exc
 
 
 def path_inside_worker_mount(path: Path, *, mount_root: Path) -> str:
@@ -423,9 +487,12 @@ def build_wham_command(
     docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE,
     docker_gpus: str = "all",
     docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE,
+    docker_container_name: str | None = None,
 ) -> list[str]:
     if use_docker:
         command = ["docker", "run", "--rm"]
+        if docker_container_name:
+            command.extend(["--name", docker_container_name])
         if docker_gpus:
             command.extend(["--gpus", docker_gpus])
         if docker_shm_size:

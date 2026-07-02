@@ -14,6 +14,7 @@ import httpx
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -35,7 +36,7 @@ class DetectionSettings:
     llama_cpp_top_k: int | None = DEFAULT_LLAMA_CPP_TOP_K
     llama_cpp_disable_reasoning: bool = False
     llama_cpp_image_min_tokens: int | None = None
-    llama_cpp_image_max_tokens: int | None = None
+    llama_cpp_image_max_tokens: int | None = DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS
     window_seconds: float = 4.0
     overlap_seconds: float = 2.0
     frames_per_window: int = 6
@@ -1488,19 +1489,19 @@ class LlamaCppVisionClient:
             raise RuntimeError("llama-cpp server mode requires base URL.")
         image_count = len(frame_paths)
         image_bytes = sum(frame_path.stat().st_size for frame_path in frame_paths if frame_path.exists())
-        request_timeout = None if request_timeout_seconds is None else max(1.0, float(request_timeout_seconds))
-        request_kwargs: dict[str, object] = {"json": payload}
-        if request_timeout is not None:
-            request_kwargs["timeout"] = request_timeout
+        if request_timeout_seconds is None:
+            request_timeout: float | None = self.request_timeout_seconds
+        else:
+            requested_timeout = float(request_timeout_seconds)
+            request_timeout = None if requested_timeout <= 0.0 else max(1.0, requested_timeout)
+        request_kwargs: dict[str, object] = {"json": payload, "timeout": request_timeout}
         response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
         if response.status_code >= 400:
             fallback_payload = dict(payload)
             fallback_payload.pop("response_format", None)
             fallback_payload.pop("reasoning_format", None)
             fallback_payload.pop("chat_template_kwargs", None)
-            fallback_request_kwargs: dict[str, object] = {"json": fallback_payload}
-            if request_timeout is not None:
-                fallback_request_kwargs["timeout"] = request_timeout
+            fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
             response = self.client.post(f"{self.base_url}/v1/chat/completions", **fallback_request_kwargs)
         if response.status_code >= 400:
             body = response.text.strip()

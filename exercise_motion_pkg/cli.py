@@ -6,6 +6,8 @@ from pathlib import Path
 
 from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_FALLBACK_CANDIDATES,
+    DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
+    DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
     DEFAULT_MAX_REVIEW_WINDOWS,
     DEFAULT_REVIEW_FRAMES,
     BakeAndRankRequest,
@@ -14,13 +16,27 @@ from exercise_motion_pkg.bake_and_rank import (
 )
 from exercise_motion_pkg.ground import embed_ground_metadata_in_clip, generate_ground_metadata
 from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_BATCH_SIZE,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_V,
+    DEFAULT_LLAMA_CPP_CTX_SIZE,
+    DEFAULT_LLAMA_CPP_FIT,
+    DEFAULT_LLAMA_CPP_FIT_CTX,
+    DEFAULT_LLAMA_CPP_FIT_TARGET,
+    DEFAULT_LLAMA_CPP_FLASH_ATTN,
+    DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_MLOCK,
+    DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_PARALLEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
+    DEFAULT_LLAMA_CPP_UBATCH_SIZE,
 )
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
@@ -31,7 +47,11 @@ from exercise_motion_pkg.raw_preview import write_raw_motion_preview_html
 from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_wham_pkl
 from exercise_motion_pkg.trim_selector import TrimSelectorRequest, run_trim_selector
 from exercise_motion_pkg.video_utils import trim_video
-from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_DOCKER_IMAGE, DEFAULT_WHAM_DOCKER_SHM_SIZE
+from exercise_motion_pkg.wham_runner import (
+    DEFAULT_WHAM_DOCKER_IMAGE,
+    DEFAULT_WHAM_DOCKER_SHM_SIZE,
+    DEFAULT_WHAM_TIMEOUT_SECONDS,
+)
 from exercise_motion_pkg.youtube import (
     YouTubeRankingSettings,
     discover_and_rank_youtube_candidates,
@@ -91,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.add_argument("--wham-docker-gpus", default="all")
     generate.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    generate.add_argument(
+        "--wham-timeout-seconds",
+        type=float,
+        default=DEFAULT_WHAM_TIMEOUT_SECONDS,
+        help="Maximum seconds for one WHAM run. Values above 200 are capped to 200.",
+    )
     generate.add_argument(
         "--wham-estimate-local-only",
         action="store_true",
@@ -242,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--llama-cpp-disable-reasoning", dest="llama_cpp_disable_reasoning", action="store_true")
     detect.set_defaults(llama_cpp_disable_reasoning=False)
     detect.add_argument("--llama-cpp-image-min-tokens", type=int)
-    detect.add_argument("--llama-cpp-image-max-tokens", type=int)
+    detect.add_argument("--llama-cpp-image-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS)
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
     detect.add_argument("--model", default="local-vision")
     detect.add_argument("--litert-command")
@@ -339,8 +365,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use a text-only llama.cpp semantic gate before YOLO pose or VLM ranking.",
     )
-    youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int)
-    youtube_search.add_argument("--semantic-gate-max-candidates-per-exercise", type=int, default=200)
+    youtube_search.add_argument("--semantic-gate-candidates-per-exercise", type=int, default=24)
+    youtube_search.add_argument("--semantic-gate-max-candidates-per-exercise", type=int, default=24)
     youtube_search.add_argument("--semantic-gate-min-score", type=float, default=0.55)
     youtube_search.add_argument(
         "--semantic-gate-duration-rank-weight",
@@ -427,22 +453,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     )
     youtube_search.add_argument("--llama-cpp-image-min-tokens", type=int)
-    youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int)
-    youtube_search.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int)
-    youtube_search.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
-    youtube_search.add_argument("--llama-cpp-batch-size", type=int)
-    youtube_search.add_argument("--llama-cpp-ubatch-size", type=int)
-    youtube_search.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
-    youtube_search.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
-    youtube_search.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
-    youtube_search.add_argument("--llama-cpp-parallel", type=int)
+    youtube_search.add_argument("--llama-cpp-image-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS)
+    youtube_search.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS)
+    youtube_search.add_argument("--llama-cpp-ctx-size", type=int, default=DEFAULT_LLAMA_CPP_CTX_SIZE)
+    youtube_search.add_argument("--llama-cpp-batch-size", type=int, default=DEFAULT_LLAMA_CPP_BATCH_SIZE)
+    youtube_search.add_argument("--llama-cpp-ubatch-size", type=int, default=DEFAULT_LLAMA_CPP_UBATCH_SIZE)
+    youtube_search.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"], default=DEFAULT_LLAMA_CPP_FLASH_ATTN)
+    youtube_search.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_K)
+    youtube_search.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_V)
+    youtube_search.add_argument("--llama-cpp-parallel", type=int, default=DEFAULT_LLAMA_CPP_PARALLEL)
     youtube_search.add_argument("--llama-cpp-threads-http", type=int)
     youtube_search.add_argument("--llama-cpp-cache-reuse", type=int)
-    youtube_search.add_argument("--llama-cpp-fit", choices=["on", "off"])
-    youtube_search.add_argument("--llama-cpp-fit-ctx", type=int, default=24576)
-    youtube_search.add_argument("--llama-cpp-fit-target", type=int)
-    youtube_search.add_argument("--no-llama-cpp-mmap", action="store_true")
-    youtube_search.add_argument("--llama-cpp-mlock", action="store_true")
+    youtube_search.add_argument("--llama-cpp-fit", choices=["on", "off"], default=DEFAULT_LLAMA_CPP_FIT)
+    youtube_search.add_argument("--llama-cpp-fit-ctx", type=int, default=DEFAULT_LLAMA_CPP_FIT_CTX)
+    youtube_search.add_argument("--llama-cpp-fit-target", type=int, default=DEFAULT_LLAMA_CPP_FIT_TARGET)
+    youtube_mmap_group = youtube_search.add_mutually_exclusive_group()
+    youtube_mmap_group.add_argument("--llama-cpp-mmap", dest="llama_cpp_mmap", action="store_true")
+    youtube_mmap_group.add_argument("--no-llama-cpp-mmap", dest="llama_cpp_mmap", action="store_false")
+    youtube_search.set_defaults(llama_cpp_mmap=DEFAULT_LLAMA_CPP_MMAP)
+    youtube_mlock_group = youtube_search.add_mutually_exclusive_group()
+    youtube_mlock_group.add_argument("--llama-cpp-mlock", dest="llama_cpp_mlock", action="store_true")
+    youtube_mlock_group.add_argument("--no-llama-cpp-mlock", dest="llama_cpp_mlock", action="store_false")
+    youtube_search.set_defaults(llama_cpp_mlock=DEFAULT_LLAMA_CPP_MLOCK)
     youtube_search.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     youtube_search.add_argument(
         "--keep-llama-cpp-server",
@@ -496,7 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--max-source-window-attempts",
         type=int,
-        default=1,
+        default=DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
         help=(
             "Maximum source-window variants to try per ranked video before moving on. "
             "Use 0 to try every reviewed source window."
@@ -547,6 +579,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--wham-docker-gpus", default="all")
     bake_and_rank.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    bake_and_rank.add_argument(
+        "--wham-timeout-seconds",
+        type=float,
+        default=DEFAULT_WHAM_TIMEOUT_SECONDS,
+        help="Maximum seconds for one WHAM run. Values above 200 are capped to 200.",
+    )
     bake_and_rank.add_argument(
         "--warm-wham-worker",
         action="store_true",
@@ -711,7 +749,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--final-output-validation-min-score",
         type=float,
-        default=0.70,
+        default=DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
         help="Minimum final-output validator score required for automatic acceptance.",
     )
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
@@ -731,25 +769,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--llama-cpp-reasoning-budget-message",
         default=DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     )
-    bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int, default=24576)
-    bake_and_rank.add_argument("--llama-cpp-batch-size", type=int)
-    bake_and_rank.add_argument("--llama-cpp-ubatch-size", type=int)
-    bake_and_rank.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"])
-    bake_and_rank.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
-    bake_and_rank.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"])
-    bake_and_rank.add_argument("--llama-cpp-parallel", type=int)
+    bake_and_rank.add_argument("--llama-cpp-ctx-size", type=int, default=DEFAULT_LLAMA_CPP_CTX_SIZE)
+    bake_and_rank.add_argument("--llama-cpp-batch-size", type=int, default=DEFAULT_LLAMA_CPP_BATCH_SIZE)
+    bake_and_rank.add_argument("--llama-cpp-ubatch-size", type=int, default=DEFAULT_LLAMA_CPP_UBATCH_SIZE)
+    bake_and_rank.add_argument("--llama-cpp-flash-attn", choices=["on", "off", "auto"], default=DEFAULT_LLAMA_CPP_FLASH_ATTN)
+    bake_and_rank.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_K)
+    bake_and_rank.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_V)
+    bake_and_rank.add_argument("--llama-cpp-parallel", type=int, default=DEFAULT_LLAMA_CPP_PARALLEL)
     bake_and_rank.add_argument("--llama-cpp-threads-http", type=int)
     bake_and_rank.add_argument("--llama-cpp-cache-reuse", type=int)
-    bake_and_rank.add_argument("--llama-cpp-fit", choices=["on", "off"])
-    bake_and_rank.add_argument("--llama-cpp-fit-ctx", type=int, default=24576)
-    bake_and_rank.add_argument("--llama-cpp-fit-target", type=int)
-    bake_and_rank.add_argument("--no-llama-cpp-mmap", action="store_true")
-    bake_and_rank.add_argument("--llama-cpp-mlock", action="store_true")
+    bake_and_rank.add_argument("--llama-cpp-fit", choices=["on", "off"], default=DEFAULT_LLAMA_CPP_FIT)
+    bake_and_rank.add_argument("--llama-cpp-fit-ctx", type=int, default=DEFAULT_LLAMA_CPP_FIT_CTX)
+    bake_and_rank.add_argument("--llama-cpp-fit-target", type=int, default=DEFAULT_LLAMA_CPP_FIT_TARGET)
+    bake_mmap_group = bake_and_rank.add_mutually_exclusive_group()
+    bake_mmap_group.add_argument("--llama-cpp-mmap", dest="llama_cpp_mmap", action="store_true")
+    bake_mmap_group.add_argument("--no-llama-cpp-mmap", dest="llama_cpp_mmap", action="store_false")
+    bake_and_rank.set_defaults(llama_cpp_mmap=DEFAULT_LLAMA_CPP_MMAP)
+    bake_mlock_group = bake_and_rank.add_mutually_exclusive_group()
+    bake_mlock_group.add_argument("--llama-cpp-mlock", dest="llama_cpp_mlock", action="store_true")
+    bake_mlock_group.add_argument("--no-llama-cpp-mlock", dest="llama_cpp_mlock", action="store_false")
+    bake_and_rank.set_defaults(llama_cpp_mlock=DEFAULT_LLAMA_CPP_MLOCK)
     bake_and_rank.add_argument("--no-llama-cpp-mmproj-offload", action="store_true")
     bake_and_rank.add_argument("--no-llama-cpp-cont-batching", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-image-min-tokens", type=int)
-    bake_and_rank.add_argument("--llama-cpp-image-max-tokens", type=int)
-    bake_and_rank.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int)
+    bake_and_rank.add_argument("--llama-cpp-image-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS)
+    bake_and_rank.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS)
     bake_and_rank.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     bake_and_rank.add_argument(
         "--keep-llama-cpp-server",
@@ -933,6 +977,7 @@ def main() -> None:
                 wham_docker_image=args.wham_docker_image,
                 wham_docker_gpus=args.wham_docker_gpus,
                 wham_docker_shm_size=args.wham_docker_shm_size,
+                wham_timeout_seconds=args.wham_timeout_seconds,
                 wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_wham_smplify,
                 spinepose_enabled=spinepose_enabled,
@@ -1162,7 +1207,10 @@ def main() -> None:
                 candidate_review_target_suitable_count=args.candidate_review_target_suitable_count,
                 min_duration_seconds=args.min_duration_seconds,
                 max_duration_seconds=args.max_duration_seconds,
-                single_exercise_name_query=args.single_exercise_name_query,
+                single_exercise_name_query=(
+                    args.single_exercise_name_query
+                    or not (args.use_deepseek_query_planner or args.use_llama_cpp_query_planner)
+                ),
                 use_deepseek_query_planner=args.use_deepseek_query_planner,
                 use_llama_cpp_query_planner=args.use_llama_cpp_query_planner,
                 exercise_name_rewrite_enabled=not args.no_exercise_name_rewrite,
@@ -1233,7 +1281,7 @@ def main() -> None:
                 llama_cpp_fit=args.llama_cpp_fit,
                 llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
                 llama_cpp_fit_target=args.llama_cpp_fit_target,
-                llama_cpp_mmap=not args.no_llama_cpp_mmap,
+                llama_cpp_mmap=args.llama_cpp_mmap,
                 llama_cpp_mlock=args.llama_cpp_mlock,
                 llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
                 keep_llama_cpp_server=args.keep_llama_cpp_server,
@@ -1276,6 +1324,7 @@ def main() -> None:
                 wham_worker_session_dir=args.wham_worker_session_dir,
                 wham_worker_mount_root=args.wham_worker_mount_root,
                 wham_worker_timeout_seconds=args.wham_worker_timeout_seconds,
+                wham_timeout_seconds=args.wham_timeout_seconds,
                 wham_estimate_local_only=args.estimate_local_only or not args.full_wham_camera_slam,
                 wham_run_smplify=not args.skip_smplify,
                 spinepose_enabled=spinepose_enabled,
@@ -1353,7 +1402,7 @@ def main() -> None:
                 llama_cpp_fit=args.llama_cpp_fit,
                 llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
                 llama_cpp_fit_target=args.llama_cpp_fit_target,
-                llama_cpp_mmap=not args.no_llama_cpp_mmap,
+                llama_cpp_mmap=args.llama_cpp_mmap,
                 llama_cpp_mlock=args.llama_cpp_mlock,
                 llama_cpp_mmproj_offload=not args.no_llama_cpp_mmproj_offload,
                 llama_cpp_cont_batching=not args.no_llama_cpp_cont_batching,

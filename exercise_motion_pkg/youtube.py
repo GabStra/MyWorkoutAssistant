@@ -21,14 +21,28 @@ from typing import Any, Callable, Iterable
 import httpx
 from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
 from exercise_motion_pkg.llama_defaults import (
+    DEFAULT_LLAMA_CPP_BATCH_SIZE,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
+    DEFAULT_LLAMA_CPP_CACHE_TYPE_V,
+    DEFAULT_LLAMA_CPP_CTX_SIZE,
+    DEFAULT_LLAMA_CPP_FIT,
+    DEFAULT_LLAMA_CPP_FIT_CTX,
+    DEFAULT_LLAMA_CPP_FIT_TARGET,
+    DEFAULT_LLAMA_CPP_FLASH_ATTN,
+    DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_MLOCK,
+    DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
+    DEFAULT_LLAMA_CPP_PARALLEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_SERVER_COMMAND,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
+    DEFAULT_LLAMA_CPP_UBATCH_SIZE,
 )
 from exercise_motion_pkg.pose_prefilter import (
     PosePrefilterSettings,
@@ -572,7 +586,7 @@ class YouTubeRankingSettings:
     candidate_review_target_suitable_count: int = 1
     min_duration_seconds: int = 0
     max_duration_seconds: int = 120
-    single_exercise_name_query: bool = False
+    single_exercise_name_query: bool = True
     use_deepseek_query_planner: bool = False
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -584,8 +598,8 @@ class YouTubeRankingSettings:
     exercise_name_rewrite_enabled: bool = True
     exercise_motion_contract_enabled: bool = True
     semantic_gate_enabled: bool = False
-    semantic_gate_candidates_per_exercise: int | None = None
-    semantic_gate_max_candidates_per_exercise: int | None = 200
+    semantic_gate_candidates_per_exercise: int | None = 24
+    semantic_gate_max_candidates_per_exercise: int | None = 24
     semantic_gate_min_score: float = 0.55
     semantic_gate_duration_rank_weight: float = SEMANTIC_GATE_DURATION_RANK_DEFAULT_WEIGHT
     semantic_gate_llm_workers: int | None = None
@@ -632,25 +646,25 @@ class YouTubeRankingSettings:
     llama_cpp_disable_reasoning: bool = False
     llama_cpp_reasoning_budget: int | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET
     llama_cpp_reasoning_budget_message: str | None = DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE
-    llama_cpp_ctx_size: int | None = 24576
-    llama_cpp_batch_size: int | None = None
-    llama_cpp_ubatch_size: int | None = None
-    llama_cpp_flash_attn: str | None = None
-    llama_cpp_cache_type_k: str | None = None
-    llama_cpp_cache_type_v: str | None = None
-    llama_cpp_parallel: int | None = None
+    llama_cpp_ctx_size: int | None = DEFAULT_LLAMA_CPP_CTX_SIZE
+    llama_cpp_batch_size: int | None = DEFAULT_LLAMA_CPP_BATCH_SIZE
+    llama_cpp_ubatch_size: int | None = DEFAULT_LLAMA_CPP_UBATCH_SIZE
+    llama_cpp_flash_attn: str | None = DEFAULT_LLAMA_CPP_FLASH_ATTN
+    llama_cpp_cache_type_k: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_K
+    llama_cpp_cache_type_v: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_V
+    llama_cpp_parallel: int | None = DEFAULT_LLAMA_CPP_PARALLEL
     llama_cpp_threads_http: int | None = None
     llama_cpp_cache_reuse: int | None = None
-    llama_cpp_fit: str | None = None
-    llama_cpp_fit_ctx: int | None = 24576
-    llama_cpp_fit_target: int | None = None
-    llama_cpp_mmap: bool = True
-    llama_cpp_mlock: bool = False
+    llama_cpp_fit: str | None = DEFAULT_LLAMA_CPP_FIT
+    llama_cpp_fit_ctx: int | None = DEFAULT_LLAMA_CPP_FIT_CTX
+    llama_cpp_fit_target: int | None = DEFAULT_LLAMA_CPP_FIT_TARGET
+    llama_cpp_mmap: bool = DEFAULT_LLAMA_CPP_MMAP
+    llama_cpp_mlock: bool = DEFAULT_LLAMA_CPP_MLOCK
     llama_cpp_mmproj_offload: bool = True
     llama_cpp_cont_batching: bool = True
     llama_cpp_image_min_tokens: int | None = None
-    llama_cpp_image_max_tokens: int | None = None
-    llama_cpp_mtmd_batch_max_tokens: int | None = None
+    llama_cpp_image_max_tokens: int | None = DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS
+    llama_cpp_mtmd_batch_max_tokens: int | None = DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS
     llama_cpp_auto_start_server: bool = True
     keep_llama_cpp_server: bool = False
     llama_cpp_server_startup_timeout_seconds: float = 180.0

@@ -81,6 +81,7 @@ class GenerateRequest:
     wham_worker_session_dir: Path | None = None
     wham_worker_mount_root: Path | None = None
     wham_worker_timeout_seconds: float | None = None
+    wham_timeout_seconds: float | None = None
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     spinepose_enabled: bool = False
@@ -248,6 +249,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
                 warm_worker_session_dir=request.wham_worker_session_dir,
                 warm_worker_mount_root=request.wham_worker_mount_root,
                 warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+                timeout_seconds=request.wham_timeout_seconds,
             )
             record_timing("whamRunSeconds", stage_started)
             timings["wham"] = wham_result.timing_payload()
