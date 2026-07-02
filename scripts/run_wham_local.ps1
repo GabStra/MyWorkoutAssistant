@@ -14,7 +14,8 @@ param(
     [switch]$UseDocker,
     [string]$DockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$DockerGpus = "all",
-    [string]$DockerShmSize = "16g"
+    [string]$DockerShmSize = "16g",
+    [double]$TimeoutSeconds = 200.0
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,77 @@ function Assert-PathExists {
     if (-not (Test-Path -LiteralPath $PathValue)) {
         throw "Required path not found: $PathValue"
     }
+}
+
+function Invoke-WhamProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath,
+
+        [double]$TimeoutSeconds,
+        [string]$DockerContainerName
+    )
+
+    $effectiveTimeoutSeconds = [Math]::Min(200.0, [Math]::Max(1.0, $TimeoutSeconds))
+    $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $processInfo.FileName = $FilePath
+    $processInfo.WorkingDirectory = $WorkingDirectory
+    $processInfo.RedirectStandardOutput = $true
+    $processInfo.RedirectStandardError = $true
+    $processInfo.UseShellExecute = $false
+    foreach ($argument in $ArgumentList) {
+        [void]$processInfo.ArgumentList.Add($argument)
+    }
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $processInfo
+    [void]$process.Start()
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $completed = $process.WaitForExit([int]($effectiveTimeoutSeconds * 1000))
+    if (-not $completed) {
+        if (-not [string]::IsNullOrWhiteSpace($DockerContainerName)) {
+            & docker rm -f $DockerContainerName *> $null
+        }
+        try {
+            $process.Kill($true)
+        }
+        catch {
+            try {
+                $process.Kill()
+            }
+            catch {
+            }
+        }
+        $process.WaitForExit()
+        $logContent = @(
+            $stdoutTask.GetAwaiter().GetResult(),
+            $stderrTask.GetAwaiter().GetResult(),
+            "WHAM timed out after $effectiveTimeoutSeconds seconds."
+        ) -join "`n"
+        Set-Content -LiteralPath $LogPath -Value $logContent -Encoding UTF8
+        throw "WHAM timed out after $effectiveTimeoutSeconds seconds. See '$LogPath'."
+    }
+
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    Set-Content -LiteralPath $LogPath -Value (@($stdout, $stderr) -join "`n") -Encoding UTF8
+    if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+        Write-Host $stdout
+    }
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+        Write-Host $stderr
+    }
+    return $process.ExitCode
 }
 
 Assert-PathExists $WhamRepoPath
@@ -76,9 +148,11 @@ if ($UseDocker) {
     $inputDir = Split-Path -Parent $resolvedInputVideo
     $inputName = [System.IO.Path]::GetFileName($resolvedInputVideo)
     $dockerLog = Join-Path $resolvedOutputRoot "wham_docker.log"
+    $dockerContainerName = "mwa-wham-job-$([guid]::NewGuid().ToString('N'))"
     $dockerArgs = @(
         "run",
-        "--rm"
+        "--rm",
+        "--name", $dockerContainerName
     )
     if (-not [string]::IsNullOrWhiteSpace($DockerGpus)) {
         $dockerArgs += @("--gpus", $DockerGpus)
@@ -107,8 +181,13 @@ if ($UseDocker) {
     if ($RunSmplify) {
         $dockerArgs += "--run_smplify"
     }
-    & docker @dockerArgs 2>&1 | Tee-Object -FilePath $dockerLog
-    $dockerExitCode = $LASTEXITCODE
+    $dockerExitCode = Invoke-WhamProcess `
+        -FilePath "docker" `
+        -ArgumentList $dockerArgs `
+        -WorkingDirectory $resolvedRepo `
+        -LogPath $dockerLog `
+        -TimeoutSeconds $TimeoutSeconds `
+        -DockerContainerName $dockerContainerName
     if ($dockerExitCode -ne 0) {
         throw "WHAM Docker run failed with exit code $dockerExitCode. See '$dockerLog'."
     }
@@ -117,9 +196,15 @@ if ($UseDocker) {
 
 Push-Location $resolvedRepo
 try {
-    & $PythonCommand @argsList
-    if ($LASTEXITCODE -ne 0) {
-        throw "WHAM run failed with exit code $LASTEXITCODE."
+    $localLog = Join-Path $resolvedOutputRoot "wham_local.log"
+    $exitCode = Invoke-WhamProcess `
+        -FilePath $PythonCommand `
+        -ArgumentList $argsList `
+        -WorkingDirectory $resolvedRepo `
+        -LogPath $localLog `
+        -TimeoutSeconds $TimeoutSeconds
+    if ($exitCode -ne 0) {
+        throw "WHAM run failed with exit code $exitCode. See '$localLog'."
     }
 }
 finally {

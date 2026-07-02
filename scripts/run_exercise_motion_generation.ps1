@@ -13,6 +13,7 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
+    [double]$WhamTimeoutSeconds = 200.0,
     [switch]$EstimateLocalOnly,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
@@ -57,7 +58,7 @@ param(
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [int]$LlamaCppImageMinTokens = 0,
-    [int]$LlamaCppImageMaxTokens = 0,
+    [int]$LlamaCppImageMaxTokens = 1024,
     [double]$SegmentWindowSeconds = 5.0,
     [double]$SegmentOverlapSeconds = 2.5,
     [int]$SegmentFramesPerWindow = 20,
@@ -370,7 +371,8 @@ $whamRunnerArgs = @(
     "-WhamRepoPath", $resolvedWhamRepoPath,
     "-InputVideo", $resolvedInputVideoPath,
     "-OutputRoot", $rawWhamDir,
-    "-PythonCommand", $WhamPython
+    "-PythonCommand", $WhamPython,
+    "-TimeoutSeconds", $WhamTimeoutSeconds
 )
 if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
     $whamRunnerArgs += "-EstimateLocalOnly"

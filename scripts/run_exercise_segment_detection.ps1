@@ -20,7 +20,21 @@ param(
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [int]$LlamaCppImageMinTokens = 0,
-    [int]$LlamaCppImageMaxTokens = 0,
+    [int]$LlamaCppImageMaxTokens = 1024,
+    [int]$LlamaCppCtxSize = 49152,
+    [int]$LlamaCppBatchSize = 256,
+    [int]$LlamaCppUBatchSize = 512,
+    [string]$LlamaCppFlashAttn = "on",
+    [string]$LlamaCppCacheTypeK = "q8_0",
+    [string]$LlamaCppCacheTypeV = "q8_0",
+    [string]$LlamaCppFit = "on",
+    [int]$LlamaCppFitCtx = 49152,
+    [int]$LlamaCppFitTarget = 2048,
+    [bool]$LlamaCppMmap = $false,
+    [bool]$LlamaCppMlock = $true,
+    [int]$LlamaCppMtmdBatchMaxTokens = 512,
+    [bool]$LlamaCppMmprojOffload = $true,
+    [bool]$LlamaCppContBatching = $true,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
     [string]$LiteRtModelFile = "gemma-4-E4B-it.litertlm",
     [string]$VisionModel = "gemma-4-E4B-it",
@@ -37,7 +51,7 @@ param(
     [double]$MinSegmentSeconds = 2.0,
     [double]$MaxSegmentSeconds = 20.0,
     [int]$ClassificationWorkers = 3,
-    [int]$LlamaCppServerParallel = 0,
+    [int]$LlamaCppServerParallel = 12,
     [int]$HealthTimeoutSeconds = 180
 )
 
@@ -96,7 +110,23 @@ function Resolve-LlamaCppServerProcess {
         [int]$ParallelSlots,
         [bool]$DisableReasoning,
         [Nullable[int]]$ReasoningBudget,
-        [string]$ReasoningBudgetMessage
+        [string]$ReasoningBudgetMessage,
+        [int]$CtxSize,
+        [int]$BatchSize,
+        [int]$UBatchSize,
+        [string]$FlashAttn,
+        [string]$CacheTypeK,
+        [string]$CacheTypeV,
+        [string]$Fit,
+        [int]$FitCtx,
+        [int]$FitTarget,
+        [int]$ImageMinTokens,
+        [int]$ImageMaxTokens,
+        [int]$MtmdBatchMaxTokens,
+        [bool]$Mmap,
+        [bool]$Mlock,
+        [bool]$MmprojOffload,
+        [bool]$ContBatching
     )
 
     $args = @(
@@ -112,6 +142,24 @@ function Resolve-LlamaCppServerProcess {
     if ($ParallelSlots -gt 1) {
         $args += @("--parallel", "$ParallelSlots")
     }
+    if ($CtxSize -gt 0) {
+        $args += @("--ctx-size", "$CtxSize")
+    }
+    if ($BatchSize -gt 0) {
+        $args += @("--batch-size", "$BatchSize")
+    }
+    if ($UBatchSize -gt 0) {
+        $args += @("--ubatch-size", "$UBatchSize")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FlashAttn)) {
+        $args += @("--flash-attn", $FlashAttn)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CacheTypeK)) {
+        $args += @("--cache-type-k", $CacheTypeK)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CacheTypeV)) {
+        $args += @("--cache-type-v", $CacheTypeV)
+    }
     if ($DisableReasoning) {
         $args += @("--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0")
     }
@@ -124,6 +172,32 @@ function Resolve-LlamaCppServerProcess {
             }
         }
     }
+    if (-not [string]::IsNullOrWhiteSpace($Fit)) {
+        $args += @("--fit", $Fit)
+    }
+    if ($FitCtx -gt 0) {
+        $args += @("--fit-ctx", "$FitCtx")
+    }
+    if ($FitTarget -gt 0) {
+        $args += @("--fit-target", "$FitTarget")
+    }
+    if ($ImageMinTokens -gt 0) {
+        $args += @("--image-min-tokens", "$ImageMinTokens")
+    }
+    if ($ImageMaxTokens -gt 0) {
+        $args += @("--image-max-tokens", "$ImageMaxTokens")
+    }
+    if ($MtmdBatchMaxTokens -gt 0) {
+        $args += @("--mtmd-batch-max-tokens", "$MtmdBatchMaxTokens")
+    }
+    if (-not $Mmap) {
+        $args += "--no-mmap"
+    }
+    if ($Mlock) {
+        $args += "--mlock"
+    }
+    $args += if ($MmprojOffload) { "--mmproj-offload" } else { "--no-mmproj-offload" }
+    $args += if ($ContBatching) { "--cont-batching" } else { "--no-cont-batching" }
     if ($Backend -eq "gpu") {
         $args += @("--gpu-layers", "all")
     }
@@ -343,18 +417,34 @@ if ($UseLiteRt) {
             -ParallelSlots $parallelSlots `
             -DisableReasoning $LlamaCppDisableReasoning `
             -ReasoningBudget $LlamaCppReasoningBudget `
-            -ReasoningBudgetMessage $LlamaCppReasoningBudgetMessage
+            -ReasoningBudgetMessage $LlamaCppReasoningBudgetMessage `
+            -CtxSize $LlamaCppCtxSize `
+            -BatchSize $LlamaCppBatchSize `
+            -UBatchSize $LlamaCppUBatchSize `
+            -FlashAttn $LlamaCppFlashAttn `
+            -CacheTypeK $LlamaCppCacheTypeK `
+            -CacheTypeV $LlamaCppCacheTypeV `
+            -Fit $LlamaCppFit `
+            -FitCtx $LlamaCppFitCtx `
+            -FitTarget $LlamaCppFitTarget `
+            -ImageMinTokens $LlamaCppImageMinTokens `
+            -ImageMaxTokens $LlamaCppImageMaxTokens `
+            -MtmdBatchMaxTokens $LlamaCppMtmdBatchMaxTokens `
+            -Mmap $LlamaCppMmap `
+            -Mlock $LlamaCppMlock `
+            -MmprojOffload $LlamaCppMmprojOffload `
+            -ContBatching $LlamaCppContBatching
         $cleanupLlamaCppServer = $true
         if (-not $llamaCppServerProcess -or $llamaCppServerProcess.HasExited) {
             throw "Failed to start llama-server process."
         }
-        if (-not (Wait-LlamaCppServer -HostAddress $serverHost -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
+        if (-not (Wait-LlamaCppServer -HostAddress $serverHost -Port $LlamaCppServerPort -TimeoutSeconds $HealthTimeoutSeconds)) {
             throw "Timed out waiting for llama-server startup on port $LlamaCppServerPort."
         }
     }
     else {
         Write-Host "Using existing server on port $LlamaCppServerPort."
-        if (-not (Wait-LlamaCppServer -HostAddress "127.0.0.1" -Port $LlamaCppServerPort -TimeoutSeconds 120)) {
+        if (-not (Wait-LlamaCppServer -HostAddress "127.0.0.1" -Port $LlamaCppServerPort -TimeoutSeconds $HealthTimeoutSeconds)) {
             throw "Existing llama-server on port $LlamaCppServerPort did not become ready."
         }
         Assert-LlamaCppServerModelMatches `

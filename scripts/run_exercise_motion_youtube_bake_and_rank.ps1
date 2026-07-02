@@ -31,11 +31,11 @@ param(
     [switch]$SkipVisionRanking,
     [switch]$SemanticGateWithLlamaCpp,
     [switch]$SkipSemanticGate,
-    [Nullable[int]]$SemanticGateCandidatesPerExercise = 4,
-    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 16,
+    [Nullable[int]]$SemanticGateCandidatesPerExercise = 24,
+    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 24,
     [double]$SemanticGateMinScore = 0.55,
     [double]$SemanticGateDurationRankWeight = 0.15,
-    [Nullable[int]]$SemanticGateLlmWorkers,
+    [Nullable[int]]$SemanticGateLlmWorkers = 4,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
@@ -56,7 +56,7 @@ param(
     [int]$ThoroughVisionMaxChunksPerCandidate = 0,
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 2,
+    [int]$MaxSourceWindowAttempts = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [bool]$UseExistingCandidatesForFirstAttempt = $true,
@@ -64,11 +64,12 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
-    [bool]$WarmWhamWorker = $true,
+    [bool]$WarmWhamWorker = $false,
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 21600.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 200.0,
+    [double]$WhamTimeoutSeconds = 200.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
@@ -118,7 +119,7 @@ param(
     [double]$MinSelectedScore = 0.55,
     [bool]$FinalOutputValidation = $true,
     [switch]$SkipFinalOutputValidation,
-    [double]$FinalOutputValidationMinScore = 0.70,
+    [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
@@ -562,7 +563,8 @@ $youtubeArgs = @(
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers"
 )
-if ($SingleExerciseNameQuery) {
+$useSingleExerciseNameQuery = $SingleExerciseNameQuery -or (-not $UseLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner)
+if ($useSingleExerciseNameQuery) {
     $youtubeArgs += "--single-exercise-name-query"
 }
 if ($VisionMaxChunksPerCandidate -gt 0) {
@@ -639,7 +641,7 @@ if ($NoExerciseMotionContract) {
 if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
     $youtubeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
 }
-if (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner) {
+if ($UseLlamaCppQueryPlanner -and -not $SkipLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner -and -not $useSingleExerciseNameQuery) {
     $youtubeArgs += @(
         "--use-llama-cpp-query-planner",
         "--deepseek-max-queries", "$DeepSeekMaxQueries"
@@ -711,6 +713,7 @@ $bakeArgs = @(
     "--wham-repo-path", $resolvedWhamRepoPath,
     "--body-model-root", $resolvedBodyModelRoot,
     "--wham-python", "python",
+    "--wham-timeout-seconds", "$WhamTimeoutSeconds",
     "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
     "--segment-padding-seconds", "$SegmentPaddingSeconds",
     "--segment-end-padding-seconds", "$SegmentEndPaddingSeconds",

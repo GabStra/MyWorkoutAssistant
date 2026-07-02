@@ -42,9 +42,9 @@ param(
     [switch]$SemanticGateWithLlamaCpp,
     [switch]$SkipSemanticGate,
     [Nullable[int]]$SemanticGateCandidatesPerExercise = 24,
-    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200,
+    [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 24,
     [double]$SemanticGateMinScore = 0.55,
-    [Nullable[int]]$SemanticGateLlmWorkers,
+    [Nullable[int]]$SemanticGateLlmWorkers = 4,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
@@ -65,7 +65,7 @@ param(
     [ValidateSet("auto", "allow", "avoid")]
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 2,
+    [int]$MaxSourceWindowAttempts = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$ReuseExistingSelected,
@@ -74,11 +74,12 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
-    [bool]$WarmWhamWorker = $true,
+    [bool]$WarmWhamWorker = $false,
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 21600.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 200.0,
+    [double]$WhamTimeoutSeconds = 200.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$RunSmplify,
@@ -109,32 +110,32 @@ param(
     [double]$MinSelectedScore = 0.55,
     [bool]$FinalOutputValidation = $true,
     [switch]$SkipFinalOutputValidation,
-    [double]$FinalOutputValidationMinScore = 0.70,
+    [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel,
-    [string]$LlamaCppServerCommand,
-    [string]$LlamaCppMmproj,
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
     [string]$LlamaCppBackend = "gpu",
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
     [Nullable[int]]$LlamaCppCtxSize = 49152,
-    [Nullable[int]]$LlamaCppBatchSize,
-    [Nullable[int]]$LlamaCppUBatchSize,
-    [string]$LlamaCppFlashAttn,
-    [string]$LlamaCppCacheTypeK,
-    [string]$LlamaCppCacheTypeV,
+    [Nullable[int]]$LlamaCppBatchSize = 256,
+    [Nullable[int]]$LlamaCppUBatchSize = 512,
+    [string]$LlamaCppFlashAttn = "on",
+    [string]$LlamaCppCacheTypeK = "q8_0",
+    [string]$LlamaCppCacheTypeV = "q8_0",
     [Nullable[int]]$LlamaCppParallel = 12,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
-    [string]$LlamaCppFit,
+    [string]$LlamaCppFit = "on",
     [Nullable[int]]$LlamaCppFitCtx = 49152,
-    [Nullable[int]]$LlamaCppFitTarget,
+    [Nullable[int]]$LlamaCppFitTarget = 2048,
     [Nullable[int]]$LlamaCppImageMinTokens,
-    [Nullable[int]]$LlamaCppImageMaxTokens,
-    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens,
-    [bool]$LlamaCppMmap = $true,
-    [bool]$LlamaCppMlock = $false,
+    [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
+    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
+    [bool]$LlamaCppMmap = $false,
+    [bool]$LlamaCppMlock = $true,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [bool]$KeepLlamaCppServer = $true,
@@ -1571,7 +1572,7 @@ $llamaCppDiscoveryUsesGpu = (
     (
         -not $SkipVisionRanking -or
         ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate) -or
-        (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner)
+        ($UseLlamaCppQueryPlanner -and -not $SkipLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner)
     )
 )
 $gpuDiscoveryStages = @()
@@ -1713,6 +1714,9 @@ if ($NoExerciseNameRewrite) {
 if ($NoExerciseMotionContract) {
     $youtubeBaseArgs += "--no-exercise-motion-contract"
 }
+if (-not $UseLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner) {
+    $youtubeBaseArgs += "--single-exercise-name-query"
+}
 if (-not $SkipVisionRanking) {
     $youtubeBaseArgs += "--rank-with-vision"
 }
@@ -1742,7 +1746,7 @@ if ($UseDeepSeekQueryPlanner) {
         $youtubeBaseArgs += @("--deepseek-api-key", $DeepSeekApiKey)
     }
 }
-if (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner) {
+if ($UseLlamaCppQueryPlanner -and -not $SkipLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner) {
     $youtubeBaseArgs += "--use-llama-cpp-query-planner"
 }
 if ($null -ne $LlamaCppParallel) {
@@ -1879,6 +1883,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
         "--wham-python", "python",
+        "--wham-timeout-seconds", "$WhamTimeoutSeconds",
         "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
         "--segment-padding-seconds", "$SegmentPaddingSeconds",
         "--segment-end-padding-seconds", "$SegmentEndPaddingSeconds",
