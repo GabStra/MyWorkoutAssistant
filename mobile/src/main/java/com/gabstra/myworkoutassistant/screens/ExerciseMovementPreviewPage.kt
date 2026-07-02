@@ -56,7 +56,8 @@ fun ExerciseMovementPreviewPage(
             backgroundColor = backgroundColor,
             primaryFill = primaryFill,
             animated = true,
-            orbitView = false,
+            orbitView = true,
+            dragRotationEnabled = true,
         )
     } else {
         MovementStatusMessage(

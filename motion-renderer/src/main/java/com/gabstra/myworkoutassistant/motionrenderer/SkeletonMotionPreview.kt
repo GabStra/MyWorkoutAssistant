@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -190,6 +192,26 @@ private data class WearSkeletonVec3(
     fun dot(other: WearSkeletonVec3): Float = x * other.x + y * other.y + z * other.z
 }
 
+private enum class WearSkeletonDisplayCoordinateTransform {
+    None,
+    RotateXPi;
+
+    fun apply(point: WearSkeletonVec3): WearSkeletonVec3 = when (this) {
+        None -> point
+        RotateXPi -> WearSkeletonVec3(point.x, -point.y, -point.z)
+    }
+
+    fun apply(bounds: WearSkeletonBounds): WearSkeletonBounds = when (this) {
+        None -> bounds
+        RotateXPi -> bounds.copy(
+            minY = -bounds.maxY,
+            maxY = -bounds.minY,
+            minZ = -bounds.maxZ,
+            maxZ = -bounds.minZ,
+        )
+    }
+}
+
 private data class LimbSpec(
     val startName: String,
     val endName: String,
@@ -260,6 +282,7 @@ fun SkeletonMotionPreview(
     var frameIndex by remember(skeleton.frames.size) { mutableIntStateOf(if (animated) 0 else min(12, skeleton.frames.lastIndex)) }
     var orbitYawDegrees by remember(baseViewYawDegrees) { mutableFloatStateOf(baseViewYawDegrees) }
     var dragYawOffsetDegrees by remember(skeletonJson, baseViewYawDegrees) { mutableFloatStateOf(0f) }
+    var orbitPausedByTouch by remember { mutableStateOf(false) }
     val dragRotationState = rememberDraggableState { delta ->
         dragYawOffsetDegrees += delta * dragRotationDegreesPerPixel
     }
@@ -291,6 +314,22 @@ fun SkeletonMotionPreview(
     } else {
         Modifier
     }
+    val touchPauseModifier = if (orbitView) {
+        Modifier.pointerInput(Unit) {
+            try {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        orbitPausedByTouch = event.changes.any { change -> change.pressed }
+                    }
+                }
+            } finally {
+                orbitPausedByTouch = false
+            }
+        }
+    } else {
+        Modifier
+    }
 
     LaunchedEffect(animated, orbitView, skeleton.fps, skeleton.frames.size, baseViewYawDegrees, loopRestartFadeMillis) {
         if (!animated && !orbitView) {
@@ -298,11 +337,17 @@ fun SkeletonMotionPreview(
             return@LaunchedEffect
         }
         var startTimeNanos: Long? = null
+        var previousFrameTimeNanos: Long? = null
+        var orbitElapsedSeconds = 0.0
         while (true) {
             val frameTimeNanos = withFrameNanos { it }
             val startedAt = startTimeNanos ?: frameTimeNanos.also { startTimeNanos = it }
             val seconds = (frameTimeNanos - startedAt) / 1_000_000_000.0
-            var orbitSeconds = seconds
+            val previousFrameTime = previousFrameTimeNanos
+            if (previousFrameTime != null && orbitView && !orbitPausedByTouch) {
+                orbitElapsedSeconds += (frameTimeNanos - previousFrameTime) / 1_000_000_000.0
+            }
+            previousFrameTimeNanos = frameTimeNanos
             if (animated && skeleton.frames.isNotEmpty()) {
                 val playback = resolveLoopPlayback(
                     elapsedSeconds = seconds,
@@ -310,7 +355,6 @@ fun SkeletonMotionPreview(
                     fps = skeleton.fps,
                     loopRestartFadeMillis = loopRestartFadeMillis,
                 )
-                orbitSeconds = playback.motionElapsedSeconds
                 if (frameIndex != playback.frameIndex) {
                     frameIndex = playback.frameIndex
                 }
@@ -319,7 +363,7 @@ fun SkeletonMotionPreview(
                 }
             }
             if (orbitView) {
-                orbitYawDegrees = baseViewYawDegrees + ((orbitSeconds * OrbitDegreesPerSecond) % 360.0).toFloat()
+                orbitYawDegrees = baseViewYawDegrees + ((orbitElapsedSeconds * OrbitDegreesPerSecond) % 360.0).toFloat()
             }
         }
     }
@@ -343,10 +387,11 @@ fun SkeletonMotionPreview(
             backgroundColor = backgroundColor,
             modifier = Modifier.fillMaxSize(),
         )
-        if (dragRotationEnabled) {
+        if (orbitView || dragRotationEnabled) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(touchPauseModifier)
                     .then(dragRotationModifier),
             )
         }
@@ -1030,13 +1075,17 @@ private fun addFilamentFloorGrid(
 ) {
     val height = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
     val floorY = bounds.minY - (height * 0.014f)
-    val paddingX = (bounds.maxX - bounds.minX) * 0.12f
-    val paddingZ = (bounds.maxZ - bounds.minZ) * 0.12f
-    val minX = bounds.minX - paddingX
-    val maxX = bounds.maxX + paddingX
-    val minZ = bounds.minZ - paddingZ
-    val maxZ = bounds.maxZ + paddingZ
-    val lineHalfWidth = max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ) * 0.0046f
+    val width = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
+    val depth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
+    val floorSize = max(width, depth) * 1.24f
+    val halfFloorSize = floorSize * 0.5f
+    val centerX = (bounds.minX + bounds.maxX) * 0.5f
+    val centerZ = (bounds.minZ + bounds.maxZ) * 0.5f
+    val minX = centerX - halfFloorSize
+    val maxX = centerX + halfFloorSize
+    val minZ = centerZ - halfFloorSize
+    val maxZ = centerZ + halfFloorSize
+    val lineHalfWidth = floorSize * 0.0046f
     val divisions = 4
 
     for (index in 0..divisions) {
@@ -1244,16 +1293,22 @@ private fun addShoeBlockFromNames(
     val horizontalLength = horizontalFoot.length()
     val bodyForward = bodyAxes.forward - worldUp * bodyAxes.forward.dot(worldUp)
     val stableForward = bodyForward.normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
-    val footForward = if (horizontalLength > 0.0001f && horizontalFoot.dot(stableForward) < 0f) {
-        stableForward * -1f
+    val footForward = if (horizontalLength > 0.0001f) {
+        horizontalFoot * (1f / horizontalLength)
     } else {
         stableForward
     }
-    val footSide = (bodyAxes.side - worldUp * bodyAxes.side.dot(worldUp)).normalizedOr(bodyAxes.side)
-    val shoeUp = bodyAxes.up
-    val length = max(horizontalLength * 1.72f, footScale * 0.86f)
-    val halfWidth = footScale * 0.42f
-    val height = footScale * 0.52f
+    val fallbackSide = (bodyAxes.side - worldUp * bodyAxes.side.dot(worldUp)).normalizedOr(bodyAxes.side)
+    val footSide = worldUp.cross(footForward).normalizedOr(fallbackSide)
+    val shoeUp = worldUp
+    val shoeScale = if (horizontalLength > 0.0001f) {
+        horizontalLength
+    } else {
+        footScale * 0.60f
+    }
+    val length = max(shoeScale * 1.12f, footScale * 0.45f)
+    val halfWidth = max(shoeScale * 0.20f, footScale * 0.12f)
+    val height = max(shoeScale * 0.24f, footScale * 0.14f)
     val profile = listOf(
         ShoeProfilePoint(
             center = ankle - footForward * (length * 0.04f) - shoeUp * (height * 0.38f),
@@ -1661,22 +1716,26 @@ private data class LimbProfile(
 private fun parseWearSkeleton(json: String): WearSkeleton {
     val root = JsonParser.parseString(json).asJsonObject
     val boundsObject = root.getAsJsonObject("bounds")
+    // Browser exports keep coordinates canonical; restore removed preview-only transforms when drawing.
+    val displayCoordinateTransform = root.toWearSkeletonDisplayCoordinateTransform()
     val frames = root.getAsJsonArray("frames").map { frameElement ->
         val jointsObject = frameElement.asJsonObject.getAsJsonObject("joints")
         WearSkeletonFrame(
             joints = jointsObject.entrySet().associate { (name, element) ->
                 val values = element.asJsonArray
-                name to WearSkeletonVec3(
-                    x = values[0].asFloat,
-                    y = values[1].asFloat,
-                    z = values[2].asFloat,
+                name to displayCoordinateTransform.apply(
+                    WearSkeletonVec3(
+                        x = values[0].asFloat,
+                        y = values[1].asFloat,
+                        z = values[2].asFloat,
+                    )
                 )
             }
         )
     }
     return WearSkeleton(
         fps = root.get("fps")?.asFloat ?: 30f,
-        bounds = boundsObject.toWearSkeletonBounds(),
+        bounds = displayCoordinateTransform.apply(boundsObject.toWearSkeletonBounds()),
         frames = frames,
         display = root.toWearSkeletonDisplay(),
     )
@@ -1694,6 +1753,19 @@ private fun JsonObject.toWearSkeletonDisplay(): WearSkeletonDisplay {
             ?: selectedPreviewSettings?.optionalFloat("cameraPitchDegrees")
             ?: bakedPreviewConfiguration?.optionalFloat("cameraPitchDegrees"),
     )
+}
+
+private fun JsonObject.toWearSkeletonDisplayCoordinateTransform(): WearSkeletonDisplayCoordinateTransform {
+    val normalization = optionalJsonObject("bakedPreviewConfiguration")
+        ?.optionalJsonObject("wearCoordinateNormalization")
+        ?: return WearSkeletonDisplayCoordinateTransform.None
+    val sceneInversionRemoved = normalization.optionalBoolean("sceneInversionRemoved") == true
+    val transform = normalization.optionalString("transform")
+    return if (sceneInversionRemoved && transform.equals("rotate_x_pi", ignoreCase = true)) {
+        WearSkeletonDisplayCoordinateTransform.RotateXPi
+    } else {
+        WearSkeletonDisplayCoordinateTransform.None
+    }
 }
 
 private fun JsonObject.toWearSkeletonBounds(): WearSkeletonBounds = WearSkeletonBounds(
@@ -1716,6 +1788,22 @@ private fun JsonObject.optionalFloat(name: String): Float? {
         return null
     }
     return runCatching { element.asFloat }.getOrNull()
+}
+
+private fun JsonObject.optionalBoolean(name: String): Boolean? {
+    val element = get(name) ?: return null
+    if (!element.isJsonPrimitive) {
+        return null
+    }
+    return runCatching { element.asBoolean }.getOrNull()
+}
+
+private fun JsonObject.optionalString(name: String): String? {
+    val element = get(name) ?: return null
+    if (!element.isJsonPrimitive) {
+        return null
+    }
+    return runCatching { element.asString }.getOrNull()
 }
 
 private fun Int.floorMod(modulus: Int): Int = ((this % modulus) + modulus) % modulus

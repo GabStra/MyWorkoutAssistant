@@ -568,7 +568,8 @@ fun ExerciseForm(
                             backgroundColor = MaterialTheme.colorScheme.background,
                             primaryFill = MaterialTheme.colorScheme.primary,
                             animated = true,
-                            orbitView = false,
+                            orbitView = true,
+                            dragRotationEnabled = true,
                         )
                     } else {
                         Text(
