@@ -10,8 +10,15 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
+    [bool]$WarmWhamWorker = $true,
+    [switch]$SkipWarmWhamWorker,
+    [string]$WhamWorkerSessionDir,
+    [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 21600.0,
+    [Alias("YoutubeCookiesPath")]
+    [string]$YoutubeCookies,
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 1,
+    [int]$MaxSourceWindowAttempts = 2,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$EstimateLocalOnly,
@@ -50,7 +57,7 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 20.0,
     [switch]$SkipPreWhamSourceValidation,
-    [switch]$NoPreWhamSourceContract,
+    [switch]$NoExerciseMotionContract,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
@@ -59,23 +66,26 @@ param(
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 12,
-    [int]$ReviewLlmWorkers = 4,
+    [int]$ReviewLlmWorkers = 12,
     [int]$MaxLlmReviewItems = 2,
-    [int]$MaxReviewWindows = 3,
+    [int]$MaxReviewWindows = 0,
     [double]$MinSelectedScore = 0.55,
+    [bool]$FinalOutputValidation = $true,
+    [switch]$SkipFinalOutputValidation,
+    [double]$FinalOutputValidationMinScore = 0.70,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
     [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
     [string]$LlamaCppBackend = "gpu",
-    [int]$LlamaCppNPredict = 768,
+    [int]$LlamaCppNPredict = 512,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
-    [Nullable[int]]$LlamaCppCtxSize = 24576,
+    [Nullable[int]]$LlamaCppCtxSize = 49152,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [ValidateSet("on", "off", "auto")]
@@ -84,19 +94,20 @@ param(
     [string]$LlamaCppCacheTypeK = "q8_0",
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 4,
-    [Nullable[int]]$LlamaCppThreadsHttp = 6,
+    [Nullable[int]]$LlamaCppParallel = 12,
+    [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 24576,
+    [Nullable[int]]$LlamaCppFitCtx = 49152,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
     [bool]$LlamaCppMmap = $false,
     [bool]$LlamaCppMlock = $true,
     [bool]$LlamaCppMmprojOffload = $true,
     [bool]$LlamaCppContBatching = $true,
     [Nullable[int]]$LlamaCppImageMinTokens,
-    [Nullable[int]]$LlamaCppImageMaxTokens,
+    [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
+    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
     [switch]$NoLlamaCppAutoStartServer,
     [bool]$KeepLlamaCppServer = $true,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
@@ -161,11 +172,130 @@ function Get-BasicPythonCommand {
     return $pythonCommand.Path
 }
 
+function Start-WhamWarmWorker {
+    param(
+        [string]$SessionDir,
+        [string]$MountRoot,
+        [string]$WorkerScriptPath
+    )
+
+    New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
+    foreach ($child in @("jobs", "running", "results", "job_logs")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
+    }
+    foreach ($staleFile in @("ready.json", "startup_error.json", "stop", "stopped.json")) {
+        $path = Join-Path $SessionDir $staleFile
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+
+    $containerName = "mwa-wham-worker-$([guid]::NewGuid().ToString('N'))"
+    $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
+    if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
+        $dockerArgs += @("--gpus", $WhamDockerGpus)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
+        $dockerArgs += @("--shm-size", $WhamDockerShmSize)
+    }
+    $dockerArgs += @(
+        "-v", "$($resolvedWhamRepoPath):/code",
+        "-v", "$($MountRoot):/workspace",
+        "-v", "$($SessionDir):/worker_state",
+        "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
+        "-w", "/code",
+        $WhamDockerImage,
+        "python", "-u", "/worker/wham_warm_worker.py",
+        "--state-dir", "/worker_state"
+    )
+
+    Write-Host "Starting warm WHAM worker container '$containerName'."
+    $containerId = (& docker @dockerArgs 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to start warm WHAM worker container: $containerId"
+    }
+    $containerId = ([string]$containerId).Trim()
+    $readyPath = Join-Path $SessionDir "ready.json"
+    $startupErrorPath = Join-Path $SessionDir "startup_error.json"
+    $deadline = (Get-Date).AddSeconds($WhamWorkerStartupTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path -LiteralPath $readyPath) {
+            $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
+            Write-Host ("Warm WHAM worker ready in {0}s. GPU: {1}" -f $ready.loadSeconds, $ready.gpuName)
+            return [pscustomobject]@{
+                containerName = $containerName
+                containerId = $containerId
+                sessionDir = $SessionDir
+                mountRoot = $MountRoot
+                readyPath = $readyPath
+            }
+        }
+        if (Test-Path -LiteralPath $startupErrorPath) {
+            $errorPayload = Get-Content -LiteralPath $startupErrorPath -Raw
+            try {
+                & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
+            } catch {
+            }
+            try {
+                & docker stop $containerName | Out-Null
+            } catch {
+            }
+            throw "Warm WHAM worker failed during startup: $errorPayload"
+        }
+        $running = (& docker inspect -f "{{.State.Running}}" $containerName 2>$null)
+        if ($LASTEXITCODE -ne 0 -or "$running".Trim().ToLowerInvariant() -ne "true") {
+            $logs = (& docker logs $containerName 2>&1)
+            throw "Warm WHAM worker container exited before ready. Logs: $logs"
+        }
+        Start-Sleep -Seconds 2
+    }
+    try {
+        & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
+    } catch {
+    }
+    try {
+        & docker stop $containerName | Out-Null
+    } catch {
+    }
+    throw "Timed out waiting for warm WHAM worker startup after $WhamWorkerStartupTimeoutSeconds seconds."
+}
+
+function Stop-WhamWarmWorker {
+    param([object]$Worker)
+    if ($null -eq $Worker) {
+        return
+    }
+    try {
+        "stop" | Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stop") -Encoding UTF8
+    } catch {
+    }
+    try {
+        & docker stop --time 10 $Worker.containerName | Out-Null
+    } catch {
+        Write-Warning "Failed to stop warm WHAM worker container '$($Worker.containerName)': $($_.Exception.Message)"
+    }
+}
+
+function Ensure-LlamaCppParallelContext {
+    $minContextPerSlot = 4096
+    $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
+    $minTotalContext = $parallelSlots * $minContextPerSlot
+    if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {
+        Write-Host ("Raising llama.cpp ctx-size from {0} to {1} so {2} parallel slot(s) keep at least {3} context tokens each." -f $LlamaCppCtxSize, $minTotalContext, $parallelSlots, $minContextPerSlot)
+        $script:LlamaCppCtxSize = $minTotalContext
+    }
+    if ($null -ne $LlamaCppFitCtx -and $null -ne $LlamaCppCtxSize -and $LlamaCppFitCtx -lt $LlamaCppCtxSize) {
+        Write-Host ("Raising llama.cpp fit-ctx from {0} to {1} to match ctx-size." -f $LlamaCppFitCtx, $LlamaCppCtxSize)
+        $script:LlamaCppFitCtx = $LlamaCppCtxSize
+    }
+}
+
 $repoRoot = Get-RepoRoot
 $resolvedCandidatesJson = Resolve-StrictPath $CandidatesJson
 if ($MaxSelectedResults -lt 1) {
     throw "MaxSelectedResults must be at least 1."
 }
+Ensure-LlamaCppParallelContext
 
 if ($ReselectExisting) {
     $pythonCommand = Get-BasicPythonCommand
@@ -200,6 +330,23 @@ if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
 
 $resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
+New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
+$resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $Workspace).Path
+$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and $UseWhamDocker
+$resolvedWhamWorkerSessionDir = $null
+$whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
+if ($effectiveWarmWhamWorker) {
+    if (-not (Test-Path -LiteralPath $whamWarmWorkerScriptPath)) {
+        throw "Warm WHAM worker script not found: $whamWarmWorkerScriptPath"
+    }
+    $activeWhamWorkerSessionDir = if ([string]::IsNullOrWhiteSpace($WhamWorkerSessionDir)) {
+        Join-Path $resolvedWorkspaceRoot "wham-warm-worker"
+    } else {
+        $WhamWorkerSessionDir
+    }
+    New-Item -ItemType Directory -Force -Path $activeWhamWorkerSessionDir | Out-Null
+    $resolvedWhamWorkerSessionDir = (Resolve-Path -LiteralPath $activeWhamWorkerSessionDir).Path
+}
 
 $argsList = @(
     "-m", "exercise_motion_pkg.cli",
@@ -226,6 +373,7 @@ $argsList = @(
     "--max-llm-review-items", "$MaxLlmReviewItems",
     "--max-review-windows", "$MaxReviewWindows",
     "--min-selected-score", "$MinSelectedScore",
+    "--final-output-validation-min-score", "$FinalOutputValidationMinScore",
     "--llama-cpp-base-url", $LlamaCppBaseUrl,
     "--llama-cpp-model", $LlamaCppModel,
     "--llama-cpp-mmproj", $LlamaCppMmproj,
@@ -236,6 +384,12 @@ $argsList = @(
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
     "--artifact-retention", $ArtifactRetention
 )
+if ($FinalOutputValidation -and -not $SkipFinalOutputValidation) {
+    $argsList += "--final-output-validation"
+}
+if ($SkipFinalOutputValidation) {
+    $argsList += "--skip-final-output-validation"
+}
 if ($null -ne $LlamaCppTopP) {
     $argsList += @("--llama-cpp-top-p", "$LlamaCppTopP")
 }
@@ -312,6 +466,9 @@ if ($null -ne $LlamaCppImageMinTokens) {
 if ($null -ne $LlamaCppImageMaxTokens) {
     $argsList += @("--llama-cpp-image-max-tokens", "$LlamaCppImageMaxTokens")
 }
+if ($null -ne $LlamaCppMtmdBatchMaxTokens) {
+    $argsList += @("--llama-cpp-mtmd-batch-max-tokens", "$LlamaCppMtmdBatchMaxTokens")
+}
 if ($NoLlamaCppAutoStartServer) {
     $argsList += "--no-llama-cpp-auto-start-server"
 }
@@ -324,6 +481,9 @@ if ($null -ne $LlamaCppReasoningBudget) {
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
     $argsList += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
 }
+if (-not [string]::IsNullOrWhiteSpace($YoutubeCookies)) {
+    $argsList += @("--youtube-cookies", (Resolve-StrictPath $YoutubeCookies))
+}
 if ($KeepLlamaCppServer) {
     $argsList += "--keep-llama-cpp-server"
 }
@@ -333,6 +493,14 @@ if ($UseWhamDocker) {
         "--wham-docker-image", $WhamDockerImage,
         "--wham-docker-gpus", $WhamDockerGpus,
         "--wham-docker-shm-size", $WhamDockerShmSize
+    )
+}
+if ($effectiveWarmWhamWorker) {
+    $argsList += @(
+        "--warm-wham-worker",
+        "--wham-worker-session-dir", $resolvedWhamWorkerSessionDir,
+        "--wham-worker-mount-root", $resolvedWorkspaceRoot,
+        "--wham-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
     )
 }
 if ($EstimateLocalOnly) {
@@ -397,13 +565,25 @@ if (-not $SkipPreWhamSourceValidation) {
 if ($SkipPreWhamSourceValidation) {
     $argsList += "--skip-pre-wham-source-validation"
 }
-if ($NoPreWhamSourceContract) {
-    $argsList += "--no-pre-wham-source-contract"
+if ($NoExerciseMotionContract) {
+    $argsList += "--no-exercise-motion-contract"
 }
 
-& $pythonCommand @argsList
-if ($LASTEXITCODE -ne 0) {
-    throw "exercise motion bake-and-rank failed with exit code $LASTEXITCODE."
+try {
+    $warmWhamWorkerInstance = $null
+    if ($effectiveWarmWhamWorker) {
+        $warmWhamWorkerInstance = Start-WhamWarmWorker `
+            -SessionDir $resolvedWhamWorkerSessionDir `
+            -MountRoot $resolvedWorkspaceRoot `
+            -WorkerScriptPath $whamWarmWorkerScriptPath
+    }
+    & $pythonCommand @argsList
+    if ($LASTEXITCODE -ne 0) {
+        throw "exercise motion bake-and-rank failed with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
 }
 
 $selectionPath = Join-Path $Workspace "selection_manifest.json"

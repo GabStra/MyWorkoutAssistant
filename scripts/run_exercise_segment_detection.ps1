@@ -12,7 +12,7 @@ param(
     [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-c1a1c8ee-cuda13.3-sm89-win-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [int]$LlamaCppNPredict = 768,
+    [int]$LlamaCppNPredict = 512,
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,

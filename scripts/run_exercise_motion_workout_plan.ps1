@@ -5,6 +5,8 @@ param(
 
     [string]$EquipmentJson,
     [string]$WorkspaceRoot = "build/exercise_motion/workout-plan",
+    [ValidateSet("quality", "fast", "max")]
+    [string]$SpeedProfile = "fast",
     [string[]]$OnlyExerciseSlug = @(),
     [string[]]$OnlyExerciseId = @(),
     [string[]]$OnlyExerciseName = @(),
@@ -19,7 +21,6 @@ param(
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 100,
     [int]$MaxCandidates = 12,
-    [int]$MetadataCandidatePoolSize = 36,
     [int]$CandidateReviewBatchSize = 12,
     [int]$CandidateReviewTargetSuitableCount = 3,
     [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
@@ -32,7 +33,7 @@ param(
     [int]$DeepSeekMaxQueries = 4,
     [int]$VisionCandidatesPerExercise = 12,
     [int]$VisionFramesPerCandidate = 6,
-    [int]$VisionMaxChunksPerCandidate = 5,
+    [int]$VisionMaxChunksPerCandidate = 0,
     [int]$VisionDownloadWorkers = 8,
     [int]$VisionLlmWorkers = 4,
     [switch]$NoExerciseNameRewrite,
@@ -43,23 +44,28 @@ param(
     [Nullable[int]]$SemanticGateCandidatesPerExercise = 24,
     [Nullable[int]]$SemanticGateMaxCandidatesPerExercise = 200,
     [double]$SemanticGateMinScore = 0.55,
+    [Nullable[int]]$SemanticGateLlmWorkers,
     [switch]$PosePrefilter,
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
-    [Nullable[int]]$PosePrefilterCandidatesPerExercise = 24,
-    [double]$PosePrefilterSampleFps = 0.0,
-    [double]$PosePrefilterMaxSeconds = 0.0,
+    [Nullable[int]]$PosePrefilterCandidatesPerExercise = 12,
+    [double]$PosePrefilterSampleFps = 2.0,
+    [double]$PosePrefilterMaxSeconds = 32.0,
     [ValidateSet("prefix", "spread", "full")]
-    [string]$PosePrefilterScanStrategy = "full",
+    [string]$PosePrefilterScanStrategy = "spread",
     [double]$PosePrefilterWindowSeconds = 8.0,
     [double]$PosePrefilterOverlapSeconds = 4.0,
     [double]$PosePrefilterMinScore = 0.45,
-    [int]$PosePrefilterWorkers = 3,
+    [int]$PosePrefilterWorkers = 1,
     [string]$PosePrefilterDevice = "cuda",
     [int]$PosePrefilterBatchSize = 16,
-    [int]$ExerciseWorkers = 2,
+    [int]$ExerciseWorkers = 1,
+    [Nullable[int]]$DiscoveryWorkers,
+    [Nullable[int]]$BakeWorkers,
+    [ValidateSet("auto", "allow", "avoid")]
+    [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 1,
+    [int]$MaxSourceWindowAttempts = 2,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$ReuseExistingSelected,
@@ -68,8 +74,14 @@ param(
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
+    [bool]$WarmWhamWorker = $true,
+    [switch]$SkipWarmWhamWorker,
+    [string]$WhamWorkerSessionDir,
+    [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 21600.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
+    [switch]$RunSmplify,
     [switch]$SkipMotionTuning,
     [switch]$SkipSourceSegmentDetection,
     [string]$SegmentBaseUrl,
@@ -93,29 +105,34 @@ param(
     [switch]$SkipSupportDominanceClassification,
     [int]$ReviewFrames = 6,
     [int]$ReviewLlmWorkers = 4,
-    [int]$MaxReviewWindows = 3,
-    [switch]$NoPreWhamSourceContract,
-    [switch]$NoMovementCutExerciseContract,
+    [int]$MaxReviewWindows = 0,
     [double]$MinSelectedScore = 0.55,
+    [bool]$FinalOutputValidation = $true,
+    [switch]$SkipFinalOutputValidation,
+    [double]$FinalOutputValidationMinScore = 0.70,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel,
     [string]$LlamaCppServerCommand,
     [string]$LlamaCppMmproj,
+    [string]$LlamaCppBackend = "gpu",
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
-    [Nullable[int]]$LlamaCppCtxSize = 24576,
+    [Nullable[int]]$LlamaCppCtxSize = 49152,
     [Nullable[int]]$LlamaCppBatchSize,
     [Nullable[int]]$LlamaCppUBatchSize,
     [string]$LlamaCppFlashAttn,
     [string]$LlamaCppCacheTypeK,
     [string]$LlamaCppCacheTypeV,
-    [Nullable[int]]$LlamaCppParallel = 4,
+    [Nullable[int]]$LlamaCppParallel = 12,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit,
-    [Nullable[int]]$LlamaCppFitCtx = 24576,
+    [Nullable[int]]$LlamaCppFitCtx = 49152,
     [Nullable[int]]$LlamaCppFitTarget,
+    [Nullable[int]]$LlamaCppImageMinTokens,
+    [Nullable[int]]$LlamaCppImageMaxTokens,
+    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens,
     [bool]$LlamaCppMmap = $true,
     [bool]$LlamaCppMlock = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
@@ -139,6 +156,19 @@ function Get-RepoRoot {
 function Resolve-StrictPath {
     param([string]$PathValue)
     return (Resolve-Path -LiteralPath $PathValue).Path
+}
+
+function Resolve-CudaPosePrefilterDevice {
+    param([string]$Device)
+    $value = if ([string]::IsNullOrWhiteSpace($Device)) { "cuda" } else { $Device.Trim() }
+    $lower = $value.ToLowerInvariant()
+    if ($lower -eq "cuda" -or $lower -eq "0" -or $lower -match "^cuda:\d+$") {
+        return $lower
+    }
+    if ($lower -eq "gpu") {
+        return "cuda"
+    }
+    throw "YOLO pose prefilter must use CUDA. Set -PosePrefilterDevice cuda or cuda:0, or pass -SkipPosePrefilter to disable it."
 }
 
 function ConvertTo-Slug {
@@ -198,6 +228,15 @@ function Add-LlamaCppTuningArgs {
     if ($null -ne $LlamaCppFitTarget) {
         $result += @("--llama-cpp-fit-target", "$LlamaCppFitTarget")
     }
+    if ($null -ne $LlamaCppImageMinTokens) {
+        $result += @("--llama-cpp-image-min-tokens", "$LlamaCppImageMinTokens")
+    }
+    if ($null -ne $LlamaCppImageMaxTokens) {
+        $result += @("--llama-cpp-image-max-tokens", "$LlamaCppImageMaxTokens")
+    }
+    if ($null -ne $LlamaCppMtmdBatchMaxTokens) {
+        $result += @("--llama-cpp-mtmd-batch-max-tokens", "$LlamaCppMtmdBatchMaxTokens")
+    }
     if (-not $LlamaCppMmap) {
         $result += "--no-llama-cpp-mmap"
     }
@@ -205,6 +244,20 @@ function Add-LlamaCppTuningArgs {
         $result += "--llama-cpp-mlock"
     }
     return $result
+}
+
+function Ensure-LlamaCppParallelContext {
+    $minContextPerSlot = 4096
+    $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
+    $minTotalContext = $parallelSlots * $minContextPerSlot
+    if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {
+        Write-Host ("Raising llama.cpp ctx-size from {0} to {1} so {2} parallel slot(s) keep at least {3} context tokens each." -f $LlamaCppCtxSize, $minTotalContext, $parallelSlots, $minContextPerSlot)
+        $script:LlamaCppCtxSize = $minTotalContext
+    }
+    if ($null -ne $LlamaCppFitCtx -and $null -ne $LlamaCppCtxSize -and $LlamaCppFitCtx -lt $LlamaCppCtxSize) {
+        Write-Host ("Raising llama.cpp fit-ctx from {0} to {1} to match ctx-size." -f $LlamaCppFitCtx, $LlamaCppCtxSize)
+        $script:LlamaCppFitCtx = $LlamaCppCtxSize
+    }
 }
 
 function ConvertTo-SlugSet {
@@ -328,6 +381,167 @@ function Invoke-PythonModule {
     }
 }
 
+function Get-ObjectProperty {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+    if ($null -eq $Object) {
+        return $null
+    }
+    if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) {
+        return $Object[$Name]
+    }
+    if ($Object.PSObject.Properties.Name -contains $Name) {
+        return $Object.$Name
+    }
+    return $null
+}
+
+function Get-OptionalDouble {
+    param([object]$Value)
+    if ($null -eq $Value) {
+        return $null
+    }
+    try {
+        return [double]$Value
+    } catch {
+        return $null
+    }
+}
+
+function Add-OptionalSeconds {
+    param(
+        [object]$Current,
+        [object]$Value
+    )
+    $currentValue = Get-OptionalDouble -Value $Current
+    if ($null -eq $currentValue) {
+        $currentValue = 0.0
+    }
+    $nextValue = Get-OptionalDouble -Value $Value
+    if ($null -eq $nextValue) {
+        return [Math]::Round($currentValue, 3)
+    }
+    return [Math]::Round(($currentValue + $nextValue), 3)
+}
+
+function Get-CandidateManifestCounts {
+    param([string]$Path)
+    $counts = [ordered]@{
+        candidateCount = 0
+        recommendedCount = 0
+    }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return $counts
+    }
+    try {
+        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        foreach ($exercise in @($payload.exercises)) {
+            foreach ($item in @($exercise.candidates)) {
+                $counts.candidateCount += 1
+                if ("$($item.status)".ToLowerInvariant() -eq "recommended") {
+                    $counts.recommendedCount += 1
+                }
+            }
+        }
+    } catch {
+        return $counts
+    }
+    return $counts
+}
+
+function Get-SelectionTimingSummary {
+    param([object]$Selection)
+    $summary = [ordered]@{
+        totalSeconds = $null
+        candidateProcessingSeconds = $null
+        processedCandidateCount = $null
+        readyCandidateCount = $null
+        reviewRankingSeconds = $null
+        selectionMaterializationSeconds = $null
+        sourcePreparationSeconds = 0.0
+        whamRunSeconds = 0.0
+        whamDockerLockWaitSeconds = 0.0
+        previewBakeSeconds = 0.0
+        whamGeneratedCount = 0
+        whamReusedCount = 0
+        whamExplicitCount = 0
+        whamNotUsedCount = 0
+        warmWhamWorkerJobCount = 0
+    }
+    if ($null -eq $Selection) {
+        return $summary
+    }
+    $pipelineTimings = Get-ObjectProperty -Object $Selection -Name "timings"
+    foreach ($name in @("totalSeconds", "candidateProcessingSeconds", "processedCandidateCount", "readyCandidateCount", "reviewRankingSeconds", "selectionMaterializationSeconds")) {
+        $summary[$name] = Get-ObjectProperty -Object $pipelineTimings -Name $name
+    }
+    foreach ($candidate in @(Get-ObjectProperty -Object $Selection -Name "candidateResults")) {
+        $candidateTimings = Get-ObjectProperty -Object $candidate -Name "timings"
+        $generationTimings = Get-ObjectProperty -Object $candidate -Name "generationTimings"
+        $summary.sourcePreparationSeconds = Add-OptionalSeconds -Current $summary.sourcePreparationSeconds -Value (Get-ObjectProperty -Object $generationTimings -Name "sourcePreparationSeconds")
+        $summary.previewBakeSeconds = Add-OptionalSeconds -Current $summary.previewBakeSeconds -Value (Get-ObjectProperty -Object $candidateTimings -Name "previewBakeSeconds")
+        $whamTiming = Get-ObjectProperty -Object $generationTimings -Name "wham"
+        if ((Get-ObjectProperty -Object $whamTiming -Name "warmWorker") -eq $true) {
+            $summary.warmWhamWorkerJobCount += 1
+        }
+        $summary.whamRunSeconds = Add-OptionalSeconds -Current $summary.whamRunSeconds -Value (Get-ObjectProperty -Object $whamTiming -Name "elapsedSeconds")
+        $summary.whamDockerLockWaitSeconds = Add-OptionalSeconds -Current $summary.whamDockerLockWaitSeconds -Value (Get-ObjectProperty -Object $whamTiming -Name "dockerLockWaitSeconds")
+        $whamCacheStatus = [string](Get-ObjectProperty -Object $candidate -Name "whamCacheStatus")
+        if ([string]::IsNullOrWhiteSpace($whamCacheStatus)) {
+            $whamCacheStatus = [string](Get-ObjectProperty -Object $whamTiming -Name "cacheStatus")
+        }
+        switch -Regex ($whamCacheStatus) {
+            "^generated" { $summary.whamGeneratedCount += 1; break }
+            "^reused" { $summary.whamReusedCount += 1; break }
+            "^explicit" { $summary.whamExplicitCount += 1; break }
+            "^not_used" { $summary.whamNotUsedCount += 1; break }
+        }
+    }
+    return $summary
+}
+
+function New-TerminalExerciseSummary {
+    param(
+        [object]$WorkItem,
+        [string]$Status,
+        [string]$ErrorMessage,
+        [string]$Stage,
+        [object]$ExitCode
+    )
+    $counts = Get-CandidateManifestCounts -Path $WorkItem.exerciseCandidatesPath
+    return [ordered]@{
+        exerciseId = $WorkItem.exerciseId
+        exerciseName = $WorkItem.exerciseName
+        status = $Status
+        error = $ErrorMessage
+        stage = $Stage
+        exitCode = $ExitCode
+        candidateCount = $counts.candidateCount
+        recommendedCandidateCount = $counts.recommendedCount
+        excludeCandidateJsonPaths = $WorkItem.excludeCandidateJsonPaths
+        candidatesJsonPath = $WorkItem.exerciseCandidatesPath
+        selectionManifestPath = Join-Path $WorkItem.bakeWorkspace "selection_manifest.json"
+        logPath = $WorkItem.logPath
+        selectedWearSkeletonPath = $null
+        selectedPreviewVideoPath = $null
+        selectedSourceVideoPath = $null
+        selectedSourceVideoOriginalPath = $null
+        selectedSourceVideoMissing = $false
+        selectedResults = @()
+        selectedCandidateDebugPath = $null
+        selectedCandidateDecisionsPath = $null
+        attempts = @($WorkItem.attempts)
+        timings = [ordered]@{
+            discoverySeconds = [Math]::Round([double]$WorkItem.discoverySeconds, 3)
+            bakeCommandSeconds = [Math]::Round([double]$WorkItem.bakeCommandSeconds, 3)
+            discoveryAttempts = [int]$WorkItem.discoveryAttemptCount
+            bakeAttempts = [int]$WorkItem.bakeAttemptCount
+        }
+    }
+}
+
 function New-ExerciseCandidateManifest {
     param(
         [object]$Exercise,
@@ -378,6 +592,110 @@ function Copy-SelectedFile {
     $destinationPath = Join-Path $DestinationDirectory $DestinationFileName
     Copy-Item -LiteralPath $SourcePath -Destination $destinationPath -Force
     return $destinationPath
+}
+
+function Start-WhamWarmWorker {
+    param(
+        [string]$SessionDir,
+        [string]$MountRoot,
+        [string]$WorkerScriptPath
+    )
+
+    New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
+    foreach ($child in @("jobs", "running", "results", "job_logs")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
+    }
+    foreach ($staleFile in @("ready.json", "startup_error.json", "stop", "stopped.json")) {
+        $path = Join-Path $SessionDir $staleFile
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+
+    $containerName = "mwa-wham-worker-$([guid]::NewGuid().ToString('N'))"
+    $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
+    if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
+        $dockerArgs += @("--gpus", $WhamDockerGpus)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
+        $dockerArgs += @("--shm-size", $WhamDockerShmSize)
+    }
+    $dockerArgs += @(
+        "-v", "$($resolvedWhamRepoPath):/code",
+        "-v", "$($MountRoot):/workspace",
+        "-v", "$($SessionDir):/worker_state",
+        "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
+        "-w", "/code",
+        $WhamDockerImage,
+        "python", "-u", "/worker/wham_warm_worker.py",
+        "--state-dir", "/worker_state"
+    )
+
+    Write-Host "Starting warm WHAM worker container '$containerName'."
+    $containerId = (& docker @dockerArgs 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to start warm WHAM worker container: $containerId"
+    }
+    $containerId = ([string]$containerId).Trim()
+    $readyPath = Join-Path $SessionDir "ready.json"
+    $startupErrorPath = Join-Path $SessionDir "startup_error.json"
+    $deadline = (Get-Date).AddSeconds($WhamWorkerStartupTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path -LiteralPath $readyPath) {
+            $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
+            Write-Host ("Warm WHAM worker ready in {0}s. GPU: {1}" -f $ready.loadSeconds, $ready.gpuName)
+            return [pscustomobject]@{
+                containerName = $containerName
+                containerId = $containerId
+                sessionDir = $SessionDir
+                mountRoot = $MountRoot
+                readyPath = $readyPath
+            }
+        }
+        if (Test-Path -LiteralPath $startupErrorPath) {
+            $errorPayload = Get-Content -LiteralPath $startupErrorPath -Raw
+            try {
+                & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
+            } catch {
+            }
+            try {
+                & docker stop $containerName | Out-Null
+            } catch {
+            }
+            throw "Warm WHAM worker failed during startup: $errorPayload"
+        }
+        $running = (& docker inspect -f "{{.State.Running}}" $containerName 2>$null)
+        if ($LASTEXITCODE -ne 0 -or "$running".Trim().ToLowerInvariant() -ne "true") {
+            $logs = (& docker logs $containerName 2>&1)
+            throw "Warm WHAM worker container exited before ready. Logs: $logs"
+        }
+        Start-Sleep -Seconds 2
+    }
+    try {
+        & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
+    } catch {
+    }
+    try {
+        & docker stop $containerName | Out-Null
+    } catch {
+    }
+    throw "Timed out waiting for warm WHAM worker startup after $WhamWorkerStartupTimeoutSeconds seconds."
+}
+
+function Stop-WhamWarmWorker {
+    param([object]$Worker)
+    if ($null -eq $Worker) {
+        return
+    }
+    try {
+        "stop" | Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stop") -Encoding UTF8
+    } catch {
+    }
+    try {
+        & docker stop --time 10 $Worker.containerName | Out-Null
+    } catch {
+        Write-Warning "Failed to stop warm WHAM worker container '$($Worker.containerName)': $($_.Exception.Message)"
+    }
 }
 
 function Remove-ExerciseIntermediateArtifacts {
@@ -480,8 +798,109 @@ function Get-ExistingSelectedSummary {
     }
 }
 
-function Start-BakeJob {
+function Start-InitialDiscoveryJob {
     param([object]$WorkItem)
+
+    Write-Host "Starting candidate discovery for '$($WorkItem.exerciseName)'."
+    $job = Start-Job -Name "discover-$($WorkItem.exerciseSlug)" -ScriptBlock {
+        param(
+            [string]$PythonCommand,
+            [string[]]$DiscoveryArguments,
+            [string]$LogPath,
+            [string]$CandidatesPath,
+            [int]$InitialTargetSuitableCount,
+            [int]$BaseMaxCandidates,
+            [int]$BaseVisionCandidates
+        )
+
+        $ErrorActionPreference = "Continue"
+
+        function Set-ArgumentValue {
+            param(
+                [string[]]$Arguments,
+                [string]$Name,
+                [string]$Value
+            )
+            $result = @()
+            $found = $false
+            for ($index = 0; $index -lt $Arguments.Count; $index += 1) {
+                $argument = $Arguments[$index]
+                if ($argument -eq $Name) {
+                    $result += @($Name, $Value)
+                    $found = $true
+                    $index += 1
+                    continue
+                }
+                $result += $argument
+            }
+            if (-not $found) {
+                $result += @($Name, $Value)
+            }
+            return [string[]]$result
+        }
+
+        function Get-CandidateCounts {
+            param([string]$Path)
+            $candidateCount = 0
+            $recommendedCount = 0
+            if (Test-Path -LiteralPath $Path) {
+                try {
+                    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                    foreach ($exercise in @($payload.exercises)) {
+                        foreach ($item in @($exercise.candidates)) {
+                            $candidateCount += 1
+                            if ("$($item.status)".ToLowerInvariant() -eq "recommended") {
+                                $recommendedCount += 1
+                            }
+                        }
+                    }
+                } catch {
+                    $candidateCount = 0
+                    $recommendedCount = 0
+                }
+            }
+            return [pscustomobject]@{
+                candidateCount = $candidateCount
+                recommendedCount = $recommendedCount
+            }
+        }
+
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+        "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
+        $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
+        $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
+        $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
+        $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+
+        "[$(Get-Date -Format o)] initial discovery attempt 1 started; target suitable candidates $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
+        $exitCode = $LASTEXITCODE
+        $stopwatch.Stop()
+        $counts = Get-CandidateCounts -Path $CandidatesPath
+        "[$(Get-Date -Format o)] initial discovery attempt 1 finished with exit code $exitCode; recommended $($counts.recommendedCount), candidates $($counts.candidateCount), elapsed $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 3))s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        [pscustomobject]@{
+            exitCode = $exitCode
+            stage = "initial_discovery"
+            logPath = $LogPath
+            candidateCount = $counts.candidateCount
+            recommendedCount = $counts.recommendedCount
+            discoverySeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            attemptIndex = 1
+            targetSuitableCount = $targetSuitableCount
+        }
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise
+    $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
+    return $job
+}
+
+function Start-BakeJob {
+    param(
+        [object]$WorkItem,
+        [bool]$UseExistingCandidatesForFirstAttempt = $true
+    )
 
     Write-Host "Starting movement generation for '$($WorkItem.exerciseName)'."
     $job = Start-Job -Name $WorkItem.exerciseSlug -ScriptBlock {
@@ -496,7 +915,8 @@ function Start-BakeJob {
             [int]$MaxTargetSuitableCount,
             [int]$BaseMaxCandidates,
             [int]$BaseVisionCandidates,
-            [int]$MaxSelectedResults
+            [int]$MaxSelectedResults,
+            [bool]$UseExistingCandidatesForFirstAttempt
         )
 
         $ErrorActionPreference = "Continue"
@@ -592,39 +1012,88 @@ function Start-BakeJob {
         }
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-        "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        if (Test-Path -LiteralPath $LogPath) {
+            "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        } else {
+            "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+            "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        }
         $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
         $attemptIndex = 1
         $previousAttemptCandidateJsonPaths = @()
+        $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
+        $discoverySecondsTotal = 0.0
+        $bakeSecondsTotal = 0.0
+        $discoveryAttemptCount = 0
+        $bakeAttemptCount = 0
+        $attempts = @()
         while ($true) {
-            $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
-            $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
-            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
-            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
-            $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
-            foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
-                if (Test-Path -LiteralPath $previousAttemptCandidateJsonPath) {
-                    $attemptDiscoveryArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)
+            if ($useExistingCandidates) {
+                "[$(Get-Date -Format o)] using pre-discovered candidates for attempt $attemptIndex" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
+                if (Test-Path -LiteralPath $CandidatesPath) {
+                    $attemptCandidateSnapshotPath = Save-AttemptCandidateSnapshot -Path $CandidatesPath -AttemptIndex $attemptIndex
+                    if (-not [string]::IsNullOrWhiteSpace($attemptCandidateSnapshotPath)) {
+                        $previousAttemptCandidateJsonPaths += $attemptCandidateSnapshotPath
+                    }
                 }
-            }
+                $attempts += [ordered]@{
+                    attemptIndex = $attemptIndex
+                    stage = "pre_discovered_candidates"
+                    exitCode = 0
+                    targetSuitableCount = $targetSuitableCount
+                    recommendedCount = $recommendedCount
+                    elapsedSeconds = 0.0
+                }
+                $useExistingCandidates = $false
+            } else {
+                $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
+                $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
+                $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
+                $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
+                $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+                foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
+                    if (Test-Path -LiteralPath $previousAttemptCandidateJsonPath) {
+                        $attemptDiscoveryArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)
+                    }
+                }
 
-            "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
-            & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
-            $discoveryExitCode = $LASTEXITCODE
-            if ($discoveryExitCode -ne 0) {
-                [pscustomobject]@{
-                    exitCode = $discoveryExitCode
+                "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                $discoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
+                $discoveryExitCode = $LASTEXITCODE
+                $discoveryStopwatch.Stop()
+                $discoverySeconds = [Math]::Round($discoveryStopwatch.Elapsed.TotalSeconds, 3)
+                $discoverySecondsTotal = [Math]::Round(($discoverySecondsTotal + $discoverySeconds), 3)
+                $discoveryAttemptCount += 1
+                $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
+                $attempts += [ordered]@{
+                    attemptIndex = $attemptIndex
                     stage = "discovery"
-                    logPath = $LogPath
+                    exitCode = $discoveryExitCode
+                    targetSuitableCount = $targetSuitableCount
+                    recommendedCount = $recommendedCount
+                    elapsedSeconds = $discoverySeconds
                 }
-                return
-            }
+                if ($discoveryExitCode -ne 0) {
+                    [pscustomobject]@{
+                        exitCode = $discoveryExitCode
+                        stage = "discovery"
+                        logPath = $LogPath
+                        discoverySeconds = $discoverySecondsTotal
+                        bakeSeconds = $bakeSecondsTotal
+                        discoveryAttemptCount = $discoveryAttemptCount
+                        bakeAttemptCount = $bakeAttemptCount
+                        attempts = $attempts
+                    }
+                    return
+                }
 
-            $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
-            if (Test-Path -LiteralPath $CandidatesPath) {
-                $attemptCandidateSnapshotPath = Save-AttemptCandidateSnapshot -Path $CandidatesPath -AttemptIndex $attemptIndex
-                if (-not [string]::IsNullOrWhiteSpace($attemptCandidateSnapshotPath)) {
-                    $previousAttemptCandidateJsonPaths += $attemptCandidateSnapshotPath
+                if (Test-Path -LiteralPath $CandidatesPath) {
+                    $attemptCandidateSnapshotPath = Save-AttemptCandidateSnapshot -Path $CandidatesPath -AttemptIndex $attemptIndex
+                    if (-not [string]::IsNullOrWhiteSpace($attemptCandidateSnapshotPath)) {
+                        $previousAttemptCandidateJsonPaths += $attemptCandidateSnapshotPath
+                    }
                 }
             }
             if ($recommendedCount -le 0) {
@@ -633,6 +1102,11 @@ function Start-BakeJob {
                         exitCode = 0
                         stage = "discovery_no_recommended"
                         logPath = $LogPath
+                        discoverySeconds = $discoverySecondsTotal
+                        bakeSeconds = $bakeSecondsTotal
+                        discoveryAttemptCount = $discoveryAttemptCount
+                        bakeAttemptCount = $bakeAttemptCount
+                        attempts = $attempts
                     }
                     return
                 }
@@ -643,10 +1117,24 @@ function Start-BakeJob {
             }
 
             "[$(Get-Date -Format o)] bake attempt $attemptIndex started with $recommendedCount recommended candidate(s)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            $bakeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             & $PythonCommand @BakeArguments *>> $LogPath
             $bakeExitCode = $LASTEXITCODE
+            $bakeStopwatch.Stop()
+            $bakeSeconds = [Math]::Round($bakeStopwatch.Elapsed.TotalSeconds, 3)
+            $bakeSecondsTotal = [Math]::Round(($bakeSecondsTotal + $bakeSeconds), 3)
+            $bakeAttemptCount += 1
 
             $selectedResultCount = Get-SelectedResultCount -Workspace $BakeWorkspace
+            $attempts += [ordered]@{
+                attemptIndex = $attemptIndex
+                stage = "bake"
+                exitCode = $bakeExitCode
+                targetSuitableCount = $targetSuitableCount
+                recommendedCount = $recommendedCount
+                selectedResultCount = $selectedResultCount
+                elapsedSeconds = $bakeSeconds
+            }
             if ($selectedResultCount -gt 0) {
                 if ($selectedResultCount -lt $MaxSelectedResults -and $targetSuitableCount -lt $MaxTargetSuitableCount) {
                     $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
@@ -658,6 +1146,12 @@ function Start-BakeJob {
                     exitCode = 0
                     stage = "bake"
                     logPath = $LogPath
+                    selectedResultCount = $selectedResultCount
+                    discoverySeconds = $discoverySecondsTotal
+                    bakeSeconds = $bakeSecondsTotal
+                    discoveryAttemptCount = $discoveryAttemptCount
+                    bakeAttemptCount = $bakeAttemptCount
+                    attempts = $attempts
                 }
                 return
             }
@@ -666,6 +1160,12 @@ function Start-BakeJob {
                     exitCode = $bakeExitCode
                     stage = "bake"
                     logPath = $LogPath
+                    selectedResultCount = $selectedResultCount
+                    discoverySeconds = $discoverySecondsTotal
+                    bakeSeconds = $bakeSecondsTotal
+                    discoveryAttemptCount = $discoveryAttemptCount
+                    bakeAttemptCount = $bakeAttemptCount
+                    attempts = $attempts
                 }
                 return
             }
@@ -678,6 +1178,12 @@ function Start-BakeJob {
                     exitCode = 0
                     stage = "bake_no_selection"
                     logPath = $LogPath
+                    selectedResultCount = $selectedResultCount
+                    discoverySeconds = $discoverySecondsTotal
+                    bakeSeconds = $bakeSecondsTotal
+                    discoveryAttemptCount = $discoveryAttemptCount
+                    bakeAttemptCount = $bakeAttemptCount
+                    attempts = $attempts
                 }
                 return
             }
@@ -686,7 +1192,7 @@ function Start-BakeJob {
             $attemptIndex += 1
             "[$(Get-Date -Format o)] no selected Wear skeleton; expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults, $UseExistingCandidatesForFirstAttempt
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
 }
@@ -727,6 +1233,7 @@ function Complete-BakeJob {
     if (Test-Path -LiteralPath $selectionPath) {
         $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
     }
+    $selectionTimingSummary = Get-SelectionTimingSummary -Selection $selection
     $selected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
     $selectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
         @($selection.selectedResults)
@@ -752,11 +1259,17 @@ function Complete-BakeJob {
     }
 
     $candidateCount = $workItem.candidateCount
+    $recommendedCandidateCount = 0
     if (Test-Path -LiteralPath $workItem.exerciseCandidatesPath) {
         try {
             $exerciseCandidateManifest = Get-Content -LiteralPath $workItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
             if ($exerciseCandidateManifest.exercises -and $exerciseCandidateManifest.exercises.Count -gt 0) {
                 $candidateCount = @($exerciseCandidateManifest.exercises[0].candidates).Count
+                foreach ($item in @($exerciseCandidateManifest.exercises[0].candidates)) {
+                    if ("$($item.status)".ToLowerInvariant() -eq "recommended") {
+                        $recommendedCandidateCount += 1
+                    }
+                }
             }
         } catch {
             if ($null -eq $candidateCount) {
@@ -764,6 +1277,21 @@ function Complete-BakeJob {
             }
         }
     }
+    $retryDiscoverySeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $jobResult -Name "discoverySeconds")
+    if ($null -eq $retryDiscoverySeconds) {
+        $retryDiscoverySeconds = 0.0
+    }
+    $bakeCommandSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $jobResult -Name "bakeSeconds")
+    if ($null -eq $bakeCommandSeconds) {
+        $bakeCommandSeconds = 0.0
+    }
+    $initialDiscoverySeconds = Get-OptionalDouble -Value $workItem.discoverySeconds
+    if ($null -eq $initialDiscoverySeconds) {
+        $initialDiscoverySeconds = 0.0
+    }
+    $attempts = @()
+    $attempts += @($workItem.attempts)
+    $attempts += @(Get-ObjectProperty -Object $jobResult -Name "attempts")
 
     $selectedOutputDir = Join-Path $workItem.exerciseWorkspace "selected"
     $selectedWearSkeletonPath = $null
@@ -881,6 +1409,7 @@ function Complete-BakeJob {
         status = $status
         error = $errorMessage
         candidateCount = $candidateCount
+        recommendedCandidateCount = $recommendedCandidateCount
         excludeCandidateJsonPaths = $workItem.excludeCandidateJsonPaths
         candidatesJsonPath = if ($status -eq "completed") { $null } else { $workItem.exerciseCandidatesPath }
         selectionManifestPath = if ($status -eq "completed") { $selectedSelectionManifestPath } else { $selectionPath }
@@ -893,6 +1422,16 @@ function Complete-BakeJob {
         selectedResults = $selectedResultOutputs
         selectedCandidateDebugPath = $selectedCandidateDebugPath
         selectedCandidateDecisionsPath = $selectedCandidateDecisionsPath
+        attempts = $attempts
+        timings = [ordered]@{
+            discoverySeconds = [Math]::Round(($initialDiscoverySeconds + $retryDiscoverySeconds), 3)
+            initialDiscoverySeconds = [Math]::Round($initialDiscoverySeconds, 3)
+            retryDiscoverySeconds = [Math]::Round($retryDiscoverySeconds, 3)
+            bakeCommandSeconds = [Math]::Round($bakeCommandSeconds, 3)
+            discoveryAttempts = ([int]$workItem.discoveryAttemptCount + [int](Get-ObjectProperty -Object $jobResult -Name "discoveryAttemptCount"))
+            bakeAttempts = [int](Get-ObjectProperty -Object $jobResult -Name "bakeAttemptCount")
+            selection = $selectionTimingSummary
+        }
     }
 }
 
@@ -915,6 +1454,8 @@ function Get-LatestLogLine {
 
 function Write-ProgressSnapshot {
     param(
+        [string]$Stage = "movement generation",
+        [datetime]$StartedAt = [datetime]::MinValue,
         [object[]]$RunningJobs,
         [int]$CompletedCount,
         [int]$TotalCount,
@@ -922,7 +1463,11 @@ function Write-ProgressSnapshot {
     )
 
     $activeNames = @($RunningJobs | ForEach-Object { $_.WorkItem.exerciseName })
-    Write-Host ("Progress: {0}/{1} finished, {2} running, {3} queued." -f $CompletedCount, $TotalCount, $RunningJobs.Count, $PendingCount)
+    $elapsedText = ""
+    if ($StartedAt -ne [datetime]::MinValue) {
+        $elapsedText = " elapsed {0:c}," -f ((Get-Date) - $StartedAt)
+    }
+    Write-Host ("{0} progress:{1} {2}/{3} finished, {4} running, {5} queued." -f $Stage, $elapsedText, $CompletedCount, $TotalCount, $RunningJobs.Count, $PendingCount)
     if ($activeNames.Count -gt 0) {
         Write-Host ("  Active: {0}" -f ($activeNames -join ", "))
     }
@@ -936,6 +1481,55 @@ function Write-ProgressSnapshot {
 
 $repoRoot = Get-RepoRoot
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
+switch ($SpeedProfile) {
+    "fast" {
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 8 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 8 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 3 }
+        if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 8 }
+        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 8 }
+        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 3 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppBatchSize")) { $LlamaCppBatchSize = 256 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppUBatchSize")) { $LlamaCppUBatchSize = 512 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 1024 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 512 }
+    }
+    "max" {
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 6 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 6 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 1 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 2 }
+        if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 6 }
+        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 6 }
+        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 2 }
+        if (-not $PSBoundParameters.ContainsKey("ReviewFrames")) { $ReviewFrames = 4 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppBatchSize")) { $LlamaCppBatchSize = 256 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppUBatchSize")) { $LlamaCppUBatchSize = 512 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 768 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 512 }
+    }
+}
+if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
+    $LlamaCppFitCtx = $LlamaCppCtxSize
+}
+Ensure-LlamaCppParallelContext
+$effectiveSkipSmplify = $SkipSmplify -or (($SpeedProfile -in @("fast", "max")) -and -not $RunSmplify)
+$llamaParallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 4 }
+$visionLlmWorkersExplicit = $PSBoundParameters.ContainsKey("VisionLlmWorkers")
+if (-not $PSBoundParameters.ContainsKey("ReviewLlmWorkers")) {
+    $ReviewLlmWorkers = [Math]::Max(1, $llamaParallelSlots)
+}
+if (-not $PSBoundParameters.ContainsKey("SegmentClassificationWorkers")) {
+    $SegmentClassificationWorkers = [Math]::Max(1, $llamaParallelSlots)
+}
+if (-not $PSBoundParameters.ContainsKey("VisionDownloadWorkers")) {
+    $VisionDownloadWorkers = [Math]::Max(8, [Math]::Min(16, $llamaParallelSlots * 2))
+}
 $resolvedWorkoutPlanJson = Resolve-StrictPath $WorkoutPlanJson
 if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
     $EquipmentJson = Resolve-StrictPath $EquipmentJson
@@ -965,6 +1559,43 @@ $hasExerciseFilter = (
 )
 if ($ExerciseWorkers -lt 1) {
     throw "ExerciseWorkers must be at least 1."
+}
+$posePrefilterEnabled = $PosePrefilter -or -not $SkipPosePrefilter
+if ($posePrefilterEnabled) {
+    $PosePrefilterDevice = Resolve-CudaPosePrefilterDevice $PosePrefilterDevice
+}
+$posePrefilterUsesGpu = $posePrefilterEnabled
+$effectiveLlamaCppBackend = if ([string]::IsNullOrWhiteSpace($LlamaCppBackend)) { "gpu" } else { $LlamaCppBackend.Trim().ToLowerInvariant() }
+$llamaCppDiscoveryUsesGpu = (
+    ($effectiveLlamaCppBackend -ne "cpu") -and
+    (
+        -not $SkipVisionRanking -or
+        ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate) -or
+        (($UseLlamaCppQueryPlanner -or -not $SkipLlamaCppQueryPlanner) -and -not $UseDeepSeekQueryPlanner)
+    )
+)
+$gpuDiscoveryStages = @()
+if ($posePrefilterUsesGpu) {
+    $gpuDiscoveryStages += "yolo_pose_prefilter"
+}
+if ($llamaCppDiscoveryUsesGpu) {
+    $gpuDiscoveryStages += "llama_cpp_discovery"
+}
+$discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
+$effectiveGpuDiscoveryBakeOverlap = if ($GpuDiscoveryBakeOverlap -eq "auto") {
+    if ($discoveryUsesGpu) { "avoid" } else { "allow" }
+} else {
+    $GpuDiscoveryBakeOverlap
+}
+$avoidGpuDiscoveryBakeOverlap = $effectiveGpuDiscoveryBakeOverlap -eq "avoid"
+$defaultDiscoveryWorkerCap = if ($posePrefilterUsesGpu) { 1 } else { 4 }
+$resolvedDiscoveryWorkers = if ($null -ne $DiscoveryWorkers) { [int]$DiscoveryWorkers } else { [Math]::Max(1, [Math]::Min($defaultDiscoveryWorkerCap, $llamaParallelSlots)) }
+$resolvedBakeWorkers = if ($null -ne $BakeWorkers) { [int]$BakeWorkers } else { 1 }
+if ($resolvedDiscoveryWorkers -lt 1) {
+    throw "DiscoveryWorkers must be at least 1."
+}
+if ($resolvedBakeWorkers -lt 1) {
+    throw "BakeWorkers must be at least 1."
 }
 if ($ProgressIntervalSeconds -lt 1) {
     throw "ProgressIntervalSeconds must be at least 1."
@@ -1000,6 +1631,21 @@ $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and -not $NoWhamDocker
+$resolvedWhamWorkerSessionDir = $null
+$whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
+if ($effectiveWarmWhamWorker) {
+    if (-not (Test-Path -LiteralPath $whamWarmWorkerScriptPath)) {
+        throw "Warm WHAM worker script not found: $whamWarmWorkerScriptPath"
+    }
+    $activeWhamWorkerSessionDir = if ([string]::IsNullOrWhiteSpace($WhamWorkerSessionDir)) {
+        Join-Path $resolvedWorkspaceRoot "wham-warm-worker"
+    } else {
+        $WhamWorkerSessionDir
+    }
+    New-Item -ItemType Directory -Force -Path $activeWhamWorkerSessionDir | Out-Null
+    $resolvedWhamWorkerSessionDir = (Resolve-Path -LiteralPath $activeWhamWorkerSessionDir).Path
+}
 $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
     Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
 } else {
@@ -1033,13 +1679,12 @@ $youtubeBaseArgs = @(
     "find-youtube-videos",
     "--results-per-query", "$ResultsPerQuery",
     "--max-candidates", "$MaxCandidates",
-    "--metadata-candidate-pool-size", "$MetadataCandidatePoolSize",
     "--candidate-review-batch-size", "$CandidateReviewBatchSize",
     "--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
     "--vision-download-workers", "$VisionDownloadWorkers",
-    "--vision-llm-workers", "$VisionLlmWorkers",
     "--llama-cpp-base-url", $LlamaCppBaseUrl,
+    "--llama-cpp-backend", $LlamaCppBackend,
     "--llama-cpp-temperature", "$LlamaCppTemperature",
     "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds"
@@ -1081,6 +1726,9 @@ if ($SemanticGateWithLlamaCpp -or -not $SkipSemanticGate) {
     }
     if ($null -ne $SemanticGateMaxCandidatesPerExercise) {
         $youtubeBaseArgs += @("--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise")
+    }
+    if ($null -ne $SemanticGateLlmWorkers) {
+        $youtubeBaseArgs += @("--semantic-gate-llm-workers", "$SemanticGateLlmWorkers")
     }
 }
 if ($UseDeepSeekQueryPlanner) {
@@ -1241,7 +1889,9 @@ foreach ($exercise in $exerciseList.exercises) {
         "--review-llm-workers", "$ReviewLlmWorkers",
         "--max-review-windows", "$MaxReviewWindows",
         "--min-selected-score", "$MinSelectedScore",
+        "--final-output-validation-min-score", "$FinalOutputValidationMinScore",
         "--llama-cpp-base-url", $LlamaCppBaseUrl,
+        "--llama-cpp-backend", $LlamaCppBackend,
         "--llama-cpp-temperature", "$LlamaCppTemperature",
         "--llama-cpp-server-startup-timeout-seconds", "$LlamaCppServerStartupTimeoutSeconds",
         "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
@@ -1275,8 +1925,14 @@ foreach ($exercise in $exerciseList.exercises) {
     if ($KeepLlamaCppServer) {
         $bakeArgs += "--keep-llama-cpp-server"
     }
-    if ($NoMovementCutExerciseContract) {
-        $bakeArgs += "--no-movement-cut-exercise-contract"
+    if ($FinalOutputValidation -and -not $SkipFinalOutputValidation) {
+        $bakeArgs += "--final-output-validation"
+    }
+    if ($SkipFinalOutputValidation) {
+        $bakeArgs += "--skip-final-output-validation"
+    }
+    if ($NoExerciseMotionContract) {
+        $bakeArgs += "--no-exercise-motion-contract"
     }
     if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
         $bakeArgs += "--rank-preview-variants"
@@ -1307,10 +1963,18 @@ foreach ($exercise in $exerciseList.exercises) {
             "--wham-docker-shm-size", $WhamDockerShmSize
         )
     }
+    if ($effectiveWarmWhamWorker) {
+        $bakeArgs += @(
+            "--warm-wham-worker",
+            "--wham-worker-session-dir", $resolvedWhamWorkerSessionDir,
+            "--wham-worker-mount-root", $resolvedWorkspaceRoot,
+            "--wham-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
+        )
+    }
     if (-not $FullWhamCameraSlam) {
         $bakeArgs += "--estimate-local-only"
     }
-    if ($SkipSmplify) {
+    if ($effectiveSkipSmplify) {
         $bakeArgs += "--skip-smplify"
     }
     if ($SkipMotionTuning) {
@@ -1330,9 +1994,6 @@ foreach ($exercise in $exerciseList.exercises) {
     }
     if ($SkipPreWhamSourceValidation) {
         $bakeArgs += "--skip-pre-wham-source-validation"
-    }
-    if ($NoPreWhamSourceContract) {
-        $bakeArgs += "--no-pre-wham-source-contract"
     }
     if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
         $bakeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
@@ -1356,6 +2017,11 @@ foreach ($exercise in $exerciseList.exercises) {
         maxSelectedResults = $MaxSelectedResults
         maxCandidates = $MaxCandidates
         visionCandidatesPerExercise = $VisionCandidatesPerExercise
+        discoverySeconds = 0.0
+        bakeCommandSeconds = 0.0
+        discoveryAttemptCount = 0
+        bakeAttemptCount = 0
+        attempts = @()
         discoveryArgs = [string[]]$discoveryArgs
         bakeArgs = [string[]]$bakeArgs
     }
@@ -1368,10 +2034,23 @@ if ($workItems.Count -eq 0) {
     }
     throw "No exercises were queued for movement generation."
 }
+$activeDiscoveryWorkerBudget = [Math]::Max(1, [Math]::Min($resolvedDiscoveryWorkers, $workItems.Count))
+$resolvedDiscoveryVisionLlmWorkers = if ($visionLlmWorkersExplicit) {
+    [Math]::Max(1, [int]$VisionLlmWorkers)
+} else {
+    [Math]::Max(1, [int][Math]::Floor($llamaParallelSlots / $activeDiscoveryWorkerBudget))
+}
+if (-not $visionLlmWorkersExplicit) {
+    $VisionLlmWorkers = $resolvedDiscoveryVisionLlmWorkers
+}
+foreach ($workItem in $workItems) {
+    $workItem.discoveryArgs = [string[]](@($workItem.discoveryArgs) + @("--vision-llm-workers", "$resolvedDiscoveryVisionLlmWorkers"))
+}
 
 $summaryByIndex = @{}
 $completedCount = 0
-$pendingWorkItems = [System.Collections.Queue]::new()
+$pendingDiscoveryItems = [System.Collections.Queue]::new()
+$pendingBakeItems = [System.Collections.Queue]::new()
 foreach ($workItem in $workItems) {
     $existingSummary = if ($ReuseExistingSelected) { Get-ExistingSelectedSummary -WorkItem $workItem } else { $null }
     if ($existingSummary) {
@@ -1379,37 +2058,135 @@ foreach ($workItem in $workItems) {
         $completedCount += 1
         continue
     }
-    $pendingWorkItems.Enqueue($workItem)
+    $pendingDiscoveryItems.Enqueue($workItem)
 }
 
-$runningJobs = @()
-$lastProgressAt = [datetime]::MinValue
-Write-Host "Generating movements with $ExerciseWorkers exercise worker(s)."
-while ($pendingWorkItems.Count -gt 0 -or $runningJobs.Count -gt 0) {
-    while ($pendingWorkItems.Count -gt 0 -and $runningJobs.Count -lt $ExerciseWorkers) {
-        $runningJobs += Start-BakeJob -WorkItem ($pendingWorkItems.Dequeue())
+$overallStartedAt = Get-Date
+if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
+    $discoveryRunningJobs = @()
+    $bakeRunningJobs = @()
+    $discoveryCompletedCount = 0
+    $bakeCompletedCount = 0
+    $bakeTotalCount = $pendingBakeItems.Count
+    $lastProgressAt = [datetime]::MinValue
+    $warmWhamWorkerInstance = $null
+    Write-Host "Pipelining candidate discovery and movement baking with $resolvedDiscoveryWorkers discovery worker(s) and $resolvedBakeWorkers bake worker(s)."
+    if (-not $NoWhamDocker -and $resolvedBakeWorkers -gt 1) {
+        Write-Warning "WHAM Docker runs are still serialized by the shared lock; extra bake workers can overlap non-WHAM work but will not run multiple WHAM containers at once."
     }
+    try {
+        while (
+            $pendingDiscoveryItems.Count -gt 0 -or
+            $discoveryRunningJobs.Count -gt 0 -or
+            $pendingBakeItems.Count -gt 0 -or
+            $bakeRunningJobs.Count -gt 0
+        ) {
+            $canLaunchDiscovery = -not (
+                $avoidGpuDiscoveryBakeOverlap -and
+                ($pendingBakeItems.Count -gt 0 -or $bakeRunningJobs.Count -gt 0)
+            )
+            while ($canLaunchDiscovery -and $pendingDiscoveryItems.Count -gt 0 -and $discoveryRunningJobs.Count -lt $resolvedDiscoveryWorkers) {
+                $discoveryRunningJobs += Start-InitialDiscoveryJob -WorkItem ($pendingDiscoveryItems.Dequeue())
+            }
 
-    if ($runningJobs.Count -eq 0) {
-        continue
-    }
+            $canLaunchBake = -not (
+                $avoidGpuDiscoveryBakeOverlap -and
+                $discoveryRunningJobs.Count -gt 0
+            )
 
-    $now = Get-Date
-    if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
-        Write-ProgressSnapshot -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount $pendingWorkItems.Count
-        $lastProgressAt = $now
-    }
+            if ($canLaunchBake -and $pendingBakeItems.Count -gt 0 -and $null -eq $warmWhamWorkerInstance -and $effectiveWarmWhamWorker) {
+                $warmWhamWorkerInstance = Start-WhamWarmWorker `
+                    -SessionDir $resolvedWhamWorkerSessionDir `
+                    -MountRoot $resolvedWorkspaceRoot `
+                    -WorkerScriptPath $whamWarmWorkerScriptPath
+            }
 
-    $finishedJobs = @(Wait-Job -Job $runningJobs -Any -Timeout 2)
-    if ($finishedJobs.Count -eq 0) {
-        continue
+            while ($canLaunchBake -and $pendingBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+                $bakeRunningJobs += Start-BakeJob -WorkItem ($pendingBakeItems.Dequeue()) -UseExistingCandidatesForFirstAttempt $true
+            }
+
+            $runningJobs = @($discoveryRunningJobs + $bakeRunningJobs)
+            if ($runningJobs.Count -eq 0) {
+                continue
+            }
+
+            $now = Get-Date
+            if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
+                Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingDiscoveryItems.Count + $pendingBakeItems.Count)
+                $lastProgressAt = $now
+            }
+
+            $finishedJobs = @(Wait-Job -Job $runningJobs -Any -Timeout 2)
+            if ($finishedJobs.Count -eq 0) {
+                continue
+            }
+
+            $discoveryJobIds = @($discoveryRunningJobs | ForEach-Object { $_.Id })
+            $bakeJobIds = @($bakeRunningJobs | ForEach-Object { $_.Id })
+            foreach ($job in $finishedJobs) {
+                if ($discoveryJobIds -contains $job.Id) {
+                    $workItem = $job.WorkItem
+                    $jobResult = $null
+                    $status = "completed"
+                    $errorMessage = $null
+                    try {
+                        $received = @(Receive-Job -Job $job -Wait -ErrorAction Stop)
+                        if ($received.Count -gt 0) {
+                            $jobResult = $received[-1]
+                        }
+                    } catch {
+                        $status = "failed"
+                        $errorMessage = $_.Exception.Message
+                    } finally {
+                        Remove-Job -Job $job -Force
+                    }
+
+                    if ($status -eq "completed" -and (-not $jobResult -or $jobResult.exitCode -ne 0)) {
+                        $status = "failed"
+                        $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
+                        $errorMessage = "python initial discovery command failed with exit code $exitCode. See log: $($workItem.logPath)"
+                    }
+
+                    $discoverySeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $jobResult -Name "discoverySeconds")
+                    if ($null -eq $discoverySeconds) {
+                        $discoverySeconds = 0.0
+                    }
+                    $workItem.discoverySeconds = Add-OptionalSeconds -Current $workItem.discoverySeconds -Value $discoverySeconds
+                    $workItem.discoveryAttemptCount = [int]$workItem.discoveryAttemptCount + 1
+                    $workItem.candidateCount = Get-ObjectProperty -Object $jobResult -Name "candidateCount"
+                    $workItem.attempts += [ordered]@{
+                        attemptIndex = 1
+                        stage = "initial_discovery"
+                        exitCode = if ($jobResult) { $jobResult.exitCode } else { $null }
+                        targetSuitableCount = if ($jobResult) { $jobResult.targetSuitableCount } else { $workItem.candidateReviewTargetSuitableCount }
+                        candidateCount = if ($jobResult) { $jobResult.candidateCount } else { 0 }
+                        recommendedCount = if ($jobResult) { $jobResult.recommendedCount } else { 0 }
+                        elapsedSeconds = $discoverySeconds
+                    }
+
+                    if ($status -eq "failed") {
+                        Write-Warning "Candidate discovery failed for '$($workItem.exerciseName)': $errorMessage"
+                        $discoveryExitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
+                        $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "failed" -ErrorMessage $errorMessage -Stage "initial_discovery" -ExitCode $discoveryExitCode
+                        $completedCount += 1
+                    } else {
+                        $pendingBakeItems.Enqueue($workItem)
+                        $bakeTotalCount += 1
+                    }
+                    $discoveryCompletedCount += 1
+                } elseif ($bakeJobIds -contains $job.Id) {
+                    $summaryByIndex[$job.WorkItem.index] = Complete-BakeJob -Job $job
+                    $completedCount += 1
+                    $bakeCompletedCount += 1
+                }
+            }
+            $finishedJobIds = @($finishedJobs | ForEach-Object { $_.Id })
+            $discoveryRunningJobs = @($discoveryRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
+            $bakeRunningJobs = @($bakeRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
+        }
+    } finally {
+        Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
     }
-    foreach ($job in $finishedJobs) {
-        $summaryByIndex[$job.WorkItem.index] = Complete-BakeJob -Job $job
-        $completedCount += 1
-    }
-    $finishedJobIds = @($finishedJobs | ForEach-Object { $_.Id })
-    $runningJobs = @($runningJobs | Where-Object { $_.Id -notin $finishedJobIds })
 }
 
 $summaryItems = @()
@@ -1428,6 +2205,47 @@ $summary = [ordered]@{
     excludeYoutubeVideoIds = @($ExcludeYoutubeVideoId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     excludeYoutubeUrls = @($ExcludeYoutubeUrl | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     exerciseListJsonPath = $exerciseListPath
+    processingOrder = "pipelined_discovery_and_bake"
+    speedProfile = $SpeedProfile
+    exerciseWorkers = $ExerciseWorkers
+    discoveryWorkers = $resolvedDiscoveryWorkers
+    bakeWorkers = $resolvedBakeWorkers
+    candidateWorkers = $CandidateWorkers
+    parallelism = [ordered]@{
+        llamaCppParallel = $LlamaCppParallel
+        activeDiscoveryWorkerBudget = $activeDiscoveryWorkerBudget
+        visionDownloadWorkers = $VisionDownloadWorkers
+        discoveryVisionLlmWorkers = $resolvedDiscoveryVisionLlmWorkers
+        requestedVisionLlmWorkers = if ($visionLlmWorkersExplicit) { $VisionLlmWorkers } else { $null }
+        posePrefilterWorkers = $PosePrefilterWorkers
+        segmentClassificationWorkers = $SegmentClassificationWorkers
+        reviewLlmWorkers = $ReviewLlmWorkers
+        gpuDiscoveryStages = $gpuDiscoveryStages
+        gpuDiscoveryBakeOverlap = $effectiveGpuDiscoveryBakeOverlap
+        defaultDiscoveryWorkerCap = $defaultDiscoveryWorkerCap
+    }
+    llamaCppRuntime = [ordered]@{
+        ctxSize = $LlamaCppCtxSize
+        fitCtx = $LlamaCppFitCtx
+        batchSize = $LlamaCppBatchSize
+        ubatchSize = $LlamaCppUBatchSize
+        imageMinTokens = $LlamaCppImageMinTokens
+        imageMaxTokens = $LlamaCppImageMaxTokens
+        mtmdBatchMaxTokens = $LlamaCppMtmdBatchMaxTokens
+    }
+    warmWhamWorkerEnabled = $effectiveWarmWhamWorker
+    whamWorkerSessionDir = $resolvedWhamWorkerSessionDir
+    whamWorkerMountRoot = if ($effectiveWarmWhamWorker) { $resolvedWorkspaceRoot } else { $null }
+    smplifyEnabled = -not $effectiveSkipSmplify
+    effectiveCandidateBudget = [ordered]@{
+        maxCandidates = $MaxCandidates
+        candidateReviewBatchSize = $CandidateReviewBatchSize
+        candidateReviewTargetSuitableCount = $CandidateReviewTargetSuitableCount
+        maxCandidateReviewTargetSuitableCount = $resolvedMaxCandidateReviewTargetSuitableCount
+        visionCandidatesPerExercise = $VisionCandidatesPerExercise
+        posePrefilterCandidatesPerExercise = $PosePrefilterCandidatesPerExercise
+        fallbackCandidates = $FallbackCandidates
+    }
     maxSelectedResults = $MaxSelectedResults
     exercises = $summaryItems
 }
