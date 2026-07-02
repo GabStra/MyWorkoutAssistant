@@ -27,6 +27,9 @@
 
 ## Build and Compilation
 
+- Keep verification scoped to the change. Do not run broad or full Python test files/suites by default when a targeted test, parser check, or compile check covers the edited path.
+- For `exercise_motion_pkg` changes, prefer the smallest relevant `pytest -k ...` subset plus `python -m py_compile` for edited Python files. Run `tests/test_exercise_motion_pkg.py` in full only when explicitly requested or when the change is broad enough that focused tests cannot give meaningful coverage.
+- If a focused test failure suggests wider fallout, fix the specific issue and rerun the focused test first; ask before escalating to long-running broad suites unless the user has already requested comprehensive verification.
 - Run a build when changes can affect app binaries or compilation outputs, including:
   - Kotlin/Java source files
   - Android resources (`res/`), manifests, or Gradle build scripts
