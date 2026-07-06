@@ -11,6 +11,8 @@ from typing import Any
 from dataclasses import dataclass
 from pathlib import Path
 
+from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+
 
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
@@ -40,6 +42,7 @@ class WhamRunResult:
     run_smplify: bool
     docker_image: str | None = None
     docker_lock_wait_seconds: float = 0.0
+    gpu_lock_wait_seconds: float = 0.0
     timeout_seconds: float | None = None
     warm_worker: bool = False
     warm_worker_job_id: str | None = None
@@ -63,6 +66,7 @@ class WhamRunResult:
             "outputDir": str(self.output_dir),
             "resultsPkl": str(self.results_pkl),
             "dockerLockWaitSeconds": round(self.docker_lock_wait_seconds, 3) if self.use_docker else 0.0,
+            "gpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
         }
 
 
@@ -123,19 +127,21 @@ def run_wham_locally(
     )
     started = time.perf_counter()
     lock_wait_seconds = 0.0
+    gpu_lock_wait_seconds = 0.0
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
         "w",
         encoding="utf-8",
     ) as stderr_handle:
-        with wham_docker_run_lock(enabled=use_docker) as lock_wait_seconds:
-            returncode = run_wham_process(
-                command,
-                cwd=str(wham_repo_path),
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-                timeout_seconds=timeout,
-                docker_container_name=docker_container_name,
-            )
+        with gpu_stage_lock(stage="wham") as gpu_lock_wait_seconds:
+            with wham_docker_run_lock(enabled=use_docker) as lock_wait_seconds:
+                returncode = run_wham_process(
+                    command,
+                    cwd=str(wham_repo_path),
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    timeout_seconds=timeout,
+                    docker_container_name=docker_container_name,
+                )
     elapsed = time.perf_counter() - started
     if returncode != 0:
         raise RuntimeError(
@@ -165,6 +171,7 @@ def run_wham_locally(
         run_smplify=run_smplify,
         docker_image=docker_image if use_docker else None,
         docker_lock_wait_seconds=lock_wait_seconds,
+        gpu_lock_wait_seconds=gpu_lock_wait_seconds,
         timeout_seconds=timeout,
     )
 
@@ -213,10 +220,12 @@ def run_wham_with_warm_worker(
     result_path = results_dir / f"{job_id}.json"
     started = time.perf_counter()
     lock_wait_seconds = 0.0
-    with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
-        tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
-        tmp_job_path.replace(job_path)
-        result_payload = wait_for_warm_worker_result(result_path, timeout_seconds=timeout)
+    gpu_lock_wait_seconds = 0.0
+    with gpu_stage_lock(stage="wham_warm_worker_job") as gpu_lock_wait_seconds:
+        with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
+            tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
+            tmp_job_path.replace(job_path)
+            result_payload = wait_for_warm_worker_result(result_path, timeout_seconds=timeout)
     elapsed = time.perf_counter() - started
     worker_stdout_log = job_logs_dir / f"{job_id}.stdout.log"
     worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
@@ -252,6 +261,7 @@ def run_wham_with_warm_worker(
         run_smplify=run_smplify,
         docker_image=docker_image,
         docker_lock_wait_seconds=lock_wait_seconds,
+        gpu_lock_wait_seconds=gpu_lock_wait_seconds,
         timeout_seconds=timeout,
         warm_worker=True,
         warm_worker_job_id=job_id,

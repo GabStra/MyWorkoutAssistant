@@ -10,6 +10,7 @@ import time
 from typing import Any, Iterable
 from urllib.request import urlretrieve
 
+from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.target_motion import (
     TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
     observable_motion_spec_for_contract,
@@ -74,6 +75,10 @@ FRONTAL_VIEW_HIP_WIDTH_LOW = 0.08
 FRONTAL_VIEW_HIP_WIDTH_HIGH = 0.15
 CLEAR_VALID_CHUNK_MIN_SCORE = 0.68
 DEFAULT_YOLO_BATCH_SIZE = 16
+FRAME_LAYOUT_CUT_JUMP_THRESHOLD = 0.045
+FRAME_EDGE_CUT_JUMP_THRESHOLD = 0.035
+FRAME_LAYOUT_HARD_CUT_JUMP_THRESHOLD = 0.075
+FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD = 0.060
 _YOLO_MODEL_THREAD_LOCAL = threading.local()
 
 
@@ -101,7 +106,7 @@ def normalize_yolo_cuda_device(configured_device: str | None) -> str:
 @dataclass(frozen=True)
 class PosePrefilterSettings:
     model: str = "yolo26x-pose.pt"
-    sample_fps: float = 1.0
+    sample_fps: float = 8.0
     max_seconds: float = 32.0
     scan_strategy: str = "spread"
     window_seconds: float = 8.0
@@ -131,6 +136,8 @@ class PoseSample:
     time_seconds: float
     detections: list[PoseDetection]
     frame_signature: tuple[float, ...] | None = None
+    frame_layout_signature: tuple[float, ...] | None = None
+    frame_edge_signature: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -156,20 +163,36 @@ def run_yolo_pose_prefilter(
     if metadata.fps <= 0 or metadata.frame_count <= 0:
         return empty_pose_prefilter_result("pose_prefilter_no_video_metadata")
     model_path = resolve_pose_model_path(settings.model)
-    device = resolve_yolo_device(settings.device)
-    model = load_thread_local_yolo_pose_model(model_path)
-    samples: list[PoseSample] = []
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"Could not open video for YOLO pose prefiltering: {video_path}")
-    try:
-        sample_frames, sampled_windows = build_pose_sample_plan(metadata, settings=settings)
-        batch_indices: list[int] = []
-        batch_frames: list[Any] = []
-        for frame_index, frame in iter_sampled_video_frames(capture, sample_frames):
-            batch_indices.append(frame_index)
-            batch_frames.append(frame)
-            if len(batch_frames) >= max(1, settings.batch_size):
+    gpu_lock_wait_seconds = 0.0
+    with gpu_stage_lock(stage="yolo_pose_prefilter") as lock_wait_seconds:
+        gpu_lock_wait_seconds = lock_wait_seconds
+        device = resolve_yolo_device(settings.device)
+        model = load_thread_local_yolo_pose_model(model_path)
+        samples: list[PoseSample] = []
+        capture = cv2.VideoCapture(str(video_path))
+        if not capture.isOpened():
+            raise RuntimeError(f"Could not open video for YOLO pose prefiltering: {video_path}")
+        try:
+            sample_frames, sampled_windows = build_pose_sample_plan(metadata, settings=settings)
+            batch_indices: list[int] = []
+            batch_frames: list[Any] = []
+            for frame_index, frame in iter_sampled_video_frames(capture, sample_frames):
+                batch_indices.append(frame_index)
+                batch_frames.append(frame)
+                if len(batch_frames) >= max(1, settings.batch_size):
+                    samples.extend(
+                        pose_samples_from_yolo_batch(
+                            model,
+                            frame_indices=batch_indices,
+                            frames=batch_frames,
+                            metadata=metadata,
+                            min_keypoint_confidence=settings.min_keypoint_confidence,
+                            device=device,
+                        )
+                    )
+                    batch_indices = []
+                    batch_frames = []
+            if batch_frames:
                 samples.extend(
                     pose_samples_from_yolo_batch(
                         model,
@@ -180,21 +203,8 @@ def run_yolo_pose_prefilter(
                         device=device,
                     )
                 )
-                batch_indices = []
-                batch_frames = []
-        if batch_frames:
-            samples.extend(
-                pose_samples_from_yolo_batch(
-                    model,
-                    frame_indices=batch_indices,
-                    frames=batch_frames,
-                    metadata=metadata,
-                    min_keypoint_confidence=settings.min_keypoint_confidence,
-                    device=device,
-                )
-            )
-    finally:
-        capture.release()
+        finally:
+            capture.release()
     result = score_pose_samples(samples, metadata=metadata, settings=settings)
     payload = dict(result.payload)
     payload["resolvedModelPath"] = model_path
@@ -206,6 +216,7 @@ def run_yolo_pose_prefilter(
     payload["sampledWindowCount"] = len(sampled_windows)
     payload["device"] = device or "auto"
     payload["batchSize"] = settings.batch_size
+    payload["gpuLockWaitSeconds"] = round(gpu_lock_wait_seconds, 3)
     return PosePrefilterResult(
         passed=result.passed,
         score=result.score,
@@ -350,6 +361,8 @@ def pose_samples_from_yolo_batch(
                 time_seconds=frame_index / metadata.fps,
                 detections=detections,
                 frame_signature=compute_frame_signature(frame),
+                frame_layout_signature=compute_frame_layout_signature(frame),
+                frame_edge_signature=compute_frame_edge_signature(frame),
             )
         )
     return samples
@@ -1004,6 +1017,10 @@ def source_window_integrity_metrics(
             "maxScaleJumpRatio": 1.0,
             "sceneCutCount": 0,
             "maxFrameSignatureJump": 0.0,
+            "visualContinuityCutCount": 0,
+            "visualContinuityComparedPairs": 0,
+            "maxFrameLayoutJump": 0.0,
+            "maxFrameEdgeJump": 0.0,
             "sampleCount": len(samples),
             "presentSampleRatio": 0.0,
             "multiPersonRatio": 0.0,
@@ -1037,13 +1054,19 @@ def source_window_integrity_metrics(
     frame_signature_jumps = frame_signature_jump_distances(samples)
     scene_cut_count = sum(1 for value in frame_signature_jumps if value >= 0.34)
     max_frame_signature_jump = max(frame_signature_jumps) if frame_signature_jumps else 0.0
+    visual_jump_metrics = frame_visual_jump_metrics(samples)
     single_person_passed = single_person_ratio >= 0.95
     full_body_passed = full_body_visible_ratio >= 0.85 and p10_crop_safety >= 0.85 and min_crop_safety >= 0.75
     joint_visibility_passed = (
         joint_visibility["wholeMovementJointVisibility"] >= 0.60
         and joint_visibility["requiredJointP10Coverage"] >= 0.58
     )
-    camera_passed = max_center_jump <= 0.18 and max_scale_jump <= 0.45 and scene_cut_count == 0
+    camera_passed = (
+        max_center_jump <= 0.18
+        and max_scale_jump <= 0.45
+        and scene_cut_count == 0
+        and int(visual_jump_metrics["visualContinuityCutCount"]) == 0
+    )
     return {
         "passed": single_person_passed and full_body_passed and joint_visibility_passed and camera_passed,
         "singlePersonContinuityPassed": single_person_passed,
@@ -1059,6 +1082,7 @@ def source_window_integrity_metrics(
         "maxScaleJumpRatio": max_scale_jump,
         "sceneCutCount": scene_cut_count,
         "maxFrameSignatureJump": max_frame_signature_jump,
+        **visual_jump_metrics,
         "sampleCount": len(samples),
         "presentSampleRatio": len(present) / len(samples),
         "multiPersonRatio": multi_person_ratio,
@@ -1086,14 +1110,114 @@ def compute_frame_signature(frame: Any) -> tuple[float, ...] | None:
         return None
 
 
+def compute_frame_layout_signature(frame: Any) -> tuple[float, ...] | None:
+    try:
+        import cv2
+    except ImportError:
+        return None
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(gray, (24, 24), interpolation=cv2.INTER_AREA)
+        values = resized.astype("float32").flatten()
+        return tuple(float(value / 255.0) for value in values)
+    except Exception:
+        return None
+
+
+def compute_frame_edge_signature(frame: Any) -> tuple[float, ...] | None:
+    try:
+        import cv2
+    except ImportError:
+        return None
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 70, 160)
+        resized = cv2.resize(edges, (24, 24), interpolation=cv2.INTER_AREA)
+        values = resized.astype("float32").flatten()
+        return tuple(float(value / 255.0) for value in values)
+    except Exception:
+        return None
+
+
 def frame_signature_jump_distances(samples: list[PoseSample]) -> list[float]:
-    signatures = [sample.frame_signature for sample in samples]
     distances: list[float] = []
-    for left, right in zip(signatures, signatures[1:]):
+    for left_sample, right_sample in consecutive_sample_pairs(samples):
+        left = left_sample.frame_signature
+        right = right_sample.frame_signature
         if left is None or right is None or len(left) != len(right):
             continue
         distances.append(sum(abs(a - b) for a, b in zip(left, right)) * 0.5)
     return distances
+
+
+def frame_visual_jump_metrics(samples: list[PoseSample]) -> dict[str, Any]:
+    layout_jumps: list[float] = []
+    edge_jumps: list[float] = []
+    visual_cut_count = 0
+    compared_pair_count = 0
+    for left_sample, right_sample in consecutive_sample_pairs(samples):
+        layout_jump = signature_mean_absolute_difference(
+            left_sample.frame_layout_signature,
+            right_sample.frame_layout_signature,
+        )
+        edge_jump = signature_mean_absolute_difference(
+            left_sample.frame_edge_signature,
+            right_sample.frame_edge_signature,
+        )
+        if layout_jump is not None:
+            layout_jumps.append(layout_jump)
+        if edge_jump is not None:
+            edge_jumps.append(edge_jump)
+        if layout_jump is None and edge_jump is None:
+            continue
+        compared_pair_count += 1
+        layout_value = layout_jump or 0.0
+        edge_value = edge_jump or 0.0
+        is_visual_cut = (
+            layout_value >= FRAME_LAYOUT_HARD_CUT_JUMP_THRESHOLD
+            or edge_value >= FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD
+            or (
+                layout_value >= FRAME_LAYOUT_CUT_JUMP_THRESHOLD
+                and edge_value >= FRAME_EDGE_CUT_JUMP_THRESHOLD
+            )
+        )
+        if is_visual_cut:
+            visual_cut_count += 1
+    return {
+        "visualContinuityCutCount": visual_cut_count,
+        "visualContinuityComparedPairs": compared_pair_count,
+        "maxFrameLayoutJump": max(layout_jumps) if layout_jumps else 0.0,
+        "maxFrameEdgeJump": max(edge_jumps) if edge_jumps else 0.0,
+    }
+
+
+def consecutive_sample_pairs(samples: list[PoseSample]) -> list[tuple[PoseSample, PoseSample]]:
+    if len(samples) < 2:
+        return []
+    sorted_samples = sorted(samples, key=lambda sample: sample.time_seconds)
+    deltas = [
+        right.time_seconds - left.time_seconds
+        for left, right in zip(sorted_samples, sorted_samples[1:])
+        if right.time_seconds > left.time_seconds
+    ]
+    if not deltas:
+        return []
+    typical_delta = max(1e-6, median(deltas))
+    max_gap = max(typical_delta * 2.5, typical_delta + 0.05)
+    return [
+        (left, right)
+        for left, right in zip(sorted_samples, sorted_samples[1:])
+        if 0.0 < right.time_seconds - left.time_seconds <= max_gap
+    ]
+
+
+def signature_mean_absolute_difference(
+    left: tuple[float, ...] | None,
+    right: tuple[float, ...] | None,
+) -> float | None:
+    if left is None or right is None or len(left) != len(right) or not left:
+        return None
+    return sum(abs(a - b) for a, b in zip(left, right)) / len(left)
 
 
 def pose_motion_strength(detections: list[PoseDetection], *, metadata: BasicVideoMetadata) -> float:

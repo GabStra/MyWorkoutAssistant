@@ -5,9 +5,11 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -18,6 +20,12 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
+)
+from exercise_motion_pkg.vlm_errors import (
+    CriticalVlmInteractionError,
+    critical_vlm_http_status_error,
+    is_critical_vlm_interaction_error,
+    wrap_vlm_infrastructure_error,
 )
 from exercise_motion_pkg.youtube import sanitize_video_for_processing
 from exercise_motion_pkg.video_utils import read_basic_video_metadata
@@ -83,7 +91,7 @@ class DetectionSettings:
     min_refined_score_ratio: float = 0.85
     min_refinement_duration_ratio: float = 0.65
     health_timeout_seconds: float = 180.0
-    request_timeout_seconds: float = 90.0
+    request_timeout_seconds: float = 240.0
 
 
 @dataclass(frozen=True)
@@ -1359,7 +1367,9 @@ class LlamaCppVisionClient:
         disable_reasoning: bool = True,
         image_min_tokens: int | None = None,
         image_max_tokens: int | None = None,
-        request_timeout_seconds: float = 90.0,
+        request_timeout_seconds: float = 240.0,
+        recovery_callback: Callable[[], None] | None = None,
+        max_recovery_retries: int = 1,
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url is not None else None
         self.model = model
@@ -1372,6 +1382,8 @@ class LlamaCppVisionClient:
         self.image_min_tokens = image_min_tokens
         self.image_max_tokens = image_max_tokens
         self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+        self.recovery_callback = recovery_callback
+        self.max_recovery_retries = max(0, int(max_recovery_retries))
         self.client = httpx.Client(timeout=self.request_timeout_seconds)
 
     def detect_window(
@@ -1391,6 +1403,8 @@ class LlamaCppVisionClient:
         try:
             raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
         except Exception as exc:
+            if is_critical_vlm_interaction_error(exc):
+                raise
             return build_unusable_window_detection(
                 window=window,
                 frame_paths=frame_paths,
@@ -1495,25 +1509,209 @@ class LlamaCppVisionClient:
             requested_timeout = float(request_timeout_seconds)
             request_timeout = None if requested_timeout <= 0.0 else max(1.0, requested_timeout)
         request_kwargs: dict[str, object] = {"json": payload, "timeout": request_timeout}
-        response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
-        if response.status_code >= 400:
-            fallback_payload = dict(payload)
-            fallback_payload.pop("response_format", None)
-            fallback_payload.pop("reasoning_format", None)
-            fallback_payload.pop("chat_template_kwargs", None)
-            fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
-            response = self.client.post(f"{self.base_url}/v1/chat/completions", **fallback_request_kwargs)
-        if response.status_code >= 400:
-            body = response.text.strip()
-            if len(body) > 1200:
-                body = body[:1200] + "...[truncated]"
-            raise RuntimeError(
-                "llama-cpp vision request failed "
-                f"status={response.status_code} images={image_count} "
-                f"imageBytes={image_bytes} promptChars={len(prompt)} body={body}"
-            )
-        data = response.json()
-        return strip_empty_llama_cpp_thought_prefix(data["choices"][0]["message"]["content"])
+        interaction = "llama-cpp vision chat completion"
+        last_error: CriticalVlmInteractionError | None = None
+        recovery_events: list[dict[str, object]] = []
+        for attempt_index in range(self.max_recovery_retries + 1):
+            attempt_started = time.monotonic()
+            try:
+                response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
+                if response.status_code >= 400:
+                    fallback_payload = dict(payload)
+                    fallback_payload.pop("response_format", None)
+                    fallback_payload.pop("reasoning_format", None)
+                    fallback_payload.pop("chat_template_kwargs", None)
+                    fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
+                    response = self.client.post(f"{self.base_url}/v1/chat/completions", **fallback_request_kwargs)
+                if response.status_code >= 400:
+                    body = response.text.strip()
+                    if len(body) > 1200:
+                        body = body[:1200] + "...[truncated]"
+                    raise critical_vlm_http_status_error(
+                        interaction=interaction,
+                        status_code=response.status_code,
+                        body=body,
+                        image_count=image_count,
+                        image_bytes=image_bytes,
+                        prompt_chars=len(prompt),
+                    )
+                data = response.json()
+                return strip_empty_llama_cpp_thought_prefix(data["choices"][0]["message"]["content"])
+            except Exception as exc:
+                critical = wrap_vlm_infrastructure_error(
+                    exc,
+                    interaction=interaction,
+                    timeout_seconds=request_timeout,
+                )
+                if critical is None:
+                    raise
+                critical.add_details(
+                    baseUrl=self.base_url,
+                    model=self.model,
+                    backend=self.backend,
+                    attemptIndex=attempt_index,
+                    maxRecoveryRetries=self.max_recovery_retries,
+                    requestTimeoutSeconds=request_timeout,
+                    elapsedSeconds=round(time.monotonic() - attempt_started, 3),
+                    imageCount=image_count,
+                    imageBytes=image_bytes,
+                    promptChars=len(prompt),
+                    maxTokens=payload.get("max_tokens"),
+                    jsonResponse=json_response,
+                    disableReasoning=use_disable_reasoning,
+                    topP=effective_top_p,
+                    topK=effective_top_k,
+                    temperature=payload.get("temperature"),
+                    endpoint=f"{self.base_url}/v1/chat/completions",
+                    requestStartedAt=datetime.now(timezone.utc).isoformat(),
+                    imageStats=self._image_debug_stats(frame_paths),
+                    serverSnapshotAtFailure=self._server_debug_snapshot(),
+                    recoveryEvents=list(recovery_events),
+                )
+                last_error = critical
+                if not critical.recoverable or attempt_index >= self.max_recovery_retries:
+                    if critical is exc:
+                        raise
+                    raise critical from exc
+                recovery_events.append(self._recover_after_vlm_failure(critical))
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("llama-cpp vision request failed without a response.")
+
+    def _recover_after_vlm_failure(self, error: CriticalVlmInteractionError) -> dict[str, object]:
+        started = time.monotonic()
+        event: dict[str, object] = {
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "trigger": error.cause_type or type(error).__name__,
+            "serverSnapshotBeforeRecovery": self._server_debug_snapshot(),
+        }
+        try:
+            self.client.close()
+        except Exception:
+            pass
+        if self.recovery_callback is not None:
+            try:
+                self.recovery_callback()
+            except Exception as exc:
+                raise CriticalVlmInteractionError(
+                    f"VLM self-recovery callback failed after {error.interaction}: {type(exc).__name__}: {exc}",
+                    interaction=error.interaction,
+                    recoverable=False,
+                    timeout_seconds=error.timeout_seconds,
+                    cause_type=type(exc).__name__,
+                    details={
+                        **error.details,
+                        **event,
+                        "recoveryCallbackError": str(exc),
+                        "recoveryElapsedSeconds": round(time.monotonic() - started, 3),
+                    },
+                ) from exc
+        self.client = httpx.Client(timeout=self.request_timeout_seconds)
+        self._wait_for_chat_ready_after_recovery(error)
+        event.update(
+            {
+                "completed": True,
+                "elapsedSeconds": round(time.monotonic() - started, 3),
+                "serverSnapshotAfterRecovery": self._server_debug_snapshot(),
+            }
+        )
+        existing_events = error.details.get("recoveryEvents")
+        recovery_events = existing_events if isinstance(existing_events, list) else []
+        error.add_details(recoveryEvents=[*recovery_events, event])
+        return event
+
+    def _wait_for_chat_ready_after_recovery(self, error: CriticalVlmInteractionError) -> None:
+        if self.base_url is None:
+            return
+        deadline = time.monotonic() + min(60.0, max(10.0, self.request_timeout_seconds / 2.0))
+        last_error: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                models = self.client.get(f"{self.base_url}/v1/models", timeout=5.0)
+                if models.status_code < 500:
+                    payload = {
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": "Reply with OK."}],
+                        "temperature": 0,
+                        "max_tokens": 1,
+                        "reasoning_format": "none",
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    }
+                    ready = self.client.post(
+                        f"{self.base_url}/v1/chat/completions",
+                        json=payload,
+                        timeout=min(10.0, self.request_timeout_seconds),
+                    )
+                    if ready.status_code < 500:
+                        return
+                    last_error = f"status={ready.status_code}"
+                else:
+                    last_error = f"models_status={models.status_code}"
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            time.sleep(1.0)
+        raise CriticalVlmInteractionError(
+            f"VLM self-recovery failed after {error.interaction}: {last_error or error}",
+            interaction=error.interaction,
+            recoverable=False,
+            timeout_seconds=error.timeout_seconds,
+            cause_type=error.cause_type,
+            details={
+                **error.details,
+                "recoveryReadinessError": last_error,
+                "serverSnapshotAfterFailedRecovery": self._server_debug_snapshot(),
+            },
+        ) from error
+
+    def _server_debug_snapshot(self) -> dict[str, object]:
+        if self.base_url is None:
+            return {"baseUrl": None}
+        snapshot: dict[str, object] = {
+            "baseUrl": self.base_url,
+            "capturedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        for name, path in (
+            ("models", "/v1/models"),
+            ("props", "/props"),
+            ("slots", "/slots"),
+        ):
+            url = f"{self.base_url}{path}"
+            started = time.monotonic()
+            try:
+                response = httpx.get(url, timeout=3.0)
+                text = response.text.strip()
+                if len(text) > 2000:
+                    text = text[:2000] + "...[truncated]"
+                endpoint_payload: dict[str, object] = {
+                    "statusCode": response.status_code,
+                    "elapsedSeconds": round(time.monotonic() - started, 3),
+                }
+                try:
+                    endpoint_payload["json"] = response.json()
+                except Exception:
+                    endpoint_payload["text"] = text
+                snapshot[name] = endpoint_payload
+            except Exception as exc:
+                snapshot[name] = {
+                    "errorType": type(exc).__name__,
+                    "error": str(exc),
+                    "elapsedSeconds": round(time.monotonic() - started, 3),
+                }
+        return snapshot
+
+    def _image_debug_stats(self, frame_paths: list[Path]) -> list[dict[str, object]]:
+        stats: list[dict[str, object]] = []
+        for frame_path in frame_paths:
+            entry: dict[str, object] = {"path": str(frame_path)}
+            try:
+                stat = frame_path.stat()
+                entry.update({"exists": True, "bytes": stat.st_size})
+            except FileNotFoundError:
+                entry["exists"] = False
+            except Exception as exc:
+                entry.update({"exists": None, "errorType": type(exc).__name__, "error": str(exc)})
+            stats.append(entry)
+        return stats
 
 
 class VisionClient:

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
+from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.paths import PipelinePaths
@@ -801,14 +802,17 @@ def run_spinepose_extraction(
     )
     log_path = logs_dir / "spinepose.log"
     started = time.perf_counter()
+    gpu_lock_wait_seconds = 0.0
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
-        completed = subprocess.run(
-            command_line,
-            shell=True,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        with gpu_stage_lock(stage="spinepose", enabled=_spinepose_uses_gpu(device)) as lock_wait_seconds:
+            gpu_lock_wait_seconds = lock_wait_seconds
+            completed = subprocess.run(
+                command_line,
+                shell=True,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
     elapsed_seconds = round(time.perf_counter() - started, 3)
     if completed.returncode != 0:
         raise RuntimeError(
@@ -822,6 +826,7 @@ def run_spinepose_extraction(
         "mode": mode,
         "modelVersion": model_version,
         "device": device,
+        "gpuLockWaitSeconds": round(gpu_lock_wait_seconds, 3),
     }
 
 
@@ -872,6 +877,11 @@ def _spinepose_hardware_acceleration_arg(device: str) -> str:
     if normalized in {"cpu", "none", "false", "off"}:
         return "--no-hardware-acceleration"
     return "--hardware-acceleration"
+
+
+def _spinepose_uses_gpu(device: str) -> bool:
+    normalized = device.strip().lower()
+    return normalized not in {"cpu", "none", "false", "off"}
 
 
 def _format_shell_executable(command: str | Path) -> str:
