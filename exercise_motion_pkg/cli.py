@@ -7,10 +7,12 @@ from pathlib import Path
 from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_FALLBACK_CANDIDATES,
     DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
+    DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS,
     DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
     DEFAULT_MAX_REVIEW_WINDOWS,
     DEFAULT_REVIEW_FRAMES,
     BakeAndRankRequest,
+    audit_selected_outputs,
     run_bake_and_rank_pipeline,
     run_bake_and_rank_reselection,
 )
@@ -385,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--pose-prefilter", action="store_true", help="Use YOLO pose as a fast visual prefilter before optional VLM ranking.")
     youtube_search.add_argument("--pose-prefilter-model", default="yolo26x-pose.pt")
     youtube_search.add_argument("--pose-prefilter-candidates-per-exercise", type=int)
-    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=2.0)
+    youtube_search.add_argument("--pose-prefilter-sample-fps", type=float, default=8.0)
     youtube_search.add_argument("--pose-prefilter-max-seconds", type=float, default=32.0)
     youtube_search.add_argument(
         "--pose-prefilter-scan-strategy",
@@ -482,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Leave an auto-started llama.cpp server running after YouTube discovery so later stages can reuse it.",
     )
     youtube_search.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
-    youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
+    youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument(
         "--exclude-youtube-candidates-json",
@@ -532,6 +534,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum source-window variants to try per ranked video before moving on. "
             "Use 0 to try every reviewed source window."
+        ),
+    )
+    bake_and_rank.add_argument(
+        "--max-final-output-rejections",
+        type=int,
+        default=DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS,
+        help=(
+            "Stop after this many WHAM-backed candidates fail final materialized validation. "
+            "Use 0 to disable this fail-fast cap."
         ),
     )
     bake_and_rank.add_argument(
@@ -801,11 +812,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Leave an auto-started llama.cpp server running after the pipeline so later runs skip model startup.",
     )
     bake_and_rank.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
-    bake_and_rank.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
+    bake_and_rank.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
     bake_and_rank.add_argument(
         "--artifact-retention",
         choices=("debug", "full"),
-        default="debug",
+        default="full",
         help=(
             "debug keeps final preview/Wear/debug evidence and prunes raw WHAM/frame/source intermediates; "
             "full keeps all generated files."
@@ -825,6 +836,14 @@ def build_parser() -> argparse.ArgumentParser:
     reselect_baked.add_argument("--review-frames", type=int)
     reselect_baked.add_argument("--max-review-windows", type=int)
     reselect_baked.add_argument("--max-selected-results", type=int)
+
+    audit_selected = subparsers.add_parser(
+        "audit-selected",
+        help="Audit copied selected motion outputs for missing files, broken preview links, blank previews, and camera cuts.",
+    )
+    audit_selected.add_argument("--workspace", required=True)
+    audit_selected.add_argument("--exercise")
+    audit_selected.add_argument("--write-report", action="store_true")
 
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
@@ -1313,6 +1332,7 @@ def main() -> None:
                 youtube_preview_cache_dir=args.youtube_preview_cache_dir,
                 fallback_candidates=args.fallback_candidates,
                 max_source_window_attempts=args.max_source_window_attempts,
+                max_final_output_rejections=args.max_final_output_rejections,
                 candidate_workers=args.candidate_workers,
                 wham_python_command=args.wham_python,
                 reuse_wham_cache=not args.no_reuse_wham_cache,
@@ -1458,6 +1478,33 @@ def main() -> None:
                 print(f"Preview HTML: {Path(selected_preview).resolve()}")
         else:
             print("Selected Wear skeleton: none")
+            raise SystemExit(1)
+        return
+    if args.command == "audit-selected":
+        report = audit_selected_outputs(
+            Path(args.workspace),
+            exercise_slug=args.exercise,
+            write_report=args.write_report,
+        )
+        summary = {
+            "workspace": report.get("workspace"),
+            "exerciseFilter": report.get("exerciseFilter"),
+            "exerciseCount": report.get("exerciseCount"),
+            "passedCount": report.get("passedCount"),
+            "failedCount": report.get("failedCount"),
+            "reportPath": report.get("reportPath"),
+            "failures": [
+                {
+                    "exerciseName": item.get("exerciseName"),
+                    "selectionManifestPath": item.get("selectionManifestPath"),
+                    "rejectionReasons": item.get("rejectionReasons"),
+                }
+                for item in report.get("exercises", [])
+                if isinstance(item, dict) and not bool(item.get("passed"))
+            ],
+        }
+        print(json.dumps(summary, indent=2))
+        if int(report.get("failedCount") or 0) > 0:
             raise SystemExit(1)
         return
     if args.command == "trim-video":

@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ from typing import Any, Callable, Iterable
 
 import httpx
 from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
+from exercise_motion_pkg.gpu_lock import GlobalGpuLock
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_BATCH_SIZE,
     DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
@@ -50,10 +53,12 @@ from exercise_motion_pkg.pose_prefilter import (
     normalize_yolo_cuda_device,
     run_yolo_pose_prefilter,
 )
-from exercise_motion_pkg.target_motion import (
-    TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
-    normalize_observable_motion_spec,
-    normalize_target_motion_profile_key,
+from exercise_motion_pkg.target_motion import TARGET_MOTION_PREFILTER_BLOCKING_ISSUE
+from exercise_motion_pkg.vlm_errors import (
+    add_vlm_context,
+    is_critical_vlm_interaction_error,
+    vlm_error_payload,
+    wrap_vlm_infrastructure_error,
 )
 
 TEXT_ONLY_LLAMA_MAX_TOKENS = 192
@@ -535,17 +540,71 @@ def youtube_candidate_exclusion_debug_payload(
     }
 
 
+RETRYABLE_CANDIDATE_FAILURE_TEXT_MARKERS = (
+    "preview download failed",
+    "download failed",
+    "sign in to confirm",
+    "not a bot",
+    "use --cookies",
+    "use --cookies-from-browser",
+    "yt-dlp timed out",
+    "timed out",
+    "timeout",
+    "http error 429",
+    "too many requests",
+)
+
+
+def youtube_candidate_payload_contains_text_marker(value: Any, markers: tuple[str, ...]) -> bool:
+    if isinstance(value, str):
+        text = value.casefold()
+        return any(marker in text for marker in markers)
+    if isinstance(value, dict):
+        return any(
+            youtube_candidate_payload_contains_text_marker(item, markers)
+            for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(
+            youtube_candidate_payload_contains_text_marker(item, markers)
+            for item in value
+        )
+    return False
+
+
+def youtube_candidate_payload_has_retryable_failure(node: dict[str, Any]) -> bool:
+    return youtube_candidate_payload_contains_text_marker(
+        node,
+        RETRYABLE_CANDIDATE_FAILURE_TEXT_MARKERS,
+    )
+
+
+def youtube_candidate_payload_identity_keys(node: dict[str, Any]) -> set[str]:
+    return youtube_candidate_exclusion_keys_from_values(
+        video_id=node.get("videoId") or node.get("video_id"),
+        url=node.get("url"),
+    )
+
+
+def youtube_candidate_payload_should_contribute_exclusion(node: dict[str, Any]) -> bool:
+    if str(node.get("skipReason") or "").strip().casefold() == "previously_processed_candidate":
+        return False
+    if youtube_candidate_payload_has_retryable_failure(node):
+        return False
+    return bool(youtube_candidate_payload_identity_keys(node))
+
+
 def collect_youtube_candidate_exclusion_keys_from_payload(payload: Any) -> set[str]:
     keys: set[str] = set()
 
     def visit(node: Any) -> None:
         if isinstance(node, dict):
-            keys.update(
-                youtube_candidate_exclusion_keys_from_values(
-                    video_id=node.get("videoId") or node.get("video_id"),
-                    url=node.get("url"),
-                )
-            )
+            identity_keys = youtube_candidate_payload_identity_keys(node)
+            if identity_keys and youtube_candidate_payload_should_contribute_exclusion(node):
+                keys.update(identity_keys)
+                return
+            if identity_keys:
+                return
             for value in node.values():
                 visit(value)
             return
@@ -606,7 +665,7 @@ class YouTubeRankingSettings:
     pose_prefilter_enabled: bool = False
     pose_prefilter_model: str = "yolo26x-pose.pt"
     pose_prefilter_candidates_per_exercise: int | None = None
-    pose_prefilter_sample_fps: float = 2.0
+    pose_prefilter_sample_fps: float = 8.0
     pose_prefilter_max_seconds: float = 32.0
     pose_prefilter_scan_strategy: str = "spread"
     pose_prefilter_window_seconds: float = 8.0
@@ -668,7 +727,7 @@ class YouTubeRankingSettings:
     llama_cpp_auto_start_server: bool = True
     keep_llama_cpp_server: bool = False
     llama_cpp_server_startup_timeout_seconds: float = 180.0
-    llama_cpp_request_timeout_seconds: float = 90.0
+    llama_cpp_request_timeout_seconds: float = 240.0
     include_disabled: bool = False
     vision_early_stop_score: float = 0.95
 
@@ -759,6 +818,38 @@ class PreparedVisionReview:
 
     def close(self) -> None:
         self.temp_dir.cleanup()
+
+
+def write_prepared_vision_critical_vlm_error(
+    prepared: PreparedVisionReview,
+    exc: BaseException,
+    *,
+    context: dict[str, Any] | None = None,
+) -> Path | None:
+    critical = add_vlm_context(exc, **(context or {}))
+    if critical is None:
+        return None
+    output_dir = Path(prepared.temp_dir.name)
+    report_path = output_dir / "vlm_critical_error.json"
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "error": vlm_error_payload(critical),
+                    "context": context or {},
+                    "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        critical.add_details(criticalErrorReportPath=str(report_path))
+        return report_path
+    except Exception as report_exc:
+        critical.add_details(criticalErrorReportWriteError=str(report_exc))
+        return None
 
 
 SearchFn = Callable[[str, int], list[YouTubeCandidate]]
@@ -1521,6 +1612,15 @@ def resolve_exercise_name_rewrite(
             payload["applied"] = False
             return exercise, payload
         except Exception as exc:
+            if is_critical_vlm_interaction_error(exc):
+                add_vlm_context(
+                    exc,
+                    stage="exercise_name_rewrite",
+                    exerciseName=exercise.name,
+                    inputExerciseName=input_name,
+                    model=settings.llama_cpp_model,
+                )
+                raise
             payload.update(
                 {
                     "status": "failed",
@@ -1555,9 +1655,7 @@ def build_exercise_name_rewrite_prompt(exercise: ExerciseEntry) -> str:
         "Do not add a variant such as seated, machine, smith-machine, assisted, banded, single-leg, or grip-specific unless it is already implied by the input.\n"
         "If unsure, set rewriteNeeded false and return the input name.\n"
         "Muscle-group-only targets should be rewritten to a common movement name only when the movement identity is unambiguous in gym context.\n"
-        "Examples:\n"
-        "- sourceExerciseName='Abs Crunch', equipmentQualifiedExerciseName='Cable Abs Crunch' -> Cable Abs Crunch.\n"
-        "- sourceExerciseName='Bench Press', equipmentQualifiedExerciseName='Barbell Bench Press' -> Barbell Bench Press.\n"
+        "When the equipment-qualified name is a more precise version of the source name, prefer that precise name without adding unrelated qualifiers.\n"
         "Return JSON only with this schema: "
         "{\"canonicalExerciseName\": string, \"rewriteNeeded\": boolean, \"confidence\": number, \"reason\": string}.\n"
         f"sourceExerciseName: {source_name}\n"
@@ -1910,11 +2008,17 @@ class LlamaCppYouTubeQueryPlanner:
     ) -> None:
         self.settings = settings
         self._shared_ranker = shared_ranker
-        self._owned_ranker = None if shared_ranker is not None else LlamaCppVisionRanker(settings)
+        self._owned_ranker: LlamaCppVisionRanker | None = None
+        self._ranker_lock = threading.Lock()
 
     @property
     def _ranker(self) -> Any:
         ranker = self._shared_ranker or self._owned_ranker
+        if ranker is None and self._shared_ranker is None:
+            with self._ranker_lock:
+                if self._owned_ranker is None:
+                    self._owned_ranker = LlamaCppVisionRanker(self.settings)
+            ranker = self._owned_ranker
         if ranker is None:
             raise RuntimeError("llama.cpp query planner is not initialized.")
         return ranker
@@ -1947,6 +2051,7 @@ class LlamaCppYouTubeQueryPlanner:
     def close(self) -> None:
         if self._owned_ranker is not None:
             self._owned_ranker.close()
+            self._owned_ranker = None
 
 
 class DeepSeekYouTubeQueryPlanner:
@@ -2028,9 +2133,8 @@ def build_youtube_query_planner_prompt(
         "Prefer exact quoted exercise names and exact common aliases. Avoid broad phrases that can match "
         "music, challenges, tutorials, commentary, or general workouts.\n"
         "If the target is a basic exercise name, generate queries for the basic/common version only. Do not add "
-        "variant terms such as chest-to-bar, kipping, butterfly, banded, assisted, jumping, negative, weighted, "
-        "chin-up, grip-specific, machine, incline, decline, seated, supported, single-arm, or single-leg unless "
-        "the target exercise already includes that qualifier.\n"
+        "extra qualifier terms for grip, range, assistance, loading, machine/support style, angle, body position, "
+        "side, limb count, tempo, or partial-only execution unless the target exercise already includes that qualifier.\n"
         "Do not return URLs. Return JSON only: {\"queries\": [\"...\"]}."
     )
 
@@ -2798,6 +2902,15 @@ def rank_candidates_with_semantic_gate(
                         settings=settings,
                     )
                 except Exception as exc:
+                    if is_critical_vlm_interaction_error(exc):
+                        add_vlm_context(
+                            exc,
+                            stage="semantic_gate_parallel",
+                            exerciseName=exercise.name,
+                            videoId=candidate.video_id,
+                            title=candidate.title,
+                        )
+                        raise
                     scored = apply_semantic_gate_score(
                         candidate,
                         exercise=exercise,
@@ -2816,37 +2929,41 @@ def rank_candidates_with_semantic_gate(
                 if debug_scored_by_key is not None:
                     debug_scored_by_key[candidate.key()] = scored
 
-    reviewed: list[YouTubeCandidate] = []
-    narrowed: list[YouTubeCandidate] = []
-    reviewed_limit = 0
-    while reviewed_limit < max_review_limit:
-        next_limit = min(max_review_limit, reviewed_limit + batch_size)
-        score_candidates(review_eligible[reviewed_limit:next_limit])
-        reviewed_limit = next_limit
-        reviewed_keys = [candidate.key() for candidate in review_eligible[:reviewed_limit]]
-        reviewed = [scored_by_key.get(key) for key in reviewed_keys if scored_by_key.get(key) is not None]
-        if settings.pose_prefilter_enabled or settings.rank_with_vision:
+    try:
+        reviewed: list[YouTubeCandidate] = []
+        narrowed: list[YouTubeCandidate] = []
+        reviewed_limit = 0
+        while reviewed_limit < max_review_limit:
+            next_limit = min(max_review_limit, reviewed_limit + batch_size)
+            score_candidates(review_eligible[reviewed_limit:next_limit])
+            reviewed_limit = next_limit
+            reviewed_keys = [candidate.key() for candidate in review_eligible[:reviewed_limit]]
+            reviewed = [scored_by_key.get(key) for key in reviewed_keys if scored_by_key.get(key) is not None]
+            if settings.pose_prefilter_enabled or settings.rank_with_vision:
+                narrowed = [
+                    candidate
+                    for candidate in reviewed
+                    if candidate_is_semantic_visual_review_candidate(candidate, settings=settings)
+                ]
+            else:
+                narrowed = [
+                    candidate
+                    for candidate in reviewed
+                    if candidate_semantic_gate_passed(candidate)
+                ]
+            if stop_after_target_pass_count and len(narrowed) >= target_pass_count:
+                break
+        if not narrowed and settings.pose_prefilter_enabled:
             narrowed = [
-                candidate
+                mark_semantic_zero_survivor_soft_fallback(candidate)
                 for candidate in reviewed
-                if candidate_is_semantic_visual_review_candidate(candidate, settings=settings)
+                if candidate_is_semantic_soft_fallback_candidate(candidate)
             ]
-        else:
-            narrowed = [
-                candidate
-                for candidate in reviewed
-                if candidate_semantic_gate_passed(candidate)
-            ]
-        if stop_after_target_pass_count and len(narrowed) >= target_pass_count:
-            break
-    if not narrowed and settings.pose_prefilter_enabled:
-        narrowed = [
-            mark_semantic_zero_survivor_soft_fallback(candidate)
-            for candidate in reviewed
-            if candidate_is_semantic_soft_fallback_candidate(candidate)
-        ]
-    narrowed.sort(key=lambda item: semantic_gate_sort_key(item, settings), reverse=True)
-    return narrowed
+        narrowed.sort(key=lambda item: semantic_gate_sort_key(item, settings), reverse=True)
+        return narrowed
+    finally:
+        if isinstance(active_gate, LlamaCppSemanticGate):
+            active_gate.close()
 
 
 def apply_semantic_gate_score(
@@ -3389,10 +3506,11 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "Focus on: start posture, primary effort, finish/return posture, visible body or equipment travel, and high-confidence wrong variants or partial phases.\n"
         "For cyclic repetitions, describe one complete repetition from meaningful start through the natural finish/return. Do not require an extra phase from the next repetition.\n"
         "Use visible movement language rather than muscle names, hidden anatomy, coaching advice, or form-quality preferences.\n"
+        "Avoid exact stance width, joint lockout, range-depth thresholds such as parallel/below-parallel, or endpoint standards unless the target name explicitly requires them; prefer meaningful visible travel and return language.\n"
         "Do not invent grip, stance, support, load attachment, anchor, platform, bench, rack, machine, strap, or setup hardware details unless the target name requires them. If grip orientation is not named, use neutral hand/arm language rather than overhand, underhand, neutral grip, or mixed grip.\n"
         "Do not add camera, crop, person-count, obstruction, lighting, timestamp, frame number, numeric threshold, score, or rep-count rules; other code handles those.\n"
-        "Respect common exercise-name identity: a chin-up is not an overhand pull-up, a pull-up is not an underhand chin-up, a lateral raise is not a front raise, and a row is not a curl or press.\n"
-        "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use exactly these short labeled lines: Source, Complete, Reject, Notes.\n"
+        "Respect the exact exercise-name identity: named grip, stance, support, implement position, body orientation, side, limb count, loading method, and motion direction distinguish the target from nearby variants.\n"
+        "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use exactly these short labeled lines with colons: Source:, Complete:, Reject:, Notes:.\n"
         "Do not include a Skeleton line; generated skeleton validation is handled by a separate call.\n"
         f"Target exercise: {exercise.name}\n"
     )
@@ -3403,10 +3521,12 @@ def build_exercise_skeleton_contract_prompt(exercise: ExerciseEntry) -> str:
         "Write compact exercise-specific guidance for validating a generated body-only skeleton animation.\n"
         "The goal is only to decide whether the skeleton looks like a reasonable generated version of the target exercise, not whether it perfectly matches source-video form or endpoint criteria.\n"
         "External supports, equipment, load, floor contact, and scene geometry may be invisible. Translate the exercise into forgiving visible body-motion evidence.\n"
+        "Include both what should be visible in the body-only skeleton and what should make the generated skeleton invalid for this exercise.\n"
+        "Reject guidance should catch mostly static animations, missing meaningful body travel, missing the main effort-and-return phase order, one-way partial fragments, and body mechanics that resemble a different exercise.\n"
         "Keep the guidance short and non-overconstrained: avoid exact angles, object clearance, precise grip/stance details, hidden anatomy, coaching form rules, or extreme end ranges unless the target exercise name explicitly requires them.\n"
-        "Do not require source endpoint criteria such as chin clears hands/bar, bar touches chest, full lockout, below parallel, full floor contact, exact depth, or exact height. Those belong to source completeness, not body-only skeleton plausibility.\n"
+        "Do not require source endpoint criteria such as exact object clearance, exact object contact, full lockout, exact depth, full floor contact, or exact height. Those belong to source completeness, not body-only skeleton plausibility.\n"
         "Use plain visible relations such as body rises or lowers, elbows or knees bend and straighten, torso changes position, arms move toward or away from the body, hips stay generally aligned, or the motion returns toward the start.\n"
-        "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use one short labeled line: Skeleton.\n"
+        "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use exactly these short labeled lines with colons: Skeleton:, Reject:.\n"
         f"Target exercise: {exercise.name}\n"
     )
 
@@ -3428,15 +3548,29 @@ def generate_exercise_motion_contract_with_ranker(
             ),
         }
         if callable_accepts_keyword(ranker.client.caption_images, "disable_reasoning"):
-            caption_kwargs["disable_reasoning"] = True
+            caption_kwargs["disable_reasoning"] = False
         if callable_accepts_keyword(ranker.client.caption_images, "json_response"):
             caption_kwargs["json_response"] = False
+        if callable_accepts_keyword(ranker.client.caption_images, "temperature"):
+            caption_kwargs["temperature"] = 0.0
+        if callable_accepts_keyword(ranker.client.caption_images, "top_p"):
+            caption_kwargs["top_p"] = 1.0
+        if callable_accepts_keyword(ranker.client.caption_images, "top_k"):
+            caption_kwargs["top_k"] = 0
         raw = ranker.client.caption_images(**caption_kwargs)
         contract = normalize_exercise_motion_contract_text(raw, exercise=exercise, source="llm")
         contract["model"] = settings.llama_cpp_model
         contract["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
         return contract
     except Exception as exc:
+        if is_critical_vlm_interaction_error(exc):
+            add_vlm_context(
+                exc,
+                stage="exercise_motion_contract_generation",
+                exerciseName=exercise.name,
+                model=settings.llama_cpp_model,
+            )
+            raise
         return {
             "schemaVersion": 1,
             "enabled": True,
@@ -3466,15 +3600,29 @@ def generate_exercise_skeleton_contract_with_ranker(
             ),
         }
         if callable_accepts_keyword(ranker.client.caption_images, "disable_reasoning"):
-            caption_kwargs["disable_reasoning"] = True
+            caption_kwargs["disable_reasoning"] = False
         if callable_accepts_keyword(ranker.client.caption_images, "json_response"):
             caption_kwargs["json_response"] = False
+        if callable_accepts_keyword(ranker.client.caption_images, "temperature"):
+            caption_kwargs["temperature"] = 0.0
+        if callable_accepts_keyword(ranker.client.caption_images, "top_p"):
+            caption_kwargs["top_p"] = 1.0
+        if callable_accepts_keyword(ranker.client.caption_images, "top_k"):
+            caption_kwargs["top_k"] = 0
         raw = ranker.client.caption_images(**caption_kwargs)
         contract = normalize_exercise_skeleton_contract_text(raw, exercise=exercise, source="llm")
         contract["model"] = settings.llama_cpp_model
         contract["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
         return contract
     except Exception as exc:
+        if is_critical_vlm_interaction_error(exc):
+            add_vlm_context(
+                exc,
+                stage="exercise_skeleton_contract_generation",
+                exerciseName=exercise.name,
+                model=settings.llama_cpp_model,
+            )
+            raise
         return {
             "schemaVersion": 1,
             "enabled": True,
@@ -3533,31 +3681,11 @@ def normalize_exercise_motion_contract(
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("exercise motion contract payload must be a JSON object.")
-    required_phases = cleaned_contract_string_list(payload.get("requiredPhases"), limit=8, item_limit=120)
-    reject_if = cleaned_contract_string_list(payload.get("rejectIf"), limit=10, item_limit=140)
-    if not required_phases or not reject_if:
-        raise ValueError("exercise motion contract must include requiredPhases and rejectIf.")
-    target_motion_profile = normalize_target_motion_profile_key(payload.get("targetMotionProfile"))
-    observable_motion_spec = normalize_observable_motion_spec(payload.get("observableMotionSpec"))
-    return {
-        "schemaVersion": 1,
-        "enabled": True,
-        "status": "generated",
-        "source": source,
-        "exerciseName": exercise.name,
-        "requiredEquipment": cleaned_contract_string_list(payload.get("requiredEquipment"), limit=6, item_limit=80),
-        "requiredStartPosture": cleaned_contract_string(payload.get("requiredStartPosture"), 160),
-        "requiredEndPosture": cleaned_contract_string(payload.get("requiredEndPosture"), 160),
-        "requiredPhases": required_phases,
-        "primaryMotionRegions": cleaned_contract_string_list(payload.get("primaryMotionRegions"), limit=8, item_limit=80),
-        "mustBeVisible": cleaned_contract_string_list(payload.get("mustBeVisible"), limit=10, item_limit=80),
-        "rejectIf": reject_if,
-        "commonWrongVariants": cleaned_contract_string_list(payload.get("commonWrongVariants"), limit=10, item_limit=100),
-        "reviewNotes": cleaned_contract_string_list(payload.get("reviewNotes"), limit=6, item_limit=140),
-        "observableMotionSpec": observable_motion_spec,
-        "youtubeQueryAliases": cleaned_contract_string_list(payload.get("youtubeQueryAliases"), limit=5, item_limit=80),
-        "targetMotionProfile": target_motion_profile,
-    }
+    for key in ("advisoryText", "guidance", "text", "contract", "plainText"):
+        advisory_text = cleaned_contract_advisory_text(payload.get(key))
+        if advisory_text:
+            return normalize_exercise_motion_contract_text(advisory_text, exercise=exercise, source=source)
+    raise ValueError("exercise motion contract payload must include plain guidance text.")
 
 
 def cleaned_contract_string(value: Any, limit: int) -> str:
@@ -3581,8 +3709,14 @@ def cleaned_contract_advisory_text(value: Any) -> str:
     text = re.sub(r"</?(?:channel|message|constrain|end)\|>", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:analysis|thought|final)\s*<channel\|>", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"^\s*(?:analysis|thought|final)\b[:\s-]*", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
-    return truncate_text(text, EXERCISE_MOTION_CONTRACT_TEXT_LIMIT) or ""
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    lines = [line.strip() for line in text.splitlines()]
+    text = "\n".join(line for line in lines if line).strip()
+    if not text:
+        return ""
+    if len(text) <= EXERCISE_MOTION_CONTRACT_TEXT_LIMIT:
+        return text
+    return text[: EXERCISE_MOTION_CONTRACT_TEXT_LIMIT - 1].rstrip() + "..."
 
 
 def cleaned_contract_string_list(value: Any, *, limit: int, item_limit: int) -> list[str]:
@@ -3606,97 +3740,27 @@ def cleaned_contract_string_list(value: Any, *, limit: int, item_limit: int) -> 
 
 
 def exercise_motion_contract_is_usable(contract: dict[str, Any] | None) -> bool:
-    return isinstance(contract, dict) and contract.get("status") == "generated"
+    return (
+        isinstance(contract, dict)
+        and contract.get("status") == "generated"
+        and bool(cleaned_contract_advisory_text(contract.get("advisoryText")))
+    )
 
 
 def exercise_motion_contract_for_prompt(contract: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(contract, dict):
         return None
-    has_generated_contract_status = exercise_motion_contract_is_usable(contract)
     advisory_text = cleaned_contract_advisory_text(contract.get("advisoryText"))
-    has_prompt_contract_fields = any(
-        cleaned_contract_string_list(contract.get(key), limit=1, item_limit=140)
-        for key in (
-            "requiredEquipment",
-            "requiredStartPosture",
-            "requiredEndPosture",
-            "requiredPhases",
-            "primaryMotionRegions",
-            "mustBeVisible",
-            "rejectIf",
-            "commonWrongVariants",
-            "reviewNotes",
-            "youtubeQueryAliases",
-        )
-    ) or (
-        normalize_target_motion_profile_key(contract.get("targetMotionProfile")) is not None
-        or normalize_observable_motion_spec(contract.get("observableMotionSpec")) is not None
-        or bool(advisory_text)
-    )
-    if not has_generated_contract_status and not has_prompt_contract_fields:
+    if not advisory_text:
         return None
-    prompt_contract = {
+    return {
         "exerciseName": contract.get("exerciseName"),
         "advisoryText": advisory_text,
-        "requiredEquipment": contract.get("requiredEquipment") or [],
-        "requiredStartPosture": str(contract.get("requiredStartPosture") or "").strip(),
-        "requiredEndPosture": str(contract.get("requiredEndPosture") or "").strip(),
-        "requiredPhases": contract.get("requiredPhases") or [],
-        "primaryMotionRegions": contract.get("primaryMotionRegions") or [],
-        "mustBeVisible": contract.get("mustBeVisible") or [],
-        "rejectIf": contract.get("rejectIf") or [],
-        "commonWrongVariants": contract.get("commonWrongVariants") or [],
-        "reviewNotes": contract.get("reviewNotes") or [],
-        "observableMotionSpec": normalize_observable_motion_spec(contract.get("observableMotionSpec")),
-        "youtubeQueryAliases": cleaned_contract_string_list(
-            contract.get("youtubeQueryAliases"),
-            limit=5,
-            item_limit=80,
-        ),
-        "targetMotionProfile": normalize_target_motion_profile_key(contract.get("targetMotionProfile")),
     }
-    if not any(
-        prompt_contract.get(key)
-        for key in (
-            "requiredEquipment",
-            "advisoryText",
-            "requiredStartPosture",
-            "requiredEndPosture",
-            "requiredPhases",
-            "primaryMotionRegions",
-            "mustBeVisible",
-            "rejectIf",
-            "commonWrongVariants",
-            "reviewNotes",
-            "observableMotionSpec",
-            "youtubeQueryAliases",
-            "targetMotionProfile",
-        )
-    ):
-        return None
-    return prompt_contract
 
 
 def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str:
-    advisory_text = cleaned_contract_advisory_text(prompt_contract.get("advisoryText"))
-    structured_keys = (
-        "requiredEquipment",
-        "requiredStartPosture",
-        "requiredEndPosture",
-        "requiredPhases",
-        "primaryMotionRegions",
-        "mustBeVisible",
-        "rejectIf",
-        "commonWrongVariants",
-        "reviewNotes",
-        "observableMotionSpec",
-        "youtubeQueryAliases",
-        "targetMotionProfile",
-    )
-    has_structured_fields = any(prompt_contract.get(key) for key in structured_keys)
-    if advisory_text and not has_structured_fields:
-        return advisory_text
-    return json.dumps(prompt_contract, ensure_ascii=False, indent=2)
+    return cleaned_contract_advisory_text(prompt_contract.get("advisoryText"))
 
 
 def build_exercise_motion_contract_prompt_section(contract: dict[str, Any] | None) -> str:
@@ -3716,8 +3780,7 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
     duration_text = str(candidate.duration_seconds) if candidate.duration_seconds is not None else "unknown"
     return (
         "Text-only semantic gate. Classify whether the YouTube title/description is the exact target movement. "
-        "Reject routines, compilations, briefly mentioned exercises, wrong base movements, and named variants not in the target "
-        "(chin-up, neutral grip, chest-to-bar, kipping, banded, assisted, machine, incline, seated, unilateral). "
+        "Reject routines, compilations, briefly mentioned exercises, wrong base movements, and named variants not in the target. "
         "For generic weighted/loaded targets, vest/belt/plate/dumbbell/kettlebell are valid loading methods only when the base movement is unchanged. "
         "Duration is ranking context only: prefer short exact exercise clips over long tutorials when semantic confidence is similar, "
         "but do not mark wrongExercise only because a video is long or short. "
@@ -3788,6 +3851,15 @@ def rank_candidates_with_pose_prefilter(
             except YoloDeviceUnavailableError:
                 raise
             except Exception as exc:
+                if is_critical_vlm_interaction_error(exc):
+                    add_vlm_context(
+                        exc,
+                        stage="pose_prefilter_parallel",
+                        exerciseName=exercise.name,
+                        videoId=candidate.video_id,
+                        title=candidate.title,
+                    )
+                    raise
                 scored_by_key[candidate.key()] = apply_pose_prefilter_score(
                     candidate,
                     pose_score=0.0,
@@ -4000,29 +4072,38 @@ def run_youtube_candidate_review_pass(
         debug_by_key.update({candidate.key(): candidate for candidate in reviewed})
         pose_elapsed = time.monotonic() - pose_started
 
-    if settings.rank_with_vision and vision_ranker is not None:
+    if settings.rank_with_vision:
         vision_started = time.monotonic()
         vision_candidates = [
             candidate
             for candidate in reviewed
             if candidate_is_eligible_for_vision_review(candidate, settings)
         ]
-        if isinstance(vision_ranker, LlamaCppVisionRanker):
-            reranked = rank_candidates_with_prepared_vision_reviews(
-                exercise=exercise,
-                ranked=vision_candidates,
-                settings=settings,
-                vision_ranker=vision_ranker,
-                exercise_motion_contract=exercise_motion_contract,
-                exercise_skeleton_contract=exercise_skeleton_contract,
-            )
-        else:
-            reranked = rank_candidates_with_vision_ranker(
-                exercise=exercise,
-                ranked=vision_candidates,
-                settings=settings,
-                vision_ranker=vision_ranker,
-            )
+        active_vision_ranker = vision_ranker
+        owned_vision_ranker: LlamaCppVisionRanker | None = None
+        if active_vision_ranker is None:
+            owned_vision_ranker = LlamaCppVisionRanker(settings)
+            active_vision_ranker = owned_vision_ranker
+        try:
+            if isinstance(active_vision_ranker, LlamaCppVisionRanker):
+                reranked = rank_candidates_with_prepared_vision_reviews(
+                    exercise=exercise,
+                    ranked=vision_candidates,
+                    settings=settings,
+                    vision_ranker=active_vision_ranker,
+                    exercise_motion_contract=exercise_motion_contract,
+                    exercise_skeleton_contract=exercise_skeleton_contract,
+                )
+            else:
+                reranked = rank_candidates_with_vision_ranker(
+                    exercise=exercise,
+                    ranked=vision_candidates,
+                    settings=settings,
+                    vision_ranker=active_vision_ranker,
+                )
+        finally:
+            if owned_vision_ranker is not None:
+                owned_vision_ranker.close()
         reranked_by_key = {candidate.key(): candidate for candidate in reranked}
         reviewed = [reranked_by_key.get(candidate.key(), candidate) for candidate in reviewed]
         debug_by_key.update({candidate.key(): candidate for candidate in reviewed})
@@ -4508,6 +4589,83 @@ def llama_cpp_server_command_lines_for_base_url(base_url: str | None) -> list[st
     return command_lines
 
 
+def _looks_like_llama_cpp_server_command(
+    command_line: str | None,
+    *,
+    expected_command: str | None,
+    expected_model: str | None,
+) -> bool:
+    if not command_line:
+        return False
+    normalized = re.sub(r"\s+", " ", command_line).casefold()
+    expected_command_name = Path(expected_command).name.casefold() if expected_command else ""
+    expected_model_name = Path(expected_model).name.casefold() if expected_model else ""
+    if expected_model_name and expected_model_name in normalized:
+        return True
+    if expected_command_name and expected_command_name in normalized:
+        return True
+    return "llama-server" in normalized
+
+
+def _terminate_process_for_gpu_exclusive_phase(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return completed.returncode == 0
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        return False
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        time.sleep(0.2)
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        return True
+    return True
+
+
+def stop_llama_cpp_servers_for_base_url(
+    base_url: str | None,
+    *,
+    expected_command: str | None = None,
+    expected_model: str | None = None,
+) -> list[int]:
+    try:
+        port = int(parse_llama_cpp_base_url(base_url)["port"])
+    except (TypeError, ValueError):
+        return []
+    stopped: list[int] = []
+    for pid in _netstat_listener_pids_for_port(port):
+        command_line = _process_command_line_for_pid(pid)
+        if not _looks_like_llama_cpp_server_command(
+            command_line,
+            expected_command=expected_command,
+            expected_model=expected_model,
+        ):
+            continue
+        if _terminate_process_for_gpu_exclusive_phase(pid):
+            stopped.append(pid)
+    return stopped
+
+
 def llama_cpp_server_reasoning_flag_conflict(command_line: str, *, disable_reasoning: bool) -> str | None:
     normalized = re.sub(r"\s+", " ", command_line).casefold()
     reasoning_off = bool(
@@ -4608,9 +4766,6 @@ def discover_and_rank_youtube_candidates(
     )
     vision_enabled = settings.rank_with_vision
     owns_vision_ranker = False
-    if vision_enabled and vision_ranker is None:
-        vision_ranker = LlamaCppVisionRanker(settings)
-        owns_vision_ranker = True
     owns_query_planner = False
     query_planner_backend: str | None = None
     if settings.use_llama_cpp_query_planner and query_planner is None:
@@ -4630,7 +4785,7 @@ def discover_and_rank_youtube_candidates(
     if settings.exercise_motion_contract_enabled and vision_enabled:
         if exercise_motion_contract_provider is not None:
             exercise_motion_contract_backend = "custom"
-        elif isinstance(vision_ranker, LlamaCppVisionRanker):
+        else:
             exercise_motion_contract_backend = "llama-cpp"
     owns_semantic_gate = False
     semantic_gate_ranker: LlamaCppSemanticGate | None = None
@@ -4641,12 +4796,6 @@ def discover_and_rank_youtube_candidates(
             semantic_gate_ranker = LlamaCppSemanticGate(settings)
             owns_semantic_gate = True
         semantic_gate = semantic_gate_ranker
-    exercise_name_rewrite_ranker: LlamaCppVisionRanker | None = (
-        vision_ranker if isinstance(vision_ranker, LlamaCppVisionRanker) else None
-    )
-    if exercise_name_rewrite_ranker is None and semantic_gate_ranker is not None:
-        exercise_name_rewrite_ranker = semantic_gate_ranker._ranker
-
     exercise_payloads: list[dict[str, Any]] = []
     try:
         for source_exercise in exercises:
@@ -4659,18 +4808,33 @@ def discover_and_rank_youtube_candidates(
                 equipmentQualifiedExerciseName=source_exercise.equipment_qualified_name,
             )
             rewrite_started = time.monotonic()
+            exercise_name_rewrite_ranker: LlamaCppVisionRanker | None = None
+            if (
+                exercise_name_rewriter is None
+                and settings.exercise_name_rewrite_enabled
+                and settings.llama_cpp_base_url is not None
+            ):
+                exercise_name_rewrite_ranker = LlamaCppVisionRanker(settings)
             if exercise_name_rewriter is not None:
-                exercise, exercise_name_rewrite_payload = exercise_name_rewriter(
-                    source_exercise,
-                    settings,
-                    exercise_name_rewrite_ranker,
-                )
+                try:
+                    exercise, exercise_name_rewrite_payload = exercise_name_rewriter(
+                        source_exercise,
+                        settings,
+                        exercise_name_rewrite_ranker,
+                    )
+                finally:
+                    if exercise_name_rewrite_ranker is not None:
+                        exercise_name_rewrite_ranker.close()
             else:
-                exercise, exercise_name_rewrite_payload = resolve_exercise_name_rewrite(
-                    source_exercise,
-                    settings,
-                    exercise_name_rewrite_ranker,
-                )
+                try:
+                    exercise, exercise_name_rewrite_payload = resolve_exercise_name_rewrite(
+                        source_exercise,
+                        settings,
+                        exercise_name_rewrite_ranker,
+                    )
+                finally:
+                    if exercise_name_rewrite_ranker is not None:
+                        exercise_name_rewrite_ranker.close()
             exercise_name_rewrite_elapsed_total += time.monotonic() - rewrite_started
             append_youtube_discovery_progress(
                 progress_path,
@@ -4687,6 +4851,7 @@ def discover_and_rank_youtube_candidates(
             exercise_skeleton_contract: dict[str, Any] | None = None
             if settings.exercise_motion_contract_enabled and vision_enabled:
                 contract_started = time.monotonic()
+                contract_ranker: LlamaCppVisionRanker | None = None
                 if exercise_motion_contract_provider is not None:
                     try:
                         provider_payload = exercise_motion_contract_provider(exercise, settings)
@@ -4720,12 +4885,16 @@ def discover_and_rank_youtube_candidates(
                             "exerciseName": exercise.name,
                             "error": truncate_text(str(exc), 240),
                         }
-                elif isinstance(vision_ranker, LlamaCppVisionRanker):
-                    exercise_motion_contract = generate_exercise_motion_contract_with_ranker(
-                        exercise=exercise,
-                        settings=settings,
-                        ranker=vision_ranker,
-                    )
+                elif settings.llama_cpp_base_url is not None:
+                    contract_ranker = LlamaCppVisionRanker(settings)
+                    try:
+                        exercise_motion_contract = generate_exercise_motion_contract_with_ranker(
+                            exercise=exercise,
+                            settings=settings,
+                            ranker=contract_ranker,
+                        )
+                    finally:
+                        contract_ranker.close()
                 else:
                     exercise_motion_contract = {
                         "schemaVersion": 1,
@@ -4766,12 +4935,16 @@ def discover_and_rank_youtube_candidates(
                     ),
                 )
                 skeleton_contract_started = time.monotonic()
-                if isinstance(vision_ranker, LlamaCppVisionRanker):
-                    exercise_skeleton_contract = generate_exercise_skeleton_contract_with_ranker(
-                        exercise=exercise,
-                        settings=settings,
-                        ranker=vision_ranker,
-                    )
+                if settings.llama_cpp_base_url is not None:
+                    skeleton_ranker = LlamaCppVisionRanker(settings)
+                    try:
+                        exercise_skeleton_contract = generate_exercise_skeleton_contract_with_ranker(
+                            exercise=exercise,
+                            settings=settings,
+                            ranker=skeleton_ranker,
+                        )
+                    finally:
+                        skeleton_ranker.close()
                 else:
                     exercise_skeleton_contract = {
                         "schemaVersion": 1,
@@ -4840,6 +5013,9 @@ def discover_and_rank_youtube_candidates(
                             "error": str(exc),
                         }
                     )
+                finally:
+                    if owns_query_planner and isinstance(query_planner, LlamaCppYouTubeQueryPlanner):
+                        query_planner.close()
             append_youtube_discovery_progress(
                 progress_path,
                 event="query_planning_completed",
@@ -5551,40 +5727,99 @@ class LlamaCppVisionRanker:
 
         self.settings = settings
         self.process: subprocess.Popen[str] | None = None
-        if settings.llama_cpp_base_url is not None:
-            self._ensure_server()
-        self.client = LlamaCppVisionClient(
-            base_url=settings.llama_cpp_base_url,
-            model=settings.llama_cpp_model,
-            backend=settings.llama_cpp_backend,
-            n_predict=settings.llama_cpp_n_predict,
-            temperature=settings.llama_cpp_temperature,
-            top_p=settings.llama_cpp_top_p,
-            top_k=settings.llama_cpp_top_k,
-            disable_reasoning=settings.llama_cpp_disable_reasoning,
-            image_min_tokens=settings.llama_cpp_image_min_tokens,
-            image_max_tokens=settings.llama_cpp_image_max_tokens,
-            request_timeout_seconds=settings.llama_cpp_request_timeout_seconds,
-        )
-
-    def close(self) -> None:
-        self.client.client.close()
-        if self.process is None or self.settings.keep_llama_cpp_server:
-            return
-        self.process.terminate()
+        self.gpu_lock: GlobalGpuLock | None = None
+        self.gpu_lock_wait_seconds = 0.0
         try:
-            self.process.wait(timeout=10.0)
+            if settings.llama_cpp_base_url is not None:
+                if self._uses_gpu():
+                    self.gpu_lock = GlobalGpuLock(stage="llama_cpp_server")
+                    self.gpu_lock_wait_seconds = self.gpu_lock.__enter__()
+                self._ensure_server()
+            self.client = LlamaCppVisionClient(
+                base_url=settings.llama_cpp_base_url,
+                model=settings.llama_cpp_model,
+                backend=settings.llama_cpp_backend,
+                n_predict=settings.llama_cpp_n_predict,
+                temperature=settings.llama_cpp_temperature,
+                top_p=settings.llama_cpp_top_p,
+                top_k=settings.llama_cpp_top_k,
+                disable_reasoning=settings.llama_cpp_disable_reasoning,
+                image_min_tokens=settings.llama_cpp_image_min_tokens,
+                image_max_tokens=settings.llama_cpp_image_max_tokens,
+                request_timeout_seconds=settings.llama_cpp_request_timeout_seconds,
+                recovery_callback=self._recover_llama_cpp_server_after_vlm_failure,
+            )
+        except Exception:
+            self._release_gpu_lock()
+            raise
+
+    def close(self, *, force_stop_server: bool = False) -> None:
+        try:
+            self.client.client.close()
+        finally:
+            try:
+                self._stop_owned_llama_cpp_server(force=force_stop_server)
+            finally:
+                self._release_gpu_lock()
+
+    def _uses_gpu(self) -> bool:
+        return str(self.settings.llama_cpp_backend or "").strip().lower() != "cpu"
+
+    def _release_gpu_lock(self) -> None:
+        if self.gpu_lock is None:
+            return
+        gpu_lock = self.gpu_lock
+        self.gpu_lock = None
+        gpu_lock.__exit__(None, None, None)
+
+    def _stop_owned_llama_cpp_server(self, *, force: bool = False) -> None:
+        if self.process is None:
+            if force and self.settings.llama_cpp_auto_start_server:
+                stop_llama_cpp_servers_for_base_url(
+                    self.settings.llama_cpp_base_url,
+                    expected_command=self.settings.llama_cpp_server_command,
+                    expected_model=self.settings.llama_cpp_model,
+                )
+            return
+        if self.settings.keep_llama_cpp_server and not force:
+            return
+        process = self.process
+        self.process = None
+        process.terminate()
+        try:
+            process.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=10.0)
+            process.kill()
+            process.wait(timeout=10.0)
+
+    def _recover_llama_cpp_server_after_vlm_failure(self) -> None:
+        if self.process is not None and not self.settings.keep_llama_cpp_server:
+            self._stop_owned_llama_cpp_server()
+            self._ensure_server()
+            return
+        self._wait_for_chat_completions_ready()
 
     def _ensure_server(self) -> None:
         server_payload = self._server_models_payload()
         if server_payload is not None:
-            self._raise_if_server_model_mismatch(server_payload)
-            self._raise_if_server_runtime_mismatch()
-            self._wait_for_chat_completions_ready()
-            return
+            try:
+                self._raise_if_server_model_mismatch(server_payload)
+                self._raise_if_server_runtime_mismatch()
+                self._wait_for_chat_completions_ready()
+                return
+            except RuntimeError:
+                if not self.settings.llama_cpp_auto_start_server:
+                    raise
+                stopped = stop_llama_cpp_servers_for_base_url(
+                    self.settings.llama_cpp_base_url,
+                    expected_command=self.settings.llama_cpp_server_command,
+                    expected_model=self.settings.llama_cpp_model,
+                )
+                if not stopped:
+                    raise
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline and self._server_models_payload() is not None:
+                    time.sleep(0.2)
         if not self.settings.llama_cpp_auto_start_server:
             response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
             response.raise_for_status()
@@ -5863,11 +6098,17 @@ class LlamaCppSemanticGate:
     ) -> None:
         self.settings = settings
         self._shared_ranker = shared_ranker
-        self._owned_ranker = None if shared_ranker is not None else LlamaCppVisionRanker(settings)
+        self._owned_ranker: LlamaCppVisionRanker | None = None
+        self._ranker_lock = threading.Lock()
 
     @property
     def _ranker(self) -> LlamaCppVisionRanker:
         ranker = self._shared_ranker or self._owned_ranker
+        if ranker is None and self._shared_ranker is None:
+            with self._ranker_lock:
+                if self._owned_ranker is None:
+                    self._owned_ranker = LlamaCppVisionRanker(self.settings)
+            ranker = self._owned_ranker
         if ranker is None:
             raise RuntimeError("llama.cpp semantic gate is not initialized.")
         return ranker
@@ -5924,6 +6165,7 @@ class LlamaCppSemanticGate:
     def close(self) -> None:
         if self._owned_ranker is not None:
             self._owned_ranker.close()
+            self._owned_ranker = None
 
 
 def rank_candidates_with_vision_ranker(
@@ -6061,7 +6303,18 @@ def score_prepared_vision_reviews_parallel(
             prepared = futures[future]
             try:
                 results[prepared.candidate.key()] = future.result()
-            except Exception:
+            except Exception as exc:
+                if is_critical_vlm_interaction_error(exc):
+                    write_prepared_vision_critical_vlm_error(
+                        prepared,
+                        exc,
+                        context={
+                            "stage": "source_video_suitability_parallel_review",
+                            "videoId": prepared.candidate.video_id,
+                            "title": prepared.candidate.title,
+                        },
+                    )
+                    raise
                 results[prepared.candidate.key()] = (0.0, ["vision_review_failed"])
     return results
 
@@ -6287,7 +6540,16 @@ def rank_candidate_with_vision_client(
             )
         finally:
             prepared.close()
-    except Exception:
+    except Exception as exc:
+        if is_critical_vlm_interaction_error(exc):
+            add_vlm_context(
+                exc,
+                stage="single_candidate_vision_review",
+                exerciseName=exercise.name,
+                videoId=candidate.video_id,
+                title=candidate.title,
+            )
+            raise
         return 0.0, ["vision_review_failed"]
 
 
@@ -6341,8 +6603,47 @@ def score_prepared_vision_review(
         vlm_started = time.monotonic()
         try:
             raw = caption_images(frame_paths=chunk_paths, prompt=chunk_prompt)
-        except Exception:
+        except Exception as exc:
             vlm_elapsed = time.monotonic() - vlm_started
+            critical = wrap_vlm_infrastructure_error(
+                exc,
+                interaction="source_video_suitability_chunk_review",
+                timeout_seconds=settings.llama_cpp_request_timeout_seconds,
+            )
+            if critical is not None:
+                critical.add_details(
+                    stage="source_video_suitability_chunk_review",
+                    videoId=prepared.candidate.video_id,
+                    title=prepared.candidate.title,
+                    chunkIndex=chunk_index,
+                    chunkStartSeconds=chunk_start,
+                    chunkEndSeconds=chunk_end,
+                    windowSource=window_source,
+                    framePaths=[str(path) for path in chunk_paths],
+                    frameCount=len(chunk_paths),
+                    promptChars=len(chunk_prompt),
+                    elapsedSeconds=round(vlm_elapsed, 3),
+                )
+                write_prepared_vision_critical_vlm_error(
+                    prepared,
+                    critical,
+                    context={
+                        "stage": "source_video_suitability_chunk_review",
+                        "videoId": prepared.candidate.video_id,
+                        "title": prepared.candidate.title,
+                        "chunkIndex": chunk_index,
+                        "chunkStartSeconds": chunk_start,
+                        "chunkEndSeconds": chunk_end,
+                        "windowSource": window_source,
+                        "framePaths": [str(path) for path in chunk_paths],
+                        "frameCount": len(chunk_paths),
+                        "promptChars": len(chunk_prompt),
+                        "elapsedSeconds": round(vlm_elapsed, 3),
+                    },
+                )
+                if critical is exc:
+                    raise
+                raise critical from exc
             vlm_elapsed_total += vlm_elapsed
             failed_count += 1
             reviewed_chunks.append(

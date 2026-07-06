@@ -108,6 +108,25 @@ DOMINANT_MOVEMENT_AXIS_JOINTS = (
     "neck",
     "spine3",
 )
+DOMINANT_MOVEMENT_AXIS_GROUPS = (
+    ("shoulder_center", ("left_shoulder", "right_shoulder"), False, 1.15),
+    ("upper_body", ("left_shoulder", "right_shoulder", "left_collar", "right_collar", "neck", "spine3"), False, 1.10),
+    ("torso", ("pelvis", "spine1", "spine2", "spine3", "neck"), False, 1.00),
+    ("hip_center", ("left_hip", "right_hip", "pelvis"), False, 0.95),
+    ("arm_center", ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist"), False, 0.88),
+    ("hand_center", ("left_hand", "right_hand", "left_wrist", "right_wrist"), False, 0.86),
+    ("knee_center", ("left_knee", "right_knee"), False, 0.84),
+    ("ankle_center", ("left_ankle", "right_ankle"), False, 0.80),
+    ("foot_center", ("left_foot", "right_foot"), False, 0.78),
+    ("left_arm_relative", ("left_shoulder", "left_elbow", "left_wrist", "left_hand"), True, 0.90),
+    ("right_arm_relative", ("right_shoulder", "right_elbow", "right_wrist", "right_hand"), True, 0.90),
+    ("hand_center_relative", ("left_hand", "right_hand", "left_wrist", "right_wrist"), True, 0.88),
+    ("left_leg_relative", ("left_hip", "left_knee", "left_ankle", "left_foot"), True, 0.86),
+    ("right_leg_relative", ("right_hip", "right_knee", "right_ankle", "right_foot"), True, 0.86),
+    ("knee_center_relative", ("left_knee", "right_knee"), True, 0.84),
+    ("ankle_center_relative", ("left_ankle", "right_ankle"), True, 0.82),
+    ("foot_center_relative", ("left_foot", "right_foot"), True, 0.80),
+)
 DOMINANT_MOVEMENT_AXIS_MIN_RANGE = 0.035
 DOMINANT_MOVEMENT_AXIS_VERTICAL_RATIO = 1.25
 DOMINANT_MOVEMENT_AXIS_MIN_HORIZONTAL_RANGE = 0.025
@@ -1346,15 +1365,19 @@ def _compute_preview_auto_alignment(
         if yaw_rotation is None:
             yaw_rotation = _estimate_horizontal_spine_yaw_rotation(frames)
         return [yaw_rotation] if yaw_rotation is not None else []
-    dominant_target_axis = _dominant_movement_nearest_world_axis(frames)
     rotations: list[tuple[tuple[float, float, float], float]] = []
     aligned_frames = frames
-    spine_rotation = _estimate_upright_spine_alignment_rotation(aligned_frames)
-    large_spine_orientation_correction = False
-    if spine_rotation is not None:
-        rotations.append(spine_rotation)
-        aligned_frames = [_rotate_frame(frame, spine_rotation) for frame in aligned_frames]
-        large_spine_orientation_correction = _is_large_non_yaw_rotation(spine_rotation)
+    dominant_target_axis = _dominant_movement_nearest_world_axis(aligned_frames)
+    movement_axis_rotation = _estimate_dominant_movement_to_nearest_world_axis_rotation(
+        aligned_frames,
+        target_axis=dominant_target_axis,
+    )
+    if movement_axis_rotation is not None and _rotation_preserves_body_orientation_or_pending_inversion(
+        aligned_frames,
+        movement_axis_rotation,
+    ):
+        rotations.append(movement_axis_rotation)
+        aligned_frames = [_rotate_frame(frame, movement_axis_rotation) for frame in aligned_frames]
     support_plane_rotation = _estimate_support_plane_alignment_rotation(aligned_frames)
     if (
         support_plane_rotation is not None
@@ -1367,20 +1390,10 @@ def _compute_preview_auto_alignment(
     ):
         rotations.append(support_plane_rotation)
         aligned_frames = [_rotate_frame(frame, support_plane_rotation) for frame in aligned_frames]
-    support_profile_rotation = (
-        None
-        if large_spine_orientation_correction
-        else _estimate_support_profile_yaw_rotation(aligned_frames)
-    )
+    support_profile_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
     if support_profile_rotation is not None:
         rotations.append(support_profile_rotation)
         aligned_frames = [_rotate_frame(frame, support_profile_rotation) for frame in aligned_frames]
-    movement_axis_rotation = _estimate_dominant_movement_to_nearest_world_axis_rotation(
-        aligned_frames,
-        target_axis=dominant_target_axis,
-    )
-    if movement_axis_rotation is not None and _rotation_preserves_body_orientation(aligned_frames, movement_axis_rotation):
-        rotations.append(movement_axis_rotation)
     return rotations
 
 
@@ -1488,6 +1501,16 @@ def _dominant_movement_alignment_score(
 def _dominant_movement_axis_points(
     frames: list[MotionFrame],
 ) -> list[tuple[float, float, float]] | None:
+    group_candidates: list[tuple[float, str, list[tuple[float, float, float]]]] = []
+    for group_name, joint_names, root_relative, priority in DOMINANT_MOVEMENT_AXIS_GROUPS:
+        points = _group_motion_axis_points(frames, joint_names, root_relative=root_relative)
+        score = _score_motion_axis_candidate(points, priority=priority)
+        if score is not None:
+            group_candidates.append((score, group_name, points))
+    if group_candidates:
+        group_candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+        return group_candidates[0][2]
+
     candidates: list[tuple[float, list[tuple[float, float, float]]]] = []
     for joint_name in DOMINANT_MOVEMENT_AXIS_JOINTS:
         points = _joint_motion_axis_points(frames, joint_name, root_relative=True)
@@ -1524,28 +1547,55 @@ def _joint_motion_axis_points(
     return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
 
 
+def _group_motion_axis_points(
+    frames: list[MotionFrame],
+    joint_names: tuple[str, ...],
+    *,
+    root_relative: bool,
+) -> list[tuple[float, float, float]]:
+    raw_points: list[tuple[float, float, float] | None] = []
+    for frame in frames:
+        points = [frame.joints[joint_name] for joint_name in joint_names if joint_name in frame.joints]
+        if not points:
+            raw_points.append(None)
+            continue
+        point = _average_preview_points(points)
+        root = frame.joints.get("pelvis") if root_relative else None
+        raw_points.append(_subtract_points(point, root) if root is not None else point)
+    return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
+
+
 def _append_motion_axis_candidate(
     candidates: list[tuple[float, list[tuple[float, float, float]]]],
     points: list[tuple[float, float, float]],
     *,
     priority: float,
 ) -> None:
+    score = _score_motion_axis_candidate(points, priority=priority)
+    if score is not None:
+        candidates.append((score, points))
+
+
+def _score_motion_axis_candidate(
+    points: list[tuple[float, float, float]],
+    *,
+    priority: float,
+) -> float | None:
     if len(points) < 3:
-        return
+        return None
     track_range = _point_track_range(points)
     if track_range < DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
-        return
+        return None
     direction = _principal_direction_3d(points) or _subtract_points(points[-1], points[0])
     direction_length = _vector_length(direction)
     if direction_length <= 1e-6:
-        return
+        return None
     axis_range = _point_track_range_along_direction(points, direction)
     residual_range = max(0.0, track_range - axis_range)
     coherence = axis_range / max(track_range, 1e-6)
     if coherence < 0.45 and residual_range > DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
-        return
-    score = track_range * coherence * max(0.0, priority)
-    candidates.append((score, points))
+        return None
+    return track_range * coherence * max(0.0, priority)
 
 
 def _dominant_movement_joint_priority(joint_name: str) -> float:
@@ -2099,6 +2149,29 @@ def _rotation_preserves_body_orientation(
     if _classify_torso_alignment_mode(frames) == "horizontal_plane":
         return _rotation_preserves_horizontal_torso(frames, rotation)
     return True
+
+
+def _rotation_preserves_body_orientation_or_pending_inversion(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    if _aligned_body_points_down(frames, []):
+        return _rotation_preserves_body_verticality(frames, rotation)
+    return _rotation_preserves_body_orientation(frames, rotation)
+
+
+def _rotation_preserves_body_verticality(
+    frames: list[MotionFrame],
+    rotation: tuple[tuple[float, float, float], float],
+) -> bool:
+    spine_vectors = _collect_spine_vectors(frames)
+    if len(spine_vectors) < 3:
+        return True
+    before = _median([abs(vector[1]) for vector in spine_vectors])
+    axis, angle = rotation
+    rotated = [_rotate_point(vector, axis=axis, angle=angle) for vector in spine_vectors]
+    after = _median([abs(vector[1]) for vector in rotated])
+    return after >= max(0.65, before - 0.12)
 
 
 def _rotation_preserves_horizontal_torso(
@@ -3526,6 +3599,26 @@ def _build_html(payload: dict[str, object]) -> str:
     .control-inline input[type="range"] {{
       grid-column: 1 / -1;
     }}
+    .range-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+    }}
+    .button-row {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+    }}
+    input[type="number"] {{
+      width: 100%;
+      min-height: 30px;
+      box-sizing: border-box;
+      color: var(--ink);
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      padding: 4px 6px;
+    }}
     input[type="range"] {{
       width: 100%;
     }}
@@ -3624,6 +3717,25 @@ def _build_html(payload: dict[str, object]) -> str:
         <label class="control">Preview source
           <select id="loopSelect"></select>
         </label>
+        <div class="control-group">
+          <div class="control-group-title">Output section</div>
+          <div class="range-grid">
+            <label class="control">Start seconds
+              <input id="sectionStartSeconds" type="number" min="0" step="0.01" value="0" />
+            </label>
+            <label class="control">End seconds
+              <input id="sectionEndSeconds" type="number" min="0" step="0.01" value="0" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="setSectionStartFromFrame" type="button">Set start</button>
+            <button id="setSectionEndFromFrame" type="button">Set end</button>
+          </div>
+          <div class="button-row">
+            <button id="applySectionRange" type="button">Preview section</button>
+            <button id="resetSectionRange" type="button">Full clip</button>
+          </div>
+        </div>
         <button id="downloadWearSkeleton" type="button">Download baked Wear skeleton</button>
         <div class="stat">Source range: <span id="loopCount"></span></div>
         <div class="stat">Active span: <span id="activeLoop">Full clip</span></div>
@@ -3670,6 +3782,12 @@ def _build_html(payload: dict[str, object]) -> str:
     const lockYRootInput = document.getElementById("lockYRoot");
     const lockPlantedFeetInput = document.getElementById("lockPlantedFeet");
     const lockPlantedHandsInput = document.getElementById("lockPlantedHands");
+    const sectionStartSecondsInput = document.getElementById("sectionStartSeconds");
+    const sectionEndSecondsInput = document.getElementById("sectionEndSeconds");
+    const setSectionStartFromFrameButton = document.getElementById("setSectionStartFromFrame");
+    const setSectionEndFromFrameButton = document.getElementById("setSectionEndFromFrame");
+    const applySectionRangeButton = document.getElementById("applySectionRange");
+    const resetSectionRangeButton = document.getElementById("resetSectionRange");
     const downloadWearSkeletonButton = document.getElementById("downloadWearSkeleton");
     const loopSelect = document.getElementById("loopSelect");
     const loopCountNode = document.getElementById("loopCount");
@@ -3752,11 +3870,13 @@ def _build_html(payload: dict[str, object]) -> str:
     loopCountNode.textContent = "Full clip";
     populateLoopSelect();
     refreshActiveLoopLabel();
+    syncSectionRangeControlsToActiveRange();
 
     const renderer = new THREE.WebGLRenderer({{
       antialias: true,
       alpha: false,
       powerPreference: "high-performance",
+      preserveDrawingBuffer: true,
     }});
     renderer.setClearColor(0x101418, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -4793,6 +4913,102 @@ def _build_html(payload: dict[str, object]) -> str:
       activeLoopNode.textContent = currentLoop?.label ?? "Full clip";
     }}
 
+    function sourceTimeBounds() {{
+      const frames = Array.isArray(payload.frames) ? payload.frames : [];
+      if (frames.length === 0) {{
+        return {{ startSeconds: 0, endSeconds: 0 }};
+      }}
+      const first = frames.find((frame) => Number.isFinite(Number(frame?.timeSec)));
+      const last = frames.slice().reverse().find((frame) => Number.isFinite(Number(frame?.timeSec)));
+      const startSeconds = Number(first?.timeSec) || 0;
+      const endSeconds = Number(last?.timeSec);
+      return {{
+        startSeconds,
+        endSeconds: Number.isFinite(endSeconds) ? Math.max(startSeconds, endSeconds) : startSeconds,
+      }};
+    }}
+
+    function formatSectionSeconds(value) {{
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
+    }}
+
+    function activeRangeSeconds() {{
+      if (currentLoop) {{
+        return {{
+          startSeconds: Number(currentLoop.startTimeSec) || 0,
+          endSeconds: Number(currentLoop.endTimeSec) || 0,
+        }};
+      }}
+      return sourceTimeBounds();
+    }}
+
+    function syncSectionRangeControlsToActiveRange() {{
+      const bounds = sourceTimeBounds();
+      const activeRange = activeRangeSeconds();
+      sectionStartSecondsInput.min = formatSectionSeconds(bounds.startSeconds);
+      sectionStartSecondsInput.max = formatSectionSeconds(bounds.endSeconds);
+      sectionEndSecondsInput.min = formatSectionSeconds(bounds.startSeconds);
+      sectionEndSecondsInput.max = formatSectionSeconds(bounds.endSeconds);
+      sectionStartSecondsInput.value = formatSectionSeconds(activeRange.startSeconds);
+      sectionEndSecondsInput.value = formatSectionSeconds(activeRange.endSeconds);
+      sectionStartSecondsInput.setCustomValidity("");
+      sectionEndSecondsInput.setCustomValidity("");
+    }}
+
+    function currentPlaybackFrame() {{
+      const frames = playbackState.frames ?? [];
+      if (frames.length === 0) {{
+        return null;
+      }}
+      const index = playbackState.loopable
+        ? ((Math.floor(frameCursor) % frames.length) + frames.length) % frames.length
+        : Math.max(0, Math.min(frames.length - 1, Math.floor(frameCursor)));
+      return frames[index] ?? null;
+    }}
+
+    function currentPlaybackSourceSeconds() {{
+      const frame = currentPlaybackFrame();
+      const value = Number(frame?.timeSec);
+      return Number.isFinite(value) ? value : null;
+    }}
+
+    function setSectionBoundaryFromCurrentFrame(boundary) {{
+      const seconds = currentPlaybackSourceSeconds();
+      if (seconds == null) {{
+        return;
+      }}
+      if (boundary === "start") {{
+        sectionStartSecondsInput.value = formatSectionSeconds(seconds);
+      }} else {{
+        sectionEndSecondsInput.value = formatSectionSeconds(seconds);
+      }}
+      sectionStartSecondsInput.setCustomValidity("");
+      sectionEndSecondsInput.setCustomValidity("");
+    }}
+
+    function applySectionRangeFromInputs() {{
+      const start = Number(sectionStartSecondsInput.value);
+      const end = Number(sectionEndSecondsInput.value);
+      if (!Number.isFinite(start)) {{
+        sectionStartSecondsInput.setCustomValidity("Invalid start seconds");
+        sectionStartSecondsInput.reportValidity();
+        return;
+      }}
+      if (!Number.isFinite(end) || end <= start) {{
+        sectionEndSecondsInput.setCustomValidity("End must be after start");
+        sectionEndSecondsInput.reportValidity();
+        return;
+      }}
+      sectionStartSecondsInput.setCustomValidity("");
+      sectionEndSecondsInput.setCustomValidity("");
+      selectCustomTimeRange(start, end);
+    }}
+
+    function resetSectionRangeToFullClip() {{
+      setSelectedLoop(-1);
+    }}
+
     function setSelectedLoop(nextIndex) {{
       selectedLoopIndex = nextIndex;
       customTimeRange = null;
@@ -4866,6 +5082,7 @@ def _build_html(payload: dict[str, object]) -> str:
       frameCursor = findFrameCursorClosestToBoundsCenter();
       playbackDirection = 1;
       refreshActiveLoopLabel();
+      syncSectionRangeControlsToActiveRange();
       applySceneReframe();
     }}
 
@@ -6370,7 +6587,9 @@ def _build_html(payload: dict[str, object]) -> str:
       const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {{ type: "application/json" }});
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      const loopLabel = selectedLoopIndex >= 0 ? `loop-${{selectedLoopIndex + 1}}` : "full-clip";
+      const loopLabel = customTimeRange
+        ? `section-${{formatSectionSeconds(customTimeRange.startTimeSec).replace(".", "p")}}-${{formatSectionSeconds(customTimeRange.endTimeSec).replace(".", "p")}}`
+        : (selectedLoopIndex >= 0 ? `loop-${{selectedLoopIndex + 1}}` : "full-clip");
       const yLabel = lockYRootInput.checked ? "-lock-y" : "";
       const footLabel = lockPlantedFeetInput.checked ? "-lock-feet" : "";
       const handLabel = lockPlantedHandsInput.checked ? "-lock-hands" : "";
@@ -6434,12 +6653,18 @@ def _build_html(payload: dict[str, object]) -> str:
       updateCamera();
     }}
 
-    function renderDeterministicFrame(frameIndex) {{
+    function nextAnimationFrame() {{
+      return new Promise((resolve) => requestAnimationFrame(resolve));
+    }}
+
+    async function renderDeterministicFrame(frameIndex) {{
       const frames = playbackState.frames ?? [];
       const boundedIndex = Math.max(0, Math.min(Math.max(0, frames.length - 1), Math.floor(Number(frameIndex) || 0)));
       paused = true;
       refreshPauseLabel();
       frameCursor = boundedIndex;
+      draw();
+      await nextAnimationFrame();
       draw();
       return renderer.domElement.toDataURL("image/png");
     }}
@@ -6543,10 +6768,7 @@ def _build_html(payload: dict[str, object]) -> str:
           motionTuningEnabled: payload.motionTuningEnabled,
           rawWhamPassthrough: payload.rawWhamPassthrough,
           previewMode: "full_clip_source_with_optional_time_range_cut",
-          sourceRange: {{
-            startSeconds: 0,
-            endSeconds: payload.frames?.length > 0 ? payload.frames[payload.frames.length - 1].timeSec : 0,
-          }},
+          sourceRange: sourceTimeBounds(),
           activeRange: currentLoop ? {{
             startSeconds: currentLoop.startTimeSec ?? 0,
             endSeconds: currentLoop.endTimeSec ?? 0,
@@ -6586,9 +6808,9 @@ def _build_html(payload: dict[str, object]) -> str:
         selectCustomTimeRange(startSeconds, endSeconds);
         return this.exportWearSkeleton(options);
       }},
-      renderFrame(frameIndex, options = {{}}) {{
+      async renderFrame(frameIndex, options = {{}}) {{
         applyAutomationSettings(options);
-        return renderDeterministicFrame(frameIndex);
+        return await renderDeterministicFrame(frameIndex);
       }},
     }};
 
@@ -7721,6 +7943,18 @@ def _build_html(payload: dict[str, object]) -> str:
     previewResidualScaleInput.addEventListener("input", syncPreviewTuningControls);
     loopSelect.addEventListener("change", () => {{
       setSelectedLoop(parseInt(loopSelect.value, 10));
+    }});
+    setSectionStartFromFrameButton.addEventListener("click", () => {{
+      setSectionBoundaryFromCurrentFrame("start");
+    }});
+    setSectionEndFromFrameButton.addEventListener("click", () => {{
+      setSectionBoundaryFromCurrentFrame("end");
+    }});
+    applySectionRangeButton.addEventListener("click", () => {{
+      applySectionRangeFromInputs();
+    }});
+    resetSectionRangeButton.addEventListener("click", () => {{
+      resetSectionRangeToFullClip();
     }});
     downloadWearSkeletonButton.addEventListener("click", () => {{
       downloadBakedWearSkeleton();
