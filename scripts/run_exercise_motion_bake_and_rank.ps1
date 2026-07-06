@@ -20,6 +20,7 @@ param(
     [string]$YoutubeCookies,
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 3,
+    [int]$MaxFinalOutputRejections = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$EstimateLocalOnly,
@@ -95,7 +96,7 @@ param(
     [string]$LlamaCppCacheTypeK = "q8_0",
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 12,
+    [Nullable[int]]$LlamaCppParallel = 4,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
@@ -110,11 +111,11 @@ param(
     [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
     [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
     [switch]$NoLlamaCppAutoStartServer,
-    [bool]$KeepLlamaCppServer = $true,
+    [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [double]$LlamaCppRequestTimeoutSeconds = 240.0,
     [ValidateSet("debug", "full")]
-    [string]$ArtifactRetention = "debug"
+    [string]$ArtifactRetention = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -355,6 +356,7 @@ $argsList = @(
     "--candidates-json", $resolvedCandidatesJson,
     "--fallback-candidates", "$FallbackCandidates",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
+    "--max-final-output-rejections", "$MaxFinalOutputRejections",
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--workspace", $Workspace,

@@ -629,11 +629,18 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
                         "renderSeconds": render_seconds,
                         "vlmSeconds": vlm_seconds,
                         "sourceCutCandidateCount": len(payload.get("sourceCutCandidates") or []),
+                        "sourceCutCandidates": payload.get("sourceCutCandidates"),
                         "sourceCutVlmInputCandidateCount": len(payload.get("sourceCutVlmInputCandidates") or []),
+                        "sourceCutVlmInputCandidates": payload.get("sourceCutVlmInputCandidates"),
+                        "sourceCutProgressiveSelection": payload.get("sourceCutProgressiveSelection"),
                         "sourceCutScorecardRowCount": len(rows_payload) if isinstance(rows_payload, list) else 0,
                         "sourceCutScorecardRows": rows_payload,
+                        "sourceCutStartBoundaryAudits": payload.get("sourceCutStartBoundaryAudits"),
                         "sourceCutScorecardContractPresent": payload.get("sourceCutScorecardContractPresent"),
                         "sourceCutScorecardThresholds": payload.get("sourceCutScorecardThresholds"),
+                        "sourceCutMotionCoverageDiagnosticFailedCount": payload.get(
+                            "sourceCutMotionCoverageDiagnosticFailedCount"
+                        ),
                         "sourceChoiceInvalidResponse": payload.get("sourceChoiceInvalidResponse"),
                         "rawResponseLength": len(ranking.raw_response or ""),
                         "rawResponsePreview": (ranking.raw_response or "")[:1000],
@@ -743,7 +750,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     parser.add_argument("--keep-llama-cpp-server", action="store_true")
     parser.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
-    parser.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=90.0)
+    parser.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
 
 
 def main() -> int:

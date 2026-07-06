@@ -40,7 +40,7 @@ param(
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
     [Nullable[int]]$PosePrefilterCandidatesPerExercise = 4,
-    [double]$PosePrefilterSampleFps = 2.0,
+    [double]$PosePrefilterSampleFps = 8.0,
     [double]$PosePrefilterMaxSeconds = 32.0,
     [ValidateSet("prefix", "spread", "full")]
     [string]$PosePrefilterScanStrategy = "spread",
@@ -57,6 +57,7 @@ param(
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 3,
+    [int]$MaxFinalOutputRejections = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [bool]$UseExistingCandidatesForFirstAttempt = $true,
@@ -138,7 +139,7 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 12,
+    [Nullable[int]]$LlamaCppParallel = 4,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
@@ -150,11 +151,11 @@ param(
     [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
     [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
     [switch]$NoLlamaCppAutoStartServer,
-    [bool]$KeepLlamaCppServer = $true,
+    [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [double]$LlamaCppRequestTimeoutSeconds = 240.0,
     [ValidateSet("debug", "full")]
-    [string]$ArtifactRetention = "debug"
+    [string]$ArtifactRetention = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -706,6 +707,7 @@ $bakeArgs = @(
     "--candidates-json", $candidatesPath,
     "--fallback-candidates", "$FallbackCandidates",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
+    "--max-final-output-rejections", "$MaxFinalOutputRejections",
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--youtube-preview-cache-dir", $previewCachePath,

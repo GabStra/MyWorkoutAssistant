@@ -18,6 +18,7 @@ import exercise_motion_pkg.bake_and_rank as bake_and_rank_module
 import exercise_motion_pkg.target_motion as target_motion_module
 import exercise_motion_pkg.wham_runner as wham_runner_module
 import exercise_motion_pkg.youtube as youtube_module
+from exercise_motion_pkg.vlm_errors import CriticalVlmInteractionError
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.cleanup import (
     CleanupStats,
@@ -1243,6 +1244,14 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "<input id=\"sceneInverted\" type=\"checkbox\"" in text
     assert "function populateLoopSelect()" in text
     assert "function setSelectedLoop(nextIndex)" in text
+    assert "Output section" in text
+    assert "<input id=\"sectionStartSeconds\" type=\"number\"" in text
+    assert "<input id=\"sectionEndSeconds\" type=\"number\"" in text
+    assert "<button id=\"setSectionStartFromFrame\" type=\"button\">Set start</button>" in text
+    assert "<button id=\"setSectionEndFromFrame\" type=\"button\">Set end</button>" in text
+    assert "<button id=\"applySectionRange\" type=\"button\">Preview section</button>" in text
+    assert "function applySectionRangeFromInputs()" in text
+    assert "function setSectionBoundaryFromCurrentFrame(boundary)" in text
     assert "function buildBakedWearSkeletonPayload()" in text
     assert "function downloadBakedWearSkeleton()" in text
     assert "function normalizeBakedWearSkeletonCoordinates(frames, removeSceneInversion)" in text
@@ -1252,7 +1261,7 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "canonicalWorldUp: true" in text
     assert "wearCoordinateNormalization: wearCoordinateNormalization.metadata" in text
     assert "lockYDrift" in text
-    assert "function getFrameTranslation(frame)" in text
+    assert "function getFrameTranslation(frame, currentFixedRoot = fixedRoot)" in text
     assert "function getFrameBakeTranslation(frame, lockYDrift)" in text
     assert "function toRootAdjustedPoint(point, frameTranslation)" in text
     assert "function applySceneTransform(point)" in text
@@ -4909,6 +4918,61 @@ def test_trim_video_creates_expected_subclip(tmp_path: Path) -> None:
     assert 7 <= metadata.frame_count <= 9
 
 
+def write_quality_test_video(path: Path, frames: list[np.ndarray], *, fps: float = 10.0) -> Path:
+    cv2 = pytest.importorskip("cv2")
+
+    assert frames
+    height, width = frames[0].shape[:2]
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        pytest.skip("OpenCV mp4v writer is unavailable in this environment.")
+    try:
+        for frame in frames:
+            writer.write(frame)
+    finally:
+        writer.release()
+    return path
+
+
+def test_review_video_render_quality_rejects_leading_blank_export(tmp_path: Path) -> None:
+    blank = np.zeros((48, 64, 3), dtype=np.uint8)
+    visible = np.full((48, 64, 3), 80, dtype=np.uint8)
+    video_path = write_quality_test_video(
+        tmp_path / "leading_blank.mp4",
+        [blank, blank, blank, visible, visible],
+        fps=10.0,
+    )
+
+    metrics = bake_and_rank_module.review_video_render_quality_metrics(video_path)
+
+    assert metrics["passed"] is False
+    assert metrics["leadingBlankFrames"] == 3
+    assert "review_video_leading_blank_frames" in metrics["rejectionReasons"]
+
+
+def test_selected_preview_html_link_metrics_rejects_broken_local_links(tmp_path: Path) -> None:
+    html_path = tmp_path / "selected_preview.html"
+    (tmp_path / "preview.webm").write_bytes(b"preview")
+    html_path.write_text(
+        '<video src="preview.webm"></video><a href="missing.mp4">source</a>',
+        encoding="utf-8",
+    )
+
+    broken = bake_and_rank_module.selected_preview_html_link_metrics(html_path)
+    assert broken["passed"] is False
+    assert broken["missingLinkCount"] == 1
+    assert "preview_html_broken_links" in broken["rejectionReasons"]
+
+    (tmp_path / "missing.mp4").write_bytes(b"source")
+    fixed = bake_and_rank_module.selected_preview_html_link_metrics(html_path)
+    assert fixed["passed"] is True
+
+
 def test_extract_workout_plan_exercises_from_planner_json_dedupes_and_skips_disabled() -> None:
     payload = {
         "exercises": [
@@ -6718,19 +6782,12 @@ def test_candidate_vision_prompt_includes_generated_exercise_motion_contract() -
         "status": "generated",
         "source": "test",
         "exerciseName": "Barbell Back Squat",
-        "requiredEquipment": ["barbell"],
-        "requiredStartPosture": "barbell supported on upper back in standing stance",
-        "requiredEndPosture": "standing with hips and knees extended",
-        "requiredPhases": [
-            "controlled hip and knee flexion descent",
-            "bottom squat position",
-            "hip and knee extension ascent",
-        ],
-        "primaryMotionRegions": ["hips", "knees", "ankles"],
-        "mustBeVisible": ["barbell", "hips", "knees", "feet"],
-        "rejectIf": ["only unrack or walkout", "front squat or goblet squat"],
-        "commonWrongVariants": ["front squat", "smith machine squat"],
-        "reviewNotes": ["judge the visible human motion, not title text"],
+        "advisoryText": (
+            "Source: Barbell supported on upper back in standing stance.\n"
+            "Complete: Controlled hip and knee flexion descent, bottom squat, and ascent to standing.\n"
+            "Reject: Only unrack or walkout, front squat, or goblet squat.\n"
+            "Notes: Judge the visible human motion, not title text."
+        ),
     }
 
     prompt = build_candidate_vision_prompt(
@@ -6751,14 +6808,12 @@ def test_candidate_vision_prompt_includes_generated_exercise_motion_contract() -
 
     assert "Exercise-specific movement guidance" in prompt
     assert "visible movement identity and completeness" in prompt
-    assert "requiredStartPosture" in prompt
-    assert "barbell supported on upper back in standing stance" in prompt
-    assert "requiredEndPosture" in prompt
-    assert "standing with hips and knees extended" in prompt
-    assert "controlled hip and knee flexion descent" in prompt
-    assert "only unrack or walkout" in prompt
-    assert "front squat or goblet squat" in prompt
-    assert "commonWrongVariants" in prompt
+    assert "Barbell supported on upper back in standing stance" in prompt
+    assert "Controlled hip and knee flexion descent" in prompt
+    assert "Only unrack or walkout" in prompt
+    assert "front squat, or goblet squat" in prompt
+    assert "requiredStartPosture" not in prompt
+    assert "commonWrongVariants" not in prompt
     assert "Do not invent variant requirements" in prompt
     assert "bar must visibly rest behind the neck on the upper back/traps" not in prompt
     assert "front-rack position across the front shoulders/collarbones" not in prompt
@@ -6772,16 +6827,12 @@ def test_candidate_vision_prompt_accepts_prepared_exercise_motion_contract() -> 
         "status": "generated",
         "source": "test",
         "exerciseName": "Barbell Back Squat",
-        "requiredEquipment": ["barbell"],
-        "requiredStartPosture": "standing under racked bar",
-        "requiredEndPosture": "standing finish",
-        "requiredPhases": ["descent", "bottom squat", "ascent"],
-        "primaryMotionRegions": ["hips", "knees"],
-        "mustBeVisible": ["barbell", "hips", "knees"],
-        "rejectIf": ["only unrack or walkout"],
-        "commonWrongVariants": ["front squat"],
-        "reviewNotes": ["use visible movement only"],
-        "targetMotionProfile": None,
+        "advisoryText": (
+            "Source: Standing under racked bar.\n"
+            "Complete: Descent, bottom squat, and ascent to standing finish.\n"
+            "Reject: Only unrack or walkout, or front squat.\n"
+            "Notes: Use visible movement only."
+        ),
     }
     prepared_contract = exercise_motion_contract_for_prompt(generated_contract)
 
@@ -6802,14 +6853,12 @@ def test_candidate_vision_prompt_accepts_prepared_exercise_motion_contract() -> 
     )
 
     assert prepared_contract is not None
-    assert prepared_contract["targetMotionProfile"] is None
+    assert set(prepared_contract) == {"exerciseName", "advisoryText"}
     assert "Exercise-specific movement guidance" in prompt
-    assert "requiredStartPosture" in prompt
-    assert "standing under racked bar" in prompt
-    assert "requiredEndPosture" in prompt
+    assert "Standing under racked bar" in prompt
     assert "standing finish" in prompt
-    assert "descent" in prompt
-    assert "only unrack or walkout" in prompt
+    assert "Descent" in prompt
+    assert "Only unrack or walkout" in prompt
 
 
 def test_exercise_motion_contract_generation_prompt_is_plain_text_guidance() -> None:
@@ -6832,8 +6881,9 @@ def test_exercise_motion_contract_generation_prompt_is_plain_text_guidance() -> 
     assert "coaching advice" in prompt
     assert "Do not invent grip, stance, support, load attachment" in prompt
     assert "a chin-up is not an overhand pull-up" in prompt
+    assert "Zercher squat uses the crooks of the elbows" in prompt
     assert "Do not add camera, crop, person-count" in prompt
-    assert "Use exactly these short labeled lines: Source, Complete, Reject, Notes" in prompt
+    assert "Use exactly these short labeled lines with colons: Source:, Complete:, Reject:, Notes:" in prompt
     assert "Do not include a Skeleton line" in prompt
 
 
@@ -6849,19 +6899,53 @@ def test_exercise_skeleton_contract_generation_prompt_is_separate_body_only_guid
     assert "body-only skeleton animation" in prompt
     assert "reasonable generated version of the target exercise" in prompt
     assert "External supports, equipment, load" in prompt
+    assert "Include both what should be visible" in prompt
+    assert "Reject guidance should catch mostly static animations" in prompt
     assert "Do not require source endpoint criteria" in prompt
-    assert "Use one short labeled line: Skeleton" in prompt
+    assert "Use exactly these short labeled lines with colons: Skeleton:, Reject:" in prompt
     assert "Target exercise: Weighted Pull-Ups" in prompt
+
+
+def test_final_output_skeleton_contract_prompt_preserves_reject_guidance() -> None:
+    prompt = bake_and_rank_module.build_final_output_skeleton_contract_prompt_section(
+        {
+            "schemaVersion": 1,
+            "enabled": True,
+            "status": "generated",
+            "exerciseName": "Barbell Zercher Squat",
+            "advisoryText": (
+                "Skeleton: Torso stays upright while hips lower and rise, with arms bent in front of the chest. "
+                "Reject: Mostly static animation, missing descent-and-rise order, or one-way partial squat fragment."
+            ),
+        }
+    )
+
+    assert "Skeleton: Torso stays upright" in prompt
+    assert "Reject: Mostly static animation" in prompt
 
 
 def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None:
     captured: dict[str, object] = {}
 
     class FakeClient:
-        def caption_images(self, *, frame_paths: list[Path], prompt: str, max_tokens: int | None = None) -> str:
+        def caption_images(
+            self,
+            *,
+            frame_paths: list[Path],
+            prompt: str,
+            max_tokens: int | None = None,
+            disable_reasoning: bool | None = None,
+            temperature: float | None = None,
+            top_p: float | None = None,
+            top_k: int | None = None,
+        ) -> str:
             captured["frame_paths"] = frame_paths
             captured["prompt"] = prompt
             captured["max_tokens"] = max_tokens
+            captured["disable_reasoning"] = disable_reasoning
+            captured["temperature"] = temperature
+            captured["top_p"] = top_p
+            captured["top_k"] = top_k
             return "Start hanging from the bar; pull body upward, then lower back to the hanging start. Reject chin-ups or setup-only clips."
 
     class FakeRanker:
@@ -6880,22 +6964,18 @@ def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None
     assert contract["status"] == "generated"
     assert contract["advisoryText"].startswith("Start hanging from the bar")
     assert captured["max_tokens"] == 384
+    assert captured["disable_reasoning"] is False
+    assert captured["temperature"] == pytest.approx(0.0)
+    assert captured["top_p"] == pytest.approx(1.0)
+    assert captured["top_k"] == 0
     assert captured["frame_paths"] == []
     assert "Weighted Pull-Ups" in str(captured["prompt"])
 
 
-def test_normalize_exercise_motion_contract_preserves_target_motion_profile() -> None:
+def test_normalize_exercise_motion_contract_uses_plain_advisory_text() -> None:
     contract = youtube_module.normalize_exercise_motion_contract(
         {
-            "requiredEquipment": ["barbell"],
-            "requiredStartPosture": "standing with feet grounded",
-            "requiredEndPosture": "standing with feet grounded again",
-            "requiredPhases": ["heels lift upward", "heels lower"],
-            "primaryMotionRegions": ["ankles", "heels"],
-            "mustBeVisible": ["heels"],
-            "rejectIf": ["only setup"],
-            "commonWrongVariants": [],
-            "reviewNotes": [],
+            "advisoryText": "Source: Standing with feet grounded.\nComplete: Heels lift and lower.\nReject: Only setup.",
             "targetMotionProfile": "distal leg vertical raise",
         },
         exercise=ExerciseEntry(exercise_id="raise", name="Loaded Heel Raise", slug="loaded-heel-raise"),
@@ -6904,24 +6984,22 @@ def test_normalize_exercise_motion_contract_preserves_target_motion_profile() ->
 
     prepared = exercise_motion_contract_for_prompt(contract)
 
-    assert contract["targetMotionProfile"] == "distal_leg_vertical_raise"
+    assert "targetMotionProfile" not in contract
+    assert contract["advisoryText"] == (
+        "Source: Standing with feet grounded.\nComplete: Heels lift and lower.\nReject: Only setup."
+    )
     assert prepared is not None
-    assert prepared["targetMotionProfile"] == "distal_leg_vertical_raise"
+    assert prepared["advisoryText"] == contract["advisoryText"]
 
 
-def test_normalize_exercise_motion_contract_preserves_hinged_upper_limb_pull_profile() -> None:
+def test_normalize_exercise_motion_contract_accepts_text_alias() -> None:
     contract = youtube_module.normalize_exercise_motion_contract(
         {
-            "requiredEquipment": ["barbell"],
-            "requiredStartPosture": "torso hinged forward with arms extended downward",
-            "requiredEndPosture": "torso hinged forward with barbell pulled to lower ribs",
-            "requiredPhases": ["barbell pulls toward torso", "arms extend to start"],
-            "primaryMotionRegions": ["torso hinge", "arms", "barbell"],
-            "mustBeVisible": ["torso hinge", "barbell path"],
-            "rejectIf": ["upright row or only setup"],
-            "commonWrongVariants": [],
-            "reviewNotes": [],
-            "targetMotionProfile": "hinged upper limb pull",
+            "text": (
+                "Source: Torso hinged forward with arms extended downward.\n"
+                "Complete: Barbell pulls toward torso and arms extend to start.\n"
+                "Reject: Upright row or only setup."
+            ),
         },
         exercise=ExerciseEntry(exercise_id="pull", name="Loaded Hinged Pull", slug="loaded-hinged-pull"),
         source="test",
@@ -6929,64 +7007,25 @@ def test_normalize_exercise_motion_contract_preserves_hinged_upper_limb_pull_pro
 
     prepared = exercise_motion_contract_for_prompt(contract)
 
-    assert contract["targetMotionProfile"] == "hinged_upper_limb_pull"
+    assert "targetMotionProfile" not in contract
     assert prepared is not None
-    assert prepared["targetMotionProfile"] == "hinged_upper_limb_pull"
+    assert "Torso hinged forward" in prepared["advisoryText"]
+    assert "Upright row or only setup" in prepared["advisoryText"]
 
 
-def test_normalize_exercise_motion_contract_preserves_observable_motion_spec_and_query_aliases() -> None:
-    contract = youtube_module.normalize_exercise_motion_contract(
-        {
-            "requiredEquipment": ["bar"],
-            "requiredStartPosture": "body hangs below the hands",
-            "requiredEndPosture": "body returns to the starting hang",
-            "requiredPhases": ["torso rises toward hands", "torso lowers back to start"],
-            "primaryMotionRegions": ["torso", "hips"],
-            "mustBeVisible": ["hands", "torso", "hips"],
-            "rejectIf": ["only setup"],
-            "commonWrongVariants": [],
-            "reviewNotes": [],
-            "observableMotionSpec": {
-                "primaryMovingRegions": ["body", "hip"],
-                "referenceRegions": ["pull-up bar", "wrist"],
-                "primaryAxis": "up down",
-                "motionPattern": "toward anchor",
-                "requiresReturnToStart": "yes",
-                "oneWayPartialIsInvalid": "yes",
-                "mustShowFullCycle": "yes",
-                "mustBeVisibleRegions": ["torso", "hands"],
-                "minRangeRatio": 0.99,
-                "timestamp": 12.3,
+def test_normalize_exercise_motion_contract_rejects_structured_json_without_plain_text() -> None:
+    with pytest.raises(ValueError, match="plain guidance text"):
+        youtube_module.normalize_exercise_motion_contract(
+            {
+                "requiredEquipment": ["bar"],
+                "requiredPhases": ["torso rises toward hands", "torso lowers back to start"],
+                "rejectIf": ["only setup"],
+                "observableMotionSpec": {"primaryMovingRegions": ["body", "hip"]},
+                "youtubeQueryAliases": ["Strict Pull Up"],
             },
-            "youtubeQueryAliases": [
-                "Strict Pull Up",
-                "Strict Pull Up",
-                "Pull-Up Full Rep",
-            ],
-            "targetMotionProfile": "not-a-supported-profile",
-        },
-        exercise=ExerciseEntry(exercise_id="pull", name="Pull Up", slug="pull-up"),
-        source="test",
-    )
-
-    prepared = exercise_motion_contract_for_prompt(contract)
-
-    assert contract["targetMotionProfile"] is None
-    assert contract["observableMotionSpec"] == {
-        "schemaVersion": 1,
-        "primaryMovingRegions": ["torso", "hips"],
-        "referenceRegions": ["hands"],
-        "primaryAxis": "vertical",
-        "motionPattern": "body_toward_anchor",
-        "requiresReturnToStart": True,
-        "oneWayPartialIsInvalid": True,
-        "mustShowFullCycle": True,
-        "mustBeVisibleRegions": ["torso", "hands"],
-    }
-    assert contract["youtubeQueryAliases"] == ["Strict Pull Up", "Pull-Up Full Rep"]
-    assert prepared is not None
-    assert prepared["observableMotionSpec"] == contract["observableMotionSpec"]
-    assert prepared["youtubeQueryAliases"] == ["Strict Pull Up", "Pull-Up Full Rep"]
+            exercise=ExerciseEntry(exercise_id="pull", name="Pull Up", slug="pull-up"),
+            source="test",
+        )
 
 
 def test_target_motion_profile_for_exercise_uses_hinged_pull_contract_not_name() -> None:
@@ -7044,15 +7083,11 @@ def test_prepared_vision_review_payload_records_exercise_motion_contract(tmp_pat
     frame_path.write_bytes(b"frame")
     contract = {
         "exerciseName": "Barbell Back Squat",
-        "requiredEquipment": ["barbell"],
-        "requiredStartPosture": "barbell on upper back",
-        "requiredEndPosture": "standing finish",
-        "requiredPhases": ["descent", "bottom squat", "ascent"],
-        "primaryMotionRegions": ["hips", "knees"],
-        "mustBeVisible": ["barbell", "hips", "knees"],
-        "rejectIf": ["only walkout or setup"],
-        "commonWrongVariants": ["front squat"],
-        "reviewNotes": [],
+        "advisoryText": (
+            "Source: Barbell on upper back.\n"
+            "Complete: Descent, bottom squat, and ascent to standing finish.\n"
+            "Reject: Only walkout or setup, or front squat."
+        ),
     }
     prompt = build_candidate_vision_prompt(
         "Barbell Back Squat",
@@ -7094,7 +7129,7 @@ def test_prepared_vision_review_payload_records_exercise_motion_contract(tmp_pat
     )
     seen_prompts: list[str] = []
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         seen_prompts.append(prompt)
         return json.dumps(high_quality_vision_payload_for_test())
 
@@ -7111,8 +7146,8 @@ def test_prepared_vision_review_payload_records_exercise_motion_contract(tmp_pat
     assert "valid_motion_scene" in reasons
     assert seen_prompts and "only walkout or setup" in seen_prompts[0]
     assert payload is not None
-    assert payload["exerciseMotionContract"]["requiredPhases"] == ["descent", "bottom squat", "ascent"]
-    assert payload["exerciseMotionContract"]["rejectIf"] == ["only walkout or setup"]
+    assert "descent, bottom squat" in payload["exerciseMotionContract"]["advisoryText"]
+    assert "Only walkout or setup" in payload["exerciseMotionContract"]["advisoryText"]
 
 
 def test_source_cut_prompt_ignores_instruction_text_and_requires_all_named_phases() -> None:
@@ -7353,7 +7388,7 @@ def test_vision_scoring_caps_isolated_valid_chunk_evidence(
         prompt="prompt",
     )
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         is_first_chunk = "chunk 1 of 5" in prompt
         return json.dumps(
             {
@@ -7433,7 +7468,7 @@ def test_full_timeline_vision_review_allows_isolated_valid_movement_chunk(
         prompt="prompt",
     )
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         is_third_chunk = "chunk 3 of 5" in prompt
         return json.dumps(
             high_quality_vision_payload_for_test(
@@ -8220,6 +8255,63 @@ def test_discover_youtube_candidates_excludes_previous_processed_manifest(tmp_pa
         and candidate["skipReason"] == "previously_processed_candidate"
         for candidate in excluded_candidates
     )
+
+
+def test_youtube_candidate_exclusions_skip_retryable_download_failures(tmp_path: Path) -> None:
+    previous_candidates_path = tmp_path / "previous_youtube_candidates.json"
+    previous_candidates_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {
+                        "exerciseName": "Weighted Nordic Curl",
+                        "candidates": [
+                            {
+                                "videoId": "retryable-video",
+                                "url": "https://www.youtube.com/watch?v=retryable-video",
+                                "status": "rejected",
+                                "scoreReasons": [
+                                    "semantic_gate_passed",
+                                    "pose_prefilter_failed",
+                                ],
+                                "visionPayload": {
+                                    "posePrefilter": {
+                                        "error": "Preview download failed: Sign in to confirm you are not a bot. Use --cookies."
+                                    }
+                                },
+                            },
+                            {
+                                "videoId": "semantic-bad-video",
+                                "url": "https://www.youtube.com/watch?v=semantic-bad-video",
+                                "status": "rejected",
+                                "scoreReasons": ["semantic_wrong_exercise"],
+                            },
+                        ],
+                        "searchAttempts": [
+                            {
+                                "excludedCandidates": [
+                                    {
+                                        "videoId": "already-excluded-debug",
+                                        "url": "https://www.youtube.com/watch?v=already-excluded-debug",
+                                        "skipReason": "previously_processed_candidate",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    excluded_keys = load_youtube_candidate_exclusion_keys(
+        candidates_json_paths=[previous_candidates_path],
+    )
+
+    assert "video:semantic-bad-video" in excluded_keys
+    assert "video:retryable-video" not in excluded_keys
+    assert "video:already-excluded-debug" not in excluded_keys
 
 
 def test_discover_and_rank_youtube_candidates_reviews_all_duration_eligible_candidates(
@@ -16235,6 +16327,10 @@ def source_scorecard_candidate(
     full_movement: float = 0.92,
     start_visible: float = 0.90,
     finish_visible: float = 0.90,
+    mechanics_consistency: float = 0.92,
+    start_state_ready: float = 0.92,
+    start_boundary_clean: float = 0.92,
+    finish_boundary_clean: float = 0.92,
     setup_or_filler: float = 0.0,
     source_quality: float = 0.92,
     confidence: float = 0.90,
@@ -16247,12 +16343,37 @@ def source_scorecard_candidate(
         "full_movement": full_movement,
         "start_visible": start_visible,
         "finish_visible": finish_visible,
+        "mechanics_consistency": mechanics_consistency,
+        "start_state_ready": start_state_ready,
+        "start_boundary_clean": start_boundary_clean,
+        "finish_boundary_clean": finish_boundary_clean,
         "setup_or_filler": setup_or_filler,
         "source_quality": source_quality,
         "confidence": confidence,
         "reject": [] if reject is None else reject,
         "note": note,
     }
+
+
+def source_start_boundary_audit_response(
+    *,
+    start_state_ready: bool = True,
+    setup_or_transition_visible: bool = False,
+    starts_mid_movement: bool = False,
+    confidence: float = 0.95,
+    reject: list[str] | None = None,
+    note: str = "Clean start.",
+) -> str:
+    return json.dumps(
+        {
+            "start_state_ready": start_state_ready,
+            "setup_or_transition_visible": setup_or_transition_visible,
+            "starts_mid_movement": starts_mid_movement,
+            "confidence": confidence,
+            "reject": [] if reject is None else reject,
+            "note": note,
+        }
+    )
 
 
 def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham(
@@ -16325,14 +16446,14 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
         fake_render_video_window_contact_sheet,
     )
     pre_wham_contract = {
+        "status": "generated",
         "exerciseName": "Bench Press",
-        "requiredEquipment": ["barbell"],
-        "requiredPhases": ["bar lowers to chest", "bar presses back to extended arms"],
-        "primaryMotionRegions": ["shoulders", "elbows"],
-        "mustBeVisible": ["barbell", "chest", "elbows"],
-        "rejectIf": ["only setup or unrack"],
-        "commonWrongVariants": ["incline press"],
-        "reviewNotes": ["Use visible motion only."],
+        "advisoryText": (
+            "Source: Barbell bench press setup.\n"
+            "Complete: Bar lowers to chest and presses back to extended arms.\n"
+            "Reject: Only setup or unrack, or incline press.\n"
+            "Notes: Use visible motion only."
+        ),
     }
 
     selected = bake_and_rank_module.prepare_candidate_input_video(
@@ -16394,7 +16515,7 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
     assert selection["preWhamSourceValidationEnabled"] is True
     assert selection["exerciseMotionContractEnabled"] is True
     assert selection["exerciseMotionContractStatus"] is None
-    assert selection["exerciseMotionContract"]["rejectIf"] == ["only setup or unrack"]
+    assert "Only setup or unrack" in selection["exerciseMotionContract"]["advisoryText"]
     assert selection["selectedSpan"]["startSeconds"] == pytest.approx(6.0)
     assert selection["selectedSpan"]["endSeconds"] == pytest.approx(10.5)
     assert selection["selectedSpanInOriginalSource"]["startSeconds"] == pytest.approx(6.0)
@@ -16405,9 +16526,17 @@ def test_exercise_motion_contract_resolver_generates_on_demand_and_caches_per_ex
     tmp_path: Path,
 ) -> None:
     prompts: list[str] = []
+    disable_reasoning_values: list[object] = []
+    temperatures: list[object] = []
+    top_ps: list[object] = []
+    top_ks: list[object] = []
 
     def fake_caption_images(**kwargs: object) -> str:
         prompts.append(str(kwargs["prompt"]))
+        disable_reasoning_values.append(kwargs.get("disable_reasoning"))
+        temperatures.append(kwargs.get("temperature"))
+        top_ps.append(kwargs.get("top_p"))
+        top_ks.append(kwargs.get("top_k"))
         return (
             "Start standing with the barbell on the upper back. "
             "Show squat descent, bottom position, and ascent back to standing. "
@@ -16453,6 +16582,10 @@ def test_exercise_motion_contract_resolver_generates_on_demand_and_caches_per_ex
     assert "squat descent" in first["advisoryText"]
     assert "front-rack squats" in first["advisoryText"]
     assert len(prompts) == 1
+    assert disable_reasoning_values == [False]
+    assert temperatures == [0.0]
+    assert top_ps == [1.0]
+    assert top_ks == [0]
     assert "Write a compact exercise-specific movement contract" in prompts[0]
     assert "Target exercise: Barbell Back Squat" in prompts[0]
 
@@ -16490,14 +16623,14 @@ def test_exercise_motion_contract_resolver_reuses_candidate_contract_without_llm
                 "title": "Back squat demo",
                 "visionPayload": {
                     "exerciseMotionContract": {
+                        "status": "generated",
                         "exerciseName": "Barbell Back Squat",
-                        "requiredEquipment": ["barbell"],
-                        "requiredPhases": ["descent", "ascent"],
-                        "primaryMotionRegions": ["hips", "knees"],
-                        "mustBeVisible": ["barbell over the back"],
-                        "rejectIf": ["front rack squat"],
-                        "commonWrongVariants": ["front squat"],
-                        "reviewNotes": ["Use visible motion only."],
+                        "advisoryText": (
+                            "Source: Barbell over the back.\n"
+                            "Complete: Descent and ascent.\n"
+                            "Reject: Front rack squat.\n"
+                            "Notes: Use visible motion only."
+                        ),
                     }
                 },
             },
@@ -16507,7 +16640,7 @@ def test_exercise_motion_contract_resolver_reuses_candidate_contract_without_llm
     assert calls == 0
     assert contract is not None
     assert contract["exerciseMotionContractStatus"] == "reused_candidate_contract"
-    assert contract["rejectIf"] == ["front rack squat"]
+    assert "Front rack squat" in contract["advisoryText"]
 
 
 def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_enabled(
@@ -16740,7 +16873,7 @@ def test_generate_candidate_motion_rejects_qaxj9nbssn4_before_wham(
         )
 
 
-def test_generate_candidate_motion_falls_back_to_strong_ranked_source_chunk_on_detection_timeout(
+def test_generate_candidate_motion_treats_detection_timeout_as_critical(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -16812,55 +16945,48 @@ def test_generate_candidate_motion_falls_back_to_strong_ranked_source_chunk_on_d
     monkeypatch.setattr(bake_and_rank_module, "run_generation_pipeline", fake_run_generation_pipeline)
     monkeypatch.setattr(bake_and_rank_module, "LlamaCppVisionRanker", FakeLlamaCppVisionRanker)
 
-    result = bake_and_rank_module.generate_candidate_motion(
-        RankedCandidate(
-            exercise_index=0,
-            candidate_rank=0,
-            exercise_id="bulgarian-split-squat",
-            exercise_name="Bulgarian Split Squat",
-            exercise_slug="bulgarian-split-squat",
-            candidate={
-                "videoPath": str(source_video),
-                "title": "Bulgarian Split Squat",
-                "visionPayload": {
-                    "bestChunkStartSeconds": 6.0,
-                    "bestChunkEndSeconds": 31.0,
-                    "bestChunkScore": 1.0,
+    with pytest.raises(CriticalVlmInteractionError) as exc_info:
+        bake_and_rank_module.generate_candidate_motion(
+            RankedCandidate(
+                exercise_index=0,
+                candidate_rank=0,
+                exercise_id="bulgarian-split-squat",
+                exercise_name="Bulgarian Split Squat",
+                exercise_slug="bulgarian-split-squat",
+                candidate={
+                    "videoPath": str(source_video),
+                    "title": "Bulgarian Split Squat",
+                    "visionPayload": {
+                        "bestChunkStartSeconds": 6.0,
+                        "bestChunkEndSeconds": 31.0,
+                        "bestChunkScore": 1.0,
+                    },
                 },
-            },
-        ),
-        request=BakeAndRankRequest(
-            candidates_json=tmp_path / "candidates.json",
-            workspace=tmp_path / "build",
-            wham_repo_path=None,
-            body_model_root=None,
-        ),
-    )
+            ),
+            request=BakeAndRankRequest(
+                candidates_json=tmp_path / "candidates.json",
+                workspace=tmp_path / "build",
+                wham_repo_path=None,
+                body_model_root=None,
+            ),
+        )
 
-    assert result.cleaned_motion_json_path.exists()
-    assert captured["video_path"].name == "selected_segment.mp4"
-    trim_calls = captured["trim_calls"]
-    assert isinstance(trim_calls, list)
-    assert len(trim_calls) == 1
-    assert trim_calls[0]["output_path"].name == "source_ranked_best_chunk.mp4"
-    assert trim_calls[0]["start_seconds"] == pytest.approx(6.0)
-    assert trim_calls[0]["end_seconds"] == pytest.approx(31.0)
+    assert exc_info.value.recoverable is True
+    assert exc_info.value.details["stage"] == "source_segment_detection"
+    assert "video_path" not in captured
 
-    selection_path = (
+    report_path = (
         tmp_path
         / "build"
         / "bulgarian-split-squat-001-bulgarian-split-squat"
         / "segment_detection"
-        / "segment_selection.json"
+        / "vlm_critical_error.json"
     )
-    selection = json.loads(selection_path.read_text(encoding="utf-8"))
-    assert selection["source"] == "segment_detection_fallback"
-    assert selection["sourcePrepReason"] == "segment_detection_fallback"
-    assert selection["fallbackErrorType"] == "TimeoutError"
-    assert selection["selectedSpan"]["startSeconds"] == pytest.approx(0.0)
-    assert selection["selectedSpan"]["endSeconds"] == pytest.approx(25.0)
-    assert selection["selectedSpanInOriginalSource"]["startSeconds"] == pytest.approx(6.0)
-    assert selection["selectedSpanInOriginalSource"]["endSeconds"] == pytest.approx(31.0)
+    assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["error"]["critical"] is True
+    assert report["context"]["stage"] == "source_segment_detection"
+    assert not (report_path.parent / "segment_selection.json").exists()
 
 
 def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_outputs(tmp_path: Path) -> None:
@@ -17684,6 +17810,28 @@ def make_scene_orientation_payload(*, inverted: bool, frame_count: int = 6) -> d
     }
 
 
+def make_moving_feet_scene_orientation_payload(*, inverted: bool, frame_count: int = 6) -> dict[str, object]:
+    payload = make_scene_orientation_payload(inverted=inverted, frame_count=frame_count)
+    frames = payload["frames"]
+    assert isinstance(frames, list)
+    divisor = max(1, frame_count - 1)
+    for index, frame in enumerate(frames):
+        assert isinstance(frame, dict)
+        joints = frame["joints"]
+        assert isinstance(joints, dict)
+        left_offset = -0.45 * (index / divisor)
+        right_offset = 0.45 * (index / divisor)
+        for joint_name in ("left_ankle", "left_foot"):
+            point = joints[joint_name]
+            assert isinstance(point, list)
+            point[0] += left_offset
+        for joint_name in ("right_ankle", "right_foot"):
+            point = joints[joint_name]
+            assert isinstance(point, list)
+            point[0] += right_offset
+    return payload
+
+
 def make_horizontal_inverted_scene_orientation_payload(frame_count: int = 6) -> dict[str, object]:
     frames = []
     for index in range(frame_count):
@@ -17858,7 +18006,7 @@ def test_deterministic_post_bake_scene_orientation_correction_preserves_zero_cam
     assert corrected_options["cameraYawDegrees"] == pytest.approx(0.0)
 
 
-def test_deterministic_post_bake_scene_orientation_fallback_does_not_stack_auto_alignment() -> None:
+def test_deterministic_post_bake_scene_orientation_fallback_preserves_auto_alignment() -> None:
     options = {
         **bake_and_rank_module.build_preview_bake_base_options(motion_tuning_enabled=True),
         "autoWorldAlignment": True,
@@ -17872,7 +18020,7 @@ def test_deterministic_post_bake_scene_orientation_fallback_does_not_stack_auto_
 
     assert hint["forceSceneInverted"] is True
     assert applied is True
-    assert corrected_options["autoWorldAlignment"] is False
+    assert corrected_options["autoWorldAlignment"] is True
     assert corrected_options["sceneInverted"] is True
 
 
@@ -18072,6 +18220,116 @@ def test_adaptive_preview_planner_prefers_auto_alignment_when_it_resolves_orient
     assert plan_payload["finalOptions"]["autoWorldAlignment"] is True
     assert plan_payload["finalOptions"]["sceneInverted"] is False
     assert plan_payload["deterministicSceneOrientation"]["orientationStrategy"] == "auto_world_alignment"
+
+
+def test_adaptive_preview_planner_stacks_auto_alignment_with_scene_inversion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_options = bake_and_rank_module.build_preview_bake_base_options(motion_tuning_enabled=True)
+
+    class FakePage:
+        def evaluate(self, script: str, payload: dict[str, object]) -> object:
+            if "bakeLoop" in script:
+                options = payload["options"]
+                assert isinstance(options, dict)
+                result = make_scene_orientation_payload(inverted=True, frame_count=24)
+                result["selectedPreviewSettings"]["sceneInverted"] = bool(options.get("sceneInverted"))
+                return result
+            if "renderFrame" in script:
+                return "data:image/png;base64,"
+            raise AssertionError(script)
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "write_review_contact_sheet_from_data_urls",
+        lambda data_urls, output_path, *, timestamps=None, sequence_labels=False: (
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True),
+            Path(output_path).write_bytes(b"sheet"),
+        ),
+    )
+
+    variants = bake_and_rank_module.plan_adaptive_preview_settings_variants(
+        page=FakePage(),
+        eligible_loop=EligibleLoop(loop_index=-1, loop={}, duration_sec=3.0),
+        base_options=base_options,
+        review_dir=tmp_path,
+        artifact_base_label="full-input",
+        review_frames=4,
+        motion_tuning_enabled=True,
+        max_variants=1,
+        exercise_name="Zercher Squat",
+    )
+
+    assert len(variants) == 1
+    assert variants[0]["options"]["autoWorldAlignment"] is True
+    assert variants[0]["options"]["sceneInverted"] is True
+    orientation = variants[0]["adaptivePreviewSettings"]["deterministicSceneOrientation"]
+    assert orientation["orientationStrategy"] == "auto_world_alignment_scene_inversion"
+    assert orientation["forceAutoWorldAlignment"] is True
+    assert orientation["forceSceneInverted"] is True
+    assert orientation["autoWorldAlignmentSceneOrientation"]["forceSceneInverted"] is True
+    assert orientation["autoWorldAlignmentSceneInversionOrientation"]["reason"] == "scene_already_inverted"
+    plan_payload = json.loads((tmp_path / "full-input.adaptive-settings-planning" / "adaptive_settings_plan.json").read_text())
+    assert plan_payload["finalOptions"]["autoWorldAlignment"] is True
+    assert plan_payload["finalOptions"]["sceneInverted"] is True
+
+
+def test_adaptive_preview_planner_adds_feet_lock_trial_after_orientation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_options = bake_and_rank_module.build_preview_bake_base_options(motion_tuning_enabled=True)
+
+    class FakePage:
+        def evaluate(self, script: str, payload: dict[str, object]) -> object:
+            if "bakeLoop" in script:
+                options = payload["options"]
+                assert isinstance(options, dict)
+                result = make_moving_feet_scene_orientation_payload(inverted=True, frame_count=24)
+                result["selectedPreviewSettings"]["sceneInverted"] = bool(options.get("sceneInverted"))
+                return result
+            if "renderFrame" in script:
+                return "data:image/png;base64,"
+            raise AssertionError(script)
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "write_review_contact_sheet_from_data_urls",
+        lambda data_urls, output_path, *, timestamps=None, sequence_labels=False: (
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True),
+            Path(output_path).write_bytes(b"sheet"),
+        ),
+    )
+
+    variants = bake_and_rank_module.plan_adaptive_preview_settings_variants(
+        page=FakePage(),
+        eligible_loop=EligibleLoop(loop_index=-1, loop={}, duration_sec=3.0),
+        base_options=base_options,
+        review_dir=tmp_path,
+        artifact_base_label="full-input",
+        review_frames=4,
+        motion_tuning_enabled=True,
+        max_variants=1,
+        exercise_name="Zercher Squat",
+    )
+
+    assert len(variants) == 2
+    baseline, feet_lock_trial = variants
+    assert baseline["options"]["autoWorldAlignment"] is True
+    assert baseline["options"]["sceneInverted"] is True
+    assert "lockPlantedFeet" not in baseline["options"]
+    assert "lockPlantedHands" not in baseline["options"]
+    assert feet_lock_trial["id"] == "adaptive-feet-lock-trial"
+    assert feet_lock_trial["options"]["autoWorldAlignment"] is True
+    assert feet_lock_trial["options"]["sceneInverted"] is True
+    assert feet_lock_trial["options"]["lockPlantedFeet"] is True
+    assert feet_lock_trial["options"]["lockPlantedHands"] is False
+    assert feet_lock_trial["adaptivePreviewSettings"]["source"] == "deterministic_support_lock_trial"
+    assert "final feet-lock trial after orientation planning" in feet_lock_trial["adaptivePreviewSettings"]["reason"]
+    plan_payload = json.loads((tmp_path / "full-input.adaptive-settings-planning" / "adaptive_settings_plan.json").read_text())
+    assert len(plan_payload["plannedVariants"]) == 2
+    assert plan_payload["plannedVariants"][1]["id"] == "adaptive-feet-lock-trial"
 
 
 def test_preview_bake_base_options_do_not_force_orientation_changes() -> None:
@@ -19587,12 +19845,167 @@ def test_materialized_selection_rejects_weak_cut_after_materialized_output_gate(
     assert rejected_ranking.score < 0.55
     assert "materialized_output_rejected" in rejected_ranking.reasons
     assert "materialized_weak_source_motion_capture" in rejected_ranking.reasons
-    assert "deterministic_review_validation_skipped" in rejected_ranking.reasons
     assert rejected_ranking.payload is not None
-    assert rejected_ranking.payload["deterministicReviewValidationSkipped"] is True
     assert rejected_ranking.payload["materializedOutputRejected"] is True
     gate = rejected_ranking.payload["materializedOutputAcceptanceGate"]
     assert gate["sourceMotionCaptureRatio"] < gate["minSourceMotionCaptureRatio"]
+
+
+def test_materialized_selection_parent_fallback_runs_before_blocked_child_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    preview_html = candidate_workspace / "preview" / "motion_preview.html"
+    skeleton = candidate_workspace / "wear" / "skeleton.baked.full-input.json"
+    review_video = candidate_workspace / "review" / "full-input.webm"
+    preview_html.parent.mkdir(parents=True)
+    skeleton.parent.mkdir(parents=True)
+    review_video.parent.mkdir(parents=True)
+    preview_html.write_text("<html></html>", encoding="utf-8")
+    skeleton.write_text("{}", encoding="utf-8")
+    review_video.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Zercher Squat",
+        candidate_title="Zercher squat",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=preview_html,
+        skeleton_path=skeleton,
+        review_video_path=review_video,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "zercher"},
+        settings_options={"autoWorldAlignment": True, "sceneInverted": True},
+    )
+    ranking = LoopRanking(
+        score=0.49,
+        reasons=["movement_cut_target_motion_gate_failed"],
+        payload={
+            "selected_section_start_seconds": 1.1,
+            "selected_section_end_seconds": 3.03,
+            "movementCutTargetMotionGateFailed": True,
+        },
+        model_score=0.49,
+    )
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "materialize_llm_selected_time_range",
+        lambda *_args, **_kwargs: pytest.fail("blocked child section should not be materialized"),
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "apply_loop_continuity_adjustment",
+        lambda _item, active_ranking: active_ranking,
+    )
+
+    def fake_acceptance_gate(
+        selected: tuple[ReviewItem, LoopRanking | None],
+        **_kwargs: object,
+    ) -> tuple[ReviewItem, LoopRanking | None]:
+        selected_item, selected_ranking = selected
+        assert selected_item is item
+        assert selected_ranking is not None
+        payload = dict(selected_ranking.payload or {})
+        payload["finalOutputValidation"] = {
+            "passed": True,
+            "approved": True,
+            "score": 0.95,
+        }
+        payload["materializedOutputRejected"] = False
+        return (
+            selected_item,
+            LoopRanking(
+                score=selected_ranking.score,
+                reasons=selected_ranking.reasons,
+                raw_response=selected_ranking.raw_response,
+                payload=payload,
+                model_score=selected_ranking.model_score,
+                continuity_score=selected_ranking.continuity_score,
+                continuity_metrics=selected_ranking.continuity_metrics,
+            ),
+        )
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "apply_materialized_output_acceptance_gate",
+        fake_acceptance_gate,
+    )
+
+    accepted, rejected = bake_and_rank_module.materialize_selection_candidate(
+        (item, ranking),
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path / "build",
+            wham_repo_path=None,
+            body_model_root=None,
+            min_selected_score=0.55,
+            final_output_validation=True,
+        ),
+        materialized_quality_rescore_enabled=False,
+    )
+
+    assert rejected is None
+    assert accepted is not None
+    accepted_item, accepted_ranking = accepted
+    assert accepted_item is item
+    assert accepted_ranking is not None
+    assert "llm_selected_section_parent_fallback" in accepted_ranking.reasons
+    assert accepted_ranking.payload is not None
+    assert accepted_ranking.payload["llmSelectedSectionParentFallback"] is True
+    assert accepted_ranking.payload["llmSelectedSectionParentFallbackReason"] == "selected_section_blocked_before_materialization"
+    assert bake_and_rank_module.selected_artifact_score(accepted) == pytest.approx(0.95)
+
+
+def test_materialized_output_gate_ignores_loop_bridge_when_loop_not_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_workspace = tmp_path / "candidate"
+    skeleton = candidate_workspace / "wear" / "loop-mismatch.json"
+    review_video = candidate_workspace / "review" / "loop-mismatch.webm"
+    write_loop_bridge_mismatch_skeleton(skeleton)
+    review_video.parent.mkdir(parents=True)
+    review_video.write_bytes(b"video")
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Barbell Zercher Squat",
+        candidate_title="Zercher squat",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=candidate_workspace / "preview.html",
+        skeleton_path=skeleton,
+        review_video_path=review_video,
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "zercher"},
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "review_video_render_quality_metrics",
+        lambda _path: {"passed": True, "rejectionReasons": []},
+    )
+
+    not_required = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(score=0.9, reasons=[], payload={"loopContinuityRequired": False}),
+    )
+    required = bake_and_rank_module.materialized_output_acceptance_metrics(
+        item,
+        LoopRanking(score=0.9, reasons=[], payload={"loopContinuityRequired": True}),
+    )
+
+    assert not_required["passed"] is True
+    assert "materialized_loop_bridge_mismatch_ignored_loop_not_required" in not_required["skippedReasons"]
+    assert "materialized_loop_bridge_pose_mismatch" not in not_required["rejectionReasons"]
+    assert required["passed"] is False
+    assert "materialized_loop_bridge_pose_mismatch" in required["rejectionReasons"]
 
 
 def test_materialized_output_gate_rejects_upside_down_scene_orientation(tmp_path: Path) -> None:
@@ -20655,16 +21068,12 @@ def test_rank_review_item_prefilters_chunks_with_skeleton_motion(
                 "exerciseMotionContract": {
                     "status": "generated",
                     "exerciseName": "Bulgarian Split Squat",
-                    "requiredEquipment": ["dumbbells"],
-                    "requiredPhases": [
-                        "rear foot stays elevated while the front knee bends",
-                        "front leg drives the body back upward",
-                    ],
-                    "primaryMotionRegions": ["front hip", "front knee"],
-                    "mustBeVisible": ["front knee flexion and extension", "rear foot support"],
-                    "rejectIf": ["standard lunge with both feet on the floor"],
-                    "commonWrongVariants": ["forward lunge", "step-up"],
-                    "reviewNotes": ["Choose the window with the full down-and-up repetition."],
+                    "advisoryText": (
+                        "Source: Rear foot stays elevated while the front knee bends.\n"
+                        "Complete: Front leg drives the body back upward after the descent.\n"
+                        "Reject: Standard lunge with both feet on the floor, forward lunge, or step-up.\n"
+                        "Notes: Choose the window with the full down-and-up repetition."
+                    ),
                 }
             },
         },
@@ -20709,18 +21118,12 @@ def test_rank_review_item_prefilters_chunks_with_skeleton_motion(
         prompts.append(str(kwargs["prompt"]))
         return json.dumps(
             {
-                "candidate_results": [
-                    {
-                        "candidate_id": "A",
-                        "contains_complete_target_movement": True,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.95,
-                        "clean_boundaries": True,
-                        "includes_setup_or_reset": False,
-                        "confidence": 0.81,
-                        "blocking_issues": ["none"],
-                        "reason": "strong middle rep",
-                    }
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        confidence=0.81,
+                        note="Strong middle rep.",
+                    )
                 ]
             }
         )
@@ -20758,7 +21161,7 @@ def test_rank_review_item_prefilters_chunks_with_skeleton_motion(
     assert [(window.start_seconds, window.end_seconds) for window in captured_windows] == [(2.0, 4.0)]
     assert rendered_preview_windows == []
     assert prompts
-    assert "candidate_results" in prompts[0]
+    assert '"candidates"' in prompts[0]
     assert ranking.score == pytest.approx(0.81)
     assert ranking.payload is not None
     assert ranking.payload["reviewOriginalChunkIndex"] == 1
@@ -20769,11 +21172,9 @@ def test_rank_review_item_prefilters_chunks_with_skeleton_motion(
     assert ranking.payload["selected_section_end_seconds"] == pytest.approx(4.0)
     assert ranking.payload["exerciseMotionContractEnabled"] is True
     assert ranking.payload["exerciseMotionContract"]["exerciseName"] == "Bulgarian Split Squat"
-    assert ranking.payload["exerciseMotionContract"]["requiredPhases"] == [
-        "rear foot stays elevated while the front knee bends",
-        "front leg drives the body back upward",
-    ]
-    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_binary_complete_movement"
+    assert "Rear foot stays elevated" in ranking.payload["exerciseMotionContract"]["advisoryText"]
+    assert "Front leg drives" in ranking.payload["exerciseMotionContract"]["advisoryText"]
+    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_scorecard_complete_movement"
     assert ranking.payload["finalCutResponsibility"] == "movement_window_selection_only"
     assert ranking.payload["deterministicWindowMotionMetrics"]["primaryMotionRangeRatio"] > 0.2
 
@@ -20786,13 +21187,12 @@ def test_movement_cut_prompt_can_omit_exercise_contract_for_ab(tmp_path: Path) -
     )
     contract = {
         "exerciseName": "Barbell Back Squat",
-        "requiredEquipment": ["barbell"],
-        "requiredPhases": ["descent", "ascent"],
-        "primaryMotionRegions": ["hips", "knees"],
-        "mustBeVisible": ["barbell over the back"],
-        "rejectIf": ["front rack squat"],
-        "commonWrongVariants": ["front squat"],
-        "reviewNotes": ["Use a full down-and-up rep."],
+        "advisoryText": (
+            "Source: Barbell over the back.\n"
+            "Complete: Descent and ascent.\n"
+            "Reject: Front rack squat.\n"
+            "Notes: Use a full down-and-up rep."
+        ),
     }
 
     enabled_prompt = bake_and_rank_module.build_movement_cut_candidate_choice_prompt(
@@ -20809,7 +21209,7 @@ def test_movement_cut_prompt_can_omit_exercise_contract_for_ab(tmp_path: Path) -
     )
 
     assert "Movement-cut exercise guidance." in enabled_prompt
-    assert "front rack squat" in enabled_prompt
+    assert "Front rack squat" in enabled_prompt
     assert "Movement-cut exercise guidance." not in disabled_prompt
     assert "front rack squat" not in disabled_prompt
 
@@ -20821,14 +21221,14 @@ def test_movement_cut_contract_can_come_from_advisory_source_review_payload() ->
             "visionPayload": {
                 "advisoryVlmSourceReview": {
                     "exerciseMotionContract": {
+                        "status": "generated",
                         "exerciseName": "Barbell Back Squat",
-                        "requiredEquipment": ["barbell"],
-                        "requiredPhases": ["descent", "ascent"],
-                        "primaryMotionRegions": ["hips", "knees"],
-                        "mustBeVisible": ["barbell over the back"],
-                        "rejectIf": ["front rack squat"],
-                        "commonWrongVariants": ["front squat"],
-                        "reviewNotes": ["Use a full down-and-up rep."],
+                        "advisoryText": (
+                            "Source: Barbell over the back.\n"
+                            "Complete: Descent and ascent.\n"
+                            "Reject: Front rack squat.\n"
+                            "Notes: Use a full down-and-up rep."
+                        ),
                     }
                 }
             },
@@ -20837,8 +21237,8 @@ def test_movement_cut_contract_can_come_from_advisory_source_review_payload() ->
 
     assert contract is not None
     assert contract["exerciseName"] == "Barbell Back Squat"
-    assert contract["requiredPhases"] == ["descent", "ascent"]
-    assert contract["rejectIf"] == ["front rack squat"]
+    assert "Descent and ascent" in contract["advisoryText"]
+    assert "Front rack squat" in contract["advisoryText"]
 
 
 def test_movement_cut_selects_single_motion_coverage_valid_candidate_without_vlm(
@@ -20896,7 +21296,7 @@ def test_movement_cut_selects_single_motion_coverage_valid_candidate_without_vlm
         contact_sheet.write_bytes(b"sheet")
         return [contact_sheet]
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         prompts.append(prompt)
         assert all("movement_cut_candidate_A" in str(path) for path in frame_paths)
         assert "movement_cut_candidate_B" not in "\n".join(str(path) for path in frame_paths)
@@ -20904,18 +21304,12 @@ def test_movement_cut_selects_single_motion_coverage_valid_candidate_without_vlm
         assert "Candidate B:" not in prompt
         return json.dumps(
             {
-                "candidate_results": [
-                    {
-                        "candidate_id": "A",
-                        "contains_complete_target_movement": True,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.95,
-                        "clean_boundaries": True,
-                        "includes_setup_or_reset": False,
-                        "confidence": 0.90,
-                        "blocking_issues": ["none"],
-                        "reason": "Candidate A keeps the full movement.",
-                    }
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        confidence=0.90,
+                        note="Candidate A keeps the full movement.",
+                    )
                 ]
             }
         )
@@ -20943,7 +21337,7 @@ def test_movement_cut_selects_single_motion_coverage_valid_candidate_without_vlm
     vlm_candidates = ranking.payload["movementCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
     assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A"]
-    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_binary_complete_movement"
+    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_scorecard_complete_movement"
     assert ranking.payload["selectedCandidateId"] == "A"
     assert ranking.payload["movementCutMotionCoverageFilteredCount"] == 1
     assert ranking.payload["movementCutMotionCoverageFallback"] is False
@@ -21002,22 +21396,29 @@ def test_movement_cut_visual_integrity_falls_back_when_all_candidates_fail(
 
     seen_frame_paths: list[Path] = []
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         seen_frame_paths.extend(frame_paths)
-        assert "Candidate A:" in prompt
-        assert "Candidate B:" in prompt
+        candidate_rows = []
+        if "Candidate A:" in prompt:
+            candidate_rows.append(
+                source_scorecard_candidate(
+                    "A",
+                    confidence=0.83,
+                    note="Candidate A is complete but longer.",
+                )
+            )
+        if "Candidate B:" in prompt:
+            candidate_rows.append(
+                source_scorecard_candidate(
+                    "B",
+                    confidence=0.84,
+                    note="Candidate B keeps the complete clean motion.",
+                )
+            )
+        assert candidate_rows
         return json.dumps(
             {
-                "selected_candidate_id": "B",
-                "score": 84,
-                "valid_movement_cut": True,
-                "complete_movement": True,
-                "clean_boundaries": True,
-                "includes_setup_or_reset": False,
-                "target_exercise_match_score": 0.95,
-                "target_exercise_match_reason": "The visible movement matches the target.",
-                "blocking_issues": ["none"],
-                "reason": "Candidate B keeps the complete clean motion.",
+                "candidates": candidate_rows
             }
         )
 
@@ -21025,6 +21426,11 @@ def test_movement_cut_visual_integrity_falls_back_when_all_candidates_fail(
         bake_and_rank_module,
         "build_source_cut_candidate",
         fake_build_source_cut_candidate,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "selected_window_is_materially_shorter",
+        lambda **_kwargs: False,
     )
 
     result = bake_and_rank_module.rank_movement_cut_candidates_with_caption_images(
@@ -21177,7 +21583,7 @@ def test_movement_cut_phase_filter_hides_partial_one_way_candidate_from_vlm(
         contact_sheet.write_bytes(b"sheet")
         return [contact_sheet]
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         prompts.append(prompt)
         assert all("movement_cut_candidate_A" in str(path) for path in frame_paths)
         assert "movement_cut_candidate_B" not in "\n".join(str(path) for path in frame_paths)
@@ -21185,18 +21591,12 @@ def test_movement_cut_phase_filter_hides_partial_one_way_candidate_from_vlm(
         assert "Candidate B:" not in prompt
         return json.dumps(
             {
-                "candidate_results": [
-                    {
-                        "candidate_id": "A",
-                        "contains_complete_target_movement": True,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.95,
-                        "clean_boundaries": True,
-                        "includes_setup_or_reset": False,
-                        "confidence": 0.90,
-                        "blocking_issues": ["none"],
-                        "reason": "Candidate A keeps the full movement.",
-                    }
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        confidence=0.90,
+                        note="Candidate A keeps the full movement.",
+                    )
                 ]
             }
         )
@@ -21224,7 +21624,7 @@ def test_movement_cut_phase_filter_hides_partial_one_way_candidate_from_vlm(
     vlm_candidates = ranking.payload["movementCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
     assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A"]
-    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_binary_complete_movement"
+    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_scorecard_complete_movement"
     assert ranking.payload["movementCutMotionCoverageFilteredCount"] == 1
     assert ranking.payload["movementCutMotionCoverageFallback"] is False
     assert all_candidates[0]["motionCoverage"]["passed"] is True
@@ -21372,6 +21772,41 @@ def test_movement_cut_motion_coverage_rejects_lower_body_walkout_without_target_
     assert metrics["passed"] is False
     assert "movement_cut_low_target_region_motion" in metrics["rejectionReasons"]
     assert "movement_cut_distal_setup_motion_dominates" in metrics["rejectionReasons"]
+
+
+def test_movement_cut_uses_plain_text_contract_for_lower_body_target() -> None:
+    contract = {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "generated",
+        "source": "test",
+        "exerciseName": "Barbell Zercher Squat",
+        "advisoryText": (
+            "Source: Person holds a barbell in the crooks of the elbows, standing upright with hips back. "
+            "Complete: Movement starts from standing, descends until hips are below parallel, and returns to standing. "
+            "Reject: barbell held on the shoulders."
+        ),
+    }
+
+    metrics = bake_and_rank_module.movement_cut_target_motion_gate_metrics(
+        exercise_name="Barbell Zercher Squat",
+        candidate_metrics={
+            "rootVerticalRangeRatio": 0.18,
+            "lowerBodyProximalRootRelativeRangeRatio": 0.16,
+            "lowerBodyDistalRootRelativeRangeRatio": 0.50,
+            "upperBodyRootRelativeRangeRatio": 0.20,
+        },
+        candidate_phase_metrics={"dominantJoint": "left_ankle"},
+        chunk_estimate=SimpleNamespace(movement_complexity="compound"),
+        exercise_motion_contract=contract,
+    )
+
+    assert metrics["targetMotionRegion"] == "lower_body"
+    assert metrics["targetMotionRangeRatio"] >= metrics["minTargetMotionRangeRatio"]
+    assert metrics["distalLowerBodyDominant"] is True
+    assert metrics["distalDominanceGateRequired"] is False
+    assert metrics["passed"] is True
+    assert "movement_cut_distal_setup_motion_dominates" not in metrics["rejectionReasons"]
 
 
 def test_movement_cut_motion_coverage_rejects_upper_body_walkout_without_target_motion(tmp_path: Path) -> None:
@@ -21528,7 +21963,7 @@ def test_source_cut_candidate_choice_can_reject_all_partial_windows() -> None:
     assert ranking.payload["sourceCutScorecardCandidates"][0]["passed"] is False
 
 
-def test_source_cut_scorecard_choice_prefers_higher_score_padded_candidate() -> None:
+def test_source_cut_scorecard_choice_prefers_shortest_passing_candidate() -> None:
     candidates = [
         bake_and_rank_module.SourceCutCandidate(
             candidate_id="A",
@@ -21565,9 +22000,9 @@ def test_source_cut_scorecard_choice_prefers_higher_score_padded_candidate() -> 
 
     assert ranking is not None
     assert ranking.payload is not None
-    assert ranking.payload["selectedCandidateId"] == "A"
-    assert ranking.payload["sourceCutSelectionPolicy"] == "highest_score_then_largest_padded_scorecard"
-    assert ranking.score == pytest.approx(0.95)
+    assert ranking.payload["selectedCandidateId"] == "B"
+    assert ranking.payload["sourceCutSelectionPolicy"] == "progressive_multiscale_stable_level_then_score"
+    assert ranking.score == pytest.approx(0.76)
 
 
 def test_source_cut_scorecard_choice_prefers_later_equal_duration_candidate() -> None:
@@ -21719,7 +22154,130 @@ def test_weighted_pullup_source_scorecard_rejects_h_and_selects_p() -> None:
     assert rows["P"]["passed"] is True
 
 
-def test_movement_cut_binary_choice_prefers_shortest_complete_candidate() -> None:
+def test_source_cut_scorecard_rejects_mechanics_inconsistency_even_with_high_identity() -> None:
+    candidates = [
+        bake_and_rank_module.SourceCutCandidate(
+            candidate_id="A",
+            window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=4.0),
+            frame_paths=[Path("mechanics-change.jpg")],
+        )
+    ]
+
+    ranking = bake_and_rank_module.parse_source_cut_candidate_choice(
+        json.dumps(
+            {
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        exercise_match=0.96,
+                        full_movement=0.95,
+                        start_visible=0.94,
+                        finish_visible=0.94,
+                        mechanics_consistency=0.35,
+                        source_quality=0.95,
+                        confidence=0.90,
+                        reject=["mechanics_inconsistent"],
+                        note="Defining setup changes mid movement.",
+                    )
+                ]
+            }
+        ),
+        candidates,
+    )
+
+    assert ranking is not None
+    assert ranking.score == pytest.approx(0.0)
+    row = ranking.payload["sourceCutScorecardCandidates"][0]
+    assert row["passed"] is False
+    assert row["mechanics_consistency"] == pytest.approx(0.35)
+    assert "source_cut_mechanics_inconsistent" in row["rejectionReasons"]
+    assert "source_cut_scorecard_reject_mechanics_inconsistent" in row["rejectionReasons"]
+
+
+def test_source_cut_scorecard_rejects_unclean_boundaries_even_with_high_identity() -> None:
+    candidates = [
+        bake_and_rank_module.SourceCutCandidate(
+            candidate_id="A",
+            window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=4.0),
+            frame_paths=[Path("setup-boundary.jpg")],
+        )
+    ]
+
+    ranking = bake_and_rank_module.parse_source_cut_candidate_choice(
+        json.dumps(
+            {
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        exercise_match=0.96,
+                        full_movement=0.95,
+                        start_visible=0.94,
+                        finish_visible=0.94,
+                        mechanics_consistency=0.95,
+                        start_boundary_clean=0.20,
+                        finish_boundary_clean=0.90,
+                        source_quality=0.95,
+                        confidence=0.90,
+                        reject=["start_boundary_bad"],
+                        note="Starts with setup before target movement.",
+                    )
+                ]
+            }
+        ),
+        candidates,
+    )
+
+    assert ranking is not None
+    assert ranking.score == pytest.approx(0.0)
+    row = ranking.payload["sourceCutScorecardCandidates"][0]
+    assert row["passed"] is False
+    assert row["start_boundary_clean"] == pytest.approx(0.20)
+    assert "source_cut_start_boundary_bad" in row["rejectionReasons"]
+    assert "source_cut_scorecard_reject_start_boundary_bad" in row["rejectionReasons"]
+
+
+def test_source_cut_scorecard_rejects_start_state_not_ready_even_with_high_identity() -> None:
+    candidates = [
+        bake_and_rank_module.SourceCutCandidate(
+            candidate_id="A",
+            window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=4.0),
+            frame_paths=[Path("setup-transition.jpg")],
+        )
+    ]
+
+    ranking = bake_and_rank_module.parse_source_cut_candidate_choice(
+        json.dumps(
+            {
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        exercise_match=0.96,
+                        full_movement=0.95,
+                        start_visible=0.94,
+                        finish_visible=0.94,
+                        mechanics_consistency=0.95,
+                        start_state_ready=0.20,
+                        source_quality=0.95,
+                        confidence=0.90,
+                        reject=["start_state_not_ready"],
+                        note="Early frames show setup transition.",
+                    )
+                ]
+            }
+        ),
+        candidates,
+    )
+
+    assert ranking is not None
+    assert ranking.score == pytest.approx(0.0)
+    row = ranking.payload["sourceCutScorecardCandidates"][0]
+    assert row["passed"] is False
+    assert row["start_state_ready"] == pytest.approx(0.20)
+    assert "source_cut_start_state_not_ready" in row["rejectionReasons"]
+    assert "source_cut_scorecard_reject_start_state_not_ready" in row["rejectionReasons"]
+
+
+def test_movement_cut_scorecard_choice_prefers_shortest_complete_candidate() -> None:
     candidates = [
         bake_and_rank_module.SourceCutCandidate(
             candidate_id="A",
@@ -21736,29 +22294,17 @@ def test_movement_cut_binary_choice_prefers_shortest_complete_candidate() -> Non
     ranking = bake_and_rank_module.parse_movement_cut_candidate_choice(
         json.dumps(
             {
-                "candidate_results": [
-                    {
-                        "candidate_id": "A",
-                        "contains_complete_target_movement": True,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.98,
-                        "clean_boundaries": True,
-                        "includes_setup_or_reset": False,
-                        "confidence": 0.98,
-                        "blocking_issues": ["none"],
-                        "reason": "Longer complete movement.",
-                    },
-                    {
-                        "candidate_id": "B",
-                        "contains_complete_target_movement": True,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.95,
-                        "clean_boundaries": True,
-                        "includes_setup_or_reset": False,
-                        "confidence": 0.75,
-                        "blocking_issues": ["none"],
-                        "reason": "Shortest complete movement.",
-                    },
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        confidence=0.98,
+                        note="Longer complete movement.",
+                    ),
+                    source_scorecard_candidate(
+                        "B",
+                        confidence=0.75,
+                        note="Shortest complete movement.",
+                    ),
                 ]
             }
         ),
@@ -21768,12 +22314,13 @@ def test_movement_cut_binary_choice_prefers_shortest_complete_candidate() -> Non
     assert ranking is not None
     assert ranking.payload is not None
     assert ranking.payload["selectedCandidateId"] == "B"
-    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_binary_complete_movement"
+    assert ranking.payload["movementCutSelectionPolicy"] == "shortest_scorecard_complete_movement"
     assert ranking.payload["finalCutResponsibility"] == "movement_window_selection_only"
     assert ranking.score == pytest.approx(0.75)
+    assert "movement_cut_scorecard_passed" in ranking.reasons
 
 
-def test_movement_cut_binary_choice_rejects_all_without_legacy_fallback() -> None:
+def test_movement_cut_scorecard_rejects_invalid_json_and_missing_fields() -> None:
     candidates = [
         bake_and_rank_module.SourceCutCandidate(
             candidate_id="A",
@@ -21782,35 +22329,19 @@ def test_movement_cut_binary_choice_rejects_all_without_legacy_fallback() -> Non
         )
     ]
 
+    assert bake_and_rank_module.parse_movement_cut_candidate_choice("not json", candidates) is None
+
     ranking = bake_and_rank_module.parse_movement_cut_candidate_choice(
-        json.dumps(
-            {
-                "selected_candidate_id": "A",
-                "score": 95,
-                "valid_movement_cut": True,
-                "complete_movement": True,
-                "clean_boundaries": True,
-                "includes_setup_or_reset": False,
-                "target_exercise_match_score": 0.95,
-                "candidate_results": [
-                    {
-                        "candidate_id": "A",
-                        "contains_complete_target_movement": False,
-                        "target_exercise_match": True,
-                        "target_exercise_match_score": 0.95,
-                        "clean_boundaries": False,
-                        "includes_setup_or_reset": True,
-                        "confidence": 0.95,
-                        "blocking_issues": ["setup_or_reset"],
-                        "reason": "This is setup, not the full movement.",
-                    }
-                ],
-            }
-        ),
+        json.dumps({"candidates": [{"id": "A", "exercise_match": 0.95}]}),
         candidates,
     )
 
-    assert ranking is None
+    assert ranking is not None
+    assert ranking.score == pytest.approx(0.0)
+    assert "movement_cut_scorecard_no_passing_candidate" in ranking.reasons
+    row = ranking.payload["movementCutScorecardCandidates"][0]
+    assert "full_movement" in row["missingFields"]
+    assert "source_cut_scorecard_missing_full_movement" in row["rejectionReasons"]
 
 
 def write_source_cut_test_frames(
@@ -21825,12 +22356,14 @@ def write_source_cut_test_frames(
     frame_paths: list[Path] = []
     for index in range(frame_count):
         image = np.full((180, 320, 3), 255, dtype=np.uint8)
-        cv2.rectangle(image, (90, 82), (245, 94), (30, 30, 30), -1)
-        cv2.rectangle(image, (132, 58), (220, 110), (30, 30, 210), -1)
-        cv2.circle(image, (80, 88), 20, (30, 180, 30), -1)
-        cv2.circle(image, (260, 88), 20, (30, 180, 30), -1)
-        cv2.rectangle(image, (150, 108), (178, 152), (20, 20, 20), -1)
-        cv2.rectangle(image, (218, 108), (246, 152), (20, 20, 20), -1)
+        motion_offset = min(index, frame_count - 1 - index) if frame_count > 1 else 0
+        motion_offset = int(motion_offset * 3)
+        cv2.rectangle(image, (90, 82 + motion_offset), (245, 94 + motion_offset), (30, 30, 30), -1)
+        cv2.rectangle(image, (132, 58 + motion_offset), (220, 110 + motion_offset), (30, 30, 210), -1)
+        cv2.circle(image, (80, 88 + motion_offset), 20, (30, 180, 30), -1)
+        cv2.circle(image, (260, 88 + motion_offset), 20, (30, 180, 30), -1)
+        cv2.rectangle(image, (150, 108 + motion_offset), (178, 152 + motion_offset), (20, 20, 20), -1)
+        cv2.rectangle(image, (218, 108 + motion_offset), (246, 152 + motion_offset), (20, 20, 20), -1)
         if washed_out_index == index:
             image = cv2.addWeighted(image, 0.14, np.full_like(image, 255), 0.86, 0)
         frame_path = directory / f"frame_{index + 1:02d}.jpg"
@@ -21927,7 +22460,7 @@ def test_source_cut_vlm_only_sees_deterministically_valid_windows(
     assert all_candidates[1]["visualIntegrity"]["passed"] is True
 
 
-def test_source_cut_pose_prefilter_hides_windows_without_yolo_motion_overlap(
+def test_source_cut_pose_prefilter_records_windows_without_yolo_motion_overlap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -21961,21 +22494,25 @@ def test_source_cut_pose_prefilter_hides_windows_without_yolo_motion_overlap(
         contact_sheet.write_bytes(b"sheet")
         return [contact_sheet]
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         prompts.append(prompt)
-        if "Candidate B:" in prompt:
-            assert all("source_candidate_B" in str(path) for path in frame_paths)
-            assert "Candidate A:" not in prompt
-            selected_id = "B"
-        else:
-            selected_id = "A"
+        if "auditing only the start boundary" in prompt:
+            return source_start_boundary_audit_response()
+        candidate_ids = list(dict.fromkeys(path.parent.name.rsplit("_", 1)[-1] for path in frame_paths))
         return json.dumps(
             {
                 "candidates": [
                     source_scorecard_candidate(
-                        selected_id,
-                        note="Candidate has YOLO-backed motion.",
+                        candidate_id,
+                        full_movement=0.92 if candidate_id == "B" else 0.20,
+                        start_visible=0.92 if candidate_id == "B" else 0.20,
+                        finish_visible=0.92 if candidate_id == "B" else 0.20,
+                        reject=[] if candidate_id == "B" else ["partial_movement"],
+                        note="Candidate has YOLO-backed motion."
+                        if candidate_id == "B"
+                        else "Candidate lacks reliable visible motion.",
                     )
+                    for candidate_id in candidate_ids
                 ],
             }
         )
@@ -22009,10 +22546,11 @@ def test_source_cut_pose_prefilter_hides_windows_without_yolo_motion_overlap(
     all_candidates = ranking.payload["sourceCutCandidates"]
     vlm_candidates = ranking.payload["sourceCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
-    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["B"]
+    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A", "B"]
+    assert ranking.payload["selectedCandidateId"] == "B"
     assert all_candidates[0]["posePrefilter"]["passed"] is False
     assert all_candidates[1]["posePrefilter"]["passed"] is True
-    assert ranking.payload["sourceCutPosePrefilterFilteredCount"] == 1
+    assert ranking.payload["sourceCutPosePrefilterFilteredCount"] == 0
 
 
 def source_pose_phase_sample(time_seconds: float, wrist_y: float) -> dict[str, object]:
@@ -22035,7 +22573,7 @@ def source_pose_phase_sample(time_seconds: float, wrist_y: float) -> dict[str, o
     }
 
 
-def test_source_cut_motion_gate_hides_one_way_source_pose_fragments(
+def test_source_cut_motion_gate_records_one_way_source_pose_fragments(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -22066,18 +22604,25 @@ def test_source_cut_motion_gate_hides_one_way_source_pose_fragments(
         contact_sheet.write_bytes(b"sheet")
         return [contact_sheet]
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         prompts.append(prompt)
-        assert all("source_candidate_B" in str(path) for path in frame_paths)
-        assert "Candidate A:" not in prompt
-        assert "Candidate B:" in prompt
+        if "auditing only the start boundary" in prompt:
+            return source_start_boundary_audit_response()
+        candidate_ids = list(dict.fromkeys(path.parent.name.rsplit("_", 1)[-1] for path in frame_paths))
         return json.dumps(
             {
                 "candidates": [
                     source_scorecard_candidate(
-                        "B",
-                        note="Candidate B has both press directions.",
+                        candidate_id,
+                        full_movement=0.92 if candidate_id == "B" else 0.20,
+                        start_visible=0.92 if candidate_id == "B" else 0.20,
+                        finish_visible=0.92 if candidate_id == "B" else 0.20,
+                        reject=[] if candidate_id == "B" else ["partial_movement"],
+                        note="Candidate has both press directions."
+                        if candidate_id == "B"
+                        else "Candidate shows only one direction.",
                     )
+                    for candidate_id in candidate_ids
                 ],
             }
         )
@@ -22121,14 +22666,16 @@ def test_source_cut_motion_gate_hides_one_way_source_pose_fragments(
     all_candidates = ranking.payload["sourceCutCandidates"]
     vlm_candidates = ranking.payload["sourceCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
-    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["B"]
+    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A", "B"]
+    assert ranking.payload["selectedCandidateId"] == "B"
     assert all_candidates[0]["motionCoverage"]["passed"] is False
     assert all_candidates[1]["motionCoverage"]["passed"] is True
     assert "source_cut_incomplete_repetition_phase" in all_candidates[0]["motionCoverage"]["rejectionReasons"]
-    assert ranking.payload["sourceCutMotionCoverageFilteredCount"] == 1
+    assert ranking.payload["sourceCutMotionCoverageFilteredCount"] == 0
+    assert ranking.payload["sourceCutMotionCoverageDiagnosticFailedCount"] == 1
 
 
-def test_source_cut_motion_gate_hides_sparse_pose_false_full_cycle(
+def test_source_cut_motion_gate_records_sparse_pose_false_full_cycle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -22159,18 +22706,25 @@ def test_source_cut_motion_gate_hides_sparse_pose_false_full_cycle(
         contact_sheet.write_bytes(b"sheet")
         return [contact_sheet]
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
         prompts.append(prompt)
-        assert all("source_candidate_B" in str(path) for path in frame_paths)
-        assert "Candidate A:" not in prompt
-        assert "Candidate B:" in prompt
+        if "auditing only the start boundary" in prompt:
+            return source_start_boundary_audit_response()
+        candidate_ids = list(dict.fromkeys(path.parent.name.rsplit("_", 1)[-1] for path in frame_paths))
         return json.dumps(
             {
                 "candidates": [
                     source_scorecard_candidate(
-                        "B",
-                        note="Candidate B has enough pose evidence for a full return.",
+                        candidate_id,
+                        full_movement=0.92 if candidate_id == "B" else 0.20,
+                        start_visible=0.92 if candidate_id == "B" else 0.20,
+                        finish_visible=0.92 if candidate_id == "B" else 0.20,
+                        reject=[] if candidate_id == "B" else ["partial_movement"],
+                        note="Candidate has enough full-return evidence."
+                        if candidate_id == "B"
+                        else "Candidate has sparse phase evidence.",
                     )
+                    for candidate_id in candidate_ids
                 ],
             }
         )
@@ -22209,12 +22763,14 @@ def test_source_cut_motion_gate_hides_sparse_pose_false_full_cycle(
     all_candidates = ranking.payload["sourceCutCandidates"]
     vlm_candidates = ranking.payload["sourceCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
-    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["B"]
+    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A", "B"]
+    assert ranking.payload["selectedCandidateId"] == "B"
     assert all_candidates[0]["motionCoverage"]["passed"] is False
     assert all_candidates[1]["motionCoverage"]["passed"] is True
     assert "source_cut_insufficient_repetition_phase_evidence" in all_candidates[0]["motionCoverage"]["rejectionReasons"]
     assert all_candidates[0]["motionCoverage"]["candidateFullRepetitionPhaseCompletenessMetrics"]["reason"] == "insufficient_source_pose_samples"
-    assert ranking.payload["sourceCutMotionCoverageFilteredCount"] == 1
+    assert ranking.payload["sourceCutMotionCoverageFilteredCount"] == 0
+    assert ranking.payload["sourceCutMotionCoverageDiagnosticFailedCount"] == 1
 
 
 def test_source_cut_batches_shortest_windows_without_capping_search(
@@ -22224,8 +22780,16 @@ def test_source_cut_batches_shortest_windows_without_capping_search(
     video_path = tmp_path / "source.mp4"
     video_path.write_bytes(b"video")
     short_windows = [
-        DetectionWindow(index=index, start_seconds=float(index), end_seconds=float(index) + 1.0)
-        for index in range(10)
+        DetectionWindow(index=0, start_seconds=0.0, end_seconds=1.0),
+        DetectionWindow(index=1, start_seconds=1.0, end_seconds=2.0),
+        DetectionWindow(index=2, start_seconds=2.0, end_seconds=3.0),
+        DetectionWindow(index=3, start_seconds=3.0, end_seconds=4.0),
+        DetectionWindow(index=4, start_seconds=4.0, end_seconds=5.0),
+        DetectionWindow(index=5, start_seconds=5.0, end_seconds=6.0),
+        DetectionWindow(index=6, start_seconds=6.0, end_seconds=7.0),
+        DetectionWindow(index=7, start_seconds=7.0, end_seconds=8.0),
+        DetectionWindow(index=8, start_seconds=7.2, end_seconds=8.2),
+        DetectionWindow(index=9, start_seconds=8.0, end_seconds=9.0),
     ]
     long_windows = [
         DetectionWindow(index=10, start_seconds=0.0, end_seconds=2.0),
@@ -22252,22 +22816,26 @@ def test_source_cut_batches_shortest_windows_without_capping_search(
         return [contact_sheet]
 
     calls: list[list[str]] = []
+    audit_calls: list[list[str]] = []
 
-    def fake_caption_images(*, frame_paths: list[Path], prompt: str) -> str:
-        candidate_ids = [path.parent.name.rsplit("_", 1)[-1] for path in frame_paths]
+    def fake_caption_images(*, frame_paths: list[Path], prompt: str, **_kwargs: object) -> str:
+        candidate_ids = list(dict.fromkeys(path.parent.name.rsplit("_", 1)[-1] for path in frame_paths))
+        if "auditing only the start boundary" in prompt:
+            audit_calls.append(candidate_ids)
+            return source_start_boundary_audit_response()
         calls.append(candidate_ids)
-        assert len(candidate_ids) <= bake_and_rank_module.CUT_CANDIDATE_MAX_VLM_BATCH_SIZE
+        assert len(candidate_ids) <= bake_and_rank_module.SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE
         return json.dumps(
-            {
-                "candidates": [
-                    source_scorecard_candidate(
-                        candidate_id,
-                        full_movement=0.90 if candidate_id == "H" else 0.20,
-                        start_visible=0.90 if candidate_id == "H" else 0.20,
-                        finish_visible=0.90 if candidate_id == "H" else 0.20,
-                        reject=[] if candidate_id == "H" else ["partial_movement"],
-                        note="Shortest complete movement." if candidate_id == "H" else "Partial movement.",
-                    )
+                {
+                    "candidates": [
+                        source_scorecard_candidate(
+                            candidate_id,
+                            full_movement=0.90 if candidate_id in {"H", "I"} else 0.20,
+                            start_visible=0.90 if candidate_id in {"H", "I"} else 0.20,
+                            finish_visible=0.90 if candidate_id in {"H", "I"} else 0.20,
+                            reject=[] if candidate_id in {"H", "I"} else ["partial_movement"],
+                            note="Shortest complete movement." if candidate_id in {"H", "I"} else "Partial movement.",
+                        )
                     for candidate_id in candidate_ids
                 ]
             }
@@ -22293,15 +22861,15 @@ def test_source_cut_batches_shortest_windows_without_capping_search(
     assert result is not None
     ranking, _, _ = result
     assert ranking.payload is not None
-    assert calls == [
-        ["A", "B", "C", "D", "E", "F"],
-        ["G", "H", "I", "J", "K", "L"],
-    ]
+    reviewed_ids = [candidate_id for call in calls for candidate_id in call]
+    assert sorted(reviewed_ids) == list("ABCDEFGHIJKL")
+    assert all(len(call) == 1 for call in calls)
     assert ranking.payload["selectedCandidateId"] == "H"
     assert ranking.payload["sourceCutVlmReviewedCandidateCount"] == 12
     assert ranking.payload["sourceCutUnreviewedCandidateCount"] == 0
+    assert sorted(candidate_id for call in audit_calls for candidate_id in call) == ["H", "I"]
     assert [candidate["candidateId"] for candidate in ranking.payload["sourceCutVlmInputCandidates"]] == list("ABCDEFGHIJKL")
-    assert [candidate["id"] for candidate in ranking.payload["sourceCutScorecardCandidates"]] == list("ABCDEFGHIJKL")
+    assert sorted(candidate["id"] for candidate in ranking.payload["sourceCutScorecardCandidates"]) == list("ABCDEFGHIJKL")
 
 
 def test_cut_candidate_batching_splits_oversized_vlm_request() -> None:
@@ -22357,29 +22925,36 @@ def test_cut_candidate_batching_splits_oversized_vlm_request() -> None:
     assert choice.ranking.payload["selectedCandidateId"] == "C"
 
 
-def test_source_cut_timeout_batch_is_unresolved() -> None:
+def test_source_cut_timeout_batch_is_critical_failure(tmp_path: Path) -> None:
+    frame_path = tmp_path / "candidate_a.jpg"
+    frame_path.write_bytes(b"frame")
     candidates = [
         bake_and_rank_module.SourceCutCandidate(
             candidate_id="A",
             window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=3.0),
-            frame_paths=[Path("candidate_a.jpg")],
+            frame_paths=[frame_path],
         )
     ]
 
-    choice = bake_and_rank_module.rank_cut_candidates_shortest_first_with_caption_images(
-        candidates=candidates,
-        caption_images=lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("timed out")),
-        prompt_builder=lambda batch: bake_and_rank_module.build_source_cut_candidate_choice_prompt(
-            exercise_name="Bench Press",
-            candidate_title="Bench Press",
-            candidates=batch,
-        ),
-        parser=bake_and_rank_module.parse_source_cut_candidate_choice,
-    )
+    with pytest.raises(CriticalVlmInteractionError) as exc_info:
+        bake_and_rank_module.rank_cut_candidates_shortest_first_with_caption_images(
+            candidates=candidates,
+            caption_images=lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("timed out")),
+            prompt_builder=lambda batch: bake_and_rank_module.build_source_cut_candidate_choice_prompt(
+                exercise_name="Bench Press",
+                candidate_title="Bench Press",
+                candidates=batch,
+            ),
+            parser=bake_and_rank_module.parse_source_cut_candidate_choice,
+        )
 
-    assert choice.ranking is None
-    assert choice.reviewed_candidate_ids == ["A"]
-    assert choice.errors[0]["errorType"] == "TimeoutError"
+    assert exc_info.value.recoverable is True
+    assert exc_info.value.details["candidateIds"] == ["A"]
+    report_path = tmp_path / "vlm_critical_error.json"
+    assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["error"]["critical"] is True
+    assert report["context"]["candidateIds"] == ["A"]
 
 
 def test_source_cut_batch_choice_prefers_later_equal_duration_across_batches() -> None:
@@ -22718,22 +23293,26 @@ def test_movement_cut_candidate_choice_rejects_wrong_target_identity() -> None:
     ranking = bake_and_rank_module.parse_movement_cut_candidate_choice(
         json.dumps(
             {
-                "selected_candidate_id": "Candidate A",
-                "score": 92,
-                "valid_movement_cut": True,
-                "complete_movement": True,
-                "clean_boundaries": True,
-                "includes_setup_or_reset": False,
-                "moving_subject_realism_score": 0.0,
-                "target_exercise_match_score": 0.0,
-                "blocking_issues": ["animation_or_synthetic", "wrong_exercise"],
-                "reason": "The window is the tightest complete movement.",
+                "candidates": [
+                    source_scorecard_candidate(
+                        "A",
+                        exercise_match=0.0,
+                        source_quality=0.0,
+                        reject=["wrong_exercise", "synthetic_subject"],
+                        note="The subject is not a real target exercise movement.",
+                    )
+                ]
             }
         ),
         candidates,
     )
 
-    assert ranking is None
+    assert ranking is not None
+    assert ranking.score == pytest.approx(0.0)
+    row = ranking.payload["movementCutScorecardCandidates"][0]
+    assert row["passed"] is False
+    assert "source_cut_wrong_exercise" in row["rejectionReasons"]
+    assert "source_cut_scorecard_reject_synthetic_subject" in row["rejectionReasons"]
 
 
 def test_source_cut_candidate_choice_rejects_unknown_reject_tags() -> None:
@@ -23407,7 +23986,7 @@ def test_materialized_acceptance_uses_vlm_when_deterministic_gate_fails(
     assert "final_output_low_deterministic_readability" in validation["deterministicWarnings"]
 
 
-def test_materialized_acceptance_rejects_partial_rep_even_when_vlm_passes(
+def test_materialized_acceptance_accepts_when_final_vlm_approves_despite_deterministic_phase_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -23444,8 +24023,13 @@ def test_materialized_acceptance_rejects_partial_rep_even_when_vlm_passes(
             "enabled": True,
             "backend": "stub",
             "passed": True,
+            "approved": True,
+            "confidence": 0.95,
             "score": 0.95,
+            "retry": False,
+            "reject": [],
             "rejectionReasons": [],
+            "note": "The generated movement is acceptable.",
         }
 
     monkeypatch.setattr(
@@ -23481,41 +24065,33 @@ def test_materialized_acceptance_rejects_partial_rep_even_when_vlm_passes(
     )
 
     _selected_item, selected_ranking = selected
-    assert bake_and_rank_module.selected_artifact_score(selected) < 0.55
+    assert bake_and_rank_module.selected_artifact_score(selected) == pytest.approx(0.92)
     assert selected_ranking.payload is not None
     validation = selected_ranking.payload["finalOutputValidation"]
-    assert selected_ranking.payload["materializedOutputRejected"] is True
-    assert validation["passed"] is False
-    assert validation["needsRetry"] is True
-    assert validation["deterministicHardRejectionReasons"] == [
-        "materialized_incomplete_repetition_phase",
-        "materialized_source_incomplete_repetition_phase",
-    ]
-    assert "final_output_hard_deterministic_gate_failed" in validation["rejectionReasons"]
-    assert "materialized_output_rejected" in selected_ranking.reasons
+    assert selected_ranking.payload["materializedOutputRejected"] is False
+    assert validation["passed"] is True
+    assert validation["approved"] is True
+    assert validation["deterministicGatePassed"] is False
+    assert "materialized_incomplete_repetition_phase" in validation["deterministicWarnings"]
+    assert "materialized_output_rejected" not in selected_ranking.reasons
 
 
 def test_final_output_validator_rejects_self_contradictory_pass() -> None:
     parsed = bake_and_rank_module.parse_final_output_validation_response(
         json.dumps(
             {
-                "passed": True,
-                "score": 0.75,
-                "exercise_match_score": 0.75,
-                "full_movement_score": 0.75,
-                "wear_readability_score": 0.8,
-                "motion_quality_score": 0.75,
-                "source_context_match_score": None,
-                "needs_retry": False,
-                "rejection_reasons": [],
-                "reason": "The preview looks more like a Romanian deadlift rather than the target movement.",
+                "approved": True,
+                "confidence": 0.75,
+                "retry": False,
+                "reject": [],
+                "note": "The preview looks more like a Romanian deadlift rather than the target movement.",
             }
         ),
         min_score=0.70,
     )
 
     assert parsed["passed"] is False
-    assert "final_output_reason_contradicts_pass" in parsed["rejectionReasons"]
+    assert "final_output_note_contradicts_approval" in parsed["rejectionReasons"]
 
 
 def test_final_output_validation_passes_source_context_before_preview(
@@ -23558,16 +24134,11 @@ def test_final_output_validation_passes_source_context_before_preview(
         captured["prompt"] = prompt
         return json.dumps(
             {
-                "passed": True,
-                "score": 0.9,
-                "exercise_match_score": 0.9,
-                "full_movement_score": 0.9,
-                "wear_readability_score": 0.9,
-                "motion_quality_score": 0.9,
-                "source_context_match_score": 0.9,
-                "needs_retry": False,
-                "rejection_reasons": [],
-                "reason": "The generated preview matches the source movement.",
+                "approved": True,
+                "confidence": 0.95,
+                "retry": False,
+                "reject": [],
+                "note": "The generated preview matches the source movement.",
             }
         )
 
@@ -23587,6 +24158,9 @@ def test_final_output_validation_passes_source_context_before_preview(
     assert captured["frame_paths"] == [source_sheet, preview_sheet]
     assert "source-video evidence first" in str(captured["prompt"])
     assert "Do not pass the result because the source is good" in str(captured["prompt"])
+    assert '"approved": boolean' in str(captured["prompt"])
+    assert validation["approved"] is True
+    assert validation["confidence"] == pytest.approx(0.95)
     assert validation["sourceContextProvidedToValidator"] is True
     assert validation["validatorImageOrder"] == ["source_contact_sheets", "preview_contact_sheets"]
     assert validation["sourceContactSheetPaths"] == [str(source_sheet)]
@@ -23644,47 +24218,7 @@ def test_final_output_validation_does_not_grade_source_without_preview(
     assert validation["previewContactSheetPaths"] == []
 
 
-def test_final_output_validation_skips_vlm_on_hard_deterministic_gate(tmp_path: Path) -> None:
-    item = ReviewItem(
-        exercise_index=0,
-        candidate_rank=0,
-        loop_index=-1,
-        exercise_name="Bench Press",
-        candidate_title="Bench Press demo",
-        candidate_workspace=tmp_path / "candidate",
-        preview_html_path=tmp_path / "candidate" / "preview" / "motion_preview.html",
-        skeleton_path=tmp_path / "candidate" / "wear" / "selected.json",
-        review_video_path=tmp_path / "candidate" / "review" / "selected.webm",
-        duration_sec=2.0,
-        loop_start_seconds=0.0,
-        loop_end_seconds=2.0,
-        candidate={"videoId": "bench"},
-    )
-    validation = bake_and_rank_module.final_output_validation_metrics(
-        item,
-        LoopRanking(score=0.95, reasons=[], payload={"modelScore": 0.95}, model_score=0.95),
-        request=BakeAndRankRequest(
-            candidates_json=tmp_path / "candidates.json",
-            workspace=tmp_path,
-            wham_repo_path=None,
-            body_model_root=None,
-            final_output_validation=True,
-        ),
-        deterministic_metrics={
-            "passed": False,
-            "rejectionReasons": ["materialized_incomplete_repetition_phase"],
-        },
-        caption_images=lambda **_kwargs: pytest.fail("hard deterministic rejection should skip VLM"),
-    )
-
-    assert validation["passed"] is False
-    assert validation["backend"] == "deterministic_hard_gate"
-    assert validation["needsRetry"] is True
-    assert validation["deterministicHardRejectionReasons"] == ["materialized_incomplete_repetition_phase"]
-    assert validation["skippedReasons"] == ["final_output_vlm_skipped_hard_deterministic_gate"]
-
-
-def test_cheap_final_output_preview_precheck_rejects_hard_deterministic_failure(
+def test_final_output_validation_runs_vlm_despite_deterministic_rejection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -23703,20 +24237,45 @@ def test_cheap_final_output_preview_precheck_rejects_hard_deterministic_failure(
         loop_end_seconds=2.0,
         candidate={"videoId": "bench"},
     )
+    called = {"vlm": False}
+
+    def fake_validate_final_output_with_caption_images(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        called["vlm"] = True
+        return {
+            "enabled": True,
+            "backend": "llama_cpp_vision",
+            "passed": True,
+            "score": 0.95,
+            "rejectionReasons": [],
+        }
+
     monkeypatch.setattr(
         bake_and_rank_module,
-        "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {
+        "validate_final_output_with_caption_images",
+        fake_validate_final_output_with_caption_images,
+    )
+    validation = bake_and_rank_module.final_output_validation_metrics(
+        item,
+        LoopRanking(score=0.95, reasons=[], payload={"modelScore": 0.95}, model_score=0.95),
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            final_output_validation=True,
+        ),
+        deterministic_metrics={
             "passed": False,
             "rejectionReasons": ["materialized_incomplete_repetition_phase"],
         },
+        caption_images=lambda **_kwargs: "{}",
     )
 
-    precheck = bake_and_rank_module.cheap_final_output_preview_precheck(item)
-
-    assert precheck["passed"] is False
-    assert precheck["deterministicHardRejectionReasons"] == ["materialized_incomplete_repetition_phase"]
-    assert "final_output_hard_deterministic_gate_failed" in precheck["rejectionReasons"]
+    assert called["vlm"] is True
+    assert validation["passed"] is True
+    assert validation["backend"] == "llama_cpp_vision"
+    assert validation["deterministicGatePassed"] is False
+    assert "final_output_deterministic_gate_failed" in validation["deterministicWarnings"]
 
 
 def test_final_output_validation_rejects_low_deterministic_readability(tmp_path: Path) -> None:
@@ -23776,6 +24335,9 @@ def test_preview_html_exposes_headless_bake_automation_api(tmp_path: Path) -> No
     assert "vlmReviewStyle" in html
     assert "cameraYawDegrees" in html
     assert "cameraPitchDegrees" in html
+    assert "selectTimeRange(startSeconds, endSeconds)" in html
+    assert "bakeTimeRange(startSeconds, endSeconds" in html
+    assert "sourceRange: sourceTimeBounds()" in html
 
 
 def test_preview_settings_variants_include_no_auto_alignment_combinations() -> None:

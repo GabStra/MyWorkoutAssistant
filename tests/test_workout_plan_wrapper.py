@@ -271,6 +271,16 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
         assert exercise["timings"]["bakeAttempts"] == 1
         assert exercise["timings"]["selection"]["whamGeneratedCount"] == 1
         assert exercise["timings"]["selection"]["whamRunSeconds"] == pytest.approx(0.02)
+        selected = exercise["selectedResults"][0]
+        selected_preview_html = Path(selected["selectedPreviewHtmlPath"])
+        selected_preview_video = Path(selected["selectedPreviewVideoPath"])
+        selected_source_video = Path(selected["selectedSourceVideoPath"])
+        selected_skeleton = Path(selected["selectedWearSkeletonPath"])
+        html = selected_preview_html.read_text(encoding="utf-8")
+        assert selected_preview_video.name in html
+        assert selected_source_video.name in html
+        assert selected_skeleton.name in html
+        assert "fake_selected" not in html
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")

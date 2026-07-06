@@ -49,7 +49,7 @@ param(
     [switch]$SkipPosePrefilter,
     [string]$PosePrefilterModel = "yolo26x-pose.pt",
     [Nullable[int]]$PosePrefilterCandidatesPerExercise = 12,
-    [double]$PosePrefilterSampleFps = 2.0,
+    [double]$PosePrefilterSampleFps = 8.0,
     [double]$PosePrefilterMaxSeconds = 32.0,
     [ValidateSet("prefix", "spread", "full")]
     [string]$PosePrefilterScanStrategy = "spread",
@@ -66,6 +66,7 @@ param(
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 3,
+    [int]$MaxFinalOutputRejections = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$ReuseExistingSelected,
@@ -125,7 +126,7 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 12,
+    [Nullable[int]]$LlamaCppParallel = 4,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
@@ -138,11 +139,11 @@ param(
     [bool]$LlamaCppMlock = $true,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
-    [bool]$KeepLlamaCppServer = $true,
+    [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 90.0,
+    [double]$LlamaCppRequestTimeoutSeconds = 240.0,
     [ValidateSet("debug", "full")]
-    [string]$ArtifactRetention = "debug",
+    [string]$ArtifactRetention = "full",
     [int]$ProgressIntervalSeconds = 15,
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
@@ -595,6 +596,110 @@ function Copy-SelectedFile {
     return $destinationPath
 }
 
+function ConvertTo-HtmlAttribute {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+    return [System.Net.WebUtility]::HtmlEncode($Value)
+}
+
+function Write-SelectedPreviewHtml {
+    param(
+        [string]$DestinationPath,
+        [string]$ExerciseName,
+        [int]$OptionIndex,
+        [string]$PreviewVideoPath,
+        [string]$InputVideoPath,
+        [string]$WearSkeletonPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DestinationPath)) {
+        return $null
+    }
+
+    $destinationDirectory = Split-Path -Parent $DestinationPath
+    New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+    $titleText = if ($OptionIndex -gt 1) { "$ExerciseName - Option $OptionIndex" } else { $ExerciseName }
+    $title = ConvertTo-HtmlAttribute $titleText
+    $previewFile = if (-not [string]::IsNullOrWhiteSpace($PreviewVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($PreviewVideoPath)) } else { "" }
+    $inputFile = if (-not [string]::IsNullOrWhiteSpace($InputVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($InputVideoPath)) } else { "" }
+    $skeletonFile = if (-not [string]::IsNullOrWhiteSpace($WearSkeletonPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($WearSkeletonPath)) } else { "" }
+
+    $previewSection = if ($previewFile) {
+@"
+        <section>
+            <h2>Selected preview</h2>
+            <video controls preload="metadata" src="$previewFile"></video>
+            <p><a href="$previewFile">Open preview video</a></p>
+        </section>
+"@
+    } else {
+@"
+        <section>
+            <h2>Selected preview</h2>
+            <p>No selected preview video was copied.</p>
+        </section>
+"@
+    }
+    $inputSection = if ($inputFile) {
+@"
+        <section>
+            <h2>Selected source</h2>
+            <video controls preload="metadata" src="$inputFile"></video>
+            <p><a href="$inputFile">Open selected source video</a></p>
+        </section>
+"@
+    } else {
+@"
+        <section>
+            <h2>Selected source</h2>
+            <p>No selected source video was copied.</p>
+        </section>
+"@
+    }
+    $skeletonSection = if ($skeletonFile) {
+@"
+        <section>
+            <h2>Wear skeleton</h2>
+            <p><a href="$skeletonFile">Open Wear skeleton JSON</a></p>
+        </section>
+"@
+    } else {
+        ""
+    }
+
+    $html = @"
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>$title</title>
+    <style>
+        body { margin: 0; padding: 24px; font-family: system-ui, sans-serif; background: #f7f7f7; color: #161616; }
+        main { max-width: 1100px; margin: 0 auto; display: grid; gap: 18px; }
+        h1, h2 { margin: 0 0 10px; }
+        h1 { font-size: 24px; }
+        h2 { font-size: 16px; }
+        section { background: #fff; border: 1px solid #d9d9d9; border-radius: 8px; padding: 16px; }
+        video { width: 100%; max-height: 70vh; background: #000; display: block; }
+        a { color: #0a5bd3; }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>$title</h1>
+$previewSection
+$inputSection
+$skeletonSection
+    </main>
+</body>
+</html>
+"@
+    Set-Content -LiteralPath $DestinationPath -Value $html -Encoding UTF8
+    return $DestinationPath
+}
+
 function Start-WhamWarmWorker {
     param(
         [string]$SessionDir,
@@ -701,6 +806,10 @@ function Stop-WhamWarmWorker {
 
 function Remove-ExerciseIntermediateArtifacts {
     param([object]$WorkItem)
+
+    if ($ArtifactRetention -eq "full") {
+        return
+    }
 
     foreach ($path in @($WorkItem.bakeWorkspace)) {
         if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
@@ -1353,13 +1462,14 @@ function Complete-BakeJob {
                     Write-Warning "Selected input video option $optionIndex was not copied for '$($workItem.exerciseName)': $optionInputVideoSourcePath"
                 }
             }
-            $optionPreviewHtmlPath = $null
-            if ($option.PSObject.Properties.Name -contains "selectedPreviewHtmlPath" -and $option.selectedPreviewHtmlPath) {
-                $optionPreviewHtmlPath = Copy-SelectedFile `
-                    -SourcePath $option.selectedPreviewHtmlPath `
-                    -DestinationDirectory $selectedOutputDir `
-                    -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_preview.html"
-            }
+            $optionPreviewHtmlPath = Join-Path $selectedOutputDir "$($selectedFilePrefix)$($optionSuffix)_selected_preview.html"
+            $optionPreviewHtmlPath = Write-SelectedPreviewHtml `
+                -DestinationPath $optionPreviewHtmlPath `
+                -ExerciseName $workItem.exerciseName `
+                -OptionIndex $optionIndex `
+                -PreviewVideoPath $optionPreviewVideoPath `
+                -InputVideoPath $optionInputVideoPath `
+                -WearSkeletonPath $optionWearSkeletonPath
             $selectedResultOutputs += [ordered]@{
                 optionIndex = $optionIndex
                 label = if ($option.PSObject.Properties.Name -contains "manualSelectionLabel") { $option.manualSelectionLabel } else { "Option $optionIndex" }
@@ -1877,6 +1987,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--candidates-json", $exerciseCandidatesPath,
         "--fallback-candidates", "$FallbackCandidates",
         "--max-source-window-attempts", "$MaxSourceWindowAttempts",
+        "--max-final-output-rejections", "$MaxFinalOutputRejections",
         "--max-selected-results", "$MaxSelectedResults",
         "--candidate-workers", "$CandidateWorkers",
         "--workspace", $bakeWorkspace,
@@ -2250,6 +2361,7 @@ $summary = [ordered]@{
         visionCandidatesPerExercise = $VisionCandidatesPerExercise
         posePrefilterCandidatesPerExercise = $PosePrefilterCandidatesPerExercise
         fallbackCandidates = $FallbackCandidates
+        maxFinalOutputRejections = $MaxFinalOutputRejections
     }
     maxSelectedResults = $MaxSelectedResults
     exercises = $summaryItems
