@@ -209,17 +209,20 @@ def detect_exercise_segment(
     output_dir: Path,
     settings: DetectionSettings,
     exercise_name: str | None = None,
+    client: object | None = None,
 ) -> DetectionResult:
     sanitized_video_path = sanitize_video_for_processing(video_path)
     metadata = read_video_metadata(sanitized_video_path)
-    if settings.litert_command:
-        client = LiteRtCliVisionClient(
+    if client is not None:
+        active_client = client
+    elif settings.litert_command:
+        active_client = LiteRtCliVisionClient(
             command=settings.litert_command,
             model=settings.model,
             backend=settings.litert_backend,
         )
     else:
-        client = LlamaCppVisionClient(
+        active_client = LlamaCppVisionClient(
             settings.base_url,
             settings.model,
             n_predict=settings.llama_cpp_n_predict,
@@ -247,7 +250,7 @@ def detect_exercise_segment(
             contact_sheet_sequence_labels=settings.contact_sheet_sequence_labels,
             output_dir=tier_dir / f"window_{window.index:04d}",
         )
-        return client.detect_window(
+        return active_client.detect_window(
             frame_paths=frame_paths,
             window=window,
             exercise_name=exercise_name,
@@ -306,7 +309,7 @@ def detect_exercise_segment(
         )
         if detected_span is not None:
             detected_span = refine_span_with_comparative_selection(
-                client=client,
+                client=active_client,
                 detections=tier_detections,
                 selected_span=detected_span,
                 confidence_threshold=settings.confidence_threshold,
@@ -320,7 +323,7 @@ def detect_exercise_segment(
         active_span, active_detections = refine_detected_span_with_active_search(
             video_path=sanitized_video_path,
             output_dir=output_dir / "active_refinement",
-            client=client,
+            client=active_client,
             metadata=metadata,
             coarse_span=detected_span,
             settings=settings,
@@ -332,7 +335,7 @@ def detect_exercise_segment(
         refined_span, refinement_detections = refine_detected_span_with_smaller_windows(
             video_path=sanitized_video_path,
             output_dir=output_dir / "refinement",
-            client=client,
+            client=active_client,
             metadata=metadata,
             coarse_span=detected_span,
             settings=settings,
@@ -344,7 +347,7 @@ def detect_exercise_segment(
         detected_span = refine_selected_chunk_boundaries(
             video_path=sanitized_video_path,
             output_dir=output_dir / "boundary_refinement",
-            client=client,
+            client=active_client,
             selected_span=detected_span,
             settings=settings,
             exercise_name=exercise_name,
@@ -362,6 +365,99 @@ def detect_exercise_segment(
         source_width=metadata.width,
         source_height=metadata.height,
     )
+
+
+class CaptionImagesDetectionClient:
+    def __init__(
+        self,
+        caption_images: Callable[..., str],
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float | None,
+        top_k: int | None,
+        disable_reasoning: bool,
+        request_timeout_seconds: float,
+    ) -> None:
+        self._caption_images = caption_images
+        self.max_tokens = max(1, int(max_tokens))
+        self.temperature = max(0.0, float(temperature))
+        self.top_p = None if top_p is None else max(0.0, min(1.0, float(top_p)))
+        self.top_k = None if top_k is None else max(0, int(top_k))
+        self.disable_reasoning = bool(disable_reasoning)
+        self.request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+
+    def detect_window(
+        self,
+        *,
+        frame_paths: list[Path],
+        window: DetectionWindow,
+        exercise_name: str | None,
+        require_complete_execution: bool = True,
+    ) -> WindowDetection:
+        prompt = build_window_prompt(
+            exercise_name=exercise_name,
+            start_seconds=window.start_seconds,
+            end_seconds=window.end_seconds,
+            require_complete_execution=require_complete_execution,
+        )
+        try:
+            raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
+        except Exception as exc:
+            if is_critical_vlm_interaction_error(exc):
+                raise
+            return build_unusable_window_detection(
+                window=window,
+                frame_paths=frame_paths,
+                reason=f"vlm_exception:{type(exc).__name__}:{exc}",
+            )
+        try:
+            payload = parse_detection_payload(raw, window=window)
+        except RuntimeError:
+            return build_unusable_window_detection(window=window, frame_paths=frame_paths, reason=raw)
+        return WindowDetection(
+            window=window,
+            movement_present=payload["movement_present"],
+            contains_movement_start=payload["contains_movement_start"],
+            contains_movement_end=payload["contains_movement_end"],
+            movement_start_seconds=payload["movement_start_seconds"],
+            movement_end_seconds=payload["movement_end_seconds"],
+            confidence=payload["confidence"],
+            summary=payload["summary"],
+            reason=payload["reason"],
+            camera_variation=compute_camera_variation(frame_paths),
+            executions=payload["executions"],
+            frame_paths=[str(path) for path in frame_paths],
+        )
+
+    def caption_images(
+        self,
+        *,
+        frame_paths: list[Path],
+        prompt: str,
+        max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
+        disable_reasoning: bool | None = None,
+        json_response: bool = True,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+    ) -> str:
+        return self._caption_images(
+            frame_paths=frame_paths,
+            prompt=prompt,
+            max_tokens=self.max_tokens if max_tokens is None else max(1, int(max_tokens)),
+            request_timeout_seconds=(
+                self.request_timeout_seconds
+                if request_timeout_seconds is None
+                else max(1.0, float(request_timeout_seconds))
+            ),
+            disable_reasoning=self.disable_reasoning if disable_reasoning is None else bool(disable_reasoning),
+            json_response=bool(json_response),
+            temperature=self.temperature if temperature is None else max(0.0, float(temperature)),
+            top_p=self.top_p if top_p is None else max(0.0, min(1.0, float(top_p))),
+            top_k=self.top_k if top_k is None else max(0, int(top_k)),
+        )
 
 
 SUPPORT_DOMINANCE_LABELS = ("foot_dominant", "hand_dominant", "mixed_support", "uncertain")
