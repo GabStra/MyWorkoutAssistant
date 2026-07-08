@@ -91,6 +91,37 @@ BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS = (
     ("left_wrist", "right_wrist", 0.6),
     ("left_hand", "right_hand", 0.6),
 )
+MOVEMENT_PLANE_ALIGNMENT_MIN_RANGE_RATIO = 0.035
+MOVEMENT_PLANE_ALIGNMENT_MIN_COHERENCE = 0.55
+MOVEMENT_PLANE_ALIGNMENT_MIN_CONFIDENCE = 0.58
+MOVEMENT_PLANE_ALIGNMENT_GROUPS = (
+    ("shoulder_center", ("left_shoulder", "right_shoulder", "left_collar", "right_collar", "neck", "spine3"), False, 1.35),
+    ("torso", ("pelvis", "spine1", "spine2", "spine3", "neck", "left_hip", "right_hip", "left_shoulder", "right_shoulder"), False, 1.25),
+    ("hip_center", ("pelvis", "left_hip", "right_hip"), False, 1.10),
+    ("upper_body_relative", ("left_shoulder", "right_shoulder", "left_collar", "right_collar", "neck", "spine3"), True, 1.05),
+    ("left_arm_relative", ("left_shoulder", "left_elbow", "left_wrist", "left_hand"), True, 0.95),
+    ("right_arm_relative", ("right_shoulder", "right_elbow", "right_wrist", "right_hand"), True, 0.95),
+    ("left_leg_relative", ("left_hip", "left_knee", "left_ankle", "left_foot"), True, 0.92),
+    ("right_leg_relative", ("right_hip", "right_knee", "right_ankle", "right_foot"), True, 0.92),
+    ("hand_center_relative", ("left_hand", "right_hand", "left_wrist", "right_wrist"), True, 0.86),
+    ("foot_center_relative", ("left_foot", "right_foot", "left_ankle", "right_ankle"), True, 0.80),
+)
+MOVEMENT_PLANE_ALIGNMENT_JOINTS = (
+    ("left_shoulder", True, 0.90),
+    ("right_shoulder", True, 0.90),
+    ("left_elbow", True, 0.86),
+    ("right_elbow", True, 0.86),
+    ("left_wrist", True, 0.82),
+    ("right_wrist", True, 0.82),
+    ("left_hand", True, 0.82),
+    ("right_hand", True, 0.82),
+    ("left_knee", True, 0.84),
+    ("right_knee", True, 0.84),
+    ("left_ankle", True, 0.78),
+    ("right_ankle", True, 0.78),
+    ("left_foot", True, 0.76),
+    ("right_foot", True, 0.76),
+)
 DOMINANT_MOVEMENT_AXIS_JOINTS = (
     "left_hand",
     "right_hand",
@@ -792,59 +823,43 @@ def _align_baked_sagittal_plane_to_grid_axis(
     return rotated_frames, alignment
 
 
-def _estimate_baked_sagittal_plane_alignment(
-    frames: list[dict[str, object]],
+def _sagittal_plane_alignment_base_payload(
+    *,
+    sample_count: int,
+    normal_source: str,
+    status: str,
 ) -> dict[str, object]:
-    accumulated_x = 0.0
-    accumulated_z = 0.0
-    total_weight = 0.0
-    sample_count = 0
-
-    for frame in frames:
-        joints = frame.get("joints")
-        if not isinstance(joints, dict):
-            continue
-        for left_name, right_name, pair_weight in BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS:
-            left = joints.get(left_name)
-            right = joints.get(right_name)
-            if not _is_serialized_point(left) or not _is_serialized_point(right):
-                continue
-            dx = float(right[0]) - float(left[0])
-            dz = float(right[2]) - float(left[2])
-            length = math.hypot(dx, dz)
-            if length <= 1e-5:
-                continue
-            weight = float(pair_weight) * length
-            accumulated_x += dx / length * weight
-            accumulated_z += dz / length * weight
-            total_weight += weight
-            sample_count += 1
-
-    base_payload: dict[str, object] = {
+    return {
         "enabled": True,
         "targetAxis": BAKED_SAGITTAL_PLANE_TARGET_AXIS,
-        "targetAxisMeaning": "body_lateral_axis_sagittal_plane_normal",
-        "normalSource": "right_minus_left_bilateral_joints",
+        "targetAxisMeaning": "movement_or_body_plane_normal",
+        "normalSource": normal_source,
         "applied": False,
-        "status": "not_enough_bilateral_joint_evidence",
+        "status": status,
         "sampleCount": sample_count,
     }
-    if sample_count <= 0 or total_weight <= 1e-6:
-        return base_payload
 
-    averaged_x = accumulated_x / total_weight
-    averaged_z = accumulated_z / total_weight
-    averaged_length = math.hypot(averaged_x, averaged_z)
-    coherence = min(1.0, averaged_length)
-    if averaged_length <= 1e-5:
+
+def _build_horizontal_normal_alignment_payload(
+    frames: list[dict[str, object]],
+    *,
+    base_payload: dict[str, object],
+    normal_x: float,
+    normal_z: float,
+    coherence: float,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    normal_length = math.hypot(normal_x, normal_z)
+    if normal_length <= 1e-5:
         return {
             **base_payload,
-            "status": "ambiguous_bilateral_joint_evidence",
+            "status": "ambiguous_alignment_normal",
             "coherence": coherence,
+            **(extra or {}),
         }
 
-    normal_x = averaged_x / averaged_length
-    normal_z = averaged_z / averaged_length
+    normal_x /= normal_length
+    normal_z /= normal_length
     current_angle = math.atan2(normal_z, normal_x)
     yaw_to_positive_x = _normalize_signed_angle(current_angle)
     yaw_to_negative_x = _normalize_signed_angle(current_angle - math.pi)
@@ -873,8 +888,278 @@ def _estimate_baked_sagittal_plane_alignment(
         ),
         "pivot": _point_to_list(pivot),
         "coherence": coherence,
-        "sampleCount": sample_count,
+        **(extra or {}),
     }
+
+
+def _estimate_baked_movement_plane_alignment(
+    frames: list[dict[str, object]],
+) -> dict[str, object] | None:
+    scale = _estimate_baked_skeleton_scale(frames)
+    candidates: list[dict[str, object]] = []
+    for label, joint_names, root_relative, priority in MOVEMENT_PLANE_ALIGNMENT_GROUPS:
+        points = _baked_group_motion_track(frames, joint_names, root_relative=root_relative)
+        candidate = _score_movement_plane_track(
+            points,
+            label=label,
+            priority=priority,
+            scale=scale,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+    for joint_name, root_relative, priority in MOVEMENT_PLANE_ALIGNMENT_JOINTS:
+        points = _baked_joint_motion_track(frames, joint_name, root_relative=root_relative)
+        candidate = _score_movement_plane_track(
+            points,
+            label=joint_name,
+            priority=priority,
+            scale=scale,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: float(item["score"]), reverse=True)
+    best = candidates[0]
+    confidence = float(best["confidence"])
+    if confidence < MOVEMENT_PLANE_ALIGNMENT_MIN_CONFIDENCE:
+        return None
+
+    direction = best["direction"]
+    direction_x = float(direction[0])
+    direction_z = float(direction[1])
+    direction_length = math.hypot(direction_x, direction_z)
+    if direction_length <= 1e-5:
+        return None
+    normal_x = direction_z / direction_length
+    normal_z = -direction_x / direction_length
+    sample_count = int(best["sampleCount"])
+    base_payload = _sagittal_plane_alignment_base_payload(
+        sample_count=sample_count,
+        normal_source="dominant_movement_plane",
+        status="not_enough_movement_plane_evidence",
+    )
+    return _build_horizontal_normal_alignment_payload(
+        frames,
+        base_payload=base_payload,
+        normal_x=normal_x,
+        normal_z=normal_z,
+        coherence=float(best["coherence"]),
+        extra={
+            "movementPlaneConfidence": confidence,
+            "movementPlaneTrack": best["label"],
+            "movementPlaneRangeRatio": float(best["rangeRatio"]),
+            "movementPlaneHorizontalRange": float(best["horizontalRange"]),
+            "movementPlaneDirection": [direction_x, 0.0, direction_z],
+            "fallbackNormalSource": "right_minus_left_bilateral_joints",
+        },
+    )
+
+
+def _baked_group_motion_track(
+    frames: list[dict[str, object]],
+    joint_names: tuple[str, ...],
+    *,
+    root_relative: bool,
+) -> list[tuple[float, float, float]]:
+    raw_points: list[tuple[float, float, float] | None] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            raw_points.append(None)
+            continue
+        points = [
+            (float(point[0]), float(point[1]), float(point[2]))
+            for joint_name in joint_names
+            if _is_serialized_point(point := joints.get(joint_name))
+        ]
+        if not points:
+            raw_points.append(None)
+            continue
+        point = _average_preview_points(points)
+        root = joints.get("pelvis") if root_relative else None
+        if _is_serialized_point(root):
+            point = _subtract_points(point, (float(root[0]), float(root[1]), float(root[2])))
+        raw_points.append(point)
+    return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
+
+
+def _baked_joint_motion_track(
+    frames: list[dict[str, object]],
+    joint_name: str,
+    *,
+    root_relative: bool,
+) -> list[tuple[float, float, float]]:
+    raw_points: list[tuple[float, float, float] | None] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            raw_points.append(None)
+            continue
+        point_value = joints.get(joint_name)
+        if not _is_serialized_point(point_value):
+            raw_points.append(None)
+            continue
+        point = (float(point_value[0]), float(point_value[1]), float(point_value[2]))
+        root = joints.get("pelvis") if root_relative else None
+        if _is_serialized_point(root):
+            point = _subtract_points(point, (float(root[0]), float(root[1]), float(root[2])))
+        raw_points.append(point)
+    return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
+
+
+def _score_movement_plane_track(
+    points: list[tuple[float, float, float]],
+    *,
+    label: str,
+    priority: float,
+    scale: float,
+) -> dict[str, object] | None:
+    if len(points) < 4:
+        return None
+    horizontal_samples = [(point[0], point[2]) for point in points]
+    horizontal_direction = _principal_direction_2d(horizontal_samples)
+    if horizontal_direction is None:
+        return None
+    horizontal_range = _point_track_range_2d(horizontal_samples)
+    if horizontal_range <= 1e-6:
+        return None
+    range_ratio = horizontal_range / max(scale, 1e-6)
+    if range_ratio < MOVEMENT_PLANE_ALIGNMENT_MIN_RANGE_RATIO:
+        return None
+    axis_range = _point_track_range_along_direction_2d(horizontal_samples, horizontal_direction)
+    coherence = axis_range / max(horizontal_range, 1e-6)
+    if coherence < MOVEMENT_PLANE_ALIGNMENT_MIN_COHERENCE:
+        return None
+    confidence = min(1.0, (range_ratio / 0.16) * 0.55 + coherence * 0.45)
+    return {
+        "label": label,
+        "sampleCount": len(points),
+        "direction": horizontal_direction,
+        "horizontalRange": horizontal_range,
+        "rangeRatio": range_ratio,
+        "coherence": min(1.0, coherence),
+        "confidence": min(1.0, confidence),
+        "score": horizontal_range * coherence * max(0.0, priority),
+    }
+
+
+def _estimate_baked_skeleton_scale(frames: list[dict[str, object]]) -> float:
+    lengths: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        for first_name, second_name in (
+            ("left_shoulder", "right_shoulder"),
+            ("left_hip", "right_hip"),
+            ("pelvis", "neck"),
+            ("pelvis", "spine3"),
+            ("left_hip", "left_knee"),
+            ("right_hip", "right_knee"),
+            ("left_knee", "left_ankle"),
+            ("right_knee", "right_ankle"),
+        ):
+            first = joints.get(first_name)
+            second = joints.get(second_name)
+            if not _is_serialized_point(first) or not _is_serialized_point(second):
+                continue
+            lengths.append(
+                _vector_length(
+                    _subtract_points(
+                        (float(second[0]), float(second[1]), float(second[2])),
+                        (float(first[0]), float(first[1]), float(first[2])),
+                    )
+                )
+            )
+    meaningful_lengths = [length for length in lengths if length > 1e-5]
+    if not meaningful_lengths:
+        return 1.0
+    return max(0.25, _median(meaningful_lengths) * 4.0)
+
+
+def _point_track_range_2d(points: list[tuple[float, float]]) -> float:
+    if len(points) < 2:
+        return 0.0
+    center_x = sum(point[0] for point in points) / len(points)
+    center_z = sum(point[1] for point in points) / len(points)
+    return max(math.hypot(point[0] - center_x, point[1] - center_z) for point in points) * 2.0
+
+
+def _point_track_range_along_direction_2d(
+    points: list[tuple[float, float]],
+    direction: tuple[float, float],
+) -> float:
+    length = math.hypot(direction[0], direction[1])
+    if len(points) < 2 or length <= 1e-8:
+        return 0.0
+    normalized = (direction[0] / length, direction[1] / length)
+    projections = [
+        point[0] * normalized[0] + point[1] * normalized[1]
+        for point in points
+    ]
+    return max(projections) - min(projections)
+
+
+def _estimate_baked_sagittal_plane_alignment(
+    frames: list[dict[str, object]],
+) -> dict[str, object]:
+    movement_alignment = _estimate_baked_movement_plane_alignment(frames)
+    if movement_alignment is not None:
+        return movement_alignment
+
+    accumulated_x = 0.0
+    accumulated_z = 0.0
+    total_weight = 0.0
+    sample_count = 0
+
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        for left_name, right_name, pair_weight in BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS:
+            left = joints.get(left_name)
+            right = joints.get(right_name)
+            if not _is_serialized_point(left) or not _is_serialized_point(right):
+                continue
+            dx = float(right[0]) - float(left[0])
+            dz = float(right[2]) - float(left[2])
+            length = math.hypot(dx, dz)
+            if length <= 1e-5:
+                continue
+            weight = float(pair_weight) * length
+            accumulated_x += dx / length * weight
+            accumulated_z += dz / length * weight
+            total_weight += weight
+            sample_count += 1
+
+    base_payload = _sagittal_plane_alignment_base_payload(
+        sample_count=sample_count,
+        normal_source="right_minus_left_bilateral_joints",
+        status="not_enough_bilateral_joint_evidence",
+    )
+    if sample_count <= 0 or total_weight <= 1e-6:
+        return base_payload
+
+    averaged_x = accumulated_x / total_weight
+    averaged_z = accumulated_z / total_weight
+    averaged_length = math.hypot(averaged_x, averaged_z)
+    coherence = min(1.0, averaged_length)
+    if averaged_length <= 1e-5:
+        return {
+            **base_payload,
+            "status": "ambiguous_bilateral_joint_evidence",
+            "coherence": coherence,
+        }
+
+    return _build_horizontal_normal_alignment_payload(
+        frames,
+        base_payload=base_payload,
+        normal_x=averaged_x,
+        normal_z=averaged_z,
+        coherence=coherence,
+    )
 
 
 def _serialize_bounds(bounds: dict[str, float]) -> dict[str, object]:
@@ -1355,46 +1640,42 @@ def _estimate_support_profile_yaw_rotation(
     return ((0.0, 1.0, 0.0), angle)
 
 
+def _estimate_preview_movement_plane_yaw_rotation(
+    frames: list[MotionFrame],
+) -> tuple[tuple[float, float, float], float] | None:
+    alignment_frames = [
+        {
+            "joints": {
+                joint_name: [point[0], point[1], point[2]]
+                for joint_name, point in frame.joints.items()
+            }
+        }
+        for frame in frames
+    ]
+    alignment = _estimate_baked_movement_plane_alignment(alignment_frames)
+    if alignment is None or alignment.get("normalSource") != "dominant_movement_plane":
+        return None
+    yaw_radians = float(alignment.get("yawRadians") or 0.0)
+    if abs(math.degrees(yaw_radians)) < BAKED_SAGITTAL_PLANE_ALIGNMENT_MIN_DEGREES:
+        return None
+    return ((0.0, 1.0, 0.0), yaw_radians)
+
+
 def _compute_preview_auto_alignment(
     frames: list[MotionFrame],
 ) -> list[tuple[tuple[float, float, float], float]]:
     if not frames:
         return []
+    movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
+    if movement_plane_yaw is not None:
+        return [movement_plane_yaw]
     if _classify_torso_alignment_mode(frames) == "horizontal_plane":
         yaw_rotation = _estimate_support_profile_yaw_rotation(frames)
         if yaw_rotation is None:
             yaw_rotation = _estimate_horizontal_spine_yaw_rotation(frames)
         return [yaw_rotation] if yaw_rotation is not None else []
-    rotations: list[tuple[tuple[float, float, float], float]] = []
-    aligned_frames = frames
-    dominant_target_axis = _dominant_movement_nearest_world_axis(aligned_frames)
-    movement_axis_rotation = _estimate_dominant_movement_to_nearest_world_axis_rotation(
-        aligned_frames,
-        target_axis=dominant_target_axis,
-    )
-    if movement_axis_rotation is not None and _rotation_preserves_body_orientation_or_pending_inversion(
-        aligned_frames,
-        movement_axis_rotation,
-    ):
-        rotations.append(movement_axis_rotation)
-        aligned_frames = [_rotate_frame(frame, movement_axis_rotation) for frame in aligned_frames]
-    support_plane_rotation = _estimate_support_plane_alignment_rotation(aligned_frames)
-    if (
-        support_plane_rotation is not None
-        and _rotation_preserves_body_orientation(aligned_frames, support_plane_rotation)
-        and _rotation_preserves_dominant_movement_alignment(
-            aligned_frames,
-            support_plane_rotation,
-            dominant_target_axis,
-        )
-    ):
-        rotations.append(support_plane_rotation)
-        aligned_frames = [_rotate_frame(frame, support_plane_rotation) for frame in aligned_frames]
-    support_profile_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
-    if support_profile_rotation is not None:
-        rotations.append(support_profile_rotation)
-        aligned_frames = [_rotate_frame(frame, support_profile_rotation) for frame in aligned_frames]
-    return rotations
+    support_profile_rotation = _estimate_support_profile_yaw_rotation(frames)
+    return [support_profile_rotation] if support_profile_rotation is not None else []
 
 
 def _is_large_non_yaw_rotation(
@@ -3672,6 +3953,22 @@ def _build_html(payload: dict[str, object]) -> str:
           <span>Invert scene</span>
           <input id="sceneInverted" type="checkbox" />
         </label>
+        <div class="control-group">
+          <div class="control-group-title">Model rotation</div>
+          <label class="control">Pitch X
+            <input id="modelRotationX" type="range" min="-90" max="90" step="1" value="0" />
+            <span id="modelRotationXValue">0°</span>
+          </label>
+          <label class="control">Yaw Y
+            <input id="modelRotationY" type="range" min="-180" max="180" step="1" value="0" />
+            <span id="modelRotationYValue">0°</span>
+          </label>
+          <label class="control">Roll Z
+            <input id="modelRotationZ" type="range" min="-90" max="90" step="1" value="0" />
+            <span id="modelRotationZValue">0°</span>
+          </label>
+          <button id="resetModelRotation" type="button">Reset model rotation</button>
+        </div>
         <label class="control-row" for="showComparisonOverlay">
           <span>Show stabilized source-motion overlay</span>
           <input id="showComparisonOverlay" type="checkbox" />
@@ -3770,6 +4067,13 @@ def _build_html(payload: dict[str, object]) -> str:
     const zoomInput = document.getElementById("zoom");
     const autoWorldAlignmentInput = document.getElementById("autoWorldAlignment");
     const sceneInvertedInput = document.getElementById("sceneInverted");
+    const modelRotationXInput = document.getElementById("modelRotationX");
+    const modelRotationYInput = document.getElementById("modelRotationY");
+    const modelRotationZInput = document.getElementById("modelRotationZ");
+    const modelRotationXValue = document.getElementById("modelRotationXValue");
+    const modelRotationYValue = document.getElementById("modelRotationYValue");
+    const modelRotationZValue = document.getElementById("modelRotationZValue");
+    const resetModelRotationButton = document.getElementById("resetModelRotation");
     const showComparisonOverlayInput = document.getElementById("showComparisonOverlay");
     const showRawComparisonOverlayInput = document.getElementById("showRawComparisonOverlay");
     const previewDominantCutoffInput = document.getElementById("previewDominantCutoff");
@@ -3817,6 +4121,9 @@ def _build_html(payload: dict[str, object]) -> str:
     let pendingReframeHandle = null;
     let autoWorldAlignmentEnabled = Boolean(payload.defaultAutoWorldAlignment);
     let sceneInverted = Boolean(payload.defaultSceneInverted);
+    let manualModelRotationXDegrees = 0.0;
+    let manualModelRotationYDegrees = 0.0;
+    let manualModelRotationZDegrees = 0.0;
     let showComparisonOverlay = false;
     let showRawComparisonOverlay = false;
     let previewDominantCutoff = Number(payload.structuralRefinement?.settings?.dominantChainRatio ?? 0.65);
@@ -3862,6 +4169,7 @@ def _build_html(payload: dict[str, object]) -> str:
     lockPlantedHandsInput.checked = lockPlantedHands;
     autoWorldAlignmentInput.checked = autoWorldAlignmentEnabled;
     sceneInvertedInput.checked = sceneInverted;
+    syncManualModelRotationControls();
     showComparisonOverlayInput.checked = showComparisonOverlay;
     showComparisonOverlayInput.disabled = comparisonFrames.length === 0;
     showRawComparisonOverlayInput.checked = showRawComparisonOverlay;
@@ -4657,7 +4965,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function buildSceneBoundsCacheKey(currentFixedRoot) {{
-      return `${{currentFixedRoot}}|${{lockYRoot}}|${{lockPlantedFeet}}|${{lockPlantedHands}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{buildActiveRangeCacheKey()}}|previewSagittalPlaneGridAlignment:v1`;
+      return `${{currentFixedRoot}}|${{lockYRoot}}|${{lockPlantedFeet}}|${{lockPlantedHands}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}|${{buildActiveRangeCacheKey()}}|previewSagittalPlaneGridAlignment:v1`;
     }}
 
     function invalidateSceneBoundsCache() {{
@@ -5400,6 +5708,72 @@ def _build_html(payload: dict[str, object]) -> str:
       return transformedPoint;
     }}
 
+    function sanitizeManualModelRotationDegrees(value, minDegrees, maxDegrees) {{
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {{
+        return 0.0;
+      }}
+      return Math.max(minDegrees, Math.min(maxDegrees, numeric));
+    }}
+
+    function manualModelRotationCacheKey() {{
+      return [
+        manualModelRotationXDegrees.toFixed(3),
+        manualModelRotationYDegrees.toFixed(3),
+        manualModelRotationZDegrees.toFixed(3),
+      ].join(",");
+    }}
+
+    function manualModelRotationPayload() {{
+      return {{
+        x: manualModelRotationXDegrees,
+        y: manualModelRotationYDegrees,
+        z: manualModelRotationZDegrees,
+      }};
+    }}
+
+    function applyManualModelRotation(point) {{
+      if (
+        Math.abs(manualModelRotationXDegrees) <= 1e-6 &&
+        Math.abs(manualModelRotationYDegrees) <= 1e-6 &&
+        Math.abs(manualModelRotationZDegrees) <= 1e-6
+      ) {{
+        return point;
+      }}
+      if (Math.abs(manualModelRotationXDegrees) > 1e-6) {{
+        point.applyAxisAngle(axisX, manualModelRotationXDegrees * Math.PI / 180);
+      }}
+      if (Math.abs(manualModelRotationYDegrees) > 1e-6) {{
+        point.applyAxisAngle(axisY, manualModelRotationYDegrees * Math.PI / 180);
+      }}
+      if (Math.abs(manualModelRotationZDegrees) > 1e-6) {{
+        point.applyAxisAngle(axisZ, manualModelRotationZDegrees * Math.PI / 180);
+      }}
+      return point;
+    }}
+
+    function syncManualModelRotationControls() {{
+      manualModelRotationXDegrees = sanitizeManualModelRotationDegrees(manualModelRotationXDegrees, -90, 90);
+      manualModelRotationYDegrees = sanitizeManualModelRotationDegrees(manualModelRotationYDegrees, -180, 180);
+      manualModelRotationZDegrees = sanitizeManualModelRotationDegrees(manualModelRotationZDegrees, -90, 90);
+      modelRotationXInput.value = String(manualModelRotationXDegrees);
+      modelRotationYInput.value = String(manualModelRotationYDegrees);
+      modelRotationZInput.value = String(manualModelRotationZDegrees);
+      modelRotationXValue.textContent = `${{manualModelRotationXDegrees.toFixed(0)}}°`;
+      modelRotationYValue.textContent = `${{manualModelRotationYDegrees.toFixed(0)}}°`;
+      modelRotationZValue.textContent = `${{manualModelRotationZDegrees.toFixed(0)}}°`;
+    }}
+
+    function updateManualModelRotationFromControls() {{
+      manualModelRotationXDegrees = sanitizeManualModelRotationDegrees(modelRotationXInput.value, -90, 90);
+      manualModelRotationYDegrees = sanitizeManualModelRotationDegrees(modelRotationYInput.value, -180, 180);
+      manualModelRotationZDegrees = sanitizeManualModelRotationDegrees(modelRotationZInput.value, -90, 90);
+      syncManualModelRotationControls();
+      activeVerticalMovementAnchor = computeActiveVerticalMovementAnchor(playbackState.boundsFrames);
+      invalidateSceneBoundsCache();
+      applySceneReframe();
+    }}
+
     function toUncorrectedWorldPoint(point, frameTranslation, frame = activeRenderFrame) {{
       const transformedPoint = applySceneTransform(toRootAdjustedPoint(point, frameTranslation));
       applyFrameShoulderLeveling(transformedPoint, frame, frameTranslation);
@@ -5435,7 +5809,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!lockPlantedHands || !activeHandSupportAnchor) {{
         return null;
       }}
-      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
+      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
       if (lockedHandBodyDriftAnchorKey === cacheKey) {{
         return lockedHandBodyDriftAnchor;
       }}
@@ -5483,7 +5857,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!lockPlantedHands || !activeHandSupportAnchor) {{
         return null;
       }}
-      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
+      const cacheKey = `${{selectedLoopIndex}}|${{playbackState.frames?.length ?? 0}}|${{activeHandSupportAnchor.x}},${{activeHandSupportAnchor.y}},${{activeHandSupportAnchor.z}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
       if (lockedHandMovementAlignmentKey === cacheKey) {{
         return lockedHandMovementAlignmentTransform;
       }}
@@ -5615,7 +5989,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (lockPlantedHands || !autoWorldAlignmentEnabled || !frame) {{
         return null;
       }}
-      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
+      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
       if (frameShoulderLevelingKey === cacheKey) {{
         return frameShoulderLevelingTransform;
       }}
@@ -5852,7 +6226,7 @@ def _build_html(payload: dict[str, object]) -> str:
         lockedJointPositions = new Map();
         return lockedJointPositions;
       }}
-      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{lockPlantedFeet}}|${{lockPlantedHands}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}`;
+      const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{lockPlantedFeet}}|${{lockPlantedHands}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
       if (lockedJointFrameKey === cacheKey) {{
         return lockedJointPositions;
       }}
@@ -6030,16 +6404,309 @@ def _build_html(payload: dict[str, object]) -> str:
       return [root, solvedKnee, solvedAnkle];
     }}
 
-    function previewSagittalPlaneAlignmentBasePayload(sampleCount) {{
+    function previewSagittalPlaneAlignmentBasePayload(
+      sampleCount,
+      normalSource = "right_minus_left_bilateral_joints",
+      status = "not_enough_bilateral_joint_evidence"
+    ) {{
       return {{
         enabled: true,
         targetAxis: "x",
-        targetAxisMeaning: "body_lateral_axis_sagittal_plane_normal",
-        normalSource: "right_minus_left_bilateral_joints",
+        targetAxisMeaning: "movement_or_body_plane_normal",
+        normalSource,
         applied: false,
-        status: "not_enough_bilateral_joint_evidence",
+        status,
         sampleCount,
       }};
+    }}
+
+    function sagittalAlignmentPayloadFromNormal(frames, basePayload, normalX, normalZ, coherence, extra = {{}}) {{
+      const normalLength = Math.hypot(normalX, normalZ);
+      if (!Number.isFinite(normalLength) || normalLength <= 1e-5) {{
+        return {{
+          ...basePayload,
+          status: "ambiguous_alignment_normal",
+          coherence,
+          ...extra,
+        }};
+      }}
+      const resolvedNormalX = normalX / normalLength;
+      const resolvedNormalZ = normalZ / normalLength;
+      const currentAngle = Math.atan2(resolvedNormalZ, resolvedNormalX);
+      const yawToPositiveX = normalizeSignedRadians(currentAngle);
+      const yawToNegativeX = normalizeSignedRadians(currentAngle - Math.PI);
+      const targetDirection = Math.abs(yawToPositiveX) <= Math.abs(yawToNegativeX) ? "+x" : "-x";
+      const yawRadians = targetDirection === "+x" ? yawToPositiveX : yawToNegativeX;
+      const yawDegrees = yawRadians * 180 / Math.PI;
+      const applied = Math.abs(yawDegrees) >= 0.5;
+      const bounds = computeBakedWearBounds(frames);
+      const pivot = bounds.center ?? [0, 0, 0];
+      return {{
+        ...basePayload,
+        applied,
+        status: applied ? "applied" : "already_aligned",
+        targetDirection,
+        yawRadians: applied ? yawRadians : 0.0,
+        yawDegrees: applied ? yawDegrees : 0.0,
+        horizontalNormalBefore: [resolvedNormalX, 0.0, resolvedNormalZ],
+        horizontalNormalAfter: applied
+          ? [targetDirection === "+x" ? 1.0 : -1.0, 0.0, 0.0]
+          : [resolvedNormalX, 0.0, resolvedNormalZ],
+        pivot,
+        coherence,
+        ...extra,
+      }};
+    }}
+
+    function medianNumber(values) {{
+      const sorted = values.filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
+      if (sorted.length === 0) {{
+        return 0.0;
+      }}
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 1
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) * 0.5;
+    }}
+
+    function averageSerializedPoints(points) {{
+      if (!Array.isArray(points) || points.length === 0) {{
+        return null;
+      }}
+      return [
+        points.reduce((total, point) => total + Number(point[0]), 0) / points.length,
+        points.reduce((total, point) => total + Number(point[1]), 0) / points.length,
+        points.reduce((total, point) => total + Number(point[2]), 0) / points.length,
+      ];
+    }}
+
+    function subtractSerializedPoints(left, right) {{
+      return [
+        Number(left[0]) - Number(right[0]),
+        Number(left[1]) - Number(right[1]),
+        Number(left[2]) - Number(right[2]),
+      ];
+    }}
+
+    function smoothSerializedPointPath(points) {{
+      if (!Array.isArray(points) || points.length < 3) {{
+        return points;
+      }}
+      return points.map((point, index) => {{
+        if (!point) {{
+          return null;
+        }}
+        const window = [];
+        for (let neighborIndex = Math.max(0, index - 2); neighborIndex < Math.min(points.length, index + 3); neighborIndex += 1) {{
+          const neighbor = points[neighborIndex];
+          if (neighbor) {{
+            window.push(neighbor);
+          }}
+        }}
+        return window.length > 0 ? averageSerializedPoints(window) : point;
+      }});
+    }}
+
+    function principalDirection2dAlignment(samples) {{
+      if (!Array.isArray(samples) || samples.length < 2) {{
+        return null;
+      }}
+      const meanX = samples.reduce((total, sample) => total + Number(sample[0]), 0) / samples.length;
+      const meanZ = samples.reduce((total, sample) => total + Number(sample[1]), 0) / samples.length;
+      const centered = samples.map((sample) => [Number(sample[0]) - meanX, Number(sample[1]) - meanZ]);
+      const covarianceXX = centered.reduce((total, sample) => total + sample[0] * sample[0], 0) / centered.length;
+      const covarianceZZ = centered.reduce((total, sample) => total + sample[1] * sample[1], 0) / centered.length;
+      const covarianceXZ = centered.reduce((total, sample) => total + sample[0] * sample[1], 0) / centered.length;
+      const trace = covarianceXX + covarianceZZ;
+      const determinant = covarianceXX * covarianceZZ - covarianceXZ * covarianceXZ;
+      const discriminant = Math.max(0.0, trace * trace * 0.25 - determinant);
+      const largestEigenvalue = trace * 0.5 + Math.sqrt(discriminant);
+      let direction = [covarianceXZ, largestEigenvalue - covarianceXX];
+      if (Math.abs(direction[0]) <= 1e-8 && Math.abs(direction[1]) <= 1e-8) {{
+        direction = [largestEigenvalue - covarianceZZ, covarianceXZ];
+      }}
+      const length = Math.hypot(direction[0], direction[1]);
+      if (!Number.isFinite(length) || length <= 1e-8) {{
+        return null;
+      }}
+      return [direction[0] / length, direction[1] / length];
+    }}
+
+    function pointTrackRange2dAlignment(samples) {{
+      if (!Array.isArray(samples) || samples.length < 2) {{
+        return 0.0;
+      }}
+      const centerX = samples.reduce((total, sample) => total + Number(sample[0]), 0) / samples.length;
+      const centerZ = samples.reduce((total, sample) => total + Number(sample[1]), 0) / samples.length;
+      return Math.max(...samples.map((sample) => Math.hypot(Number(sample[0]) - centerX, Number(sample[1]) - centerZ))) * 2.0;
+    }}
+
+    function pointTrackRangeAlongDirection2dAlignment(samples, direction) {{
+      const length = Math.hypot(Number(direction?.[0]), Number(direction?.[1]));
+      if (!Array.isArray(samples) || samples.length < 2 || !Number.isFinite(length) || length <= 1e-8) {{
+        return 0.0;
+      }}
+      const normalized = [Number(direction[0]) / length, Number(direction[1]) / length];
+      const projections = samples.map((sample) => Number(sample[0]) * normalized[0] + Number(sample[1]) * normalized[1]);
+      return Math.max(...projections) - Math.min(...projections);
+    }}
+
+    function movementPlaneGroupTrack(frames, jointNames, rootRelative) {{
+      const rawPoints = [];
+      for (const frame of frames) {{
+        const points = [];
+        for (const jointName of jointNames) {{
+          const point = serializedJointPoint(frame, jointName);
+          if (point) {{
+            points.push(point);
+          }}
+        }}
+        let averaged = averageSerializedPoints(points);
+        const root = rootRelative ? serializedJointPoint(frame, "pelvis") : null;
+        if (averaged && root) {{
+          averaged = subtractSerializedPoints(averaged, root);
+        }}
+        rawPoints.push(averaged);
+      }}
+      return smoothSerializedPointPath(rawPoints).filter(Boolean);
+    }}
+
+    function movementPlaneJointTrack(frames, jointName, rootRelative) {{
+      const rawPoints = [];
+      for (const frame of frames) {{
+        let point = serializedJointPoint(frame, jointName);
+        const root = rootRelative ? serializedJointPoint(frame, "pelvis") : null;
+        if (point && root) {{
+          point = subtractSerializedPoints(point, root);
+        }}
+        rawPoints.push(point);
+      }}
+      return smoothSerializedPointPath(rawPoints).filter(Boolean);
+    }}
+
+    function estimateAlignmentSkeletonScale(frames) {{
+      const lengths = [];
+      const pairs = [
+        ["left_shoulder", "right_shoulder"],
+        ["left_hip", "right_hip"],
+        ["pelvis", "neck"],
+        ["pelvis", "spine3"],
+        ["left_hip", "left_knee"],
+        ["right_hip", "right_knee"],
+        ["left_knee", "left_ankle"],
+        ["right_knee", "right_ankle"],
+      ];
+      for (const frame of frames) {{
+        for (const [firstName, secondName] of pairs) {{
+          const first = serializedJointPoint(frame, firstName);
+          const second = serializedJointPoint(frame, secondName);
+          if (!first || !second) {{
+            continue;
+          }}
+          const length = Math.hypot(
+            Number(second[0]) - Number(first[0]),
+            Number(second[1]) - Number(first[1]),
+            Number(second[2]) - Number(first[2])
+          );
+          if (Number.isFinite(length) && length > 1e-5) {{
+            lengths.push(length);
+          }}
+        }}
+      }}
+      return Math.max(0.25, medianNumber(lengths) * 4.0 || 1.0);
+    }}
+
+    function scoreMovementPlaneTrack(points, label, priority, scale) {{
+      if (!Array.isArray(points) || points.length < 4) {{
+        return null;
+      }}
+      const horizontalSamples = points.map((point) => [Number(point[0]), Number(point[2])]);
+      const direction = principalDirection2dAlignment(horizontalSamples);
+      if (!direction) {{
+        return null;
+      }}
+      const horizontalRange = pointTrackRange2dAlignment(horizontalSamples);
+      if (!Number.isFinite(horizontalRange) || horizontalRange <= 1e-6) {{
+        return null;
+      }}
+      const rangeRatio = horizontalRange / Math.max(Number(scale) || 1.0, 1e-6);
+      if (rangeRatio < movementPlaneAlignmentMinRangeRatio) {{
+        return null;
+      }}
+      const axisRange = pointTrackRangeAlongDirection2dAlignment(horizontalSamples, direction);
+      const coherence = axisRange / Math.max(horizontalRange, 1e-6);
+      if (coherence < movementPlaneAlignmentMinCoherence) {{
+        return null;
+      }}
+      const confidence = Math.min(1.0, (rangeRatio / 0.16) * 0.55 + coherence * 0.45);
+      return {{
+        label,
+        sampleCount: points.length,
+        direction,
+        horizontalRange,
+        rangeRatio,
+        coherence: Math.min(1.0, coherence),
+        confidence,
+        score: horizontalRange * coherence * Math.max(0.0, Number(priority) || 0.0),
+      }};
+    }}
+
+    function estimateMovementPlaneSagittalAlignment(frames) {{
+      const scale = estimateAlignmentSkeletonScale(frames);
+      const candidates = [];
+      for (const [label, jointNames, rootRelative, priority] of movementPlaneAlignmentGroups) {{
+        const candidate = scoreMovementPlaneTrack(
+          movementPlaneGroupTrack(frames, jointNames, rootRelative),
+          label,
+          priority,
+          scale
+        );
+        if (candidate) {{
+          candidates.push(candidate);
+        }}
+      }}
+      for (const [jointName, rootRelative, priority] of movementPlaneAlignmentJoints) {{
+        const candidate = scoreMovementPlaneTrack(
+          movementPlaneJointTrack(frames, jointName, rootRelative),
+          jointName,
+          priority,
+          scale
+        );
+        if (candidate) {{
+          candidates.push(candidate);
+        }}
+      }}
+      candidates.sort((left, right) => right.score - left.score);
+      const best = candidates[0];
+      if (!best || best.confidence < movementPlaneAlignmentMinConfidence) {{
+        return null;
+      }}
+      const directionX = Number(best.direction[0]);
+      const directionZ = Number(best.direction[1]);
+      const directionLength = Math.hypot(directionX, directionZ);
+      if (!Number.isFinite(directionLength) || directionLength <= 1e-5) {{
+        return null;
+      }}
+      const basePayload = previewSagittalPlaneAlignmentBasePayload(
+        best.sampleCount,
+        "dominant_movement_plane",
+        "not_enough_movement_plane_evidence"
+      );
+      return sagittalAlignmentPayloadFromNormal(
+        frames,
+        basePayload,
+        directionZ / directionLength,
+        -directionX / directionLength,
+        best.coherence,
+        {{
+          movementPlaneConfidence: best.confidence,
+          movementPlaneTrack: best.label,
+          movementPlaneRangeRatio: best.rangeRatio,
+          movementPlaneHorizontalRange: best.horizontalRange,
+          movementPlaneDirection: [directionX, 0.0, directionZ],
+          fallbackNormalSource: "right_minus_left_bilateral_joints",
+        }}
+      );
     }}
 
     function estimatePreviewSagittalPlaneAlignment(currentFixedRoot = fixedRoot) {{
@@ -6048,12 +6715,7 @@ def _build_html(payload: dict[str, object]) -> str:
       let accumulatedZ = 0.0;
       let totalWeight = 0.0;
       let sampleCount = 0;
-      let minX = Number.POSITIVE_INFINITY;
-      let maxX = Number.NEGATIVE_INFINITY;
-      let minY = Number.POSITIVE_INFINITY;
-      let maxY = Number.NEGATIVE_INFINITY;
-      let minZ = Number.POSITIVE_INFINITY;
-      let maxZ = Number.NEGATIVE_INFINITY;
+      const alignmentFrames = [];
       const previousActiveFrame = activeRenderFrame;
       const previousSuppressPreviewSagittalPlaneAlignment = suppressPreviewSagittalPlaneAlignment;
       suppressPreviewSagittalPlaneAlignment = true;
@@ -6062,6 +6724,7 @@ def _build_html(payload: dict[str, object]) -> str:
           activeRenderFrame = frame;
           const frameTranslation = currentFixedRoot ? getFrameTranslation(frame, currentFixedRoot) : [0, 0, 0];
           const transformedPoints = new Map();
+          const transformedJoints = {{}};
           for (const jointName of payload.jointNames) {{
             const point = frame?.joints?.[jointName];
             if (!Array.isArray(point) || point.length < 3) {{
@@ -6069,12 +6732,7 @@ def _build_html(payload: dict[str, object]) -> str:
             }}
             const worldPoint = toBaseWorldPoint(point, frameTranslation, false, jointName, currentFixedRoot);
             transformedPoints.set(jointName, worldPoint);
-            minX = Math.min(minX, worldPoint.x);
-            maxX = Math.max(maxX, worldPoint.x);
-            minY = Math.min(minY, worldPoint.y);
-            maxY = Math.max(maxY, worldPoint.y);
-            minZ = Math.min(minZ, worldPoint.z);
-            maxZ = Math.max(maxZ, worldPoint.z);
+            transformedJoints[jointName] = [worldPoint.x, worldPoint.y, worldPoint.z];
           }}
           for (const [leftName, rightName, pairWeight] of sagittalPlaneAlignmentPairs) {{
             const left = transformedPoints.get(leftName);
@@ -6094,10 +6752,18 @@ def _build_html(payload: dict[str, object]) -> str:
             totalWeight += weight;
             sampleCount += 1;
           }}
+          if (Object.keys(transformedJoints).length > 0) {{
+            alignmentFrames.push({{ joints: transformedJoints }});
+          }}
         }}
       }} finally {{
         suppressPreviewSagittalPlaneAlignment = previousSuppressPreviewSagittalPlaneAlignment;
         activeRenderFrame = previousActiveFrame;
+      }}
+
+      const movementAlignment = estimateMovementPlaneSagittalAlignment(alignmentFrames);
+      if (movementAlignment) {{
+        return movementAlignment;
       }}
 
       const basePayload = previewSagittalPlaneAlignmentBasePayload(sampleCount);
@@ -6117,37 +6783,13 @@ def _build_html(payload: dict[str, object]) -> str:
         }};
       }}
 
-      const normalX = averagedX / averagedLength;
-      const normalZ = averagedZ / averagedLength;
-      const currentAngle = Math.atan2(normalZ, normalX);
-      const yawToPositiveX = normalizeSignedRadians(currentAngle);
-      const yawToNegativeX = normalizeSignedRadians(currentAngle - Math.PI);
-      const targetDirection = Math.abs(yawToPositiveX) <= Math.abs(yawToNegativeX) ? "+x" : "-x";
-      const yawRadians = targetDirection === "+x" ? yawToPositiveX : yawToNegativeX;
-      const yawDegrees = yawRadians * 180 / Math.PI;
-      const applied = Math.abs(yawDegrees) >= 0.5;
-      const pivot = Number.isFinite(minX) && Number.isFinite(maxX)
-        ? [
-          (minX + maxX) * 0.5,
-          (minY + maxY) * 0.5,
-          (minZ + maxZ) * 0.5,
-        ]
-        : [0.0, 0.0, 0.0];
-      return {{
-        ...basePayload,
-        applied,
-        status: applied ? "applied" : "already_aligned",
-        targetDirection,
-        yawRadians: applied ? yawRadians : 0.0,
-        yawDegrees: applied ? yawDegrees : 0.0,
-        horizontalNormalBefore: [normalX, 0.0, normalZ],
-        horizontalNormalAfter: applied
-          ? [targetDirection === "+x" ? 1.0 : -1.0, 0.0, 0.0]
-          : [normalX, 0.0, normalZ],
-        pivot,
+      return sagittalAlignmentPayloadFromNormal(
+        alignmentFrames,
+        basePayload,
+        averagedX,
+        averagedZ,
         coherence,
-        sampleCount,
-      }};
+      );
     }}
 
     function getPreviewSagittalPlaneAlignment(currentFixedRoot = fixedRoot) {{
@@ -6197,6 +6839,7 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!suppressPreviewSagittalPlaneAlignment) {{
         applyPreviewSagittalPlaneAlignment(transformedPoint, currentFixedRoot);
       }}
+      applyManualModelRotation(transformedPoint);
       if (applySceneOriginOffset && !suppressSceneOriginOffset) {{
         transformedPoint.sub(sceneOriginOffset);
       }}
@@ -6310,6 +6953,38 @@ def _build_html(payload: dict[str, object]) -> str:
       ["left_hand", "right_hand", 0.6],
     ];
 
+    const movementPlaneAlignmentMinRangeRatio = 0.035;
+    const movementPlaneAlignmentMinCoherence = 0.55;
+    const movementPlaneAlignmentMinConfidence = 0.58;
+    const movementPlaneAlignmentGroups = [
+      ["shoulder_center", ["left_shoulder", "right_shoulder", "left_collar", "right_collar", "neck", "spine3"], false, 1.35],
+      ["torso", ["pelvis", "spine1", "spine2", "spine3", "neck", "left_hip", "right_hip", "left_shoulder", "right_shoulder"], false, 1.25],
+      ["hip_center", ["pelvis", "left_hip", "right_hip"], false, 1.10],
+      ["upper_body_relative", ["left_shoulder", "right_shoulder", "left_collar", "right_collar", "neck", "spine3"], true, 1.05],
+      ["left_arm_relative", ["left_shoulder", "left_elbow", "left_wrist", "left_hand"], true, 0.95],
+      ["right_arm_relative", ["right_shoulder", "right_elbow", "right_wrist", "right_hand"], true, 0.95],
+      ["left_leg_relative", ["left_hip", "left_knee", "left_ankle", "left_foot"], true, 0.92],
+      ["right_leg_relative", ["right_hip", "right_knee", "right_ankle", "right_foot"], true, 0.92],
+      ["hand_center_relative", ["left_hand", "right_hand", "left_wrist", "right_wrist"], true, 0.86],
+      ["foot_center_relative", ["left_foot", "right_foot", "left_ankle", "right_ankle"], true, 0.80],
+    ];
+    const movementPlaneAlignmentJoints = [
+      ["left_shoulder", true, 0.90],
+      ["right_shoulder", true, 0.90],
+      ["left_elbow", true, 0.86],
+      ["right_elbow", true, 0.86],
+      ["left_wrist", true, 0.82],
+      ["right_wrist", true, 0.82],
+      ["left_hand", true, 0.82],
+      ["right_hand", true, 0.82],
+      ["left_knee", true, 0.84],
+      ["right_knee", true, 0.84],
+      ["left_ankle", true, 0.78],
+      ["right_ankle", true, 0.78],
+      ["left_foot", true, 0.76],
+      ["right_foot", true, 0.76],
+    ];
+
     function normalizeSignedRadians(angle) {{
       let normalized = Number(angle) || 0;
       while (normalized <= -Math.PI) {{
@@ -6327,6 +7002,11 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function estimateBakedSagittalPlaneAlignment(frames) {{
+      const movementAlignment = estimateMovementPlaneSagittalAlignment(frames);
+      if (movementAlignment) {{
+        return movementAlignment;
+      }}
+
       let accumulatedX = 0.0;
       let accumulatedZ = 0.0;
       let totalWeight = 0.0;
@@ -6370,32 +7050,13 @@ def _build_html(payload: dict[str, object]) -> str:
         }};
       }}
 
-      const normalX = averagedX / averagedLength;
-      const normalZ = averagedZ / averagedLength;
-      const currentAngle = Math.atan2(normalZ, normalX);
-      const yawToPositiveX = normalizeSignedRadians(currentAngle);
-      const yawToNegativeX = normalizeSignedRadians(currentAngle - Math.PI);
-      const targetDirection = Math.abs(yawToPositiveX) <= Math.abs(yawToNegativeX) ? "+x" : "-x";
-      const yawRadians = targetDirection === "+x" ? yawToPositiveX : yawToNegativeX;
-      const bounds = computeBakedWearBounds(frames);
-      const pivot = bounds.center ?? [0, 0, 0];
-      const yawDegrees = yawRadians * 180 / Math.PI;
-      const applied = Math.abs(yawDegrees) >= 0.5;
-      return {{
-        ...basePayload,
-        applied,
-        status: applied ? "applied" : "already_aligned",
-        targetDirection,
-        yawRadians: applied ? yawRadians : 0.0,
-        yawDegrees: applied ? yawDegrees : 0.0,
-        horizontalNormalBefore: [normalX, 0.0, normalZ],
-        horizontalNormalAfter: applied
-          ? [targetDirection === "+x" ? 1.0 : -1.0, 0.0, 0.0]
-          : [normalX, 0.0, normalZ],
-        pivot,
+      return sagittalAlignmentPayloadFromNormal(
+        frames,
+        basePayload,
+        averagedX,
+        averagedZ,
         coherence,
-        sampleCount,
-      }};
+      );
     }}
 
     function rotateBakedWearFramesAroundY(frames, alignment) {{
@@ -6452,6 +7113,7 @@ def _build_html(payload: dict[str, object]) -> str:
         lockPlantedFeet,
         lockPlantedHands,
         sceneInverted,
+        manualModelRotationDegrees: manualModelRotationPayload(),
         cameraYawDegrees: exportCameraYawDegrees,
         cameraPitchDegrees: exportCameraPitchDegrees,
         playbackSpeed: exportPlaybackSpeed,
@@ -6520,6 +7182,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockPlantedFeet: selectedPreviewSettings.lockPlantedFeet,
           lockPlantedHands: selectedPreviewSettings.lockPlantedHands,
           invertScene: selectedPreviewSettings.sceneInverted,
+          manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
           canonicalWorldUp: true,
           wearCoordinateNormalization: wearCoordinateNormalization.metadata,
           previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
@@ -6549,6 +7212,7 @@ def _build_html(payload: dict[str, object]) -> str:
         }},
         transforms: {{
           autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
+          manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
           rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
           sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
           previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
@@ -6626,6 +7290,28 @@ def _build_html(payload: dict[str, object]) -> str:
         sceneInverted = Boolean(options.sceneInverted);
         sceneInvertedInput.checked = sceneInverted;
       }}
+      const manualRotation = options.manualModelRotationDegrees;
+      if (manualRotation && typeof manualRotation === "object") {{
+        if (Number.isFinite(Number(manualRotation.x))) {{
+          manualModelRotationXDegrees = sanitizeManualModelRotationDegrees(manualRotation.x, -90, 90);
+        }}
+        if (Number.isFinite(Number(manualRotation.y))) {{
+          manualModelRotationYDegrees = sanitizeManualModelRotationDegrees(manualRotation.y, -180, 180);
+        }}
+        if (Number.isFinite(Number(manualRotation.z))) {{
+          manualModelRotationZDegrees = sanitizeManualModelRotationDegrees(manualRotation.z, -90, 90);
+        }}
+      }}
+      if (Number.isFinite(Number(options.modelRotationXDegrees))) {{
+        manualModelRotationXDegrees = sanitizeManualModelRotationDegrees(options.modelRotationXDegrees, -90, 90);
+      }}
+      if (Number.isFinite(Number(options.modelRotationYDegrees))) {{
+        manualModelRotationYDegrees = sanitizeManualModelRotationDegrees(options.modelRotationYDegrees, -180, 180);
+      }}
+      if (Number.isFinite(Number(options.modelRotationZDegrees))) {{
+        manualModelRotationZDegrees = sanitizeManualModelRotationDegrees(options.modelRotationZDegrees, -90, 90);
+      }}
+      syncManualModelRotationControls();
       if (Object.prototype.hasOwnProperty.call(options, "showBoundsHelper")) {{
         showBoundsHelper = Boolean(options.showBoundsHelper);
       }}
@@ -6723,6 +7409,36 @@ def _build_html(payload: dict[str, object]) -> str:
         description: "Flips the rendered scene orientation.",
         useWhen: "Use only when the skeleton is clearly facing backward after alignment.",
         risk: "Can make an otherwise correct view backwards.",
+      }},
+      {{
+        id: "modelRotationXDegrees",
+        label: "Model pitch X degrees",
+        type: "number",
+        defaultValue: 0.0,
+        range: [-90.0, 90.0],
+        description: "Rotates the model around the world X axis after automatic alignment.",
+        useWhen: "Use when the body/floor relationship is tilted forward or backward.",
+        risk: "Can make a correct floor contact look wrong if overused.",
+      }},
+      {{
+        id: "modelRotationYDegrees",
+        label: "Model yaw Y degrees",
+        type: "number",
+        defaultValue: 0.0,
+        range: [-180.0, 180.0],
+        description: "Rotates the model around the world Y axis after automatic alignment.",
+        useWhen: "Use when the body faces the wrong grid direction after alignment.",
+        risk: "Can fight the automatic sagittal-plane grid alignment if overused.",
+      }},
+      {{
+        id: "modelRotationZDegrees",
+        label: "Model roll Z degrees",
+        type: "number",
+        defaultValue: 0.0,
+        range: [-90.0, 90.0],
+        description: "Rotates the model around the world Z axis after automatic alignment.",
+        useWhen: "Use when the body/floor relationship is tilted sideways.",
+        risk: "Can create visible leaning if overused.",
       }},
       {{
         id: "cameraYawDegrees",
@@ -7905,6 +8621,18 @@ def _build_html(payload: dict[str, object]) -> str:
     }});
     sceneInvertedInput.addEventListener("change", () => {{
       sceneInverted = sceneInvertedInput.checked;
+      activeVerticalMovementAnchor = computeActiveVerticalMovementAnchor(playbackState.boundsFrames);
+      invalidateSceneBoundsCache();
+      applySceneReframe();
+    }});
+    modelRotationXInput.addEventListener("input", updateManualModelRotationFromControls);
+    modelRotationYInput.addEventListener("input", updateManualModelRotationFromControls);
+    modelRotationZInput.addEventListener("input", updateManualModelRotationFromControls);
+    resetModelRotationButton.addEventListener("click", () => {{
+      manualModelRotationXDegrees = 0.0;
+      manualModelRotationYDegrees = 0.0;
+      manualModelRotationZDegrees = 0.0;
+      syncManualModelRotationControls();
       activeVerticalMovementAnchor = computeActiveVerticalMovementAnchor(playbackState.boundsFrames);
       invalidateSceneBoundsCache();
       applySceneReframe();
