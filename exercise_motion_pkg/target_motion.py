@@ -121,11 +121,102 @@ def observable_motion_spec_for_contract(contract: dict[str, Any] | None) -> dict
     return normalize_observable_motion_spec(contract.get("observableMotionSpec"))
 
 
+def contract_plain_text_for_return_detection(contract: dict[str, Any] | None) -> str:
+    if not isinstance(contract, dict):
+        return ""
+
+    parts: list[str] = []
+
+    def add_text(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                parts.append(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                add_text(item)
+            return
+        if isinstance(value, dict):
+            for nested_key in (
+                "advisoryText",
+                "guidance",
+                "text",
+                "contract",
+                "plainText",
+                "Source",
+                "Complete",
+                "Reject",
+                "Notes",
+                "source",
+                "complete",
+                "reject",
+                "notes",
+                "requiredPhases",
+                "reviewNotes",
+            ):
+                add_text(value.get(nested_key))
+
+    for key in (
+        "advisoryText",
+        "guidance",
+        "text",
+        "contract",
+        "plainText",
+        "Source",
+        "Complete",
+        "Reject",
+        "Notes",
+        "source",
+        "complete",
+        "reject",
+        "notes",
+        "requiredPhases",
+        "reviewNotes",
+    ):
+        add_text(contract.get(key))
+
+    return "\n".join(parts)
+
+
+def plain_text_contract_requires_return(contract: dict[str, Any] | None) -> bool:
+    text = contract_plain_text_for_return_detection(contract)
+    if not text:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    if not normalized:
+        return False
+    return any(
+        re.search(pattern, normalized) is not None
+        for pattern in (
+            r"\breturn(?:s|ed|ing)?(?:\s+back)?\s+to\s+(?:the\s+)?(?:start|starting|initial|original)\b",
+            r"\bback\s+to\s+(?:the\s+)?(?:start|starting|initial|original)\b",
+            r"\bfinish(?:es|ed|ing)?\s+(?:back\s+)?(?:at|in)\s+(?:the\s+)?(?:start|starting|initial|original)\b",
+            r"\bfull\s+cycle\b",
+            r"\bcomplete\s+cycle\b",
+            r"\bforward\s+and\s+backward\b",
+            r"\bbackward\s+and\s+forward\b",
+            r"\bback\s+and\s+forth\b",
+            r"\bforth\s+and\s+back\b",
+            r"\baway\s+from\s+(?:the\s+)?body\s+and\s+(?:back|toward)\b",
+            r"\btoward\s+(?:the\s+)?body\s+and\s+away\b",
+            r"\bone\s+way\s+(?:partial|fragment|movement|only)\b",
+            r"\bonly\s+(?:the\s+)?(?:forward|backward|return|lowering|raising|descent|ascent|pull|push|roll)\b",
+        )
+    )
+
+
 def observable_motion_spec_requires_return(contract: dict[str, Any] | None) -> bool:
     spec = observable_motion_spec_for_contract(contract)
-    if spec is None:
-        return False
-    return bool(spec.get("requiresReturnToStart")) or bool(spec.get("oneWayPartialIsInvalid"))
+    if spec is not None and (
+        bool(spec.get("requiresReturnToStart"))
+        or bool(spec.get("oneWayPartialIsInvalid"))
+    ):
+        return True
+    return plain_text_contract_requires_return(contract)
+
 
 
 def observable_motion_spec_mentions_lower_body(contract: dict[str, Any] | None) -> bool:
