@@ -110,10 +110,12 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                 review_video_path = selected_dir / "review.webm"
                 input_video_path = selected_dir / "input.mp4"
                 preview_html_path = selected_dir / "preview.html"
+                source_preview_html_path = selected_dir / "motion_preview.html"
                 skeleton_path.write_text("{}", encoding="utf-8")
                 review_video_path.write_bytes(b"webm")
                 input_video_path.write_bytes(b"mp4")
                 preview_html_path.write_text("<html></html>", encoding="utf-8")
+                source_preview_html_path.write_text("<html>interactive</html>", encoding="utf-8")
                 selected = {
                     "exerciseName": exercise["exerciseName"],
                     "candidateTitle": exercise["candidates"][0]["title"],
@@ -121,6 +123,15 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     "selectedReviewVideoPath": str(review_video_path),
                     "selectedInputVideoPath": str(input_video_path),
                     "selectedPreviewHtmlPath": str(preview_html_path),
+                    "sourcePreviewHtmlPath": str(source_preview_html_path),
+                    "selectedSectionStartSeconds": 1.25,
+                    "selectedSectionEndSeconds": 4.75,
+                    "settingsOptions": {
+                        "autoWorldAlignment": True,
+                        "sceneInverted": True,
+                        "lockPlantedFeet": True,
+                        "lockPlantedHands": False,
+                    },
                     "wearSkeletonSettingsBaked": True,
                     "selectionScore": 0.9,
                 }
@@ -241,13 +252,13 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
     assert summary["speedProfile"] == "fast"
     assert summary["discoveryWorkers"] == 1
     assert summary["bakeWorkers"] == 1
-    assert summary["parallelism"]["llamaCppParallel"] == 12
+    assert summary["parallelism"]["llamaCppParallel"] == 4
     assert summary["parallelism"]["activeDiscoveryWorkerBudget"] == 1
-    assert summary["parallelism"]["discoveryVisionLlmWorkers"] == 12
+    assert summary["parallelism"]["discoveryVisionLlmWorkers"] == 4
     assert summary["parallelism"]["requestedVisionLlmWorkers"] is None
-    assert summary["parallelism"]["reviewLlmWorkers"] == 12
-    assert summary["parallelism"]["segmentClassificationWorkers"] == 12
-    assert summary["parallelism"]["visionDownloadWorkers"] == 16
+    assert summary["parallelism"]["reviewLlmWorkers"] == 4
+    assert summary["parallelism"]["segmentClassificationWorkers"] == 4
+    assert summary["parallelism"]["visionDownloadWorkers"] == 8
     assert summary["parallelism"]["gpuDiscoveryStages"] == []
     assert summary["parallelism"]["gpuDiscoveryBakeOverlap"] == "allow"
     assert summary["parallelism"]["defaultDiscoveryWorkerCap"] == 4
@@ -275,8 +286,19 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
         selected_preview_html = Path(selected["selectedPreviewHtmlPath"])
         selected_preview_video = Path(selected["selectedPreviewVideoPath"])
         selected_source_video = Path(selected["selectedSourceVideoPath"])
+        selected_interactive_preview_html = Path(selected["selectedInteractivePreviewHtmlPath"])
         selected_skeleton = Path(selected["selectedWearSkeletonPath"])
         html = selected_preview_html.read_text(encoding="utf-8")
+        assert selected_interactive_preview_html.exists()
+        assert selected_interactive_preview_html.read_text(encoding="utf-8") == "<html>interactive</html>"
+        assert selected_interactive_preview_html.name in html
+        assert "startSeconds=1.250000" in html
+        assert "endSeconds=4.750000" in html
+        assert "options=" in html
+        assert "%22sceneInverted%22%3Atrue" in html
+        assert "%22lockPlantedFeet%22%3Atrue" in html
+        assert "%22cameraYawDegrees%22%3A45" in html
+        assert "%22cameraPitchDegrees%22%3A30" in html
         assert selected_preview_video.name in html
         assert selected_source_video.name in html
         assert selected_skeleton.name in html
