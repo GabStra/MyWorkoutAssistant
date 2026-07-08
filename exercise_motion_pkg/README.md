@@ -49,7 +49,13 @@ Repo defaults:
 
 ## Repo Runner
 
-Use the repo-level PowerShell entrypoint for the full flow:
+For the current app-ready movement-generation commands, including single-exercise YouTube search/ranking and workout-plan generation, use the runbook:
+
+```text
+docs/exercise_motion_youtube_e2e.md
+```
+
+Use `run_exercise_motion_generation.ps1` only when you already have a specific local video or exact YouTube URL and want to run the lower-level WHAM/cleanup/preview pipeline without YouTube candidate search and ranking:
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_generation.ps1 `

@@ -6,7 +6,7 @@ The current default path is optimized for source quality first:
 
 1. Search YouTube for the requested exercise name.
 2. Run the semantic gate to discard unrelated candidates.
-3. Run the YOLO pose prefilter on candidate timelines to find single-person, in-frame, stable-camera chunks. The single-exercise script enables this by default; the workout-plan script uses it when `-PosePrefilter` is passed.
+3. Run the YOLO pose prefilter on candidate timelines to find single-person, in-frame, stable-camera chunks. The single-exercise and workout-plan scripts enable this by default; pass `-SkipPosePrefilter` only for debugging.
 4. Review the remaining source chunks with the VLM.
 5. Run pre-WHAM source validation and source segment preparation.
 6. Run WHAM, deterministic cleanup, adaptive preview settings, movement cut selection, and final materialization.
@@ -25,20 +25,40 @@ The current default path is optimized for source quality first:
 
 Use a long shell/tool timeout when running these. A good source can finish much faster, but difficult searches or first-time cache misses can take 10-25 minutes.
 
-## Single Exercise
+## Which Script To Use
+
+Use these repo-level PowerShell entrypoints from `C:\Users\gabri\Documents\MyWorkoutAssistant`:
+
+- Single exercise from an exercise name, with YouTube search, source validation, WHAM, ranking, final validation, selected preview, and selected Wear skeleton:
+  `scripts/run_exercise_motion_youtube_bake_and_rank.ps1`
+- Single exercise from an exact local video or exact YouTube URL, without YouTube search/ranking:
+  `scripts/run_exercise_motion_generation.ps1`
+- Workout plan import, one run across many plan exercises:
+  `scripts/run_exercise_motion_workout_plan.ps1`
+
+For generated app-ready movements, prefer the first and third scripts. The direct generation script is mainly for a manually chosen source clip and writes a cleaned motion preview rather than running the full candidate-selection flow.
+
+## Single Exercise By Name
+
+This is the normal single-exercise movement generator. It searches YouTube using the exercise name, validates source chunks before WHAM, bakes/ranks generated movement, and writes the selected preview and Wear skeleton.
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_youtube_bake_and_rank.ps1 `
-  -ExerciseName "barbell bench press" `
+  -ExerciseName "weighted ab wheel" `
   -WorkspaceRoot "build/exercise_motion/manual-runs" `
-  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(8).txt"
+  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt" `
+  -SingleExerciseNameQuery `
+  -MaxSelectedResults 1 `
+  -MaxSourceWindowAttempts 3 `
+  -LlamaCppParallel 4 `
+  -ArtifactRetention full
 ```
 
 Useful optional flags:
 
 ```powershell
-# Keep every raw/generated intermediate for deep debugging.
--ArtifactRetention full
+# Keep only compact debug artifacts instead of every generated intermediate.
+-ArtifactRetention debug
 
 # Enable experimental SpinePose fusion.
 -EnableSpinePose
@@ -46,22 +66,76 @@ Useful optional flags:
 # Keep up to N accepted final motions so you can pick manually.
 -MaxSelectedResults 3
 
+# Disable the default pose prefilter only when debugging candidate filtering.
+-SkipPosePrefilter
+
 # Skip YouTube cookies only when public downloads are working.
 # Omit -YouTubeCookiesPath
 ```
 
+The single-exercise output folder is:
+
+```text
+<WorkspaceRoot>/<exercise-slug>-e2e/
+```
+
+Open this first:
+
+```text
+<WorkspaceRoot>/<exercise-slug>-e2e/bake-final/selected_section_preview.html
+```
+
+That page embeds the exact interactive preview used for the selected result and links the exact selected source input video. From the interactive preview, change preview settings and download/bake a different Wear skeleton if needed.
+
+## Single Exercise From A Known Source
+
+Use this only when you already know the exact source video or exact YouTube URL. This path does not run the YouTube candidate search/ranking flow.
+
+Local video:
+
+```powershell
+pwsh ./scripts/run_exercise_motion_generation.ps1 `
+  -ExerciseName "barbell back squat" `
+  -ExerciseSlug "barbell-back-squat-manual" `
+  -VideoPath "C:\path\to\selected_source.mp4" `
+  -Workspace "build/exercise_motion/manual-source-runs" `
+  -UseWhamDocker `
+  -SegmentStartSeconds 2.0 `
+  -SegmentEndSeconds 7.0
+```
+
+Exact YouTube URL:
+
+```powershell
+pwsh ./scripts/run_exercise_motion_generation.ps1 `
+  -ExerciseName "barbell back squat" `
+  -ExerciseSlug "barbell-back-squat-manual" `
+  -YouTubeUrl "https://www.youtube.com/watch?v=VIDEO_ID" `
+  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt" `
+  -Workspace "build/exercise_motion/manual-source-runs" `
+  -UseWhamDocker `
+  -SegmentStartSeconds 2.0 `
+  -SegmentEndSeconds 7.0
+```
+
+If you do not pass `-SegmentStartSeconds` and `-SegmentEndSeconds`, this script runs segment detection unless you pass `-UseSourceAsIs` or `-SkipSegmentDetection`.
+
 ## Workout Plan
 
-Use this when you want to generate one selected motion per exercise in a workout plan. If you have an equipment export, pass it so exercise searches are prefixed with the equipment name where available.
+Use this when you want to generate selected motions for every exercise in a workout plan. If you have an equipment export, pass it so exercise searches can use the equipment-qualified exercise name where available.
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_workout_plan.ps1 `
-  -WorkoutPlanJson "C:\path\to\workout_plan.json" `
-  -EquipmentJson "C:\path\to\equipment_export.json" `
-  -WorkspaceRoot "build/exercise_motion/workout-plan" `
-  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(8).txt" `
-  -PosePrefilter `
-  -MaxSelectedResults 3
+  -WorkoutPlanJson "C:\Users\gabri\Documents\MyWorkoutAssistant\workouts\workout_plan_2026-05-15_174946.json" `
+  -EquipmentJson "C:\Users\gabri\Downloads\equipment_20260514_192507.json" `
+  -WorkspaceRoot "build/exercise_motion/workout-plan/workout_plan_2026-05-15_174946" `
+  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt" `
+  -SpeedProfile fast `
+  -MaxSelectedResults 1 `
+  -MaxSourceWindowAttempts 3 `
+  -LlamaCppParallel 4 `
+  -ProgressIntervalSeconds 300 `
+  -ArtifactRetention full
 ```
 
 The clearer alias script forwards to the same implementation:
@@ -71,8 +145,20 @@ pwsh ./scripts/run_workout_plan_motion_bake_and_rank.ps1 `
   -WorkoutPlanJson "C:\path\to\workout_plan.json" `
   -EquipmentJson "C:\path\to\equipment_export.json" `
   -WorkspaceRoot "build/exercise_motion/workout-plan" `
-  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(8).txt" `
-  -PosePrefilter
+  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt"
+```
+
+To process only one exercise from the plan:
+
+```powershell
+pwsh ./scripts/run_exercise_motion_workout_plan.ps1 `
+  -WorkoutPlanJson "C:\path\to\workout_plan.json" `
+  -EquipmentJson "C:\path\to\equipment_export.json" `
+  -WorkspaceRoot "build/exercise_motion/workout-plan/debug-one" `
+  -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt" `
+  -OnlyExerciseName "Weighted Ab Wheel" `
+  -MaxSelectedResults 1 `
+  -ProgressIntervalSeconds 60
 ```
 
 Completed workout-plan exercises are compacted into:
@@ -81,7 +167,15 @@ Completed workout-plan exercises are compacted into:
 <WorkspaceRoot>/<exercise-slug>/selected/
 ```
 
-That folder keeps the selected Wear skeleton JSON, selected review WebM, selected input MP4, copied `selection_manifest.json`, and debug source-selection files.
+That folder keeps the selected Wear skeleton JSON, selected review WebM, selected input MP4, selected preview HTML, copied interactive preview HTML, copied `selection_manifest.json`, and debug source-selection files.
+
+Open this first for each completed exercise:
+
+```text
+<WorkspaceRoot>/<exercise-slug>/selected/<exercise_slug>_selected_preview.html
+```
+
+That selected preview page links the exact selected input MP4 and embeds the same interactive preview page as the single-exercise output. Use it when you want to tweak preview settings and download/bake a new skeleton from the browser.
 
 When `-MaxSelectedResults` is greater than 1, option 1 keeps the normal filenames and additional options are copied as:
 
@@ -89,6 +183,8 @@ When `-MaxSelectedResults` is greater than 1, option 1 keeps the normal filename
 <exercise_slug>_option_02_wear_skeleton.json
 <exercise_slug>_option_02_selected_preview.webm
 <exercise_slug>_option_02_selected_input.mp4
+<exercise_slug>_option_02_selected_preview.html
+<exercise_slug>_option_02_interactive_preview.html
 ```
 
 ## Output To Inspect
@@ -119,9 +215,13 @@ workout_motion_generation_summary.json
 <exercise-slug>/selected/selection_manifest.json
 <exercise-slug>/selected/<exercise_slug>_wear_skeleton.json
 <exercise-slug>/selected/<exercise_slug>_selected_preview.webm
+<exercise-slug>/selected/<exercise_slug>_selected_preview.html
+<exercise-slug>/selected/<exercise_slug>_interactive_preview.html
 <exercise-slug>/selected/<exercise_slug>_selected_input.mp4
 <exercise-slug>/selected/<exercise_slug>_option_02_wear_skeleton.json
 <exercise-slug>/selected/<exercise_slug>_option_02_selected_preview.webm
+<exercise-slug>/selected/<exercise_slug>_option_02_selected_preview.html
+<exercise-slug>/selected/<exercise_slug>_option_02_interactive_preview.html
 <exercise-slug>/selected/<exercise_slug>_option_02_selected_input.mp4
 <exercise-slug>/selected/debug/youtube_candidates.full.json
 <exercise-slug>/selected/debug/candidate_decisions.jsonl
@@ -129,9 +229,9 @@ workout_motion_generation_summary.json
 
 ## Artifact Retention
 
-The default retention mode is `debug`.
+The PowerShell E2E wrappers default to `-ArtifactRetention full` so manual review and reruns have all generated evidence available. Use `-ArtifactRetention debug` when you want smaller output folders.
 
-It keeps what is normally useful to inspect a result:
+The compact `debug` mode keeps what is normally useful to inspect a result:
 
 - `selection_manifest.json`
 - selected input video

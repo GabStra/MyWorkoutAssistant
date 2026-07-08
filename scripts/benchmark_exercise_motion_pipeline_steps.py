@@ -541,8 +541,6 @@ def window_for_ranked_candidate(ranked_candidate: RankedCandidate, source_video_
 def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
     request = build_bake_request_for_pre_wham(args, run_dir)
     candidates = load_ranked_candidates_for_pre_wham(args, request)
-    if args.source_scorecard_batch_size > 0:
-        bake_module.SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE = args.source_scorecard_batch_size
     results_path = run_dir / "pre_wham_source_results.jsonl"
     started = time.perf_counter()
     vision_settings = replace(
@@ -635,7 +633,6 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
                         "sourceCutProgressiveSelection": payload.get("sourceCutProgressiveSelection"),
                         "sourceCutScorecardRowCount": len(rows_payload) if isinstance(rows_payload, list) else 0,
                         "sourceCutScorecardRows": rows_payload,
-                        "sourceCutStartBoundaryAudits": payload.get("sourceCutStartBoundaryAudits"),
                         "sourceCutScorecardContractPresent": payload.get("sourceCutScorecardContractPresent"),
                         "sourceCutScorecardThresholds": payload.get("sourceCutScorecardThresholds"),
                         "sourceCutMotionCoverageDiagnosticFailedCount": payload.get(
@@ -667,7 +664,7 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
         "candidateWindowCount": len(candidates),
         "passCount": pass_count,
         "contractMode": args.contract_mode,
-        "sourceScorecardBatchSize": bake_module.SOURCE_CUT_CANDIDATE_MAX_VLM_BATCH_SIZE,
+        "sourceScorecardRequestPolicy": "one_candidate_per_request",
         "reviewLlmWorkers": args.review_llm_workers,
         "elapsedSeconds": round_elapsed(time.perf_counter() - started),
         "resultsJsonl": str(results_path),
@@ -710,7 +707,6 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--review-llm-workers", type=int, default=4)
     parser.add_argument("--pre-wham-frame-count", type=int)
     parser.add_argument("--source-window-attempts", type=int, default=3)
-    parser.add_argument("--source-scorecard-batch-size", type=int, default=0)
     parser.add_argument("--include-fallback-candidates", action="store_true")
     parser.add_argument("--contract-mode", choices=("none", "candidate", "generate"), default="candidate")
     parser.add_argument("--video-path", type=Path)

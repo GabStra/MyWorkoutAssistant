@@ -604,6 +604,34 @@ function ConvertTo-HtmlAttribute {
     return [System.Net.WebUtility]::HtmlEncode($Value)
 }
 
+function ConvertTo-UrlComponent {
+    param([string]$Value)
+    if ($null -eq $Value) {
+        return ""
+    }
+    return [System.Uri]::EscapeDataString($Value)
+}
+
+function ConvertTo-SelectedPreviewOptionsJson {
+    param([object]$Options)
+
+    $previewOptions = [ordered]@{}
+    if ($Options -is [System.Collections.IDictionary]) {
+        foreach ($key in $Options.Keys) {
+            $previewOptions[[string]$key] = $Options[$key]
+        }
+    } elseif ($null -ne $Options) {
+        foreach ($property in @($Options.PSObject.Properties)) {
+            if ($property.MemberType -in @("NoteProperty", "Property", "AliasProperty")) {
+                $previewOptions[$property.Name] = $property.Value
+            }
+        }
+    }
+    $previewOptions["cameraYawDegrees"] = 45.0
+    $previewOptions["cameraPitchDegrees"] = 30.0
+    return ($previewOptions | ConvertTo-Json -Depth 32 -Compress)
+}
+
 function Write-SelectedPreviewHtml {
     param(
         [string]$DestinationPath,
@@ -611,7 +639,11 @@ function Write-SelectedPreviewHtml {
         [int]$OptionIndex,
         [string]$PreviewVideoPath,
         [string]$InputVideoPath,
-        [string]$WearSkeletonPath
+        [string]$WearSkeletonPath,
+        [string]$InteractivePreviewPath,
+        [double]$StartSeconds = 0.0,
+        [double]$EndSeconds = 0.0,
+        [string]$SettingsOptionsJson = "{}"
     )
 
     if ([string]::IsNullOrWhiteSpace($DestinationPath)) {
@@ -625,6 +657,35 @@ function Write-SelectedPreviewHtml {
     $previewFile = if (-not [string]::IsNullOrWhiteSpace($PreviewVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($PreviewVideoPath)) } else { "" }
     $inputFile = if (-not [string]::IsNullOrWhiteSpace($InputVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($InputVideoPath)) } else { "" }
     $skeletonFile = if (-not [string]::IsNullOrWhiteSpace($WearSkeletonPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($WearSkeletonPath)) } else { "" }
+    $interactiveFile = if (-not [string]::IsNullOrWhiteSpace($InteractivePreviewPath)) { [System.IO.Path]::GetFileName($InteractivePreviewPath) } else { "" }
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    $optionsJson = if (-not [string]::IsNullOrWhiteSpace($SettingsOptionsJson)) { $SettingsOptionsJson } else { "{}" }
+    $interactiveHref = ""
+    if (-not [string]::IsNullOrWhiteSpace($interactiveFile)) {
+        $queryParts = @(
+            "startSeconds=$([System.Uri]::EscapeDataString(([double]$StartSeconds).ToString("0.000000", $culture)))",
+            "endSeconds=$([System.Uri]::EscapeDataString(([double]$EndSeconds).ToString("0.000000", $culture)))",
+            "options=$(ConvertTo-UrlComponent $optionsJson)"
+        )
+        $interactiveHref = "{0}?{1}" -f (ConvertTo-HtmlAttribute $interactiveFile), ($queryParts -join "&amp;")
+    }
+
+    $interactiveSection = if ($interactiveHref) {
+@"
+        <section>
+            <h2>Interactive selected preview</h2>
+            <iframe src="$interactiveHref" title="$title"></iframe>
+            <p><a href="$interactiveHref">Open interactive preview</a></p>
+        </section>
+"@
+    } else {
+@"
+        <section>
+            <h2>Interactive selected preview</h2>
+            <p>No interactive selected preview was copied.</p>
+        </section>
+"@
+    }
 
     $previewSection = if ($previewFile) {
 @"
@@ -683,12 +744,14 @@ function Write-SelectedPreviewHtml {
         h2 { font-size: 16px; }
         section { background: #fff; border: 1px solid #d9d9d9; border-radius: 8px; padding: 16px; }
         video { width: 100%; max-height: 70vh; background: #000; display: block; }
+        iframe { width: 100%; height: min(72vh, 760px); min-height: 520px; background: #000; border: 1px solid #d9d9d9; display: block; }
         a { color: #0a5bd3; }
     </style>
 </head>
 <body>
     <main>
         <h1>$title</h1>
+$interactiveSection
 $previewSection
 $inputSection
 $skeletonSection
@@ -841,6 +904,7 @@ function Get-ExistingSelectedSummary {
     $previewFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.webm" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $inputFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_input.mp4" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $previewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $interactivePreviewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_interactive_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $debugDir = Join-Path $selectedOutputDir "debug"
     $candidateDebugPath = Join-Path $debugDir "youtube_candidates.full.json"
     $candidateDecisionsPath = Join-Path $debugDir "candidate_decisions.jsonl"
@@ -869,6 +933,7 @@ function Get-ExistingSelectedSummary {
             selectedWearSkeletonPath = $wearSkeletonFiles[$index].FullName
             selectedPreviewVideoPath = if ($index -lt $previewFiles.Count) { $previewFiles[$index].FullName } else { $null }
             selectedPreviewHtmlPath = if ($index -lt $previewHtmlFiles.Count) { $previewHtmlFiles[$index].FullName } else { $null }
+            selectedInteractivePreviewHtmlPath = if ($index -lt $interactivePreviewHtmlFiles.Count) { $interactivePreviewHtmlFiles[$index].FullName } else { $null }
             selectedSourceVideoPath = if ($index -lt $inputFiles.Count) { $inputFiles[$index].FullName } else { $null }
             selectedSourceVideoOriginalPath = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestOption.selectedInputVideoPath } else { $null }
             selectedSourceVideoMissing = $false
@@ -899,6 +964,7 @@ function Get-ExistingSelectedSummary {
         logPath = $WorkItem.logPath
         selectedWearSkeletonPath = $wearSkeletonFiles[0].FullName
         selectedPreviewVideoPath = if ($previewFiles.Count -gt 0) { $previewFiles[0].FullName } else { $null }
+        selectedInteractivePreviewHtmlPath = if ($interactivePreviewHtmlFiles.Count -gt 0) { $interactivePreviewHtmlFiles[0].FullName } else { $null }
         selectedSourceVideoPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { $null }
         selectedSourceVideoOriginalPath = if ($manifestSelected -and $manifestSelected.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestSelected.selectedInputVideoPath } else { $null }
         selectedSourceVideoMissing = $false
@@ -1406,6 +1472,7 @@ function Complete-BakeJob {
     $selectedOutputDir = Join-Path $workItem.exerciseWorkspace "selected"
     $selectedWearSkeletonPath = $null
     $selectedPreviewVideoPath = $null
+    $selectedInteractivePreviewHtmlPath = $null
     $selectedInputVideoPath = $null
     $selectedInputVideoSourcePath = $null
     $selectedInputVideoMissing = $false
@@ -1462,6 +1529,30 @@ function Complete-BakeJob {
                     Write-Warning "Selected input video option $optionIndex was not copied for '$($workItem.exerciseName)': $optionInputVideoSourcePath"
                 }
             }
+            $optionInteractivePreviewSourcePath = Get-ObjectProperty -Object $option -Name "sourcePreviewHtmlPath"
+            $optionInteractivePreviewPath = Copy-SelectedFile `
+                -SourcePath $optionInteractivePreviewSourcePath `
+                -DestinationDirectory $selectedOutputDir `
+                -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_interactive_preview.html"
+            $optionStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "selectedSectionStartSeconds")
+            if ($null -eq $optionStartSeconds) {
+                $optionStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "loopStartSeconds")
+            }
+            if ($null -eq $optionStartSeconds) {
+                $optionStartSeconds = 0.0
+            }
+            $optionEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "selectedSectionEndSeconds")
+            if ($null -eq $optionEndSeconds) {
+                $optionEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "loopEndSeconds")
+            }
+            if ($null -eq $optionEndSeconds) {
+                $optionEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "durationSec")
+            }
+            if ($null -eq $optionEndSeconds) {
+                $optionEndSeconds = 0.0
+            }
+            $optionSettingsOptions = Get-ObjectProperty -Object $option -Name "settingsOptions"
+            $optionSettingsOptionsJson = ConvertTo-SelectedPreviewOptionsJson -Options $optionSettingsOptions
             $optionPreviewHtmlPath = Join-Path $selectedOutputDir "$($selectedFilePrefix)$($optionSuffix)_selected_preview.html"
             $optionPreviewHtmlPath = Write-SelectedPreviewHtml `
                 -DestinationPath $optionPreviewHtmlPath `
@@ -1469,13 +1560,18 @@ function Complete-BakeJob {
                 -OptionIndex $optionIndex `
                 -PreviewVideoPath $optionPreviewVideoPath `
                 -InputVideoPath $optionInputVideoPath `
-                -WearSkeletonPath $optionWearSkeletonPath
+                -WearSkeletonPath $optionWearSkeletonPath `
+                -InteractivePreviewPath $optionInteractivePreviewPath `
+                -StartSeconds $optionStartSeconds `
+                -EndSeconds $optionEndSeconds `
+                -SettingsOptionsJson $optionSettingsOptionsJson
             $selectedResultOutputs += [ordered]@{
                 optionIndex = $optionIndex
                 label = if ($option.PSObject.Properties.Name -contains "manualSelectionLabel") { $option.manualSelectionLabel } else { "Option $optionIndex" }
                 selectedWearSkeletonPath = $optionWearSkeletonPath
                 selectedPreviewVideoPath = $optionPreviewVideoPath
                 selectedPreviewHtmlPath = $optionPreviewHtmlPath
+                selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 selectedSourceVideoPath = $optionInputVideoPath
                 selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
                 selectedSourceVideoMissing = $optionInputVideoMissing
@@ -1485,6 +1581,7 @@ function Complete-BakeJob {
             if ($optionIndex -eq 1) {
                 $selectedWearSkeletonPath = $optionWearSkeletonPath
                 $selectedPreviewVideoPath = $optionPreviewVideoPath
+                $selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 $selectedInputVideoPath = $optionInputVideoPath
                 $selectedInputVideoSourcePath = $optionInputVideoSourcePath
                 $selectedInputVideoMissing = $optionInputVideoMissing
@@ -1527,6 +1624,7 @@ function Complete-BakeJob {
         logPath = $workItem.logPath
         selectedWearSkeletonPath = $selectedWearSkeletonPath
         selectedPreviewVideoPath = $selectedPreviewVideoPath
+        selectedInteractivePreviewHtmlPath = $selectedInteractivePreviewHtmlPath
         selectedSourceVideoPath = $selectedInputVideoPath
         selectedSourceVideoOriginalPath = $selectedInputVideoSourcePath
         selectedSourceVideoMissing = $selectedInputVideoMissing
