@@ -605,7 +605,9 @@ def collect_youtube_candidate_exclusion_keys_from_payload(payload: Any) -> set[s
                 return
             if identity_keys:
                 return
-            for value in node.values():
+            for key, value in node.items():
+                if key == "debugCandidates":
+                    continue
                 visit(value)
             return
         if isinstance(node, list):
@@ -814,6 +816,7 @@ class PreparedVisionReview:
     preview_download_elapsed_seconds: float = 0.0
     motion_scan_elapsed_seconds: float = 0.0
     window_planning_elapsed_seconds: float = 0.0
+    artifact_dir: Path | None = None
     rendered_chunk_cache: dict[int, tuple[list[Path], float]] = field(default_factory=dict)
 
     def close(self) -> None:
@@ -829,7 +832,7 @@ def write_prepared_vision_critical_vlm_error(
     critical = add_vlm_context(exc, **(context or {}))
     if critical is None:
         return None
-    output_dir = Path(prepared.temp_dir.name)
+    output_dir = prepared.artifact_dir or Path(prepared.temp_dir.name)
     report_path = output_dir / "vlm_critical_error.json"
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -850,6 +853,21 @@ def write_prepared_vision_critical_vlm_error(
     except Exception as report_exc:
         critical.add_details(criticalErrorReportWriteError=str(report_exc))
         return None
+
+
+def prepared_vision_review_artifact_dir(
+    exercise: ExerciseEntry,
+    candidate: YouTubeCandidate,
+    settings: YouTubeRankingSettings,
+) -> Path | None:
+    if settings.youtube_preview_cache_dir is None:
+        return None
+    return (
+        settings.youtube_preview_cache_dir.expanduser().resolve()
+        / "vision-review"
+        / slugify(exercise.name)
+        / youtube_preview_cache_stem(candidate.url)
+    )
 
 
 SearchFn = Callable[[str, int], list[YouTubeCandidate]]
@@ -946,41 +964,6 @@ PENALTY_KEYWORDS = (
     "sorry for the camera",
 )
 
-SEMANTIC_GATE_OTHER_EXERCISE_TERMS = (
-    "squat",
-    "deadlift",
-    "power clean",
-    "clean and jerk",
-    "snatch",
-    "step up",
-    "tricep extension",
-    "biceps curl",
-    "curl",
-    "row",
-    "pull up",
-    "chin up",
-    "lunge",
-    "shoulder press",
-    "overhead press",
-    "kettlebell",
-    "dumbbell",
-)
-
-SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE = {
-    "barbell bench press": ("bench press", "barbell bench", "panca piana", "flat bench"),
-    "bench press": ("bench press", "panca piana", "flat bench"),
-    "bulgarian split squat": (
-        "bulgarian split squat",
-        "bulgarian squat",
-        "rear foot elevated split squat",
-        "rfess",
-    ),
-}
-YOUTUBE_QUERY_EQUIPMENT_ALIASES = {
-    "barbell": ("barbell", "bb"),
-    "dumbbell": ("dumbbell", "dumbbells", "db"),
-    "kettlebell": ("kettlebell", "kettlebells", "kb"),
-}
 YOUTUBE_QUERY_EQUIPMENT_PREFIXES = (
     "barbell",
     "dumbbell",
@@ -994,106 +977,6 @@ YOUTUBE_QUERY_LOAD_PREFIXES = (
     "loaded",
     "bodyweight",
     "body weight",
-)
-YOUTUBE_QUERY_LOAD_ALIASES = {
-    "weighted": (
-        "weighted",
-        "with weight",
-        "with weights",
-        "loaded",
-        "weight vest",
-        "weighted vest",
-        "vest",
-        "dip belt",
-        "weight belt",
-        "belt",
-        "plate",
-        "plates",
-        "weight plate",
-        "dumbbell",
-        "dumbbells",
-        "db",
-        "kettlebell",
-        "kettlebells",
-        "kb",
-    ),
-    "loaded": (
-        "loaded",
-        "weighted",
-        "with weight",
-        "with weights",
-        "weight vest",
-        "weighted vest",
-        "vest",
-        "dip belt",
-        "weight belt",
-        "belt",
-        "plate",
-        "plates",
-        "weight plate",
-        "dumbbell",
-        "dumbbells",
-        "db",
-        "kettlebell",
-        "kettlebells",
-        "kb",
-    ),
-    "bodyweight": ("bodyweight", "body weight"),
-    "body weight": ("bodyweight", "body weight"),
-}
-SEMANTIC_GENERIC_LOAD_PREFIXES = {"weighted", "loaded"}
-EXERCISE_VARIANT_TERMS = (
-    "incline",
-    "decline",
-    "close grip",
-    "wide grip",
-    "neutral grip",
-    "mixed grip",
-    "reverse",
-    "reverse grip",
-    "underhand",
-    "overhand",
-    "smith machine",
-    "machine",
-    "cable",
-    "floor",
-    "seated",
-    "kneeling",
-    "bent over",
-    "chest supported",
-    "supported",
-    "unsupported",
-    "single arm",
-    "one arm",
-    "single leg",
-    "one leg",
-    "front foot elevated",
-    "rear foot elevated",
-    "deficit",
-    "box",
-    "sumo",
-    "conventional",
-    "romanian",
-    "stiff leg",
-    "paused",
-    "tempo",
-    "eccentric",
-    "negative",
-    "isometric",
-    "assisted",
-    "band assisted",
-    "banded",
-    "weighted",
-    "jumping",
-    "kipping",
-    "butterfly",
-    "chest to bar",
-    "chin up",
-    "commando",
-    "pin press",
-    "board press",
-    "spoto",
-    "triceps press",
 )
 SOURCE_ATTEMPT_REASON_CAPS = {
     "record_penalty": 0.67,
@@ -1114,17 +997,6 @@ POSE_QUALITY_REASON_CAPS = {
     "pose_cropped_body": (0.67, "borderline_full_body_frame_source_cap"),
 }
 SEMANTIC_POSE_BACKFILL_MIN_SCORE = 0.35
-SEMANTIC_IDENTITY_TOKEN_ALIASES = {
-    "abdominal": "ab",
-    "abdominals": "ab",
-    "abs": "ab",
-    "biceps": "bicep",
-    "calves": "calf",
-    "triceps": "tricep",
-}
-SEMANTIC_OPTIONAL_IDENTITY_TOKENS = {
-    "ab",
-}
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MIN_INCREMENT = 10
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MULTIPLIER = 2
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MAX_RESULTS_PER_QUERY = 100
@@ -1193,9 +1065,9 @@ def load_workout_plan_exercises(
     include_disabled: bool = False,
     equipment_path: Path | None = None,
 ) -> list[ExerciseEntry]:
-    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    payload = json.loads(plan_path.read_text(encoding="utf-8-sig"))
     equipment_payload = (
-        json.loads(equipment_path.read_text(encoding="utf-8"))
+        json.loads(equipment_path.read_text(encoding="utf-8-sig"))
         if equipment_path is not None
         else None
     )
@@ -2521,27 +2393,6 @@ def vision_review_priority_score(
     return clamp_score(score)
 
 
-def unrequested_variant_terms(candidate_text: str, exercise_name: str) -> list[str]:
-    normalized_candidate = normalize_exercise_name(candidate_text)
-    normalized_exercise = normalize_exercise_name(exercise_name)
-    allowed_identity_text = " ".join(
-        [
-            normalized_exercise,
-            *semantic_gate_title_aliases(normalized_exercise),
-        ]
-    )
-    found: list[str] = []
-    for term in EXERCISE_VARIANT_TERMS:
-        normalized_term = normalize_exercise_name(term)
-        if not normalized_phrase_in_text(normalized_term, normalized_candidate):
-            continue
-        if normalized_phrase_in_text(normalized_term, allowed_identity_text):
-            continue
-        if normalized_term not in found:
-            found.append(term)
-    return found
-
-
 def keyword_matches_text(keyword: str, text: str) -> bool:
     if keyword.startswith("#"):
         return keyword in text
@@ -2800,9 +2651,11 @@ MIN_MOVING_SUBJECT_REALISM_SCORE = 0.85
 LOW_MOVING_SUBJECT_REALISM_SCORE_CAP = 0.34
 VISION_SEMANTIC_BLOCKING_ISSUES = {
     "wrong_exercise",
+    "wrong_variant",
     "partial_movement",
     "slow_instruction",
     "setup_or_talking",
+    "unclear",
 }
 
 
@@ -2978,68 +2831,24 @@ def apply_semantic_gate_score(
     clamped_score = clamp_score(semantic_score)
     payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
     semantic_payload = dict(semantic_payload) if isinstance(semantic_payload, dict) else {}
-    normalized_exercise = normalize_exercise_name(exercise.name)
-    conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
-    deterministic_unrequested_variants = semantic_gate_filter_allowed_load_variant_terms(
-        unrequested_variant_terms(candidate.title, exercise.name),
-        normalized_exercise,
-    )
-    raw_model_unrequested_variants = semantic_payload_unrequested_variant_terms(semantic_payload)
-    model_unrequested_variants = semantic_gate_filter_allowed_load_variant_terms(
-        raw_model_unrequested_variants,
-        normalized_exercise,
-    )
-    allowed_model_load_variants = [
-        variant
-        for variant in raw_model_unrequested_variants
-        if variant not in model_unrequested_variants
+    model_unrequested_variants = semantic_payload_unrequested_variant_terms(semantic_payload)
+    model_variant_reasons = [
+        f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
+        for variant in model_unrequested_variants
+        if slugify(variant)
     ]
-    if allowed_model_load_variants:
-        semantic_payload["allowedLoadingVariantTerms"] = allowed_model_load_variants
+    if model_unrequested_variants:
         semantic_payload["unrequestedVariantTerms"] = model_unrequested_variants
-    unrequested_variants = dedupe_reasons([*deterministic_unrequested_variants, *model_unrequested_variants])
-    if unrequested_variants:
-        semantic_payload["unrequestedVariantTerms"] = unrequested_variants
-        conflict_reasons = dedupe_reasons(
-            [
-                *conflict_reasons,
-                *[
-                    f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
-                    for variant in model_unrequested_variants
-                    if slugify(variant)
-                ],
-            ]
-        )
     semantic_unresolved = semantic_gate_payload_is_unresolved(semantic_payload)
     if semantic_unresolved:
         semantic_payload["unresolved"] = True
         semantic_reasons = dedupe_reasons([*semantic_reasons, "semantic_gate_unresolved"])
-        if not conflict_reasons and (settings.pose_prefilter_enabled or settings.rank_with_vision):
+        if not model_variant_reasons and (settings.pose_prefilter_enabled or settings.rank_with_vision):
             semantic_reasons = dedupe_reasons([*semantic_reasons, "semantic_gate_unresolved_visual_fallback"])
-    if conflict_reasons:
+    if model_variant_reasons:
         clamped_score = min(clamped_score, 0.20)
-        existing_conflicts = semantic_payload.get("textConflictReasons")
-        if isinstance(existing_conflicts, list):
-            semantic_payload["textConflictReasons"] = dedupe_reasons(
-                [str(item) for item in existing_conflicts] + conflict_reasons
-            )
-        else:
-            semantic_payload["textConflictReasons"] = conflict_reasons
-        semantic_reasons = dedupe_reasons([*semantic_reasons, *conflict_reasons])
+        semantic_reasons = dedupe_reasons([*semantic_reasons, *model_variant_reasons])
     wrong_exercise = bool(semantic_payload.get("wrongExercise"))
-    if (
-        wrong_exercise
-        and allowed_model_load_variants
-        and not model_unrequested_variants
-        and not conflict_reasons
-        and semantic_gate_text_contains_target_identity(
-            normalized_exercise,
-            normalize_exercise_name(candidate.title),
-        )
-    ):
-        wrong_exercise = False
-        semantic_payload["wrongExercise"] = False
-        semantic_reasons = dedupe_reasons([*semantic_reasons, "semantic_allowed_loading_method"])
     passed = clamped_score >= settings.semantic_gate_min_score and not wrong_exercise
     duration_preference_score = semantic_gate_duration_preference_score(candidate, settings)
     ranking_score = compose_semantic_gate_ranking_score(
@@ -3060,7 +2869,7 @@ def apply_semantic_gate_score(
         score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_passed"])
     else:
         score_reasons = dedupe_reasons([*score_reasons, "semantic_gate_rejected"])
-    final_score = 0.0 if conflict_reasons else clamped_score
+    final_score = 0.0 if model_variant_reasons else clamped_score
     final_score, cap_reasons = apply_source_quality_caps(final_score, score_reasons)
     return replace_candidate(
         candidate,
@@ -3202,9 +3011,6 @@ def candidate_is_semantic_visual_review_candidate(
         return True
     if bool(payload.get("wrongExercise")) or bool(payload.get("wrongEquipment")):
         return False
-    text_conflicts = payload.get("textConflictReasons")
-    if isinstance(text_conflicts, list) and text_conflicts:
-        return False
     if semantic_gate_payload_is_unresolved(payload):
         return True
     return semantic_gate_score(candidate) >= min(settings.semantic_gate_min_score, SEMANTIC_POSE_BACKFILL_MIN_SCORE)
@@ -3220,8 +3026,7 @@ def candidate_is_semantic_soft_fallback_candidate(candidate: YouTubeCandidate) -
         return False
     if bool(payload.get("wrongExercise")) or bool(payload.get("wrongEquipment")):
         return False
-    text_conflicts = payload.get("textConflictReasons")
-    return not (isinstance(text_conflicts, list) and text_conflicts)
+    return True
 
 
 def mark_semantic_zero_survivor_soft_fallback(candidate: YouTubeCandidate) -> YouTubeCandidate:
@@ -3251,241 +3056,6 @@ def rank_candidate_with_llama_cpp_semantic_gate(
         gate.close()
 
 
-def semantic_gate_text_conflict_reasons(exercise: ExerciseEntry, candidate: YouTubeCandidate) -> list[str]:
-    normalized_exercise = normalize_exercise_name(exercise.name)
-    normalized_title = normalize_exercise_name(candidate.title)
-    normalized_description = normalize_exercise_name(candidate.description_snippet or "")
-    candidate_text = candidate.title
-    reasons: list[str] = []
-    unrequested_variants = unrequested_variant_terms(candidate_text, exercise.name)
-    if unrequested_variants:
-        reasons.extend(
-            [
-                f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
-                for variant in unrequested_variants
-            ]
-        )
-    title_has_target = semantic_gate_text_contains_target_identity(normalized_exercise, normalized_title)
-    allowed_identity_text = semantic_gate_allowed_identity_text(normalized_exercise)
-    other_terms = [
-        term
-        for term in SEMANTIC_GATE_OTHER_EXERCISE_TERMS
-        if semantic_gate_other_exercise_term_is_conflicting(
-            term,
-            normalized_exercise=normalized_exercise,
-            normalized_title=normalized_title,
-            allowed_identity_text=allowed_identity_text,
-        )
-    ]
-    if other_terms:
-        reasons.append("semantic_title_mentions_other_exercise")
-    if not title_has_target:
-        reasons.append("semantic_title_missing_target_identity")
-        target_in_description = semantic_gate_text_contains_target_identity(
-            normalized_exercise,
-            normalized_description,
-        )
-        if target_in_description:
-            reasons.append("semantic_target_only_in_description")
-    return reasons
-
-
-def semantic_gate_text_contains_target_identity(normalized_exercise: str, normalized_text: str) -> bool:
-    aliases = semantic_gate_title_aliases(normalized_exercise)
-    if aliases and any(normalized_phrase_in_text(alias, normalized_text) for alias in aliases):
-        return True
-    equipment_prefix, base_exercise = split_equipment_prefix(normalized_exercise)
-    if equipment_prefix and base_exercise:
-        base_aliases = semantic_gate_title_aliases(base_exercise)
-        equipment_aliases = YOUTUBE_QUERY_EQUIPMENT_ALIASES.get(equipment_prefix, (equipment_prefix,))
-        has_equipment = any(
-            normalized_phrase_in_text(normalize_exercise_name(alias), normalized_text)
-            for alias in equipment_aliases
-        )
-        has_base = any(normalized_phrase_in_text(alias, normalized_text) for alias in base_aliases)
-        if has_equipment and has_base:
-            return True
-    load_prefix, load_base_exercise = split_load_prefix(normalized_exercise)
-    if load_prefix and load_base_exercise:
-        load_aliases = YOUTUBE_QUERY_LOAD_ALIASES.get(load_prefix, (load_prefix,))
-        has_load = any(
-            normalized_phrase_in_text(normalize_exercise_name(alias), normalized_text)
-            for alias in load_aliases
-        )
-        if has_load and semantic_gate_text_contains_base_identity(load_base_exercise, normalized_text):
-            return True
-    if aliases:
-        return False
-    return semantic_gate_text_contains_base_identity(normalized_exercise, normalized_text)
-
-
-def semantic_gate_text_contains_base_identity(normalized_exercise: str, normalized_text: str) -> bool:
-    aliases = semantic_gate_title_aliases(normalized_exercise)
-    if aliases and any(normalized_phrase_in_text(alias, normalized_text) for alias in aliases):
-        return True
-    target_tokens = semantic_required_identity_tokens(normalized_exercise)
-    text_tokens = set(semantic_identity_tokens(normalized_text))
-    return bool(target_tokens) and all(token in text_tokens for token in target_tokens)
-
-
-def semantic_required_identity_tokens(normalized_text: str) -> list[str]:
-    tokens = semantic_identity_tokens(normalized_text)
-    required = [
-        token
-        for token in tokens
-        if token not in SEMANTIC_OPTIONAL_IDENTITY_TOKENS
-    ]
-    return required or tokens
-
-
-def semantic_identity_tokens(normalized_text: str) -> list[str]:
-    tokens: list[str] = []
-    seen: set[str] = set()
-    for raw_token in normalized_text.split():
-        token = semantic_identity_token(raw_token)
-        if token and token not in seen:
-            seen.add(token)
-            tokens.append(token)
-    return tokens
-
-
-def semantic_identity_token(token: str) -> str:
-    token = token.strip().lower()
-    if not token:
-        return ""
-    alias = SEMANTIC_IDENTITY_TOKEN_ALIASES.get(token)
-    if alias:
-        return alias
-    if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
-    if len(token) > 4 and token.endswith(("ches", "shes", "sses", "xes", "zes")):
-        return token[:-2]
-    if len(token) > 2 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
-    return token
-
-
-def semantic_gate_allowed_identity_text(normalized_exercise: str) -> str:
-    parts = [
-        normalized_exercise,
-        *semantic_gate_title_aliases(normalized_exercise),
-    ]
-    load_prefix, _ = split_load_prefix(normalized_exercise)
-    if load_prefix in SEMANTIC_GENERIC_LOAD_PREFIXES:
-        parts.extend(
-            normalize_exercise_name(alias)
-            for alias in YOUTUBE_QUERY_LOAD_ALIASES.get(load_prefix, ())
-        )
-    return " ".join(part for part in parts if part)
-
-
-def semantic_gate_other_exercise_term_is_conflicting(
-    term: str,
-    *,
-    normalized_exercise: str,
-    normalized_title: str,
-    allowed_identity_text: str,
-) -> bool:
-    normalized_term = normalize_exercise_name(term)
-    if not normalized_term:
-        return False
-    if normalized_phrase_in_text(normalized_term, normalized_exercise):
-        return False
-    term_tokens = semantic_required_identity_tokens(normalized_term)
-    exercise_tokens = set(semantic_identity_tokens(normalized_exercise))
-    if term_tokens and all(token in exercise_tokens for token in term_tokens):
-        return False
-    if normalized_phrase_in_text(normalized_term, allowed_identity_text):
-        return False
-    return normalized_phrase_in_text(normalized_term, normalized_title)
-
-
-def semantic_gate_filter_allowed_load_variant_terms(
-    terms: list[str],
-    normalized_exercise: str,
-) -> list[str]:
-    load_prefix, _ = split_load_prefix(normalized_exercise)
-    if load_prefix not in SEMANTIC_GENERIC_LOAD_PREFIXES:
-        return terms
-    return [
-        term
-        for term in terms
-        if not semantic_gate_is_allowed_load_variant_term(term, load_prefix)
-    ]
-
-
-def semantic_gate_is_allowed_load_variant_term(term: str, load_prefix: str) -> bool:
-    normalized_term = normalize_exercise_name(term)
-    if not normalized_term:
-        return False
-    for alias in YOUTUBE_QUERY_LOAD_ALIASES.get(load_prefix, ()):
-        normalized_alias = normalize_exercise_name(alias)
-        if not normalized_alias:
-            continue
-        if normalized_phrase_in_text(normalized_term, normalized_alias):
-            return True
-        if normalized_phrase_in_text(normalized_alias, normalized_term):
-            return True
-    return False
-
-
-def semantic_gate_title_aliases(normalized_exercise: str) -> tuple[str, ...]:
-    aliases = [
-        normalize_exercise_name(alias)
-        for alias in SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(normalized_exercise, ())
-    ]
-    equipment_prefix, base_exercise = split_equipment_prefix(normalized_exercise)
-    if equipment_prefix and base_exercise:
-        base_aliases = SEMANTIC_GATE_TITLE_ALIASES_BY_EXERCISE.get(base_exercise, ())
-        equipment_aliases = YOUTUBE_QUERY_EQUIPMENT_ALIASES.get(equipment_prefix, ())
-        for base_alias in base_aliases:
-            normalized_base_alias = normalize_exercise_name(base_alias)
-            if not normalized_base_alias:
-                continue
-            for equipment_alias in equipment_aliases:
-                normalized_equipment_alias = normalize_exercise_name(equipment_alias)
-                if not normalized_equipment_alias:
-                    continue
-                aliases.append(f"{normalized_equipment_alias} {normalized_base_alias}")
-                aliases.append(f"{normalized_base_alias} {normalized_equipment_alias}")
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for alias in aliases:
-        if alias and alias not in seen:
-            seen.add(alias)
-            deduped.append(alias)
-    return tuple(deduped)
-
-
-def split_equipment_prefix(normalized_exercise: str) -> tuple[str | None, str | None]:
-    for equipment_prefix in YOUTUBE_QUERY_EQUIPMENT_PREFIXES:
-        normalized_prefix = normalize_exercise_name(equipment_prefix)
-        if normalized_exercise.startswith(f"{normalized_prefix} "):
-            base_exercise = normalized_exercise[len(normalized_prefix) + 1 :].strip()
-            if base_exercise:
-                return normalized_prefix, base_exercise
-    return None, None
-
-
-def split_load_prefix(normalized_exercise: str) -> tuple[str | None, str | None]:
-    for load_prefix in YOUTUBE_QUERY_LOAD_PREFIXES:
-        normalized_prefix = normalize_exercise_name(load_prefix)
-        if normalized_exercise.startswith(f"{normalized_prefix} "):
-            base_exercise = normalized_exercise[len(normalized_prefix) + 1 :].strip()
-            if base_exercise:
-                return normalized_prefix, base_exercise
-    return None, None
-
-
-def normalized_phrase_in_text(normalized_phrase: str, normalized_text: str) -> bool:
-    if not normalized_phrase:
-        return False
-    return re.search(
-        rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])",
-        normalized_text,
-    ) is not None
-
-
 def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool:
     try:
         signature = inspect.signature(callback)
@@ -3502,16 +3072,14 @@ def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool
 def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     return (
         "Write a compact exercise-specific movement contract for source-video review.\n"
-        "The contract must add only the information needed to recognize the exact target movement in visible source-video frames and decide whether a source window contains the complete useful movement.\n"
-        "Focus on: start posture, primary effort, finish/return posture, visible body or equipment travel, and high-confidence wrong variants or partial phases.\n"
-        "For cyclic repetitions, describe one complete repetition from meaningful start through the natural finish/return. Do not require an extra phase from the next repetition.\n"
-        "Use visible movement language rather than muscle names, hidden anatomy, coaching advice, or form-quality preferences.\n"
-        "Avoid exact stance width, joint lockout, range-depth thresholds such as parallel/below-parallel, or endpoint standards unless the target name explicitly requires them; prefer meaningful visible travel and return language.\n"
-        "Do not invent grip, stance, support, load attachment, anchor, platform, bench, rack, machine, strap, or setup hardware details unless the target name requires them. If grip orientation is not named, use neutral hand/arm language rather than overhand, underhand, neutral grip, or mixed grip.\n"
-        "Do not add camera, crop, person-count, obstruction, lighting, timestamp, frame number, numeric threshold, score, or rep-count rules; other code handles those.\n"
-        "Respect the exact exercise-name identity: named grip, stance, support, implement position, body orientation, side, limb count, loading method, and motion direction distinguish the target from nearby variants.\n"
+        "Use the standard exercise definition for the exact named movement. Do not infer mechanics by decomposing isolated words in the name.\n"
+        "Describe only robust visible cues needed to recognize the target movement and whether one complete useful movement is visible.\n"
+        "Focus on start posture, main visible body/equipment travel, finish or return posture, and high-confidence wrong variants or partial phases.\n"
+        "If a setup detail is uncertain, omit it instead of inventing a mandatory posture, support, anchor, grip, bench, machine, platform, or load placement.\n"
+        "Do not use false default setups such as standing, prone, bench-supported, machine-supported, or generic hip-hinge mechanics unless they are truly standard for the exact named exercise.\n"
+        "For weighted or loaded variants, say only that the exercise is visibly loaded unless the name specifies where or how the load is held, attached, or supported.\n"
+        "Avoid coaching-form rejects such as rounding, tempo, depth, lockout, or jerkiness unless they change the visible exercise identity or make the movement incomplete.\n"
         "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use exactly these short labeled lines with colons: Source:, Complete:, Reject:, Notes:.\n"
-        "Do not include a Skeleton line; generated skeleton validation is handled by a separate call.\n"
         f"Target exercise: {exercise.name}\n"
     )
 
@@ -3519,13 +3087,12 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
 def build_exercise_skeleton_contract_prompt(exercise: ExerciseEntry) -> str:
     return (
         "Write compact exercise-specific guidance for validating a generated body-only skeleton animation.\n"
-        "The goal is only to decide whether the skeleton looks like a reasonable generated version of the target exercise, not whether it perfectly matches source-video form or endpoint criteria.\n"
-        "External supports, equipment, load, floor contact, and scene geometry may be invisible. Translate the exercise into forgiving visible body-motion evidence.\n"
-        "Include both what should be visible in the body-only skeleton and what should make the generated skeleton invalid for this exercise.\n"
-        "Reject guidance should catch mostly static animations, missing meaningful body travel, missing the main effort-and-return phase order, one-way partial fragments, and body mechanics that resemble a different exercise.\n"
-        "Keep the guidance short and non-overconstrained: avoid exact angles, object clearance, precise grip/stance details, hidden anatomy, coaching form rules, or extreme end ranges unless the target exercise name explicitly requires them.\n"
-        "Do not require source endpoint criteria such as exact object clearance, exact object contact, full lockout, exact depth, full floor contact, or exact height. Those belong to source completeness, not body-only skeleton plausibility.\n"
-        "Use plain visible relations such as body rises or lowers, elbows or knees bend and straighten, torso changes position, arms move toward or away from the body, hips stay generally aligned, or the motion returns toward the start.\n"
+        "Use the standard exercise definition for the exact named movement. Do not infer mechanics by decomposing isolated words in the name.\n"
+        "The goal is only to decide whether the skeleton looks like a reasonable generated version of the target exercise, using forgiving visible body-motion evidence.\n"
+        "The skeleton has no equipment, load, anchors, support surface, floor grid context, or source-video scene, so do not make those mandatory.\n"
+        "Avoid guessing mandatory prone, standing, seated, bench-supported, machine-supported, or exact start orientation unless it is unmistakably required by the target exercise.\n"
+        "Describe broad expected body/joint travel, finish or return, and only clear wrong-motion cases that would indicate a different exercise.\n"
+        "Avoid exact angles, object contact, depth, lockout, hidden anatomy, and coaching-form rejects unless they change the visible exercise identity or make the motion incomplete.\n"
         "Return plain text only. No JSON, markdown table, code fence, timestamps, chain-of-thought, or explanation. Use exactly these short labeled lines with colons: Skeleton:, Reject:.\n"
         f"Target exercise: {exercise.name}\n"
     )
@@ -5646,11 +5213,6 @@ def write_candidate_decisions_jsonl(path: Path, manifest: dict[str, Any]) -> Non
                             if semantic_reviewed
                             else None
                         ),
-                        "semanticTextConflictReasons": (
-                            semantic_payload.get("textConflictReasons")
-                            if semantic_reviewed
-                            else None
-                        ),
                         "semanticWrongExercise": (
                             semantic_payload.get("wrongExercise")
                             if semantic_reviewed
@@ -6139,11 +5701,6 @@ class LlamaCppSemanticGate:
         wrong_exercise = bool(payload.get("wrongExercise"))
         passed = score >= settings.semantic_gate_min_score and not wrong_exercise
         reasons = ["semantic_text_match" if passed else "semantic_text_mismatch"]
-        conflict_reasons = semantic_gate_text_conflict_reasons(exercise, candidate)
-        if conflict_reasons:
-            passed = False
-            score = min(score, 0.20)
-            reasons.extend(conflict_reasons)
         if wrong_exercise:
             reasons.append("semantic_wrong_exercise")
         if bool(payload.get("wrongEquipment")):
@@ -6156,7 +5713,6 @@ class LlamaCppSemanticGate:
             "score": clamp_score(score),
             "wrongExercise": wrong_exercise,
             "wrongEquipment": bool(payload.get("wrongEquipment")),
-            "textConflictReasons": conflict_reasons,
             "unrequestedVariantTerms": semantic_payload_unrequested_variant_terms(payload),
             "matchedExercise": truncate_text(str(payload.get("matchedExercise") or ""), 120),
             "reason": truncate_text(str(payload.get("reason") or ""), 240),
@@ -6403,6 +5959,7 @@ def prepare_vision_review(
     temp_dir = tempfile.TemporaryDirectory(prefix="exercise-motion-youtube-")
     temp_path = Path(temp_dir.name)
     try:
+        artifact_dir = prepared_vision_review_artifact_dir(exercise, candidate, settings)
         download_started = time.monotonic()
         video_path = download_youtube_preview(
             candidate.url,
@@ -6500,6 +6057,7 @@ def prepare_vision_review(
             preview_download_elapsed_seconds=preview_download_elapsed,
             motion_scan_elapsed_seconds=motion_scan_elapsed,
             window_planning_elapsed_seconds=window_planning_elapsed,
+            artifact_dir=artifact_dir,
         )
     except Exception:
         temp_dir.cleanup()
@@ -6646,6 +6204,16 @@ def score_prepared_vision_review(
                 raise critical from exc
             vlm_elapsed_total += vlm_elapsed
             failed_count += 1
+            debug_artifacts = write_prepared_vision_chunk_debug(
+                prepared,
+                chunk_index=chunk_index,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                window_source=window_source,
+                frame_paths=chunk_paths,
+                prompt=chunk_prompt,
+                error={"type": type(exc).__name__, "message": str(exc)},
+            )
             reviewed_chunks.append(
                 build_reviewed_chunk_timing(
                     chunk_index=chunk_index,
@@ -6655,6 +6223,7 @@ def score_prepared_vision_review(
                     render_elapsed=render_elapsed,
                     vlm_elapsed=vlm_elapsed,
                     failure="vlm_exception",
+                    debug_artifacts=debug_artifacts,
                 )
             )
             continue
@@ -6663,6 +6232,17 @@ def score_prepared_vision_review(
         payload = extract_json_object(raw)
         if not isinstance(payload, dict):
             invalid_json_count += 1
+            debug_artifacts = write_prepared_vision_chunk_debug(
+                prepared,
+                chunk_index=chunk_index,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                window_source=window_source,
+                frame_paths=chunk_paths,
+                prompt=chunk_prompt,
+                raw_response=raw,
+                error={"type": "invalid_json", "message": "VLM response did not contain a JSON object."},
+            )
             reviewed_chunks.append(
                 build_reviewed_chunk_timing(
                     chunk_index=chunk_index,
@@ -6672,10 +6252,24 @@ def score_prepared_vision_review(
                     render_elapsed=render_elapsed,
                     vlm_elapsed=vlm_elapsed,
                     failure="invalid_json",
+                    debug_artifacts=debug_artifacts,
                 )
             )
             continue
         score, reasons = score_candidate_vision_payload(payload)
+        debug_artifacts = write_prepared_vision_chunk_debug(
+            prepared,
+            chunk_index=chunk_index,
+            chunk_start=chunk_start,
+            chunk_end=chunk_end,
+            window_source=window_source,
+            frame_paths=chunk_paths,
+            prompt=chunk_prompt,
+            raw_response=raw,
+            parsed_payload=payload,
+            score=score,
+            reasons=reasons,
+        )
         chunk_scores.append(score)
         chunk_results.append((score, reasons, payload, chunk_index))
         reviewed_chunks.append(
@@ -6688,6 +6282,7 @@ def score_prepared_vision_review(
                 vlm_elapsed=vlm_elapsed,
                 score=score,
                 valid=score >= 0.50,
+                debug_artifacts=debug_artifacts,
             )
         )
         early_stop_reason = adaptive_review_stop_reason(
@@ -6859,7 +6454,7 @@ def get_prepared_chunk_paths(
         contact_sheet_frames_per_sheet=settings.vision_contact_sheet_frames_per_sheet,
         contact_sheet_jpeg_quality=settings.vision_contact_sheet_jpeg_quality,
         contact_sheet_sequence_labels=True,
-        output_dir=Path(prepared.temp_dir.name) / "frames" / f"chunk_{chunk_index:04d}",
+        output_dir=(prepared.artifact_dir or Path(prepared.temp_dir.name)) / "frames" / f"chunk_{chunk_index:04d}",
     )
     elapsed = time.monotonic() - started
     paths = [sample.path if hasattr(sample, "path") else sample for sample in frame_samples]
@@ -6869,6 +6464,71 @@ def get_prepared_chunk_paths(
     prepared.frame_path_chunks[chunk_index] = paths
     prepared.frame_paths.extend(paths)
     return paths, elapsed
+
+
+def write_prepared_vision_chunk_debug(
+    prepared: PreparedVisionReview,
+    *,
+    chunk_index: int,
+    chunk_start: float,
+    chunk_end: float,
+    window_source: str,
+    frame_paths: list[Path],
+    prompt: str,
+    raw_response: str | None = None,
+    parsed_payload: dict[str, Any] | None = None,
+    score: float | None = None,
+    reasons: list[str] | None = None,
+    error: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if prepared.artifact_dir is None:
+        return None
+    chunk_dir = prepared.artifact_dir / "chunks" / f"chunk_{chunk_index:04d}"
+    try:
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = chunk_dir / "prompt.txt"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        raw_response_path: Path | None = None
+        parsed_payload_path: Path | None = None
+        if raw_response is not None:
+            raw_response_path = chunk_dir / "raw_response.txt"
+            raw_response_path.write_text(raw_response, encoding="utf-8")
+        if parsed_payload is not None:
+            parsed_payload_path = chunk_dir / "parsed_payload.json"
+            parsed_payload_path.write_text(json.dumps(parsed_payload, indent=2), encoding="utf-8")
+        debug_path = chunk_dir / "review_debug.json"
+        debug_payload: dict[str, Any] = {
+            "schemaVersion": 1,
+            "videoId": prepared.candidate.video_id,
+            "title": prepared.candidate.title,
+            "url": prepared.candidate.url,
+            "chunkIndex": chunk_index,
+            "startSeconds": round(chunk_start, 3),
+            "endSeconds": round(chunk_end, 3),
+            "windowSource": window_source,
+            "framePaths": [str(path) for path in frame_paths],
+            "promptPath": str(prompt_path),
+            "promptChars": len(prompt),
+            "rawResponsePath": str(raw_response_path) if raw_response_path is not None else None,
+            "rawResponseChars": len(raw_response) if raw_response is not None else 0,
+            "parsedPayloadPath": str(parsed_payload_path) if parsed_payload_path is not None else None,
+            "score": score,
+            "reasons": reasons or [],
+            "error": error,
+        }
+        debug_path.write_text(json.dumps(debug_payload, indent=2), encoding="utf-8")
+        return {
+            "artifactDir": str(chunk_dir),
+            "promptPath": str(prompt_path),
+            "rawResponsePath": str(raw_response_path) if raw_response_path is not None else None,
+            "parsedPayloadPath": str(parsed_payload_path) if parsed_payload_path is not None else None,
+            "debugPath": str(debug_path),
+        }
+    except Exception as exc:
+        return {
+            "artifactDir": str(chunk_dir),
+            "debugWriteError": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def adaptive_review_stop_reason(
@@ -6910,6 +6570,7 @@ def build_reviewed_chunk_timing(
     score: float | None = None,
     valid: bool | None = None,
     failure: str | None = None,
+    debug_artifacts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "chunkIndex": chunk_index,
@@ -6925,6 +6586,8 @@ def build_reviewed_chunk_timing(
         payload["valid"] = valid
     if failure is not None:
         payload["failure"] = failure
+    if debug_artifacts is not None:
+        payload["debugArtifacts"] = debug_artifacts
     return payload
 
 
@@ -6939,7 +6602,7 @@ def build_vision_timing_payload(
     early_stop_reason: str,
 ) -> dict[str, Any]:
     review_limit = resolved_vision_chunk_review_limit(settings)
-    return {
+    payload: dict[str, Any] = {
         "previewPreparationElapsedSeconds": round_elapsed(prepared.preview_preparation_elapsed_seconds),
         "previewDownloadElapsedSeconds": round_elapsed(prepared.preview_download_elapsed_seconds),
         "motionScanElapsedSeconds": round_elapsed(prepared.motion_scan_elapsed_seconds),
@@ -6960,6 +6623,9 @@ def build_vision_timing_payload(
             "plannedChunkCount": prepared.chunk_count,
         },
     }
+    if prepared.artifact_dir is not None:
+        payload["visionReviewArtifactDir"] = str(prepared.artifact_dir)
+    return payload
 
 
 def build_failed_vision_payload(
@@ -7082,6 +6748,11 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
     legacy_real_human_subject = parse_payload_bool(payload, "real_human_subject")
     subject_realism_score = parse_moving_subject_realism_score(payload)
     blocking_issues = parse_blocking_issues(payload.get("blocking_issues", payload.get("blocking_issue")))
+    note_conflict_reasons = vision_payload_note_conflict_reasons(payload)
+    semantic_blocking_issue_present = any(
+        issue != "none" and issue in VISION_SEMANTIC_BLOCKING_ISSUES
+        for issue in blocking_issues
+    )
     confidence_score = parse_score_value(payload.get("confidence"), default=0.5)
 
     score = source_score
@@ -7111,6 +6782,7 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
             reasons.append(f"{issue}_penalty")
         elif issue != "none":
             reasons.append(f"{issue}_ignored_by_vlm_score")
+    reasons.extend(note_conflict_reasons)
     if target_identity_match is True:
         reasons.append("target_identity_match")
     elif target_identity_match is False:
@@ -7167,6 +6839,8 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         and action_path_visible is True
         and end_posture_visible is True
         and no_setup_or_talking_frames is True
+        and not semantic_blocking_issue_present
+        and not note_conflict_reasons
     )
     if valid_motion_scene:
         reasons.append("valid_motion_scene")
@@ -7177,6 +6851,8 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         score = min(score, minimum_gate_score)
     score = apply_explicit_gate_caps(score, explicit_gate_values)
     score = apply_blocking_issue_caps(score, blocking_issues)
+    if note_conflict_reasons:
+        score = min(score, 0.49)
     score = min(score, subject_realism_score)
     if subject_realism_score < MIN_MOVING_SUBJECT_REALISM_SCORE:
         score = min(score, LOW_MOVING_SUBJECT_REALISM_SCORE_CAP)
@@ -7334,10 +7010,49 @@ def parse_moving_subject_realism_score(payload: dict[str, Any]) -> float:
     )
 
 
+def vision_payload_note_conflict_reasons(payload: dict[str, Any]) -> list[str]:
+    note_parts = [
+        str(payload.get(key) or "").strip().lower()
+        for key in ("reason", "note", "summary")
+        if str(payload.get(key) or "").strip()
+    ]
+    note = " ".join(note_parts)
+    if not note:
+        return []
+    conflict_phrases = (
+        "wrong exercise",
+        "wrong variant",
+        "different variant",
+        "different variation",
+        "not the target",
+        "not a clean",
+        "cannot verify",
+        "can't verify",
+        "not visible",
+        "not clearly visible",
+        "not clearly shown",
+        "unclear",
+        "ambiguous",
+        "missing required",
+        "lacks required",
+        "lacks the required",
+        "no external weight",
+        "external weight is not visible",
+        "load is not visible",
+        "weight is not visible",
+        "not visibly weighted",
+        "bodyweight only",
+    )
+    if any(phrase in note for phrase in conflict_phrases):
+        return ["vision_reason_contradicts_high_score"]
+    return []
+
+
 def parse_blocking_issues(value: Any) -> list[str]:
     allowed = {
         "none",
         "wrong_exercise",
+        "wrong_variant",
         "partial_movement",
         "camera_motion",
         "cropped_body",
@@ -7351,6 +7066,7 @@ def parse_blocking_issues(value: Any) -> list[str]:
         "poor_reconstruction_suitability",
         "slow_instruction",
         "setup_or_talking",
+        "unclear",
     }
     if isinstance(value, str):
         raw_items = [value]
@@ -7373,9 +7089,11 @@ def parse_blocking_issues(value: Any) -> list[str]:
 def apply_blocking_issue_caps(score: float, blocking_issues: list[str]) -> float:
     caps = {
         "wrong_exercise": 0.20,
+        "wrong_variant": 0.20,
         "partial_movement": 0.34,
         "slow_instruction": 0.49,
         "setup_or_talking": 0.34,
+        "unclear": 0.49,
     }
     capped = score
     for issue in blocking_issues:
@@ -7409,6 +7127,7 @@ def build_candidate_vision_prompt(
         "Extra non-exercise frames before or after the movement are a blocking issue for source selection; include setup_or_talking and lower source_score even if a partial rep is visible.\n"
         "Treat the target exercise name as the exact movement identity, not just a loose keyword match. Adjacent variations that share words but visibly change the required stance, support, equipment path, body position, or movement pattern are wrong for this target.\n"
         "If the requested exercise name contains qualifiers such as single-leg, split, incline, decline, seated, bent-over, front, back, lateral, supported, unsupported, dumbbell, barbell, cable, machine, or similar variant terms, the visible movement must satisfy those qualifiers.\n"
+        "If the target exercise name implies external loading or equipment, including words such as weighted, loaded, dumbbell, kettlebell, barbell, plate, vest, belt, cable, machine, smith-machine, band, medicine-ball, or sandbag, that load/equipment must be visibly used in the chunk. If the visible person performs the unloaded/bodyweight version or the required load is not visible, set target_identity_match false and include wrong_variant.\n"
         "If the source title or visible movement adds an exercise-changing qualifier that is not in the target name, mark target_identity_match false. Examples: incline, decline, seated, supported, machine, smith-machine, close-grip, wide-grip, single-arm, or triceps-focused variants are wrong unless requested by the target exercise name.\n"
         "Pose/camera suitability is handled by deterministic YOLO/pose filtering before and after this step. Do not return gates for camera cuts, camera stability, crop, body scale, joint visibility, obstruction, pose angle, or person count; those are not your responsibility.\n"
         "For source selection, prefer clean repeatable demo repetitions over records, personal records, max attempts, AMRAP tests, competitions, combines, meets, crowds, or event footage. Those event clips are lower-quality motion sources even when the exercise is technically correct.\n"
@@ -7429,7 +7148,7 @@ def build_candidate_vision_prompt(
         "- moving_subject_realism_score: how clearly the moving exercise subject is a real human body captured by a camera, ignoring text/graphics overlays that are not the subject.\n"
         "- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n"
         "- source_score: overall semantic usefulness of this exact chunk as a target-exercise motion source, assuming deterministic pose/camera gates are handled elsewhere.\n"
-        "Before scoring, list semantic blocking issues only. Use [] or [\"none\"] only if no semantic blocking issue is visible. Allowed semantic issues are wrong_exercise, partial_movement, slow_instruction, and setup_or_talking.\n"
+        "Before scoring, list semantic blocking issues only. Use [] or [\"none\"] only if no semantic blocking issue is visible. Allowed semantic issues are wrong_exercise, wrong_variant, partial_movement, slow_instruction, setup_or_talking, and unclear.\n"
         "Return JSON only with these keys:\n"
         "{"
         '"correct_exercise": boolean, '
@@ -7452,7 +7171,7 @@ def build_candidate_vision_prompt(
         '"moving_subject_realism_score": number, '
         '"execution_quality": number, '
         '"source_score": number, '
-        '"blocking_issues": ["none|wrong_exercise|partial_movement|slow_instruction|setup_or_talking"], '
+        '"blocking_issues": ["none|wrong_exercise|wrong_variant|partial_movement|slow_instruction|setup_or_talking|unclear"], '
         '"confidence": number, '
         '"reason": string'
         "}"
