@@ -53,11 +53,11 @@ class GlobalGpuLock:
                 if (
                     isinstance(active_payload, dict)
                     and active_payload.get("pid") == os.getpid()
-                    and active_payload.get("threadId") == threading.get_ident()
                 ):
                     raise RuntimeError(
-                        "Nested global GPU lock acquisition in the same thread would deadlock: "
+                        "Nested global GPU lock acquisition in the same process would deadlock: "
                         f"currentStage={active_payload.get('stage')} requestedStage={self.stage} "
+                        f"currentThreadId={active_payload.get('threadId')} requestedThreadId={threading.get_ident()} "
                         f"lockPath={self.path}"
                     )
                 elapsed = time.perf_counter() - started
