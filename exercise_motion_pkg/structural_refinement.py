@@ -61,6 +61,10 @@ SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
 SYMMETRY_MAX_POSE_ERROR_BODY_RATIO = 0.16
+SOFT_LEG_SYMMETRY_MIN_BLEND = 0.16
+SOFT_LEG_SYMMETRY_MAX_BLEND = 0.34
+SOFT_LEG_SYMMETRY_BLEND_SCALE = 0.45
+SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS = 0.028
 ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO = 0.70
 ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION = 0.90
 ARM_MOTION_DRIVEN_SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.20
@@ -101,6 +105,12 @@ def refine_motion_clip_structurally(
         dominant_chain_ratio=dominant_chain_ratio,
     )
     dominant_groups = set(dominant_profile.get("dominantGroups", []))
+    bilateral_modes = _dominant_bilateral_motion_modes(clip, dominant_groups)
+    if bilateral_modes:
+        dominant_profile = {
+            **dominant_profile,
+            "bilateralModes": bilateral_modes,
+        }
     if "torso" in dominant_groups:
         refined, refinement_metadata = _refine_torso_dominant_motion_conservatively(
             clip,
@@ -568,14 +578,26 @@ def _refine_torso_dominant_motion_conservatively(
     )
     refined, distal_leg_metadata = _stabilize_torso_dominant_distal_leg_sliding(refined, reference_clip=clip)
     refined, foot_axis_leg_metadata = _align_leg_motion_to_foot_axis(refined, reference_clip=clip)
-    refined, length_metadata = _preserve_reference_bone_lengths(refined, reference_clip=clip)
+    bilateral_modes = _bilateral_modes_from_dominant_profile(dominant_profile)
+    refined, soft_bilateral_metadata = _apply_soft_same_phase_leg_symmetry(
+        refined,
+        bilateral_modes=bilateral_modes,
+    )
+    dynamic_bone_length_joints = _range_dominant_chain_child_joints(dominant_profile)
+    refined, length_metadata = _preserve_reference_bone_lengths(
+        refined,
+        reference_clip=clip,
+        dynamic_length_child_joints=dynamic_bone_length_joints,
+    )
     return refined, {
         "strategy": "torso_dominant_conservative_cleanup",
+        "bilateralModes": bilateral_modes,
         "lowMagnitudeSuppression": jitter_metadata,
         "temporalSpikes": spike_metadata,
         "stabilizedIkTargetConstraint": target_constraint_metadata,
         "distalLegSlidingStabilization": distal_leg_metadata,
         "footAxisLegAlignment": foot_axis_leg_metadata,
+        "softBilateralSymmetry": soft_bilateral_metadata,
         "boneLengthProjection": length_metadata,
         "steps": [
             "torso_dominant_preserve_body_motion",
@@ -584,6 +606,7 @@ def _refine_torso_dominant_motion_conservatively(
             "stabilized_ik_target_constraint",
             "torso_dominant_distal_leg_sliding_stabilization",
             "foot_axis_leg_motion_alignment",
+            "soft_same_phase_leg_symmetry",
             "reference_bone_length_projection",
         ],
     }
@@ -607,7 +630,9 @@ def _transfer_selected_motion_to_canonical_body(
         )
     if not canonical_joints:
         return clip, {"applied": False, "reason": "canonical_body_unavailable"}
-    bilateral_modes = _dominant_bilateral_motion_modes(clip, dominant_groups)
+    bilateral_modes = _bilateral_modes_from_dominant_profile(dominant_profile)
+    if not bilateral_modes:
+        bilateral_modes = _dominant_bilateral_motion_modes(clip, dominant_groups)
     transferred_joints: set[str] = set()
     frames: list[MotionFrame] = []
     for source_frame in clip.frames:
@@ -1943,12 +1968,15 @@ def _should_suppress_joint_motion(
     non_dominant_threshold: float,
     dominant_profile: dict[str, object],
 ) -> bool:
+    joint_group = _joint_motion_group(joint_name)
+    dominant_groups = set(dominant_profile.get("dominantGroups", []))
+    range_dominant_groups = set(dominant_profile.get("rangeDominantGroups", []))
+    if joint_group is not None and joint_group in dominant_groups and joint_group in range_dominant_groups:
+        return False
     if joint_motion <= active_threshold:
         return True
-    joint_group = _joint_motion_group(joint_name)
     if joint_group is None:
         return False
-    dominant_groups = set(dominant_profile.get("dominantGroups", []))
     if joint_group not in dominant_groups and joint_motion <= non_dominant_threshold:
         return True
     return False
@@ -1990,6 +2018,31 @@ def _protected_dominant_chain_anchor_joints(dominant_profile: dict[str, object])
             "right_hip",
         ))
     return protected
+
+
+def _range_dominant_chain_child_joints(dominant_profile: dict[str, object]) -> set[str]:
+    dominant_groups = set(dominant_profile.get("dominantGroups", []))
+    range_dominant_groups = set(dominant_profile.get("rangeDominantGroups", []))
+    joints: set[str] = set()
+    if "arms" in dominant_groups and "arms" in range_dominant_groups:
+        joints.update((
+            "left_elbow",
+            "right_elbow",
+            "left_wrist",
+            "right_wrist",
+            "left_hand",
+            "right_hand",
+        ))
+    if "legs" in dominant_groups and "legs" in range_dominant_groups:
+        joints.update((
+            "left_knee",
+            "right_knee",
+            "left_ankle",
+            "right_ankle",
+            "left_foot",
+            "right_foot",
+        ))
+    return joints
 
 
 def _never_suppress_anchor_joints() -> set[str]:
@@ -2389,6 +2442,99 @@ def _refine_bilateral_chain_symmetry(
         "blend": blend,
         "averageDisplacement": displacement["average"],
         "maxDisplacement": displacement["max"],
+    }
+
+
+def _apply_soft_same_phase_leg_symmetry(
+    clip: MotionClip,
+    *,
+    bilateral_modes: dict[str, dict[str, object]],
+) -> tuple[MotionClip, dict[str, object]]:
+    legs_mode = bilateral_modes.get("legs")
+    if not isinstance(legs_mode, dict) or legs_mode.get("mode") != "same_phase_symmetric":
+        return clip, {
+            "applied": False,
+            "reason": "legs_not_same_phase_symmetric",
+            "legsMode": legs_mode,
+        }
+    pairs = (
+        ("left_knee", "right_knee"),
+        ("left_ankle", "right_ankle"),
+        ("left_foot", "right_foot"),
+    )
+    required = ("left_hip", "right_hip", *[joint for pair in pairs for joint in pair])
+    if any(joint not in clip.joint_names for joint in required):
+        return clip, {
+            "applied": False,
+            "reason": "missing_leg_joints",
+            "legsMode": legs_mode,
+        }
+    mode_strength = _optional_float(legs_mode.get("symmetryStrength"))
+    if mode_strength is None:
+        mode_strength = 0.50
+    blend = min(
+        SOFT_LEG_SYMMETRY_MAX_BLEND,
+        max(SOFT_LEG_SYMMETRY_MIN_BLEND, mode_strength * SOFT_LEG_SYMMETRY_BLEND_SCALE),
+    )
+    frames: list[MotionFrame] = []
+    total_displacement = 0.0
+    max_displacement = 0.0
+    samples = 0
+    for frame in clip.frames:
+        body_frame = _body_local_frame(frame)
+        if body_frame is None:
+            frames.append(frame)
+            continue
+        targets = _symmetric_pair_targets(
+            frame,
+            body_frame=body_frame,
+            pairs=pairs,
+        )
+        if not targets:
+            frames.append(frame)
+            continue
+        joints = dict(frame.joints)
+        for joint_name, target in targets.items():
+            current = joints.get(joint_name)
+            if current is None:
+                continue
+            updated = _limited_lerp_point(
+                current,
+                target,
+                blend,
+                SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS,
+            )
+            displacement = _distance(current, updated)
+            if displacement > 1e-6:
+                total_displacement += displacement
+                max_displacement = max(max_displacement, displacement)
+                samples += 1
+            joints[joint_name] = updated
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    if samples == 0:
+        return clip, {
+            "applied": False,
+            "reason": "no_leg_symmetry_correction_needed",
+            "legsMode": legs_mode,
+            "blend": blend,
+        }
+    refined = replace(clip, frames=frames)
+    displacement = _average_joint_displacement(
+        clip,
+        refined,
+        [joint for pair in pairs for joint in pair],
+    )
+    return refined, {
+        "applied": True,
+        "groups": ["legs"],
+        "target": "soft_body_local_mirrored_leg_pairs",
+        "blend": blend,
+        "maxCorrection": SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS,
+        "averageDisplacement": displacement["average"],
+        "maxDisplacement": displacement["max"],
+        "sampleAverageDisplacement": total_displacement / samples,
+        "sampleMaxDisplacement": max_displacement,
+        "legsMode": legs_mode,
     }
 
 
@@ -3023,6 +3169,17 @@ def _dominant_bilateral_motion_modes(reference_clip: MotionClip, dominant_groups
     return modes
 
 
+def _bilateral_modes_from_dominant_profile(dominant_profile: dict[str, object]) -> dict[str, dict[str, object]]:
+    modes = dominant_profile.get("bilateralModes")
+    if not isinstance(modes, dict):
+        return {}
+    return {
+        str(group_name): dict(mode)
+        for group_name, mode in modes.items()
+        if isinstance(mode, dict)
+    }
+
+
 def _bilateral_motion_mode(
     clip: MotionClip,
     *,
@@ -3360,6 +3517,7 @@ def _preserve_reference_bone_lengths(
     clip: MotionClip,
     *,
     reference_clip: MotionClip,
+    dynamic_length_child_joints: set[str] | None = None,
 ) -> tuple[MotionClip, dict[str, object]]:
     reference_lengths = {
         (parent, child): _median_bone_length(reference_clip, parent, child)
@@ -3373,11 +3531,21 @@ def _preserve_reference_bone_lengths(
     total_displacement = 0.0
     max_displacement = 0.0
     samples = 0
-    for frame in clip.frames:
+    dynamic_joints = set(dynamic_length_child_joints or set())
+    dynamic_samples = 0
+    for frame_index, frame in enumerate(clip.frames):
         joints = dict(frame.joints)
+        reference_frame = reference_clip.frames[min(frame_index, reference_clip.frame_count - 1)]
         for (parent, child), target_length in reference_lengths.items():
             if parent not in joints or child not in joints:
                 continue
+            if (
+                child in dynamic_joints
+                and parent in reference_frame.joints
+                and child in reference_frame.joints
+            ):
+                target_length = _distance(reference_frame.joints[parent], reference_frame.joints[child])
+                dynamic_samples += 1
             direction = _subtract(joints[child], joints[parent])
             current_length = _length(direction)
             if current_length <= 1e-8:
@@ -3395,6 +3563,8 @@ def _preserve_reference_bone_lengths(
         "boneCount": len(reference_lengths),
         "averageDisplacement": total_displacement / samples if samples else 0.0,
         "maxDisplacement": max_displacement,
+        "dynamicLengthChildJoints": sorted(dynamic_joints),
+        "dynamicLengthSampleCount": dynamic_samples,
     }
 
 
