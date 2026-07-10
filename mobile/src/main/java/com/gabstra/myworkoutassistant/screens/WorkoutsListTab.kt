@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,7 +50,11 @@ fun WorkoutsListTab(
     onWorkoutClick: (Workout) -> Unit,
     onSelectionChange: (List<Workout>) -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
-    selectedPlanId: UUID? = null
+    selectedPlanId: UUID? = null,
+    hideDisabledWorkouts: Boolean,
+    disabledWorkoutCount: Int,
+    emptyMessage: String,
+    onHideDisabledWorkoutsChange: (Boolean) -> Unit
 ) {
     val scrollState = rememberScrollState()
 
@@ -62,6 +69,33 @@ fun WorkoutsListTab(
             text = "Workouts",
             modifier = Modifier.fillMaxWidth(),
         )
+        if (disabledWorkoutCount > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 15.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(15.dp)
+                ) {
+                    Checkbox(
+                        modifier = Modifier.size(10.dp),
+                        checked = hideDisabledWorkouts,
+                        onCheckedChange = onHideDisabledWorkoutsChange,
+                        colors = CheckboxDefaults.colors().copy(
+                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    Text(
+                        text = "Hide disabled",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(Spacing.md))
         if (workouts.isEmpty()) {
             Row(
@@ -72,7 +106,7 @@ fun WorkoutsListTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "No workouts in this plan yet.",
+                    text = emptyMessage,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground,
                 )

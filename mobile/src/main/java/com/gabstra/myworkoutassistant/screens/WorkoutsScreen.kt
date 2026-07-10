@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,6 +171,18 @@ fun WorkoutsScreen(
         filteredWorkouts.filter { it.isActive }.sortedBy { it.order }
     }
 
+    var hideDisabledWorkouts by rememberSaveable { mutableStateOf(true) }
+    val visibleActiveWorkouts = remember(
+        activeWorkouts,
+        activeAndEnabledWorkouts,
+        hideDisabledWorkouts
+    ) {
+        if (hideDisabledWorkouts) activeAndEnabledWorkouts else activeWorkouts
+    }
+    val disabledActiveWorkoutCount = remember(activeWorkouts) {
+        activeWorkouts.count { !it.enabled }
+    }
+
     val workoutsByPlan = remember(activeWorkouts, allPlans, selectedPlanFilter) {
         val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
 
@@ -218,6 +231,17 @@ fun WorkoutsScreen(
 
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(visibleActiveWorkouts.map { it.id }) {
+        val visibleIds = visibleActiveWorkouts.mapTo(mutableSetOf()) { it.id }
+        val visibleSelection = selectedWorkouts.filter { it.id in visibleIds }
+        if (visibleSelection.size != selectedWorkouts.size) {
+            selectedWorkouts = visibleSelection
+            if (visibleSelection.isEmpty()) {
+                isWorkoutSelectionModeActive = false
+            }
+        }
+    }
 
     var selectedEquipments by remember { mutableStateOf(listOf<WeightLoadedEquipment>()) }
     var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
@@ -486,31 +510,52 @@ fun WorkoutsScreen(
         }
     }
 
+    fun activeWorkoutOrderWithVisibleOrder(
+        visibleOrderedWorkouts: List<Workout>,
+        allActiveWorkouts: List<Workout>
+    ): List<Workout> {
+        val visibleIds = visibleOrderedWorkouts.mapTo(mutableSetOf()) { it.id }
+        var visibleIndex = 0
+        return allActiveWorkouts.map { workout ->
+            if (workout.id in visibleIds) {
+                visibleOrderedWorkouts[visibleIndex++]
+            } else {
+                workout
+            }
+        }
+    }
+
     fun onMoveWorkoutUp() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
-        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
-        if (index <= 0 || index >= activeWorkouts.size) return
-        val newList = activeWorkouts.toMutableList().apply {
+        val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
+        if (index <= 0 || index >= visibleActiveWorkouts.size) return
+        val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
             val prev = this[index - 1]
             this[index - 1] = this[index]
             this[index] = prev
         }
-        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.reorderWorkoutsInPlan(
+            selectedPlanFilter,
+            activeWorkoutOrderWithVisibleOrder(newVisibleList, activeWorkouts)
+        )
         appViewModel.scheduleWorkoutSave(context)
     }
 
     fun onMoveWorkoutDown() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
-        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
-        if (index < 0 || index >= activeWorkouts.size - 1) return
-        val newList = activeWorkouts.toMutableList().apply {
+        val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
+        if (index < 0 || index >= visibleActiveWorkouts.size - 1) return
+        val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
             val next = this[index + 1]
             this[index + 1] = this[index]
             this[index] = next
         }
-        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.reorderWorkoutsInPlan(
+            selectedPlanFilter,
+            activeWorkoutOrderWithVisibleOrder(newVisibleList, activeWorkouts)
+        )
         appViewModel.scheduleWorkoutSave(context)
     }
 
@@ -590,7 +635,7 @@ fun WorkoutsScreen(
                     when (selectedTabIndex) {
                         1 -> WorkoutsBottomBar(
                             selectedWorkouts = selectedWorkouts,
-                            activeWorkouts = activeWorkouts,
+                            activeWorkouts = visibleActiveWorkouts,
                             appViewModel = appViewModel,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
@@ -716,10 +761,24 @@ fun WorkoutsScreen(
                                                 }
                                             )
                                             WorkoutsListTab(
-                                                workouts = activeWorkouts,
+                                                workouts = visibleActiveWorkouts,
                                                 selectedWorkouts = selectedWorkouts,
                                                 isSelectionModeActive = isWorkoutSelectionModeActive,
                                                 appViewModel = appViewModel,
+                                                hideDisabledWorkouts = hideDisabledWorkouts,
+                                                disabledWorkoutCount = disabledActiveWorkoutCount,
+                                                emptyMessage = if (
+                                                    hideDisabledWorkouts &&
+                                                    disabledActiveWorkoutCount > 0 &&
+                                                    activeWorkouts.isNotEmpty()
+                                                ) {
+                                                    "No enabled workouts in this plan."
+                                                } else {
+                                                    "No workouts in this plan yet."
+                                                },
+                                                onHideDisabledWorkoutsChange = {
+                                                    hideDisabledWorkouts = it
+                                                },
                                                 onWorkoutClick = { workout ->
                                                     appViewModel.setScreenData(
                                                         ScreenData.WorkoutDetail(workout.id)
