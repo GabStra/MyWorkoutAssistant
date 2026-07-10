@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import fields
 import json
 from pathlib import Path
 
 from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_FALLBACK_CANDIDATES,
     DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
+    DEFAULT_CANDIDATE_TIMEOUT_SECONDS,
+    DEFAULT_EXERCISE_TIMEOUT_SECONDS,
+    DEFAULT_FINAL_REVIEW_TIMEOUT_SECONDS,
     DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS,
     DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
     DEFAULT_MAX_REVIEW_WINDOWS,
     DEFAULT_REVIEW_FRAMES,
+    DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     BakeAndRankRequest,
     audit_selected_outputs,
     run_bake_and_rank_pipeline,
@@ -39,6 +44,8 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
     DEFAULT_LLAMA_CPP_UBATCH_SIZE,
+    DEFAULT_TEXT_LLAMA_CPP_MMPROJ,
+    DEFAULT_TEXT_LLAMA_CPP_MODEL,
 )
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
@@ -485,6 +492,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
+    youtube_search.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
+    youtube_search.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument(
         "--exclude-youtube-candidates-json",
@@ -814,6 +823,28 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-server-startup-timeout-seconds", type=float, default=180.0)
     bake_and_rank.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
     bake_and_rank.add_argument(
+        "--source-review-timeout-seconds",
+        type=float,
+        default=DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+    )
+    bake_and_rank.add_argument(
+        "--final-review-timeout-seconds",
+        type=float,
+        default=DEFAULT_FINAL_REVIEW_TIMEOUT_SECONDS,
+    )
+    bake_and_rank.add_argument(
+        "--candidate-timeout-seconds",
+        type=float,
+        default=DEFAULT_CANDIDATE_TIMEOUT_SECONDS,
+    )
+    bake_and_rank.add_argument(
+        "--exercise-timeout-seconds",
+        type=float,
+        default=DEFAULT_EXERCISE_TIMEOUT_SECONDS,
+    )
+    bake_and_rank.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
+    bake_and_rank.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
+    bake_and_rank.add_argument(
         "--artifact-retention",
         choices=("debug", "full"),
         default="full",
@@ -961,6 +992,83 @@ def build_parser() -> argparse.ArgumentParser:
     physics_sim.add_argument("--preview-html", help="Optional preview HTML path to build from the simulated output.")
     physics_sim.add_argument("--preview-title", help="Optional title to use when generating the simulated preview.")
     return parser
+
+
+def _request_kwargs(args: argparse.Namespace, request_type: type, overrides: dict[str, object]) -> dict[str, object]:
+    request_fields = {field.name for field in fields(request_type)}
+    kwargs = {
+        name: getattr(args, name)
+        for name in request_fields
+        if hasattr(args, name)
+    }
+    kwargs.update({name: value for name, value in overrides.items() if name in request_fields})
+    return kwargs
+
+
+def build_youtube_ranking_settings(
+    args: argparse.Namespace,
+    *,
+    preview_cache_dir: Path,
+    excluded_candidate_keys: tuple[str, ...],
+) -> YouTubeRankingSettings:
+    overrides: dict[str, object] = {
+        "youtube_cookies": Path(args.youtube_cookies) if args.youtube_cookies else None,
+        "youtube_preview_cache_dir": preview_cache_dir,
+        "excluded_candidate_keys": excluded_candidate_keys,
+        "single_exercise_name_query": (
+            args.single_exercise_name_query
+            or not (args.use_deepseek_query_planner or args.use_llama_cpp_query_planner)
+        ),
+        "exercise_name_rewrite_enabled": not args.no_exercise_name_rewrite,
+        "semantic_gate_enabled": args.semantic_gate_with_llama_cpp,
+        "pose_prefilter_enabled": args.pose_prefilter,
+        "vision_adaptive_chunk_review": not args.no_vision_adaptive_chunk_review,
+        "exercise_motion_contract_enabled": not args.no_exercise_motion_contract,
+        "llama_cpp_base_url": None if args.no_llama_cpp else args.llama_cpp_base_url,
+        "llama_cpp_auto_start_server": not args.no_llama_cpp_auto_start_server,
+    }
+    return YouTubeRankingSettings(**_request_kwargs(args, YouTubeRankingSettings, overrides))
+
+
+def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
+    spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
+    spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
+    if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
+        raise ValueError(
+            "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
+            "Pass --enable-spinepose to use it."
+        )
+    overrides: dict[str, object] = {
+        "candidates_json": Path(args.candidates_json),
+        "workspace": Path(args.workspace),
+        "wham_repo_path": Path(args.wham_repo_path),
+        "body_model_root": Path(args.body_model_root),
+        "youtube_cookies": Path(args.youtube_cookies) if args.youtube_cookies else None,
+        "reuse_wham_cache": not args.no_reuse_wham_cache,
+        "wham_python_command": args.wham_python,
+        "use_warm_wham_worker": args.warm_wham_worker,
+        "wham_estimate_local_only": args.estimate_local_only or not args.full_wham_camera_slam,
+        "wham_run_smplify": not args.skip_smplify,
+        "spinepose_enabled": spinepose_enabled,
+        "spinepose_json_dir": Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
+        "spinepose_output_dir": Path(args.spinepose_output_dir) if args.spinepose_output_dir else None,
+        "spinepose_reuse_cache": not args.no_spinepose_cache,
+        "spinepose_merge_mode": spinepose_merge_mode,
+        "detect_source_segment": not args.skip_source_segment_detection,
+        "pre_wham_source_validation": (
+            args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
+        ),
+        "exercise_motion_contract_enabled": not args.no_exercise_motion_contract,
+        "final_output_validation": (
+            args.final_output_validation and not args.skip_final_output_validation
+        ),
+        "motion_tuning_enabled": not args.skip_motion_tuning,
+        "classify_support_dominance": not args.no_classify_support_dominance,
+        "llama_cpp_mmproj_offload": not args.no_llama_cpp_mmproj_offload,
+        "llama_cpp_cont_batching": not args.no_llama_cpp_cont_batching,
+        "llama_cpp_auto_start_server": not args.no_llama_cpp_auto_start_server,
+    }
+    return BakeAndRankRequest(**_request_kwargs(args, BakeAndRankRequest, overrides))
 
 
 def main() -> None:
@@ -1215,227 +1323,17 @@ def main() -> None:
             workout_plan_json=Path(args.workout_plan_json),
             equipment_json=Path(args.equipment_json) if args.equipment_json else None,
             out_json=out_json,
-            settings=YouTubeRankingSettings(
-                results_per_query=args.results_per_query,
-                youtube_search_empty_retries=args.youtube_search_empty_retries,
-                youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
-                youtube_preview_cache_dir=preview_cache_dir,
+            settings=build_youtube_ranking_settings(
+                args,
+                preview_cache_dir=preview_cache_dir,
                 excluded_candidate_keys=excluded_candidate_keys,
-                max_candidates=args.max_candidates,
-                candidate_review_batch_size=args.candidate_review_batch_size,
-                candidate_review_target_suitable_count=args.candidate_review_target_suitable_count,
-                min_duration_seconds=args.min_duration_seconds,
-                max_duration_seconds=args.max_duration_seconds,
-                single_exercise_name_query=(
-                    args.single_exercise_name_query
-                    or not (args.use_deepseek_query_planner or args.use_llama_cpp_query_planner)
-                ),
-                use_deepseek_query_planner=args.use_deepseek_query_planner,
-                use_llama_cpp_query_planner=args.use_llama_cpp_query_planner,
-                exercise_name_rewrite_enabled=not args.no_exercise_name_rewrite,
-                deepseek_api_key=args.deepseek_api_key,
-                deepseek_base_url=args.deepseek_base_url,
-                deepseek_model=args.deepseek_model,
-                deepseek_max_queries=args.deepseek_max_queries,
-                deepseek_timeout_seconds=args.deepseek_timeout_seconds,
-                rank_with_vision=args.rank_with_vision,
-                semantic_gate_enabled=args.semantic_gate_with_llama_cpp,
-                semantic_gate_candidates_per_exercise=args.semantic_gate_candidates_per_exercise,
-                semantic_gate_max_candidates_per_exercise=args.semantic_gate_max_candidates_per_exercise,
-                semantic_gate_min_score=args.semantic_gate_min_score,
-                semantic_gate_duration_rank_weight=args.semantic_gate_duration_rank_weight,
-                semantic_gate_llm_workers=args.semantic_gate_llm_workers,
-                pose_prefilter_enabled=args.pose_prefilter,
-                pose_prefilter_model=args.pose_prefilter_model,
-                pose_prefilter_candidates_per_exercise=args.pose_prefilter_candidates_per_exercise,
-                pose_prefilter_sample_fps=args.pose_prefilter_sample_fps,
-                pose_prefilter_max_seconds=args.pose_prefilter_max_seconds,
-                pose_prefilter_scan_strategy=args.pose_prefilter_scan_strategy,
-                pose_prefilter_window_seconds=args.pose_prefilter_window_seconds,
-                pose_prefilter_overlap_seconds=args.pose_prefilter_overlap_seconds,
-                pose_prefilter_min_score=args.pose_prefilter_min_score,
-                pose_prefilter_min_keypoint_confidence=args.pose_prefilter_min_keypoint_confidence,
-                pose_prefilter_min_body_scale=args.pose_prefilter_min_body_scale,
-                pose_prefilter_workers=args.pose_prefilter_workers,
-                pose_prefilter_device=args.pose_prefilter_device,
-                pose_prefilter_batch_size=args.pose_prefilter_batch_size,
-                vision_candidates_per_exercise=args.vision_candidates_per_exercise,
-                vision_frames_per_candidate=args.vision_frames_per_candidate,
-                vision_chunk_seconds=args.vision_chunk_seconds,
-                vision_chunk_overlap_seconds=args.vision_chunk_overlap_seconds,
-                vision_max_chunks_per_candidate=args.vision_max_chunks_per_candidate,
-                vision_adaptive_chunk_review=not args.no_vision_adaptive_chunk_review,
-                vision_initial_chunks_per_candidate=args.vision_initial_chunks_per_candidate,
-                vision_expand_chunks_per_candidate=args.vision_expand_chunks_per_candidate,
-                vision_motion_scan_sample_fps=args.vision_motion_scan_sample_fps,
-                vision_motion_scan_max_seconds=args.vision_motion_scan_max_seconds,
-                vision_download_workers=args.vision_download_workers,
-                vision_llm_workers=args.vision_llm_workers,
-                vision_model=args.vision_model,
-                exercise_motion_contract_enabled=not args.no_exercise_motion_contract,
-                llama_cpp_base_url=None if args.no_llama_cpp else args.llama_cpp_base_url,
-                llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_server_command=args.llama_cpp_server_command,
-                llama_cpp_mmproj=args.llama_cpp_mmproj,
-                llama_cpp_backend=args.llama_cpp_backend,
-                llama_cpp_n_predict=args.llama_cpp_n_predict,
-                llama_cpp_temperature=args.llama_cpp_temperature,
-                llama_cpp_top_p=args.llama_cpp_top_p,
-                llama_cpp_top_k=args.llama_cpp_top_k,
-                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
-                llama_cpp_reasoning_budget=args.llama_cpp_reasoning_budget,
-                llama_cpp_reasoning_budget_message=args.llama_cpp_reasoning_budget_message,
-                llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
-                llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
-                llama_cpp_mtmd_batch_max_tokens=args.llama_cpp_mtmd_batch_max_tokens,
-                llama_cpp_ctx_size=args.llama_cpp_ctx_size,
-                llama_cpp_batch_size=args.llama_cpp_batch_size,
-                llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,
-                llama_cpp_flash_attn=args.llama_cpp_flash_attn,
-                llama_cpp_cache_type_k=args.llama_cpp_cache_type_k,
-                llama_cpp_cache_type_v=args.llama_cpp_cache_type_v,
-                llama_cpp_parallel=args.llama_cpp_parallel,
-                llama_cpp_threads_http=args.llama_cpp_threads_http,
-                llama_cpp_cache_reuse=args.llama_cpp_cache_reuse,
-                llama_cpp_fit=args.llama_cpp_fit,
-                llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
-                llama_cpp_fit_target=args.llama_cpp_fit_target,
-                llama_cpp_mmap=args.llama_cpp_mmap,
-                llama_cpp_mlock=args.llama_cpp_mlock,
-                llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
-                keep_llama_cpp_server=args.keep_llama_cpp_server,
-                llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
-                llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
-                include_disabled=args.include_disabled,
-                vision_early_stop_score=args.vision_early_stop_score,
             ),
         )
         print(f"YouTube candidates JSON: {Path(args.out_json).resolve()}")
         print(f"Exercises: {len(manifest['exercises'])}")
         return
     if args.command == "bake-and-rank":
-        spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
-        spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
-        if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
-            raise ValueError(
-                "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
-                "Pass --enable-spinepose to use it."
-            )
-        manifest = run_bake_and_rank_pipeline(
-            BakeAndRankRequest(
-                candidates_json=Path(args.candidates_json),
-                workspace=Path(args.workspace),
-                wham_repo_path=Path(args.wham_repo_path),
-                body_model_root=Path(args.body_model_root),
-                youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
-                youtube_source_cache_dir=args.youtube_source_cache_dir,
-                youtube_preview_cache_dir=args.youtube_preview_cache_dir,
-                fallback_candidates=args.fallback_candidates,
-                max_source_window_attempts=args.max_source_window_attempts,
-                max_final_output_rejections=args.max_final_output_rejections,
-                candidate_workers=args.candidate_workers,
-                wham_python_command=args.wham_python,
-                reuse_wham_cache=not args.no_reuse_wham_cache,
-                use_wham_docker=args.use_wham_docker,
-                wham_docker_image=args.wham_docker_image,
-                wham_docker_gpus=args.wham_docker_gpus,
-                wham_docker_shm_size=args.wham_docker_shm_size,
-                use_warm_wham_worker=args.warm_wham_worker,
-                wham_worker_session_dir=args.wham_worker_session_dir,
-                wham_worker_mount_root=args.wham_worker_mount_root,
-                wham_worker_timeout_seconds=args.wham_worker_timeout_seconds,
-                wham_timeout_seconds=args.wham_timeout_seconds,
-                wham_estimate_local_only=args.estimate_local_only or not args.full_wham_camera_slam,
-                wham_run_smplify=not args.skip_smplify,
-                spinepose_enabled=spinepose_enabled,
-                spinepose_json_dir=Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
-                spinepose_command=args.spinepose_command,
-                spinepose_output_dir=Path(args.spinepose_output_dir) if args.spinepose_output_dir else None,
-                spinepose_mode=args.spinepose_mode,
-                spinepose_model_version=args.spinepose_model_version,
-                spinepose_device=args.spinepose_device,
-                spinepose_reuse_cache=not args.no_spinepose_cache,
-                spinepose_gain=args.spinepose_gain,
-                spinepose_max_degrees=args.spinepose_max_degrees,
-                spinepose_axis=args.spinepose_axis,
-                spinepose_invert=args.spinepose_invert,
-                spinepose_smoothing_window=args.spinepose_smoothing_window,
-                spinepose_arm_counter_rotation=args.spinepose_arm_counter_rotation,
-                spinepose_merge_mode=spinepose_merge_mode,
-                export_wham_smpl_preview=args.export_wham_smpl_preview,
-                detect_source_segment=not args.skip_source_segment_detection,
-                segment_base_url=args.segment_base_url,
-                segment_model=args.segment_model,
-                segment_window_seconds=args.segment_window_seconds,
-                segment_overlap_seconds=args.segment_overlap_seconds,
-                segment_frames_per_window=args.segment_frames_per_window,
-                segment_confidence_threshold=args.segment_confidence_threshold,
-                segment_padding_seconds=args.segment_padding_seconds,
-                segment_end_padding_seconds=args.segment_end_padding_seconds,
-                segment_min_seconds=args.segment_min_seconds,
-                segment_max_seconds=args.segment_max_seconds,
-                segment_refinement_window_seconds=args.segment_refinement_window_seconds,
-                segment_refinement_overlap_seconds=args.segment_refinement_overlap_seconds,
-                segment_refinement_frames_per_window=args.segment_refinement_frames_per_window,
-                segment_refinement_padding_seconds=args.segment_refinement_padding_seconds,
-                segment_classification_workers=args.segment_classification_workers,
-                pre_wham_source_validation=(
-                    args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
-                ),
-                exercise_motion_contract_enabled=not args.no_exercise_motion_contract,
-                review_frames=args.review_frames,
-                review_llm_workers=args.review_llm_workers,
-                max_llm_review_items=args.max_llm_review_items,
-                max_review_windows=args.max_review_windows,
-                max_selected_results=args.max_selected_results,
-                rank_preview_variants=args.rank_preview_variants,
-                adaptive_preview_settings=args.adaptive_preview_settings,
-                max_adaptive_preview_settings=args.max_adaptive_preview_settings,
-                min_selected_score=args.min_selected_score,
-                final_output_validation=(
-                    args.final_output_validation and not args.skip_final_output_validation
-                ),
-                final_output_validation_min_score=args.final_output_validation_min_score,
-                motion_tuning_enabled=not args.skip_motion_tuning,
-                classify_support_dominance=not args.no_classify_support_dominance,
-                llama_cpp_base_url=args.llama_cpp_base_url,
-                llama_cpp_model=args.llama_cpp_model,
-                llama_cpp_server_command=args.llama_cpp_server_command,
-                llama_cpp_mmproj=args.llama_cpp_mmproj,
-                llama_cpp_backend=args.llama_cpp_backend,
-                llama_cpp_n_predict=args.llama_cpp_n_predict,
-                llama_cpp_temperature=args.llama_cpp_temperature,
-                llama_cpp_top_p=args.llama_cpp_top_p,
-                llama_cpp_top_k=args.llama_cpp_top_k,
-                llama_cpp_disable_reasoning=args.llama_cpp_disable_reasoning,
-                llama_cpp_reasoning_budget=args.llama_cpp_reasoning_budget,
-                llama_cpp_reasoning_budget_message=args.llama_cpp_reasoning_budget_message,
-                llama_cpp_ctx_size=args.llama_cpp_ctx_size,
-                llama_cpp_batch_size=args.llama_cpp_batch_size,
-                llama_cpp_ubatch_size=args.llama_cpp_ubatch_size,
-                llama_cpp_flash_attn=args.llama_cpp_flash_attn,
-                llama_cpp_cache_type_k=args.llama_cpp_cache_type_k,
-                llama_cpp_cache_type_v=args.llama_cpp_cache_type_v,
-                llama_cpp_parallel=args.llama_cpp_parallel,
-                llama_cpp_threads_http=args.llama_cpp_threads_http,
-                llama_cpp_cache_reuse=args.llama_cpp_cache_reuse,
-                llama_cpp_fit=args.llama_cpp_fit,
-                llama_cpp_fit_ctx=args.llama_cpp_fit_ctx,
-                llama_cpp_fit_target=args.llama_cpp_fit_target,
-                llama_cpp_mmap=args.llama_cpp_mmap,
-                llama_cpp_mlock=args.llama_cpp_mlock,
-                llama_cpp_mmproj_offload=not args.no_llama_cpp_mmproj_offload,
-                llama_cpp_cont_batching=not args.no_llama_cpp_cont_batching,
-                llama_cpp_image_min_tokens=args.llama_cpp_image_min_tokens,
-                llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
-                llama_cpp_mtmd_batch_max_tokens=args.llama_cpp_mtmd_batch_max_tokens,
-                llama_cpp_auto_start_server=not args.no_llama_cpp_auto_start_server,
-                keep_llama_cpp_server=args.keep_llama_cpp_server,
-                llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
-                llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
-                artifact_retention=args.artifact_retention,
-            )
-        )
+        manifest = run_bake_and_rank_pipeline(build_bake_and_rank_request(args))
         selection_path = Path(args.workspace) / "selection_manifest.json"
         print(f"Selection manifest: {selection_path.resolve()}")
         selected = manifest.get("selected")

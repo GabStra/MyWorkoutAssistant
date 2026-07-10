@@ -78,7 +78,8 @@ YAW_ALIGNMENT_PAIRS = (
     ("left_hand", "right_hand"),
     ("left_wrist", "right_wrist"),
 )
-BAKED_SAGITTAL_PLANE_TARGET_AXIS = "x"
+BAKED_SAGITTAL_PLANE_TARGET_AXIS = "negative_z"
+BAKED_SAGITTAL_PLANE_TARGET_NORMAL = (0.0, -1.0)
 BAKED_SAGITTAL_PLANE_ALIGNMENT_MIN_DEGREES = 0.5
 BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS = (
     ("left_shoulder", "right_shoulder", 2.0),
@@ -204,7 +205,7 @@ def write_preview_html(
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
         "defaultSceneInverted": default_scene_inverted,
-        "defaultAutoWorldAlignment": bool(default_auto_alignment) and not has_horizontal_torso_profile,
+        "defaultAutoWorldAlignment": not raw_motion_review,
         "defaultAutoAlignment": default_auto_alignment,
         "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
         "defaultCameraPitchDegrees": 0.0 if has_horizontal_torso_profile else 10.3,
@@ -832,7 +833,8 @@ def _sagittal_plane_alignment_base_payload(
     return {
         "enabled": True,
         "targetAxis": BAKED_SAGITTAL_PLANE_TARGET_AXIS,
-        "targetAxisMeaning": "movement_or_body_plane_normal",
+        "targetNormal": [BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1]],
+        "targetAxisMeaning": "body_lateral_axis_sagittal_plane_normal",
         "normalSource": normal_source,
         "applied": False,
         "status": status,
@@ -861,14 +863,12 @@ def _build_horizontal_normal_alignment_payload(
     normal_x /= normal_length
     normal_z /= normal_length
     current_angle = math.atan2(normal_z, normal_x)
-    yaw_to_positive_x = _normalize_signed_angle(current_angle)
-    yaw_to_negative_x = _normalize_signed_angle(current_angle - math.pi)
-    if abs(yaw_to_positive_x) <= abs(yaw_to_negative_x):
-        yaw_radians = yaw_to_positive_x
-        target_direction = "+x"
-    else:
-        yaw_radians = yaw_to_negative_x
-        target_direction = "-x"
+    target_angle = math.atan2(
+        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1],
+        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0],
+    )
+    yaw_radians = _normalize_signed_angle(current_angle - target_angle)
+    target_direction = "-z"
 
     bounds = _compute_transformed_joint_bounds(frames)
     pivot = _bounds_center(bounds)
@@ -882,7 +882,7 @@ def _build_horizontal_normal_alignment_payload(
         "yawDegrees": math.degrees(yaw_radians) if applied else 0.0,
         "horizontalNormalBefore": [normal_x, 0.0, normal_z],
         "horizontalNormalAfter": (
-            [1.0 if target_direction == "+x" else -1.0, 0.0, 0.0]
+            [BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1]]
             if applied
             else [normal_x, 0.0, normal_z]
         ),
@@ -932,8 +932,8 @@ def _estimate_baked_movement_plane_alignment(
     direction_length = math.hypot(direction_x, direction_z)
     if direction_length <= 1e-5:
         return None
-    normal_x = direction_z / direction_length
-    normal_z = -direction_x / direction_length
+    axis_x = direction_x / direction_length
+    axis_z = direction_z / direction_length
     sample_count = int(best["sampleCount"])
     base_payload = _sagittal_plane_alignment_base_payload(
         sample_count=sample_count,
@@ -943,15 +943,16 @@ def _estimate_baked_movement_plane_alignment(
     return _build_horizontal_normal_alignment_payload(
         frames,
         base_payload=base_payload,
-        normal_x=normal_x,
-        normal_z=normal_z,
+        normal_x=axis_x,
+        normal_z=axis_z,
         coherence=float(best["coherence"]),
         extra={
+            "alignmentAxisSource": "dominant_movement_direction",
             "movementPlaneConfidence": confidence,
             "movementPlaneTrack": best["label"],
             "movementPlaneRangeRatio": float(best["rangeRatio"]),
             "movementPlaneHorizontalRange": float(best["horizontalRange"]),
-            "movementPlaneDirection": [direction_x, 0.0, direction_z],
+            "movementPlaneDirection": [axis_x, 0.0, axis_z],
             "fallbackNormalSource": "right_minus_left_bilateral_joints",
         },
     )
@@ -1105,10 +1106,6 @@ def _point_track_range_along_direction_2d(
 def _estimate_baked_sagittal_plane_alignment(
     frames: list[dict[str, object]],
 ) -> dict[str, object]:
-    movement_alignment = _estimate_baked_movement_plane_alignment(frames)
-    if movement_alignment is not None:
-        return movement_alignment
-
     accumulated_x = 0.0
     accumulated_z = 0.0
     total_weight = 0.0
@@ -1666,14 +1663,19 @@ def _compute_preview_auto_alignment(
 ) -> list[tuple[tuple[float, float, float], float]]:
     if not frames:
         return []
-    movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
-    if movement_plane_yaw is not None:
-        return [movement_plane_yaw]
     if _classify_torso_alignment_mode(frames) == "horizontal_plane":
+        movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
+        if movement_plane_yaw is not None:
+            return [movement_plane_yaw]
         yaw_rotation = _estimate_support_profile_yaw_rotation(frames)
         if yaw_rotation is None:
             yaw_rotation = _estimate_horizontal_spine_yaw_rotation(frames)
         return [yaw_rotation] if yaw_rotation is not None else []
+
+    movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
+    if movement_plane_yaw is not None:
+        return [movement_plane_yaw]
+
     support_profile_rotation = _estimate_support_profile_yaw_rotation(frames)
     return [support_profile_rotation] if support_profile_rotation is not None else []
 
@@ -1782,17 +1784,13 @@ def _dominant_movement_alignment_score(
 def _dominant_movement_axis_points(
     frames: list[MotionFrame],
 ) -> list[tuple[float, float, float]] | None:
-    group_candidates: list[tuple[float, str, list[tuple[float, float, float]]]] = []
+    candidates: list[tuple[float, list[tuple[float, float, float]]]] = []
     for group_name, joint_names, root_relative, priority in DOMINANT_MOVEMENT_AXIS_GROUPS:
         points = _group_motion_axis_points(frames, joint_names, root_relative=root_relative)
         score = _score_motion_axis_candidate(points, priority=priority)
         if score is not None:
-            group_candidates.append((score, group_name, points))
-    if group_candidates:
-        group_candidates.sort(key=lambda candidate: candidate[0], reverse=True)
-        return group_candidates[0][2]
+            candidates.append((score, points))
 
-    candidates: list[tuple[float, list[tuple[float, float, float]]]] = []
     for joint_name in DOMINANT_MOVEMENT_AXIS_JOINTS:
         points = _joint_motion_axis_points(frames, joint_name, root_relative=True)
         _append_motion_axis_candidate(candidates, points, priority=_dominant_movement_joint_priority(joint_name))
@@ -2179,6 +2177,26 @@ def _estimate_upper_body_vertical_trend_alignment_rotation(
     return _rotation_between_vectors(trend, (0.0, 1.0, 0.0), minimum_degrees=1.0)
 
 
+def _estimate_dominant_vertical_body_trend_alignment_rotation(
+    frames: list[MotionFrame],
+) -> tuple[tuple[float, float, float], float] | None:
+    points = [point for point in _smooth_motion_line_path([
+        _frame_upper_body_motion_anchor(frame)
+        for frame in frames
+    ]) if point is not None]
+    if len(points) < 3:
+        return None
+    vertical_range = max(point[1] for point in points) - min(point[1] for point in points)
+    horizontal_range = max(
+        math.hypot(right[0] - left[0], right[2] - left[2])
+        for left in points
+        for right in points
+    )
+    if vertical_range < 0.05 or vertical_range < horizontal_range:
+        return None
+    return _estimate_upper_body_vertical_trend_alignment_rotation(frames)
+
+
 def _estimate_all_joint_vertical_trend_alignment_rotation(
     frames: list[MotionFrame],
 ) -> tuple[tuple[float, float, float], float] | None:
@@ -2483,6 +2501,23 @@ def _estimate_upright_spine_alignment_rotation(
     if _vector_length(averaged) <= 1e-6:
         return None
     return _rotation_between_vectors(averaged, (0.0, 1.0, 0.0), minimum_degrees=2.0)
+
+
+def _estimate_upright_spine_leveling_rotation(
+    frames: list[MotionFrame],
+) -> tuple[tuple[float, float, float], float] | None:
+    upright_vectors = _collect_upright_spine_vectors(frames)
+    if len(upright_vectors) < 3:
+        return None
+    averaged = _normalize((
+        sum(vector[0] for vector in upright_vectors) / len(upright_vectors),
+        sum(vector[1] for vector in upright_vectors) / len(upright_vectors),
+        sum(vector[2] for vector in upright_vectors) / len(upright_vectors),
+    ))
+    if _vector_length(averaged) <= 1e-6:
+        return None
+    target = (0.0, 1.0 if averaged[1] >= 0.0 else -1.0, 0.0)
+    return _rotation_between_vectors(averaged, target, minimum_degrees=2.0)
 
 
 def _collect_spine_vectors(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
@@ -4364,6 +4399,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const sceneOriginOffset = new THREE.Vector3();
     let suppressSceneOriginOffset = false;
     let suppressPreviewSagittalPlaneAlignment = false;
+    let suppressManualModelRotation = false;
     let previewSagittalPlaneAlignmentKey = null;
     let previewSagittalPlaneAlignment = null;
     const sceneRotationQuaternion = new THREE.Quaternion();
@@ -5555,7 +5591,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function verticalMovementCorrectionForFrame(frame, frameTranslation, jointName) {{
-      if (!autoWorldAlignmentEnabled || !activeVerticalMovementAnchor || !frame) {{
+      if (manualModelRotationOverridesAutoOrientation() || !autoWorldAlignmentEnabled || !activeVerticalMovementAnchor || !frame) {{
         return null;
       }}
       if (lockPlantedHands) {{
@@ -5668,7 +5704,12 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function applyAutoAlignment(point) {{
-      if (!autoWorldAlignmentEnabled || !Array.isArray(currentAutoAlignment) || currentAutoAlignment.length === 0) {{
+      if (
+        manualModelRotationOverridesAutoOrientation()
+        || !autoWorldAlignmentEnabled
+        || !Array.isArray(currentAutoAlignment)
+        || currentAutoAlignment.length === 0
+      ) {{
         return point.clone();
       }}
       tempPivotedPoint.copy(point);
@@ -5732,22 +5773,159 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
-    function applyManualModelRotation(point) {{
-      if (
-        Math.abs(manualModelRotationXDegrees) <= 1e-6 &&
-        Math.abs(manualModelRotationYDegrees) <= 1e-6 &&
-        Math.abs(manualModelRotationZDegrees) <= 1e-6
-      ) {{
+    function manualModelRotationAxisSemanticsPayload() {{
+      return {{
+        x: "body_lateral_axis_sagittal_plane_normal",
+        y: "world_y_axis",
+        z: "body_sagittal_forward_axis",
+      }};
+    }}
+
+    function manualModelRotationIsActive() {{
+      return (
+        Math.abs(manualModelRotationXDegrees) > 1e-6
+        || Math.abs(manualModelRotationYDegrees) > 1e-6
+        || Math.abs(manualModelRotationZDegrees) > 1e-6
+      );
+    }}
+
+    function manualYawRotationIsActive() {{
+      return Math.abs(manualModelRotationYDegrees) > 1e-6;
+    }}
+
+    function manualModelRotationOverridesAutoOrientation() {{
+      return manualYawRotationIsActive() && !suppressManualModelRotation;
+    }}
+
+    function averageManualRotationVectors(vectors) {{
+      const valid = vectors.filter((vector) => vector && vector.lengthSq() > 1e-8);
+      if (valid.length === 0) {{
+        return null;
+      }}
+      const averaged = new THREE.Vector3();
+      for (const vector of valid) {{
+        averaged.add(vector);
+      }}
+      averaged.multiplyScalar(1 / valid.length);
+      return averaged.lengthSq() > 1e-8 ? averaged : null;
+    }}
+
+    function transformedManualRotationReferencePoint(frame, jointName, frameTranslation, currentFixedRoot = fixedRoot) {{
+      const rawPoint = frame?.joints?.[jointName];
+      if (!Array.isArray(rawPoint) || rawPoint.length < 3) {{
+        return null;
+      }}
+      const transformed = toUncorrectedWorldPoint(rawPoint, frameTranslation, frame);
+      if (!manualModelRotationOverridesAutoOrientation() && !suppressPreviewSagittalPlaneAlignment) {{
+        applyPreviewSagittalPlaneAlignment(transformed, currentFixedRoot);
+      }}
+      return transformed;
+    }}
+
+    function bodyRelativeManualRotationAxes(frame, frameTranslation, currentFixedRoot = fixedRoot) {{
+      if (!frame) {{
+        return {{
+          lateral: axisX.clone(),
+          forward: axisZ.clone(),
+        }};
+      }}
+      const transformedPoints = new Map();
+      const pointForJoint = (jointName) => {{
+        if (!transformedPoints.has(jointName)) {{
+          transformedPoints.set(
+            jointName,
+            transformedManualRotationReferencePoint(frame, jointName, frameTranslation, currentFixedRoot)
+          );
+        }}
+        return transformedPoints.get(jointName);
+      }};
+      const lateral = new THREE.Vector3();
+      let lateralWeight = 0.0;
+      for (const [leftName, rightName, pairWeight] of sagittalPlaneAlignmentPairs) {{
+        const left = pointForJoint(leftName);
+        const right = pointForJoint(rightName);
+        if (!left || !right) {{
+          continue;
+        }}
+        const direction = right.clone().sub(left);
+        const length = direction.length();
+        if (!Number.isFinite(length) || length <= 1e-5) {{
+          continue;
+        }}
+        const weight = Number(pairWeight) * length;
+        lateral.addScaledVector(direction.multiplyScalar(1 / length), weight);
+        lateralWeight += weight;
+      }}
+      if (lateralWeight <= 1e-6 || lateral.lengthSq() <= 1e-8) {{
+        lateral.copy(axisX);
+      }} else {{
+        lateral.normalize();
+      }}
+
+      const shoulderCenter = averageManualRotationVectors([
+        pointForJoint("left_shoulder"),
+        pointForJoint("right_shoulder"),
+        pointForJoint("left_collar"),
+        pointForJoint("right_collar"),
+      ]);
+      const hipCenter = averageManualRotationVectors([
+        pointForJoint("left_hip"),
+        pointForJoint("right_hip"),
+        pointForJoint("pelvis"),
+      ]);
+      let bodyUp = null;
+      if (shoulderCenter && hipCenter) {{
+        bodyUp = shoulderCenter.clone().sub(hipCenter);
+      }}
+      if (!bodyUp || bodyUp.lengthSq() <= 1e-8) {{
+        const neck = pointForJoint("neck") ?? pointForJoint("spine3") ?? pointForJoint("head");
+        const pelvis = pointForJoint("pelvis");
+        if (neck && pelvis) {{
+          bodyUp = neck.clone().sub(pelvis);
+        }}
+      }}
+      if (!bodyUp || bodyUp.lengthSq() <= 1e-8) {{
+        bodyUp = axisY.clone();
+      }}
+      bodyUp.addScaledVector(lateral, -bodyUp.dot(lateral));
+      if (bodyUp.lengthSq() <= 1e-8) {{
+        bodyUp.copy(axisY).addScaledVector(lateral, -axisY.dot(lateral));
+      }}
+      if (bodyUp.lengthSq() <= 1e-8) {{
+        bodyUp.copy(axisZ);
+      }} else {{
+        bodyUp.normalize();
+      }}
+      const forward = new THREE.Vector3().crossVectors(lateral, bodyUp);
+      if (forward.lengthSq() <= 1e-8) {{
+        forward.copy(axisZ);
+      }} else {{
+        forward.normalize();
+      }}
+      return {{
+        lateral,
+        forward,
+      }};
+    }}
+
+    function applyManualModelRotation(point, frame = activeRenderFrame, frameTranslation = [0, 0, 0], currentFixedRoot = fixedRoot) {{
+      if (suppressManualModelRotation || !manualModelRotationIsActive()) {{
         return point;
       }}
+      const bodyAxes = (
+        Math.abs(manualModelRotationXDegrees) > 1e-6
+        || Math.abs(manualModelRotationZDegrees) > 1e-6
+      )
+        ? bodyRelativeManualRotationAxes(frame, frameTranslation, currentFixedRoot)
+        : null;
       if (Math.abs(manualModelRotationXDegrees) > 1e-6) {{
-        point.applyAxisAngle(axisX, manualModelRotationXDegrees * Math.PI / 180);
+        point.applyAxisAngle(bodyAxes?.lateral ?? axisX, manualModelRotationXDegrees * Math.PI / 180);
       }}
       if (Math.abs(manualModelRotationYDegrees) > 1e-6) {{
         point.applyAxisAngle(axisY, manualModelRotationYDegrees * Math.PI / 180);
       }}
       if (Math.abs(manualModelRotationZDegrees) > 1e-6) {{
-        point.applyAxisAngle(axisZ, manualModelRotationZDegrees * Math.PI / 180);
+        point.applyAxisAngle(bodyAxes?.forward ?? axisZ, manualModelRotationZDegrees * Math.PI / 180);
       }}
       return point;
     }}
@@ -5986,7 +6164,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function computeFrameShoulderLevelingTransform(frame, frameTranslation) {{
-      if (lockPlantedHands || !autoWorldAlignmentEnabled || !frame) {{
+      if (manualModelRotationOverridesAutoOrientation() || lockPlantedHands || !autoWorldAlignmentEnabled || !frame) {{
         return null;
       }}
       const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
@@ -6042,7 +6220,8 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function availableFootJoints() {{
-      return ["left_ankle", "right_ankle"].filter((jointName) => payload.jointNames.includes(jointName));
+      return ["left_ankle", "left_foot", "right_ankle", "right_foot"]
+        .filter((jointName) => payload.jointNames.includes(jointName));
     }}
 
     function availableHandJoints() {{
@@ -6052,7 +6231,12 @@ def _build_html(payload: dict[str, object]) -> str:
     function isFootLockTarget(target) {{
       return lockPlantedFeet
         && typeof target?.jointName === "string"
-        && (target.jointName === "left_ankle" || target.jointName === "right_ankle");
+        && (
+          target.jointName === "left_ankle"
+          || target.jointName === "left_foot"
+          || target.jointName === "right_ankle"
+          || target.jointName === "right_foot"
+        );
     }}
 
     function computeLockedFootBodyTranslation(activeTargets, basePositions) {{
@@ -6073,7 +6257,6 @@ def _build_html(payload: dict[str, object]) -> str:
         const targetPoint = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ);
         const desiredTranslation = targetPoint.sub(currentPoint);
         desiredTranslation.y = 0;
-        desiredTranslation.multiplyScalar(targetWeight);
         weightedTranslation.addScaledVector(desiredTranslation, targetWeight);
         totalWeight += targetWeight;
       }}
@@ -6110,53 +6293,110 @@ def _build_html(payload: dict[str, object]) -> str:
         return;
       }}
       const isHandJoint = jointName.includes("hand") || jointName.includes("wrist");
-      const contactSpeed = isHandJoint ? 0.035 : 0.028;
+      const contactSpeedMetersPerSecond = isHandJoint ? 0.25 : 0.32;
+      const edgeSpeeds = samples.slice(0, -1).map((sample, index) => {{
+        const next = samples[index + 1];
+        if (!sample || !next) {{
+          return null;
+        }}
+        const deltaSeconds = Math.max(
+          Math.abs(Number(next.frame.timeSec) - Number(sample.frame.timeSec)),
+          1 / Math.max(1, Number(payload.fps) || 30)
+        );
+        return next.point.distanceTo(sample.point) / deltaSeconds;
+      }});
       const plantedSamples = samples.filter((sample, index) => {{
         if (!sample) {{
           return false;
         }}
-        const previous = index > 0 ? samples[index - 1] : null;
-        const next = index + 1 < samples.length ? samples[index + 1] : null;
-        const speedPrev = previous
-          ? Math.hypot(sample.point.x - previous.point.x, sample.point.y - previous.point.y, sample.point.z - previous.point.z)
-          : 0;
-        const speedNext = next
-          ? Math.hypot(next.point.x - sample.point.x, next.point.y - sample.point.y, next.point.z - sample.point.z)
-          : 0;
-        const isSlow = Math.min(speedPrev, speedNext) <= contactSpeed;
-        return isSlow;
+        const localSpeeds = edgeSpeeds
+          .slice(Math.max(0, index - 2), Math.min(edgeSpeeds.length, index + 2))
+          .filter((speed) => Number.isFinite(speed));
+        return localSpeeds.length > 0
+          && medianValue(localSpeeds) <= contactSpeedMetersPerSecond;
       }});
       if (plantedSamples.length === 0) {{
         return;
       }}
-      const anchorPoint = new THREE.Vector3(
-        medianValue(plantedSamples.map((sample) => sample.point.x)),
-        medianValue(plantedSamples.map((sample) => sample.point.y)),
-        medianValue(plantedSamples.map((sample) => sample.point.z))
-      );
       const plantedIndexes = new Set(plantedSamples.map((sample) => sample.index));
-      for (const sample of validSamples) {{
-        let weight = plantedIndexes.has(sample.index) ? 1 : 0;
-        for (const plantedSample of plantedSamples) {{
-          const distance = Math.abs(sample.index - plantedSample.index);
-          if (distance <= 4) {{
-            weight = Math.max(weight, 1 - distance / 5);
+      const continuousSupport = plantedSamples.length / validSamples.length >= 0.8;
+      if (continuousSupport) {{
+        for (const sample of validSamples) {{
+          plantedIndexes.add(sample.index);
+        }}
+      }}
+      const sortedPlantedIndexes = [...plantedIndexes].sort((left, right) => left - right);
+      for (let index = 1; index < sortedPlantedIndexes.length; index += 1) {{
+        const previous = sortedPlantedIndexes[index - 1];
+        const next = sortedPlantedIndexes[index];
+        if (next - previous <= 5) {{
+          for (let fillIndex = previous + 1; fillIndex < next; fillIndex += 1) {{
+            if (samples[fillIndex]) {{
+              plantedIndexes.add(fillIndex);
+            }}
           }}
         }}
-        if (weight <= 0) {{
+      }}
+      if (sortedPlantedIndexes.length > 0 && sortedPlantedIndexes[0] <= 4) {{
+        for (let index = 0; index < sortedPlantedIndexes[0]; index += 1) {{
+          if (samples[index]) {{
+            plantedIndexes.add(index);
+          }}
+        }}
+      }}
+      const lastPlantedIndex = sortedPlantedIndexes[sortedPlantedIndexes.length - 1];
+      if (Number.isInteger(lastPlantedIndex) && samples.length - 1 - lastPlantedIndex <= 4) {{
+        for (let index = lastPlantedIndex + 1; index < samples.length; index += 1) {{
+          if (samples[index]) {{
+            plantedIndexes.add(index);
+          }}
+        }}
+      }}
+      const contactRuns = [];
+      let currentRun = [];
+      for (const sample of validSamples) {{
+        if (plantedIndexes.has(sample.index)) {{
+          if (currentRun.length > 0 && sample.index !== currentRun[currentRun.length - 1].index + 1) {{
+            contactRuns.push(currentRun);
+            currentRun = [];
+          }}
+          currentRun.push(sample);
+        }} else if (currentRun.length > 0) {{
+          contactRuns.push(currentRun);
+          currentRun = [];
+        }}
+      }}
+      if (currentRun.length > 0) {{
+        contactRuns.push(currentRun);
+      }}
+      const minimumContactFrames = Math.max(2, Math.round((Number(payload.fps) || 30) * 0.12));
+      for (const run of contactRuns) {{
+        if (run.length < minimumContactFrames) {{
           continue;
         }}
-        const targets = targetsByFrameKey.get(frameFootLockKey(sample.frame));
-        if (!targets) {{
-          continue;
+        const anchorPoint = new THREE.Vector3(
+          medianValue(run.map((sample) => sample.point.x)),
+          medianValue(run.map((sample) => sample.point.y)),
+          medianValue(run.map((sample) => sample.point.z))
+        );
+        const touchesStart = run[0].index === 0;
+        const touchesEnd = run[run.length - 1].index === frames.length - 1;
+        for (let runIndex = 0; runIndex < run.length; runIndex += 1) {{
+          const sample = run[runIndex];
+          const startWeight = touchesStart ? 1 : Math.min(1, (runIndex + 1) / 3);
+          const endWeight = touchesEnd ? 1 : Math.min(1, (run.length - runIndex) / 3);
+          const targets = targetsByFrameKey.get(frameFootLockKey(sample.frame));
+          if (!targets) {{
+            continue;
+          }}
+          targets.push({{
+            jointName,
+            anchorX: anchorPoint.x,
+            anchorY: anchorPoint.y,
+            anchorZ: anchorPoint.z,
+            weight: Math.min(startWeight, endWeight),
+          }});
         }}
-        targets.push({{
-          jointName,
-          anchorX: anchorPoint.x,
-          anchorY: anchorPoint.y,
-          anchorZ: anchorPoint.z,
-          weight,
-        }});
       }}
     }}
 
@@ -6268,6 +6508,7 @@ def _build_html(payload: dict[str, object]) -> str:
         const ankleName = `${{side}}_ankle`;
         const footName = `${{side}}_foot`;
         const target = activeTargets.find((candidate) => candidate.jointName === ankleName);
+        const footTarget = activeTargets.find((candidate) => candidate.jointName === footName);
         if (!target) {{
           continue;
         }}
@@ -6280,10 +6521,14 @@ def _build_html(payload: dict[str, object]) -> str:
           continue;
         }}
         const originalAnkle = basePositions.get(ankleName);
-        const blendedTarget = originalAnkle.clone().lerp(
-          new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ),
-          targetWeight
-        );
+        const ankleCorrection = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
+          .sub(originalAnkle)
+          .multiplyScalar(targetWeight);
+        const maxLocalCorrection = 0.025;
+        if (ankleCorrection.length() > maxLocalCorrection) {{
+          ankleCorrection.setLength(maxLocalCorrection);
+        }}
+        const blendedTarget = originalAnkle.clone().add(ankleCorrection);
         const solved = solveLegIkChain(
           chain.map((jointName) => basePositions.get(jointName).clone()),
           blendedTarget
@@ -6295,7 +6540,24 @@ def _build_html(payload: dict[str, object]) -> str:
           const originalAnkle = basePositions.get(ankleName);
           const originalFoot = basePositions.get(footName);
           const ankleToFoot = originalFoot.clone().sub(originalAnkle);
-          lockedJointPositions.set(footName, solved[solved.length - 1].clone().add(ankleToFoot));
+          if (footTarget && ankleToFoot.lengthSq() > 1e-10) {{
+            const plantedFootDirection = new THREE.Vector3(
+              footTarget.anchorX - target.anchorX,
+              footTarget.anchorY - target.anchorY,
+              footTarget.anchorZ - target.anchorZ
+            );
+            if (plantedFootDirection.lengthSq() > 1e-10) {{
+              plantedFootDirection.setLength(ankleToFoot.length());
+              lockedJointPositions.set(
+                footName,
+                solved[solved.length - 1].clone().add(plantedFootDirection)
+              );
+            }} else {{
+              lockedJointPositions.set(footName, solved[solved.length - 1].clone().add(ankleToFoot));
+            }}
+          }} else {{
+            lockedJointPositions.set(footName, solved[solved.length - 1].clone().add(ankleToFoot));
+          }}
         }}
       }}
       for (const side of ["left", "right"]) {{
@@ -6411,12 +6673,25 @@ def _build_html(payload: dict[str, object]) -> str:
     ) {{
       return {{
         enabled: true,
-        targetAxis: "x",
-        targetAxisMeaning: "movement_or_body_plane_normal",
+        targetAxis: "negative_z",
+        targetNormal: [0.0, 0.0, -1.0],
+        targetAxisMeaning: "body_lateral_axis_sagittal_plane_normal",
         normalSource,
         applied: false,
         status,
         sampleCount,
+      }};
+    }}
+
+    function manualModelRotationSkippedAlignmentPayload(sampleCount = 0) {{
+      return {{
+        ...previewSagittalPlaneAlignmentBasePayload(
+          sampleCount,
+          "manual_model_rotation",
+          "skipped_manual_model_rotation"
+        ),
+        skippedReason: "manual_model_rotation_is_orientation_override",
+        manualModelRotationDegrees: manualModelRotationPayload(),
       }};
     }}
 
@@ -6433,10 +6708,8 @@ def _build_html(payload: dict[str, object]) -> str:
       const resolvedNormalX = normalX / normalLength;
       const resolvedNormalZ = normalZ / normalLength;
       const currentAngle = Math.atan2(resolvedNormalZ, resolvedNormalX);
-      const yawToPositiveX = normalizeSignedRadians(currentAngle);
-      const yawToNegativeX = normalizeSignedRadians(currentAngle - Math.PI);
-      const targetDirection = Math.abs(yawToPositiveX) <= Math.abs(yawToNegativeX) ? "+x" : "-x";
-      const yawRadians = targetDirection === "+x" ? yawToPositiveX : yawToNegativeX;
+      const targetDirection = "-z";
+      const yawRadians = normalizeSignedRadians(currentAngle + Math.PI / 2);
       const yawDegrees = yawRadians * 180 / Math.PI;
       const applied = Math.abs(yawDegrees) >= 0.5;
       const bounds = computeBakedWearBounds(frames);
@@ -6450,7 +6723,7 @@ def _build_html(payload: dict[str, object]) -> str:
         yawDegrees: applied ? yawDegrees : 0.0,
         horizontalNormalBefore: [resolvedNormalX, 0.0, resolvedNormalZ],
         horizontalNormalAfter: applied
-          ? [targetDirection === "+x" ? 1.0 : -1.0, 0.0, 0.0]
+          ? [0.0, 0.0, -1.0]
           : [resolvedNormalX, 0.0, resolvedNormalZ],
         pivot,
         coherence,
@@ -6695,15 +6968,16 @@ def _build_html(payload: dict[str, object]) -> str:
       return sagittalAlignmentPayloadFromNormal(
         frames,
         basePayload,
+        directionX / directionLength,
         directionZ / directionLength,
-        -directionX / directionLength,
         best.coherence,
         {{
+          alignmentAxisSource: "dominant_movement_direction",
           movementPlaneConfidence: best.confidence,
           movementPlaneTrack: best.label,
           movementPlaneRangeRatio: best.rangeRatio,
           movementPlaneHorizontalRange: best.horizontalRange,
-          movementPlaneDirection: [directionX, 0.0, directionZ],
+          movementPlaneDirection: [directionX / directionLength, 0.0, directionZ / directionLength],
           fallbackNormalSource: "right_minus_left_bilateral_joints",
         }}
       );
@@ -6718,7 +6992,9 @@ def _build_html(payload: dict[str, object]) -> str:
       const alignmentFrames = [];
       const previousActiveFrame = activeRenderFrame;
       const previousSuppressPreviewSagittalPlaneAlignment = suppressPreviewSagittalPlaneAlignment;
+      const previousSuppressManualModelRotation = suppressManualModelRotation;
       suppressPreviewSagittalPlaneAlignment = true;
+      suppressManualModelRotation = true;
       try {{
         for (const frame of frames) {{
           activeRenderFrame = frame;
@@ -6758,12 +7034,8 @@ def _build_html(payload: dict[str, object]) -> str:
         }}
       }} finally {{
         suppressPreviewSagittalPlaneAlignment = previousSuppressPreviewSagittalPlaneAlignment;
+        suppressManualModelRotation = previousSuppressManualModelRotation;
         activeRenderFrame = previousActiveFrame;
-      }}
-
-      const movementAlignment = estimateMovementPlaneSagittalAlignment(alignmentFrames);
-      if (movementAlignment) {{
-        return movementAlignment;
       }}
 
       const basePayload = previewSagittalPlaneAlignmentBasePayload(sampleCount);
@@ -6793,6 +7065,9 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function getPreviewSagittalPlaneAlignment(currentFixedRoot = fixedRoot) {{
+      if (manualModelRotationOverridesAutoOrientation()) {{
+        return manualModelRotationSkippedAlignmentPayload(playbackState.boundsFrames?.length ?? 0);
+      }}
       const key = buildSceneBoundsCacheKey(currentFixedRoot);
       if (previewSagittalPlaneAlignmentKey !== key || previewSagittalPlaneAlignment == null) {{
         previewSagittalPlaneAlignment = estimatePreviewSagittalPlaneAlignment(currentFixedRoot);
@@ -6836,10 +7111,10 @@ def _build_html(payload: dict[str, object]) -> str:
       if (verticalCorrection) {{
         transformedPoint.sub(verticalCorrection);
       }}
-      if (!suppressPreviewSagittalPlaneAlignment) {{
+      if (!manualModelRotationOverridesAutoOrientation() && !suppressPreviewSagittalPlaneAlignment) {{
         applyPreviewSagittalPlaneAlignment(transformedPoint, currentFixedRoot);
       }}
-      applyManualModelRotation(transformedPoint);
+      applyManualModelRotation(transformedPoint, activeRenderFrame, frameTranslation, currentFixedRoot);
       if (applySceneOriginOffset && !suppressSceneOriginOffset) {{
         transformedPoint.sub(sceneOriginOffset);
       }}
@@ -7002,11 +7277,6 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function estimateBakedSagittalPlaneAlignment(frames) {{
-      const movementAlignment = estimateMovementPlaneSagittalAlignment(frames);
-      if (movementAlignment) {{
-        return movementAlignment;
-      }}
-
       let accumulatedX = 0.0;
       let accumulatedZ = 0.0;
       let totalWeight = 0.0;
@@ -7093,6 +7363,23 @@ def _build_html(payload: dict[str, object]) -> str:
 
     function alignBakedSagittalPlaneToGridAxis(frames) {{
       const alignment = estimateBakedSagittalPlaneAlignment(frames);
+      if (manualModelRotationOverridesAutoOrientation()) {{
+        return {{
+          frames,
+          alignment: {{
+            ...alignment,
+            applied: false,
+            status: "skipped_manual_model_rotation",
+            skippedReason: "manual_model_rotation_is_orientation_override",
+            suggestedYawRadians: Number(alignment?.yawRadians) || 0.0,
+            suggestedYawDegrees: Number(alignment?.yawDegrees) || 0.0,
+            yawRadians: 0.0,
+            yawDegrees: 0.0,
+            horizontalNormalAfter: alignment?.horizontalNormalBefore ?? alignment?.horizontalNormalAfter,
+            manualModelRotationDegrees: manualModelRotationPayload(),
+          }},
+        }};
+      }}
       return {{
         frames: rotateBakedWearFramesAroundY(frames, alignment),
         alignment,
@@ -7114,6 +7401,7 @@ def _build_html(payload: dict[str, object]) -> str:
         lockPlantedHands,
         sceneInverted,
         manualModelRotationDegrees: manualModelRotationPayload(),
+        manualModelRotationAxisSemantics: manualModelRotationAxisSemanticsPayload(),
         cameraYawDegrees: exportCameraYawDegrees,
         cameraPitchDegrees: exportCameraPitchDegrees,
         playbackSpeed: exportPlaybackSpeed,
@@ -7183,6 +7471,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockPlantedHands: selectedPreviewSettings.lockPlantedHands,
           invertScene: selectedPreviewSettings.sceneInverted,
           manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
+          manualModelRotationAxisSemantics: selectedPreviewSettings.manualModelRotationAxisSemantics,
           canonicalWorldUp: true,
           wearCoordinateNormalization: wearCoordinateNormalization.metadata,
           previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
@@ -7213,6 +7502,7 @@ def _build_html(payload: dict[str, object]) -> str:
         transforms: {{
           autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
           manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
+          manualModelRotationAxisSemantics: selectedPreviewSettings.manualModelRotationAxisSemantics,
           rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
           sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
           previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
@@ -7416,8 +7706,8 @@ def _build_html(payload: dict[str, object]) -> str:
         type: "number",
         defaultValue: 0.0,
         range: [-90.0, 90.0],
-        description: "Rotates the model around the world X axis after automatic alignment.",
-        useWhen: "Use when the body/floor relationship is tilted forward or backward.",
+        description: "Rotates the model around the body lateral axis, which is the sagittal-plane normal after alignment.",
+        useWhen: "Use when the body/floor relationship is tilted forward or backward in the movement plane.",
         risk: "Can make a correct floor contact look wrong if overused.",
       }},
       {{
@@ -7436,8 +7726,8 @@ def _build_html(payload: dict[str, object]) -> str:
         type: "number",
         defaultValue: 0.0,
         range: [-90.0, 90.0],
-        description: "Rotates the model around the world Z axis after automatic alignment.",
-        useWhen: "Use when the body/floor relationship is tilted sideways.",
+        description: "Rotates the model around the body sagittal-forward axis after alignment.",
+        useWhen: "Use when the body/floor relationship is tilted sideways relative to the movement plane.",
         risk: "Can create visible leaning if overused.",
       }},
       {{

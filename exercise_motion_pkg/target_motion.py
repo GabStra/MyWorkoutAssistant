@@ -118,7 +118,28 @@ def normalize_observable_motion_spec(value: Any) -> dict[str, Any] | None:
 def observable_motion_spec_for_contract(contract: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(contract, dict):
         return None
-    return normalize_observable_motion_spec(contract.get("observableMotionSpec"))
+    spec = normalize_observable_motion_spec(contract.get("observableMotionSpec"))
+    if spec is not None:
+        return spec
+    explicit_requires_return = parse_contract_bool(contract.get("requiresReturnToStart"))
+    explicit_one_way_invalid = parse_contract_bool(contract.get("oneWayPartialIsInvalid"))
+    explicit_must_show_full_cycle = parse_contract_bool(contract.get("mustShowFullCycle"))
+    if explicit_requires_return is not None:
+        if explicit_one_way_invalid is None:
+            explicit_one_way_invalid = explicit_requires_return
+        if explicit_must_show_full_cycle is None:
+            explicit_must_show_full_cycle = explicit_requires_return
+    spec_payload = {
+        "primaryMovingRegions": contract.get("primaryMovingRegions") or contract.get("primaryMotionRegions"),
+        "referenceRegions": contract.get("referenceRegions"),
+        "primaryAxis": contract.get("primaryAxis"),
+        "motionPattern": contract.get("motionPattern"),
+        "requiresReturnToStart": explicit_requires_return,
+        "oneWayPartialIsInvalid": explicit_one_way_invalid,
+        "mustShowFullCycle": explicit_must_show_full_cycle,
+        "mustBeVisibleRegions": contract.get("mustBeVisibleRegions") or contract.get("mustBeVisible"),
+    }
+    return normalize_observable_motion_spec(spec_payload)
 
 
 def contract_plain_text_for_return_detection(contract: dict[str, Any] | None) -> str:
@@ -146,12 +167,21 @@ def contract_plain_text_for_return_detection(contract: dict[str, Any] | None) ->
                 "text",
                 "contract",
                 "plainText",
+                "movementType",
+                "requiresReturnToStart",
+                "validStartState",
+                "validEndState",
+                "boundaryRule",
+                "allowedExerciseTransitions",
+                "excludedSetupOrCleanup",
                 "Source",
                 "Complete",
+                "Boundary",
                 "Reject",
                 "Notes",
                 "source",
                 "complete",
+                "boundary",
                 "reject",
                 "notes",
                 "requiredPhases",
@@ -165,12 +195,21 @@ def contract_plain_text_for_return_detection(contract: dict[str, Any] | None) ->
         "text",
         "contract",
         "plainText",
+        "movementType",
+        "requiresReturnToStart",
+        "validStartState",
+        "validEndState",
+        "boundaryRule",
+        "allowedExerciseTransitions",
+        "excludedSetupOrCleanup",
         "Source",
         "Complete",
+        "Boundary",
         "Reject",
         "Notes",
         "source",
         "complete",
+        "boundary",
         "reject",
         "notes",
         "requiredPhases",
@@ -209,6 +248,19 @@ def plain_text_contract_requires_return(contract: dict[str, Any] | None) -> bool
 
 
 def observable_motion_spec_requires_return(contract: dict[str, Any] | None) -> bool:
+    if isinstance(contract, dict):
+        explicit_requires_return = parse_contract_bool(contract.get("requiresReturnToStart"))
+        if explicit_requires_return is not None:
+            return explicit_requires_return
+        movement_type = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            str(contract.get("movementType") or "").strip().casefold(),
+        ).strip("_")
+        if movement_type in {"hold", "carry", "transition_sequence"}:
+            return False
+        if movement_type in {"repetition", "cyclic"}:
+            return True
     spec = observable_motion_spec_for_contract(contract)
     if spec is not None and (
         bool(spec.get("requiresReturnToStart"))

@@ -120,14 +120,14 @@ def refine_motion_clip_structurally(
             non_dominant_radius_scale=non_dominant_radius_scale,
         )
     else:
-        refined, refinement_metadata = _refine_non_torso_dominant_motion_by_transfer(
+        refined, refinement_metadata = _preserve_non_torso_dominant_motion(
             clip,
             dominant_profile=dominant_profile,
         )
-    if dominant_groups == {"arms"}:
+    if "torso" not in dominant_groups:
         head_metadata = {
             "applied": False,
-            "reason": "head_motion_not_part_of_arms_only_dominant_motion",
+            "reason": "source_preserving_branch_skips_head_pose_reconstruction",
         }
     else:
         refined, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
@@ -503,55 +503,18 @@ def _chain_range_summary(clip: MotionClip) -> dict[str, float]:
     }
 
 
-def _refine_non_torso_dominant_motion_by_transfer(
+def _preserve_non_torso_dominant_motion(
     clip: MotionClip,
     *,
     dominant_profile: dict[str, object],
 ) -> tuple[MotionClip, dict[str, object]]:
-    dominant_groups = set(dominant_profile.get("dominantGroups", []))
-    refined, transfer_metadata = _transfer_selected_motion_to_canonical_body(
-        clip,
-        dominant_profile=dominant_profile,
-    )
-    refined, length_metadata = _preserve_reference_bone_lengths(refined, reference_clip=clip)
-    refined, exact_bilateral_metadata = _enforce_exact_same_phase_bilateral_symmetry(
-        refined,
-        transfer_metadata=transfer_metadata,
-    )
-    refined, reapplied_metadata = _reapply_dominant_local_motion(
-        refined,
-        reference_clip=clip,
-        dominant_profile=dominant_profile,
-    )
-    refined, paired_hands_metadata = _preserve_same_phase_paired_hand_path(
-        refined,
-        reference_clip=clip,
-        transfer_metadata=transfer_metadata,
-    )
-    if dominant_groups == {"arms"}:
-        root_vertical_metadata = {
-            "applied": False,
-            "reason": "root_vertical_motion_not_part_of_arms_only_dominant_motion",
-        }
-    else:
-        refined, root_vertical_metadata = _preserve_reference_root_vertical_motion(refined, reference_clip=clip)
-    return refined, {
-        "strategy": "canonical_body_selected_motion_transfer",
-        "selectedMotionTransfer": transfer_metadata,
-        "boneLengthProjection": length_metadata,
-        "exactBilateralSymmetry": exact_bilateral_metadata,
-        "dominantLocalMotionReapplication": reapplied_metadata,
-        "pairedHandPathPreservation": paired_hands_metadata,
-        "rootVerticalMotionPreservation": root_vertical_metadata,
-        "steps": [
-            "canonical_body_estimation",
-            "selected_dominant_motion_transfer",
-            "reference_bone_length_projection",
-            "exact_same_phase_bilateral_symmetry",
-            "dominant_local_motion_reapplication",
-            "same_phase_paired_hand_path_preservation",
-            "reference_root_vertical_motion_preservation",
-        ],
+    return clip, {
+        "strategy": "source_preserving_non_torso_motion",
+        "applied": False,
+        "reason": "canonical_reconstruction_can_distort_source_motion",
+        "dominantGroups": list(dominant_profile.get("dominantGroups", [])),
+        "maxJointDisplacement": 0.0,
+        "steps": [],
     }
 
 
