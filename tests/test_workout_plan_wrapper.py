@@ -135,6 +135,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     "wearSkeletonSettingsBaked": True,
                     "selectionScore": 0.9,
                 }
+                manual_review = os.environ.get("FAKE_MOTION_MANUAL_REVIEW") == "1"
                 selection = {
                     "schemaVersion": 1,
                     "sourceCandidatesJson": str(candidates_json),
@@ -157,9 +158,18 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                             "timings": {"previewBakeSeconds": 0.03},
                         }
                     ],
-                    "selectedResultCount": 1,
-                    "selectedResults": [selected],
-                    "selected": selected,
+                    "selectedResultCount": 0 if manual_review else 1,
+                    "selectedResults": [] if manual_review else [selected],
+                    "selected": None if manual_review else selected,
+                    "manualReviewFallback": (
+                        {
+                            **selected,
+                            "selectionStatus": "needs_manual_review",
+                            "rejectionReason": "automatic_acceptance_gate_failed",
+                        }
+                        if manual_review
+                        else None
+                    ),
                 }
                 workspace.mkdir(parents=True, exist_ok=True)
                 (workspace / "selection_manifest.json").write_text(json.dumps(selection), encoding="utf-8")
@@ -303,6 +313,74 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
         assert selected_source_video.name in html
         assert selected_skeleton.name in html
         assert "fake_selected" not in html
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workspace = tmp_path / "workspace"
+    wham_repo = tmp_path / "WHAM"
+    body_models = wham_repo / "dataset" / "body_models"
+    body_models.mkdir(parents=True)
+    workout_plan = write_workout_plan(tmp_path, exercise_count=1)
+    _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+    env = os.environ.copy()
+    env["FAKE_MOTION_MANUAL_REVIEW"] = "1"
+
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-WorkoutPlanJson",
+            str(workout_plan),
+            "-WorkspaceRoot",
+            str(workspace),
+            "-WhamRepoPath",
+            str(wham_repo),
+            "-BodyModelRoot",
+            str(body_models),
+            "-PythonCommand",
+            str(fake_cmd),
+            "-BakeWorkers",
+            "1",
+            "-DiscoveryWorkers",
+            "1",
+            "-ProgressIntervalSeconds",
+            "1",
+            "-NoWhamDocker",
+            "-SkipVisionRanking",
+            "-SkipSemanticGate",
+            "-SkipLlamaCppQueryPlanner",
+            "-SkipPosePrefilter",
+            "-SkipPreWhamSourceValidation",
+            "-SkipFinalOutputValidation",
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
+    exercise = summary["exercises"][0]
+    assert exercise["status"] == "needs_manual_review"
+    manual_review_dir = workspace / "bench" / "manual-review"
+    assert Path(exercise["selectionManifestPath"]) == manual_review_dir / "selection_manifest.json"
+    assert Path(exercise["selectedWearSkeletonPath"]).exists()
+    assert Path(exercise["selectedPreviewVideoPath"]).exists()
+    assert Path(exercise["selectedPreviewHtmlPath"]).exists()
+    assert Path(exercise["selectedSourceVideoPath"]).exists()
+    html = Path(exercise["selectedPreviewHtmlPath"]).read_text(encoding="utf-8")
+    assert "Manual review" in html
+    assert Path(exercise["selectedPreviewVideoPath"]).name in html
+    assert Path(exercise["selectedSourceVideoPath"]).name in html
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
