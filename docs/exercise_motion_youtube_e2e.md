@@ -19,8 +19,9 @@ The current default path is optimized for source quality first:
 - The default WHAM repo is `C:\Users\gabri\Downloads\WHAM`; otherwise the scripts try `third_party\WHAM`.
 - The default body model root is `<WHAM>\dataset\body_models`.
 - The default VLM path uses llama.cpp with:
-  - `C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf`
-  - `C:\Users\gabri\Downloads\mmproj-BF16.gguf`
+  - `C:\Users\gabri\Downloads\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf`
+  - `C:\Users\gabri\Downloads\mmproj-BF16(3).gguf`
+  - context/fit context `8192`, image min tokens `1024`, memory mapping enabled, and `mlock` disabled, which is the smoke-tested load mode for this Q6 model on this machine.
 - A YouTube cookies file is strongly recommended for reliable downloads.
 
 Use a long shell/tool timeout when running these. A good source can finish much faster, but difficult searches or first-time cache misses can take 10-25 minutes.

@@ -22,8 +22,8 @@ param(
     [int]$ResultsPerQuery = 100,
     [int]$MaxCandidates = 12,
     [int]$CandidateReviewBatchSize = 12,
-    [int]$CandidateReviewTargetSuitableCount = 3,
-    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 5,
+    [int]$CandidateReviewTargetSuitableCount = 2,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 2,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
     [switch]$UseDeepSeekQueryPlanner,
@@ -65,8 +65,12 @@ param(
     [ValidateSet("auto", "allow", "avoid")]
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 3,
-    [int]$MaxFinalOutputRejections = 3,
+    [int]$MaxSourceWindowAttempts = 5,
+    [int]$MaxFinalOutputRejections = 6,
+    [double]$SourceReviewTimeoutSeconds = 90.0,
+    [double]$FinalReviewTimeoutSeconds = 120.0,
+    [double]$CandidateTimeoutSeconds = 420.0,
+    [double]$ExerciseTimeoutSeconds = 1500.0,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$ReuseExistingSelected,
@@ -113,30 +117,33 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(3).gguf",
+    [string]$TextLlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+    [AllowEmptyString()]
+    [string]$TextLlamaCppMmproj = "",
     [string]$LlamaCppBackend = "gpu",
     [double]$LlamaCppTemperature = 1.0,
     [Nullable[double]]$LlamaCppTopP = 0.95,
     [Nullable[int]]$LlamaCppTopK = 64,
-    [Nullable[int]]$LlamaCppCtxSize = 49152,
+    [Nullable[int]]$LlamaCppCtxSize = 8192,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 4,
+    [Nullable[int]]$LlamaCppParallel = 1,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 49152,
+    [Nullable[int]]$LlamaCppFitCtx = 8192,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
-    [Nullable[int]]$LlamaCppImageMinTokens,
-    [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
-    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
-    [bool]$LlamaCppMmap = $false,
-    [bool]$LlamaCppMlock = $true,
+    [Nullable[int]]$LlamaCppImageMinTokens = 1024,
+    [Nullable[int]]$LlamaCppImageMaxTokens = 2048,
+    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 768,
+    [bool]$LlamaCppMmap = $true,
+    [bool]$LlamaCppMlock = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [bool]$KeepLlamaCppServer = $false,
@@ -144,12 +151,14 @@ param(
     [double]$LlamaCppRequestTimeoutSeconds = 240.0,
     [ValidateSet("debug", "full")]
     [string]$ArtifactRetention = "full",
-    [int]$ProgressIntervalSeconds = 15,
+    [int]$ProgressIntervalSeconds = 90,
+    [switch]$DetailedProgressLogs,
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
 )
 
 $ErrorActionPreference = "Stop"
+$script:LastProgressDetailByLogPath = @{}
 
 function Get-RepoRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -192,6 +201,18 @@ function ConvertTo-StringSet {
         }
     }
     return $set
+}
+
+function Add-LlamaCppTextArgs {
+    param([string[]]$Arguments)
+    $result = @($Arguments)
+    if (-not [string]::IsNullOrWhiteSpace($TextLlamaCppModel)) {
+        $result += @("--text-llama-cpp-model", $TextLlamaCppModel)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TextLlamaCppMmproj)) {
+        $result += @("--text-llama-cpp-mmproj", $TextLlamaCppMmproj)
+    }
+    return $result
 }
 
 function Add-LlamaCppTuningArgs {
@@ -529,6 +550,7 @@ function New-TerminalExerciseSummary {
         selectedWearSkeletonPath = $null
         selectedPreviewVideoPath = $null
         selectedSourceVideoPath = $null
+        selectedSourceVideoWebmPath = $null
         selectedSourceVideoOriginalPath = $null
         selectedSourceVideoMissing = $false
         selectedResults = @()
@@ -596,6 +618,33 @@ function Copy-SelectedFile {
     return $destinationPath
 }
 
+function Convert-SelectedSourceVideoToWebm {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationDirectory,
+        [string]$DestinationFileName
+    )
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath)) {
+        return $null
+    }
+    New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
+    $destinationPath = Join-Path $DestinationDirectory $DestinationFileName
+    $pythonArgs = @(
+        "-m", "exercise_motion_pkg.cli",
+        "convert-video-webm",
+        "--video-path", $SourcePath,
+        "--out-video", $destinationPath
+    )
+    & $PythonCommand @pythonArgs *> $null
+    if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $destinationPath)) {
+        return $destinationPath
+    }
+    if (Test-Path -LiteralPath $destinationPath) {
+        Remove-Item -LiteralPath $destinationPath -Force
+    }
+    return $null
+}
+
 function ConvertTo-HtmlAttribute {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -639,6 +688,7 @@ function Write-SelectedPreviewHtml {
         [int]$OptionIndex,
         [string]$PreviewVideoPath,
         [string]$InputVideoPath,
+        [string]$InputVideoWebmPath,
         [string]$WearSkeletonPath,
         [string]$InteractivePreviewPath,
         [double]$StartSeconds = 0.0,
@@ -656,6 +706,7 @@ function Write-SelectedPreviewHtml {
     $title = ConvertTo-HtmlAttribute $titleText
     $previewFile = if (-not [string]::IsNullOrWhiteSpace($PreviewVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($PreviewVideoPath)) } else { "" }
     $inputFile = if (-not [string]::IsNullOrWhiteSpace($InputVideoPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($InputVideoPath)) } else { "" }
+    $inputWebmFile = if (-not [string]::IsNullOrWhiteSpace($InputVideoWebmPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($InputVideoWebmPath)) } else { "" }
     $skeletonFile = if (-not [string]::IsNullOrWhiteSpace($WearSkeletonPath)) { ConvertTo-HtmlAttribute ([System.IO.Path]::GetFileName($WearSkeletonPath)) } else { "" }
     $interactiveFile = if (-not [string]::IsNullOrWhiteSpace($InteractivePreviewPath)) { [System.IO.Path]::GetFileName($InteractivePreviewPath) } else { "" }
     $culture = [System.Globalization.CultureInfo]::InvariantCulture
@@ -703,12 +754,29 @@ function Write-SelectedPreviewHtml {
         </section>
 "@
     }
-    $inputSection = if ($inputFile) {
+    $inputVideoSources = ""
+    if ($inputWebmFile) {
+        $inputVideoSources += "                <source src=""$inputWebmFile"" type=""video/webm"">`n"
+    }
+    if ($inputFile) {
+        $inputVideoSources += "                <source src=""$inputFile"" type=""video/mp4"">`n"
+    }
+    $inputLinkFile = if ($inputWebmFile) { $inputWebmFile } else { $inputFile }
+    $inputFallbackLink = if ($inputWebmFile -and $inputFile) {
+@"
+            <p><a href="$inputFile">Open selected source mp4</a></p>
+"@
+    } else {
+        ""
+    }
+    $inputSection = if ($inputVideoSources) {
 @"
         <section>
             <h2>Selected source</h2>
-            <video controls preload="metadata" src="$inputFile"></video>
-            <p><a href="$inputFile">Open selected source video</a></p>
+            <video controls preload="metadata">
+$inputVideoSources            </video>
+            <p><a href="$inputLinkFile">Open selected source video</a></p>
+$inputFallbackLink
         </section>
 "@
     } else {
@@ -903,6 +971,7 @@ function Get-ExistingSelectedSummary {
 
     $previewFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.webm" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $inputFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_input.mp4" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $inputWebmFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_input.webm" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $previewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $interactivePreviewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_interactive_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     $debugDir = Join-Path $selectedOutputDir "debug"
@@ -935,6 +1004,7 @@ function Get-ExistingSelectedSummary {
             selectedPreviewHtmlPath = if ($index -lt $previewHtmlFiles.Count) { $previewHtmlFiles[$index].FullName } else { $null }
             selectedInteractivePreviewHtmlPath = if ($index -lt $interactivePreviewHtmlFiles.Count) { $interactivePreviewHtmlFiles[$index].FullName } else { $null }
             selectedSourceVideoPath = if ($index -lt $inputFiles.Count) { $inputFiles[$index].FullName } else { $null }
+            selectedSourceVideoWebmPath = if ($index -lt $inputWebmFiles.Count) { $inputWebmFiles[$index].FullName } else { $null }
             selectedSourceVideoOriginalPath = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestOption.selectedInputVideoPath } else { $null }
             selectedSourceVideoMissing = $false
             selectionScore = if ($manifestOption -and $manifestOption.PSObject.Properties.Name -contains "selectionScore") { $manifestOption.selectionScore } else { $null }
@@ -942,14 +1012,7 @@ function Get-ExistingSelectedSummary {
         }
     }
 
-    Write-Host "[reused] $($WorkItem.exerciseName)"
-    Write-Host "  Wear skeleton JSON: $($wearSkeletonFiles[0].FullName)"
-    if ($previewFiles.Count -gt 0) {
-        Write-Host "  Selected preview video: $($previewFiles[0].FullName)"
-    }
-    if ($inputFiles.Count -gt 0) {
-        Write-Host "  Selected input video: $($inputFiles[0].FullName)"
-    }
+    Write-Host "[reused] $($WorkItem.exerciseName) -> $selectedOutputDir"
 
     return [ordered]@{
         exerciseId = $WorkItem.exerciseId
@@ -966,6 +1029,7 @@ function Get-ExistingSelectedSummary {
         selectedPreviewVideoPath = if ($previewFiles.Count -gt 0) { $previewFiles[0].FullName } else { $null }
         selectedInteractivePreviewHtmlPath = if ($interactivePreviewHtmlFiles.Count -gt 0) { $interactivePreviewHtmlFiles[0].FullName } else { $null }
         selectedSourceVideoPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { $null }
+        selectedSourceVideoWebmPath = if ($inputWebmFiles.Count -gt 0) { $inputWebmFiles[0].FullName } else { $null }
         selectedSourceVideoOriginalPath = if ($manifestSelected -and $manifestSelected.PSObject.Properties.Name -contains "selectedInputVideoPath") { $manifestSelected.selectedInputVideoPath } else { $null }
         selectedSourceVideoMissing = $false
         selectedResults = $selectedResultOutputs
@@ -977,7 +1041,7 @@ function Get-ExistingSelectedSummary {
 function Start-InitialDiscoveryJob {
     param([object]$WorkItem)
 
-    Write-Host "Starting candidate discovery for '$($WorkItem.exerciseName)'."
+    Write-Host "[start] discovery: $($WorkItem.exerciseName)"
     $job = Start-Job -Name "discover-$($WorkItem.exerciseSlug)" -ScriptBlock {
         param(
             [string]$PythonCommand,
@@ -985,6 +1049,7 @@ function Start-InitialDiscoveryJob {
             [string]$LogPath,
             [string]$CandidatesPath,
             [int]$InitialTargetSuitableCount,
+            [int]$MaxTargetSuitableCount,
             [int]$BaseMaxCandidates,
             [int]$BaseVisionCandidates
         )
@@ -1043,7 +1108,7 @@ function Start-InitialDiscoveryJob {
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
         "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
-        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
         $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
         $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
@@ -1067,7 +1132,7 @@ function Start-InitialDiscoveryJob {
             attemptIndex = 1
             targetSuitableCount = $targetSuitableCount
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
 }
@@ -1078,7 +1143,7 @@ function Start-BakeJob {
         [bool]$UseExistingCandidatesForFirstAttempt = $true
     )
 
-    Write-Host "Starting movement generation for '$($WorkItem.exerciseName)'."
+    Write-Host "[start] bake: $($WorkItem.exerciseName)"
     $job = Start-Job -Name $WorkItem.exerciseSlug -ScriptBlock {
         param(
             [string]$PythonCommand,
@@ -1194,7 +1259,7 @@ function Start-BakeJob {
             "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
             "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
         $attemptIndex = 1
         $previousAttemptCandidateJsonPaths = @()
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
@@ -1379,6 +1444,7 @@ function Complete-BakeJob {
     $workItem = $Job.WorkItem
     $status = "completed"
     $errorMessage = $null
+    $failureStage = $null
     $jobResult = $null
 
     try {
@@ -1389,6 +1455,7 @@ function Complete-BakeJob {
     } catch {
         $status = "failed"
         $errorMessage = $_.Exception.Message
+        $failureStage = "job"
     } finally {
         Remove-Job -Job $Job -Force
     }
@@ -1397,11 +1464,8 @@ function Complete-BakeJob {
         $status = "failed"
         $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
         $stage = if ($jobResult -and $jobResult.stage) { $jobResult.stage } else { "unknown" }
+        $failureStage = $stage
         $errorMessage = "python $stage command failed with exit code $exitCode. See log: $($workItem.logPath)"
-    }
-
-    if ($status -eq "failed") {
-        Write-Warning "Movement generation failed for '$($workItem.exerciseName)': $errorMessage"
     }
 
     $selectionPath = Join-Path $workItem.bakeWorkspace "selection_manifest.json"
@@ -1411,6 +1475,7 @@ function Complete-BakeJob {
     }
     $selectionTimingSummary = Get-SelectionTimingSummary -Selection $selection
     $selected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
+    $manualReviewFallback = if ($selection -and $selection.manualReviewFallback) { $selection.manualReviewFallback } else { $null }
     $selectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
         @($selection.selectedResults)
     } elseif ($selected) {
@@ -1419,14 +1484,20 @@ function Complete-BakeJob {
         @()
     }
     if ($status -eq "completed" -and $selectedOptions.Count -eq 0) {
-        $status = "no_selection"
-        $errorMessage = "No Wear skeleton was selected."
+        if ($manualReviewFallback) {
+            $status = "needs_manual_review"
+            $errorMessage = "No candidate passed automatic validation; the best generated movement is available for manual review."
+        } else {
+            $status = "no_selection"
+            $errorMessage = "No Wear skeleton was selected."
+        }
     }
     if ($status -eq "completed") {
         $optionIndex = 1
         foreach ($option in $selectedOptions) {
             if ($option.wearSkeletonSettingsBaked -ne $true) {
                 $status = "failed"
+                $failureStage = "selected_output_validation"
                 $errorMessage = "Selected Wear skeleton option $optionIndex does not contain baked preview settings required by Wear."
                 break
             }
@@ -1474,6 +1545,7 @@ function Complete-BakeJob {
     $selectedPreviewVideoPath = $null
     $selectedInteractivePreviewHtmlPath = $null
     $selectedInputVideoPath = $null
+    $selectedInputVideoWebmPath = $null
     $selectedInputVideoSourcePath = $null
     $selectedInputVideoMissing = $false
     $selectedSelectionManifestPath = $null
@@ -1481,28 +1553,127 @@ function Complete-BakeJob {
     $selectedCandidateDebugPath = $null
     $selectedCandidateDecisionsPath = $null
     $selectedResultOutputs = @()
+    if ($status -eq "needs_manual_review" -and $manualReviewFallback) {
+        $manualReviewOutputDir = Join-Path $workItem.exerciseWorkspace "manual-review"
+        $manualReviewFilePrefix = $workItem.exerciseSlug -replace "-", "_"
+        $selectedSelectionManifestPath = Copy-SelectedFile `
+            -SourcePath $selectionPath `
+            -DestinationDirectory $manualReviewOutputDir `
+            -DestinationFileName "selection_manifest.json"
+        $selectedWearSkeletonPath = Copy-SelectedFile `
+            -SourcePath $manualReviewFallback.selectedWearSkeletonPath `
+            -DestinationDirectory $manualReviewOutputDir `
+            -DestinationFileName "$($manualReviewFilePrefix)_wear_skeleton.json"
+        $selectedPreviewVideoPath = Copy-SelectedFile `
+            -SourcePath $manualReviewFallback.selectedReviewVideoPath `
+            -DestinationDirectory $manualReviewOutputDir `
+            -DestinationFileName "$($manualReviewFilePrefix)_manual_review_preview.webm"
+        $selectedInputVideoSourcePath = Get-ObjectProperty -Object $manualReviewFallback -Name "selectedInputVideoPath"
+        $selectedInputVideoPath = Copy-SelectedFile `
+            -SourcePath $selectedInputVideoSourcePath `
+            -DestinationDirectory $manualReviewOutputDir `
+            -DestinationFileName "$($manualReviewFilePrefix)_manual_review_input.mp4"
+        if ($selectedInputVideoPath) {
+            $selectedInputVideoWebmPath = Convert-SelectedSourceVideoToWebm `
+                -SourcePath $selectedInputVideoPath `
+                -DestinationDirectory $manualReviewOutputDir `
+                -DestinationFileName "$($manualReviewFilePrefix)_manual_review_input.webm"
+        }
+        $manualReviewInteractiveSourcePath = Get-ObjectProperty -Object $manualReviewFallback -Name "sourcePreviewHtmlPath"
+        if ([string]::IsNullOrWhiteSpace($manualReviewInteractiveSourcePath)) {
+            $manualReviewInteractiveSourcePath = Get-ObjectProperty -Object $manualReviewFallback -Name "previewHtmlPath"
+        }
+        $selectedInteractivePreviewHtmlPath = Copy-SelectedFile `
+            -SourcePath $manualReviewInteractiveSourcePath `
+            -DestinationDirectory $manualReviewOutputDir `
+            -DestinationFileName "$($manualReviewFilePrefix)_interactive_preview.html"
+        $manualReviewStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "selectedSectionStartSeconds")
+        if ($null -eq $manualReviewStartSeconds) {
+            $manualReviewStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "sectionStartSeconds")
+        }
+        if ($null -eq $manualReviewStartSeconds) {
+            $manualReviewStartSeconds = 0.0
+        }
+        $manualReviewEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "selectedSectionEndSeconds")
+        if ($null -eq $manualReviewEndSeconds) {
+            $manualReviewEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "sectionEndSeconds")
+        }
+        if ($null -eq $manualReviewEndSeconds) {
+            $manualReviewEndSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "durationSec")
+        }
+        if ($null -eq $manualReviewEndSeconds) {
+            $manualReviewEndSeconds = 0.0
+        }
+        $manualReviewSettingsJson = ConvertTo-SelectedPreviewOptionsJson `
+            -Options (Get-ObjectProperty -Object $manualReviewFallback -Name "settingsOptions")
+        $selectedPreviewHtmlPath = Join-Path $manualReviewOutputDir "$($manualReviewFilePrefix)_manual_review.html"
+        $selectedPreviewHtmlPath = Write-SelectedPreviewHtml `
+            -DestinationPath $selectedPreviewHtmlPath `
+            -ExerciseName "$($workItem.exerciseName) - Manual review" `
+            -OptionIndex 1 `
+            -PreviewVideoPath $selectedPreviewVideoPath `
+            -InputVideoPath $selectedInputVideoPath `
+            -InputVideoWebmPath $selectedInputVideoWebmPath `
+            -WearSkeletonPath $selectedWearSkeletonPath `
+            -InteractivePreviewPath $selectedInteractivePreviewHtmlPath `
+            -StartSeconds $manualReviewStartSeconds `
+            -EndSeconds $manualReviewEndSeconds `
+            -SettingsOptionsJson $manualReviewSettingsJson
+        $selectedResultOutputs = @(
+            [ordered]@{
+                optionIndex = 1
+                label = "Manual review fallback"
+                selectionStatus = "needs_manual_review"
+                selectedWearSkeletonPath = $selectedWearSkeletonPath
+                selectedPreviewVideoPath = $selectedPreviewVideoPath
+                selectedPreviewHtmlPath = $selectedPreviewHtmlPath
+                selectedInteractivePreviewHtmlPath = $selectedInteractivePreviewHtmlPath
+                selectedSourceVideoPath = $selectedInputVideoPath
+                selectedSourceVideoWebmPath = $selectedInputVideoWebmPath
+                selectedSourceVideoOriginalPath = $selectedInputVideoSourcePath
+                selectionScore = Get-ObjectProperty -Object $manualReviewFallback -Name "selectionScore"
+                candidateTitle = Get-ObjectProperty -Object $manualReviewFallback -Name "candidateTitle"
+            }
+        )
+    }
     if ($status -eq "completed" -and $selectedOptions.Count -gt 0) {
         $selectedFilePrefix = $workItem.exerciseSlug -replace "-", "_"
         $selectedSelectionManifestPath = Copy-SelectedFile `
             -SourcePath $selectionPath `
             -DestinationDirectory $selectedOutputDir `
             -DestinationFileName "selection_manifest.json"
-        $selectedCandidateDebugPath = Copy-SelectedFile `
-            -SourcePath $workItem.exerciseCandidatesPath `
-            -DestinationDirectory $selectedDebugDir `
-            -DestinationFileName "youtube_candidates.full.json"
-        $candidateDecisionsPath = Join-Path (Split-Path -Parent $workItem.exerciseCandidatesPath) "candidate_decisions.jsonl"
-        $selectedCandidateDecisionsPath = Copy-SelectedFile `
-            -SourcePath $candidateDecisionsPath `
-            -DestinationDirectory $selectedDebugDir `
-            -DestinationFileName "candidate_decisions.jsonl"
+        if (-not $selectedSelectionManifestPath) {
+            $status = "failed"
+            $failureStage = "selected_output_copy"
+            $errorMessage = "Selection manifest was not copied to the selected output directory."
+        }
+        if ($status -eq "completed") {
+            $selectedCandidateDebugPath = Copy-SelectedFile `
+                -SourcePath $workItem.exerciseCandidatesPath `
+                -DestinationDirectory $selectedDebugDir `
+                -DestinationFileName "youtube_candidates.full.json"
+            $candidateDecisionsPath = Join-Path (Split-Path -Parent $workItem.exerciseCandidatesPath) "candidate_decisions.jsonl"
+            $selectedCandidateDecisionsPath = Copy-SelectedFile `
+                -SourcePath $candidateDecisionsPath `
+                -DestinationDirectory $selectedDebugDir `
+                -DestinationFileName "candidate_decisions.jsonl"
+        }
         $optionIndex = 1
         foreach ($option in $selectedOptions) {
+            if ($status -ne "completed") {
+                break
+            }
             $optionSuffix = if ($optionIndex -eq 1) { "" } else { "_option_{0:D2}" -f $optionIndex }
             $optionWearSkeletonPath = Copy-SelectedFile `
                 -SourcePath $option.selectedWearSkeletonPath `
                 -DestinationDirectory $selectedOutputDir `
                 -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_wear_skeleton.json"
+            if (-not $optionWearSkeletonPath) {
+                $status = "failed"
+                $failureStage = "selected_output_copy"
+                $errorMessage = "Selected Wear skeleton option $optionIndex was not copied to the selected output directory."
+                break
+            }
             $optionPreviewVideoPath = $null
             if ($option.selectedReviewVideoPath) {
                 $optionPreviewVideoPath = Copy-SelectedFile `
@@ -1518,6 +1689,7 @@ function Complete-BakeJob {
                 $null
             }
             $optionInputVideoPath = $null
+            $optionInputVideoWebmPath = $null
             $optionInputVideoMissing = $false
             if ($optionInputVideoSourcePath) {
                 $optionInputVideoPath = Copy-SelectedFile `
@@ -1527,6 +1699,11 @@ function Complete-BakeJob {
                 if (-not $optionInputVideoPath) {
                     $optionInputVideoMissing = $true
                     Write-Warning "Selected input video option $optionIndex was not copied for '$($workItem.exerciseName)': $optionInputVideoSourcePath"
+                } else {
+                    $optionInputVideoWebmPath = Convert-SelectedSourceVideoToWebm `
+                        -SourcePath $optionInputVideoPath `
+                        -DestinationDirectory $selectedOutputDir `
+                        -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_input.webm"
                 }
             }
             $optionInteractivePreviewSourcePath = Get-ObjectProperty -Object $option -Name "sourcePreviewHtmlPath"
@@ -1560,6 +1737,7 @@ function Complete-BakeJob {
                 -OptionIndex $optionIndex `
                 -PreviewVideoPath $optionPreviewVideoPath `
                 -InputVideoPath $optionInputVideoPath `
+                -InputVideoWebmPath $optionInputVideoWebmPath `
                 -WearSkeletonPath $optionWearSkeletonPath `
                 -InteractivePreviewPath $optionInteractivePreviewPath `
                 -StartSeconds $optionStartSeconds `
@@ -1573,6 +1751,7 @@ function Complete-BakeJob {
                 selectedPreviewHtmlPath = $optionPreviewHtmlPath
                 selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 selectedSourceVideoPath = $optionInputVideoPath
+                selectedSourceVideoWebmPath = $optionInputVideoWebmPath
                 selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
                 selectedSourceVideoMissing = $optionInputVideoMissing
                 selectionScore = if ($option.PSObject.Properties.Name -contains "selectionScore") { $option.selectionScore } else { $null }
@@ -1583,32 +1762,24 @@ function Complete-BakeJob {
                 $selectedPreviewVideoPath = $optionPreviewVideoPath
                 $selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 $selectedInputVideoPath = $optionInputVideoPath
+                $selectedInputVideoWebmPath = $optionInputVideoWebmPath
                 $selectedInputVideoSourcePath = $optionInputVideoSourcePath
                 $selectedInputVideoMissing = $optionInputVideoMissing
             }
             $optionIndex += 1
         }
-        Remove-ExerciseIntermediateArtifacts -WorkItem $workItem
+        if ($status -eq "completed") {
+            Remove-ExerciseIntermediateArtifacts -WorkItem $workItem
+        }
     }
 
-    Write-Host "[$status] $($workItem.exerciseName)"
-    if ($selectedWearSkeletonPath) {
-        Write-Host "  Wear skeleton JSON: $selectedWearSkeletonPath"
-        if ($selected.PSObject.Properties.Name -contains "wearSkeletonSettingsBaked") {
-            Write-Host "  Wear skeleton settings baked: $($selected.wearSkeletonSettingsBaked)"
-        }
-    }
-    if ($selectedPreviewVideoPath) {
-        Write-Host "  Selected preview video: $selectedPreviewVideoPath"
-    }
-    if ($selectedInputVideoPath) {
-        Write-Host "  Selected input video: $selectedInputVideoPath"
-    }
-    if ($selectedResultOutputs.Count -gt 1) {
-        Write-Host "  Selected result options: $($selectedResultOutputs.Count)"
-        foreach ($option in $selectedResultOutputs) {
-            Write-Host "    Option $($option.optionIndex): $($option.selectedWearSkeletonPath)"
-        }
+    if ($status -eq "completed") {
+        $optionText = if ($selectedResultOutputs.Count -gt 1) { " ($($selectedResultOutputs.Count) options)" } else { "" }
+        Write-Host "[$status] $($workItem.exerciseName) -> $selectedOutputDir$optionText"
+    } else {
+        $stageText = if (-not [string]::IsNullOrWhiteSpace($failureStage)) { " [$failureStage]" } else { "" }
+        $reasonText = if (-not [string]::IsNullOrWhiteSpace($errorMessage)) { " - $errorMessage" } else { "" }
+        Write-Host "[$status] $($workItem.exerciseName)$stageText (log: $($workItem.logPath))$reasonText"
     }
 
     return [ordered]@{
@@ -1616,16 +1787,19 @@ function Complete-BakeJob {
         exerciseName = $workItem.exerciseName
         status = $status
         error = $errorMessage
+        stage = if ($status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($failureStage)) { $failureStage } elseif ($status -eq "no_selection") { "bake_no_selection" } elseif ($status -eq "needs_manual_review") { "manual_review" } else { $null }
         candidateCount = $candidateCount
         recommendedCandidateCount = $recommendedCandidateCount
         excludeCandidateJsonPaths = $workItem.excludeCandidateJsonPaths
         candidatesJsonPath = if ($status -eq "completed") { $null } else { $workItem.exerciseCandidatesPath }
-        selectionManifestPath = if ($status -eq "completed") { $selectedSelectionManifestPath } else { $selectionPath }
+        selectionManifestPath = if ($status -in @("completed", "needs_manual_review") -and $selectedSelectionManifestPath) { $selectedSelectionManifestPath } else { $selectionPath }
         logPath = $workItem.logPath
         selectedWearSkeletonPath = $selectedWearSkeletonPath
         selectedPreviewVideoPath = $selectedPreviewVideoPath
+        selectedPreviewHtmlPath = if ($status -eq "needs_manual_review") { $selectedPreviewHtmlPath } else { $null }
         selectedInteractivePreviewHtmlPath = $selectedInteractivePreviewHtmlPath
         selectedSourceVideoPath = $selectedInputVideoPath
+        selectedSourceVideoWebmPath = $selectedInputVideoWebmPath
         selectedSourceVideoOriginalPath = $selectedInputVideoSourcePath
         selectedSourceVideoMissing = $selectedInputVideoMissing
         selectedResults = $selectedResultOutputs
@@ -1644,18 +1818,45 @@ function Complete-BakeJob {
     }
 }
 
-function Get-LatestLogLine {
-    param([string]$Path)
+function Get-LatestUsefulLogLine {
+    param(
+        [string]$Path,
+        [switch]$Detailed
+    )
 
     if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
 
-    $lines = @(Get-Content -LiteralPath $Path -Tail 20 -ErrorAction SilentlyContinue)
+    $lines = @(Get-Content -LiteralPath $Path -Tail 80 -ErrorAction SilentlyContinue)
+    $usefulPatterns = @(
+        "initial discovery attempt",
+        "bake stage started",
+        "using pre-discovered candidates",
+        "discovery attempt",
+        "bake attempt",
+        "selected \d+/\d+ result",
+        "no recommended candidates",
+        "no selected Wear skeleton",
+        "finished with exit code",
+        "returned exit code",
+        "failed",
+        "Traceback",
+        "Exception",
+        "ERROR"
+    )
     for ($index = $lines.Count - 1; $index -ge 0; $index -= 1) {
         $line = [string]$lines[$index]
         if (-not [string]::IsNullOrWhiteSpace($line)) {
-            return $line.Trim()
+            $trimmed = $line.Trim()
+            if ($Detailed) {
+                return $trimmed
+            }
+            foreach ($pattern in $usefulPatterns) {
+                if ($trimmed -match $pattern) {
+                    return $trimmed
+                }
+            }
         }
     }
     return $null
@@ -1668,7 +1869,8 @@ function Write-ProgressSnapshot {
         [object[]]$RunningJobs,
         [int]$CompletedCount,
         [int]$TotalCount,
-        [int]$PendingCount
+        [int]$PendingCount,
+        [switch]$DetailedLogs
     )
 
     $activeNames = @($RunningJobs | ForEach-Object { $_.WorkItem.exerciseName })
@@ -1676,14 +1878,26 @@ function Write-ProgressSnapshot {
     if ($StartedAt -ne [datetime]::MinValue) {
         $elapsedText = " elapsed {0:c}," -f ((Get-Date) - $StartedAt)
     }
-    Write-Host ("{0} progress:{1} {2}/{3} finished, {4} running, {5} queued." -f $Stage, $elapsedText, $CompletedCount, $TotalCount, $RunningJobs.Count, $PendingCount)
-    if ($activeNames.Count -gt 0) {
-        Write-Host ("  Active: {0}" -f ($activeNames -join ", "))
+    Write-Host ("{0}:{1} {2}/{3} done, {4} running, {5} queued." -f $Stage, $elapsedText, $CompletedCount, $TotalCount, $RunningJobs.Count, $PendingCount)
+    if ($DetailedLogs -and $activeNames.Count -gt 0) {
+        Write-Host ("  active: {0}" -f ($activeNames -join ", "))
     }
     foreach ($job in $RunningJobs) {
-        $latestLine = Get-LatestLogLine -Path $job.WorkItem.logPath
-        if ($latestLine) {
+        $latestLine = Get-LatestUsefulLogLine -Path $job.WorkItem.logPath -Detailed:$DetailedLogs
+        if (-not $latestLine) {
+            continue
+        }
+        if (-not $DetailedLogs) {
+            $detailKey = $job.WorkItem.logPath
+            if ($script:LastProgressDetailByLogPath.ContainsKey($detailKey) -and $script:LastProgressDetailByLogPath[$detailKey] -eq $latestLine) {
+                continue
+            }
+            $script:LastProgressDetailByLogPath[$detailKey] = $latestLine
+        }
+        if ($DetailedLogs) {
             Write-Host ("  {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+        } else {
+            Write-Host ("  changed: {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
         }
     }
 }
@@ -1692,19 +1906,21 @@ $repoRoot = Get-RepoRoot
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 switch ($SpeedProfile) {
     "fast" {
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 8 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 8 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 12 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 12 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 3 }
-        if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 8 }
-        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 8 }
-        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 3 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 49152 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 2 }
+        if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 12 }
+        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 12 }
+        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 8 }
+        if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 5 }
+        if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 6 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 8192 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 8192 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppBatchSize")) { $LlamaCppBatchSize = 256 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppUBatchSize")) { $LlamaCppUBatchSize = 512 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 1024 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 512 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 2048 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 768 }
     }
     "max" {
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 6 }
@@ -1715,12 +1931,12 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 2 }
         if (-not $PSBoundParameters.ContainsKey("ReviewFrames")) { $ReviewFrames = 4 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 49152 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 49152 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 8192 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 8192 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppBatchSize")) { $LlamaCppBatchSize = 256 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppUBatchSize")) { $LlamaCppUBatchSize = 512 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 768 }
-        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 512 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 2048 }
+        if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 768 }
     }
 }
 if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
@@ -1728,7 +1944,7 @@ if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParamete
 }
 Ensure-LlamaCppParallelContext
 $effectiveSkipSmplify = $SkipSmplify -or (($SpeedProfile -in @("fast", "max")) -and -not $RunSmplify)
-$llamaParallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 4 }
+$llamaParallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
 $visionLlmWorkersExplicit = $PSBoundParameters.ContainsKey("VisionLlmWorkers")
 if (-not $PSBoundParameters.ContainsKey("ReviewLlmWorkers")) {
     $ReviewLlmWorkers = [Math]::Max(1, $llamaParallelSlots)
@@ -1913,6 +2129,7 @@ if (-not [string]::IsNullOrWhiteSpace($LlamaCppServerCommand)) {
 if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj)) {
     $youtubeBaseArgs += @("--llama-cpp-mmproj", $LlamaCppMmproj)
 }
+$youtubeBaseArgs = Add-LlamaCppTextArgs -Arguments $youtubeBaseArgs
 if ($VisionMaxChunksPerCandidate -gt 0) {
     $youtubeBaseArgs += @("--vision-max-chunks-per-candidate", "$VisionMaxChunksPerCandidate")
 }
@@ -2086,6 +2303,10 @@ foreach ($exercise in $exerciseList.exercises) {
         "--fallback-candidates", "$FallbackCandidates",
         "--max-source-window-attempts", "$MaxSourceWindowAttempts",
         "--max-final-output-rejections", "$MaxFinalOutputRejections",
+        "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
+        "--final-review-timeout-seconds", "$FinalReviewTimeoutSeconds",
+        "--candidate-timeout-seconds", "$CandidateTimeoutSeconds",
+        "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
         "--max-selected-results", "$MaxSelectedResults",
         "--candidate-workers", "$CandidateWorkers",
         "--workspace", $bakeWorkspace,
@@ -2126,6 +2347,7 @@ foreach ($exercise in $exerciseList.exercises) {
     if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj)) {
         $bakeArgs += @("--llama-cpp-mmproj", $LlamaCppMmproj)
     }
+    $bakeArgs = Add-LlamaCppTextArgs -Arguments $bakeArgs
     if ($null -ne $LlamaCppParallel) {
         $bakeArgs += @("--llama-cpp-parallel", "$LlamaCppParallel")
     }
@@ -2135,9 +2357,6 @@ foreach ($exercise in $exerciseList.exercises) {
     }
     if (-not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
         $bakeArgs += @("--llama-cpp-reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
-    }
-    if ($KeepLlamaCppServer) {
-        $bakeArgs += "--keep-llama-cpp-server"
     }
     if ($FinalOutputValidation -and -not $SkipFinalOutputValidation) {
         $bakeArgs += "--final-output-validation"
@@ -2326,7 +2545,7 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
 
             $now = Get-Date
             if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
-                Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingDiscoveryItems.Count + $pendingBakeItems.Count)
+                Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingDiscoveryItems.Count + $pendingBakeItems.Count) -DetailedLogs:$DetailedProgressLogs
                 $lastProgressAt = $now
             }
 
@@ -2379,7 +2598,7 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
                     }
 
                     if ($status -eq "failed") {
-                        Write-Warning "Candidate discovery failed for '$($workItem.exerciseName)': $errorMessage"
+                        Write-Host "[failed] $($workItem.exerciseName) [initial_discovery] (log: $($workItem.logPath)) - $errorMessage"
                         $discoveryExitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
                         $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "failed" -ErrorMessage $errorMessage -Stage "initial_discovery" -ExitCode $discoveryExitCode
                         $completedCount += 1
@@ -2439,6 +2658,10 @@ $summary = [ordered]@{
         defaultDiscoveryWorkerCap = $defaultDiscoveryWorkerCap
     }
     llamaCppRuntime = [ordered]@{
+        visualModel = $LlamaCppModel
+        visualMmproj = $LlamaCppMmproj
+        textModel = $TextLlamaCppModel
+        textMmproj = if ([string]::IsNullOrWhiteSpace($TextLlamaCppMmproj)) { $null } else { $TextLlamaCppMmproj }
         ctxSize = $LlamaCppCtxSize
         fitCtx = $LlamaCppFitCtx
         batchSize = $LlamaCppBatchSize

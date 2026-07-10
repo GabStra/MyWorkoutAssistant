@@ -5,11 +5,11 @@ param(
     [string]$ExerciseName,
     [string]$OutputSlug,
     [string]$Workspace = "build/exercise_motion",
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16.gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(3).gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-c1a1c8ee-cuda13.3-sm89-win-x64\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b9936-bin-win-cuda-12.4-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
@@ -19,20 +19,20 @@ param(
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
-    [int]$LlamaCppImageMinTokens = 0,
-    [int]$LlamaCppImageMaxTokens = 1024,
-    [int]$LlamaCppCtxSize = 49152,
+    [int]$LlamaCppImageMinTokens = 1024,
+    [int]$LlamaCppImageMaxTokens = 2048,
+    [int]$LlamaCppCtxSize = 8192,
     [int]$LlamaCppBatchSize = 256,
     [int]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
     [string]$LlamaCppFit = "on",
-    [int]$LlamaCppFitCtx = 49152,
+    [int]$LlamaCppFitCtx = 8192,
     [int]$LlamaCppFitTarget = 2048,
-    [bool]$LlamaCppMmap = $false,
-    [bool]$LlamaCppMlock = $true,
-    [int]$LlamaCppMtmdBatchMaxTokens = 512,
+    [bool]$LlamaCppMmap = $true,
+    [bool]$LlamaCppMlock = $false,
+    [int]$LlamaCppMtmdBatchMaxTokens = 768,
     [bool]$LlamaCppMmprojOffload = $true,
     [bool]$LlamaCppContBatching = $true,
     [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
@@ -51,7 +51,7 @@ param(
     [double]$MinSegmentSeconds = 2.0,
     [double]$MaxSegmentSeconds = 20.0,
     [int]$ClassificationWorkers = 3,
-    [int]$LlamaCppServerParallel = 12,
+    [int]$LlamaCppServerParallel = 1,
     [int]$HealthTimeoutSeconds = 180
 )
 
@@ -92,7 +92,7 @@ function Get-LlamaCppServerCommand {
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    $fallback = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe"
+    $fallback = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }

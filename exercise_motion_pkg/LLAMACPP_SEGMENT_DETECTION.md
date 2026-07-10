@@ -4,7 +4,7 @@
 
 - Model: `C:\Users\gabri\Downloads\Qwen3VL-8B-Instruct-Q4_K_M.gguf`
 - mmproj: `C:\Users\gabri\Downloads\mmproj-Qwen3VL-8B-Instruct-F16.gguf`
-- Server binary: `C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe`
+- Server binary: `C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe`
 - Backend: `gpu`
 
 These are now the defaults in:

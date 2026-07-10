@@ -13,8 +13,8 @@ param(
     [int]$YoutubeSearchEmptyRetries = 5,
     [int]$MaxCandidates = 8,
     [int]$CandidateReviewBatchSize = 4,
-    [int]$CandidateReviewTargetSuitableCount = 1,
-    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 3,
+    [int]$CandidateReviewTargetSuitableCount = 2,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 2,
     [switch]$SingleExerciseNameQuery,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
@@ -58,6 +58,10 @@ param(
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 3,
     [int]$MaxFinalOutputRejections = 3,
+    [double]$SourceReviewTimeoutSeconds = 90.0,
+    [double]$FinalReviewTimeoutSeconds = 120.0,
+    [double]$CandidateTimeoutSeconds = 420.0,
+    [double]$ExerciseTimeoutSeconds = 1500.0,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [bool]$UseExistingCandidatesForFirstAttempt = $true,
@@ -122,9 +126,9 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-c1a1c8ee-cuda13.3-sm89-win-x64\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16.gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(3).gguf",
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 512,
     [double]$LlamaCppTemperature = 1.0,
@@ -133,23 +137,23 @@ param(
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
-    [Nullable[int]]$LlamaCppCtxSize = 49152,
+    [Nullable[int]]$LlamaCppCtxSize = 8192,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 4,
+    [Nullable[int]]$LlamaCppParallel = 1,
     [Nullable[int]]$LlamaCppThreadsHttp,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 49152,
+    [Nullable[int]]$LlamaCppFitCtx = 8192,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
-    [bool]$LlamaCppMmap = $false,
-    [bool]$LlamaCppMlock = $true,
-    [Nullable[int]]$LlamaCppImageMinTokens,
-    [Nullable[int]]$LlamaCppImageMaxTokens = 1024,
-    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 512,
+    [bool]$LlamaCppMmap = $true,
+    [bool]$LlamaCppMlock = $false,
+    [Nullable[int]]$LlamaCppImageMinTokens = 1024,
+    [Nullable[int]]$LlamaCppImageMaxTokens = 2048,
+    [Nullable[int]]$LlamaCppMtmdBatchMaxTokens = 768,
     [switch]$NoLlamaCppAutoStartServer,
     [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
@@ -299,8 +303,9 @@ function Assert-SelectedWearSkeletonContract {
 }
 
 function Ensure-LlamaCppParallelContext {
-    $minContextPerSlot = 4096
-    $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
+    # Multi-image reviews can exceed 4K prompt tokens before response generation.
+    $minContextPerSlot = 6144
+    $parallelSlots = Get-LlamaCppParallelSlots
     $minTotalContext = $parallelSlots * $minContextPerSlot
     if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {
         Write-Host ("Raising llama.cpp ctx-size from {0} to {1} so {2} parallel slot(s) keep at least {3} context tokens each." -f $LlamaCppCtxSize, $minTotalContext, $parallelSlots, $minContextPerSlot)
@@ -312,6 +317,13 @@ function Ensure-LlamaCppParallelContext {
     }
 }
 
+function Get-LlamaCppParallelSlots {
+    if ($null -ne $LlamaCppParallel) {
+        return [Math]::Max(1, [int]$LlamaCppParallel)
+    }
+    return 1
+}
+
 $repoRoot = Get-RepoRoot
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 $slug = ConvertTo-Slug $ExerciseName
@@ -319,6 +331,15 @@ if ([string]::IsNullOrWhiteSpace($ExerciseId)) {
     $ExerciseId = $slug
 }
 Ensure-LlamaCppParallelContext
+if (-not $PSBoundParameters.ContainsKey("VisionLlmWorkers")) {
+    $VisionLlmWorkers = Get-LlamaCppParallelSlots
+}
+if (-not $PSBoundParameters.ContainsKey("ReviewLlmWorkers")) {
+    $ReviewLlmWorkers = Get-LlamaCppParallelSlots
+}
+if (-not $PSBoundParameters.ContainsKey("SemanticGateLlmWorkers")) {
+    $SemanticGateLlmWorkers = Get-LlamaCppParallelSlots
+}
 
 if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
     $WhamRepoPath = "C:\Users\gabri\Downloads\WHAM"
@@ -708,6 +729,10 @@ $bakeArgs = @(
     "--fallback-candidates", "$FallbackCandidates",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
     "--max-final-output-rejections", "$MaxFinalOutputRejections",
+    "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
+    "--final-review-timeout-seconds", "$FinalReviewTimeoutSeconds",
+    "--candidate-timeout-seconds", "$CandidateTimeoutSeconds",
+    "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--youtube-preview-cache-dir", $previewCachePath,
@@ -783,9 +808,6 @@ if ($null -ne $LlamaCppMtmdBatchMaxTokens) {
 }
 if ($NoLlamaCppAutoStartServer) {
     $bakeArgs += "--no-llama-cpp-auto-start-server"
-}
-if ($KeepLlamaCppServer) {
-    $bakeArgs += "--keep-llama-cpp-server"
 }
 $bakeArgs = Add-LlamaCppTuningArgs -Arguments $bakeArgs
 if ($null -ne $SegmentWindowSeconds) {
@@ -884,7 +906,7 @@ if ($NoExerciseMotionContract) {
 
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"
 $bakeBaseArgs = [string[]]$bakeArgs
-$currentTargetSuitableCount = [Math]::Max(1, $initialTargetSuitableCount)
+$currentTargetSuitableCount = [Math]::Max(1, $resolvedMaxCandidateReviewTargetSuitableCount)
 $attemptIndex = 1
 $selection = $null
 $previousAttemptCandidateJsonPaths = @()
@@ -973,6 +995,16 @@ try {
             Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); expanding YouTube review target to $currentTargetSuitableCount."
             continue
         }
+        if ($selection -and "$($selection.selectionStatus)" -eq "needs_manual_review" -and $selection.manualReviewFallback) {
+            if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+                Write-Warning "No candidate passed automatic validation after reaching the maximum discovery target; keeping the best generated movement as a manual-review fallback."
+                break
+            }
+            $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
+            $attemptIndex += 1
+            Write-Host "Only a manual-review fallback was produced; expanding YouTube review target to $currentTargetSuitableCount."
+            continue
+        }
         if ($bakeExitCode -ne 0 -and -not $selection) {
             throw "python bake-and-rank command failed with exit code $bakeExitCode and did not write $selectionPath."
         }
@@ -1018,6 +1050,10 @@ if ($selection.selected) {
     if ($selection.selectedPreviewHtmlPath) {
         Write-Host "Preview HTML: $($selection.selectedPreviewHtmlPath)"
     }
+} elseif ($selection.manualReviewFallback) {
+    Write-Host "Movement status: needs_manual_review"
+    Write-Host "Manual-review Wear skeleton JSON: $($selection.manualReviewFallback.selectedWearSkeletonPath)"
+    Write-Host "Manual-review video: $($selection.manualReviewFallback.selectedReviewVideoPath)"
 } else {
     Write-Host "Selected Wear skeleton: none"
     throw "Bake-and-rank completed without selecting a Wear skeleton. Inspect $selectionPath."

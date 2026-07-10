@@ -18,11 +18,13 @@ from exercise_motion_pkg import bake_and_rank as bake_module
 from exercise_motion_pkg.bake_and_rank import (
     BakeAndRankRequest,
     RankedCandidate,
+    candidate_bake_status,
     copy_or_download_candidate_source,
     exercise_motion_contract_from_candidate,
     expand_ranked_candidates_for_source_windows,
     generate_exercise_motion_contract_for_bake,
     load_ranked_candidates_manifest,
+    mark_ranked_candidate_as_bake_fallback,
     parse_optional_float,
     parse_ranked_candidates_manifest,
     rank_source_video_cut_candidates_with_caption_images,
@@ -37,6 +39,8 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
+    DEFAULT_TEXT_LLAMA_CPP_MMPROJ,
+    DEFAULT_TEXT_LLAMA_CPP_MODEL,
 )
 from exercise_motion_pkg.segment_detection import DetectionWindow, read_video_metadata
 from exercise_motion_pkg.youtube import (
@@ -239,6 +243,8 @@ def build_settings(args: argparse.Namespace, *, semantic: bool = False, vision: 
         keep_llama_cpp_server=args.keep_llama_cpp_server,
         llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
         llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
+        text_llama_cpp_model=args.text_llama_cpp_model,
+        text_llama_cpp_mmproj=args.text_llama_cpp_mmproj,
     )
 
 
@@ -453,6 +459,8 @@ def build_bake_request_for_pre_wham(args: argparse.Namespace, run_dir: Path) -> 
         keep_llama_cpp_server=args.keep_llama_cpp_server,
         llama_cpp_server_startup_timeout_seconds=args.llama_cpp_server_startup_timeout_seconds,
         llama_cpp_request_timeout_seconds=args.llama_cpp_request_timeout_seconds,
+        text_llama_cpp_model=args.text_llama_cpp_model,
+        text_llama_cpp_mmproj=args.text_llama_cpp_mmproj,
     )
 
 
@@ -489,16 +497,39 @@ def load_ranked_candidates_for_pre_wham(args: argparse.Namespace, request: BakeA
     if args.candidates_json is None:
         raise ValueError("--candidates-json or --video-path is required for pre-wham-source.")
     if args.include_fallback_candidates:
-        candidates = load_ranked_candidates_manifest(args.candidates_json, include_fallback_candidates=True)
+        payload = read_json(args.candidates_json)
+        all_candidates = [
+            candidate
+            for candidate in parse_ranked_candidates_manifest(payload, candidate_list=args.candidate_list)
+            if candidate.exercise_index == args.exercise_index
+        ]
+        recommended_candidates = [
+            candidate
+            for candidate in all_candidates
+            if candidate_bake_status(candidate) == "recommended"
+        ]
+        fallback_candidates = [
+            mark_ranked_candidate_as_bake_fallback(candidate)
+            for candidate in all_candidates
+            if candidate_bake_status(candidate) not in {"recommended", "disabled"}
+        ]
+        candidates = [*recommended_candidates, *fallback_candidates]
+        if not candidates:
+            raise ValueError("No YouTube candidate found in the selected candidates manifest list.")
     else:
         payload = read_json(args.candidates_json)
         candidates = [
             candidate
-            for candidate in parse_ranked_candidates_manifest(payload)
+            for candidate in parse_ranked_candidates_manifest(payload, candidate_list=args.candidate_list)
+            if candidate.exercise_index == args.exercise_index
             if str(candidate.candidate.get("status") or "").casefold() == "recommended"
         ]
         if not candidates:
-            candidates = load_ranked_candidates_manifest(args.candidates_json, include_fallback_candidates=False)
+            candidates = [
+                candidate
+                for candidate in load_ranked_candidates_manifest(args.candidates_json, include_fallback_candidates=False)
+                if candidate.exercise_index == args.exercise_index
+            ]
     expanded = expand_ranked_candidates_for_source_windows(candidates, request=request)
     if args.limit > 0:
         expanded = expanded[: args.limit]
@@ -635,9 +666,6 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
                         "sourceCutScorecardRows": rows_payload,
                         "sourceCutScorecardContractPresent": payload.get("sourceCutScorecardContractPresent"),
                         "sourceCutScorecardThresholds": payload.get("sourceCutScorecardThresholds"),
-                        "sourceCutMotionCoverageDiagnosticFailedCount": payload.get(
-                            "sourceCutMotionCoverageDiagnosticFailedCount"
-                        ),
                         "sourceChoiceInvalidResponse": payload.get("sourceChoiceInvalidResponse"),
                         "rawResponseLength": len(ranking.raw_response or ""),
                         "rawResponsePreview": (ranking.raw_response or "")[:1000],
@@ -670,6 +698,306 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
         "resultsJsonl": str(results_path),
     }
     write_json(run_dir / "summary.json", summary)
+    return summary
+
+
+def source_cut_strategy_names(value: str) -> list[str]:
+    aliases = {
+        "pose-gated": "current",
+        "current-pose-gated": "current",
+        "no-pose": "vlm-only",
+        "vlm": "vlm-only",
+        "full-window": "parent-only",
+        "parent": "parent-only",
+        "direct": "direct-parent",
+    }
+    valid = {"current", "vlm-only", "parent-only", "direct-parent"}
+    names: list[str] = []
+    for raw_part in value.split(","):
+        name = aliases.get(raw_part.strip().lower(), raw_part.strip().lower())
+        if not name:
+            continue
+        if name not in valid:
+            raise ValueError(f"Unknown source-cut strategy {raw_part!r}. Valid strategies: {', '.join(sorted(valid))}.")
+        if name not in names:
+            names.append(name)
+    if not names:
+        raise ValueError("At least one source-cut strategy is required.")
+    return names
+
+
+def source_cut_pose_payload_for_candidate(ranked_candidate: RankedCandidate) -> dict[str, Any] | None:
+    vision_payload = ranked_candidate.candidate.get("visionPayload")
+    if not isinstance(vision_payload, dict):
+        return None
+    pose_payload = vision_payload.get("posePrefilter")
+    return pose_payload if isinstance(pose_payload, dict) else None
+
+
+def direct_parent_source_cut_row(
+    *,
+    ranked_candidate: RankedCandidate,
+    source_video_path: Path,
+    source_window: DetectionWindow,
+    output_dir: Path,
+    frame_count: int,
+    row_started: float,
+) -> dict[str, Any]:
+    render_started = time.perf_counter()
+    frame_paths = bake_module.render_video_window_contact_sheet(
+        video_path=source_video_path,
+        window=source_window,
+        output_dir=output_dir / "contact_sheet",
+        frame_count=frame_count,
+    )
+    render_seconds = round_elapsed(time.perf_counter() - render_started)
+    return {
+        "strategy": "direct-parent",
+        "outputDir": str(output_dir),
+        "attemptKey": ranked_candidate_attempt_key(ranked_candidate),
+        "videoId": ranked_candidate.video_id,
+        "title": ranked_candidate.title,
+        "passed": True,
+        "score": 1.0,
+        "reasons": ["direct_parent_source_window"],
+        "selectedCandidateId": "parent",
+        "selectedStartSeconds": source_window.start_seconds,
+        "selectedEndSeconds": source_window.end_seconds,
+        "sourceWindowStartSeconds": source_window.start_seconds,
+        "sourceWindowEndSeconds": source_window.end_seconds,
+        "sourceCutCandidateCount": 1,
+        "sourceCutVlmInputCandidateCount": 0,
+        "sourceCutScorecardRowCount": 0,
+        "renderSeconds": render_seconds,
+        "vlmSeconds": 0.0,
+        "elapsedSeconds": round_elapsed(time.perf_counter() - row_started),
+        "contactSheetPaths": [str(path) for path in frame_paths],
+    }
+
+
+def source_cut_strategy_row_from_ranking(
+    *,
+    strategy: str,
+    ranked_candidate: RankedCandidate,
+    source_window: DetectionWindow,
+    output_dir: Path,
+    ranking: Any,
+    render_seconds: float,
+    vlm_seconds: float,
+    row_started: float,
+) -> dict[str, Any]:
+    payload = ranking.payload if isinstance(ranking.payload, dict) else {}
+    rows_payload = payload.get("sourceCutScorecardCandidates")
+    source_candidates = payload.get("sourceCutCandidates") if isinstance(payload.get("sourceCutCandidates"), list) else []
+    vlm_input_candidates = (
+        payload.get("sourceCutVlmInputCandidates")
+        if isinstance(payload.get("sourceCutVlmInputCandidates"), list)
+        else []
+    )
+    return {
+        "strategy": strategy,
+        "outputDir": str(output_dir),
+        "attemptKey": ranked_candidate_attempt_key(ranked_candidate),
+        "videoId": ranked_candidate.video_id,
+        "title": ranked_candidate.title,
+        "sourceWindowStartSeconds": source_window.start_seconds,
+        "sourceWindowEndSeconds": source_window.end_seconds,
+        "score": ranking.score,
+        "passed": ranking.score >= bake_module.SOURCE_CUT_MIN_SELECTED_SCORE,
+        "reasons": ranking.reasons,
+        "selectedCandidateId": payload.get("selectedCandidateId"),
+        "selectedStartSeconds": payload.get("selected_section_start_seconds"),
+        "selectedEndSeconds": payload.get("selected_section_end_seconds"),
+        "renderSeconds": render_seconds,
+        "vlmSeconds": vlm_seconds,
+        "sourceCutCandidateCount": len(source_candidates),
+        "sourceCutCandidates": source_candidates,
+        "sourceCutVlmInputCandidateCount": len(vlm_input_candidates),
+        "sourceCutVlmInputCandidates": vlm_input_candidates,
+        "sourceCutProgressiveSelection": payload.get("sourceCutProgressiveSelection"),
+        "sourceCutScorecardRowCount": len(rows_payload) if isinstance(rows_payload, list) else 0,
+        "sourceCutScorecardRows": rows_payload,
+        "sourceCutSourcePoseSampleCount": payload.get("sourceCutSourcePoseSampleCount"),
+        "sourceCutProgressiveDisabledReason": payload.get("sourceCutProgressiveDisabledReason"),
+        "sourceCutProgressiveWithoutPoseAllowed": payload.get("sourceCutProgressiveWithoutPoseAllowed"),
+        "sourceCutBoundaryAuditEnabled": payload.get("sourceCutBoundaryAuditEnabled"),
+        "sourceCutDisableReasoning": bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING,
+        "sourceChoiceInvalidResponse": payload.get("sourceChoiceInvalidResponse"),
+        "rawResponseLength": len(ranking.raw_response or ""),
+        "rawResponsePreview": (ranking.raw_response or "")[:1000],
+        "elapsedSeconds": round_elapsed(time.perf_counter() - row_started),
+    }
+
+
+def run_source_cut_strategy(
+    *,
+    strategy: str,
+    ranked_candidate: RankedCandidate,
+    source_video_path: Path,
+    source_window: DetectionWindow,
+    chunk_estimate: Any,
+    output_dir: Path,
+    frame_count: int,
+    caption_images: Any,
+    exercise_motion_contract: dict[str, Any] | None,
+    source_pose_prefilter_payload: dict[str, Any] | None,
+    max_vlm_workers: int,
+    include_boundary_audit: bool,
+) -> dict[str, Any]:
+    row_started = time.perf_counter()
+    if strategy == "direct-parent":
+        return direct_parent_source_cut_row(
+            ranked_candidate=ranked_candidate,
+            source_video_path=source_video_path,
+            source_window=source_window,
+            output_dir=output_dir,
+            frame_count=frame_count,
+            row_started=row_started,
+        )
+
+    strategy_pose_payload = source_pose_prefilter_payload if strategy in {"current", "parent-only"} else None
+    original_window_builder = bake_module.build_source_video_pyramid_candidate_windows
+    if strategy == "parent-only":
+        bake_module.build_source_video_pyramid_candidate_windows = lambda **_kwargs: [source_window]
+    try:
+        source_choice = rank_source_video_cut_candidates_with_caption_images(
+            video_path=source_video_path,
+            exercise_name=ranked_candidate.exercise_name,
+            candidate_title=ranked_candidate.title,
+            timeline_window=source_window,
+            chunk_estimate=chunk_estimate,
+            output_dir=output_dir / "source_scorecard",
+            frame_count=frame_count,
+            caption_images=caption_images,
+            exercise_motion_contract=exercise_motion_contract,
+            source_pose_prefilter_payload=strategy_pose_payload,
+            source_pose_offset_seconds=0.0,
+            max_vlm_workers=max_vlm_workers,
+            allow_progressive_without_pose=strategy == "vlm-only",
+            include_boundary_audit=include_boundary_audit,
+        )
+    finally:
+        bake_module.build_source_video_pyramid_candidate_windows = original_window_builder
+
+    if source_choice is None:
+        return {
+            "strategy": strategy,
+            "attemptKey": ranked_candidate_attempt_key(ranked_candidate),
+            "videoId": ranked_candidate.video_id,
+            "title": ranked_candidate.title,
+            "status": "no_source_candidates",
+            "passed": False,
+            "score": 0.0,
+            "elapsedSeconds": round_elapsed(time.perf_counter() - row_started),
+        }
+    ranking, render_seconds, vlm_seconds = source_choice
+    return source_cut_strategy_row_from_ranking(
+        strategy=strategy,
+        ranked_candidate=ranked_candidate,
+        source_window=source_window,
+        output_dir=output_dir,
+        ranking=ranking,
+        render_seconds=render_seconds,
+        vlm_seconds=vlm_seconds,
+        row_started=row_started,
+    )
+
+
+def run_source_cut_strategies_stage(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
+    strategies = source_cut_strategy_names(args.source_cut_strategies)
+    request = build_bake_request_for_pre_wham(args, run_dir)
+    candidates = load_ranked_candidates_for_pre_wham(args, request)
+    results_path = run_dir / "source_cut_strategy_results.jsonl"
+    started = time.perf_counter()
+    original_source_cut_disable_reasoning = bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING
+    if args.source_cut_disable_reasoning is not None:
+        bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING = bool(args.source_cut_disable_reasoning)
+    effective_source_cut_disable_reasoning = bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING
+    vision_settings = replace(
+        build_settings(args, vision=True),
+        vision_llm_workers=max(1, args.review_llm_workers),
+    )
+    ranker = LlamaCppVisionRanker(vision_settings)
+    rows: list[dict[str, Any]] = []
+    try:
+        source_cache_dir = args.youtube_source_cache_dir or bake_module.resolved_youtube_source_cache_dir(request)
+        preview_cache_dir = args.youtube_preview_cache_dir or bake_module.default_youtube_preview_cache_read_through_dir(request)
+        for index, ranked_candidate in enumerate(candidates):
+            candidate_dir = run_dir / "source_cut_candidates" / f"{index + 1:03d}-{ranked_candidate.workspace_slug}"
+            source_dir = candidate_dir / "source"
+            source_video_path = copy_or_download_candidate_source(
+                ranked_candidate,
+                source_dir,
+                youtube_cookies=args.youtube_cookies,
+                youtube_source_cache_dir=source_cache_dir,
+                youtube_preview_cache_dir=preview_cache_dir,
+            )
+            source_window = window_for_ranked_candidate(ranked_candidate, source_video_path)
+            chunk_estimate = estimate_chunking(
+                exercise_name=ranked_candidate.exercise_name,
+                use_llm=False,
+            )
+            duration = max(0.5, source_window.end_seconds - source_window.start_seconds)
+            frame_count = args.pre_wham_frame_count or max(12, min(args.review_frames, frames_for_chunk_seconds(duration)))
+            contract = contract_for_pre_wham_candidate(
+                ranked_candidate,
+                request=request,
+                ranker=ranker,
+                mode=args.contract_mode,
+            )
+            pose_payload = source_cut_pose_payload_for_candidate(ranked_candidate)
+            for strategy in strategies:
+                try:
+                    row = run_source_cut_strategy(
+                        strategy=strategy,
+                        ranked_candidate=ranked_candidate,
+                        source_video_path=source_video_path,
+                        source_window=source_window,
+                        chunk_estimate=chunk_estimate,
+                        output_dir=candidate_dir / strategy,
+                        frame_count=frame_count,
+                        caption_images=ranker.client.caption_images,
+                        exercise_motion_contract=contract,
+                        source_pose_prefilter_payload=pose_payload,
+                        max_vlm_workers=args.review_llm_workers,
+                        include_boundary_audit=args.source_cut_boundary_audit,
+                    )
+                except Exception as exc:  # noqa: BLE001 - benchmark row
+                    row = {
+                        "strategy": strategy,
+                        "attemptKey": ranked_candidate_attempt_key(ranked_candidate),
+                        "videoId": ranked_candidate.video_id,
+                        "title": ranked_candidate.title,
+                        "status": "failed",
+                        "passed": False,
+                        "score": 0.0,
+                        "error": str(exc),
+                    }
+                row["candidateIndex"] = index
+                rows.append(row)
+                append_jsonl(results_path, row)
+    finally:
+        try:
+            ranker.close()
+        finally:
+            bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING = original_source_cut_disable_reasoning
+    summary = {
+        "stage": "source-cut-strategies",
+        "candidateWindowCount": len(candidates),
+        "strategyCount": len(strategies),
+        "strategies": strategies,
+        "resultCount": len(rows),
+        "passCount": sum(1 for row in rows if row.get("passed") is True),
+        "contractMode": args.contract_mode,
+        "sourceScorecardRequestPolicy": "one_candidate_per_request",
+        "sourceCutDisableReasoning": effective_source_cut_disable_reasoning,
+        "sourceCutBoundaryAuditEnabled": bool(args.source_cut_boundary_audit),
+        "reviewLlmWorkers": args.review_llm_workers,
+        "elapsedSeconds": round_elapsed(time.perf_counter() - started),
+        "resultsJsonl": str(results_path),
+    }
+    write_json(run_dir / "summary.json", summary)
+    bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING = original_source_cut_disable_reasoning
     return summary
 
 
@@ -706,6 +1034,42 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--review-frames", type=int, default=32)
     parser.add_argument("--review-llm-workers", type=int, default=4)
     parser.add_argument("--pre-wham-frame-count", type=int)
+    parser.add_argument(
+        "--source-cut-strategies",
+        default="current,vlm-only,parent-only,direct-parent",
+        help=(
+            "Comma-separated source-cut strategies for --stage source-cut-strategies. "
+            "Valid values: current, vlm-only, parent-only, direct-parent."
+        ),
+    )
+    source_cut_reasoning_group = parser.add_mutually_exclusive_group()
+    source_cut_reasoning_group.add_argument(
+        "--source-cut-disable-reasoning",
+        dest="source_cut_disable_reasoning",
+        action="store_true",
+        default=None,
+        help="Disable llama.cpp reasoning for source-cut VLM classification requests.",
+    )
+    source_cut_reasoning_group.add_argument(
+        "--source-cut-enable-reasoning",
+        dest="source_cut_disable_reasoning",
+        action="store_false",
+        help="Enable llama.cpp reasoning for source-cut VLM classification requests.",
+    )
+    source_cut_boundary_group = parser.add_mutually_exclusive_group()
+    source_cut_boundary_group.add_argument(
+        "--source-cut-boundary-audit",
+        dest="source_cut_boundary_audit",
+        action="store_true",
+        default=True,
+        help="Attach enlarged start/end boundary audit sheets to source-cut VLM requests.",
+    )
+    source_cut_boundary_group.add_argument(
+        "--no-source-cut-boundary-audit",
+        dest="source_cut_boundary_audit",
+        action="store_false",
+        help="Do not attach enlarged start/end boundary audit sheets to source-cut VLM requests.",
+    )
     parser.add_argument("--source-window-attempts", type=int, default=3)
     parser.add_argument("--include-fallback-candidates", action="store_true")
     parser.add_argument("--contract-mode", choices=("none", "candidate", "generate"), default="candidate")
@@ -718,6 +1082,20 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     parser.add_argument("--llama-cpp-server-command")
     parser.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
+    parser.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
+    parser.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
+    parser.add_argument(
+        "--exercise-contract-llama-cpp-model",
+        dest="text_llama_cpp_model",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--exercise-contract-llama-cpp-mmproj",
+        dest="text_llama_cpp_mmproj",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--llama-cpp-backend", default="gpu")
     parser.add_argument("--llama-cpp-n-predict", type=int, default=512)
     parser.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
@@ -754,7 +1132,7 @@ def main() -> int:
     parser.add_argument(
         "--stage",
         required=True,
-        choices=("semantic", "discovery-vlm", "pre-wham-source"),
+        choices=("semantic", "discovery-vlm", "pre-wham-source", "source-cut-strategies"),
     )
     add_common_args(parser)
     args = parser.parse_args()
@@ -776,6 +1154,8 @@ def main() -> int:
         summary = run_semantic_stage(args, run_dir)
     elif args.stage == "discovery-vlm":
         summary = run_discovery_vlm_stage(args, run_dir)
+    elif args.stage == "source-cut-strategies":
+        summary = run_source_cut_strategies_stage(args, run_dir)
     else:
         summary = run_pre_wham_source_stage(args, run_dir)
     print(json.dumps({"runDir": str(run_dir), **summary}, indent=2, ensure_ascii=False, sort_keys=True))
