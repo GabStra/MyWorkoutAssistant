@@ -147,7 +147,7 @@ fun EnduranceSetScreen (
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) {
-        typography.numeralSmall.compactExerciseSetValueStyle()
+        typography.numeralSmall.exerciseTimerValueStyle()
     }
 
     fun pauseRunningTimerForEditMode() {
@@ -478,7 +478,7 @@ fun EnduranceSetScreen (
 
             if (showStartButton) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         autoStartJob?.cancel()
                         scope.launch {
@@ -499,7 +499,7 @@ fun EnduranceSetScreen (
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -510,7 +510,7 @@ fun EnduranceSetScreen (
             if (showRepeatButton) {
                 IconButton(
                     modifier = Modifier
-                        .size(50.dp)
+                        .size(WearStandardIconButtonSize)
                         .semantics { contentDescription = "Repeat set" },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                     onClick = {
@@ -542,7 +542,7 @@ fun EnduranceSetScreen (
                     }
                 ) {
                     Icon(
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -552,7 +552,7 @@ fun EnduranceSetScreen (
 
             if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.workoutTimerService.unregisterTimer(set.id)
@@ -561,7 +561,7 @@ fun EnduranceSetScreen (
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop",
                         tint = MaterialTheme.colorScheme.onBackground

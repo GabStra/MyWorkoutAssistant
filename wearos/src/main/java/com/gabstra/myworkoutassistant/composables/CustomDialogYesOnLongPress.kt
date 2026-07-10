@@ -248,7 +248,7 @@ fun CustomDialogYesOnLongPress(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 22.5.dp)
                         ) {
                             EnhancedIconButton(
-                                buttonSize = 50.dp,
+                                buttonSize = WearStandardIconButtonSize,
                                 hitBoxScale = 1.25f,
                                 onClick = {
                                     runNoClick()
@@ -256,7 +256,7 @@ fun CustomDialogYesOnLongPress(
                                 buttonModifier = Modifier.clip(CircleShape)
                             ) {
                                 Icon(
-                                    modifier = Modifier.size(30.dp),
+                                    modifier = Modifier.size(WearStandardIconButtonIconSize),
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Close",
                                     tint = contentColor
@@ -265,7 +265,7 @@ fun CustomDialogYesOnLongPress(
                             Spacer(modifier = Modifier.width(15.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(62.5.dp)
+                                    .size(WearStandardIconButtonHitBoxSize)
                                     .pointerInput(show, holdDurationMillis) {
                                         detectTapGestures(
                                             onPress = {
@@ -282,13 +282,13 @@ fun CustomDialogYesOnLongPress(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(50.dp)
+                                        .size(WearStandardIconButtonSize)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        modifier = Modifier.size(30.dp),
+                                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                                         imageVector = Icons.Default.Check,
                                         contentDescription = "Done",
                                         tint = MaterialTheme.colorScheme.onPrimary

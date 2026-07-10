@@ -81,7 +81,7 @@ fun ControlButtonsVertical(
                 contentDescription = "Subtract",
                 icon = {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Filled.ArrowDownward,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onBackground
@@ -97,7 +97,7 @@ fun ControlButtonsVertical(
                 contentDescription = "Add",
                 icon = {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Filled.ArrowUpward,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onBackground
@@ -123,7 +123,7 @@ private fun ControlButton(
 ) {
     Box(
         modifier = Modifier
-            .size(62.5.dp)
+            .size(WearStandardIconButtonHitBoxSize)
             .alpha(if (enabled) 1f else 0.45f)
             .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
@@ -154,7 +154,7 @@ private fun ControlButton(
     ) {
         Box(
             modifier = Modifier
-                .size(50.dp)
+                .size(WearStandardIconButtonSize)
                 .background(backgroundColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
