@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import shutil
 import subprocess
 from pathlib import Path
+
+from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path, resolve_ffprobe_path
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ def read_basic_video_metadata(video_path: Path) -> BasicVideoMetadata:
 
 
 def read_basic_video_metadata_with_ffprobe(video_path: Path) -> BasicVideoMetadata | None:
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = resolve_ffprobe_path()
     if ffprobe is None:
         return None
     command = [
@@ -131,7 +132,7 @@ def trim_video(
     start_seconds: float,
     end_seconds: float,
 ) -> Path:
-    ffmpeg_path = shutil.which("ffmpeg")
+    ffmpeg_path = resolve_ffmpeg_path()
     if ffmpeg_path is not None:
         return _trim_video_with_ffmpeg(
             source_path=source_path,
@@ -191,6 +192,66 @@ def trim_video(
     return output_path
 
 
+def convert_video_to_webm(
+    *,
+    source_path: Path,
+    output_path: Path,
+) -> Path:
+    ffmpeg_path = resolve_ffmpeg_path()
+    if ffmpeg_path is not None:
+        return _convert_video_to_webm_with_ffmpeg(
+            source_path=source_path,
+            output_path=output_path,
+            ffmpeg=ffmpeg_path,
+        )
+
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "opencv-python is required for WebM conversion when ffmpeg is unavailable. Install with: pip install -e .[motion]"
+        ) from exc
+
+    metadata = read_basic_video_metadata(source_path)
+    if metadata.fps <= 0 or metadata.width <= 0 or metadata.height <= 0:
+        raise RuntimeError(f"Could not determine video metadata for WebM conversion: {source_path}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    capture = cv2.VideoCapture(str(source_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not open video: {source_path}")
+
+    writer = None
+    try:
+        for codec in ("VP90", "VP80"):
+            writer = cv2.VideoWriter(
+                str(output_path),
+                cv2.VideoWriter_fourcc(*codec),
+                metadata.fps,
+                (metadata.width, metadata.height),
+            )
+            if writer.isOpened():
+                break
+            writer.release()
+            writer = None
+        if writer is None or not writer.isOpened():
+            raise RuntimeError(f"Could not open WebM video writer for output: {output_path}")
+
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            writer.write(frame)
+    finally:
+        capture.release()
+        if writer is not None:
+            writer.release()
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(f"WebM video was not created correctly: {output_path}")
+    return output_path
+
+
 def _trim_video_with_ffmpeg(
     *,
     source_path: Path,
@@ -240,4 +301,48 @@ def _trim_video_with_ffmpeg(
         raise RuntimeError(f"ffmpeg trim failed: {process.stderr}")
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError(f"Trimmed video was not created correctly: {output_path}")
+    return output_path
+
+
+def _convert_video_to_webm_with_ffmpeg(
+    *,
+    source_path: Path,
+    output_path: Path,
+    ffmpeg: str,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-y",
+        "-i",
+        str(source_path),
+        "-an",
+        "-c:v",
+        "libvpx-vp9",
+        "-pix_fmt",
+        "yuv420p",
+        "-deadline",
+        "good",
+        "-cpu-used",
+        "4",
+        "-crf",
+        "32",
+        "-b:v",
+        "0",
+        str(output_path),
+    ]
+    process = subprocess.run(
+        command,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode != 0:
+        raise RuntimeError(f"ffmpeg WebM conversion failed: {process.stderr}")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(f"WebM video was not created correctly: {output_path}")
     return output_path

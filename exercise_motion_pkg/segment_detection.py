@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import re
-import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+
+from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.llama_defaults import (
@@ -1185,7 +1186,7 @@ def extract_window_frames(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     times = linspace_times(window.start_seconds, window.end_seconds, max(1, frames_per_window))
-    ffmpeg_available = shutil.which("ffmpeg") is not None
+    ffmpeg_available = resolve_ffmpeg_path() is not None
     frame_paths = extract_window_frames_with_ffmpeg(
         video_path=video_path,
         times=times,
@@ -1238,7 +1239,7 @@ def extract_window_frames_with_ffmpeg(
     max_frame_width: int,
     output_dir: Path,
 ) -> list[Path]:
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = resolve_ffmpeg_path()
     if ffmpeg is None:
         return []
     frame_paths: list[Path] = []

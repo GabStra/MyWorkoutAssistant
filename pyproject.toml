@@ -15,6 +15,7 @@ test = [
     "pytest>=8.0.0",
 ]
 motion = [
+    "imageio-ffmpeg>=0.5",
     "joblib>=1.4",
     "opencv-python>=4.10",
     "playwright>=1.44",
