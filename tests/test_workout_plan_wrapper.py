@@ -197,6 +197,27 @@ def write_workout_plan(tmp_path: Path, exercise_count: int = 3) -> Path:
     return workout_plan
 
 
+def test_workout_plan_wrappers_disable_total_wall_clock_timeouts_by_default() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for relative_path in (
+        "scripts/run_exercise_motion_workout_plan.ps1",
+        "scripts/run_exercise_motion_youtube_bake_and_rank.ps1",
+    ):
+        script = (repo_root / relative_path).read_text(encoding="utf-8")
+        assert "[double]$CandidateTimeoutSeconds = 0.0" in script
+        assert "[double]$ExerciseTimeoutSeconds = 0.0" in script
+        assert '"--candidate-timeout-seconds", "$CandidateTimeoutSeconds"' in script
+        assert '"--exercise-timeout-seconds", "$ExerciseTimeoutSeconds"' in script
+
+
+def test_workout_plan_wrapper_starts_with_initial_suitable_target() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+
+    assert script.count('$targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)') == 2
+    assert '$targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)' not in script
+
+
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
 def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -262,25 +283,25 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
     assert summary["speedProfile"] == "fast"
     assert summary["discoveryWorkers"] == 1
     assert summary["bakeWorkers"] == 1
-    assert summary["parallelism"]["llamaCppParallel"] == 4
+    assert summary["parallelism"]["llamaCppParallel"] == 1
     assert summary["parallelism"]["activeDiscoveryWorkerBudget"] == 1
-    assert summary["parallelism"]["discoveryVisionLlmWorkers"] == 4
+    assert summary["parallelism"]["discoveryVisionLlmWorkers"] == 1
     assert summary["parallelism"]["requestedVisionLlmWorkers"] is None
-    assert summary["parallelism"]["reviewLlmWorkers"] == 4
-    assert summary["parallelism"]["segmentClassificationWorkers"] == 4
+    assert summary["parallelism"]["reviewLlmWorkers"] == 1
+    assert summary["parallelism"]["segmentClassificationWorkers"] == 1
     assert summary["parallelism"]["visionDownloadWorkers"] == 8
     assert summary["parallelism"]["gpuDiscoveryStages"] == []
     assert summary["parallelism"]["gpuDiscoveryBakeOverlap"] == "allow"
     assert summary["parallelism"]["defaultDiscoveryWorkerCap"] == 4
-    assert summary["llamaCppRuntime"]["ctxSize"] == 49152
-    assert summary["llamaCppRuntime"]["fitCtx"] == 49152
+    assert summary["llamaCppRuntime"]["ctxSize"] == 8192
+    assert summary["llamaCppRuntime"]["fitCtx"] == 8192
     assert summary["llamaCppRuntime"]["batchSize"] == 256
     assert summary["llamaCppRuntime"]["ubatchSize"] == 512
-    assert summary["llamaCppRuntime"]["imageMaxTokens"] == 1024
-    assert summary["llamaCppRuntime"]["mtmdBatchMaxTokens"] == 512
+    assert summary["llamaCppRuntime"]["imageMaxTokens"] == 2048
+    assert summary["llamaCppRuntime"]["mtmdBatchMaxTokens"] == 768
     assert summary["smplifyEnabled"] is False
-    assert summary["effectiveCandidateBudget"]["candidateReviewTargetSuitableCount"] == 2
-    assert summary["effectiveCandidateBudget"]["fallbackCandidates"] == 3
+    assert summary["effectiveCandidateBudget"]["candidateReviewTargetSuitableCount"] == 1
+    assert summary["effectiveCandidateBudget"]["fallbackCandidates"] == 6
     assert [item["status"] for item in summary["exercises"]] == ["completed", "completed", "completed"]
     for exercise in summary["exercises"]:
         assert [attempt["stage"] for attempt in exercise["attempts"]] == [
