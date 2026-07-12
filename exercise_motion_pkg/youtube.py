@@ -82,6 +82,7 @@ SEMANTIC_GATE_SHORT_DURATION_SECONDS = 20.0
 SEMANTIC_GATE_DURATION_HORIZON_SECONDS = 120.0
 LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS = 5.0
 YOUTUBE_PREVIEW_FRAGMENT_WORKERS = 4
+YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS: tuple[str | None, ...] = ("android_vr", "tv", None)
 
 LOW_RES_VIDEO_ONLY_FORMAT = (
     "bestvideo[height<=360][ext=mp4][protocol^=http][vcodec!=none]/"
@@ -113,30 +114,83 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
             raise FileNotFoundError(f"YouTube cookies file not found: {resolved_cookies_path}")
     try:
         from yt_dlp import YoutubeDL  # type: ignore
+        from yt_dlp.utils import DownloadError  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
             "yt-dlp is required for YouTube downloads. Install with: pip install .[motion]"
         ) from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    options = build_youtube_download_options(
-        outtmpl=str(output_dir / "source.%(ext)s"),
-        quiet=False,
-        noprogress=False,
-        retries=3,
-        preview=False,
-        cookies_path=resolved_cookies_path,
+    failures: list[str] = []
+    for attempt_index, player_client in enumerate(YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS, start=1):
+        remove_incomplete_youtube_downloads(output_dir)
+        attempt_cookies = isolated_youtube_cookie_copy(
+            resolved_cookies_path,
+            output_dir=output_dir,
+            attempt_index=attempt_index,
+        )
+        options = build_youtube_download_options(
+            outtmpl=str(output_dir / "source.%(ext)s"),
+            quiet=False,
+            noprogress=False,
+            retries=1,
+            preview=False,
+            cookies_path=attempt_cookies,
+        )
+        if player_client is not None:
+            options["extractor_args"] = {"youtube": {"player_client": [player_client]}}
+        attempt_label = player_client or "automatic"
+        print(f"[youtube] full download attempt {attempt_index}: client={attempt_label}", flush=True)
+        try:
+            try:
+                with YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    downloaded = Path(ydl.prepare_filename(info))
+                resolved_download = find_completed_youtube_download(downloaded)
+                if resolved_download is not None:
+                    return sanitize_downloaded_video(resolved_download)
+                failures.append(f"client={attempt_label}: download completed without an output file")
+            except DownloadError as exc:
+                failures.append(f"client={attempt_label}: {truncate_text(str(exc), 300)}")
+                print(
+                    f"[youtube] full download attempt {attempt_index} failed; re-extracting with another client",
+                    flush=True,
+                )
+        finally:
+            if attempt_cookies is not None:
+                attempt_cookies.unlink(missing_ok=True)
+    raise RuntimeError(
+        "YouTube full download failed after fresh client fallbacks: " + " | ".join(failures)
     )
-    with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=True)
-        downloaded = Path(ydl.prepare_filename(info))
-    if downloaded.exists():
-        return sanitize_downloaded_video(downloaded)
+
+
+def isolated_youtube_cookie_copy(
+    cookies_path: Path | None,
+    *,
+    output_dir: Path,
+    attempt_index: int,
+) -> Path | None:
+    if cookies_path is None:
+        return None
+    isolated_path = output_dir / f".youtube-cookies-attempt-{attempt_index}.txt"
+    shutil.copy2(cookies_path, isolated_path)
+    return isolated_path
+
+
+def remove_incomplete_youtube_downloads(output_dir: Path) -> None:
+    for candidate in output_dir.glob("source.*"):
+        if candidate.is_file():
+            candidate.unlink(missing_ok=True)
+
+
+def find_completed_youtube_download(downloaded: Path) -> Path | None:
+    if downloaded.exists() and downloaded.stat().st_size > 0:
+        return downloaded
     for extension in (".mp4", ".mkv", ".webm", ".mov"):
         candidate = Path(os.path.splitext(str(downloaded))[0] + extension)
-        if candidate.exists():
-            return sanitize_downloaded_video(candidate)
-    raise RuntimeError(f"Download finished but no video file was found in {output_dir}.")
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return candidate
+    return None
 
 
 def download_youtube_preview(
@@ -661,7 +715,7 @@ class YouTubeRankingSettings:
     candidate_review_target_suitable_count: int = 1
     min_duration_seconds: int = 0
     max_duration_seconds: int = 120
-    single_exercise_name_query: bool = True
+    single_exercise_name_query: bool = False
     use_deepseek_query_planner: bool = False
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -1698,6 +1752,9 @@ def build_youtube_queries(exercise_name: str) -> list[str]:
     base_term = quote_youtube_search_term(base)
     exclusions = build_youtube_query_exclusion_suffix(base)
     queries = [
+        f"{base_term} shorts{exclusions}",
+        f"{base_term} #shorts{exclusions}",
+        f"{base_term} full rep shorts{exclusions}",
         f"{base_term} exercise demonstration{exclusions}",
         f"{base_term} exercise demo full rep{exclusions}",
         f"{base_term} proper form{exclusions}",
@@ -2377,8 +2434,9 @@ def candidate_duration_rejection_reason(
         return None
     if min_duration_seconds > 0 and duration < min_duration_seconds:
         return "duration_too_short"
-    if max_duration_seconds > 0 and duration > max_duration_seconds:
-        return "duration_too_long"
+    # Long videos are more expensive to scan, but can still contain an ideal
+    # short movement window. Duration remains a ranking signal below; it must
+    # not prevent pose/vision window discovery entirely.
     return None
 
 
@@ -2408,6 +2466,8 @@ def vision_review_priority_score(
         score -= 0.04
     elif duration < min_duration_seconds:
         score -= 0.45
+    elif duration <= 60:
+        score += 0.22
     elif duration <= max_duration_seconds:
         score += 0.10
     elif duration <= max_duration_seconds * 2:
@@ -3302,6 +3362,7 @@ def normalize_exercise_motion_contract(
         raise ValueError("exercise motion contract payload must be a JSON object.")
     payload = unpack_nested_exercise_motion_contract_payload(payload)
     structured_fields = normalized_exercise_motion_contract_fields(payload)
+    structured_fields = simplify_repetition_contract_for_visual_review(structured_fields)
     structured_advisory_text = synthesize_exercise_motion_advisory_text(structured_fields)
     advisory_text = ""
     for key in ("advisoryText", "guidance", "text", "contract", "plainText"):
@@ -3317,6 +3378,37 @@ def normalize_exercise_motion_contract(
     contract = normalize_exercise_motion_contract_text(advisory_text, exercise=exercise, source=source)
     contract.update(structured_fields)
     return contract
+
+
+def simplify_repetition_contract_for_visual_review(fields: dict[str, Any]) -> dict[str, Any]:
+    """Replace fragile model-authored phase mechanics with an observable cycle contract."""
+    if (
+        fields.get("movementType") not in {"repetition", "cyclic"}
+        or fields.get("requiresReturnToStart") is not True
+    ):
+        return fields
+    simplified = dict(fields)
+    stable_posture = "a stable exercise posture immediately before one complete repetition"
+    phases = [
+        "move away from the start posture through the exercise action",
+        "reach a clear turning point",
+        "return through the exercise action to the start posture",
+    ]
+    simplified["validStartState"] = stable_posture
+    simplified["validEndState"] = stable_posture
+    simplified["requiredPhases"] = phases
+    simplified["movementTopology"] = {
+        "schemaVersion": 1,
+        "completionMode": "return_to_start",
+        "startState": {"id": "start_state", "label": stable_posture},
+        "phases": [
+            {"id": f"phase_{index + 1:02d}", "label": label}
+            for index, label in enumerate(phases)
+        ],
+        "endState": {"id": "end_state", "label": stable_posture},
+    }
+    simplified["contractSimplification"] = "generic_observable_return_cycle"
+    return simplified
 
 
 def normalize_exercise_movement_type(value: Any) -> str | None:
@@ -4084,6 +4176,25 @@ def youtube_suitable_candidate_count(
     return sum(1 for candidate in ranked if youtube_candidate_is_suitable_after_review(candidate, settings))
 
 
+def demote_candidates_missing_required_review(
+    ranked: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+) -> list[YouTubeCandidate]:
+    """Do not advertise pose-only candidates as fully recommended sources."""
+    if not settings.rank_with_vision:
+        return ranked
+    return [
+        replace_candidate(
+            candidate,
+            status="candidate",
+            score_reasons=dedupe_reasons([*candidate.score_reasons, "vision_review_not_completed"]),
+        )
+        if candidate.status == "recommended" and candidate.vision_score is None
+        else candidate
+        for candidate in ranked
+    ]
+
+
 def run_youtube_candidate_review_batches(
     *,
     exercise: ExerciseEntry,
@@ -4153,7 +4264,10 @@ def run_youtube_candidate_review_batches(
         if suitable_count >= target_suitable_count:
             break
 
-    ranked_reviewed = sort_youtube_reviewed_candidates(reviewed_by_key.values(), settings)
+    ranked_reviewed = demote_candidates_missing_required_review(
+        sort_youtube_reviewed_candidates(reviewed_by_key.values(), settings),
+        settings,
+    )
     if not ranked_reviewed:
         ranked_reviewed = sort_youtube_reviewed_candidates(ranked, settings)
     return CandidateReviewPassResult(
@@ -4953,7 +5067,18 @@ def discover_and_rank_youtube_candidates(
                 )
                 for candidate in by_key.values()
             ]
-            ranked = select_review_candidate_pool(prepared_ranked, settings)
+            ranked = sorted(
+                select_review_candidate_pool(prepared_ranked, settings),
+                key=lambda candidate: (
+                    vision_review_priority_score(
+                        candidate,
+                        min_duration_seconds=settings.min_duration_seconds,
+                        max_duration_seconds=settings.max_duration_seconds,
+                    ),
+                    candidate.view_count or 0,
+                ),
+                reverse=True,
+            )
             review_pool_elapsed_total += time.monotonic() - review_pool_started
             review_pool_ranked = ranked
             debug_candidates_by_key: dict[str, YouTubeCandidate] = {
