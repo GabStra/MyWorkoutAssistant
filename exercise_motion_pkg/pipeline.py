@@ -16,6 +16,7 @@ from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
+from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.paths import PipelinePaths
 from exercise_motion_pkg.preview import write_preview_html, write_wear_skeleton_json
 from exercise_motion_pkg.retarget_contract import build_target_rig_contract
@@ -113,6 +114,9 @@ class GenerateRequest:
     export_wham_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
+    output_crop_start_seconds: float | None = None
+    output_crop_end_seconds: float | None = None
+    wham_output_rotation_degrees: float = 0.0
     youtube_cookies: Path | None = None
 
 
@@ -300,6 +304,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
             coordinate_space=WHAM_COORDINATE_SPACE,
+            output_rotation_degrees=request.wham_output_rotation_degrees,
         )
         record_timing("normalizeWhamOutputSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -369,6 +374,15 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
     stage_started = time.perf_counter()
     raw_clip = load_motion_json(raw_motion_json_path)
     record_timing("loadRawMotionSeconds", stage_started)
+    if request.output_crop_start_seconds is not None or request.output_crop_end_seconds is not None:
+        stage_started = time.perf_counter()
+        raw_clip = crop_motion_clip_to_input_window(
+            raw_clip,
+            start_seconds=request.output_crop_start_seconds,
+            end_seconds=request.output_crop_end_seconds,
+        )
+        save_motion_json(raw_motion_json_path, raw_clip)
+        record_timing("cropInferenceContextSeconds", stage_started)
     raw_preview_html_path = paths.preview_dir / "motion_preview.raw.html"
     stage_started = time.perf_counter()
     raw_preview_clip = replace(
@@ -540,6 +554,49 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             wham_results_pkl=wham_results_pkl,
             wham_cache_status=wham_cache_status,
             timings=timings,
+    )
+
+
+def crop_motion_clip_to_input_window(
+    clip: MotionClip,
+    *,
+    start_seconds: float | None,
+    end_seconds: float | None,
+) -> MotionClip:
+    """Remove inference-only video context and rebase retained motion to zero."""
+    start = max(0.0, float(start_seconds or 0.0))
+    end = float(end_seconds) if end_seconds is not None else float("inf")
+    if end <= start:
+        raise ValueError("Motion output crop end must be after crop start.")
+    retained = [
+        frame
+        for frame in clip.frames
+        if frame.time_sec + 1e-6 >= start and frame.time_sec <= end + 1e-6
+    ]
+    if not retained:
+        raise ValueError(
+            f"WHAM produced no motion frames inside the requested output window {start:.3f}-{end:.3f}s."
+        )
+    first_time = retained[0].time_sec
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=[
+            MotionFrame(time_sec=max(0.0, frame.time_sec - first_time), joints=frame.joints)
+            for frame in retained
+        ],
+        source=clip.source,
+        metadata={
+            **clip.metadata,
+            "inferenceContextCrop": {
+                "requestedStartSeconds": start,
+                "requestedEndSeconds": None if end == float("inf") else end,
+                "retainedInputStartSeconds": retained[0].time_sec,
+                "retainedInputEndSeconds": retained[-1].time_sec,
+                "inputFrameCount": clip.frame_count,
+                "outputFrameCount": len(retained),
+            },
+        },
     )
 
 

@@ -101,6 +101,92 @@ def read_basic_video_metadata_with_ffprobe(video_path: Path) -> BasicVideoMetada
     return BasicVideoMetadata(fps=fps, frame_count=frame_count, width=width, height=height)
 
 
+def rotate_video_quarter_turn(*, source_path: Path, output_path: Path, counter_clockwise: bool) -> Path:
+    """Rotate a video by exactly 90 degrees without changing its timeline."""
+    ffmpeg_path = resolve_ffmpeg_path()
+    if not ffmpeg_path:
+        return _rotate_video_quarter_turn_with_opencv(
+            source_path=source_path,
+            output_path=output_path,
+            counter_clockwise=counter_clockwise,
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    transpose = "2" if counter_clockwise else "1"
+    process = subprocess.run(
+        [
+            ffmpeg_path,
+            "-y",
+            "-i",
+            str(source_path),
+            "-vf",
+            f"transpose={transpose}",
+            "-an",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0 or not output_path.exists():
+        raise RuntimeError(
+            "Could not rotate WHAM input video.\n"
+            f"stdout:\n{process.stdout}\n"
+            f"stderr:\n{process.stderr}"
+        )
+    return output_path
+
+
+def _rotate_video_quarter_turn_with_opencv(
+    *, source_path: Path,
+    output_path: Path,
+    counter_clockwise: bool,
+) -> Path:
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "WHAM input orientation normalization requires either ffmpeg or opencv-python."
+        ) from exc
+    capture = cv2.VideoCapture(str(source_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not open video for orientation normalization: {source_path}")
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
+    source_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    source_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if source_width <= 0 or source_height <= 0:
+        capture.release()
+        raise RuntimeError(f"Could not read video dimensions for orientation normalization: {source_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (source_height, source_width),
+    )
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError(f"Could not create rotated video: {output_path}")
+    rotation_code = (
+        cv2.ROTATE_90_COUNTERCLOCKWISE
+        if counter_clockwise
+        else cv2.ROTATE_90_CLOCKWISE
+    )
+    frame_count = 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            writer.write(cv2.rotate(frame, rotation_code))
+            frame_count += 1
+    finally:
+        capture.release()
+        writer.release()
+    if frame_count <= 0 or not output_path.exists():
+        raise RuntimeError(f"Rotated video contains no frames: {output_path}")
+    return output_path
+
+
 def parse_frame_rate(value: str) -> float:
     if "/" in value:
         numerator, denominator = value.split("/", 1)

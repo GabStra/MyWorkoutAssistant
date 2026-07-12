@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 
 from exercise_motion_pkg.legacy_smpl_compat import ensure_legacy_smpl_runtime_compat
 from exercise_motion_pkg.models import MotionClip, MotionFrame
@@ -14,6 +15,7 @@ def convert_wham_results_to_motion_clip(
     body_model_root: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
+    output_rotation_degrees: float = 0.0,
 ) -> MotionClip:
     ensure_legacy_smpl_runtime_compat()
     try:
@@ -62,6 +64,21 @@ def convert_wham_results_to_motion_clip(
         )
 
     joints = output.joints[:, : len(SMPL_JOINT_NAMES), :].detach().cpu().tolist()
+    if abs(output_rotation_degrees) > 1e-6:
+        radians = math.radians(output_rotation_degrees)
+        cosine = math.cos(radians)
+        sine = math.sin(radians)
+        joints = [
+            [
+                [
+                    cosine * float(coords[0]) - sine * float(coords[1]),
+                    sine * float(coords[0]) + cosine * float(coords[1]),
+                    float(coords[2]),
+                ]
+                for coords in joint_row
+            ]
+            for joint_row in joints
+        ]
     normalized_frame_ids = _normalize_frame_ids(frame_ids, frame_count=frame_count)
     fps = 30.0
     frames: list[MotionFrame] = []
@@ -90,6 +107,7 @@ def convert_wham_results_to_motion_clip(
             "whamResultsPkl": str(wham_results_pkl),
             "coordinateSpace": coordinate_space,
             "subjectId": str(resolved_subject_id),
+            "outputRotationDegrees": output_rotation_degrees,
         },
         metadata={
             "upstream": "wham",
@@ -109,6 +127,7 @@ def normalize_wham_output(
     output_json: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
+    output_rotation_degrees: float = 0.0,
 ) -> Path:
     from exercise_motion_pkg.motion_io import save_motion_json
 
@@ -117,6 +136,7 @@ def normalize_wham_output(
         body_model_root=body_model_root,
         coordinate_space=coordinate_space,
         subject_id=subject_id,
+        output_rotation_degrees=output_rotation_degrees,
     )
     save_motion_json(output_json, clip)
     return output_json

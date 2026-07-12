@@ -17,7 +17,7 @@ from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
-DEFAULT_WHAM_TIMEOUT_SECONDS = 200.0
+DEFAULT_WHAM_TIMEOUT_SECONDS = 0.0
 WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
 WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS"
 WHAM_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_TIMEOUT_SECONDS"
@@ -293,28 +293,30 @@ def resolve_warm_worker_mount_root(configured: Path | None) -> Path:
     )
 
 
-def resolve_warm_worker_timeout_seconds(configured: float | None) -> float:
+def resolve_warm_worker_timeout_seconds(configured: float | None) -> float | None:
     if configured is not None:
-        return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(configured)))
+        return None if float(configured) <= 0.0 else max(1.0, float(configured))
     raw = os.environ.get(WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR)
     if raw is not None:
         try:
-            return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(raw)))
+            value = float(raw)
+            return None if value <= 0.0 else max(1.0, value)
         except ValueError:
             pass
-    return float(DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS)
+    return None if DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS <= 0.0 else float(DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS)
 
 
-def resolve_wham_timeout_seconds(configured: float | None) -> float:
+def resolve_wham_timeout_seconds(configured: float | None) -> float | None:
     if configured is not None:
-        return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(configured)))
+        return None if float(configured) <= 0.0 else max(1.0, float(configured))
     raw = os.environ.get(WHAM_TIMEOUT_SECONDS_ENV_VAR)
     if raw is not None:
         try:
-            return min(float(DEFAULT_WHAM_TIMEOUT_SECONDS), max(1.0, float(raw)))
+            value = float(raw)
+            return None if value <= 0.0 else max(1.0, value)
         except ValueError:
             pass
-    return float(DEFAULT_WHAM_TIMEOUT_SECONDS)
+    return None if DEFAULT_WHAM_TIMEOUT_SECONDS <= 0.0 else float(DEFAULT_WHAM_TIMEOUT_SECONDS)
 
 
 def run_wham_process(
@@ -323,7 +325,7 @@ def run_wham_process(
     cwd: str,
     stdout: Any,
     stderr: Any,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
     docker_container_name: str | None,
 ) -> int:
     process = subprocess.Popen(
@@ -369,12 +371,12 @@ def path_inside_worker_mount(path: Path, *, mount_root: Path) -> str:
     return "/workspace" if str(relative) == "." else "/workspace/" + relative.as_posix()
 
 
-def wait_for_warm_worker_result(path: Path, *, timeout_seconds: float) -> dict[str, Any]:
+def wait_for_warm_worker_result(path: Path, *, timeout_seconds: float | None) -> dict[str, Any]:
     started = time.perf_counter()
     while True:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
-        if time.perf_counter() - started >= timeout_seconds:
+        if timeout_seconds is not None and time.perf_counter() - started >= timeout_seconds:
             raise TimeoutError(f"Timed out waiting for warm WHAM worker result: {path}")
         time.sleep(0.5)
 
