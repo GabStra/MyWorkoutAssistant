@@ -63,7 +63,7 @@ param(
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
-    [int]$MaxAdaptivePreviewSettings = 1,
+    [int]$MaxAdaptivePreviewSettings = 2,
     [switch]$SkipPreviewVariantRanking,
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,

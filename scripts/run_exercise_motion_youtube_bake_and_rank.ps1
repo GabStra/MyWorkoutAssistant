@@ -9,12 +9,12 @@ param(
     [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
     [string]$PythonCommand = "",
-    [int]$ResultsPerQuery = 100,
+    [int]$ResultsPerQuery = 30,
     [int]$YoutubeSearchEmptyRetries = 5,
-    [int]$MaxCandidates = 8,
+    [int]$MaxCandidates = 6,
     [int]$CandidateReviewBatchSize = 4,
-    [int]$CandidateReviewTargetSuitableCount = 2,
-    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 2,
+    [int]$CandidateReviewTargetSuitableCount = 1,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 6,
     [switch]$SingleExerciseNameQuery,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
@@ -23,9 +23,9 @@ param(
     [string]$DeepSeekBaseUrl = "https://api.deepseek.com",
     [string]$DeepSeekModel = "deepseek-v4-flash",
     [int]$DeepSeekMaxQueries = 4,
-    [int]$VisionCandidatesPerExercise = 4,
+    [int]$VisionCandidatesPerExercise = 3,
     [int]$VisionFramesPerCandidate = 0,
-    [int]$VisionMaxChunksPerCandidate = 0,
+    [int]$VisionMaxChunksPerCandidate = 2,
     [int]$VisionDownloadWorkers = 16,
     [int]$VisionLlmWorkers = 12,
     [switch]$SkipVisionRanking,
@@ -55,13 +55,13 @@ param(
     [double]$ThoroughPosePrefilterMaxSeconds = 0.0,
     [int]$ThoroughVisionMaxChunksPerCandidate = 0,
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
-    [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 3,
-    [int]$MaxFinalOutputRejections = 3,
+    [int]$FallbackCandidates = 2,
+    [int]$MaxSourceWindowAttempts = 2,
+    [int]$MaxFinalOutputRejections = 2,
     [double]$SourceReviewTimeoutSeconds = 90.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
-    [double]$CandidateTimeoutSeconds = 420.0,
-    [double]$ExerciseTimeoutSeconds = 1500.0,
+    [double]$CandidateTimeoutSeconds = 0.0,
+    [double]$ExerciseTimeoutSeconds = 0.0,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [bool]$UseExistingCandidatesForFirstAttempt = $true,
@@ -114,7 +114,7 @@ param(
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
-    [int]$MaxAdaptivePreviewSettings = 1,
+    [int]$MaxAdaptivePreviewSettings = 2,
     [switch]$SkipPreviewVariantRanking,
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
@@ -585,7 +585,7 @@ $youtubeArgs = @(
     "--vision-download-workers", "$VisionDownloadWorkers",
     "--vision-llm-workers", "$VisionLlmWorkers"
 )
-$useSingleExerciseNameQuery = $SingleExerciseNameQuery -or (-not $UseLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner)
+$useSingleExerciseNameQuery = $SingleExerciseNameQuery
 if ($useSingleExerciseNameQuery) {
     $youtubeArgs += "--single-exercise-name-query"
 }
@@ -906,7 +906,7 @@ if ($NoExerciseMotionContract) {
 
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"
 $bakeBaseArgs = [string[]]$bakeArgs
-$currentTargetSuitableCount = [Math]::Max(1, $resolvedMaxCandidateReviewTargetSuitableCount)
+$currentTargetSuitableCount = $initialTargetSuitableCount
 $attemptIndex = 1
 $selection = $null
 $previousAttemptCandidateJsonPaths = @()
@@ -976,7 +976,11 @@ try {
         }
 
         Write-Host "Bake attempt ${attemptIndex}: baking $($recommendationCounts.Recommended) recommended candidate(s)."
-        & $PythonCommand @bakeBaseArgs
+        $attemptBakeArgs = @($bakeBaseArgs)
+        if ($attemptIndex -gt 1) {
+            $attemptBakeArgs += "--reuse-previous-terminal-results"
+        }
+        & $PythonCommand @attemptBakeArgs
         $bakeExitCode = $LASTEXITCODE
 
         $selection = Get-SelectionManifest -SelectionPath $selectionPath

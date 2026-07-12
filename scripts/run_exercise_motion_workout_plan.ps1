@@ -23,7 +23,7 @@ param(
     [int]$MaxCandidates = 12,
     [int]$CandidateReviewBatchSize = 12,
     [int]$CandidateReviewTargetSuitableCount = 2,
-    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 2,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 6,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
     [switch]$UseDeepSeekQueryPlanner,
@@ -69,8 +69,8 @@ param(
     [int]$MaxFinalOutputRejections = 6,
     [double]$SourceReviewTimeoutSeconds = 90.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
-    [double]$CandidateTimeoutSeconds = 420.0,
-    [double]$ExerciseTimeoutSeconds = 1500.0,
+    [double]$CandidateTimeoutSeconds = 0.0,
+    [double]$ExerciseTimeoutSeconds = 0.0,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
     [switch]$ReuseExistingSelected,
@@ -83,8 +83,8 @@ param(
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 200.0,
-    [double]$WhamTimeoutSeconds = 200.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 0.0,
+    [double]$WhamTimeoutSeconds = 0.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$RunSmplify,
@@ -105,7 +105,7 @@ param(
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
-    [int]$MaxAdaptivePreviewSettings = 1,
+    [int]$MaxAdaptivePreviewSettings = 2,
     [switch]$SkipPreviewVariantRanking,
     [switch]$ClassifySupportDominance,
     [switch]$SkipSupportDominanceClassification,
@@ -1108,7 +1108,7 @@ function Start-InitialDiscoveryJob {
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
         "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
-        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
+        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
         $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
         $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
@@ -1259,7 +1259,7 @@ function Start-BakeJob {
             "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
             "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
+        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
         $attemptIndex = 1
         $previousAttemptCandidateJsonPaths = @()
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
@@ -1359,7 +1359,11 @@ function Start-BakeJob {
 
             "[$(Get-Date -Format o)] bake attempt $attemptIndex started with $recommendedCount recommended candidate(s)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             $bakeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-            & $PythonCommand @BakeArguments *>> $LogPath
+            $attemptBakeArguments = @($BakeArguments)
+            if ($bakeAttemptCount -gt 0) {
+                $attemptBakeArguments += "--reuse-previous-terminal-results"
+            }
+            & $PythonCommand @attemptBakeArguments *>> $LogPath
             $bakeExitCode = $LASTEXITCODE
             $bakeStopwatch.Stop()
             $bakeSeconds = [Math]::Round($bakeStopwatch.Elapsed.TotalSeconds, 3)
@@ -1906,15 +1910,21 @@ $repoRoot = Get-RepoRoot
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 switch ($SpeedProfile) {
     "fast" {
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 12 }
+        if (-not $PSBoundParameters.ContainsKey("ResultsPerQuery")) { $ResultsPerQuery = 100 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 24 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 12 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 2 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 1 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 12 }
-        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 12 }
-        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 8 }
-        if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 5 }
+        if (-not $PSBoundParameters.ContainsKey("VisionMaxChunksPerCandidate")) { $VisionMaxChunksPerCandidate = 2 }
+        if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 24 }
+        if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 6 }
+        if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 3 }
         if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 6 }
+        if (-not $PSBoundParameters.ContainsKey("NoExerciseNameRewrite")) { $NoExerciseNameRewrite = $true }
+        if (-not $PSBoundParameters.ContainsKey("SemanticGateWithLlamaCpp") -and -not $PSBoundParameters.ContainsKey("SkipSemanticGate")) {
+            $SkipSemanticGate = $true
+        }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 8192 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 8192 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppBatchSize")) { $LlamaCppBatchSize = 256 }
@@ -1926,7 +1936,7 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 6 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 6 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 1 }
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 2 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 2 }
@@ -2138,9 +2148,6 @@ if ($NoExerciseNameRewrite) {
 }
 if ($NoExerciseMotionContract) {
     $youtubeBaseArgs += "--no-exercise-motion-contract"
-}
-if (-not $UseLlamaCppQueryPlanner -and -not $UseDeepSeekQueryPlanner) {
-    $youtubeBaseArgs += "--single-exercise-name-query"
 }
 if (-not $SkipVisionRanking) {
     $youtubeBaseArgs += "--rank-with-vision"
