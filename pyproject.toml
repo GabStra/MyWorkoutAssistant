@@ -20,7 +20,7 @@ motion = [
     "opencv-python>=4.10",
     "playwright>=1.44",
     "ultralytics>=8.0",
-    "yt-dlp>=2024.8.6",
+    "yt-dlp>=2026.7.4",
 ]
 
 [project.scripts]
