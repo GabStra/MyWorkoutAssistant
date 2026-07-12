@@ -60,6 +60,7 @@ HINGE_LIMITS = (
 )
 MIN_LOOP_DURATION_SECONDS = 2.0
 MAX_DETECTED_LOOPS = 8
+MIN_PREVIEW_LOOP_MOTION_BODY_RATIO = 0.08
 ORIENTATION_PRIMARY_SUPPORT_JOINTS = (
     "left_foot",
     "right_foot",
@@ -209,6 +210,7 @@ def write_preview_html(
         "defaultAutoAlignment": default_auto_alignment,
         "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
         "defaultCameraPitchDegrees": 0.0 if has_horizontal_torso_profile else 10.3,
+        "horizontalTorsoProfile": has_horizontal_torso_profile,
         "previewMaxRenderFps": min(30.0, max(12.0, float(preview_clip.fps))),
         "motionTuningEnabled": not raw_motion_review,
         "rawWhamPassthrough": raw_motion_review,
@@ -3476,6 +3478,14 @@ def _detect_preview_loops(clip: MotionClip) -> list[dict[str, object]]:
     candidates: list[dict[str, object]] = []
     for start_index in range(0, clip.frame_count - minimum_frames):
         for end_index in range(start_index + minimum_frames, clip.frame_count):
+            if not _preview_loop_motion_is_meaningful(
+                clip,
+                start_index=start_index,
+                end_index=end_index,
+                key_joints=key_joints,
+                root_joint=root_joint,
+            ):
+                continue
             if use_support_state_veto and not _preview_loop_support_states_are_compatible(
                 support_states=support_states,
                 start_index=start_index,
@@ -3544,6 +3554,53 @@ def _detect_preview_loops(clip: MotionClip) -> list[dict[str, object]]:
         if len(selected) >= MAX_DETECTED_LOOPS:
             break
     return selected
+
+
+def _preview_loop_motion_is_meaningful(
+    clip: MotionClip,
+    *,
+    start_index: int,
+    end_index: int,
+    key_joints: list[str],
+    root_joint: str | None,
+) -> bool:
+    frames = clip.frames[start_index:end_index + 1]
+    if len(frames) < 2:
+        return False
+    points = [point for frame in frames for point in frame.joints.values()]
+    if not points:
+        return False
+    body_span = max(
+        max(point[axis] for point in points) - min(point[axis] for point in points)
+        for axis in range(3)
+    )
+    if body_span <= 1e-8:
+        return False
+    max_range = 0.0
+    for joint_name in key_joints:
+        localized: list[tuple[float, float, float]] = []
+        for frame in frames:
+            point = frame.joints.get(joint_name)
+            if point is None:
+                continue
+            root = frame.joints.get(root_joint) if root_joint else None
+            localized.append(
+                (
+                    point[0] - (root[0] if root is not None else 0.0),
+                    point[1] - (root[1] if root is not None else 0.0),
+                    point[2] - (root[2] if root is not None else 0.0),
+                )
+            )
+        if len(localized) < 2:
+            continue
+        joint_range = math.sqrt(
+            sum(
+                (max(point[axis] for point in localized) - min(point[axis] for point in localized)) ** 2
+                for axis in range(3)
+            )
+        )
+        max_range = max(max_range, joint_range)
+    return max_range / body_span >= MIN_PREVIEW_LOOP_MOTION_BODY_RATIO
 
 
 def _preview_minimum_loop_frames(clip: MotionClip) -> int:
@@ -4186,6 +4243,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const detectedLoops = Array.isArray(payload.detectedLoops) ? payload.detectedLoops : [];
     const comparisonFrames = Array.isArray(payload.comparisonFrames) ? payload.comparisonFrames : [];
     const rawComparisonFrames = Array.isArray(payload.rawComparisonFrames) ? payload.rawComparisonFrames : [];
+    const horizontalTorsoProfile = Boolean(payload.horizontalTorsoProfile);
     const customModelUsesFusedSpine = Boolean(payload.spineposeMotionFusion && Number(payload.spineposeMotionFusion.appliedFrames) > 0);
     let selectedLoopIndex = -1;
     let customTimeRange = null;
@@ -5207,8 +5265,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function getFrameStableRootPoint(frame) {{
-      const horizontalTorso = isHorizontalTorsoFrame(frame);
-      const jointNames = horizontalTorso
+      const jointNames = horizontalTorsoProfile
         ? ["pelvis", "left_hip", "right_hip", "spine1", "spine2", "spine3", "left_shoulder", "right_shoulder"]
         : [payload.rootJoint, "pelvis", "spine1"];
       const points = [];
@@ -5590,14 +5647,17 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
-    function verticalMovementCorrectionForFrame(frame, frameTranslation, jointName) {{
+    function verticalMovementCorrectionForFrame(frame, frameTranslation, jointName, includeSupportJoints = false) {{
       if (manualModelRotationOverridesAutoOrientation() || !autoWorldAlignmentEnabled || !activeVerticalMovementAnchor || !frame) {{
         return null;
       }}
       if (lockPlantedHands) {{
         return null;
       }}
-      if ((lockPlantedHands && isHandSupportJoint(jointName)) || (lockPlantedFeet && isFootSupportJoint(jointName))) {{
+      if (!includeSupportJoints && (
+        (lockPlantedHands && isHandSupportJoint(jointName))
+        || (lockPlantedFeet && isFootSupportJoint(jointName))
+      )) {{
         return null;
       }}
       const point = getFrameMovementReferencePoint(frame);
@@ -5647,7 +5707,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function clampFrameRootTranslation(frame, translation, lockYDrift) {{
-      if (!isHorizontalTorsoFrame(frame)) {{
+      if (!horizontalTorsoProfile) {{
         return translation;
       }}
       return [
@@ -5953,9 +6013,7 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function toUncorrectedWorldPoint(point, frameTranslation, frame = activeRenderFrame) {{
-      const transformedPoint = applySceneTransform(toRootAdjustedPoint(point, frameTranslation));
-      applyFrameShoulderLeveling(transformedPoint, frame, frameTranslation);
-      return transformedPoint;
+      return applySceneTransform(toRootAdjustedPoint(point, frameTranslation));
     }}
 
     function computeLockedHandBodyDriftCorrection(frame) {{
@@ -6276,7 +6334,17 @@ def _build_html(payload: dict[str, object]) -> str:
         return null;
       }}
       const translation = fixedRoot ? getFrameTranslation(frame) : [0, 0, 0];
-      return toUncorrectedWorldPoint(point, translation);
+      const worldPoint = toUncorrectedWorldPoint(point, translation, frame);
+      const verticalCorrection = verticalMovementCorrectionForFrame(
+        frame,
+        translation,
+        jointName,
+        true
+      );
+      if (verticalCorrection) {{
+        worldPoint.sub(verticalCorrection);
+      }}
+      return worldPoint;
     }}
 
     function lockSampleForFrame(frame, jointName) {{
@@ -6319,7 +6387,16 @@ def _build_html(payload: dict[str, object]) -> str:
         return;
       }}
       const plantedIndexes = new Set(plantedSamples.map((sample) => sample.index));
-      const continuousSupport = plantedSamples.length / validSamples.length >= 0.8;
+      const xRange = Math.max(...validSamples.map((sample) => sample.point.x))
+        - Math.min(...validSamples.map((sample) => sample.point.x));
+      const yRange = Math.max(...validSamples.map((sample) => sample.point.y))
+        - Math.min(...validSamples.map((sample) => sample.point.y));
+      const zRange = Math.max(...validSamples.map((sample) => sample.point.z))
+        - Math.min(...validSamples.map((sample) => sample.point.z));
+      const fullRangeRatio = Math.hypot(xRange, yRange, zRange)
+        / Math.max(estimateAlignmentSkeletonScale(frames), 1e-6);
+      const continuousSupport = plantedSamples.length / validSamples.length >= 0.8
+        || fullRangeRatio <= 0.10;
       if (continuousSupport) {{
         for (const sample of validSamples) {{
           plantedIndexes.add(sample.index);
@@ -6493,7 +6570,17 @@ def _build_html(payload: dict[str, object]) -> str:
       for (const jointName of payload.jointNames) {{
         const point = frame.joints[jointName];
         if (Array.isArray(point) && point.length >= 3) {{
-          basePositions.set(jointName, toUncorrectedWorldPoint(point, frameTranslation));
+          const worldPoint = toUncorrectedWorldPoint(point, frameTranslation, frame);
+          const verticalCorrection = verticalMovementCorrectionForFrame(
+            frame,
+            frameTranslation,
+            jointName,
+            true
+          );
+          if (verticalCorrection) {{
+            worldPoint.sub(verticalCorrection);
+          }}
+          basePositions.set(jointName, worldPoint);
         }}
       }}
       const bodyTranslation = computeLockedFootBodyTranslation(activeTargets, basePositions);
