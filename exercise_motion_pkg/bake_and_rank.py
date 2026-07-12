@@ -87,7 +87,7 @@ from exercise_motion_pkg.target_motion import (
     observable_motion_spec_requires_return,
     target_motion_profile_for_exercise,
 )
-from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
+from exercise_motion_pkg.video_utils import read_basic_video_metadata, rotate_video_quarter_turn, trim_video
 from exercise_motion_pkg.vlm_errors import (
     add_vlm_context,
     is_critical_vlm_interaction_error,
@@ -156,8 +156,8 @@ DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS = 5
 DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS = 6
 DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS = 90.0
 DEFAULT_FINAL_REVIEW_TIMEOUT_SECONDS = 120.0
-DEFAULT_CANDIDATE_TIMEOUT_SECONDS = 420.0
-DEFAULT_EXERCISE_TIMEOUT_SECONDS = 1500.0
+DEFAULT_CANDIDATE_TIMEOUT_SECONDS = 0.0
+DEFAULT_EXERCISE_TIMEOUT_SECONDS = 0.0
 ARTIFACT_RETENTION_DEBUG = "debug"
 ARTIFACT_RETENTION_FULL = "full"
 ARTIFACT_RETENTION_MODES = frozenset((ARTIFACT_RETENTION_DEBUG, ARTIFACT_RETENTION_FULL))
@@ -219,6 +219,7 @@ LOWER_BODY_MOTION_MIN_ARTICULATION_RATIO = 0.10
 WEAK_FOCUSED_MOTION_SCORE_MULTIPLIER_FLOOR = 0.55
 PAIRED_HANDS_MIN_SOURCE_CAPTURE_RATIO = 0.75
 PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO = 0.18
+PAIRED_HANDS_SEVERE_SPACING_INSTABILITY_RATIO = 0.50
 PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION = 0.45
 LOOP_BRIDGE_ARTIFACT_SCORE_CAP = 0.49
 NON_LOOPING_MOVEMENT_COMPLEXITIES = {"multi_phase", "long_duration"}
@@ -360,8 +361,10 @@ SOURCE_CUT_PROGRESSIVE_STRIDE_RATIO = 0.20
 SOURCE_CUT_PROGRESSIVE_MAX_WINDOWS_PER_LEVEL = 9
 SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_SIZE = 2
 SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_OVERLAP_RATIO = 0.25
+SOURCE_CUT_MAX_VLM_CANDIDATES = 9
 SOURCE_CUT_END_BOUNDARY_SWEEP_FLOOR_RATIO = 0.80
 SOURCE_CUT_END_BOUNDARY_SWEEP_MAX_WINDOWS = 9
+WHAM_INFERENCE_CONTEXT_PADDING_SECONDS = 1.25
 SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 3.0
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.5
@@ -506,12 +509,17 @@ PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS = frozenset(
 PRE_WHAM_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS = frozenset(
     (
         "source_candidate_choice_invalid_response",
+        "source_candidate_scorecard_no_passing_candidate",
+        "source_cut_wrong_exercise",
+        "source_cut_wrong_variant",
+        "source_cut_setup_or_filler",
+        "source_cut_low_source_quality",
+        "source_cut_low_confidence",
     )
 )
 SOURCE_FAMILY_HARD_MATERIALIZED_REJECTION_REASONS = frozenset(
     (
         "source_mismatch",
-        "materialized_incomplete_repetition_phase",
         "materialized_source_incomplete_repetition_phase",
     )
 )
@@ -959,7 +967,11 @@ def ranked_candidates_to_process_with_previous_terminal_skips(
     request: BakeAndRankRequest,
     fallback_ready_target: int,
 ) -> tuple[list[tuple[int, RankedCandidate]], dict[int, dict[str, Any]]]:
-    previous_terminal_results = load_previous_terminal_candidate_results(request.workspace)
+    previous_terminal_results = (
+        load_previous_terminal_candidate_results(request.workspace)
+        if request.reuse_previous_terminal_results
+        else {}
+    )
     candidates_to_process: list[tuple[int, RankedCandidate]] = []
     skipped_by_original_index: dict[int, dict[str, Any]] = {}
     new_candidate_count = 0
@@ -1620,6 +1632,7 @@ class BakeAndRankRequest:
     candidate_workers: int = 1
     wham_python_command: str = "python"
     reuse_wham_cache: bool = True
+    reuse_previous_terminal_results: bool = False
     use_wham_docker: bool = False
     wham_docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE
     wham_docker_gpus: str = "all"
@@ -2243,7 +2256,7 @@ def candidate_attempt_budget_for_request(request: BakeAndRankRequest) -> int:
     if not request.pre_wham_source_validation:
         return base_target
     source_window_attempts = max(1, int(request.max_source_window_attempts or 1))
-    return max(base_target, base_target * source_window_attempts)
+    return base_target + source_window_attempts - 1
 
 
 def max_final_output_rejections_for_request(request: BakeAndRankRequest) -> int:
@@ -2680,6 +2693,14 @@ def materialized_output_was_rejected(selected: SelectedArtifact) -> bool:
     return parse_optional_bool(payload.get("materializedOutputRejected")) is True
 
 
+def rejected_artifact_sort_key(selected: SelectedArtifact) -> tuple[Any, ...]:
+    item, _ranking = selected
+    return (
+        selected_artifact_sort_key(selected),
+        1 if item.settings_variant_id == "adaptive-baseline" else 0,
+    )
+
+
 def choose_best_materialized_review_item(
     items: list[ReviewItem],
     rankings: list[LoopRanking],
@@ -2691,6 +2712,7 @@ def choose_best_materialized_review_item(
         zip(items, rankings),
         key=lambda pair: (
             selected_artifact_score(pair),
+            1 if pair[0].settings_variant_id == "adaptive-baseline" else 0,
             -pair[0].exercise_index,
             -pair[0].candidate_rank,
             -pair[0].loop_index,
@@ -2719,7 +2741,7 @@ def choose_best_materialized_review_item(
             continue
         if rejected is not None and (
             rejected_best is None
-            or selected_artifact_sort_key(rejected) > selected_artifact_sort_key(rejected_best)
+            or rejected_artifact_sort_key(rejected) > rejected_artifact_sort_key(rejected_best)
         ):
             rejected_best = rejected
     if accepted_best is not None:
@@ -2764,7 +2786,7 @@ def choose_top_materialized_review_items(
                 accepted_by_source_window[attempt_key] = accepted
         if rejected is not None and (
             rejected_best is None
-            or selected_artifact_sort_key(rejected) > selected_artifact_sort_key(rejected_best)
+            or rejected_artifact_sort_key(rejected) > rejected_artifact_sort_key(rejected_best)
         ):
             rejected_best = rejected
 
@@ -4928,7 +4950,15 @@ def full_repetition_phase_completeness_metrics_from_payload(
         isinstance(target_motion_profile, dict)
         and target_motion_profile.get("profile") == DISTAL_LEG_VERTICAL_RAISE_PROFILE_KEY
     )
-    preferred_joint_region = "lower_body" if lower_body_target else None
+    primary_regions = {
+        str(region).strip().lower()
+        for region in (observable_spec or {}).get("primaryMovingRegions", [])
+        if str(region).strip()
+    }
+    upper_body_target = bool(
+        primary_regions.intersection({"upper_body", "upper_limb", "shoulders", "elbows", "wrists", "hands"})
+    )
+    preferred_joint_region = "lower_body" if lower_body_target else ("upper_body" if upper_body_target else None)
     preferred_joint_predicate: Callable[[str], bool] | None = None
     if lower_body_target:
         preferred_joint_predicate = (
@@ -4936,6 +4966,8 @@ def full_repetition_phase_completeness_metrics_from_payload(
             if distal_lower_body_target or complexity != "compound"
             else is_lower_body_proximal_joint
         )
+    elif upper_body_target:
+        preferred_joint_predicate = is_upper_body_joint
     dominant = dominant_root_relative_axis_track(
         frames,
         joint_names=joint_names,
@@ -4962,7 +4994,7 @@ def full_repetition_phase_completeness_metrics_from_payload(
     if motion_range_ratio < FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO:
         return {
             "required": True,
-            "passed": True,
+            "passed": False,
             "reason": "dominant_motion_too_small_for_phase_gate",
             "movementComplexity": complexity,
             "targetMotionProfile": target_motion_profile.get("profile") if target_motion_profile is not None else None,
@@ -4992,7 +5024,11 @@ def full_repetition_phase_completeness_metrics_from_payload(
     has_interior_extreme = interior_min or interior_max
     finish_at_extreme = min_index >= sample_count - 1 - edge_margin or max_index >= sample_count - 1 - edge_margin
     requires_return = observable_motion_spec_requires_return(motion_contract)
-    passed = has_return_phase and has_interior_extreme and (not requires_return or not finish_at_extreme)
+    # Endpoint agreement already proves that a return-to-start motion came back
+    # near its initial phase. A coordinate can legitimately set a new minimum
+    # on the final sampled frame because of tracking drift or axis projection;
+    # treating that alone as a one-way partial rejects complete repetitions.
+    passed = has_return_phase and has_interior_extreme
     return {
         "required": True,
         "passed": passed,
@@ -5037,7 +5073,7 @@ def empty_full_repetition_phase_completeness_metrics(
 ) -> dict[str, Any]:
     return {
         "required": required,
-        "passed": True,
+        "passed": not required,
         "reason": reason,
         "movementComplexity": movement_complexity,
         "frameCount": frame_count,
@@ -6022,9 +6058,9 @@ def compute_paired_hands_preservation_metrics_from_payload(payload: dict[str, An
         if source_elbow_range > 1e-6
         else None
     )
-    severe = (
-        spacing_instability_ratio > PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO
-        or (
+    phase_mismatch = same_phase < PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION
+    source_capture_failure = (
+        (
             shared_travel_capture_ratio is not None
             and shared_travel_capture_ratio < PAIRED_HANDS_MIN_SOURCE_CAPTURE_RATIO
         )
@@ -6032,7 +6068,11 @@ def compute_paired_hands_preservation_metrics_from_payload(payload: dict[str, An
             elbow_range_capture_ratio is not None
             and elbow_range_capture_ratio < PAIRED_HANDS_MIN_SOURCE_CAPTURE_RATIO
         )
-        or same_phase < PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION
+    )
+    severe = (
+        spacing_instability_ratio > PAIRED_HANDS_SEVERE_SPACING_INSTABILITY_RATIO
+        or phase_mismatch
+        or source_capture_failure
     )
     return {
         "severePairedHandsDistortion": severe,
@@ -6051,6 +6091,7 @@ def compute_paired_hands_preservation_metrics_from_payload(payload: dict[str, An
         "sourceElbowFlexionRangeDegrees": source_elbow_range if source_elbow_range > 0.0 else None,
         "elbowFlexionRangeCaptureRatio": elbow_range_capture_ratio,
         "spacingInstabilityThreshold": PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO,
+        "severeSpacingInstabilityThreshold": PAIRED_HANDS_SEVERE_SPACING_INSTABILITY_RATIO,
         "sourceCaptureRatioThreshold": PAIRED_HANDS_MIN_SOURCE_CAPTURE_RATIO,
         "samePhaseCorrelationThreshold": PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION,
     }
@@ -6074,6 +6115,7 @@ def empty_paired_hands_preservation_metrics(*, frame_count: int = 0) -> dict[str
         "sourceElbowFlexionRangeDegrees": None,
         "elbowFlexionRangeCaptureRatio": None,
         "spacingInstabilityThreshold": PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO,
+        "severeSpacingInstabilityThreshold": PAIRED_HANDS_SEVERE_SPACING_INSTABILITY_RATIO,
         "sourceCaptureRatioThreshold": PAIRED_HANDS_MIN_SOURCE_CAPTURE_RATIO,
         "samePhaseCorrelationThreshold": PAIRED_HANDS_MIN_SAME_PHASE_CORRELATION,
     }
@@ -7472,6 +7514,17 @@ def build_exercise_motion_contract_resolver(
     def resolve(ranked_candidate: RankedCandidate) -> dict[str, Any] | None:
         candidate_contract = exercise_motion_contract_from_candidate(ranked_candidate.candidate)
         if candidate_contract is not None and movement_topology_from_contract(candidate_contract) is not None:
+            exercise = ExerciseEntry(
+                exercise_id=ranked_candidate.exercise_id,
+                name=ranked_candidate.exercise_name,
+                slug=ranked_candidate.exercise_slug,
+            )
+            candidate_contract = normalize_exercise_motion_contract(
+                candidate_contract,
+                exercise=exercise,
+                source="reused_candidate_contract",
+            )
+            ranked_candidate.candidate["exerciseMotionContract"] = candidate_contract
             return {
                 **candidate_contract,
                 "exerciseMotionContractStatus": "reused_candidate_contract",
@@ -9014,7 +9067,11 @@ def process_ranked_candidates_until_final_selection(
         if exercise_timeout is not None
         else None
     )
-    previous_terminal_results = load_previous_terminal_candidate_results(request.workspace)
+    previous_terminal_results = (
+        load_previous_terminal_candidate_results(request.workspace)
+        if request.reuse_previous_terminal_results
+        else {}
+    )
 
     processed_new_candidate_count = 0
     candidate_queue = list(candidates)
@@ -9727,11 +9784,11 @@ def process_ranked_candidate(
         stage_started = time.perf_counter()
         cleaned_clip = load_motion_json(generate_result.cleaned_motion_json_path)
         record_timing_seconds(result_payload, "loadCleanedMotionSeconds", stage_started)
-        eligible = [build_full_clip_eligible_loop(cleaned_clip)]
+        eligible = build_preview_detected_eligible_loops(cleaned_clip)
         rejected: list[RejectedLoop] = []
         result_payload["reviewSourceClips"] = [eligible_loop_to_manifest(item) for item in eligible]
         result_payload["rejectedSourceClips"] = [rejected_loop_to_manifest(item) for item in rejected]
-        result_payload["processedFullClip"] = True
+        result_payload["processedFullClip"] = not any(item.loop_index >= 0 for item in eligible)
         stage_started = time.perf_counter()
         baked_artifacts = preview_baker(
             generate_result.preview_html_path,
@@ -9913,12 +9970,21 @@ def generate_candidate_motion(
         source_cut_caption_images=source_cut_caption_images,
         exercise_motion_contract_resolver=exercise_motion_contract_resolver,
     )
+    wham_video_path, output_crop_start_seconds, output_crop_end_seconds = prepare_wham_inference_video(
+        candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
+        selected_video_path=video_path,
+    )
+    wham_video_path, wham_output_rotation_degrees = normalize_wham_input_orientation(
+        ranked_candidate=ranked_candidate,
+        candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
+        selected_video_path=wham_video_path,
+    )
     source_preparation_seconds = elapsed_seconds(source_started)
     generation_started = time.perf_counter()
     generation_request = GenerateRequest(
         exercise_slug=ranked_candidate.workspace_slug,
         workspace=request.workspace,
-        video_path=video_path,
+        video_path=wham_video_path,
         wham_repo_path=request.wham_repo_path,
         body_model_root=request.body_model_root,
         wham_python_command=request.wham_python_command,
@@ -9951,6 +10017,9 @@ def generate_candidate_motion(
         spinepose_merge_mode=request.spinepose_merge_mode,
         motion_tuning_enabled=request.motion_tuning_enabled,
         export_wham_smpl_preview=request.export_wham_smpl_preview,
+        output_crop_start_seconds=output_crop_start_seconds,
+        output_crop_end_seconds=output_crop_end_seconds,
+        wham_output_rotation_degrees=wham_output_rotation_degrees,
     )
     if run_wham_exclusive is None:
         result = run_generation_pipeline(generation_request)
@@ -9960,6 +10029,127 @@ def generate_candidate_motion(
         result.timings["sourcePreparationSeconds"] = source_preparation_seconds
         result.timings["generationPipelineCallSeconds"] = elapsed_seconds(generation_started)
     return result
+
+
+def normalize_wham_input_orientation(
+    *,
+    ranked_candidate: RankedCandidate,
+    candidate_workspace: Path,
+    selected_video_path: Path,
+) -> tuple[Path, float]:
+    """Present strongly sideways subjects upright to WHAM and return the inverse output rotation."""
+    rotation = wham_input_quarter_turn_from_candidate(ranked_candidate.candidate)
+    if rotation == 0:
+        return selected_video_path, 0.0
+    output_path = candidate_workspace / "input" / "wham_inference_upright.mp4"
+    if not output_path.exists():
+        rotate_video_quarter_turn(
+            source_path=selected_video_path,
+            output_path=output_path,
+            counter_clockwise=rotation > 0,
+        )
+    metadata_path = candidate_workspace / "input" / "wham_orientation_normalization.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "inputRotationDegrees": rotation,
+                "outputRotationDegrees": -rotation,
+                "sourceVideoPath": str(selected_video_path),
+                "normalizedVideoPath": str(output_path),
+            },
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    return output_path, float(-rotation)
+
+
+def wham_input_quarter_turn_from_candidate(candidate: dict[str, Any]) -> int:
+    vision = candidate.get("visionPayload")
+    pose = vision.get("posePrefilter") if isinstance(vision, dict) else None
+    samples = pose.get("dominantPoseSamples") if isinstance(pose, dict) else None
+    if not isinstance(samples, list):
+        return 0
+    torso_vectors: list[tuple[float, float]] = []
+    for sample in samples:
+        keypoints = sample.get("keypoints") if isinstance(sample, dict) else None
+        if not isinstance(keypoints, dict):
+            continue
+        left_shoulder = source_pose_keypoint_to_point3(keypoints.get("left_shoulder"))
+        right_shoulder = source_pose_keypoint_to_point3(keypoints.get("right_shoulder"))
+        left_hip = source_pose_keypoint_to_point3(keypoints.get("left_hip"))
+        right_hip = source_pose_keypoint_to_point3(keypoints.get("right_hip"))
+        shoulders = source_pose_midpoint3(left_shoulder, right_shoulder)
+        hips = source_pose_midpoint3(left_hip, right_hip)
+        if shoulders is None or hips is None:
+            continue
+        dx = shoulders[0] - hips[0]
+        dy = shoulders[1] - hips[1]
+        if math.hypot(dx, dy) >= 0.03:
+            torso_vectors.append((dx, dy))
+    if len(torso_vectors) < 3:
+        return 0
+    median_dx = statistics.median(vector[0] for vector in torso_vectors)
+    median_dy = statistics.median(vector[1] for vector in torso_vectors)
+    # Image Y grows downward. Upright shoulders should be predominantly above hips.
+    if abs(median_dx) <= abs(median_dy) * 1.25:
+        return 0
+    return 90 if median_dx > 0.0 else -90
+
+
+def prepare_wham_inference_video(
+    *,
+    candidate_workspace: Path,
+    selected_video_path: Path,
+    padding_seconds: float = WHAM_INFERENCE_CONTEXT_PADDING_SECONDS,
+) -> tuple[Path, float | None, float | None]:
+    """Add source context for WHAM while retaining the exact selected cut as output."""
+    if padding_seconds <= 0.0:
+        return selected_video_path, None, None
+    selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
+    try:
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return selected_video_path, None, None
+
+    selected_span = selection.get("selectedSpan")
+    source_path_value = selection.get("detectionSourceVideoPath")
+    if not isinstance(selected_span, dict) or not source_path_value:
+        selected_span = selection.get("selectedSpanInOriginalSource")
+        source_path_value = selection.get("sourceVideoPath")
+    if not isinstance(selected_span, dict) or not source_path_value:
+        return selected_video_path, None, None
+    selected_start = parse_optional_float(selected_span.get("startSeconds"))
+    selected_end = parse_optional_float(selected_span.get("endSeconds"))
+    source_path = Path(str(source_path_value)).expanduser().resolve()
+    if (
+        selected_start is None
+        or selected_end is None
+        or selected_end <= selected_start
+        or not source_path.exists()
+    ):
+        return selected_video_path, None, None
+
+    try:
+        source_duration = read_basic_video_metadata(source_path).duration_seconds
+    except Exception:
+        return selected_video_path, None, None
+    inference_start = max(0.0, selected_start - padding_seconds)
+    inference_end = min(source_duration, selected_end + padding_seconds)
+    if inference_end <= inference_start:
+        return selected_video_path, None, None
+    output_path = candidate_workspace / "input" / "wham_inference_segment.mp4"
+    if not output_path.exists():
+        trim_video(
+            source_path=source_path,
+            output_path=output_path,
+            start_seconds=inference_start,
+            end_seconds=inference_end,
+        )
+    crop_start = selected_start - inference_start
+    crop_end = selected_end - inference_start
+    return output_path, crop_start, crop_end
 
 
 def build_full_clip_eligible_loop(cleaned_clip: Any) -> EligibleLoop:
@@ -9980,6 +10170,34 @@ def build_full_clip_eligible_loop(cleaned_clip: Any) -> EligibleLoop:
         start_seconds=0.0,
         end_seconds=duration_sec,
     )
+
+
+def build_preview_detected_eligible_loops(cleaned_clip: Any) -> list[EligibleLoop]:
+    """Use the same deterministic loops that the generated Wear preview selects."""
+    from exercise_motion_pkg.preview import detect_preview_loops_for_clip
+
+    detected_loops = detect_preview_loops_for_clip(cleaned_clip)
+    eligible: list[EligibleLoop] = []
+    fps = float(getattr(cleaned_clip, "fps", 30.0) or 30.0)
+    for loop_index, loop in enumerate(detected_loops):
+        start_frame = max(0, int(loop.get("startFrame", 0) or 0))
+        end_frame = max(start_frame, int(loop.get("endFrame", start_frame) or start_frame))
+        start_seconds = float(loop.get("startTimeSec", start_frame / fps) or 0.0)
+        end_seconds = float(loop.get("endTimeSec", end_frame / fps) or 0.0)
+        duration_seconds = max(
+            0.0,
+            float(loop.get("durationSec", end_seconds - start_seconds) or 0.0),
+        )
+        eligible.append(
+            EligibleLoop(
+                loop_index=loop_index,
+                loop=dict(loop),
+                duration_sec=duration_seconds,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+            )
+        )
+    return eligible or [build_full_clip_eligible_loop(cleaned_clip)]
 
 
 def classify_support_dominance_for_review_loop(
@@ -11163,8 +11381,22 @@ def limit_adaptive_preview_settings_variants(
     if max_variants <= 0 or len(variants) <= max_variants:
         return variants
 
+    baseline_index = next(
+        (
+            index
+            for index, variant in enumerate(variants)
+            if str(variant.get("id") or "") == "adaptive-baseline"
+        ),
+        0,
+    )
+    baseline_variant = variants[baseline_index]
+    trial_variants = [
+        (index, variant)
+        for index, variant in enumerate(variants)
+        if index != baseline_index
+    ]
     ranked_variants = sorted(
-        enumerate(variants),
+        trial_variants,
         key=lambda indexed_variant: (
             preview_options_preference_score(
                 options=(
@@ -11182,11 +11414,12 @@ def limit_adaptive_preview_settings_variants(
         ),
         reverse=True,
     )
-    limited_variants = [variant for _, variant in ranked_variants[:max(1, max_variants)]]
-    skipped_variants = [variant for _, variant in ranked_variants[max(1, max_variants):]]
+    trial_limit = max(0, max_variants - 1)
+    limited_variants = [baseline_variant, *[variant for _, variant in ranked_variants[:trial_limit]]]
+    skipped_variants = [variant for _, variant in ranked_variants[trial_limit:]]
     for variant in skipped_variants:
         record_adaptive_skipped_variant_trial(
-            limited_variants[0],
+            baseline_variant,
             trial_id=str(variant.get("id") or "adaptive-preview-settings-trial"),
             reason="max_adaptive_preview_settings_cap",
             details={
@@ -12326,12 +12559,9 @@ def apply_deterministic_preview_settings_hints_to_variant(
     }
     corrected_options = dict(corrected.get("options") if isinstance(corrected.get("options"), dict) else {})
     correction_reasons: list[str] = []
-    if bool(preview_settings_hint.get("forceLockPlantedFeet")) and not bool(effective_options.get("lockPlantedFeet")):
-        corrected_options["lockPlantedFeet"] = True
-        correction_reasons.append("deterministic support geometry set lockPlantedFeet true")
-    if bool(preview_settings_hint.get("forceLockPlantedHands")) and not bool(effective_options.get("lockPlantedHands")):
-        corrected_options["lockPlantedHands"] = True
-        correction_reasons.append("deterministic support geometry set lockPlantedHands true")
+    # Support locks alter the actual joint motion and can introduce distortions.
+    # Keep the baseline untouched; append_final_support_lock_trial_variants owns
+    # materializing locks as alternatives that can be compared with the baseline.
     if (
         bool(preview_settings_hint.get("forceAutoWorldAlignmentFalse"))
         and bool(effective_options.get("autoWorldAlignment"))
@@ -14768,7 +14998,7 @@ def build_source_cut_candidate_choice_prompt(
         "Do not approve a candidate merely because a correct repetition appears somewhere inside it; the whole candidate window must be the useful movement-only segment. "
         "Approve only when the frames clearly show one complete, useful execution of the target exercise: correct visible movement, meaningful start, full action path, natural finish or return, readable real source footage, and no material setup/reset/filler inside the cut. "
         "Audit the phase order before approving: the first visible execution frames must show the natural pre-action posture or the first exercise-defining action, the chronological sheets must show the required action path in contract order, and the final execution frames must show the natural finish/return posture. "
-        "If the first frames are already at the deepest, bottom, contracted, lockout, or end-range posture, or if the first material body motion is the return/ascent from that posture, reject as partial_movement and bad_boundary. "
+        "A deepest, bottom, contracted, lockout, or end-range posture may be a valid repetition boundary. Do not reject it by posture name alone; approve when the visible action leaves that posture, reaches the opposite turning point, and returns cleanly to the same posture. "
         "When the target name or contract describes an action plus return, opposite direction, completion, or repeated phase sequence, require those phases to be visible in the correct order; do not infer a missing first or last phase. "
         "Preparation, waiting, adjustment, repositioning, approach, exit, reset, cleanup, equipment transition, and contact/support/implement changes before or after the contract-required action are setup_or_filler unless the target name or contract explicitly requires them. "
         "A meaningful start is the actual start posture of the same execution, not the return from a previous rep or an idle/reset period before a later rep. "
@@ -14782,7 +15012,7 @@ def build_source_cut_candidate_choice_prompt(
         "Do not invent frame numbers, timestamps, selected candidate IDs, or chain-of-thought. "
         "reject must use only these fixed tags: wrong_exercise, wrong_variant, partial_movement, mechanics_inconsistent, contact_changed, bad_boundary, setup_or_filler, low_source_quality, low_confidence, synthetic_subject, unclear. Use [] only when approved is true. "
         "completeMovement must be true only when the full execution is visible from meaningful start through natural finish. "
-        "startBoundaryClean must be false when the first frames are mid-repetition, bottom/end posture, recovery from a previous repetition, setup, waiting, equipment transition, or repositioning. "
+        "startBoundaryClean must be false when the first frames are mid-repetition, recovery from a previous repetition, setup, waiting, equipment transition, or repositioning. A stable top or bottom posture is clean when it directly begins the reviewed repetition. "
         "finishBoundaryClean must be false when the final frames are mid-repetition, setup/reset, cleanup, equipment transition, changing contact/support/implement relationship, walking/stepping into or out of equipment, releasing/returning equipment, or missing the natural return/finish posture. "
         "setupOrFiller must be true when material setup, waiting, adjustment, unrack/rerack, reset, or filler is inside the cut. "
         "Decision order: first set completeMovement, startBoundaryClean, finishBoundaryClean, and setupOrFiller from the visible frames; then set approved true only when completeMovement is true, both boundary fields are true, setupOrFiller is false, confidence is high, and reject is empty. "
@@ -15405,10 +15635,16 @@ def source_cut_candidate_passes_pre_motion_filters(candidate: SourceCutCandidate
 
 
 def source_cut_candidate_eligible_for_vlm(candidate: SourceCutCandidate) -> bool:
-    # Pose-derived phase coverage is intentionally diagnostic here. The source
-    # VLM sees denser rendered frames than the pose prefilter, so sparse pose
-    # samples must not veto a visually complete shorter cut.
-    return source_cut_candidate_passes_pre_motion_filters(candidate)
+    return (
+        source_cut_candidate_passes_pre_motion_filters(candidate)
+        and source_cut_candidate_passes_motion_coverage(candidate)
+    )
+
+
+def source_cut_candidate_passes_motion_coverage(candidate: SourceCutCandidate) -> bool:
+    if not candidate.motion_coverage:
+        return True
+    return bool(candidate.motion_coverage.get("passed", True))
 
 
 def source_pose_sample_time_seconds(sample: dict[str, Any]) -> float | None:
@@ -15671,7 +15907,7 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
     if motion_range_ratio < FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO:
         return {
             "required": True,
-            "passed": True,
+            "passed": False,
             "reason": "source_pose_dominant_motion_too_small_for_phase_gate",
             "movementComplexity": complexity,
             "targetMotionProfile": target_motion_profile.get("profile") if target_motion_profile is not None else None,
@@ -15701,7 +15937,7 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
     has_interior_extreme = interior_min or interior_max
     finish_at_extreme = min_index >= sample_count - 1 - edge_margin or max_index >= sample_count - 1 - edge_margin
     requires_return = observable_motion_spec_requires_return(motion_contract)
-    passed = has_return_phase and has_interior_extreme and (not requires_return or not finish_at_extreme)
+    passed = has_return_phase and has_interior_extreme
     return {
         "required": True,
         "passed": passed,
@@ -15734,6 +15970,58 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
         "requiresReturn": requires_return,
         "interiorMin": interior_min,
         "interiorMax": interior_max,
+    }
+
+
+def source_cut_candidate_motion_coverage_metrics(
+    *,
+    candidate_window: DetectionWindow,
+    pose_payload: dict[str, Any],
+    exercise_name: str,
+    chunk_estimate: Any,
+    exercise_motion_contract: dict[str, Any] | None = None,
+    source_offset_seconds: float = 0.0,
+) -> dict[str, Any]:
+    source_pose_payload = source_pose_skeleton_payload_for_window(
+        pose_payload,
+        candidate_window=candidate_window,
+        source_offset_seconds=source_offset_seconds,
+    )
+    if source_pose_payload is None:
+        phase_metrics = empty_full_repetition_phase_completeness_metrics(
+            required=True,
+            reason="source_cut_pose_samples_unavailable",
+        )
+        return {
+            "passed": False,
+            "sourcePoseSampleCount": 0,
+            "rejectionReasons": ["source_cut_insufficient_repetition_phase_evidence"],
+            "skippedReasons": ["source_cut_pose_samples_unavailable"],
+            "candidateFullRepetitionPhaseCompletenessMetrics": phase_metrics,
+        }
+    phase_metrics = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+        source_pose_payload,
+        exercise_name=exercise_name,
+        ranking_payload={"exerciseMotionContract": exercise_motion_contract},
+        chunk_estimate=chunk_estimate,
+    )
+    phase_required = bool(phase_metrics.get("required"))
+    phase_reason = str(phase_metrics.get("reason") or "")
+    phase_evidence_missing = "insufficient" in phase_reason or "unavailable" in phase_reason
+    phase_passed = bool(phase_metrics.get("passed", True)) and not phase_evidence_missing
+    rejection_reasons: list[str] = []
+    if phase_required and not phase_passed:
+        rejection_reasons.append(
+            "source_cut_insufficient_repetition_phase_evidence"
+            if phase_evidence_missing
+            else "source_cut_incomplete_repetition_phase"
+        )
+    return {
+        "passed": not rejection_reasons,
+        "sourcePoseSampleCount": len(source_pose_payload.get("frames") or []),
+        "rejectionReasons": rejection_reasons,
+        "skippedReasons": [],
+        "candidateFullRepetitionPhaseCompletenessMetrics": phase_metrics,
     }
 
 
@@ -17308,7 +17596,11 @@ def progressive_source_cut_stable_levels(
     ranking_by_candidate_id: dict[str, LoopRanking] = {}
     for ranking in rankings:
         candidate = candidate_for_cut_ranking(ranking, candidates_by_id, candidates)
-        if candidate is None or selected_window_from_cut_ranking(ranking) is None or ranking.score <= 0.0:
+        if (
+            candidate is None
+            or selected_window_from_cut_ranking(ranking) is None
+            or ranking.score <= 0.0
+        ):
             continue
         ranking_by_candidate_id[candidate.candidate_id] = ranking
 
@@ -17485,7 +17777,42 @@ def select_progressive_source_cut_ranking(
         stop_at_first_unstable_after_stable=stop_at_first_unstable_after_stable,
     )
     if not stable_levels:
-        return select_cross_level_supported_source_cut_ranking(rankings, candidates)
+        cross_level_ranking = select_cross_level_supported_source_cut_ranking(rankings, candidates)
+        if cross_level_ranking is not None:
+            return cross_level_ranking
+
+        candidates_by_id = {
+            normalize_source_cut_candidate_id(candidate.candidate_id): candidate
+            for candidate in candidates
+        }
+        isolated_passing: list[tuple[LoopRanking, SourceCutCandidate]] = []
+        for ranking in rankings:
+            candidate = candidate_for_cut_ranking(ranking, candidates_by_id, candidates)
+            if candidate is None or ranking.score <= 0.0 or selected_window_from_cut_ranking(ranking) is None:
+                continue
+            isolated_passing.append((ranking, candidate))
+        if not isolated_passing:
+            return None
+
+        ranking, candidate = min(
+            isolated_passing,
+            key=lambda item: source_cut_stable_candidate_selection_key(item[0], item[1]),
+        )
+        payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
+        payload["sourceCutProgressiveSelection"] = {
+            "strategy": "progressive_multiscale_isolated_passing_fallback",
+            "selectedCandidateId": candidate.candidate_id,
+            "selectedLevelIndex": source_cut_progressive_level_index(candidate),
+            "passingCandidateCount": len(isolated_passing),
+            "crossLevelSupportPreferred": True,
+            "crossLevelSupportAvailable": False,
+        }
+        payload["sourceCutSelectionPolicy"] = "progressive_multiscale_isolated_passing_fallback"
+        return replace(
+            ranking,
+            payload=payload,
+            reasons=dedupe_text([*ranking.reasons, "progressive_source_cut_isolated_passing_fallback"]),
+        )
 
     all_stable_to_floor = stopped_at_unstable_level is None
     deepest_level = stable_levels[-1]
@@ -18961,6 +19288,18 @@ def rank_source_video_cut_candidates_with_caption_images(
             include_boundary_audit=include_boundary_audit,
         )
         if candidate is not None:
+            if source_pose_prefilter_has_samples(source_pose_prefilter_payload):
+                candidate = replace(
+                    candidate,
+                    motion_coverage=source_cut_candidate_motion_coverage_metrics(
+                        candidate_window=candidate_window,
+                        pose_payload=source_pose_prefilter_payload or {},
+                        exercise_name=exercise_name,
+                        chunk_estimate=chunk_estimate,
+                        exercise_motion_contract=exercise_motion_contract,
+                        source_offset_seconds=source_pose_offset_seconds,
+                    ),
+                )
             all_candidates.append(candidate)
             if source_cut_candidate_eligible_for_vlm(candidate):
                 candidates.append(candidate)
@@ -18998,6 +19337,16 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "sourceCutDeterministicCandidateFilterFailed": True,
                     "sourceCutVisualIntegrityFilteredCount": visual_filtered_count,
                     "sourceCutFrameMotionFilteredCount": frame_motion_filtered_count,
+                    "sourceCutMotionCoverageFilteredCount": sum(
+                        1
+                        for candidate in all_candidates
+                        if not source_cut_candidate_passes_motion_coverage(candidate)
+                    ),
+                    "sourceCutMotionCoverageDiagnosticFailedCount": sum(
+                        1
+                        for candidate in all_candidates
+                        if candidate.motion_coverage and not bool(candidate.motion_coverage.get("passed", True))
+                    ),
                     "sourceCutPosePrefilterFilteredCount": pose_filtered_count,
                     "sourceCutSourcePoseSampleCount": source_pose_sample_count,
                     "sourceCutProgressiveDisabledReason": (
@@ -19020,22 +19369,15 @@ def rank_source_video_cut_candidates_with_caption_images(
         raw: str,
         candidate: SourceCutCandidate,
     ) -> LoopRanking | None:
-        ranking = parse_source_cut_candidate_choice(
+        return parse_source_cut_candidate_choice(
             raw,
             [candidate],
             has_contract=source_scorecard_has_contract,
             exercise_motion_contract=exercise_motion_contract,
         )
-        return apply_source_cut_boundary_state_validation(
-            ranking,
-            candidate=candidate,
-            exercise_motion_contract=exercise_motion_contract,
-            caption_images=caption_images,
-            request_kwargs=source_cut_caption_kwargs,
-        )
 
     review_choice = rank_cut_candidates_shortest_first_with_caption_images(
-        candidates=candidates,
+        candidates=candidates[:SOURCE_CUT_MAX_VLM_CANDIDATES],
         caption_images=caption_images,
         prompt_builder=lambda candidate: build_source_cut_candidate_choice_prompt(
             exercise_name=exercise_name,
@@ -19088,6 +19430,16 @@ def rank_source_video_cut_candidates_with_caption_images(
                         if source_cut_candidate_passes_visual_integrity(candidate)
                         and not source_cut_candidate_passes_frame_motion(candidate)
                     ),
+                    "sourceCutMotionCoverageFilteredCount": sum(
+                        1
+                        for candidate in all_candidates
+                        if not source_cut_candidate_passes_motion_coverage(candidate)
+                    ),
+                    "sourceCutMotionCoverageDiagnosticFailedCount": sum(
+                        1
+                        for candidate in all_candidates
+                        if candidate.motion_coverage and not bool(candidate.motion_coverage.get("passed", True))
+                    ),
                     "sourceChoiceInvalidResponse": not bool(source_cut_scorecard_rows),
                     "sourceCutVlmReviewedCandidateCount": len(reviewed_vlm_candidates),
                     "sourceCutVlmReviewedRequestCount": review_choice.reviewed_request_count,
@@ -19134,6 +19486,16 @@ def rank_source_video_cut_candidates_with_caption_images(
         for candidate in all_candidates
         if source_cut_candidate_passes_visual_integrity(candidate)
         and not source_cut_candidate_passes_frame_motion(candidate)
+    )
+    ranking_payload["sourceCutMotionCoverageFilteredCount"] = sum(
+        1
+        for candidate in all_candidates
+        if not source_cut_candidate_passes_motion_coverage(candidate)
+    )
+    ranking_payload["sourceCutMotionCoverageDiagnosticFailedCount"] = sum(
+        1
+        for candidate in all_candidates
+        if candidate.motion_coverage and not bool(candidate.motion_coverage.get("passed", True))
     )
     ranking_payload["sourceCutVlmReviewedCandidateCount"] = len(reviewed_vlm_candidates)
     ranking_payload["sourceCutVlmReviewedRequestCount"] = review_choice.reviewed_request_count
@@ -19351,12 +19713,12 @@ def rank_review_item_with_caption_images(
     payload: dict[str, Any] = {
         "score": 1.0,
         "modelScore": 1.0,
-        "postWhamMovementCutSelectionEnabled": False,
-        "postWhamMovementCutSelectionDisabledReason": "source_video_boundaries_are_canonical",
-        "postWhamSelectionPolicy": "validate_full_pre_wham_source_segment",
-        "sectionSelectionPolicy": "full_pre_wham_source_segment",
-        "finalCutResponsibility": "pre_wham_source_segment",
-        "reviewFrameSource": "full_generated_preview_validation",
+        "postWhamMovementCutSelectionEnabled": item.loop_index >= 0,
+        "postWhamMovementCutSelectionDisabledReason": None if item.loop_index >= 0 else "no_detected_complete_loop",
+        "postWhamSelectionPolicy": "deterministic_detected_loop" if item.loop_index >= 0 else "full_generated_fallback",
+        "sectionSelectionPolicy": "deterministic_detected_loop" if item.loop_index >= 0 else "selected_artifact_window",
+        "finalCutResponsibility": "deterministic_post_wham_loop" if item.loop_index >= 0 else "full_generated_fallback",
+        "reviewFrameSource": "selected_generated_loop_validation" if item.loop_index >= 0 else "full_generated_preview_validation",
         "fullArtifactStartSeconds": item.loop_start_seconds,
         "fullArtifactEndSeconds": item.loop_end_seconds,
         "fullArtifactDurationSeconds": item.duration_sec,
@@ -19373,8 +19735,8 @@ def rank_review_item_with_caption_images(
     return LoopRanking(
         score=1.0,
         reasons=[
-            "post_wham_full_artifact_review",
-            "post_wham_movement_cut_selection_disabled",
+            "post_wham_detected_loop_review" if item.loop_index >= 0 else "post_wham_full_artifact_review",
+            "post_wham_deterministic_loop_selected" if item.loop_index >= 0 else "post_wham_movement_cut_selection_disabled",
         ],
         payload=payload,
         model_score=1.0,
@@ -19650,8 +20012,8 @@ def build_selection_manifest(
         "youtubeSourceCacheDir": str(resolved_youtube_source_cache_dir(request)),
         "youtubePreviewCacheReadThroughDir": str(default_youtube_preview_cache_read_through_dir(request)),
         "candidateSelectionPolicy": "ranked_source_video_budget_best_final_selection",
-        "sectionSelectionPolicy": "pre_wham_source_segment_only",
-        "postWhamTemporalCutEnabled": False,
+        "sectionSelectionPolicy": "deterministic_post_wham_loop_with_full_clip_fallback",
+        "postWhamTemporalCutEnabled": True,
         "previewSettingsVariantRankingEnabled": request.rank_preview_variants,
         "adaptivePreviewSettingsEnabled": request.adaptive_preview_settings,
         "maxAdaptivePreviewSettings": request.max_adaptive_preview_settings,
@@ -19967,11 +20329,50 @@ def youtube_source_cache_stem(ranked_candidate: RankedCandidate) -> str:
     return f"{safe_identity}-{digest}" if safe_identity else f"source-{digest}"
 
 
+def cached_youtube_source_is_usable(video_path: Path) -> bool:
+    if not video_path.exists() or video_path.stat().st_size <= 0:
+        return False
+    try:
+        metadata = read_basic_video_metadata(video_path)
+    except Exception:
+        return False
+    if (
+        metadata.fps <= 0.0
+        or metadata.frame_count <= 0
+        or metadata.width <= 0
+        or metadata.height <= 0
+    ):
+        return False
+    try:
+        import cv2
+    except ImportError:
+        return True
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        return False
+    try:
+        sample_indices = sorted(
+            {
+                0,
+                max(0, metadata.frame_count // 2),
+                max(0, metadata.frame_count - 2),
+            }
+        )
+        for frame_index in sample_indices:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = capture.read()
+            if not ok or frame is None or getattr(frame, "size", 0) <= 0:
+                return False
+    finally:
+        capture.release()
+    return True
+
+
 def cache_youtube_source(video_path: Path, cache_dir: Path, cache_stem: str) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     suffix = video_path.suffix if video_path.suffix else ".mp4"
     target = cache_dir / f"{cache_stem}{suffix}"
-    if target.exists() and target.stat().st_size > 0:
+    if cached_youtube_source_is_usable(target):
         return target
     temp_target = cache_dir / f"{target.name}.{os.getpid()}.{threading.get_ident()}.part"
     shutil.copy2(video_path, temp_target)
@@ -20011,6 +20412,16 @@ def copy_or_download_candidate_source(
         seen_dirs.add(resolved_cache_dir)
         cached = find_cached_youtube_preview(resolved_cache_dir, cache_stem)
         if cached is None:
+            continue
+        if not cached_youtube_source_is_usable(cached):
+            if (
+                youtube_source_cache_dir is not None
+                and resolved_cache_dir == youtube_source_cache_dir.expanduser().resolve()
+            ):
+                try:
+                    cached.unlink()
+                except OSError:
+                    pass
             continue
         if youtube_source_cache_dir is not None and resolved_cache_dir != youtube_source_cache_dir.expanduser().resolve():
             cached = cache_youtube_source(cached, youtube_source_cache_dir.expanduser().resolve(), cache_stem)

@@ -740,6 +740,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum accepted final motion results to keep for manual review. The best result remains available as selected.",
     )
     bake_and_rank.add_argument(
+        "--reuse-previous-terminal-results",
+        action="store_true",
+        help="Reuse terminal candidate quality decisions already stored in this bake workspace. Fresh runs retry them by default.",
+    )
+    bake_and_rank.add_argument(
         "--rank-preview-variants",
         action="store_true",
         help="Bake preset preview tuning variants and ask llama.cpp to score/select the best loopable preview section.",
@@ -836,11 +841,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--candidate-timeout-seconds",
         type=float,
         default=DEFAULT_CANDIDATE_TIMEOUT_SECONDS,
+        help="Optional total wall-clock limit for one candidate; 0 disables it (default).",
     )
     bake_and_rank.add_argument(
         "--exercise-timeout-seconds",
         type=float,
         default=DEFAULT_EXERCISE_TIMEOUT_SECONDS,
+        help="Optional total wall-clock limit for the exercise bake; 0 disables it (default).",
     )
     bake_and_rank.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
     bake_and_rank.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
@@ -1015,10 +1022,7 @@ def build_youtube_ranking_settings(
         "youtube_cookies": Path(args.youtube_cookies) if args.youtube_cookies else None,
         "youtube_preview_cache_dir": preview_cache_dir,
         "excluded_candidate_keys": excluded_candidate_keys,
-        "single_exercise_name_query": (
-            args.single_exercise_name_query
-            or not (args.use_deepseek_query_planner or args.use_llama_cpp_query_planner)
-        ),
+        "single_exercise_name_query": args.single_exercise_name_query,
         "exercise_name_rewrite_enabled": not args.no_exercise_name_rewrite,
         "semantic_gate_enabled": args.semantic_gate_with_llama_cpp,
         "pose_prefilter_enabled": args.pose_prefilter,
@@ -1045,6 +1049,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "body_model_root": Path(args.body_model_root),
         "youtube_cookies": Path(args.youtube_cookies) if args.youtube_cookies else None,
         "reuse_wham_cache": not args.no_reuse_wham_cache,
+        "reuse_previous_terminal_results": args.reuse_previous_terminal_results,
         "wham_python_command": args.wham_python,
         "use_warm_wham_worker": args.warm_wham_worker,
         "wham_estimate_local_only": args.estimate_local_only or not args.full_wham_camera_slam,
