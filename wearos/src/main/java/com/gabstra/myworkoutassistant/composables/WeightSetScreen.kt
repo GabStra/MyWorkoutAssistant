@@ -394,7 +394,6 @@ fun WeightSetScreen(
             )
             SetDeltaTextSlot(
                 deltaText = repsDeltaText,
-                color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
             )
         }
     }
@@ -464,7 +463,6 @@ fun WeightSetScreen(
             )
             SetDeltaTextSlot(
                 deltaText = weightDeltaText,
-                color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
             )
         }
     }
@@ -484,29 +482,11 @@ fun WeightSetScreen(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(15.dp,Alignment.CenterHorizontally)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
-                    ) {
-                        Text(
-                            text = "WEIGHT (KG)",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color =  MaterialTheme.colorScheme.onBackground,
-                        )
+                    SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
                         WeightRow(style = itemStyle)
                     }
 
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
-                    ) {
-                        Text(
-                            text = "REPS",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color =  MaterialTheme.colorScheme.onBackground,
-                        )
+                    SetValueSection(label = "REPS", headerStyle = headerStyle) {
                         RepsRow(style = itemStyle)
                     }
                 }
@@ -606,10 +586,18 @@ fun WeightSetScreen(
                     content = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                            horizontalArrangement = Arrangement.spacedBy(15.dp, Alignment.CenterHorizontally)
                         ) {
-                            if (isRepsInEditMode) RepsRow(style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(style = itemStyle)
+                            if (isWeightInEditMode) {
+                                SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                                    WeightRow(style = itemStyle)
+                                }
+                            }
+                            if (isRepsInEditMode) {
+                                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                                    RepsRow(style = itemStyle)
+                                }
+                            }
                         }
                     }
                 )

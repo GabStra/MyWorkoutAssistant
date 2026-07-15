@@ -486,15 +486,12 @@ fun TimedDurationSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
         ) {
-            Text(
-                text = "TIMER",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
-            if (isTimerInEditMode) {
-                textComposable()
-            } else {
-                TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+            SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                if (isTimerInEditMode) {
+                    textComposable()
+                } else {
+                    TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+                }
             }
 
             if (showStartButton) {
@@ -617,7 +614,9 @@ fun TimedDurationSetScreen(
                         timerEditModeController.updateEditMode(false)
                     },
                     content = {
-                        textComposable()
+                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                            textComposable()
+                        }
                     }
                 )
             } else {

@@ -12,7 +12,6 @@ import androidx.wear.compose.material3.MaterialTheme
 @Composable
 fun SetDeltaTextSlot(
     deltaText: String?,
-    color: androidx.compose.ui.graphics.Color,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -23,7 +22,7 @@ fun SetDeltaTextSlot(
             ScalableText(
                 text = deltaText,
                 style = MaterialTheme.typography.bodySmall,
-                color = color,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
         }

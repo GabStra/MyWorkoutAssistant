@@ -465,15 +465,12 @@ fun EnduranceSetScreen (
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
         ) {
-            Text(
-                text = "TIMER",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
-            if (isTimerInEditMode) {
-                textComposable()
-            } else {
-                EnduranceRunningDisplay(initialMillis = 0)
+            SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                if (isTimerInEditMode) {
+                    textComposable()
+                } else {
+                    EnduranceRunningDisplay(initialMillis = 0)
+                }
             }
 
             if (showStartButton) {
@@ -597,7 +594,9 @@ fun EnduranceSetScreen (
                         setTimerEditMode(false)
                     },
                     content = {
-                        textComposable()
+                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                            textComposable()
+                        }
                     }
                 )
             } else {
