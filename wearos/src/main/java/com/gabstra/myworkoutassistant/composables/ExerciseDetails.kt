@@ -26,6 +26,7 @@ fun ExerciseDetail(
     onEditModeEnabled: () -> Unit,
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit,
+    showPlateauWarning: Boolean = true,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable () -> Unit,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
@@ -48,6 +49,7 @@ fun ExerciseDetail(
                 forceStopEditMode = false,
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
+                showPlateauWarning = showPlateauWarning,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = exerciseTitleComposable,
                 customComponentWrapper = customComponentWrapper

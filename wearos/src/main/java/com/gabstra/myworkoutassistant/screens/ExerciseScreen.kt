@@ -6,8 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,7 +33,6 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
-import com.gabstra.myworkoutassistant.composables.Chip
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseAnimationPage
@@ -43,7 +40,6 @@ import com.gabstra.myworkoutassistant.composables.ExerciseDetail
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOption
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOverlay
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
@@ -64,7 +60,6 @@ import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -97,7 +92,7 @@ private enum class ExerciseHorizontalPage {
     PLATES,
     EXERCISE_DETAIL,
     ANIMATION,
-    TITLED_LINES,
+    INFO,
     MUSCLES,
     PROGRESSION_COMPARISON,
     NOTES,
@@ -106,7 +101,6 @@ private enum class ExerciseHorizontalPage {
 
 private val PREVIEW_FIXED_NOW: LocalDateTime = LocalDateTime.of(2026, 1, 1, 12, 0)
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
@@ -178,9 +172,6 @@ fun ExerciseScreen(
     val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
     val showMovementPage = remember(exercise) { exercise.movementRef != null }
     val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
-    val showTitledLinesPage = remember(exercise, equipment, accessoryEquipments) {
-        exercise.notes.isNotEmpty() || equipment != null || accessoryEquipments.isNotEmpty()
-    }
     val showProgressionComparisonPage = remember(exercise) {
         !exercise.requiresLoadCalibration &&
             viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
@@ -193,7 +184,6 @@ fun ExerciseScreen(
 
     val pageTypes = remember(
         showPlatesPage,
-        showTitledLinesPage,
         showMovementPage,
         hasMuscleInfo,
         showProgressionComparisonPage,
@@ -201,7 +191,7 @@ fun ExerciseScreen(
     ) {
         mutableListOf<ExerciseHorizontalPage>().apply {
             add(ExerciseHorizontalPage.BUTTONS)
-            if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
+            add(ExerciseHorizontalPage.INFO)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
             if (showMovementPage) add(ExerciseHorizontalPage.ANIMATION)
@@ -373,9 +363,6 @@ fun ExerciseScreen(
                                 state = state,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
-                                exercise = exercise,
-                                exerciseOrSupersetId = exerciseOrSupersetId,
-                                isSuperset = isSuperset,
                                 exerciseTitleComposable = exerciseTitleComposable,
                                 onEditModeEnabled = { isEditModeEnabled = true },
                                 onEditModeDisabled = { isEditModeEnabled = false }
@@ -392,24 +379,33 @@ fun ExerciseScreen(
                         }
                     }
 
-                    ExerciseHorizontalPage.TITLED_LINES -> {
-                        val titledLinesSections = remember(exercise, equipment, accessoryEquipments) {
-                            val sections = mutableListOf<TitledLinesSection>()
-                            if (exercise.notes.isNotEmpty()) {
-                                sections.add(TitledLinesSection("Notes", listOf(exercise.notes)))
-                            }
-                            equipment?.let { sections.add(TitledLinesSection("Equipment", listOf(it.name))) }
-                            if (accessoryEquipments.isNotEmpty()) {
-                                sections.add(
-                                    TitledLinesSection(
-                                        "Accessories",
-                                        accessoryEquipments.map { it.name }
-                                    )
-                                )
-                            }
-                            sections
+                    ExerciseHorizontalPage.INFO -> {
+                        val plateauReason = viewModel.plateauReasonByExerciseId[state.exerciseId]
+                        val infoSections = remember(
+                            exercise,
+                            equipment,
+                            accessoryEquipments,
+                            state,
+                            isSuperset,
+                            exerciseOrSupersetId,
+                            plateauReason,
+                        ) {
+                            buildExerciseInfoSections(
+                                exercise = exercise,
+                                state = state,
+                                equipmentName = equipment?.name,
+                                accessoryEquipmentNames = accessoryEquipments.map { it.name },
+                                supersetExercises = if (isSuperset) {
+                                    viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty()
+                                } else {
+                                    emptyList()
+                                },
+                                setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
+                                unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
+                                plateauReason = plateauReason,
+                            )
                         }
-                        PageTitledLines(modifier = Modifier.fillMaxSize(), sections = titledLinesSections)
+                        PageTitledLines(modifier = Modifier.fillMaxSize(), sections = infoSections)
                     }
 
                     ExerciseHorizontalPage.MUSCLES -> {
@@ -586,7 +582,7 @@ internal enum class ExercisePreviewSetType {
 
 internal enum class ExercisePreviewPage {
     BUTTONS,
-    TITLED_LINES,
+    INFO,
     PLATES,
     DETAIL,
     ANIMATION,
@@ -629,9 +625,7 @@ private fun ExercisePreviewScenario.resolveOpenPageIndex(): Int? {
     val requestedPage = openPage ?: return openPageIndex
     val pages = mutableListOf(ExercisePreviewPage.BUTTONS)
 
-    if (includeTitledLinesPage || hasPreviewBarbellEquipment()) {
-        pages.add(ExercisePreviewPage.TITLED_LINES)
-    }
+    pages.add(ExercisePreviewPage.INFO)
     if (hasPreviewBarbellEquipment()) {
         pages.add(ExercisePreviewPage.PLATES)
     }
@@ -1266,7 +1260,7 @@ private fun ExerciseScreenPreviewTitledLinesPage() {
             setType = ExercisePreviewSetType.WEIGHT,
             includeBarbellPage = true,
             includeTitledLinesPage = true,
-            openPage = ExercisePreviewPage.TITLED_LINES
+            openPage = ExercisePreviewPage.INFO
         )
     )
 }
@@ -1289,15 +1283,11 @@ private fun ExerciseScreenPreviewAnimationPage() {
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExerciseDetailContent(
     state: WorkoutState.Set,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
-    exercise: Exercise,
-    exerciseOrSupersetId: UUID,
-    isSuperset: Boolean,
     exerciseTitleComposable: @Composable () -> Unit,
     onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
@@ -1314,113 +1304,70 @@ private fun ExerciseDetailContent(
             onEditModeEnabled = onEditModeEnabled,
             onTimerDisabled = { },
             onTimerEnabled = { },
-            extraInfo = {
-                val isWarmupSet = remember(state.set) {
-                    when (val set = state.set) {
-                        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                        else -> false
-                    }
-                }
-                val isCalibrationSet = remember(state.isCalibrationSet) { state.isCalibrationSet }
-                val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) { state.isAutoRegulationWorkSet }
-                val progressionState = remember(state.progressionState) { state.progressionState }
-                val setLabelPrefix = remember(state) {
-                    when (displayCounterKindForSetState(state)) {
-                        SetDisplayCounterKind.Warmup -> "Warm-up"
-                        SetDisplayCounterKind.Work -> "Work Set"
-                        else -> "Set"
-                    }
-                }
-                val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
-                    if (isSuperset) viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty() else null
-                }
-                val supersetIndex = remember(supersetExercises, exercise) {
-                    supersetExercises?.indexOf(exercise)
-                }
-                val repRange = remember(exercise) {
-                    when {
-                        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
-                                exercise.minReps > 0 && exercise.maxReps >= exercise.minReps ->
-                            "${exercise.minReps}–${exercise.maxReps}"
-                        else -> null
-                    }
-                }
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 22.5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    ExerciseMetadataStrip(
-                        supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                        supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
-                        setLabelPrefix = setLabelPrefix,
-                        setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
-                            ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
-                        repRange = repRange,
-                        sideIndicator = if (state.intraSetTotal != null) "L / R" else null,
-                        currentSideIndex = viewModel.getUnilateralSideIndex(state)
-                    )
-
-                    if (
-                        isCalibrationSet ||
-                        isAutoRegulationWorkSet ||
-                        progressionState == ProgressionState.RETRY ||
-                        progressionState == ProgressionState.DELOAD
-                    ) {
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
-                            itemVerticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isCalibrationSet) {
-                                Chip(backgroundColor = Green) {
-                                    Text(
-                                        text = "Calibration",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Green,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                            if (isAutoRegulationWorkSet) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        text = "Auto-reg",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                            if (progressionState == ProgressionState.RETRY) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.tertiary) {
-                                    Text(
-                                        text = "Retry",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                            if (progressionState == ProgressionState.DELOAD) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.error) {
-                                    Text(
-                                        text = "Deload",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
+            showPlateauWarning = false,
+            extraInfo = null,
             exerciseTitleComposable = exerciseTitleComposable,
             hapticsViewModel = hapticsViewModel,
             customComponentWrapper = { content -> content() }
         )
+    }
+}
+
+private fun buildExerciseInfoSections(
+    exercise: Exercise,
+    state: WorkoutState.Set,
+    equipmentName: String?,
+    accessoryEquipmentNames: List<String>,
+    supersetExercises: List<Exercise>,
+    setCounter: Pair<Int, Int>?,
+    unilateralSideIndex: UInt?,
+    plateauReason: String?,
+): List<TitledLinesSection> {
+    val setLabel = when (displayCounterKindForSetState(state)) {
+        SetDisplayCounterKind.Warmup -> "Warm-up"
+        SetDisplayCounterKind.Work -> "Work set"
+        else -> "Set"
+    }
+    val sessionLines = buildList {
+        setCounter?.let { (current, total) ->
+            add(if (total > 1) "$setLabel $current of $total" else setLabel)
+        }
+        if (
+            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+            exercise.minReps > 0 &&
+            exercise.maxReps >= exercise.minReps
+        ) {
+            add("Target ${exercise.minReps}–${exercise.maxReps} reps")
+        }
+        if (supersetExercises.isNotEmpty()) {
+            val position = supersetExercises.indexOf(exercise)
+            if (position >= 0) {
+                add("Superset ${('A'.code + position).toChar()} of ${supersetExercises.size}")
+            }
+        }
+        if (state.intraSetTotal != null && unilateralSideIndex != null) {
+            add("Side $unilateralSideIndex of ${state.intraSetTotal}")
+        }
+    }
+    val statusLines = buildList {
+        if (state.isCalibrationSet) add("Calibration")
+        if (state.isAutoRegulationWorkSet) add("Auto-regulation")
+        when (state.progressionState) {
+            ProgressionState.RETRY -> add("Retry")
+            ProgressionState.DELOAD -> add("Deload")
+            else -> Unit
+        }
+    }
+
+    return buildList {
+        add(TitledLinesSection("Exercise", listOf(exercise.name)))
+        if (sessionLines.isNotEmpty()) add(TitledLinesSection("Session", sessionLines))
+        if (statusLines.isNotEmpty()) add(TitledLinesSection("Status", statusLines))
+        plateauReason?.let { add(TitledLinesSection("Plateau", listOf(it))) }
+        equipmentName?.let { add(TitledLinesSection("Equipment", listOf(it))) }
+        if (accessoryEquipmentNames.isNotEmpty()) {
+            add(TitledLinesSection("Accessories", accessoryEquipmentNames))
+        }
+        if (exercise.notes.isNotEmpty()) add(TitledLinesSection("Notes", listOf(exercise.notes)))
     }
 }

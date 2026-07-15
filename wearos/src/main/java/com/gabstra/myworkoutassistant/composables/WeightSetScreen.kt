@@ -72,6 +72,7 @@ fun WeightSetScreen(
     forceStopEditMode: Boolean,
     onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
+    showPlateauWarning: Boolean = true,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable () -> Unit,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
@@ -84,8 +85,10 @@ fun WeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
-    val plateauReason = remember(state.exerciseId) {
-        viewModel.plateauReasonByExerciseId[state.exerciseId]
+    val plateauReason = if (showPlateauWarning) {
+        remember(state.exerciseId) { viewModel.plateauReasonByExerciseId[state.exerciseId] }
+    } else {
+        null
     }
     val isPlateauDetected = plateauReason != null
 
