@@ -26,10 +26,8 @@ class WorkoutSupersetAssemblyService {
                 if (!isWarmupSet(s)) continue
 
                 anyWarmups = true
-                out.add(q.removeAt(0) as WorkoutState.Set)
-                if (q.isNotEmpty() && q.first() is WorkoutState.Rest) {
-                    q.removeAt(0)
-                }
+                out.addAll(removeNextSetBlock(q))
+                removeLeadingRests(q)
             }
         }
 
@@ -50,7 +48,7 @@ class WorkoutSupersetAssemblyService {
                     continue
                 }
 
-                out.add(q.removeAt(0) as WorkoutState.Set)
+                out.addAll(removeNextSetBlock(q))
 
                 val restSec = superset.restSecondsByExercise[s.exerciseId] ?: 0
                 if (restSec > 0) {
@@ -65,7 +63,7 @@ class WorkoutSupersetAssemblyService {
                     )
                 }
 
-                while (q.isNotEmpty() && q.first() is WorkoutState.Rest) q.removeAt(0)
+                removeLeadingRests(q)
             }
         }
 
@@ -87,12 +85,39 @@ class WorkoutSupersetAssemblyService {
 
     private fun workCount(queue: MutableList<WorkoutState>): Int {
         return queue.count {
-            if (it !is WorkoutState.Set) {
-                false
-            } else {
-                !isWarmupSet(it)
-            }
+            it is WorkoutState.Set &&
+                !isWarmupSet(it) &&
+                (!it.isUnilateral || it.intraSetCounter == 1u)
         }
+    }
+
+    /**
+     * Removes one logical set from a flattened exercise queue.
+     *
+     * A unilateral set is represented as left side, intra-set rest, right side. Superset
+     * scheduling must keep that entire sequence together before moving to the next exercise.
+     */
+    private fun removeNextSetBlock(queue: MutableList<WorkoutState>): List<WorkoutState> {
+        val firstSide = queue.removeAt(0) as WorkoutState.Set
+        if (!firstSide.isUnilateral || firstSide.intraSetCounter != 1u) {
+            return listOf(firstSide)
+        }
+
+        val block = mutableListOf<WorkoutState>(firstSide)
+        if (queue.firstOrNull() is WorkoutState.Rest &&
+            (queue.first() as WorkoutState.Rest).isIntraSetRest
+        ) {
+            block.add(queue.removeAt(0))
+        }
+        val secondSide = queue.firstOrNull() as? WorkoutState.Set
+        if (secondSide?.isUnilateral == true && secondSide.set.id == firstSide.set.id) {
+            block.add(queue.removeAt(0))
+        }
+        return block
+    }
+
+    private fun removeLeadingRests(queue: MutableList<WorkoutState>) {
+        while (queue.firstOrNull() is WorkoutState.Rest) queue.removeAt(0)
     }
 
     private fun isWarmupSet(state: WorkoutState.Set): Boolean {
