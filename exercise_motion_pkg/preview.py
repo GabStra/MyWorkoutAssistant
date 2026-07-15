@@ -52,6 +52,11 @@ JOINT_ALIASES = {
     "right_foot": ("right_foot", "r_foot", "right_toe", "r_toe"),
 }
 PREVIEW_REFINEMENT_METADATA_KEY = "previewRefinement"
+BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO = 0.08
+BILATERAL_SYMMETRY_REJECT_BODY_RATIO = 0.14
+BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO = 0.20
+CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO = 0.03
+CENTERLINE_PROJECTION_REJECT_BODY_RATIO = 0.08
 HINGE_LIMITS = (
     ("left_shoulder", "left_elbow", "left_wrist", math.radians(15.0), math.radians(175.0), ("left_wrist", "left_hand")),
     ("right_shoulder", "right_elbow", "right_wrist", math.radians(15.0), math.radians(175.0), ("right_wrist", "right_hand")),
@@ -1274,12 +1279,16 @@ def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
     frames = _stabilize_unrealistic_segment_motion(frames)
     frames = _enforce_preview_joint_limits(frames)
     frames = _smooth_preview_frames(frames)
+    frames, bilateral_symmetry = _stabilize_bilateral_joint_symmetry(frames)
+    frames, horizontal_torso_stabilization = _stabilize_horizontal_rendered_torso_plane(frames)
     metadata = dict(clip.metadata)
     metadata[PREVIEW_REFINEMENT_METADATA_KEY] = {
         "prepared": True,
         "flipVerticalApplied": flip_vertical,
         "supportPlaneAligned": False,
         "motionLineAligned": False,
+        "bilateralJointSymmetry": bilateral_symmetry,
+        "horizontalRenderedTorsoPlaneStabilization": horizontal_torso_stabilization,
     }
     ground = metadata.get("ground")
     if isinstance(ground, dict):
@@ -1666,13 +1675,22 @@ def _compute_preview_auto_alignment(
     if not frames:
         return []
     if _classify_torso_alignment_mode(frames) == "horizontal_plane":
-        movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
+        rotations: list[tuple[tuple[float, float, float], float]] = []
+        leveling_rotation = _estimate_horizontal_spine_leveling_rotation(frames)
+        aligned_frames = frames
+        if leveling_rotation is not None:
+            rotations.append(leveling_rotation)
+            aligned_frames = [_rotate_frame(frame, leveling_rotation) for frame in frames]
+        movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(aligned_frames)
         if movement_plane_yaw is not None:
-            return [movement_plane_yaw]
-        yaw_rotation = _estimate_support_profile_yaw_rotation(frames)
+            rotations.append(movement_plane_yaw)
+            return rotations
+        yaw_rotation = _estimate_support_profile_yaw_rotation(aligned_frames)
         if yaw_rotation is None:
-            yaw_rotation = _estimate_horizontal_spine_yaw_rotation(frames)
-        return [yaw_rotation] if yaw_rotation is not None else []
+            yaw_rotation = _estimate_horizontal_spine_yaw_rotation(aligned_frames)
+        if yaw_rotation is not None:
+            rotations.append(yaw_rotation)
+        return rotations
 
     movement_plane_yaw = _estimate_preview_movement_plane_yaw_rotation(frames)
     if movement_plane_yaw is not None:
@@ -1898,6 +1916,296 @@ def _horizontal_point_track_range(points: list[tuple[float, float, float]]) -> f
         max(math.hypot(point[0] - center_x, point[2] - center_z) for point in points) *
         2.0
     )
+
+
+def _stabilize_bilateral_joint_symmetry(
+    frames: list[MotionFrame],
+) -> tuple[list[MotionFrame], dict[str, object]]:
+    if len(frames) < 3:
+        return frames, {"applied": False, "reason": "insufficient_frames", "pairCount": 0}
+    joint_names = set().union(*(frame.joints.keys() for frame in frames))
+    joint_pairs = sorted(
+        (joint_name, f"right_{joint_name[5:]}")
+        for joint_name in joint_names
+        if joint_name.startswith("left_") and f"right_{joint_name[5:]}" in joint_names
+    )
+    paired_joint_names = {joint_name for pair in joint_pairs for joint_name in pair}
+    centerline_joint_names = sorted(joint_names - paired_joint_names)
+    if not joint_pairs:
+        return frames, {"applied": False, "reason": "no_bilateral_joint_pairs", "pairCount": 0}
+    body_span = _median_motion_body_span(frames)
+    if body_span <= 1e-6:
+        return frames, {"applied": False, "reason": "invalid_body_span", "pairCount": len(joint_pairs)}
+
+    frame_planes = [_frame_bilateral_symmetry_plane(frame) for frame in frames]
+    pair_decisions: dict[tuple[str, str], dict[str, object]] = {}
+    for left_name, right_name in joint_pairs:
+        discrepancies: list[float] = []
+        for frame, plane in zip(frames, frame_planes, strict=True):
+            if plane is None:
+                continue
+            left = frame.joints.get(left_name)
+            right = frame.joints.get(right_name)
+            if left is None or right is None:
+                continue
+            plane_point, plane_normal = plane
+            mirrored_right = _mirror_point_across_plane(right, plane_point, plane_normal)
+            discrepancies.append(_point_distance(left, mirrored_right) / body_span)
+        median_discrepancy = _median(discrepancies) if discrepancies else math.inf
+        max_discrepancy = max(discrepancies, default=math.inf)
+        if (
+            not discrepancies
+            or median_discrepancy >= BILATERAL_SYMMETRY_REJECT_BODY_RATIO
+            or max_discrepancy >= BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO
+        ):
+            blend = 0.0
+        elif median_discrepancy <= BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO:
+            blend = 1.0
+        else:
+            blend = (
+                BILATERAL_SYMMETRY_REJECT_BODY_RATIO - median_discrepancy
+            ) / (
+                BILATERAL_SYMMETRY_REJECT_BODY_RATIO
+                - BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO
+            )
+        pair_decisions[(left_name, right_name)] = {
+            "leftJoint": left_name,
+            "rightJoint": right_name,
+            "medianMirroredDiscrepancyBodyRatio": median_discrepancy,
+            "maxMirroredDiscrepancyBodyRatio": max_discrepancy,
+            "blend": max(0.0, min(1.0, blend)),
+        }
+
+    centerline_decisions: dict[str, dict[str, object]] = {}
+    for joint_name in centerline_joint_names:
+        offsets: list[float] = []
+        for frame, plane in zip(frames, frame_planes, strict=True):
+            point = frame.joints.get(joint_name)
+            if point is None or plane is None:
+                continue
+            plane_point, plane_normal = plane
+            offsets.append(abs(_dot(_subtract_points(point, plane_point), plane_normal)) / body_span)
+        median_offset = _median(offsets) if offsets else math.inf
+        max_offset = max(offsets, default=math.inf)
+        if not offsets or median_offset >= CENTERLINE_PROJECTION_REJECT_BODY_RATIO:
+            blend = 0.0
+        elif median_offset <= CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO:
+            blend = 1.0
+        else:
+            blend = (
+                CENTERLINE_PROJECTION_REJECT_BODY_RATIO - median_offset
+            ) / (
+                CENTERLINE_PROJECTION_REJECT_BODY_RATIO
+                - CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO
+            )
+        centerline_decisions[joint_name] = {
+            "joint": joint_name,
+            "medianPlaneOffsetBodyRatio": median_offset,
+            "maxPlaneOffsetBodyRatio": max_offset,
+            "blend": max(0.0, min(1.0, blend)),
+        }
+
+    corrected_frames: list[MotionFrame] = []
+    for frame, plane in zip(frames, frame_planes, strict=True):
+        if plane is None:
+            corrected_frames.append(frame)
+            continue
+        plane_point, plane_normal = plane
+        joints = dict(frame.joints)
+        for pair, decision in pair_decisions.items():
+            blend = float(decision["blend"])
+            if blend <= 0.0:
+                continue
+            left_name, right_name = pair
+            left = joints.get(left_name)
+            right = joints.get(right_name)
+            if left is None or right is None:
+                continue
+            mirrored_right = _mirror_point_across_plane(right, plane_point, plane_normal)
+            symmetric_left = _midpoint(left, mirrored_right)
+            symmetric_right = _mirror_point_across_plane(symmetric_left, plane_point, plane_normal)
+            joints[left_name] = _lerp_point(left, symmetric_left, blend)
+            joints[right_name] = _lerp_point(right, symmetric_right, blend)
+        for joint_name, decision in centerline_decisions.items():
+            blend = float(decision["blend"])
+            point = joints.get(joint_name)
+            if point is None or blend <= 0.0:
+                continue
+            projected = _project_point_onto_plane(point, plane_point, plane_normal)
+            joints[joint_name] = _lerp_point(point, projected, blend)
+        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+
+    corrected_pairs = [decision for decision in pair_decisions.values() if float(decision["blend"]) > 0.0]
+    corrected_centerline = [
+        decision
+        for decision in centerline_decisions.values()
+        if float(decision["blend"]) > 0.0
+    ]
+    return corrected_frames, {
+        "applied": bool(corrected_pairs or corrected_centerline),
+        "reason": "geometry_gated_paired_and_centerline_joint_projection",
+        "pairCount": len(joint_pairs),
+        "correctedPairCount": len(corrected_pairs),
+        "centerlineJointCount": len(centerline_joint_names),
+        "correctedCenterlineJointCount": len(corrected_centerline),
+        "bodySpan": body_span,
+        "fullBlendMaxBodyRatio": BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO,
+        "rejectBodyRatio": BILATERAL_SYMMETRY_REJECT_BODY_RATIO,
+        "maxFrameBodyRatio": BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO,
+        "pairs": list(pair_decisions.values()),
+        "centerlineJoints": list(centerline_decisions.values()),
+    }
+
+
+def _median_motion_body_span(frames: list[MotionFrame]) -> float:
+    spans: list[float] = []
+    for frame in frames:
+        if not frame.joints:
+            continue
+        xs = [point[0] for point in frame.joints.values()]
+        ys = [point[1] for point in frame.joints.values()]
+        zs = [point[2] for point in frame.joints.values()]
+        spans.append(math.sqrt(
+            (max(xs) - min(xs)) ** 2
+            + (max(ys) - min(ys)) ** 2
+            + (max(zs) - min(zs)) ** 2
+        ))
+    return _median(spans) if spans else 0.0
+
+
+def _frame_bilateral_symmetry_plane(
+    frame: MotionFrame,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    vectors: list[tuple[float, float, float]] = []
+    midpoints: list[tuple[float, float, float]] = []
+    reference: tuple[float, float, float] | None = None
+    for left_name, right_name in (
+        ("left_shoulder", "right_shoulder"),
+        ("left_hip", "right_hip"),
+        ("left_collar", "right_collar"),
+    ):
+        left = frame.joints.get(left_name)
+        right = frame.joints.get(right_name)
+        if left is None or right is None:
+            continue
+        vector = _normalize(_subtract_points(right, left))
+        if _vector_length(vector) <= 1e-6:
+            continue
+        if reference is None:
+            reference = vector
+        elif _dot(vector, reference) < 0.0:
+            vector = _scale_vector(vector, -1.0)
+        vectors.append(vector)
+        midpoints.append(_midpoint(left, right))
+    if not vectors or not midpoints:
+        return None
+    normal = _normalize(tuple(sum(vector[axis] for vector in vectors) for axis in range(3)))
+    if _vector_length(normal) <= 1e-6:
+        return None
+    return _average_preview_points(midpoints), normal
+
+
+def _mirror_point_across_plane(
+    point: tuple[float, float, float],
+    plane_point: tuple[float, float, float],
+    plane_normal: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    signed_distance = _dot(_subtract_points(point, plane_point), plane_normal)
+    return _subtract_points(point, _scale_vector(plane_normal, 2.0 * signed_distance))
+
+
+def _project_point_onto_plane(
+    point: tuple[float, float, float],
+    plane_point: tuple[float, float, float],
+    plane_normal: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    signed_distance = _dot(_subtract_points(point, plane_point), plane_normal)
+    return _subtract_points(point, _scale_vector(plane_normal, signed_distance))
+
+
+def _midpoint(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return tuple((left[axis] + right[axis]) * 0.5 for axis in range(3))
+
+
+def _lerp_point(
+    source: tuple[float, float, float],
+    target: tuple[float, float, float],
+    blend: float,
+) -> tuple[float, float, float]:
+    return tuple(source[axis] + (target[axis] - source[axis]) * blend for axis in range(3))
+
+
+def _stabilize_horizontal_rendered_torso_plane(
+    frames: list[MotionFrame],
+) -> tuple[list[MotionFrame], dict[str, object]]:
+    if _classify_torso_alignment_mode(frames) != "horizontal_plane":
+        return frames, {
+            "applied": False,
+            "reason": "torso_not_consistently_horizontal",
+            "frameCount": len(frames),
+        }
+
+    stabilized_frames: list[MotionFrame] = []
+    applied_angles_degrees: list[float] = []
+    for frame in frames:
+        plane_geometry = _rendered_torso_plane_normal_and_pivot(frame)
+        axis_geometry = _rendered_torso_axis_and_pivot(frame)
+        if plane_geometry is not None:
+            torso_plane_normal, pivot = plane_geometry
+            target_normal = (0.0, 1.0 if torso_plane_normal[1] >= 0.0 else -1.0, 0.0)
+            rotation = _rotation_between_vectors(
+                torso_plane_normal,
+                target_normal,
+                minimum_degrees=0.05,
+            )
+        elif axis_geometry is not None:
+            torso_axis, pivot = axis_geometry
+            horizontal_target = _normalize((torso_axis[0], 0.0, torso_axis[2]))
+            rotation = _rotation_between_vectors(
+                torso_axis,
+                horizontal_target,
+                minimum_degrees=0.05,
+            )
+        else:
+            stabilized_frames.append(frame)
+            continue
+        if rotation is None:
+            stabilized_frames.append(frame)
+            continue
+        axis, angle = rotation
+        stabilized_frames.append(
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    joint_name: _add_points(
+                        _rotate_point(
+                            _subtract_points(point, pivot),
+                            axis=axis,
+                            angle=angle,
+                        ),
+                        pivot,
+                    )
+                    for joint_name, point in frame.joints.items()
+                },
+            )
+        )
+        applied_angles_degrees.append(math.degrees(angle))
+
+    return stabilized_frames, {
+        "applied": bool(applied_angles_degrees),
+        "reason": "stabilized_rendered_torso_plane_against_world_floor",
+        "frameCount": len(frames),
+        "correctedFrameCount": len(applied_angles_degrees),
+        "medianCorrectionDegrees": (
+            _median(applied_angles_degrees)
+            if applied_angles_degrees
+            else 0.0
+        ),
+        "maxCorrectionDegrees": max(applied_angles_degrees, default=0.0),
+    }
 
 
 def _point_track_range_along_direction(
@@ -2401,6 +2709,100 @@ def _estimate_horizontal_spine_yaw_rotation(
     if _vector_length(averaged) <= 1e-6:
         return None
     return _rotation_between_vectors(averaged, (0.0, 0.0, 1.0), minimum_degrees=2.0)
+
+
+def _estimate_horizontal_spine_leveling_rotation(
+    frames: list[MotionFrame],
+) -> tuple[tuple[float, float, float], float] | None:
+    """Level a horizontal torso in world space while preserving its heading."""
+    spine_vectors = [
+        vector
+        for vector in _collect_rendered_torso_axis_vectors(frames)
+        if abs(vector[1]) <= 0.50
+    ]
+    if len(spine_vectors) < 3:
+        return None
+    reference = spine_vectors[0]
+    oriented_vectors = [
+        vector if _dot(vector, reference) >= 0.0 else _scale_vector(vector, -1.0)
+        for vector in spine_vectors
+    ]
+    representative = _normalize((
+        _median([vector[0] for vector in oriented_vectors]),
+        _median([vector[1] for vector in oriented_vectors]),
+        _median([vector[2] for vector in oriented_vectors]),
+    ))
+    horizontal_target = _normalize((representative[0], 0.0, representative[2]))
+    if _vector_length(representative) <= 1e-6 or _vector_length(horizontal_target) <= 1e-6:
+        return None
+    return _rotation_between_vectors(
+        representative,
+        horizontal_target,
+        minimum_degrees=0.5,
+    )
+
+
+def _collect_rendered_torso_axis_vectors(
+    frames: list[MotionFrame],
+) -> list[tuple[float, float, float]]:
+    """Match the hip-center to shoulder-center axis used by the procedural torso mesh."""
+    vectors: list[tuple[float, float, float]] = []
+    for frame in frames:
+        geometry = _rendered_torso_axis_and_pivot(frame)
+        if geometry is None:
+            continue
+        torso_axis, _pivot = geometry
+        vectors.append(torso_axis)
+    return vectors
+
+
+def _rendered_torso_axis_and_pivot(
+    frame: MotionFrame,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    left_hip = frame.joints.get("left_hip")
+    right_hip = frame.joints.get("right_hip")
+    pelvis = frame.joints.get("pelvis")
+    hip_center = (
+        _average_preview_points([left_hip, right_hip])
+        if left_hip is not None and right_hip is not None
+        else pelvis
+    )
+    left_shoulder = frame.joints.get("left_shoulder")
+    right_shoulder = frame.joints.get("right_shoulder")
+    shoulder_center = (
+        _average_preview_points([left_shoulder, right_shoulder])
+        if left_shoulder is not None and right_shoulder is not None
+        else frame.joints.get("neck") or frame.joints.get("spine3") or frame.joints.get("head")
+    )
+    if hip_center is None or shoulder_center is None:
+        return None
+    torso_axis = _subtract_points(shoulder_center, hip_center)
+    if _vector_length(torso_axis) <= 1e-5:
+        return None
+    return _normalize(torso_axis), hip_center
+
+
+def _rendered_torso_plane_normal_and_pivot(
+    frame: MotionFrame,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    left_hip = frame.joints.get("left_hip")
+    right_hip = frame.joints.get("right_hip")
+    pelvis = frame.joints.get("pelvis")
+    hip_center = (
+        _average_preview_points([left_hip, right_hip])
+        if left_hip is not None and right_hip is not None
+        else pelvis
+    )
+    left_shoulder = frame.joints.get("left_shoulder")
+    right_shoulder = frame.joints.get("right_shoulder")
+    if hip_center is None or left_shoulder is None or right_shoulder is None:
+        return None
+    left_axis = _subtract_points(left_shoulder, hip_center)
+    right_axis = _subtract_points(right_shoulder, hip_center)
+    normal = _cross(left_axis, right_axis)
+    if _vector_length(normal) <= 1e-5:
+        return None
+    return _normalize(normal), hip_center
 
 
 def _collect_torso_plane_normals(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
@@ -3357,6 +3759,17 @@ def _subtract_points(
         left[0] - right[0],
         left[1] - right[1],
         left[2] - right[2],
+    )
+
+
+def _add_points(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        left[0] + right[0],
+        left[1] + right[1],
+        left[2] + right[2],
     )
 
 
@@ -4739,15 +5152,15 @@ def _build_html(payload: dict[str, object]) -> str:
       grid.visible = !vlmReviewStyle;
 
       if (vlmReviewStyle) {{
-        setLitMaterial(limbMaterial, 0x26313d, 0x000000, 0.0, 0.84, 0.0);
-        setLitMaterial(torsoMaterial, 0x192532, 0x000000, 0.0, 0.82, 0.0);
-        setLitMaterial(headMaterial, 0x101923, 0x000000, 0.0, 0.78, 0.0);
-        setLineMaterial(limbOutlineMaterial, 0x000000, 1.0);
-        setLineMaterial(torsoOutlineMaterial, 0x000000, 1.0);
-        setLineMaterial(headOutlineMaterial, 0x000000, 1.0);
-        setLitMaterial(skeletonSurfaceMaterial, 0x1b2733, 0x000000, 0.0, 0.82, 0.0);
-        setLitMaterial(jointNodeMaterial, 0x0c1117, 0x000000, 0.0, 0.78, 0.0);
-        setLineMaterial(skeletonLineMaterial, 0x000000, 0.55);
+        setLitMaterial(limbMaterial, 0x2563eb, 0x000000, 0.0, 0.74, 0.0);
+        setLitMaterial(torsoMaterial, 0x334155, 0x000000, 0.0, 0.78, 0.0);
+        setLitMaterial(headMaterial, 0x7c3aed, 0x000000, 0.0, 0.72, 0.0);
+        setLineMaterial(limbOutlineMaterial, 0x0f172a, 1.0);
+        setLineMaterial(torsoOutlineMaterial, 0x0f172a, 1.0);
+        setLineMaterial(headOutlineMaterial, 0x3b0764, 1.0);
+        setLitMaterial(skeletonSurfaceMaterial, 0x2563eb, 0x000000, 0.0, 0.74, 0.0);
+        setLitMaterial(jointNodeMaterial, 0xf97316, 0x000000, 0.0, 0.68, 0.0);
+        setLineMaterial(skeletonLineMaterial, 0x0f172a, 0.72);
       }} else {{
         setLitMaterial(limbMaterial, 0x081317, 0x35f2ff, 0.62, 0.28, 0.2);
         setLitMaterial(torsoMaterial, 0x0a1519, 0x47f6ff, 0.78, 0.22, 0.24);
@@ -8334,7 +8747,8 @@ def _build_html(payload: dict[str, object]) -> str:
 
     function updateCamera() {{
       const zoomScale = 240 / Math.max(120, zoom);
-      const distance = getCameraFitDistance() * zoomScale * 1.28;
+      const framingMargin = vlmReviewStyle ? 1.05 : 1.28;
+      const distance = getCameraFitDistance() * zoomScale * framingMargin;
       const horizontalDistance = Math.cos(pitch) * distance;
       refreshSceneBasis();
       perspectiveCamera.position.copy(cameraTarget)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import replace
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +46,7 @@ SPINEPOSE_CONDA_ENV_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_CONDA_ENV"
 DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
+WHAM_GLOBAL_CACHE_VERSION = 1
 SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "import ctypes, os, pathlib, site; "
     "_dll_dirs=[str(_p) for _root in site.getsitepackages() "
@@ -64,6 +67,25 @@ SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
 SPINEPOSE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
+class IncompleteWhamTrackingError(ValueError):
+    """WHAM returned motion, but its selected subject track misses part of the requested cut."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        requested_start_seconds: float,
+        requested_end_seconds: float | None,
+        retained_start_seconds: float,
+        retained_end_seconds: float,
+    ) -> None:
+        super().__init__(message)
+        self.requested_start_seconds = requested_start_seconds
+        self.requested_end_seconds = requested_end_seconds
+        self.retained_start_seconds = retained_start_seconds
+        self.retained_end_seconds = retained_end_seconds
+
+
 @dataclass(frozen=True)
 class GenerateRequest:
     exercise_slug: str
@@ -73,6 +95,7 @@ class GenerateRequest:
     wham_repo_path: Path | None = None
     wham_results_pkl: Path | None = None
     reuse_wham_cache: bool = True
+    wham_global_cache_dir: Path | None = None
     body_model_root: Path | None = None
     wham_python_command: str = "python"
     use_wham_docker: bool = False
@@ -157,6 +180,96 @@ def default_wham_results_pkl(wham_output_dir: Path, input_video_path: Path) -> P
     return wham_output_dir / input_video_path.stem / "wham_output.pkl"
 
 
+def default_wham_global_cache_dir(workspace: Path) -> Path:
+    resolved = workspace.expanduser().resolve()
+    for candidate in (resolved, *resolved.parents):
+        if candidate.name.lower() == "exercise_motion":
+            return candidate / "wham-cache"
+    return resolved / "wham-cache"
+
+
+def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"wham-global-cache-v{WHAM_GLOBAL_CACHE_VERSION}\n".encode("utf-8"))
+    digest.update(
+        json.dumps(
+            {
+                "estimateLocalOnly": request.wham_estimate_local_only,
+                "runSmplify": request.wham_run_smplify,
+                "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
+                "outputRotationDegrees": request.wham_output_rotation_degrees,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    if request.wham_repo_path is not None:
+        wham_repo = request.wham_repo_path.expanduser().resolve()
+        repository_inputs = (
+            wham_repo / "demo.py",
+            wham_repo / "configs" / "yamls" / "demo.yaml",
+            wham_repo / "lib" / "models" / "preproc" / "detector.py",
+            wham_repo / "checkpoints" / "wham_vit_w_3dpw.pth.tar",
+            wham_repo / "checkpoints" / "hmr2a.ckpt",
+        )
+        for path in repository_inputs:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            digest.update(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}\n".encode("utf-8"))
+    with input_video_path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def global_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path:
+    cache_dir = request.wham_global_cache_dir or default_wham_global_cache_dir(request.workspace)
+    return cache_dir.expanduser().resolve() / wham_content_cache_key(request, input_video_path) / "wham_output.pkl"
+
+
+def reusable_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path | None:
+    if not request.reuse_wham_cache:
+        return None
+    local = default_wham_results_pkl(
+        PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham",
+        input_video_path,
+    )
+    if local.is_file() and local.stat().st_size > 0:
+        return local
+    shared = global_wham_results_pkl(request, input_video_path)
+    if shared.is_file() and shared.stat().st_size > 0:
+        return shared
+    return None
+
+
+def publish_global_wham_results(
+    request: GenerateRequest,
+    *,
+    input_video_path: Path,
+    results_pkl: Path,
+) -> Path:
+    destination = global_wham_results_pkl(request, input_video_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(f".tmp-{os.getpid()}-{uuid.uuid4().hex}.pkl")
+    shutil.copy2(results_pkl, temporary)
+    temporary.replace(destination)
+    metadata = {
+        "schemaVersion": 1,
+        "cacheKey": destination.parent.name,
+        "sourceInputVideo": str(input_video_path),
+        "sourceResultsPkl": str(results_pkl),
+        "estimateLocalOnly": request.wham_estimate_local_only,
+        "runSmplify": request.wham_run_smplify,
+        "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
+    }
+    destination.with_name("cache_manifest.json").write_text(
+        json.dumps(metadata, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return destination
+
+
 def resolve_wham_results_source(
     *,
     explicit_results_pkl: Path | None,
@@ -224,14 +337,19 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             raise ValueError("body_model_root is required when using WHAM output.")
         wham_output_dir = paths.raw_dir / "wham"
         wham_output_dir.mkdir(parents=True, exist_ok=True)
+        reusable_results_pkl = reusable_wham_results_pkl(request, input_video_path)
         wham_source = resolve_wham_results_source(
-            explicit_results_pkl=request.wham_results_pkl,
+            explicit_results_pkl=request.wham_results_pkl or reusable_results_pkl,
             wham_output_dir=wham_output_dir,
             input_video_path=input_video_path,
             reuse_wham_cache=request.reuse_wham_cache,
         )
         wham_results_pkl = wham_source.path
-        wham_cache_status = wham_source.cache_status
+        if reusable_results_pkl is not None and request.wham_results_pkl is None:
+            local_cached = default_wham_results_pkl(wham_output_dir, input_video_path)
+            wham_cache_status = "reused_local" if reusable_results_pkl == local_cached else "reused_global"
+        else:
+            wham_cache_status = wham_source.cache_status
         if wham_source.should_run_wham:
             if request.wham_repo_path is None:
                 raise ValueError(
@@ -259,6 +377,12 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             record_timing("whamRunSeconds", stage_started)
             timings["wham"] = wham_result.timing_payload()
             wham_results_pkl = wham_result.results_pkl
+            global_cache_path = publish_global_wham_results(
+                request,
+                input_video_path=input_video_path,
+                results_pkl=wham_results_pkl,
+            )
+            timings["wham"]["globalCachePath"] = str(global_cache_path)
         else:
             timings["wham"] = {
                 "elapsedSeconds": 0.0,
@@ -576,6 +700,26 @@ def crop_motion_clip_to_input_window(
     if not retained:
         raise ValueError(
             f"WHAM produced no motion frames inside the requested output window {start:.3f}-{end:.3f}s."
+        )
+    frame_tolerance_seconds = 1.5 / max(float(clip.fps), 1.0)
+    coverage_failures: list[str] = []
+    if retained[0].time_sec > start + frame_tolerance_seconds:
+        coverage_failures.append(
+            f"starts at {retained[0].time_sec:.3f}s instead of {start:.3f}s"
+        )
+    if end != float("inf") and retained[-1].time_sec < end - frame_tolerance_seconds:
+        coverage_failures.append(
+            f"ends at {retained[-1].time_sec:.3f}s instead of {end:.3f}s"
+        )
+    if coverage_failures:
+        raise IncompleteWhamTrackingError(
+            "WHAM tracking does not cover the complete requested output window: "
+            + "; ".join(coverage_failures)
+            + ". The subject track was likely fragmented or lost.",
+            requested_start_seconds=start,
+            requested_end_seconds=None if end == float("inf") else end,
+            retained_start_seconds=retained[0].time_sec,
+            retained_end_seconds=retained[-1].time_sec,
         )
     first_time = retained[0].time_sec
     return MotionClip(

@@ -79,6 +79,12 @@ FRAME_LAYOUT_CUT_JUMP_THRESHOLD = 0.045
 FRAME_EDGE_CUT_JUMP_THRESHOLD = 0.035
 FRAME_LAYOUT_HARD_CUT_JUMP_THRESHOLD = 0.075
 FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD = 0.060
+FULL_BODY_JOINT_SAFETY_THRESHOLD = 0.999
+FULL_BODY_SAFE_SAMPLE_RATIO = 0.95
+BODY_FRAME_CLEARANCE_MARGIN_RATIO = 0.01
+BODY_FRAME_CONTACT_TOLERANCE_RATIO = 0.01
+BODY_FRAME_CONTACT_MIN_PIXELS = 2.0
+BODY_FRAME_PERSISTENT_CONTACT_RATIO = 0.20
 _YOLO_MODEL_THREAD_LOCAL = threading.local()
 
 
@@ -827,8 +833,6 @@ def score_pose_window(
         blocking_issues.append("low_required_joint_visibility")
     if body_scale < settings.min_body_scale:
         blocking_issues.append("small_body")
-    if crop_safety < 0.65:
-        blocking_issues.append("cropped_body")
     quality_issues: list[str] = []
     if not source_window_integrity["singlePersonContinuityPassed"]:
         if source_window_integrity.get("maxSignificantPersonCount", 0) > 1:
@@ -973,6 +977,44 @@ def crop_safety_score(detection: PoseDetection, *, metadata: BasicVideoMetadata)
     return safe / total if total else 0.0
 
 
+def body_frame_clearance_ratio(detection: PoseDetection, *, metadata: BasicVideoMetadata) -> float:
+    """Return the smallest person-box clearance from any image boundary.
+
+    COCO keypoints stop at the ankles, so a clipped shoe can still look
+    complete to the pose model. The person box supplies the missing evidence:
+    a clipped or precariously framed body approaches zero clearance on one edge.
+    """
+    x1, y1, x2, y2 = detection.bbox
+    width = max(1.0, float(metadata.width))
+    height = max(1.0, float(metadata.height))
+    clearances = (
+        x1 / width,
+        y1 / height,
+        (width - x2) / width,
+        (height - y2) / height,
+    )
+    return max(0.0, min(1.0, min(clearances)))
+
+
+def body_frame_edge_contacts(
+    detection: PoseDetection,
+    *,
+    metadata: BasicVideoMetadata,
+) -> dict[str, bool]:
+    """Report person-box contact with each image edge within detector tolerance."""
+    x1, y1, x2, y2 = detection.bbox
+    tolerance = max(
+        BODY_FRAME_CONTACT_MIN_PIXELS,
+        min(float(metadata.width), float(metadata.height)) * BODY_FRAME_CONTACT_TOLERANCE_RATIO,
+    )
+    return {
+        "left": x1 <= tolerance,
+        "top": y1 <= tolerance,
+        "right": x2 >= float(metadata.width) - tolerance,
+        "bottom": y2 >= float(metadata.height) - tolerance,
+    }
+
+
 def camera_stability_score(detections: list[PoseDetection], *, metadata: BasicVideoMetadata) -> float:
     if len(detections) < 3:
         return 0.5
@@ -1013,6 +1055,13 @@ def source_window_integrity_metrics(
             "p10RequiredJointsVisible": 0.0,
             "minCropSafety": 0.0,
             "p10CropSafety": 0.0,
+            "bodyFrameSafeRatio": 0.0,
+            "minBodyFrameClearanceRatio": 0.0,
+            "p10BodyFrameClearanceRatio": 0.0,
+            "bodyFrameBoundaryContactPassed": False,
+            "bodyFrameBoundaryContactRatio": 1.0,
+            "bodyFrameBoundaryContactByEdge": {},
+            "bodyFrameFramingStatus": "cropped",
             "maxCenterJumpRatio": 1.0,
             "maxScaleJumpRatio": 1.0,
             "sceneCutCount": 0,
@@ -1033,10 +1082,50 @@ def source_window_integrity_metrics(
     no_person_ratio = sum(1 for count in significant_counts if count == 0) / len(significant_counts)
     max_significant_person_count = max(significant_counts) if significant_counts else 0
     crop_scores = [crop_safety_score(detection, metadata=metadata) for detection in present]
+    body_frame_clearances = [body_frame_clearance_ratio(detection, metadata=metadata) for detection in present]
+    body_frame_contacts = [body_frame_edge_contacts(detection, metadata=metadata) for detection in present]
     joint_visibility = required_joint_visibility_metrics(dominant)
-    full_body_visible_ratio = sum(1 for score in crop_scores if score >= 0.90) / len(crop_scores)
+    full_body_visible_ratio = (
+        sum(1 for score in crop_scores if score >= FULL_BODY_JOINT_SAFETY_THRESHOLD) / len(crop_scores)
+    )
     min_crop_safety = min(crop_scores) if crop_scores else 0.0
     p10_crop_safety = percentile(crop_scores, 0.10)
+    body_frame_safe_ratio = (
+        sum(1 for clearance in body_frame_clearances if clearance >= BODY_FRAME_CLEARANCE_MARGIN_RATIO)
+        / len(body_frame_clearances)
+    )
+    min_body_frame_clearance = min(body_frame_clearances) if body_frame_clearances else 0.0
+    p10_body_frame_clearance = percentile(body_frame_clearances, 0.10)
+    contact_counts = {
+        edge: sum(1 for contacts in body_frame_contacts if contacts[edge])
+        for edge in ("left", "top", "right", "bottom")
+    }
+    contact_ratios = {
+        edge: count / len(body_frame_contacts)
+        for edge, count in contact_counts.items()
+    }
+    persistent_contact_sample_count = (
+        1
+        if len(body_frame_contacts) == 1
+        else max(2, math.ceil(len(body_frame_contacts) * BODY_FRAME_PERSISTENT_CONTACT_RATIO))
+    )
+    persistent_contact_edges = [
+        edge
+        for edge, count in contact_counts.items()
+        if count >= persistent_contact_sample_count
+    ]
+    body_frame_boundary_contact_ratio = max(contact_ratios.values(), default=0.0)
+    body_frame_boundary_contact_passed = not persistent_contact_edges
+    body_frame_framing_status = (
+        "cropped"
+        if persistent_contact_edges
+        else "borderline"
+        if (
+            p10_body_frame_clearance < BODY_FRAME_CLEARANCE_MARGIN_RATIO
+            or full_body_visible_ratio < FULL_BODY_SAFE_SAMPLE_RATIO
+        )
+        else "safe"
+    )
     centers = [bbox_center(detection.bbox) for detection in present]
     scales = [body_scale_ratio(detection, metadata=metadata) for detection in present]
     diagonal = max(1.0, math.hypot(metadata.width, metadata.height))
@@ -1056,7 +1145,7 @@ def source_window_integrity_metrics(
     max_frame_signature_jump = max(frame_signature_jumps) if frame_signature_jumps else 0.0
     visual_jump_metrics = frame_visual_jump_metrics(samples)
     single_person_passed = single_person_ratio >= 0.95
-    full_body_passed = full_body_visible_ratio >= 0.85 and p10_crop_safety >= 0.85 and min_crop_safety >= 0.75
+    full_body_passed = body_frame_boundary_contact_passed
     joint_visibility_passed = (
         joint_visibility["wholeMovementJointVisibility"] >= 0.60
         and joint_visibility["requiredJointP10Coverage"] >= 0.58
@@ -1078,6 +1167,15 @@ def source_window_integrity_metrics(
         **joint_visibility,
         "minCropSafety": min_crop_safety,
         "p10CropSafety": p10_crop_safety,
+        "bodyFrameSafeRatio": body_frame_safe_ratio,
+        "minBodyFrameClearanceRatio": min_body_frame_clearance,
+        "p10BodyFrameClearanceRatio": p10_body_frame_clearance,
+        "bodyFrameBoundaryContactPassed": body_frame_boundary_contact_passed,
+        "bodyFrameBoundaryContactRatio": body_frame_boundary_contact_ratio,
+        "bodyFrameBoundaryContactByEdge": contact_ratios,
+        "bodyFramePersistentContactEdges": persistent_contact_edges,
+        "bodyFramePersistentContactSampleCount": persistent_contact_sample_count,
+        "bodyFrameFramingStatus": body_frame_framing_status,
         "maxCenterJumpRatio": max_center_jump,
         "maxScaleJumpRatio": max_scale_jump,
         "sceneCutCount": scene_cut_count,
@@ -1643,18 +1741,26 @@ def pose_reconstruction_view_quality(
     shoulder_widths: list[float] = []
     hip_widths: list[float] = []
     for detection in detections:
-        body_height = max(1.0, detection.bbox[3] - detection.bbox[1])
+        # Use the major body-box span rather than image-space height.  A person
+        # lying on a bench has a short vertical box but is not consequently a
+        # frontal/back view; normalizing by vertical height made clean side-view
+        # horizontal exercises look maximally ambiguous.
+        body_span = max(
+            1.0,
+            detection.bbox[2] - detection.bbox[0],
+            detection.bbox[3] - detection.bbox[1],
+        )
         shoulder_width = normalized_joint_pair_distance(
             detection,
             "left_shoulder",
             "right_shoulder",
-            body_height=body_height,
+            body_span=body_span,
         )
         hip_width = normalized_joint_pair_distance(
             detection,
             "left_hip",
             "right_hip",
-            body_height=body_height,
+            body_span=body_span,
         )
         if shoulder_width is not None:
             shoulder_widths.append(shoulder_width)
@@ -1688,13 +1794,13 @@ def normalized_joint_pair_distance(
     first_joint: str,
     second_joint: str,
     *,
-    body_height: float,
+    body_span: float,
 ) -> float | None:
     first = detection.keypoints.get(first_joint)
     second = detection.keypoints.get(second_joint)
     if first is None or second is None:
         return None
-    return math.hypot(first[0] - second[0], first[1] - second[1]) / max(body_height, 1.0)
+    return math.hypot(first[0] - second[0], first[1] - second[1]) / max(body_span, 1.0)
 
 
 def ramp_unit(value: float, *, low: float, high: float) -> float:

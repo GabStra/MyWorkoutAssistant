@@ -83,6 +83,11 @@ SEMANTIC_GATE_DURATION_HORIZON_SECONDS = 120.0
 LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS = 5.0
 YOUTUBE_PREVIEW_FRAGMENT_WORKERS = 4
 YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS: tuple[str | None, ...] = ("android_vr", "tv", None)
+SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA = 0.005
+SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO = 0.80
+SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE = 0.03
+SOURCE_REVIEW_TEMPORAL_ANALYSIS_WIDTH = 160
+SOURCE_REVIEW_TEMPORAL_ANALYSIS_HEIGHT = 90
 
 LOW_RES_VIDEO_ONLY_FORMAT = (
     "bestvideo[height<=360][ext=mp4][protocol^=http][vcodec!=none]/"
@@ -1067,7 +1072,6 @@ SOURCE_VARIANT_CAP = 0.34
 POSE_QUALITY_REASON_CAPS = {
     "pose_cropped_body": (0.67, "borderline_full_body_frame_source_cap"),
 }
-SEMANTIC_POSE_BACKFILL_MIN_SCORE = 0.35
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MIN_INCREMENT = 10
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MULTIPLIER = 2
 YOUTUBE_FAILURE_SEARCH_EXPANSION_MAX_RESULTS_PER_QUERY = 100
@@ -2481,6 +2485,60 @@ def vision_review_priority_score(
     return clamp_score(score)
 
 
+def candidate_title_identity_priority_score(exercise_name: str, candidate_title: str) -> float:
+    """Prefer literal target titles before spending model time on nearby variants."""
+    target = normalize_exercise_name(exercise_name)
+    title = normalize_exercise_name(candidate_title)
+    if not target or not title:
+        return 0.0
+    target_tokens = target.split()
+    title_tokens = title.split()
+    unrequested_partial_tokens = {"partial", "quarter"}.intersection(title_tokens).difference(target_tokens)
+    if "half" in title_tokens and "half" not in target_tokens and "full" not in title_tokens:
+        unrequested_partial_tokens.add("half")
+    partial_execution_cap = 0.35 if unrequested_partial_tokens else 1.0
+    if title == target:
+        return partial_execution_cap
+    if title.startswith(f"{target} "):
+        return min(0.98, partial_execution_cap)
+    phrase_match = re.search(rf"(?<![a-z0-9]){re.escape(target)}(?![a-z0-9])", title)
+    if phrase_match is not None:
+        leading_token_count = len(title[: phrase_match.start()].split())
+        return min(
+            max(0.80, 0.95 - min(0.15, leading_token_count * 0.03)),
+            partial_execution_cap,
+        )
+
+    if not target_tokens or not title_tokens:
+        return 0.0
+    title_token_set = set(title_tokens)
+    matched_count = sum(1 for token in target_tokens if token in title_token_set)
+    coverage = matched_count / len(target_tokens)
+    precision = matched_count / len(title_tokens)
+    return min(
+        clamp_score((coverage * 0.70) + (precision * 0.30)),
+        partial_execution_cap,
+    )
+def rank_youtube_review_pool(
+    exercise: ExerciseEntry,
+    candidates: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+) -> list[YouTubeCandidate]:
+    return sorted(
+        select_review_candidate_pool(candidates, settings),
+        key=lambda candidate: (
+            candidate_title_identity_priority_score(exercise.name, candidate.title),
+            vision_review_priority_score(
+                candidate,
+                min_duration_seconds=settings.min_duration_seconds,
+                max_duration_seconds=settings.max_duration_seconds,
+            ),
+            candidate.view_count or 0,
+        ),
+        reverse=True,
+    )
+
+
 def keyword_matches_text(keyword: str, text: str) -> bool:
     if keyword.startswith("#"):
         return keyword in text
@@ -2894,12 +2952,6 @@ def rank_candidates_with_semantic_gate(
                 ]
             if stop_after_target_pass_count and len(narrowed) >= target_pass_count:
                 break
-        if not narrowed and settings.pose_prefilter_enabled:
-            narrowed = [
-                mark_semantic_zero_survivor_soft_fallback(candidate)
-                for candidate in reviewed
-                if candidate_is_semantic_soft_fallback_candidate(candidate)
-            ]
         narrowed.sort(key=lambda item: semantic_gate_sort_key(item, settings), reverse=True)
         return narrowed
     finally:
@@ -3099,37 +3151,11 @@ def candidate_is_semantic_visual_review_candidate(
         return True
     if bool(payload.get("wrongExercise")) or bool(payload.get("wrongEquipment")):
         return False
-    if semantic_gate_payload_is_unresolved(payload):
-        return True
-    return semantic_gate_score(candidate) >= min(settings.semantic_gate_min_score, SEMANTIC_POSE_BACKFILL_MIN_SCORE)
+    return semantic_gate_payload_is_unresolved(payload)
 
 
 def candidate_is_semantic_pose_candidate(candidate: YouTubeCandidate, *, settings: YouTubeRankingSettings) -> bool:
     return candidate_is_semantic_visual_review_candidate(candidate, settings=settings)
-
-
-def candidate_is_semantic_soft_fallback_candidate(candidate: YouTubeCandidate) -> bool:
-    payload = candidate_semantic_gate_payload(candidate)
-    if payload is None:
-        return False
-    if bool(payload.get("wrongExercise")) or bool(payload.get("wrongEquipment")):
-        return False
-    return True
-
-
-def mark_semantic_zero_survivor_soft_fallback(candidate: YouTubeCandidate) -> YouTubeCandidate:
-    payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
-    semantic_payload = dict(payload.get("semanticGate")) if isinstance(payload.get("semanticGate"), dict) else {}
-    semantic_payload["softFallbackForPose"] = True
-    semantic_payload["fallbackReason"] = "semantic_gate_zero_survivors"
-    payload["semanticGate"] = semantic_payload
-    return replace_candidate(
-        candidate,
-        score_reasons=dedupe_reasons(
-            [*candidate.score_reasons, "semantic_gate_zero_survivor_soft_fallback"]
-        ),
-        vision_payload=payload,
-    )
 
 
 def rank_candidate_with_llama_cpp_semantic_gate(
@@ -3812,6 +3838,12 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
     return (
         "Text-only semantic gate. Classify whether the YouTube title/description is the exact target movement. "
         "Reject routines, compilations, briefly mentioned exercises, wrong base movements, and named variants not in the target. "
+        "First identify every movement-changing qualifier expressed by the target and every qualifier expressed by the candidate. "
+        "A qualifier changes how the movement is performed, including but not limited to range of motion, assistance, loading method, "
+        "equipment, angle, grip, stance, limb count, body position, tempo, pause, support style, or a progression that combines variants. "
+        "If the candidate contains any movement-changing qualifier that the target does not request, put each extra qualifier in "
+        "unrequestedVariantTerms and set passed=false even when the title also contains the unqualified target words. "
+        "Do not let one matching qualifier cancel a conflicting or additional qualifier; judge the complete candidate title as one movement identity. "
         "For generic weighted/loaded targets, vest/belt/plate/dumbbell/kettlebell are valid loading methods only when the base movement is unchanged. "
         "Duration is ranking context only: prefer short exact exercise clips over long tutorials when semantic confidence is similar, "
         "but do not mark wrongExercise only because a video is long or short. "
@@ -4219,8 +4251,9 @@ def run_youtube_candidate_review_batches(
     pose_elapsed = 0.0
     vision_elapsed = 0.0
 
-    for batch_index, start in enumerate(range(0, len(ranked), batch_size), start=1):
-        batch = ranked[start : start + batch_size]
+    bounded_ranked = ranked[:youtube_candidate_review_hard_cap(settings)]
+    for batch_index, start in enumerate(range(0, len(bounded_ranked), batch_size), start=1):
+        batch = bounded_ranked[start : start + batch_size]
         if not batch:
             continue
         pass_result = run_youtube_candidate_review_pass(
@@ -4293,6 +4326,17 @@ def youtube_candidate_review_can_expand(settings: YouTubeRankingSettings, availa
     return any(limit < available_count for limit in limits)
 
 
+def youtube_candidate_review_hard_cap(settings: YouTubeRankingSettings) -> int:
+    limits = [max(1, settings.max_candidates)]
+    if settings.semantic_gate_enabled:
+        limits.append(settings.resolved_semantic_gate_max_candidates_per_exercise())
+    if settings.pose_prefilter_enabled:
+        limits.append(settings.resolved_pose_prefilter_candidates_per_exercise())
+    if settings.rank_with_vision:
+        limits.append(max(1, settings.vision_candidates_per_exercise))
+    return max(limits)
+
+
 def youtube_candidate_search_can_expand(settings: YouTubeRankingSettings) -> bool:
     return settings.semantic_gate_enabled or settings.pose_prefilter_enabled or settings.rank_with_vision
 
@@ -4303,17 +4347,17 @@ def expanded_youtube_candidate_review_settings(
 ) -> YouTubeRankingSettings:
     changes: dict[str, Any] = {}
     if settings.semantic_gate_enabled:
-        changes["semantic_gate_max_candidates_per_exercise"] = max(
-            settings.resolved_semantic_gate_max_candidates_per_exercise(),
+        changes["semantic_gate_max_candidates_per_exercise"] = min(
             available_count,
+            settings.resolved_semantic_gate_max_candidates_per_exercise(),
         )
     if settings.pose_prefilter_enabled:
-        changes["pose_prefilter_candidates_per_exercise"] = max(
-            settings.resolved_pose_prefilter_candidates_per_exercise(),
+        changes["pose_prefilter_candidates_per_exercise"] = min(
             available_count,
+            settings.resolved_pose_prefilter_candidates_per_exercise(),
         )
     if settings.rank_with_vision:
-        changes["vision_candidates_per_exercise"] = max(settings.vision_candidates_per_exercise, available_count)
+        changes["vision_candidates_per_exercise"] = min(available_count, settings.vision_candidates_per_exercise)
     return dataclass_replace(settings, **changes)
 
 
@@ -5067,18 +5111,7 @@ def discover_and_rank_youtube_candidates(
                 )
                 for candidate in by_key.values()
             ]
-            ranked = sorted(
-                select_review_candidate_pool(prepared_ranked, settings),
-                key=lambda candidate: (
-                    vision_review_priority_score(
-                        candidate,
-                        min_duration_seconds=settings.min_duration_seconds,
-                        max_duration_seconds=settings.max_duration_seconds,
-                    ),
-                    candidate.view_count or 0,
-                ),
-                reverse=True,
-            )
+            ranked = rank_youtube_review_pool(exercise, prepared_ranked, settings)
             review_pool_elapsed_total += time.monotonic() - review_pool_started
             review_pool_ranked = ranked
             debug_candidates_by_key: dict[str, YouTubeCandidate] = {
@@ -5130,6 +5163,12 @@ def discover_and_rank_youtube_candidates(
             vision_elapsed_total += review_result.vision_elapsed_seconds
 
             initial_suitable_count = youtube_suitable_candidate_count(ranked, settings)
+            initial_review_hard_cap = youtube_candidate_review_hard_cap(settings)
+            initial_review_hard_cap_exhausted = bool(
+                review_result.review_batches
+                and int(review_result.review_batches[-1].get("endIndexExclusive") or 0)
+                >= min(len(review_pool_ranked), initial_review_hard_cap)
+            )
             candidate_expansion_payload = build_youtube_candidate_expansion_payload(
                 settings=settings,
                 available_count=len(review_pool_ranked),
@@ -5144,11 +5183,14 @@ def discover_and_rank_youtube_candidates(
                         if review_result.review_batches
                         else len(ranked)
                     ),
+                    "initialReviewHardCap": initial_review_hard_cap,
+                    "initialReviewHardCapExhausted": initial_review_hard_cap_exhausted,
                 }
             )
             current_review_settings = settings
             if (
                 initial_suitable_count == 0
+                and not initial_review_hard_cap_exhausted
                 and youtube_candidate_review_can_expand(settings, len(review_pool_ranked))
             ):
                 append_youtube_discovery_progress(
@@ -5164,7 +5206,7 @@ def discover_and_rank_youtube_candidates(
                 current_review_settings = expanded_settings
                 expanded_result = run_youtube_candidate_review_batches(
                     exercise=exercise,
-                    ranked=review_pool_ranked,
+                    ranked=review_pool_ranked[:youtube_candidate_review_hard_cap(expanded_settings)],
                     settings=expanded_settings,
                     debug_candidates_by_key=debug_candidates_by_key,
                     semantic_gate=semantic_gate,
@@ -5227,6 +5269,7 @@ def discover_and_rank_youtube_candidates(
             )
             if (
                 youtube_suitable_candidate_count(ranked, current_review_settings) == 0
+                and not initial_review_hard_cap_exhausted
                 and not settings.single_exercise_name_query
                 and youtube_candidate_search_can_expand(settings)
                 and (expanded_results_per_query is not None or search_expansion_queries)
@@ -5277,7 +5320,7 @@ def discover_and_rank_youtube_candidates(
                         )
                         for candidate in by_key.values()
                     ]
-                    ranked = select_review_candidate_pool(prepared_ranked, search_expanded_settings)
+                    ranked = rank_youtube_review_pool(exercise, prepared_ranked, search_expanded_settings)
                     review_pool_elapsed_total += time.monotonic() - review_pool_started
                     review_pool_ranked = ranked
                     debug_candidates_by_key = {
@@ -5306,7 +5349,7 @@ def discover_and_rank_youtube_candidates(
                     )
                     search_review_result = run_youtube_candidate_review_batches(
                         exercise=exercise,
-                        ranked=review_pool_ranked,
+                        ranked=review_pool_ranked[:youtube_candidate_review_hard_cap(search_review_settings)],
                         settings=search_review_settings,
                         debug_candidates_by_key=debug_candidates_by_key,
                         semantic_gate=semantic_gate,
@@ -6604,6 +6647,57 @@ def score_prepared_vision_review(
             "Score only this chunk as evidence that the source video contains a usable target-exercise segment. "
             "The final single-rep trim will be found later by detect_exercise_segment."
         )
+        temporal_change = source_review_temporal_change_metrics(chunk_paths)
+        if bool(temporal_change.get("nearIdenticalFrames")):
+            reasons = [
+                "near_duplicate_source_frames",
+                "deterministic_temporal_change_gate_failed",
+            ]
+            payload = static_source_chunk_vision_payload(temporal_change)
+            debug_artifacts = write_prepared_vision_chunk_debug(
+                prepared,
+                chunk_index=chunk_index,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                window_source=window_source,
+                frame_paths=chunk_paths,
+                prompt=chunk_prompt,
+                parsed_payload=payload,
+                score=0.0,
+                reasons=reasons,
+                error={
+                    "type": "near_duplicate_source_frames",
+                    "message": "The sampled source frames contain no meaningful temporal visual change.",
+                    "temporalChangeMetrics": temporal_change,
+                },
+            )
+            chunk_scores.append(0.0)
+            chunk_results.append((0.0, reasons, payload, chunk_index))
+            reviewed_chunks.append(
+                build_reviewed_chunk_timing(
+                    chunk_index=chunk_index,
+                    chunk_start=chunk_start,
+                    chunk_end=chunk_end,
+                    window_source=window_source,
+                    render_elapsed=render_elapsed,
+                    vlm_elapsed=0.0,
+                    score=0.0,
+                    valid=False,
+                    failure="near_duplicate_source_frames",
+                    debug_artifacts=debug_artifacts,
+                    temporal_change_metrics=temporal_change,
+                )
+            )
+            early_stop_reason = adaptive_review_stop_reason(
+                chunk_scores=chunk_scores,
+                chunk_results=chunk_results,
+                review_order=review_order,
+                settings=settings,
+                is_final_planned_chunk=review_order >= len(chunk_indexes) - 1,
+            )
+            if early_stop_reason is not None:
+                break
+            continue
         vlm_started = time.monotonic()
         try:
             raw = caption_images(frame_paths=chunk_paths, prompt=chunk_prompt)
@@ -6814,6 +6908,108 @@ def score_prepared_vision_review(
     return final_score, dedupe_reasons(best_reasons + evidence_reasons + ["chunked_source_video_review"]), compact_payload
 
 
+def source_review_temporal_frame_paths(frame_paths: list[Path]) -> list[Path]:
+    """Resolve the unlabeled frames behind source-review contact sheets."""
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for path in frame_paths:
+        candidates = (
+            sorted(path.parent.glob("frame_*.jpg"))
+            if path.stem.startswith("contact_sheet")
+            else [path]
+        )
+        for candidate in candidates:
+            normalized = candidate.resolve()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            resolved.append(candidate)
+    return resolved
+
+
+def source_review_temporal_change_metrics(frame_paths: list[Path]) -> dict[str, Any]:
+    """Conservatively reject only frozen or nearly frozen sampled sequences."""
+    resolved_paths = source_review_temporal_frame_paths(frame_paths)
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return {
+            "available": False,
+            "nearIdenticalFrames": False,
+            "reason": "temporal_change_dependencies_missing",
+            "frameCount": 0,
+        }
+
+    frames: list[Any] = []
+    for path in resolved_paths:
+        frame = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if frame is None:
+            continue
+        resized = cv2.resize(
+            frame,
+            (SOURCE_REVIEW_TEMPORAL_ANALYSIS_WIDTH, SOURCE_REVIEW_TEMPORAL_ANALYSIS_HEIGHT),
+            interpolation=cv2.INTER_AREA,
+        )
+        frames.append(resized.astype(np.float32))
+    if len(frames) < 3:
+        return {
+            "available": False,
+            "nearIdenticalFrames": False,
+            "reason": "insufficient_decodable_frames",
+            "frameCount": len(frames),
+        }
+
+    adjacent_deltas = [
+        float(np.mean(np.abs(current - previous)) / 255.0)
+        for previous, current in zip(frames, frames[1:])
+    ]
+    first_frame_deltas = [
+        float(np.mean(np.abs(frame - frames[0])) / 255.0)
+        for frame in frames[1:]
+    ]
+    near_duplicate_pair_ratio = sum(
+        delta <= SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA
+        for delta in adjacent_deltas
+    ) / len(adjacent_deltas)
+    max_temporal_range = max(first_frame_deltas, default=0.0)
+    near_identical = (
+        near_duplicate_pair_ratio >= SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO
+        and max_temporal_range <= SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE
+    )
+    return {
+        "available": True,
+        "nearIdenticalFrames": near_identical,
+        "reason": "near_identical_sampled_frames" if near_identical else "meaningful_temporal_change_detected",
+        "frameCount": len(frames),
+        "meanAdjacentDelta": float(np.mean(adjacent_deltas)),
+        "medianAdjacentDelta": float(np.median(adjacent_deltas)),
+        "maxAdjacentDelta": max(adjacent_deltas, default=0.0),
+        "nearDuplicatePairRatio": near_duplicate_pair_ratio,
+        "maxTemporalRangeFromFirst": max_temporal_range,
+        "nearDuplicateFrameDeltaThreshold": SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA,
+        "nearDuplicatePairRatioThreshold": SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO,
+        "maxStaticTemporalRangeThreshold": SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE,
+    }
+
+
+def static_source_chunk_vision_payload(temporal_change: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "correct_exercise": False,
+        "usable_for_motion_extraction": False,
+        "complete_repetition_visible": False,
+        "target_identity_match": False,
+        "target_match": 0.0,
+        "complete_movement": 0.0,
+        "execution_quality": 0.0,
+        "source_score": 0.0,
+        "blocking_issues": ["static_or_near_duplicate_frames"],
+        "confidence": 1.0,
+        "reason": "The sampled frames are identical or nearly identical and cannot contain a visible movement.",
+        "deterministicTemporalChange": temporal_change,
+    }
+
+
 def planned_adaptive_chunk_indexes(
     prepared: PreparedVisionReview,
     settings: YouTubeRankingSettings,
@@ -6986,15 +7182,19 @@ def adaptive_review_stop_reason(
     if not settings.vision_adaptive_chunk_review:
         return None
     review_limit = resolved_vision_chunk_review_limit(settings)
+    planned_budget = review_order + 1 if is_final_planned_chunk else None
     initial_budget = max(1, settings.vision_initial_chunks_per_candidate)
+    if review_limit is not None:
+        initial_budget = min(initial_budget, max(1, review_limit))
+    if planned_budget is not None:
+        initial_budget = min(initial_budget, planned_budget)
     if review_limit is not None and len(chunk_scores) >= initial_budget and max(chunk_scores, default=0.0) < 0.50:
         return "all_diagnostic_chunks_bad"
     best_score, best_reasons, _, _ = max(chunk_results, key=lambda item: item[0])
     valid_chunk_ratio = sum(1 for score in chunk_scores if score >= 0.50) / max(1, len(chunk_scores))
     if (
-        review_limit is None
-        and not is_final_planned_chunk
-        and len(chunk_scores) >= initial_budget
+        (review_limit is not None or not is_final_planned_chunk)
+        and (review_limit is not None or len(chunk_scores) >= initial_budget)
         and valid_chunk_ratio >= 0.50
         and best_score >= settings.vision_early_stop_score
         and VISION_HARD_GATE_REASONS.issubset(set(best_reasons))
@@ -7015,6 +7215,7 @@ def build_reviewed_chunk_timing(
     valid: bool | None = None,
     failure: str | None = None,
     debug_artifacts: dict[str, Any] | None = None,
+    temporal_change_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "chunkIndex": chunk_index,
@@ -7032,6 +7233,8 @@ def build_reviewed_chunk_timing(
         payload["failure"] = failure
     if debug_artifacts is not None:
         payload["debugArtifacts"] = debug_artifacts
+    if temporal_change_metrics is not None:
+        payload["temporalChangeMetrics"] = temporal_change_metrics
     return payload
 
 
@@ -7147,13 +7350,12 @@ def single_strong_chunk_is_enough(
 ) -> bool:
     if valid_chunk_count != 1:
         return False
-    if valid_chunk_ratio < 0.5:
-        return False
     if best_chunk_score is None or best_chunk_score < 0.80:
         return False
-    if candidate_duration_seconds is None:
-        return False
-    return 0.0 < float(candidate_duration_seconds) <= 30.0
+    # We only need one complete extraction interval. The downstream selector
+    # validates and trims that interval, so unrelated portions of a longer
+    # source are not evidence that the known-good interval is unusable.
+    return True
 
 
 def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list[str]]:

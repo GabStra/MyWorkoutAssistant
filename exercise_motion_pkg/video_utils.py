@@ -217,6 +217,7 @@ def trim_video(
     output_path: Path,
     start_seconds: float,
     end_seconds: float,
+    target_fps: float | None = None,
 ) -> Path:
     ffmpeg_path = resolve_ffmpeg_path()
     if ffmpeg_path is not None:
@@ -225,6 +226,7 @@ def trim_video(
             output_path=output_path,
             start_seconds=start_seconds,
             end_seconds=end_seconds,
+            target_fps=target_fps,
             ffmpeg=ffmpeg_path,
         )
 
@@ -250,10 +252,11 @@ def trim_video(
         raise RuntimeError(f"Could not open video: {source_path}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    output_fps = float(target_fps) if target_fps is not None and target_fps > 0.0 else metadata.fps
     writer = cv2.VideoWriter(
         str(output_path),
         fourcc,
-        metadata.fps,
+        output_fps,
         (metadata.width, metadata.height),
     )
     if not writer.isOpened():
@@ -263,12 +266,26 @@ def trim_video(
     try:
         capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         current_frame = start_frame
+        selected_frames = []
         while current_frame < end_frame_exclusive:
             ok, frame = capture.read()
             if not ok:
                 break
-            writer.write(frame)
+            if target_fps is None:
+                writer.write(frame)
+            else:
+                selected_frames.append(frame)
             current_frame += 1
+        if target_fps is not None:
+            if not selected_frames:
+                raise RuntimeError(f"Trimmed video contains no frames: {source_path}")
+            output_frame_count = max(1, int(round(len(selected_frames) * output_fps / metadata.fps)))
+            for output_index in range(output_frame_count):
+                source_index = min(
+                    len(selected_frames) - 1,
+                    int(round(output_index * metadata.fps / output_fps)),
+                )
+                writer.write(selected_frames[source_index])
     finally:
         capture.release()
         writer.release()
@@ -344,6 +361,7 @@ def _trim_video_with_ffmpeg(
     output_path: Path,
     start_seconds: float,
     end_seconds: float,
+    target_fps: float | None,
     ffmpeg: str,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,6 +382,10 @@ def _trim_video_with_ffmpeg(
         str(safe_end),
         "-i",
         str(source_path),
+    ]
+    if target_fps is not None and target_fps > 0.0:
+        command.extend(["-vf", f"fps={float(target_fps):g}"])
+    command.extend([
         "-c:v",
         "libx264",
         "-pix_fmt",
@@ -375,7 +397,7 @@ def _trim_video_with_ffmpeg(
         "-movflags",
         "+faststart",
         str(output_path),
-    ]
+    ])
     process = subprocess.run(
         command,
         check=False,

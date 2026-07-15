@@ -57,7 +57,7 @@ param(
     [double]$ThoroughVisionMotionScanMaxSeconds = 180.0,
     [int]$FallbackCandidates = 2,
     [int]$MaxSourceWindowAttempts = 2,
-    [int]$MaxFinalOutputRejections = 2,
+    [int]$MaxFinalOutputRejections = 0,
     [double]$SourceReviewTimeoutSeconds = 90.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
     [double]$CandidateTimeoutSeconds = 0.0,
@@ -211,11 +211,266 @@ function Resolve-MotionPythonCommand {
     return "python"
 }
 
+function Write-ExerciseRunLockMetadata {
+    param(
+        [System.IO.FileStream]$LockStream,
+        [Nullable[int]]$ActiveChildProcessId,
+        [string]$ActiveStage
+    )
+    $payload = @{
+        schemaVersion = 1
+        ownerProcessId = $PID
+        ownerStartedAt = $script:ExerciseRunStartedAt
+        exerciseName = $ExerciseName
+        exerciseId = $ExerciseId
+        workspace = $script:ExerciseWorkspace
+        activeChildProcessId = $ActiveChildProcessId
+        activeStage = $ActiveStage
+        updatedAt = (Get-Date).ToString("o")
+    } | ConvertTo-Json -Depth 4
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($payload)
+    $LockStream.Position = 0
+    $LockStream.SetLength(0)
+    $LockStream.Write($bytes, 0, $bytes.Length)
+    $LockStream.Flush($true)
+}
+
+function Read-ExerciseRunLockMetadata {
+    param([System.IO.FileStream]$LockStream)
+    if ($LockStream.Length -le 0) {
+        return $null
+    }
+    $LockStream.Position = 0
+    $reader = [System.IO.StreamReader]::new(
+        $LockStream,
+        [System.Text.UTF8Encoding]::new($false),
+        $true,
+        1024,
+        $true
+    )
+    try {
+        $text = $reader.ReadToEnd()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return $null
+        }
+        return $text | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+    finally {
+        $reader.Dispose()
+    }
+}
+
+function Test-ProcessIdAlive {
+    param([Nullable[int]]$ProcessId)
+    if ($null -eq $ProcessId -or $ProcessId -le 0) {
+        return $false
+    }
+    return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Initialize-ExerciseSubprocessJob {
+    if ($null -eq ("ExerciseMotion.NativeJob" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace ExerciseMotion {
+    public static class NativeJob {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoCounters {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicLimitInformation {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ExtendedLimitInformation {
+            public BasicLimitInformation BasicLimitInformation;
+            public IoCounters IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            IntPtr information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        public static IntPtr CreateKillOnCloseJob() {
+            const uint KillOnJobClose = 0x00002000;
+            const int ExtendedLimitInformationClass = 9;
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) {
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+            var limits = new ExtendedLimitInformation();
+            limits.BasicLimitInformation.LimitFlags = KillOnJobClose;
+            int size = Marshal.SizeOf(typeof(ExtendedLimitInformation));
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try {
+                Marshal.StructureToPtr(limits, buffer, false);
+                if (!SetInformationJobObject(job, ExtendedLimitInformationClass, buffer, (uint)size)) {
+                    int error = Marshal.GetLastWin32Error();
+                    CloseHandle(job);
+                    throw new System.ComponentModel.Win32Exception(error);
+                }
+            }
+            finally {
+                Marshal.FreeHGlobal(buffer);
+            }
+            return job;
+        }
+
+        public static void AssignProcess(IntPtr job, IntPtr process) {
+            if (!AssignProcessToJobObject(job, process)) {
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+
+        public static void CloseJob(IntPtr job) {
+            if (job != IntPtr.Zero) {
+                CloseHandle(job);
+            }
+        }
+    }
+}
+"@
+    }
+    return [ExerciseMotion.NativeJob]::CreateKillOnCloseJob()
+}
+
+function Close-ExerciseSubprocessJob {
+    param([IntPtr]$JobHandle)
+    if ($JobHandle -ne [IntPtr]::Zero) {
+        [ExerciseMotion.NativeJob]::CloseJob($JobHandle)
+    }
+}
+
+function Enter-ExerciseRunLock {
+    param([string]$LockPath)
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $LockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    catch [System.IO.IOException] {
+        throw "Another exercise movement run is already using this workspace: $script:ExerciseWorkspace"
+    }
+
+    $previous = Read-ExerciseRunLockMetadata -LockStream $stream
+    $previousChildId = if ($null -ne $previous) { $previous.activeChildProcessId } else { $null }
+    if (Test-ProcessIdAlive -ProcessId $previousChildId) {
+        $stream.Dispose()
+        throw "An orphaned exercise movement subprocess (PID $previousChildId) is still using this workspace: $script:ExerciseWorkspace. Stop that process before retrying."
+    }
+    Write-ExerciseRunLockMetadata -LockStream $stream -ActiveChildProcessId $null -ActiveStage "initializing"
+    return $stream
+}
+
+function Exit-ExerciseRunLock {
+    param(
+        [System.IO.FileStream]$LockStream,
+        [string]$LockPath
+    )
+    if ($null -eq $LockStream) {
+        return
+    }
+    $LockStream.Dispose()
+    if (Test-Path -LiteralPath $LockPath) {
+        Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-PythonModuleWithExitCode {
+    param(
+        [string[]]$Arguments,
+        [string]$Stage = "python"
+    )
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PythonCommand
+    $startInfo.UseShellExecute = $false
+    $startInfo.WorkingDirectory = (Get-Location).Path
+    foreach ($argument in $Arguments) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) {
+        $process.Dispose()
+        throw "Failed to start python command for stage '$Stage'."
+    }
+    try {
+        [ExerciseMotion.NativeJob]::AssignProcess($script:ExerciseSubprocessJob, $process.Handle)
+    }
+    catch {
+        try {
+            $process.Kill($true)
+        }
+        catch {
+        }
+        $process.Dispose()
+        throw "Failed to attach stage '$Stage' to the cancellation job: $($_.Exception.Message)"
+    }
+    Write-ExerciseRunLockMetadata `
+        -LockStream $script:ExerciseRunLockStream `
+        -ActiveChildProcessId $process.Id `
+        -ActiveStage $Stage
+    try {
+        $process.WaitForExit()
+        return $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+        Write-ExerciseRunLockMetadata `
+            -LockStream $script:ExerciseRunLockStream `
+            -ActiveChildProcessId $null `
+            -ActiveStage "between_stages"
+    }
+}
+
 function Invoke-PythonModule {
-    param([string[]]$Arguments)
-    & $PythonCommand @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "python command failed with exit code $LASTEXITCODE."
+    param(
+        [string[]]$Arguments,
+        [string]$Stage = "python"
+    )
+    $exitCode = Invoke-PythonModuleWithExitCode -Arguments $Arguments -Stage $Stage
+    if ($exitCode -ne 0) {
+        throw "python command failed with exit code $exitCode."
     }
 }
 
@@ -276,13 +531,27 @@ function Save-AttemptCandidateSnapshot {
     try {
         $snapshotDir = Join-Path (Split-Path -Parent $Path) "attempt_exclusions"
         New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
-        $snapshotPath = Join-Path $snapshotDir ("youtube_candidates.attempt-{0:D2}.json" -f $AttemptIndex)
-        Copy-Item -LiteralPath $Path -Destination $snapshotPath -Force
+        $snapshotTimestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+        $snapshotPath = Join-Path $snapshotDir ("youtube_candidates.attempt-{0:D2}.{1}.json" -f $AttemptIndex, $snapshotTimestamp)
+        Copy-Item -LiteralPath $Path -Destination $snapshotPath
         return $snapshotPath
     } catch {
         Write-Warning "Failed to snapshot attempt $AttemptIndex candidates for retry exclusion: $($_.Exception.Message)"
         return $null
     }
+}
+
+function Get-AttemptCandidateSnapshotPaths {
+    param([string]$CandidatesPath)
+    $snapshotDir = Join-Path (Split-Path -Parent $CandidatesPath) "attempt_exclusions"
+    if (-not (Test-Path -LiteralPath $snapshotDir)) {
+        return @()
+    }
+    return @(
+        Get-ChildItem -LiteralPath $snapshotDir -Filter "youtube_candidates.attempt-*.json" -File |
+            Sort-Object FullName |
+            ForEach-Object { $_.FullName }
+    )
 }
 
 function Assert-SelectedWearSkeletonContract {
@@ -559,6 +828,11 @@ $previewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
 }
 New-Item -ItemType Directory -Force -Path $exerciseWorkspace | Out-Null
 New-Item -ItemType Directory -Force -Path $previewCachePath | Out-Null
+$script:ExerciseWorkspace = $exerciseWorkspace
+$script:ExerciseRunStartedAt = (Get-Date).ToString("o")
+$exerciseRunLockPath = Join-Path $exerciseWorkspace ".exercise-motion-run.lock.json"
+$script:ExerciseRunLockStream = $null
+$script:ExerciseSubprocessJob = [IntPtr]::Zero
 
 $planPayload = @{
     exercises = @(
@@ -906,12 +1180,14 @@ if ($NoExerciseMotionContract) {
 
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"
 $bakeBaseArgs = [string[]]$bakeArgs
-$currentTargetSuitableCount = $initialTargetSuitableCount
+$currentTargetSuitableCount = $resolvedMaxCandidateReviewTargetSuitableCount
 $attemptIndex = 1
 $selection = $null
-$previousAttemptCandidateJsonPaths = @()
+$previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $candidatesPath)
 
 try {
+    $script:ExerciseRunLockStream = Enter-ExerciseRunLock -LockPath $exerciseRunLockPath
+    $script:ExerciseSubprocessJob = Initialize-ExerciseSubprocessJob
     $warmWhamWorkerInstance = $null
     if ($effectiveWarmWhamWorker) {
         $warmWhamWorkerInstance = Start-WhamWarmWorker `
@@ -920,11 +1196,17 @@ try {
             -WorkerScriptPath $whamWarmWorkerScriptPath
     }
     while ($true) {
-        $attemptMaxCandidates = [Math]::Max($MaxCandidates, $currentTargetSuitableCount)
+        # The wrapper previously paid model startup and YouTube search once per
+        # replacement attempt. Use that same cumulative review budget in the
+        # first resident-model pass and stop naturally once the target is met.
+        $cumulativeCandidateBudget = $MaxCandidates * $resolvedMaxCandidateReviewTargetSuitableCount
+        $attemptMaxCandidates = [Math]::Max($cumulativeCandidateBudget, $currentTargetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($VisionCandidatesPerExercise, $currentTargetSuitableCount)
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count" -Value "$currentTargetSuitableCount"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+        $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--semantic-gate-candidates-per-exercise" -Value "$attemptMaxCandidates"
+        $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--semantic-gate-max-candidates-per-exercise" -Value "$attemptMaxCandidates"
         foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
             if (Test-Path -LiteralPath $previousAttemptCandidateJsonPath) {
                 $attemptYoutubeArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)
@@ -942,7 +1224,7 @@ try {
             Write-Host "Reusing existing YouTube candidates for first bake attempt: $candidatesPath"
         } else {
             Write-Host "YouTube discovery attempt ${attemptIndex}: target suitable candidates $currentTargetSuitableCount (max $resolvedMaxCandidateReviewTargetSuitableCount)."
-            Invoke-PythonModule -Arguments $attemptYoutubeArgs
+            Invoke-PythonModule -Arguments $attemptYoutubeArgs -Stage "youtube_discovery_attempt_$attemptIndex"
 
             $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
             if ($recommendationCounts.Recommended -le 0 -and $ThoroughYoutubeRetry -and -not $SkipThoroughYoutubeRetry) {
@@ -955,7 +1237,7 @@ try {
                 if ($ThoroughVisionMaxChunksPerCandidate -gt 0) {
                     $thoroughYoutubeArgs += @("--vision-max-chunks-per-candidate", "$ThoroughVisionMaxChunksPerCandidate")
                 }
-                Invoke-PythonModule -Arguments $thoroughYoutubeArgs
+                Invoke-PythonModule -Arguments $thoroughYoutubeArgs -Stage "youtube_discovery_thorough_attempt_$attemptIndex"
                 $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
             }
         }
@@ -966,12 +1248,11 @@ try {
         }
 
         if ($recommendationCounts.Recommended -le 0) {
-            if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+            if ($attemptIndex -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
                 throw "No recommended YouTube candidate found after discovery. Refusing to bake non-recommended candidates. Inspect $candidatesPath and fix discovery/ranking."
             }
-            $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
             $attemptIndex += 1
-            Write-Host "No recommended candidates yet; expanding YouTube review target to $currentTargetSuitableCount."
+            Write-Host "No recommended candidates yet; retrying discovery for one replacement candidate (attempt $attemptIndex/$resolvedMaxCandidateReviewTargetSuitableCount)."
             continue
         }
 
@@ -980,8 +1261,9 @@ try {
         if ($attemptIndex -gt 1) {
             $attemptBakeArgs += "--reuse-previous-terminal-results"
         }
-        & $PythonCommand @attemptBakeArgs
-        $bakeExitCode = $LASTEXITCODE
+        $bakeExitCode = Invoke-PythonModuleWithExitCode `
+            -Arguments $attemptBakeArgs `
+            -Stage "bake_attempt_$attemptIndex"
 
         $selection = Get-SelectionManifest -SelectionPath $selectionPath
         $selectedResultCount = Get-SelectedResultCount -Selection $selection
@@ -990,23 +1272,21 @@ try {
             if ($selectedResultCount -ge $MaxSelectedResults) {
                 break
             }
-            if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+            if ($attemptIndex -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
                 Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); max YouTube review target reached, keeping valid partial output."
                 break
             }
-            $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
             $attemptIndex += 1
-            Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); expanding YouTube review target to $currentTargetSuitableCount."
+            Write-Host "Bake-and-rank selected $selectedResultCount/$MaxSelectedResults requested result(s); retrying discovery for one replacement candidate."
             continue
         }
         if ($selection -and "$($selection.selectionStatus)" -eq "needs_manual_review" -and $selection.manualReviewFallback) {
-            if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+            if ($attemptIndex -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
                 Write-Warning "No candidate passed automatic validation after reaching the maximum discovery target; keeping the best generated movement as a manual-review fallback."
                 break
             }
-            $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
             $attemptIndex += 1
-            Write-Host "Only a manual-review fallback was produced; expanding YouTube review target to $currentTargetSuitableCount."
+            Write-Host "Only a manual-review fallback was produced; retrying discovery for one replacement candidate."
             continue
         }
         if ($bakeExitCode -ne 0 -and -not $selection) {
@@ -1017,16 +1297,17 @@ try {
         }
 
         Write-Host "Bake-and-rank completed without selecting a Wear skeleton at target $currentTargetSuitableCount."
-        if ($currentTargetSuitableCount -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
+        if ($attemptIndex -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
             throw "Bake-and-rank completed without selecting a Wear skeleton after reviewing up to $resolvedMaxCandidateReviewTargetSuitableCount suitable YouTube candidate(s). Inspect $selectionPath."
         }
-        $currentTargetSuitableCount = [Math]::Min($resolvedMaxCandidateReviewTargetSuitableCount, $currentTargetSuitableCount + 1)
         $attemptIndex += 1
-        Write-Host "No final selected motion; expanding YouTube review target to $currentTargetSuitableCount."
+        Write-Host "No final selected motion; retrying discovery for one replacement candidate (attempt $attemptIndex/$resolvedMaxCandidateReviewTargetSuitableCount)."
     }
 }
 finally {
     Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+    Close-ExerciseSubprocessJob -JobHandle $script:ExerciseSubprocessJob
+    Exit-ExerciseRunLock -LockStream $script:ExerciseRunLockStream -LockPath $exerciseRunLockPath
 }
 
 Write-Host "Plan JSON: $((Resolve-Path -LiteralPath $planPath).Path)"

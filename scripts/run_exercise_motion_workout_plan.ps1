@@ -66,7 +66,7 @@ param(
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 5,
-    [int]$MaxFinalOutputRejections = 6,
+    [int]$MaxFinalOutputRejections = 0,
     [double]$SourceReviewTimeoutSeconds = 90.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
     [double]$CandidateTimeoutSeconds = 0.0,
@@ -1243,13 +1243,27 @@ function Start-BakeJob {
             try {
                 $snapshotDir = Join-Path (Split-Path -Parent $Path) "attempt_exclusions"
                 New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
-                $snapshotPath = Join-Path $snapshotDir ("youtube_candidates.attempt-{0:D2}.json" -f $AttemptIndex)
-                Copy-Item -LiteralPath $Path -Destination $snapshotPath -Force
+                $snapshotTimestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+                $snapshotPath = Join-Path $snapshotDir ("youtube_candidates.attempt-{0:D2}.{1}.json" -f $AttemptIndex, $snapshotTimestamp)
+                Copy-Item -LiteralPath $Path -Destination $snapshotPath
                 return $snapshotPath
             } catch {
                 "[$(Get-Date -Format o)] failed to snapshot attempt $AttemptIndex candidates for retry exclusion: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
                 return $null
             }
+        }
+
+        function Get-AttemptCandidateSnapshotPaths {
+            param([string]$CandidatesPath)
+            $snapshotDir = Join-Path (Split-Path -Parent $CandidatesPath) "attempt_exclusions"
+            if (-not (Test-Path -LiteralPath $snapshotDir)) {
+                return @()
+            }
+            return @(
+                Get-ChildItem -LiteralPath $snapshotDir -Filter "youtube_candidates.attempt-*.json" -File |
+                    Sort-Object FullName |
+                    ForEach-Object { $_.FullName }
+            )
         }
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
@@ -1259,9 +1273,9 @@ function Start-BakeJob {
             "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
             "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
         $attemptIndex = 1
-        $previousAttemptCandidateJsonPaths = @()
+        $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $CandidatesPath)
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
         $discoverySecondsTotal = 0.0
         $bakeSecondsTotal = 0.0
@@ -1288,11 +1302,14 @@ function Start-BakeJob {
                 }
                 $useExistingCandidates = $false
             } else {
-                $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
+                $cumulativeCandidateBudget = $BaseMaxCandidates * $MaxTargetSuitableCount
+                $attemptMaxCandidates = [Math]::Max($cumulativeCandidateBudget, $targetSuitableCount)
                 $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
                 $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
                 $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
                 $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
+                $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--semantic-gate-candidates-per-exercise" -Value "$attemptMaxCandidates"
+                $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--semantic-gate-max-candidates-per-exercise" -Value "$attemptMaxCandidates"
                 foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
                     if (Test-Path -LiteralPath $previousAttemptCandidateJsonPath) {
                         $attemptDiscoveryArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)
@@ -1920,7 +1937,7 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 24 }
         if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 6 }
         if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 3 }
-        if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 6 }
+        if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 0 }
         if (-not $PSBoundParameters.ContainsKey("NoExerciseNameRewrite")) { $NoExerciseNameRewrite = $true }
         if (-not $PSBoundParameters.ContainsKey("SemanticGateWithLlamaCpp") -and -not $PSBoundParameters.ContainsKey("SkipSemanticGate")) {
             $SkipSemanticGate = $true
