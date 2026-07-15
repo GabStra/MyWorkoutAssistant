@@ -299,15 +299,34 @@ fun ExerciseScreen(
     }
 
     key(state.exerciseId to state.set.id) {
+        val activeExerciseContext = buildActiveExerciseContextLabel(
+            setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
+            unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
+            intraSetTotal = state.intraSetTotal,
+        )
         val exerciseTitleComposable: @Composable () -> Unit = {
-            ExerciseNameText(
-                text = exercise.name,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 45.dp),
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                textAlign = TextAlign.Center
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp),
+            ) {
+                ExerciseNameText(
+                    text = exercise.name,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    textAlign = TextAlign.Center
+                )
+                activeExerciseContext?.let { context ->
+                    Text(
+                        text = context,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -1360,7 +1379,6 @@ private fun buildExerciseInfoSections(
     }
 
     return buildList {
-        add(TitledLinesSection("Exercise", listOf(exercise.name)))
         if (sessionLines.isNotEmpty()) add(TitledLinesSection("Session", sessionLines))
         if (statusLines.isNotEmpty()) add(TitledLinesSection("Status", statusLines))
         plateauReason?.let { add(TitledLinesSection("Plateau", listOf(it))) }
@@ -1371,3 +1389,16 @@ private fun buildExerciseInfoSections(
         if (exercise.notes.isNotEmpty()) add(TitledLinesSection("Notes", listOf(exercise.notes)))
     }
 }
+
+private fun buildActiveExerciseContextLabel(
+    setCounter: Pair<Int, Int>?,
+    unilateralSideIndex: UInt?,
+    intraSetTotal: UInt?,
+): String? = listOfNotNull(
+    setCounter?.let { (current, total) -> "$current/$total" },
+    if (unilateralSideIndex != null && intraSetTotal != null) {
+        "SIDE $unilateralSideIndex/$intraSetTotal"
+    } else {
+        null
+    }
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
