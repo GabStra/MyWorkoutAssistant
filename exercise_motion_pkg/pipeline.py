@@ -521,8 +521,11 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
 
     if request.motion_tuning_enabled:
         stage_started = time.perf_counter()
+        tuning_input_clip = canonicalize_camera_motion_clip(raw_clip)
+        record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
+        stage_started = time.perf_counter()
         cleaned_clip, cleanup_stats = cleanup_motion_clip(
-            raw_clip,
+            tuning_input_clip,
             one_euro_min_cutoff=request.one_euro_min_cutoff,
             one_euro_beta=request.one_euro_beta,
             one_euro_derivative_cutoff=request.one_euro_derivative_cutoff,
@@ -555,6 +558,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             },
         )
         post_processing_steps = [
+            "camera_to_canonical_world_coordinates",
             "ground_plane_fitting",
             "support_global_translation_stabilization",
             "root_translation_one_euro_xz",
@@ -701,7 +705,12 @@ def crop_motion_clip_to_input_window(
         raise ValueError(
             f"WHAM produced no motion frames inside the requested output window {start:.3f}-{end:.3f}s."
         )
-    frame_tolerance_seconds = 1.5 / max(float(clip.fps), 1.0)
+    frame_duration_seconds = 1.0 / max(float(clip.fps), 1.0)
+    requested_duration_seconds = None if end == float("inf") else end - start
+    frame_tolerance_seconds = max(
+        3.0 * frame_duration_seconds,
+        0.05 * requested_duration_seconds if requested_duration_seconds is not None else 0.0,
+    )
     coverage_failures: list[str] = []
     if retained[0].time_sec > start + frame_tolerance_seconds:
         coverage_failures.append(
@@ -710,6 +719,18 @@ def crop_motion_clip_to_input_window(
     if end != float("inf") and retained[-1].time_sec < end - frame_tolerance_seconds:
         coverage_failures.append(
             f"ends at {retained[-1].time_sec:.3f}s instead of {end:.3f}s"
+        )
+    largest_internal_gap_seconds = max(
+        (
+            current.time_sec - previous.time_sec
+            for previous, current in zip(retained, retained[1:])
+        ),
+        default=0.0,
+    )
+    internal_gap_tolerance_seconds = 2.5 * frame_duration_seconds
+    if largest_internal_gap_seconds > internal_gap_tolerance_seconds + 1e-6:
+        coverage_failures.append(
+            f"contains an internal {largest_internal_gap_seconds:.3f}s tracking gap"
         )
     if coverage_failures:
         raise IncompleteWhamTrackingError(
@@ -739,6 +760,45 @@ def crop_motion_clip_to_input_window(
                 "retainedInputEndSeconds": retained[-1].time_sec,
                 "inputFrameCount": clip.frame_count,
                 "outputFrameCount": len(retained),
+                "boundaryToleranceSeconds": frame_tolerance_seconds,
+                "missingStartSeconds": max(0.0, retained[0].time_sec - start),
+                "missingEndSeconds": (
+                    None
+                    if end == float("inf")
+                    else max(0.0, end - retained[-1].time_sec)
+                ),
+                "largestInternalGapSeconds": largest_internal_gap_seconds,
+            },
+        },
+    )
+
+
+def canonicalize_camera_motion_clip(clip: MotionClip) -> MotionClip:
+    """Convert WHAM/OpenCV camera coordinates into the preview's Y-up world basis.
+
+    WHAM camera coordinates use positive Y down and positive Z forward.  The
+    renderer uses positive Y up and the opposite Z direction.  Converting the
+    motion once during post-processing keeps world orientation out of preview
+    settings and avoids camera-dependent scene inversion heuristics.
+    """
+    return replace(
+        clip,
+        frames=[
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    joint_name: (point[0], -point[1], -point[2])
+                    for joint_name, point in frame.joints.items()
+                },
+            )
+            for frame in clip.frames
+        ],
+        metadata={
+            **clip.metadata,
+            "coordinateNormalization": {
+                "source": "wham_opencv_camera",
+                "target": "canonical_y_up_world",
+                "transform": "rotate_x_180_degrees",
             },
         },
     )

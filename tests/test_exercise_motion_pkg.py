@@ -426,6 +426,73 @@ def test_crop_motion_clip_to_input_window_rejects_incomplete_wham_track() -> Non
         )
 
 
+def test_crop_motion_clip_to_input_window_accepts_small_proportional_boundary_loss() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis"],
+        frames=[
+            MotionFrame(time_sec=1.4 + index / 30.0, joints={"pelvis": (float(index), 0.0, 0.0)})
+            for index in range(169)
+        ],
+    )
+
+    cropped = pipeline.crop_motion_clip_to_input_window(
+        clip,
+        start_seconds=1.25,
+        end_seconds=7.03,
+    )
+
+    crop_metadata = cropped.metadata["inferenceContextCrop"]
+    assert crop_metadata["missingStartSeconds"] == pytest.approx(0.15)
+    assert crop_metadata["missingEndSeconds"] == pytest.approx(0.03, abs=0.001)
+    assert crop_metadata["boundaryToleranceSeconds"] == pytest.approx(0.289)
+
+
+def test_crop_motion_clip_to_input_window_rejects_internal_tracking_gap() -> None:
+    times = [index / 30.0 for index in range(30)] + [2.0 + index / 30.0 for index in range(30)]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis"],
+        frames=[
+            MotionFrame(time_sec=time_sec, joints={"pelvis": (float(index), 0.0, 0.0)})
+            for index, time_sec in enumerate(times)
+        ],
+    )
+
+    with pytest.raises(IncompleteWhamTrackingError, match="internal .* tracking gap"):
+        pipeline.crop_motion_clip_to_input_window(
+            clip,
+            start_seconds=0.0,
+            end_seconds=2.95,
+        )
+
+
+def test_canonicalize_camera_motion_clip_converts_to_y_up_world_without_mutating_source() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["head", "pelvis", "left_foot"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "head": (0.2, -0.8, 4.0),
+                    "pelvis": (0.1, -0.1, 4.2),
+                    "left_foot": (-0.2, 0.6, 4.3),
+                },
+            )
+        ],
+    )
+
+    canonical = pipeline.canonicalize_camera_motion_clip(clip)
+
+    assert canonical.frames[0].joints["head"] == pytest.approx((0.2, 0.8, -4.0))
+    assert canonical.frames[0].joints["pelvis"] == pytest.approx((0.1, 0.1, -4.2))
+    assert canonical.frames[0].joints["left_foot"] == pytest.approx((-0.2, -0.6, -4.3))
+    assert canonical.frames[0].joints["head"][1] > canonical.frames[0].joints["left_foot"][1]
+    assert clip.frames[0].joints["head"] == pytest.approx((0.2, -0.8, 4.0))
+    assert canonical.metadata["coordinateNormalization"]["transform"] == "rotate_x_180_degrees"
+
+
 def _wham_track(frame_ids: list[int], *, translation_x: float = 0.0) -> dict[str, object]:
     frame_count = len(frame_ids)
     return {
@@ -5956,14 +6023,14 @@ def test_llama_cpp_server_model_matching_uses_model_basename() -> None:
     payload = {
         "data": [
             {
-                "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
             }
         ]
     }
 
     assert youtube_module.llama_cpp_server_models_match_expected(
         payload,
-        "C:/Users/gabri/Downloads/gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+        "C:/Users/gabri/Downloads/gemma-4-12b-it-UD-Q4_K_XL.gguf",
     )
     assert not youtube_module.llama_cpp_server_models_match_expected(
         payload,
@@ -5989,7 +6056,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_unexpected_model(
 
     monkeypatch.setattr(youtube_module.httpx, "get", fake_get)
 
-    with pytest.raises(RuntimeError, match="serving .*Qwen3VL.*expects gemma-4-12B"):
+    with pytest.raises(RuntimeError, match="serving .*Qwen3VL.*expects gemma-4-12b"):
         youtube_module.LlamaCppVisionRanker(YouTubeRankingSettings())
 
 
@@ -6003,7 +6070,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_mode(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -6030,7 +6097,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_budget(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -6059,7 +6126,7 @@ def test_llama_cpp_ranker_allows_existing_server_with_matching_reasoning_mode(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-heretic-QAT-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -19491,7 +19558,7 @@ def test_deterministic_scene_orientation_hint_keeps_upright_render_orientation()
     assert hint["reason"] == "head_lower_body_order_not_strongly_inverted"
 
 
-def test_deterministic_scene_orientation_correction_updates_variant_settings() -> None:
+def test_deterministic_scene_orientation_hint_cannot_invert_canonical_motion() -> None:
     base_options = bake_and_rank_module.build_preview_bake_base_options(motion_tuning_enabled=True)
     hint = bake_and_rank_module.deterministic_scene_orientation_hint_from_payload(
         make_scene_orientation_payload(inverted=True),
@@ -19514,8 +19581,8 @@ def test_deterministic_scene_orientation_correction_updates_variant_settings() -
     )
 
     assert corrected["options"]["lockPlantedFeet"] is True
-    assert corrected["options"]["sceneInverted"] is True
-    assert "deterministic scene orientation set sceneInverted true" in corrected["adaptivePreviewSettings"]["reason"]
+    assert corrected["options"]["sceneInverted"] is False
+    assert corrected["adaptivePreviewSettings"]["deterministicSceneOrientation"]["applied"] is False
     assert corrected["adaptivePreviewSettings"]["deterministicSceneOrientation"]["forceSceneInverted"] is True
 
 
@@ -19539,8 +19606,8 @@ def test_deterministic_post_bake_scene_orientation_correction_preserves_zero_cam
 
     assert hint["cameraYawDegrees"] == pytest.approx(0.0)
     assert hint["forceSceneInverted"] is True
-    assert applied is True
-    assert corrected_options["sceneInverted"] is True
+    assert applied is False
+    assert corrected_options["sceneInverted"] is False
     assert corrected_options["cameraYawDegrees"] == pytest.approx(0.0)
 
 
@@ -19557,9 +19624,9 @@ def test_deterministic_post_bake_scene_orientation_fallback_preserves_auto_align
     )
 
     assert hint["forceSceneInverted"] is True
-    assert applied is True
+    assert applied is False
     assert corrected_options["autoWorldAlignment"] is True
-    assert corrected_options["sceneInverted"] is True
+    assert corrected_options["sceneInverted"] is False
 
 
 def make_planted_feet_payload() -> dict[str, object]:
@@ -19697,6 +19764,29 @@ def test_raw_wham_gate_defers_unstable_overhead_hands_to_lock_aware_final_gate(t
     assert gate["pairedHandsPreservationMetrics"]["severePairedHandsDistortion"] is True
 
 
+def test_raw_wham_gate_allows_only_bounded_isolated_distal_recovery() -> None:
+    def gate(*, reasons: list[str], exceedances: int, consecutive: int) -> dict[str, object]:
+        return {
+            "kinematicPlausibilityMetrics": {
+                "artifactReasons": reasons,
+                "distalStep": {
+                    "thresholdExceedanceCount": exceedances,
+                    "maxConsecutiveThresholdExceedanceCount": consecutive,
+                },
+            }
+        }
+
+    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+        gate(reasons=["limb_velocity_spike_penalty"], exceedances=3, consecutive=2)
+    ) is True
+    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+        gate(reasons=["limb_velocity_spike_penalty"], exceedances=4, consecutive=2)
+    ) is False
+    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+        gate(reasons=["bone_length_instability_penalty"], exceedances=1, consecutive=1)
+    ) is False
+
+
 def test_deterministic_preview_settings_hints_keep_auto_alignment_for_horizontal_body() -> None:
     hint = bake_and_rank_module.deterministic_preview_settings_hint_from_payload(
         make_horizontal_body_payload(),
@@ -19790,7 +19880,7 @@ def test_deterministic_support_hint_keeps_unlocked_baseline_and_adds_lock_trial(
     assert planned[1]["options"]["lockPlantedHands"] is True
 
 
-def test_adaptive_preview_planner_applies_deterministic_scene_orientation_correction(
+def test_adaptive_preview_planner_keeps_canonical_world_orientation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -19830,10 +19920,10 @@ def test_adaptive_preview_planner_applies_deterministic_scene_orientation_correc
     )
 
     assert len(variants) == 1
-    assert variants[0]["options"]["sceneInverted"] is True
+    assert variants[0]["options"]["sceneInverted"] is False
     assert (
         variants[0]["adaptivePreviewSettings"]["deterministicSceneOrientation"]["forceSceneInverted"]
-        is True
+        is False
     )
     plan_payload = json.loads((tmp_path / "full-input.adaptive-settings-planning" / "adaptive_settings_plan.json").read_text())
     assert captured["contact_sheet_frame_count"] == 12
@@ -19845,9 +19935,9 @@ def test_adaptive_preview_planner_applies_deterministic_scene_orientation_correc
     assert plan_payload["contactSheetFrameCount"] == 12
     assert len(plan_payload["contactSheetFrameTimestamps"]) == 12
     assert plan_payload["source"] == "deterministic_postprocessing"
-    assert plan_payload["deterministicSceneOrientation"]["forceSceneInverted"] is True
-    assert plan_payload["deterministicRebakeRequired"] is True
-    assert plan_payload["plannedVariants"][0]["options"]["sceneInverted"] is True
+    assert plan_payload["deterministicSceneOrientation"]["forceSceneInverted"] is False
+    assert plan_payload["deterministicSceneOrientation"]["screenOrientationHintDiagnosticOnly"] is True
+    assert plan_payload["plannedVariants"][0]["options"]["sceneInverted"] is False
     assert len(plan_payload["materializedVariants"]) == 1
 
 
@@ -19901,11 +19991,11 @@ def test_adaptive_preview_planner_keeps_default_auto_alignment_when_orientation_
     plan_payload = json.loads((tmp_path / "full-input.adaptive-settings-planning" / "adaptive_settings_plan.json").read_text())
     assert plan_payload["finalOptions"]["autoWorldAlignment"] is True
     assert plan_payload["finalOptions"]["sceneInverted"] is False
-    assert plan_payload["deterministicSceneOrientation"]["orientationStrategy"] == "none"
+    assert plan_payload["deterministicSceneOrientation"]["orientationStrategy"] == "canonical_world"
     assert len(plan_payload["materializedVariants"]) == 1
 
 
-def test_adaptive_preview_planner_stacks_auto_alignment_with_scene_inversion(
+def test_adaptive_preview_planner_does_not_probe_or_apply_scene_inversion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -19945,17 +20035,15 @@ def test_adaptive_preview_planner_stacks_auto_alignment_with_scene_inversion(
     )
 
     assert len(variants) == 1
-    assert variants[0]["options"]["autoWorldAlignment"] is True
-    assert variants[0]["options"]["sceneInverted"] is True
+    assert {**base_options, **variants[0]["options"]}["autoWorldAlignment"] is True
+    assert variants[0]["options"]["sceneInverted"] is False
     orientation = variants[0]["adaptivePreviewSettings"]["deterministicSceneOrientation"]
-    assert orientation["orientationStrategy"] == "auto_world_alignment_scene_inversion"
-    assert orientation["forceAutoWorldAlignment"] is True
-    assert orientation["forceSceneInverted"] is True
-    assert orientation["autoWorldAlignmentSceneOrientation"]["forceSceneInverted"] is True
-    assert orientation["autoWorldAlignmentSceneInversionOrientation"]["reason"] == "scene_already_inverted"
+    assert orientation["orientationStrategy"] == "canonical_world"
+    assert orientation["forceSceneInverted"] is False
+    assert orientation["screenOrientationHintDiagnosticOnly"] is True
     plan_payload = json.loads((tmp_path / "full-input.adaptive-settings-planning" / "adaptive_settings_plan.json").read_text())
     assert plan_payload["finalOptions"]["autoWorldAlignment"] is True
-    assert plan_payload["finalOptions"]["sceneInverted"] is True
+    assert plan_payload["finalOptions"]["sceneInverted"] is False
     assert len(plan_payload["materializedVariants"]) == 1
 
 
@@ -20000,20 +20088,20 @@ def test_adaptive_preview_planner_adds_feet_and_hands_lock_trials_after_orientat
 
     assert len(variants) == 3
     baseline, feet_lock_trial, hands_lock_trial = variants
-    assert baseline["options"]["autoWorldAlignment"] is True
-    assert baseline["options"]["sceneInverted"] is True
+    assert {**base_options, **baseline["options"]}["autoWorldAlignment"] is True
+    assert baseline["options"]["sceneInverted"] is False
     assert "lockPlantedFeet" not in baseline["options"]
     assert "lockPlantedHands" not in baseline["options"]
     assert feet_lock_trial["id"] == "adaptive-feet-lock-trial"
-    assert feet_lock_trial["options"]["autoWorldAlignment"] is True
-    assert feet_lock_trial["options"]["sceneInverted"] is True
+    assert {**base_options, **feet_lock_trial["options"]}["autoWorldAlignment"] is True
+    assert feet_lock_trial["options"]["sceneInverted"] is False
     assert feet_lock_trial["options"]["lockPlantedFeet"] is True
     assert feet_lock_trial["options"]["lockPlantedHands"] is False
     assert feet_lock_trial["adaptivePreviewSettings"]["source"] == "deterministic_support_lock_trial"
     assert "final feet-lock trial after orientation planning" in feet_lock_trial["adaptivePreviewSettings"]["reason"]
     assert hands_lock_trial["id"] == "adaptive-hands-lock-trial"
-    assert hands_lock_trial["options"]["autoWorldAlignment"] is True
-    assert hands_lock_trial["options"]["sceneInverted"] is True
+    assert {**base_options, **hands_lock_trial["options"]}["autoWorldAlignment"] is True
+    assert hands_lock_trial["options"]["sceneInverted"] is False
     assert hands_lock_trial["options"]["lockPlantedFeet"] is False
     assert hands_lock_trial["options"]["lockPlantedHands"] is True
     assert hands_lock_trial["adaptivePreviewSettings"]["source"] == "deterministic_support_lock_trial"
@@ -21830,8 +21918,8 @@ def test_materialized_output_gate_rejects_partial_exact_source_video(
 
     metrics = bake_and_rank_module.materialized_output_acceptance_metrics(item, ranking)
 
-    assert metrics["passed"] is False
-    assert "materialized_source_video_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_source_video_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    assert "materialized_source_video_phase_hint_diagnostic_only" in metrics["skippedReasons"]
     assert (
         "materialized_source_video_incomplete_repetition_phase"
         not in bake_and_rank_module.FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS
@@ -22130,7 +22218,7 @@ def test_materialized_output_gate_ignores_loop_bridge_when_loop_not_required(
     assert "materialized_loop_bridge_pose_mismatch" in required["rejectionReasons"]
 
 
-def test_materialized_output_gate_rejects_upside_down_scene_orientation(tmp_path: Path) -> None:
+def test_materialized_output_gate_treats_screen_orientation_as_diagnostic(tmp_path: Path) -> None:
     candidate_workspace = tmp_path / "candidate"
     skeleton = candidate_workspace / "wear" / "upside-down.json"
     payload = make_horizontal_inverted_scene_orientation_payload(frame_count=8)
@@ -22174,11 +22262,12 @@ def test_materialized_output_gate_rejects_upside_down_scene_orientation(tmp_path
     )
 
     assert metrics["passed"] is False
-    assert "materialized_scene_orientation_inverted" in metrics["rejectionReasons"]
+    assert "materialized_scene_orientation_inverted" not in metrics["rejectionReasons"]
+    assert "materialized_screen_orientation_hint_ignored_canonical_world" in metrics["skippedReasons"]
     assert metrics["sceneOrientationMetrics"]["forceSceneInverted"] is True
 
 
-def test_materialized_output_gate_rejects_partial_one_way_repetition_phase(tmp_path: Path) -> None:
+def test_materialized_output_gate_keeps_partial_phase_hint_diagnostic(tmp_path: Path) -> None:
     candidate_workspace = tmp_path / "candidate"
     skeleton = candidate_workspace / "wear" / "partial-rep.json"
     write_repetition_phase_skeleton(skeleton, [0.00, 0.08, 0.16, 0.24, 0.32, 0.40])
@@ -22211,14 +22300,15 @@ def test_materialized_output_gate_rejects_partial_one_way_repetition_phase(tmp_p
     )
 
     assert metrics["passed"] is False
-    assert "materialized_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    assert "materialized_skeleton_phase_hint_diagnostic_only" in metrics["skippedReasons"]
     phase = metrics["fullRepetitionPhaseCompletenessMetrics"]
     assert phase["required"] is True
     assert phase["passed"] is False
     assert phase["endpointPhaseDeltaRatio"] > phase["maxEndpointPhaseDeltaRatio"]
 
 
-def test_materialized_output_gate_rejects_incomplete_selected_source_phase(tmp_path: Path) -> None:
+def test_materialized_output_gate_keeps_selected_source_phase_hint_diagnostic(tmp_path: Path) -> None:
     candidate_workspace = tmp_path / "candidate"
     selected_skeleton = candidate_workspace / "wear" / "selected-complete.json"
     source_skeleton = candidate_workspace / "wear" / "source-partial.json"
@@ -22268,7 +22358,8 @@ def test_materialized_output_gate_rejects_incomplete_selected_source_phase(tmp_p
     )
 
     assert metrics["passed"] is False
-    assert "materialized_source_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_source_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    assert "materialized_source_skeleton_phase_hint_diagnostic_only" in metrics["skippedReasons"]
     assert "materialized_incomplete_repetition_phase" not in metrics["rejectionReasons"]
     source_phase = metrics["sourceFullRepetitionPhaseCompletenessMetrics"]
     assert source_phase["phaseReference"] == "selected_source_time_range"
@@ -22657,7 +22748,8 @@ def test_materialized_output_gate_prefers_lower_body_phase_for_lower_body_exerci
     )
 
     assert metrics["passed"] is False
-    assert "materialized_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    assert "materialized_skeleton_phase_hint_diagnostic_only" in metrics["skippedReasons"]
     phase = metrics["fullRepetitionPhaseCompletenessMetrics"]
     assert phase["passed"] is False
     assert phase["reason"] == "one_way_partial_repetition_phase"
@@ -22665,7 +22757,7 @@ def test_materialized_output_gate_prefers_lower_body_phase_for_lower_body_exerci
     assert "hand" not in phase["dominantJoint"]
 
 
-def test_materialized_output_gate_rejects_partial_phase_when_source_has_full_return(tmp_path: Path) -> None:
+def test_materialized_output_gate_defers_partial_phase_to_semantic_validation(tmp_path: Path) -> None:
     candidate_workspace = tmp_path / "candidate"
     selected_skeleton = candidate_workspace / "wear" / "partial-rep.json"
     source_skeleton = candidate_workspace / "wear" / "full-source.json"
@@ -22702,7 +22794,8 @@ def test_materialized_output_gate_rejects_partial_phase_when_source_has_full_ret
     )
 
     assert metrics["passed"] is False
-    assert "materialized_incomplete_repetition_phase" in metrics["rejectionReasons"]
+    assert "materialized_incomplete_repetition_phase" not in metrics["rejectionReasons"]
+    assert "materialized_skeleton_phase_hint_diagnostic_only" in metrics["skippedReasons"]
     assert metrics["fullRepetitionPhaseCompletenessMetrics"]["passed"] is False
     assert metrics["sourceFullRepetitionPhaseCompletenessMetrics"]["passed"] is True
 
@@ -23206,21 +23299,21 @@ def test_rank_review_item_does_not_run_post_wham_movement_cut(
     )
 
     assert called == []
-    assert ranking.score == pytest.approx(0.0)
-    assert ranking.model_score == pytest.approx(0.0)
-    assert "post_wham_no_complete_loop" in ranking.reasons
-    assert "post_wham_candidate_rejected" in ranking.reasons
+    assert ranking.score == pytest.approx(1.0)
+    assert ranking.model_score == pytest.approx(1.0)
+    assert "post_wham_full_artifact_review" in ranking.reasons
+    assert "post_wham_movement_cut_selection_disabled" in ranking.reasons
     assert ranking.payload is not None
     assert ranking.payload["postWhamMovementCutSelectionEnabled"] is False
     assert ranking.payload["postWhamMovementCutSelectionDisabledReason"] == "no_detected_complete_loop"
-    assert ranking.payload["postWhamSelectionPolicy"] == "rejected_no_complete_loop"
-    assert ranking.payload["sectionSelectionPolicy"] == "none"
-    assert ranking.payload["finalCutResponsibility"] == "reject_candidate"
-    assert ranking.payload["reviewFrameSource"] == "none"
+    assert ranking.payload["postWhamSelectionPolicy"] == "full_generated_fallback"
+    assert ranking.payload["sectionSelectionPolicy"] == "selected_artifact_window"
+    assert ranking.payload["finalCutResponsibility"] == "full_generated_fallback"
+    assert ranking.payload["reviewFrameSource"] == "full_generated_preview_validation"
     assert ranking.payload["fullArtifactStartSeconds"] == pytest.approx(0.0)
     assert ranking.payload["fullArtifactEndSeconds"] == pytest.approx(6.0)
     assert ranking.payload["fullArtifactDurationSeconds"] == pytest.approx(6.0)
-    assert bake_and_rank_module.selection_blocking_ranking_reason(ranking) == "post_wham_no_complete_loop"
+    assert bake_and_rank_module.selection_blocking_ranking_reason(ranking) is None
     assert "selectedCandidateId" not in ranking.payload
     assert "selected_section_start_seconds" not in ranking.payload
     assert "selected_section_end_seconds" not in ranking.payload
@@ -24394,7 +24487,7 @@ def test_source_cut_scorecard_deterministic_full_cycle_does_not_override_visual_
     assert "source_cut_model_rejected" in row["rejectionReasons"]
 
 
-def test_source_cut_scorecard_strong_full_cycle_overrides_contradictory_soft_rejection() -> None:
+def test_source_cut_scorecard_semantic_rejection_owns_identity_despite_pose_cycle() -> None:
     candidate = bake_and_rank_module.SourceCutCandidate(
         candidate_id="A",
         window=DetectionWindow(index=0, start_seconds=3.4, end_seconds=6.61),
@@ -24454,11 +24547,13 @@ def test_source_cut_scorecard_strong_full_cycle_overrides_contradictory_soft_rej
     )
 
     assert ranking is not None
-    assert ranking.score == pytest.approx(0.95)
+    assert ranking.score == pytest.approx(0.0)
     assert ranking.payload is not None
     row = ranking.payload["sourceCutScorecardCandidates"][0]
-    assert row["passed"] is True
+    assert row["passed"] is False
     assert row["deterministicFullCycleOverride"] is True
+    assert "source_cut_model_rejected" in row["rejectionReasons"]
+    assert "source_cut_setup_or_filler" in row["rejectionReasons"]
 
 
 def test_selection_manifest_reports_post_wham_loop_policy(tmp_path: Path) -> None:
@@ -25454,13 +25549,13 @@ def test_source_cut_motion_gate_records_one_way_source_pose_fragments(
 
     assert result is not None
     ranking, _, _ = result
-    assert not prompts
+    assert prompts
     assert ranking.payload is not None
     all_candidates = ranking.payload["sourceCutCandidates"]
     vlm_candidates = ranking.payload["sourceCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
-    assert vlm_candidates == []
-    assert ranking.payload["sourceCutDeterministicDirectSelection"] is True
+    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A", "B"]
+    assert ranking.payload["sourceCutDeterministicDirectSelection"] is False
     assert ranking.payload["selectedCandidateId"] == "B"
     assert all_candidates[0]["motionCoverage"]["passed"] is False
     assert all_candidates[1]["motionCoverage"]["passed"] is True
@@ -25550,13 +25645,13 @@ def test_source_cut_motion_gate_records_sparse_pose_false_full_cycle(
 
     assert result is not None
     ranking, _, _ = result
-    assert not prompts
+    assert prompts
     assert ranking.payload is not None
     all_candidates = ranking.payload["sourceCutCandidates"]
     vlm_candidates = ranking.payload["sourceCutVlmInputCandidates"]
     assert [candidate["candidateId"] for candidate in all_candidates] == ["A", "B"]
-    assert vlm_candidates == []
-    assert ranking.payload["sourceCutDeterministicDirectSelection"] is True
+    assert [candidate["candidateId"] for candidate in vlm_candidates] == ["A", "B"]
+    assert ranking.payload["sourceCutDeterministicDirectSelection"] is False
     assert ranking.payload["selectedCandidateId"] == "B"
     assert all_candidates[0]["motionCoverage"]["passed"] is False
     assert all_candidates[1]["motionCoverage"]["passed"] is True
@@ -27659,14 +27754,7 @@ def test_preview_settings_variants_include_no_auto_alignment_combinations() -> N
         "fixedRoot": True,
         "sceneInverted": False,
     }
-    assert options_by_id["lock-feet-hands-no-auto-alignment-inverted"] == {
-        "lockPlantedFeet": True,
-        "lockPlantedHands": True,
-        "cleanupInterpretation": "support_lock",
-        "fixedRoot": True,
-        "autoWorldAlignment": False,
-        "sceneInverted": True,
-    }
+    assert "lock-feet-hands-no-auto-alignment-inverted" not in options_by_id
 
 
 def test_preview_settings_variants_include_paired_hands_cleanup_mode() -> None:
@@ -27683,21 +27771,15 @@ def test_preview_settings_variants_include_paired_hands_cleanup_mode() -> None:
     assert by_id["lock-feet-hands"]["options"]["lockPlantedHands"] is True
 
 
-def test_preview_settings_variants_include_scene_inversion_and_global_drift_controls() -> None:
+def test_preview_settings_variants_exclude_scene_inversion_and_include_global_drift_controls() -> None:
     variants = bake_and_rank_module.preview_settings_variants(motion_tuning_enabled=True)
     options_by_id = {
         str(variant["id"]): variant["options"]
         for variant in variants
     }
 
-    assert options_by_id["lock-feet-hands-inverted"] == {
-        "lockPlantedFeet": True,
-        "lockPlantedHands": True,
-        "cleanupInterpretation": "support_lock",
-        "fixedRoot": True,
-        "autoWorldAlignment": True,
-        "sceneInverted": True,
-    }
+    assert "lock-feet-hands-inverted" not in options_by_id
+    assert all(options.get("sceneInverted") is not True for options in options_by_id.values())
     assert options_by_id["lock-feet-hands-free-root"] == {
         "lockPlantedFeet": True,
         "lockPlantedHands": True,
@@ -27706,14 +27788,7 @@ def test_preview_settings_variants_include_scene_inversion_and_global_drift_cont
         "autoWorldAlignment": True,
         "sceneInverted": False,
     }
-    assert options_by_id["no-support-lock-inverted"] == {
-        "lockPlantedFeet": False,
-        "lockPlantedHands": False,
-        "cleanupInterpretation": "support_lock",
-        "fixedRoot": True,
-        "autoWorldAlignment": True,
-        "sceneInverted": True,
-    }
+    assert "no-support-lock-inverted" not in options_by_id
     assert options_by_id["no-foot-lock-no-auto-alignment"] == {
         "lockPlantedFeet": False,
         "lockPlantedHands": True,
@@ -27730,14 +27805,7 @@ def test_preview_settings_variants_include_scene_inversion_and_global_drift_cont
         "autoWorldAlignment": False,
         "sceneInverted": False,
     }
-    assert options_by_id["no-support-lock-no-auto-alignment-inverted"] == {
-        "lockPlantedFeet": False,
-        "lockPlantedHands": False,
-        "cleanupInterpretation": "support_lock",
-        "fixedRoot": True,
-        "autoWorldAlignment": False,
-        "sceneInverted": True,
-    }
+    assert "no-support-lock-no-auto-alignment-inverted" not in options_by_id
 def test_wham_input_quarter_turn_uses_torso_direction_for_sideways_subject() -> None:
     samples = [
         {

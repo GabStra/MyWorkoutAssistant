@@ -381,6 +381,7 @@ SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_SIZE = 2
 SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_OVERLAP_RATIO = 0.25
 SOURCE_CUT_MAX_VLM_CANDIDATES = 4
 SOURCE_CUT_MAX_MATERIALIZED_CANDIDATES = 16
+SOURCE_CUT_MAX_RENDER_WORKERS = 4
 SOURCE_CUT_END_BOUNDARY_SWEEP_FLOOR_RATIO = 0.80
 SOURCE_CUT_END_BOUNDARY_SWEEP_MAX_WINDOWS = 9
 WHAM_INFERENCE_CONTEXT_PADDING_SECONDS = 1.25
@@ -2615,7 +2616,6 @@ SELECTION_BLOCKING_RANKING_REASONS = frozenset(
         "movement_cut_scorecard_no_passing_candidate",
         "movement_cut_selected_duration_below_floor",
         "movement_cut_target_motion_gate_failed",
-        "post_wham_no_complete_loop",
     )
 )
 
@@ -4535,24 +4535,28 @@ def materialized_output_acceptance_metrics(item: ReviewItem, ranking: LoopRankin
             elif str(reason):
                 rejection_reasons.append("materialized_exported_preview_unreadable")
     if bool(orientation_metrics.get("forceSceneInverted")):
-        rejection_reasons.append("materialized_scene_orientation_inverted")
+        # Camera-screen head/foot ordering is ambiguous for horizontal,
+        # suspended, and intentionally inverted exercises.  World orientation
+        # is normalized once in the post-WHAM pipeline; keep this screen-space
+        # signal diagnostic-only rather than rejecting an otherwise valid clip.
+        skipped_reasons.append("materialized_screen_orientation_hint_ignored_canonical_world")
     if (
         bool(phase_metrics.get("required"))
         and not bool(phase_metrics.get("passed", True))
     ):
-        rejection_reasons.append("materialized_incomplete_repetition_phase")
+        skipped_reasons.append("materialized_skeleton_phase_hint_diagnostic_only")
     if (
         source_phase_metrics is not None
         and bool(source_phase_metrics.get("required"))
         and not bool(source_phase_metrics.get("passed", True))
     ):
-        rejection_reasons.append("materialized_source_incomplete_repetition_phase")
+        skipped_reasons.append("materialized_source_skeleton_phase_hint_diagnostic_only")
     if (
         source_video_phase_metrics is not None
         and bool(source_video_phase_metrics.get("required"))
         and not bool(source_video_phase_metrics.get("passed", True))
     ):
-        rejection_reasons.append("materialized_source_video_incomplete_repetition_phase")
+        skipped_reasons.append("materialized_source_video_phase_hint_diagnostic_only")
     if (
         bool(target_motion_metrics.get("required"))
         and not bool(target_motion_metrics.get("passed", True))
@@ -4597,6 +4601,28 @@ def materialized_source_video_phase_completeness_metrics(
     ranking: LoopRanking,
 ) -> dict[str, Any] | None:
     """Measure repetition completeness from pixels, independently of WHAM output."""
+    if item.loop_index < 0:
+        exact_validation_path = (
+            item.candidate_workspace
+            / "segment_detection"
+            / "exact_source_phase_validation.json"
+        )
+        try:
+            exact_validation_payload = json.loads(
+                exact_validation_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            exact_validation_payload = None
+        exact_metrics = (
+            exact_validation_payload.get("metrics")
+            if isinstance(exact_validation_payload, dict)
+            else None
+        )
+        if isinstance(exact_metrics, dict):
+            return {
+                **exact_metrics,
+                "cacheStatus": "reused_pre_wham_exact_validation",
+            }
     source_video_path = selected_source_section_video_path_for_review_item(item, create=True)
     if source_video_path is None or not source_video_path.exists():
         return None
@@ -4697,6 +4723,24 @@ def evaluate_raw_wham_motion_gate(raw_motion_path: Path) -> dict[str, Any]:
         "pairedHandsPreservationMetrics": paired_hands_metrics,
         "kinematicPlausibilityMetrics": kinematic_metrics,
     }
+
+
+def raw_wham_motion_gate_allows_cleaned_recovery(gate: dict[str, Any]) -> bool:
+    """Allow cleanup to repair only a few isolated distal-joint discontinuities."""
+    metrics = gate.get("kinematicPlausibilityMetrics")
+    if not isinstance(metrics, dict):
+        return False
+    if set(str(reason) for reason in metrics.get("artifactReasons", [])) != {
+        "limb_velocity_spike_penalty"
+    }:
+        return False
+    distal_step = metrics.get("distalStep")
+    if not isinstance(distal_step, dict):
+        return False
+    return (
+        int(distal_step.get("thresholdExceedanceCount") or 0) <= 3
+        and int(distal_step.get("maxConsecutiveThresholdExceedanceCount") or 0) <= 2
+    )
 
 
 def materialized_target_motion_observability_metrics_from_payload(
@@ -10547,6 +10591,22 @@ def process_ranked_candidate(
         raw_wham_gate = evaluate_raw_wham_motion_gate(generate_result.raw_motion_json_path)
         record_timing_seconds(result_payload, "rawWhamMotionGateSeconds", stage_started)
         result_payload["rawWhamMotionGate"] = raw_wham_gate
+        if not bool(raw_wham_gate.get("passed")) and raw_wham_motion_gate_allows_cleaned_recovery(
+            raw_wham_gate
+        ):
+            cleaned_wham_gate = evaluate_raw_wham_motion_gate(generate_result.cleaned_motion_json_path)
+            raw_wham_gate["cleanedRecovery"] = {
+                "attempted": True,
+                "policy": "isolated_distal_discontinuity_only",
+                "passed": bool(cleaned_wham_gate.get("passed")),
+                "cleanedMotionGate": cleaned_wham_gate,
+            }
+            if bool(cleaned_wham_gate.get("passed")):
+                raw_wham_gate["passed"] = True
+                raw_wham_gate["rejectionReasonsBeforeRecovery"] = raw_wham_gate.get(
+                    "rejectionReasons", []
+                )
+                raw_wham_gate["rejectionReasons"] = []
         if not bool(raw_wham_gate.get("passed")):
             result_payload["status"] = "rejected_raw_wham_validation"
             result_payload["failures"].append(
@@ -12245,89 +12305,18 @@ def choose_deterministic_orientation_strategy(
     orientation_hint: dict[str, Any],
     preview_settings_hint: dict[str, Any],
 ) -> dict[str, Any]:
-    if not bool(orientation_hint.get("forceSceneInverted")):
-        return {
-            **orientation_hint,
-            "orientationStrategy": "none",
-        }
-    if bool(preview_settings_hint.get("forceAutoWorldAlignmentFalse")):
-        return {
-            **orientation_hint,
-            "orientationStrategy": "scene_inversion",
-            "autoWorldAlignmentProbeSkippedReason": "disabled_by_body_orientation_geometry",
-        }
-    auto_options = with_fixed_preview_camera_options(
-        {
-            **base_options,
-            "autoWorldAlignment": True,
-            "sceneInverted": False,
-        }
-    )
-    try:
-        auto_export = page.evaluate(
-            """({ loopIndex, options }) => window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
-            {"loopIndex": eligible_loop.loop_index, "options": auto_options},
-        )
-        auto_orientation_hint = deterministic_scene_orientation_hint_from_payload(
-            auto_export,
-            options=auto_options,
-        )
-    except Exception as exc:
-        return {
-            **orientation_hint,
-            "orientationStrategy": "scene_inversion",
-            "autoWorldAlignmentProbeFailure": {
-                "type": type(exc).__name__,
-                "message": str(exc),
-            },
-        }
-
-    if not bool(auto_orientation_hint.get("forceSceneInverted")):
-        return {
-            **orientation_hint,
-            "forceSceneInverted": False,
-            "forceAutoWorldAlignment": True,
-            "reason": "auto_world_alignment_resolves_scene_orientation",
-            "orientationStrategy": "auto_world_alignment",
-            "baselineSceneOrientation": orientation_hint,
-            "autoWorldAlignmentSceneOrientation": auto_orientation_hint,
-        }
-
-    auto_inverted_options = with_fixed_preview_camera_options(
-        {
-            **base_options,
-            "autoWorldAlignment": True,
-            "sceneInverted": True,
-        }
-    )
-    try:
-        auto_inverted_export = page.evaluate(
-            """({ loopIndex, options }) => window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
-            {"loopIndex": eligible_loop.loop_index, "options": auto_inverted_options},
-        )
-        auto_inverted_orientation_hint = deterministic_scene_orientation_hint_from_payload(
-            auto_inverted_export,
-            options=auto_inverted_options,
-        )
-    except Exception as exc:
-        return {
-            **orientation_hint,
-            "orientationStrategy": "scene_inversion",
-            "autoWorldAlignmentSceneOrientation": auto_orientation_hint,
-            "autoWorldAlignmentSceneInversionProbeFailure": {
-                "type": type(exc).__name__,
-                "message": str(exc),
-            },
-        }
-
+    del page, eligible_loop, base_options, preview_settings_hint
+    # The cleaned motion is already normalized into canonical Y-up world
+    # coordinates. Screen-space head/foot ordering is view-dependent, so it
+    # must not trigger extra bakes or alter gravity/orientation.
     return {
         **orientation_hint,
-        "forceAutoWorldAlignment": True,
-        "reason": "auto_world_alignment_requires_scene_inversion",
-        "orientationStrategy": "auto_world_alignment_scene_inversion",
-        "baselineSceneOrientation": orientation_hint,
-        "autoWorldAlignmentSceneOrientation": auto_orientation_hint,
-        "autoWorldAlignmentSceneInversionOrientation": auto_inverted_orientation_hint,
+        "forceSceneInverted": False,
+        "reason": "canonical_world_coordinates_own_scene_orientation",
+        "orientationStrategy": "canonical_world",
+        "screenOrientationHintDiagnosticOnly": bool(
+            orientation_hint.get("forceSceneInverted")
+        ),
     }
 
 
@@ -13230,75 +13219,22 @@ def apply_deterministic_scene_orientation_to_variant(
     base_options: dict[str, Any],
     orientation_hint: dict[str, Any],
 ) -> dict[str, Any]:
-    if bool(orientation_hint.get("forceAutoWorldAlignment")):
-        force_scene_inverted = bool(orientation_hint.get("forceSceneInverted"))
-        effective_options = {
-            **base_options,
-            **dict(variant.get("options") if isinstance(variant.get("options"), dict) else {}),
-        }
-        corrected = dict(variant)
-        corrected_options = dict(variant.get("options") if isinstance(variant.get("options"), dict) else {})
-        corrected_options["autoWorldAlignment"] = True
-        corrected_options["sceneInverted"] = force_scene_inverted
-        corrected["options"] = corrected_options
-        adaptive_settings = dict(
-            variant.get("adaptivePreviewSettings")
-            if isinstance(variant.get("adaptivePreviewSettings"), dict)
-            else {}
-        )
-        existing_reason = str(adaptive_settings.get("reason") or "").strip()
-        correction_reason = (
-            "deterministic scene orientation set autoWorldAlignment true and sceneInverted true"
-            if force_scene_inverted
-            else "deterministic scene orientation set autoWorldAlignment true"
-        )
-        adaptive_settings["reason"] = (
-            f"{existing_reason}; {correction_reason}"
-            if existing_reason
-            else correction_reason
-        )
-        adaptive_settings["deterministicSceneOrientation"] = orientation_hint
-        corrected["adaptivePreviewSettings"] = adaptive_settings
-        corrected["cleanupInterpretation"] = str(
-            corrected_options.get("cleanupInterpretation")
-            or effective_options.get("cleanupInterpretation")
-            or corrected.get("cleanupInterpretation")
-            or "support_lock"
-        )
-        return corrected
-    if not bool(orientation_hint.get("forceSceneInverted")):
-        return variant
-    effective_options = {
-        **base_options,
-        **dict(variant.get("options") if isinstance(variant.get("options"), dict) else {}),
-    }
-    if parse_optional_bool(effective_options.get("sceneInverted")) is True:
-        return variant
+    del base_options
     corrected = dict(variant)
     corrected_options = dict(variant.get("options") if isinstance(variant.get("options"), dict) else {})
-    corrected_options["sceneInverted"] = True
+    corrected_options["sceneInverted"] = False
     corrected["options"] = corrected_options
-
     adaptive_settings = dict(
         variant.get("adaptivePreviewSettings")
         if isinstance(variant.get("adaptivePreviewSettings"), dict)
         else {}
     )
-    existing_reason = str(adaptive_settings.get("reason") or "").strip()
-    correction_reason = "deterministic scene orientation set sceneInverted true"
-    adaptive_settings["reason"] = (
-        f"{existing_reason}; {correction_reason}"
-        if existing_reason
-        else correction_reason
-    )
-    adaptive_settings["deterministicSceneOrientation"] = orientation_hint
+    adaptive_settings["deterministicSceneOrientation"] = {
+        **orientation_hint,
+        "applied": False,
+        "reasonNotApplied": "motion_already_normalized_to_canonical_world",
+    }
     corrected["adaptivePreviewSettings"] = adaptive_settings
-    corrected["cleanupInterpretation"] = str(
-        corrected_options.get("cleanupInterpretation")
-        or effective_options.get("cleanupInterpretation")
-        or corrected.get("cleanupInterpretation")
-        or "support_lock"
-    )
     return corrected
 
 
@@ -13311,12 +13247,9 @@ def deterministic_post_bake_scene_orientation_correction(
         export_payload,
         options=options,
     )
-    if (
-        bool(orientation_hint.get("forceSceneInverted"))
-        and parse_optional_bool(options.get("sceneInverted")) is not True
-    ):
+    if parse_optional_bool(options.get("sceneInverted")) is True:
         corrected_options = dict(options)
-        corrected_options["sceneInverted"] = True
+        corrected_options["sceneInverted"] = False
         return corrected_options, orientation_hint, True
     return options, orientation_hint, False
 
@@ -14834,15 +14767,6 @@ def preview_tuning_option_catalog(*, motion_tuning_enabled: bool) -> list[dict[s
             "risk": "Can choose a worse orientation if the pose estimate is noisy.",
         },
         {
-            "id": "sceneInverted",
-            "label": "Invert scene",
-            "type": "boolean",
-            "default": False,
-            "description": "Flips the rendered scene orientation.",
-            "useWhen": "Use only when the skeleton is clearly facing backward after alignment.",
-            "risk": "Can make an otherwise correct view backwards.",
-        },
-        {
             "id": "modelRotationXDegrees",
             "label": "Model pitch X degrees",
             "type": "number",
@@ -14972,30 +14896,12 @@ def preview_settings_variants(*, motion_tuning_enabled: bool = True) -> list[dic
             },
         ),
         (
-            "inverted",
-            "Inverted scene",
-            {
-                "fixedRoot": True,
-                "autoWorldAlignment": True,
-                "sceneInverted": True,
-            },
-        ),
-        (
             "no-auto-alignment",
             "No auto alignment",
             {
                 "fixedRoot": True,
                 "autoWorldAlignment": False,
                 "sceneInverted": False,
-            },
-        ),
-        (
-            "no-auto-alignment-inverted",
-            "No auto alignment, inverted scene",
-            {
-                "fixedRoot": True,
-                "autoWorldAlignment": False,
-                "sceneInverted": True,
             },
         ),
         (
@@ -18149,11 +18055,10 @@ def source_cut_scorecard_row(
             if isinstance(phase_metrics, dict)
             else None
         )
-        # A projected joint can appear to return because of detector noise or
-        # perspective. Override a contradictory soft visual classification only
-        # when the observed cycle is substantially stronger than the normal
-        # phase gate and the model's own topology evidence is internally
-        # complete. This rejects weak apparent cycles such as one-way half reps.
+        # Deterministic pose coverage is evidence about technical observability,
+        # not exercise identity.  Keep the diagnostic, but never let it erase a
+        # semantic rejection such as wrong exercise, setup/filler, or partial
+        # movement.
         deterministic_full_cycle_override = bool(
             candidate is not None
             and candidate.motion_coverage.get("passed") is True
@@ -18180,21 +18085,6 @@ def source_cut_scorecard_row(
                 }
             )
         )
-        if deterministic_full_cycle_override:
-            soft_model_reasons = {
-                "source_cut_model_rejected",
-                "source_cut_partial_movement",
-                "source_cut_start_boundary_bad",
-                "source_cut_finish_boundary_bad",
-                "source_cut_setup_or_filler",
-                "source_cut_scorecard_reject_bad_boundary",
-                "source_cut_scorecard_reject_partial_movement",
-                "source_cut_scorecard_reject_setup_or_filler",
-            }
-            rejection_reasons = [
-                reason for reason in rejection_reasons if reason not in soft_model_reasons
-            ]
-
         deduped_reasons = dedupe_text(rejection_reasons)
         model_score = 0.0 if confidence is None else confidence
         return {
@@ -20754,7 +20644,6 @@ def rank_source_video_cut_candidates_with_caption_images(
     if not candidate_window_specs:
         return None
     original_candidate_window_spec_count = len(candidate_window_specs)
-    deterministic_pose_ranking: LoopRanking | None = None
     if source_pose_prefilter_has_samples(source_pose_prefilter_payload):
         candidate_window_specs = shortlist_source_window_specs_by_pose(
             candidate_window_specs,
@@ -20764,21 +20653,14 @@ def rank_source_video_cut_candidates_with_caption_images(
             exercise_motion_contract=exercise_motion_contract,
             source_offset_seconds=source_pose_offset_seconds,
         )
-        if source_pose_sample_count >= 5:
-            deterministic_pose_ranking = deterministic_source_cut_ranking_from_pose(
-                candidate_window_specs=candidate_window_specs,
-                pose_payload=source_pose_prefilter_payload or {},
-                exercise_name=exercise_name,
-                chunk_estimate=chunk_estimate,
-                exercise_motion_contract=exercise_motion_contract,
-                source_offset_seconds=source_pose_offset_seconds,
-            )
-            if deterministic_pose_ranking.score >= SOURCE_CUT_MIN_SELECTED_SCORE:
-                return deterministic_pose_ranking, 0.0, 0.0
     render_started = time.perf_counter()
     candidates: list[SourceCutCandidate] = []
     all_candidates: list[SourceCutCandidate] = []
-    for index, candidate_spec in enumerate(candidate_window_specs):
+
+    def materialize_source_candidate(
+        index: int,
+        candidate_spec: SourceWindowCandidateSpec | DetectionWindow,
+    ) -> SourceCutCandidate | None:
         if isinstance(candidate_spec, DetectionWindow):
             candidate_window = candidate_spec
             candidate_chunking: dict[str, Any] = {}
@@ -20809,19 +20691,38 @@ def rank_source_video_cut_candidates_with_caption_images(
             chunking=candidate_chunking,
             include_boundary_audit=include_boundary_audit,
         )
-        if candidate is not None:
-            if source_pose_prefilter_has_samples(source_pose_prefilter_payload):
-                candidate = replace(
-                    candidate,
-                    motion_coverage=source_cut_candidate_motion_coverage_metrics(
-                        candidate_window=candidate_window,
-                        pose_payload=source_pose_prefilter_payload or {},
-                        exercise_name=exercise_name,
-                        chunk_estimate=chunk_estimate,
-                        exercise_motion_contract=exercise_motion_contract,
-                        source_offset_seconds=source_pose_offset_seconds,
-                    ),
+        if candidate is not None and source_pose_prefilter_has_samples(source_pose_prefilter_payload):
+            candidate = replace(
+                candidate,
+                motion_coverage=source_cut_candidate_motion_coverage_metrics(
+                    candidate_window=candidate_window,
+                    pose_payload=source_pose_prefilter_payload or {},
+                    exercise_name=exercise_name,
+                    chunk_estimate=chunk_estimate,
+                    exercise_motion_contract=exercise_motion_contract,
+                    source_offset_seconds=source_pose_offset_seconds,
+                ),
+            )
+        return candidate
+
+    indexed_specs = list(enumerate(candidate_window_specs))
+    render_worker_count = min(SOURCE_CUT_MAX_RENDER_WORKERS, len(indexed_specs))
+    if render_worker_count <= 1:
+        materialized_candidates = [
+            materialize_source_candidate(index, candidate_spec)
+            for index, candidate_spec in indexed_specs
+        ]
+    else:
+        with ThreadPoolExecutor(max_workers=render_worker_count) as executor:
+            materialized_candidates = list(
+                executor.map(
+                    lambda indexed_spec: materialize_source_candidate(*indexed_spec),
+                    indexed_specs,
                 )
+            )
+
+    for candidate in materialized_candidates:
+        if candidate is not None:
             all_candidates.append(candidate)
             if source_cut_candidate_eligible_for_vlm(candidate):
                 candidates.append(candidate)
@@ -21032,6 +20933,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     ranking_payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
     ranking_payload["sourceCutCandidates"] = source_cut_candidates_payload(all_candidates)
     ranking_payload["sourceCutVlmInputCandidates"] = source_cut_candidates_payload(reviewed_vlm_candidates)
+    ranking_payload["sourceCutDeterministicDirectSelection"] = False
     ranking_payload["sourceCutVisualIntegrityFilteredCount"] = sum(
         1
         for candidate in all_candidates
@@ -21071,16 +20973,6 @@ def rank_source_video_cut_candidates_with_caption_images(
     ranking_payload["sourceCutScorecardCandidates"] = source_cut_scorecard_rows
     ranking_payload["sourceCutScorecardContractPresent"] = source_scorecard_has_contract
     ranking_payload["sourceCutSourcePoseSampleCount"] = source_pose_sample_count
-    if deterministic_pose_ranking is not None:
-        ranking_payload["sourceCutDeterministicPoseFallbackToVlm"] = True
-        ranking_payload["sourceCutDeterministicPoseFallbackReasons"] = list(
-            deterministic_pose_ranking.reasons
-        )
-        ranking_payload["sourceCutDeterministicPoseFallbackEvidence"] = (
-            deterministic_pose_ranking.payload
-            if isinstance(deterministic_pose_ranking.payload, dict)
-            else None
-        )
     ranking_payload["sourceCutProgressiveDisabledReason"] = (
         "source_pose_samples_unavailable" if progressive_without_pose else None
     )
@@ -21288,14 +21180,14 @@ def rank_review_item_with_caption_images(
     exercise_motion_contract = exercise_motion_contract_for_review_item(item, None)
     detected_complete_loop = item.loop_index >= 0
     payload: dict[str, Any] = {
-        "score": 1.0 if detected_complete_loop else 0.0,
-        "modelScore": 1.0 if detected_complete_loop else 0.0,
+        "score": 1.0,
+        "modelScore": 1.0,
         "postWhamMovementCutSelectionEnabled": detected_complete_loop,
         "postWhamMovementCutSelectionDisabledReason": None if detected_complete_loop else "no_detected_complete_loop",
-        "postWhamSelectionPolicy": "deterministic_detected_loop" if detected_complete_loop else "rejected_no_complete_loop",
-        "sectionSelectionPolicy": "deterministic_detected_loop" if detected_complete_loop else "none",
-        "finalCutResponsibility": "deterministic_post_wham_loop" if detected_complete_loop else "reject_candidate",
-        "reviewFrameSource": "selected_generated_loop_validation" if detected_complete_loop else "none",
+        "postWhamSelectionPolicy": "deterministic_detected_loop" if detected_complete_loop else "full_generated_fallback",
+        "sectionSelectionPolicy": "deterministic_detected_loop" if detected_complete_loop else "selected_artifact_window",
+        "finalCutResponsibility": "deterministic_post_wham_loop" if detected_complete_loop else "full_generated_fallback",
+        "reviewFrameSource": "selected_generated_loop_validation" if detected_complete_loop else "full_generated_preview_validation",
         "fullArtifactStartSeconds": item.loop_start_seconds,
         "fullArtifactEndSeconds": item.loop_end_seconds,
         "fullArtifactDurationSeconds": item.duration_sec,
@@ -21310,13 +21202,13 @@ def rank_review_item_with_caption_images(
     else:
         payload["exerciseMotionContractEnabled"] = False
     return LoopRanking(
-        score=1.0 if detected_complete_loop else 0.0,
+        score=1.0,
         reasons=[
-            "post_wham_detected_loop_review" if detected_complete_loop else "post_wham_no_complete_loop",
-            "post_wham_deterministic_loop_selected" if detected_complete_loop else "post_wham_candidate_rejected",
+            "post_wham_detected_loop_review" if detected_complete_loop else "post_wham_full_artifact_review",
+            "post_wham_deterministic_loop_selected" if detected_complete_loop else "post_wham_movement_cut_selection_disabled",
         ],
         payload=payload,
-        model_score=1.0 if detected_complete_loop else 0.0,
+        model_score=1.0,
     )
 
 
