@@ -57,6 +57,28 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
     }
 
     @Test
+    fun completeSetDialog_closeDismissesWithoutAdvancingSet() {
+        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
+
+        device.pressBack()
+        val closeButton = device.wait(Until.findObject(By.desc("Close")), 5_000)
+        require(closeButton != null) { "Complete Set dialog did not show its Close button" }
+
+        closeButton.click()
+
+        val dialogDismissed = device.wait(Until.gone(By.desc("Done")), 5_000)
+        require(dialogDismissed) { "Complete Set dialog remained visible after tapping Close" }
+
+        val setStillVisible = device.wait(
+            Until.hasObject(By.text("Simple Exercise")),
+            5_000
+        )
+        require(setStillVisible) { "Close advanced away from the current set instead of dismissing the dialog" }
+    }
+
+    @Test
     fun calibrationExercise_flowCompletesAndAdvances() {
         CalibrationRequiredWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()

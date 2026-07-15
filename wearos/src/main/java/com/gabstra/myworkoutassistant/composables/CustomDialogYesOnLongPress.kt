@@ -249,7 +249,6 @@ fun CustomDialogYesOnLongPress(
                         ) {
                             EnhancedIconButton(
                                 buttonSize = WearStandardIconButtonSize,
-                                hitBoxScale = 1.25f,
                                 onClick = {
                                     runNoClick()
                                 },
