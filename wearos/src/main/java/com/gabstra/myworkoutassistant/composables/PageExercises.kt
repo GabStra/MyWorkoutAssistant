@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -494,7 +496,7 @@ private fun RestPageFixedHeader(
             Text(
                 text = "UP NEXT",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onBackground
             )
 
             ExerciseNameText(
@@ -726,6 +728,11 @@ fun PageExercises(
             .semantics { contentDescription = "Exercise sets viewer" }
     ) {
         val topSection = headerOverlayHeightDp + WorkoutPagerPageSafeAreaPadding.calculateTopPadding()
+        val stepIndicatorReservedHeightDp = 14.dp
+        val listContentPadding = PaddingValues(
+            top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
+            bottom = stepIndicatorReservedHeightDp,
+        )
         val selectedRowHeightDp = 25.dp
         val itemSpacingDp = 5.dp
         val selectedRowScrollOffsetPx = with(density) {
@@ -753,7 +760,7 @@ fun PageExercises(
                 topSection -
                 selectedRowHeightDp -
                 itemSpacingDp -
-                WorkoutPagerPageSafeAreaPadding.calculateBottomPadding()
+                stepIndicatorReservedHeightDp
             ).coerceAtLeast(0.dp)
 
         LaunchedEffect(targetItemIndex, selectedPageIndex.value, selectedRowScrollOffsetPx) {
@@ -793,7 +800,7 @@ fun PageExercises(
                     state = transformingLazyColumnState,
                     userScrollEnabled = false,
                     verticalArrangement = Arrangement.spacedBy(itemSpacingDp, Alignment.Top),
-                    contentPadding = WorkoutPagerPageSafeAreaPadding
+                    contentPadding = listContentPadding
                 ) {
                     InvisibleListSpacer(headerOverlayHeightDp)
                     RestPageContent(
@@ -813,7 +820,7 @@ fun PageExercises(
                         state = transformingLazyColumnState,
                         userScrollEnabled = isSelectedPageScrollable && !isAutoScrolling,
                         verticalArrangement = Arrangement.spacedBy(itemSpacingDp, Alignment.Top),
-                        contentPadding = WorkoutPagerPageSafeAreaPadding
+                        contentPadding = listContentPadding
                     ) {
                         InvisibleListSpacer(headerOverlayHeightDp)
                         ExerciseSetsViewer(
@@ -868,9 +875,9 @@ fun PageExercises(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .height(10.dp + WorkoutPagerPageSafeAreaPadding.calculateBottomPadding())
+                .height(stepIndicatorReservedHeightDp)
+                .wrapContentHeight(Alignment.Bottom)
                 .background(MaterialTheme.colorScheme.background)
-                .padding(vertical = 2.5.dp)
         )
 
         Row(

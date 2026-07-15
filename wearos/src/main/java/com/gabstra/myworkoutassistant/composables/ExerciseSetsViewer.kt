@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -559,7 +560,11 @@ private fun FastPageExercisesSetTableRow(
                 style = itemStyle,
                 hideSetListRowText = hideSetListRowText,
             )
-        }
+        } ?: Spacer(
+            modifier = Modifier
+                .weight(1f)
+                .height(PageExercisesSetRowInnerHeight)
+        )
     }
 }
 
@@ -715,8 +720,9 @@ private fun buildPageExercisesFittedRows(
     val rows = preparedRows.rowModels.associate { rowModel ->
         val fittedRow = when (rowModel.contentType) {
             PageExercisesRowContentType.Set -> {
-                val hasReps = rowModel.repsText != null
-                val totalWeight = 1f + rowModel.valueWeight + if (hasReps) 1f else 0f
+                // Every set row uses the same three-column grid. Timed sets leave the
+                // trailing column empty so their value remains centered in the middle column.
+                val totalWeight = 1f + rowModel.valueWeight + 1f
                 val setTextWidth = setInnerWidth * (1f / totalWeight)
                 val valueTextWidth = setInnerWidth * (rowModel.valueWeight / totalWeight)
                 val repsTextWidth = setInnerWidth * (1f / totalWeight)
@@ -1190,13 +1196,13 @@ private fun buildPageExercisesSetRowTexts(
         is TimedDurationSetData -> PageExercisesSetRowTexts(
             valueText = FormatTime(currentSetData.startTimer / 1000),
             repsText = null,
-            valueWeight = 3f
+            valueWeight = 2f
         )
 
         is EnduranceSetData -> PageExercisesSetRowTexts(
             valueText = FormatTime(currentSetData.startTimer / 1000),
             repsText = null,
-            valueWeight = 3f
+            valueWeight = 2f
         )
 
         else -> throw RuntimeException("Unsupported set type")
@@ -1238,31 +1244,12 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         rowModel: PageExercisesRowModel,
     ) {
         val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-        val completedFillColor = MaterialTheme.colorScheme.onBackground
-        val completedTextColor = MaterialTheme.colorScheme.background
-        val borderColor = when (progressState) {
-            ProgressState.PAST -> completedFillColor
+        val completedColor = MaterialTheme.colorScheme.onBackground
+        val rowAccentColor = when (progressState) {
+            ProgressState.PAST -> completedColor
             ProgressState.CURRENT -> when {
                 rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
-                rowModel.rowIndex < setIndex -> completedFillColor
-                else -> currentExercisePendingColor
-            }
-            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
-        }
-        val backgroundColor = when (progressState) {
-            ProgressState.PAST -> completedFillColor
-            ProgressState.CURRENT -> when {
-                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
-                rowModel.rowIndex < setIndex -> completedFillColor
-                else -> MaterialTheme.colorScheme.background
-            }
-            ProgressState.FUTURE -> MaterialTheme.colorScheme.background
-        }
-        val textColor = when (progressState) {
-            ProgressState.PAST -> completedTextColor
-            ProgressState.CURRENT -> when {
-                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
-                rowModel.rowIndex < setIndex -> completedTextColor
+                rowModel.rowIndex < setIndex -> completedColor
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1271,8 +1258,8 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val rowModifier = Modifier
             .fillMaxWidth()
             .height(25.dp)
-            .background(backgroundColor, RoundedCornerShape(25))
-            .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(25))
+            .background(MaterialTheme.colorScheme.background, RoundedCornerShape(25))
+            .border(BorderStroke(1.dp, rowAccentColor), RoundedCornerShape(25))
 
         when (rowModel.contentType) {
             PageExercisesRowContentType.Set -> FastPageExercisesSetTableRow(
@@ -1281,27 +1268,27 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
                 enableFadingText = enableFadingText,
                 hideSetListRowText = hideSetListRowText,
                 modifier = rowModifier,
-                textColor = textColor
+                textColor = rowAccentColor
             )
             PageExercisesRowContentType.CalibrationLoad -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = textColor,
+                textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.Rest -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = textColor,
+                textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.CalibrationRir -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = textColor,
+                textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,
             )
         }
