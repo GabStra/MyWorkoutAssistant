@@ -5,8 +5,8 @@ param(
     [string]$ExerciseName,
     [string]$OutputSlug,
     [string]$Workspace = "build/exercise_motion",
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(3).gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(4).gguf",
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
     [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b9936-bin-win-cuda-12.4-x64\\llama-server.exe",

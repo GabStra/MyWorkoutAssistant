@@ -73,8 +73,8 @@ param(
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 200.0,
-    [double]$WhamTimeoutSeconds = 200.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 0.0,
+    [double]$WhamTimeoutSeconds = 0.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
@@ -126,9 +126,9 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12b-it-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(3).gguf",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(4).gguf",
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 512,
     [double]$LlamaCppTemperature = 1.0,
@@ -1180,7 +1180,7 @@ if ($NoExerciseMotionContract) {
 
 $selectionPath = Join-Path $bakeWorkspace "selection_manifest.json"
 $bakeBaseArgs = [string[]]$bakeArgs
-$currentTargetSuitableCount = $resolvedMaxCandidateReviewTargetSuitableCount
+$currentTargetSuitableCount = $initialTargetSuitableCount
 $attemptIndex = 1
 $selection = $null
 $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $candidatesPath)
@@ -1196,11 +1196,10 @@ try {
             -WorkerScriptPath $whamWarmWorkerScriptPath
     }
     while ($true) {
-        # The wrapper previously paid model startup and YouTube search once per
-        # replacement attempt. Use that same cumulative review budget in the
-        # first resident-model pass and stop naturally once the target is met.
-        $cumulativeCandidateBudget = $MaxCandidates * $resolvedMaxCandidateReviewTargetSuitableCount
-        $attemptMaxCandidates = [Math]::Max($cumulativeCandidateBudget, $currentTargetSuitableCount)
+        # Discover only as much as the current attempt needs. Failed candidates
+        # are excluded below, so each retry asks for one additional replacement
+        # instead of front-loading the maximum review budget.
+        $attemptMaxCandidates = [Math]::Max($MaxCandidates, $currentTargetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($VisionCandidatesPerExercise, $currentTargetSuitableCount)
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count" -Value "$currentTargetSuitableCount"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
