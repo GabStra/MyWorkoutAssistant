@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -69,8 +68,8 @@ fun CustomTimePicker(
     }
 
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         TimeInputField(
@@ -82,7 +81,8 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Hour"
+            label = "Hour",
+            modifier = Modifier.weight(1f)
         )
         Text(":", style = MaterialTheme.typography.headlineMedium)
         TimeInputField(
@@ -94,7 +94,8 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Minute"
+            label = "Minute",
+            modifier = Modifier.weight(1f)
         )
         Text(":", style = MaterialTheme.typography.headlineMedium)
         TimeInputField(
@@ -106,7 +107,8 @@ fun CustomTimePicker(
                     updateTime()
                 }
             },
-            label = "Second"
+            label = "Second",
+            modifier = Modifier.weight(1f)
         )
     }
 }
@@ -115,7 +117,8 @@ fun CustomTimePicker(
 fun TimeInputField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = value,
@@ -123,7 +126,7 @@ fun TimeInputField(
         label = { Text(text = label, style = MaterialTheme.typography.bodySmall) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.width(80.dp)
+        modifier = modifier
     )
 }
 

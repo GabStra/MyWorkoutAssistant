@@ -83,6 +83,8 @@ fun WorkoutOverviewTab(
     currentSelectedWorkoutId: UUID?,
     showRest: Boolean,
     onShowRestChange: (Boolean) -> Unit,
+    hideDisabledWorkoutComponents: Boolean,
+    onHideDisabledWorkoutComponentsChange: (Boolean) -> Unit,
     selectedWorkoutComponents: List<WorkoutComponent>,
     isSelectionModeActive: Boolean,
     onEnableSelection: () -> Unit,
@@ -100,6 +102,19 @@ fun WorkoutOverviewTab(
     workoutHistoryIdForExerciseNavigation: UUID? = null,
 ) {
     val scrollState = rememberScrollState()
+    val disabledWorkoutComponentCount = remember(workout.workoutComponents) {
+        workout.workoutComponents.count { !it.enabled }
+    }
+    val displayComponents = remember(
+        workout.workoutComponents,
+        showRest,
+        hideDisabledWorkoutComponents
+    ) {
+        workout.workoutComponents.filter { component ->
+            (showRest || component !is Rest) &&
+                (!hideDisabledWorkoutComponents || component.enabled)
+        }
+    }
     val currentLocale = LocalLocale.current.platformLocale
     val resumeTimeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy HH:mm", currentLocale)
@@ -229,9 +244,39 @@ fun WorkoutOverviewTab(
                 }
             }
 
+            if (disabledWorkoutComponentCount > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(15.dp)
+                    ) {
+                        Checkbox(
+                            modifier = Modifier.size(10.dp),
+                            checked = hideDisabledWorkoutComponents,
+                            onCheckedChange = onHideDisabledWorkoutComponentsChange,
+                            colors = CheckboxDefaults.colors().copy(
+                                checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                        Text(
+                            text = "Hide disabled",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+
             GenericSelectableList(
                 it = null,
-                items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
+                items = displayComponents,
                 selectedItems = selectedWorkoutComponents,
                 isSelectionModeActive = isSelectionModeActive,
                 onItemClick = {
@@ -248,7 +293,7 @@ fun WorkoutOverviewTab(
                     onSelectedComponentIdsChange(newSelection.map { it.id }.toSet())
                 },
                 onOrderChange = { newWorkoutComponents ->
-                    if (!showRest) return@GenericSelectableList
+                    if (!showRest || hideDisabledWorkoutComponents) return@GenericSelectableList
                     val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
                     onWorkoutComponentsReordered(adjustedComponents)
                 },

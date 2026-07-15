@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -427,6 +428,7 @@ fun WorkoutDetailScreen(
     var pendingComponentBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
 
     var showRest by remember { mutableStateOf(true) }
+    var hideDisabledWorkoutComponents by rememberSaveable(workout.id) { mutableStateOf(true) }
 
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     val allWorkouts by appViewModel.workoutsFlow.collectAsState()
@@ -536,7 +538,7 @@ fun WorkoutDetailScreen(
         }
     }
 
-    LaunchedEffect(showRest) {
+    LaunchedEffect(showRest, hideDisabledWorkoutComponents) {
         selectedComponentIds = emptySet()
     }
 
@@ -595,7 +597,10 @@ fun WorkoutDetailScreen(
                             .width(56.dp)
                     ) {
                         IconButton(onClick = {
-                            val filteredItems = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents
+                            val filteredItems = workout.workoutComponents.filter { component ->
+                                (showRest || component !is Rest) &&
+                                    (!hideDisabledWorkoutComponents || getEnabledStatusOfWorkoutComponent(component))
+                            }
                             selectedComponentIds = filteredItems.map { it.id }.toSet()
                         }) {
                             Icon(
@@ -1273,6 +1278,10 @@ fun WorkoutDetailScreen(
                             currentSelectedWorkoutId = currentSelectedWorkoutId,
                             showRest = showRest,
                             onShowRestChange = { showRest = it },
+                            hideDisabledWorkoutComponents = hideDisabledWorkoutComponents,
+                            onHideDisabledWorkoutComponentsChange = {
+                                hideDisabledWorkoutComponents = it
+                            },
                             selectedWorkoutComponents = selectedWorkoutComponents,
                             isSelectionModeActive = isSelectionModeActive,
                             onEnableSelection = { isSelectionModeActive = true },
