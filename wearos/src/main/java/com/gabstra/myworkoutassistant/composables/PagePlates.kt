@@ -100,6 +100,61 @@ private fun computeBarbellStartX(
 }
 
 /**
+ * Computes the horizontal extent of the rendered plate stack using the same sleeve geometry
+ * as [BarbellVisualization]. The viewport should initially center this physical stack; labels
+ * may extend outside it and remain reachable through horizontal scrolling.
+ */
+private fun computePlateBoundsPx(
+    plateData: List<PlateData>,
+    canvasWidthPx: Float,
+    viewportWidthPx: Float,
+    sleeveLength: Float,
+    density: Density,
+): LabelBoundsPx {
+    val shaftLength = with(density) { 20.dp.toPx() }
+    val stopperWidth = with(density) { 5.dp.toPx() }
+    val paddingEnd = with(density) { BarbellEndPaddingDp.dp.toPx() }
+    val sleeveX = computeBarbellStartX(viewportWidthPx, density) + shaftLength + stopperWidth
+    val sleeveWidth = (canvasWidthPx - sleeveX - paddingEnd).coerceAtLeast(0f)
+    val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
+    val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
+    val minPlateWidthPx = with(density) { 4.dp.toPx() }
+    var currentX = sleeveX
+
+    plateData.forEach { plateInfo ->
+        val plateWidth = (plateInfo.thickness.toFloat() * scaleFactor)
+            .coerceAtLeast(minPlateWidthPx)
+            .coerceAtMost((sleeveX + sleeveWidth - currentX).coerceAtLeast(0f))
+        currentX += plateWidth
+    }
+
+    return LabelBoundsPx(left = sleeveX, right = currentX)
+}
+
+/**
+ * Finds the initial scroll offset that keeps the plate stack centered unless doing so would
+ * clip labels that can otherwise fit together in the viewport.
+ */
+internal fun resolveInitialBarbellScrollTargetPx(
+    plateCenterPx: Float,
+    labelBoundsLeftPx: Float,
+    labelBoundsRightPx: Float,
+    viewportWidthPx: Float,
+    maxScrollPx: Float,
+): Int {
+    val plateCenteredTarget = (plateCenterPx - (viewportWidthPx / 2f))
+        .coerceIn(0f, maxScrollPx)
+    val labelWidthPx = (labelBoundsRightPx - labelBoundsLeftPx).coerceAtLeast(0f)
+
+    if (labelWidthPx > viewportWidthPx) return plateCenteredTarget.toInt()
+
+    val minimumScrollForLabels = (labelBoundsRightPx - viewportWidthPx)
+        .coerceIn(0f, maxScrollPx)
+    val maximumScrollForLabels = labelBoundsLeftPx.coerceIn(0f, maxScrollPx)
+    return plateCenteredTarget.coerceIn(minimumScrollForLabels, maximumScrollForLabels).toInt()
+}
+
+/**
  * Computes the rightmost X (in px) that plate labels will use when laid out with the same
  * geometry and collision logic as [BarbellVisualization]. Used to set content width so
  * horizontal scroll is only enabled when labels actually overflow the viewport.
@@ -699,6 +754,21 @@ private fun PagePlatesContent(
                     minimumContentWidthPx,
                     labelBounds.right + labelRightPaddingPx
                 )
+                val plateBounds = remember(
+                    plateDataForWidth,
+                    contentWidthPx,
+                    viewportWidthPx,
+                    sleeveLength,
+                    density,
+                ) {
+                    computePlateBoundsPx(
+                        plateData = plateDataForWidth,
+                        canvasWidthPx = contentWidthPx,
+                        viewportWidthPx = viewportWidthPx,
+                        sleeveLength = sleeveLength,
+                        density = density,
+                    )
+                }
                 val contentWidth = with(density) { contentWidthPx.toDp() }
                 val maxScrollPx = (contentWidthPx - viewportWidthPx).coerceAtLeast(0f)
                 val labelOverflowPx = (labelBounds.right + labelRightPaddingPx - viewportWidthPx)
@@ -722,11 +792,15 @@ private fun PagePlatesContent(
                         }
                     }
                 }
-                val initialScrollTargetPx = remember(labelBounds, viewportWidthPx, maxScrollPx, canPanHorizontally) {
+                val initialScrollTargetPx = remember(plateBounds, viewportWidthPx, maxScrollPx, canPanHorizontally) {
                     if (canPanHorizontally) {
-                        (labelBounds.center - (viewportWidthPx / 2f))
-                            .coerceIn(0f, maxScrollPx)
-                            .toInt()
+                        resolveInitialBarbellScrollTargetPx(
+                            plateCenterPx = plateBounds.center,
+                            labelBoundsLeftPx = labelBounds.left,
+                            labelBoundsRightPx = labelBounds.right,
+                            viewportWidthPx = viewportWidthPx,
+                            maxScrollPx = maxScrollPx,
+                        )
                     } else {
                         0
                     }
