@@ -1,10 +1,12 @@
-# Llama.cpp Segment Detection Notes (Qwen3VL)
+# Llama.cpp Segment Detection Notes (Gemma 4)
 
 ## Current working setup
 
-- Model: `C:\Users\gabri\Downloads\Qwen3VL-8B-Instruct-Q4_K_M.gguf`
-- mmproj: `C:\Users\gabri\Downloads\mmproj-Qwen3VL-8B-Instruct-F16.gguf`
-- Server binary: `C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe`
+- Model: `C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf`
+- mmproj: `C:\Users\gabri\Downloads\mmproj-BF16(5).gguf`
+- MTP model: `C:\Users\gabri\Downloads\mtp-gemma-4-12B-it(1).gguf`
+- Server binary: `C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe`
+- Speculative decoding: `draft-mtp`, maximum 3 drafted tokens
 - Backend: `gpu`
 
 These are now the defaults in:

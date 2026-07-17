@@ -460,6 +460,10 @@ def score_pose_samples(
     scored = [item for item in scored if item["sampleCount"] > 0]
     if not scored:
         return empty_pose_prefilter_result("pose_prefilter_no_windows")
+    scored = [
+        recover_transient_pose_window_failures(item, min_score=settings.min_score)
+        for item in scored
+    ]
     eligible = [
         item
         for item in scored
@@ -496,6 +500,7 @@ def score_pose_samples(
         "validChunkCount": len(valid_chunks),
         "validChunkScoreThreshold": valid_chunk_score_threshold,
         "blockingIssues": blocking_issues,
+        "recoveredBlockingIssues": list(best.get("recoveredBlockingIssues", [])),
         "qualityIssues": quality_issues,
         "singlePersonRatio": best["singlePersonRatio"],
         "multiPersonRatio": best["multiPersonRatio"],
@@ -540,6 +545,57 @@ def score_pose_samples(
     return PosePrefilterResult(passed=passed, score=score, reasons=dedupe_text(reasons), payload=payload)
 
 
+TRANSIENT_POSE_WINDOW_ISSUES = {
+    "no_person_detected",
+    "low_keypoint_coverage",
+    "low_required_joint_visibility",
+    "cropped_body",
+    "camera_or_track_instability",
+    "low_active_joint_visibility",
+    "low_active_chain_visibility",
+}
+
+
+def recover_transient_pose_window_failures(
+    window: dict[str, Any],
+    *,
+    min_score: float,
+) -> dict[str, Any]:
+    """Recover a strong window from isolated detector misses without weakening real hard gates."""
+    blocking_issues = dedupe_text(list(window.get("blockingIssues", [])))
+    if not blocking_issues or any(issue not in TRANSIENT_POSE_WINDOW_ISSUES for issue in blocking_issues):
+        return window
+    integrity = window.get("sourceWindowIntegrity")
+    target_motion = window.get("targetMotionObservability")
+    if not isinstance(integrity, dict) or not isinstance(target_motion, dict):
+        return window
+    target_motion_passed = not bool(target_motion.get("required")) or bool(target_motion.get("passed"))
+    recoverable = (
+        float(window.get("score", 0.0)) >= min_score
+        and float(window.get("singlePersonRatio", 0.0)) >= 0.75
+        and float(window.get("multiPersonRatio", 1.0)) <= 0.10
+        and float(window.get("noPersonRatio", 1.0)) <= 0.25
+        and int(window.get("maxSignificantPersonCount", 0)) <= 1
+        and float(window.get("requiredJointAverageCoverage", 0.0)) >= 0.70
+        and float(window.get("activeChainVisibility", 0.0)) >= 0.60
+        and float(integrity.get("bodyFrameSafeRatio", 0.0)) >= 0.80
+        and bool(integrity.get("bodyFrameBoundaryContactPassed", False))
+        and not (
+            int(integrity.get("sceneCutCount", 0)) > 0
+            and int(integrity.get("visualContinuityComparedPairs", 0)) <= 0
+        )
+        and int(integrity.get("visualContinuityCutCount", 0)) == 0
+        and target_motion_passed
+    )
+    if not recoverable:
+        return window
+    recovered = dict(window)
+    recovered["blockingIssues"] = []
+    recovered["recoveredBlockingIssues"] = blocking_issues
+    recovered["reasons"] = ["pose_transient_detection_failures_recovered"]
+    return recovered
+
+
 def pose_valid_chunks_from_scored_windows(
     scored_windows: list[dict[str, Any]],
     *,
@@ -578,6 +634,7 @@ def pose_valid_chunks_from_scored_windows(
                 "sourceWindowIntegrity": window.get("sourceWindowIntegrity"),
                 "targetMotionObservability": window.get("targetMotionObservability"),
                 "qualityIssues": list(window.get("qualityIssues", [])),
+                "recoveredBlockingIssues": list(window.get("recoveredBlockingIssues", [])),
             }
         )
     return chunks

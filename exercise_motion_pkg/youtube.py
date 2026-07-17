@@ -39,11 +39,13 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTP_MODEL,
     DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_PARALLEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
     DEFAULT_LLAMA_CPP_SERVER_COMMAND,
+    DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -772,6 +774,8 @@ class YouTubeRankingSettings:
     llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL
     llama_cpp_server_command: str | None = None
     llama_cpp_mmproj: str | None = DEFAULT_LLAMA_CPP_MMPROJ
+    llama_cpp_mtp_model: str | None = DEFAULT_LLAMA_CPP_MTP_MODEL
+    llama_cpp_spec_draft_n_max: int = DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX
     llama_cpp_backend: str = "gpu"
     llama_cpp_n_predict: int = 512
     llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
@@ -3194,9 +3198,11 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "List setup and cleanup actions that must be outside the selected movement, such as approach, unrack, repositioning, rerack, release, or walking away.\n"
         "Only list body regions that must be visible to recognize the movement. Use generic observable language, not coaching advice.\n"
         "Return minified JSON only. No markdown table, code fence, timestamps, chain-of-thought, or explanation.\n"
-        "Use exactly these keys: movementType, validStartState, validEndState, requiredPhases, "
+        "Use exactly these keys: movementType, groundContactMode, validStartState, validEndState, requiredPhases, "
         "primaryMovingRegions, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
         "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
+        "groundContactMode must be continuous when at least one body support normally remains on the floor, "
+        "intermittent when the movement intentionally contains airborne phases, or none when the body is hanging, suspended, swimming, or otherwise not floor-supported.\n"
         "primaryMovingRegions and mustBeVisibleRegions may only contain: hands, elbows, shoulders, torso, head, hips, knees, feet, upper_limb, lower_limb.\n"
         f"Target exercise: {exercise.name}\n"
     )
@@ -3457,6 +3463,23 @@ def normalize_exercise_movement_type(value: Any) -> str | None:
     return text if text in {"repetition", "cyclic", "hold", "carry", "transition_sequence", "unknown"} else None
 
 
+def normalize_ground_contact_mode(value: Any) -> str | None:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().casefold()).strip("_")
+    aliases = {
+        "always": "continuous",
+        "always_supported": "continuous",
+        "floor_supported": "continuous",
+        "sometimes": "intermittent",
+        "airborne": "intermittent",
+        "flight": "intermittent",
+        "hanging": "none",
+        "suspended": "none",
+        "unsupported": "none",
+    }
+    text = aliases.get(text, text)
+    return text if text in {"continuous", "intermittent", "none"} else None
+
+
 def normalize_exercise_completion_mode(value: Any) -> str | None:
     text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().casefold()).strip("_")
     aliases = {
@@ -3595,6 +3618,12 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     if movement_type is not None:
         fields["movementType"] = movement_type
 
+    ground_contact_mode = normalize_ground_contact_mode(
+        first_contract_value(payload, "groundContactMode", "ground_contact_mode")
+    )
+    if ground_contact_mode is not None:
+        fields["groundContactMode"] = ground_contact_mode
+
     requires_return = parse_contract_bool(first_contract_value(payload, "requiresReturnToStart", "requires_return_to_start"))
     if requires_return is None:
         if movement_type in {"repetition", "cyclic"}:
@@ -3705,6 +3734,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
 
 EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "movementType",
+    "groundContactMode",
     "completionMode",
     "requiresReturnToStart",
     "validStartState",
@@ -4813,6 +4843,19 @@ def llama_cpp_server_parallel(command_line: str) -> int | None:
         return None
 
 
+def llama_cpp_server_mtp_conflict(command_line: str, *, expected_model: str | None) -> str | None:
+    normalized = re.sub(r"\s+", " ", command_line).casefold()
+    has_mtp = "--spec-type draft-mtp" in normalized and "--model-draft" in normalized
+    if expected_model is None:
+        return "started with MTP enabled" if has_mtp else None
+    expected_name = Path(expected_model).name.casefold()
+    if not has_mtp:
+        return "started without MTP enabled"
+    if expected_name not in normalized:
+        return f"started with a different MTP model than {Path(expected_model).name}"
+    return None
+
+
 def discover_and_rank_youtube_candidates(
     *,
     workout_plan_json: Path,
@@ -5783,6 +5826,7 @@ class LlamaCppVisionRanker:
 
         self.settings = settings
         self.process: subprocess.Popen[str] | None = None
+        self._server_recovery_lock = threading.Lock()
         self.gpu_lock: GlobalGpuLock | None = None
         self.gpu_lock_wait_seconds = 0.0
         try:
@@ -5850,11 +5894,14 @@ class LlamaCppVisionRanker:
             process.wait(timeout=10.0)
 
     def _recover_llama_cpp_server_after_vlm_failure(self) -> None:
-        if self.process is not None and not self.settings.keep_llama_cpp_server:
-            self._stop_owned_llama_cpp_server()
-            self._ensure_server()
-            return
-        self._wait_for_chat_completions_ready()
+        # Parallel VLM workers can fail together. Serialize stop/start so one
+        # worker cannot clear self.process while another is polling its restart.
+        with self._server_recovery_lock:
+            if self.process is not None and not self.settings.keep_llama_cpp_server:
+                self._stop_owned_llama_cpp_server()
+                self._ensure_server()
+                return
+            self._wait_for_chat_completions_ready()
 
     def _ensure_server(self) -> None:
         server_payload = self._server_models_payload()
@@ -5889,10 +5936,13 @@ class LlamaCppVisionRanker:
         )
         model_path = Path(self.settings.llama_cpp_model)
         mmproj_path = Path(self.settings.llama_cpp_mmproj) if self.settings.llama_cpp_mmproj else None
+        mtp_model_path = Path(self.settings.llama_cpp_mtp_model) if self.settings.llama_cpp_mtp_model else None
         if not model_path.exists():
             raise FileNotFoundError(f"Could not find llama.cpp model file: {model_path}")
         if mmproj_path is not None and not mmproj_path.exists():
             raise FileNotFoundError(f"Could not find llama.cpp mmproj file: {mmproj_path}")
+        if mtp_model_path is not None and not mtp_model_path.exists():
+            raise FileNotFoundError(f"Could not find llama.cpp MTP model file: {mtp_model_path}")
         if shutil.which(command) is None and not Path(command).exists():
             raise FileNotFoundError(f"Could not find llama-server binary: {command}")
         parsed = parse_llama_cpp_base_url(self.settings.llama_cpp_base_url)
@@ -5909,6 +5959,19 @@ class LlamaCppVisionRanker:
         ]
         if mmproj_path is not None:
             args.extend(["--mmproj", str(mmproj_path)])
+        if mtp_model_path is not None:
+            args.extend(
+                [
+                    "--model-draft",
+                    str(mtp_model_path),
+                    "--spec-type",
+                    "draft-mtp",
+                    "--spec-draft-n-max",
+                    str(max(1, self.settings.llama_cpp_spec_draft_n_max)),
+                    "--gpu-layers-draft",
+                    "all" if self.settings.llama_cpp_backend == "gpu" else "0",
+                ]
+            )
         if self.settings.llama_cpp_ctx_size is not None:
             args.extend(["--ctx-size", str(max(1, self.settings.llama_cpp_ctx_size))])
         if self.settings.llama_cpp_batch_size is not None:
@@ -6107,6 +6170,15 @@ class LlamaCppVisionRanker:
                 raise RuntimeError(
                     f"Existing llama.cpp server at {self.settings.llama_cpp_base_url} was started "
                     f"with --parallel {actual_parallel}, but this run expects --parallel {expected_parallel}. "
+                    "Stop the existing server or use a different --llama-cpp-base-url."
+                )
+            mtp_conflict = llama_cpp_server_mtp_conflict(
+                command_line,
+                expected_model=self.settings.llama_cpp_mtp_model,
+            )
+            if mtp_conflict is not None:
+                raise RuntimeError(
+                    f"Existing llama.cpp server at {self.settings.llama_cpp_base_url} was {mtp_conflict}. "
                     "Stop the existing server or use a different --llama-cpp-base-url."
                 )
             conflict = llama_cpp_server_reasoning_flag_conflict(
@@ -6526,7 +6598,12 @@ def prepare_vision_review(
             ),
             review_windows,
         )
-        review_windows = select_review_windows_by_budget(review_windows, review_limit)
+        # Adaptive review needs the fallback windows available even when its VLM
+        # budget is small. Rendering remains lazy, so unused windows cost nothing.
+        review_windows = select_review_windows_by_budget(
+            review_windows,
+            None if settings.vision_adaptive_chunk_review else review_limit,
+        )
         window_planning_elapsed = time.monotonic() - planning_started
         frames_per_chunk = max(1, settings.vision_frames_per_candidate or frames_for_chunk_seconds(chunk_seconds))
         prompt_motion_contract = exercise_motion_contract_for_prompt(exercise_motion_contract)
@@ -6647,7 +6724,15 @@ def score_prepared_vision_review(
             "Score only this chunk as evidence that the source video contains a usable target-exercise segment. "
             "The final single-rep trim will be found later by detect_exercise_segment."
         )
-        temporal_change = source_review_temporal_change_metrics(chunk_paths)
+        pose_motion_evidence = source_review_pose_motion_evidence(
+            prepared.candidate,
+            start_seconds=chunk_start,
+            end_seconds=chunk_end,
+        )
+        temporal_change = source_review_temporal_change_metrics(
+            chunk_paths,
+            pose_motion_evidence=pose_motion_evidence,
+        )
         if bool(temporal_change.get("nearIdenticalFrames")):
             reasons = [
                 "near_duplicate_source_frames",
@@ -6688,15 +6773,10 @@ def score_prepared_vision_review(
                     temporal_change_metrics=temporal_change,
                 )
             )
-            early_stop_reason = adaptive_review_stop_reason(
-                chunk_scores=chunk_scores,
-                chunk_results=chunk_results,
-                review_order=review_order,
-                settings=settings,
-                is_final_planned_chunk=review_order >= len(chunk_indexes) - 1,
-            )
-            if early_stop_reason is not None:
-                break
+            # A cheap frozen-frame diagnostic must not consume the candidate's
+            # useful review budget. Try the next motion-ranked window.
+            if review_order >= len(chunk_indexes) - 1:
+                early_stop_reason = "all_planned_chunks_near_duplicate"
             continue
         vlm_started = time.monotonic()
         try:
@@ -6927,7 +7007,94 @@ def source_review_temporal_frame_paths(frame_paths: list[Path]) -> list[Path]:
     return resolved
 
 
-def source_review_temporal_change_metrics(frame_paths: list[Path]) -> dict[str, Any]:
+def source_review_pose_motion_evidence(
+    candidate: YouTubeCandidate,
+    *,
+    start_seconds: float,
+    end_seconds: float,
+) -> dict[str, Any] | None:
+    """Return trusted person-track motion evidence for one review window."""
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
+    if not isinstance(pose_payload, dict) or not bool(pose_payload.get("passed")):
+        return None
+
+    best_chunk: dict[str, Any] | None = None
+    best_overlap = 0.0
+    for item in pose_payload.get("validChunks") or []:
+        if not isinstance(item, dict):
+            continue
+        item_start = coerce_float(item.get("startSeconds"))
+        item_end = coerce_float(item.get("endSeconds"))
+        if item_start is None or item_end is None or item_end <= item_start:
+            continue
+        overlap = max(0.0, min(end_seconds, item_end) - max(start_seconds, item_start))
+        if overlap > best_overlap:
+            best_chunk = item
+            best_overlap = overlap
+    if best_chunk is None or best_overlap <= 0.0:
+        return None
+
+    observability = best_chunk.get("targetMotionObservability")
+    source_integrity = best_chunk.get("sourceWindowIntegrity")
+    if not isinstance(observability, dict) or not isinstance(source_integrity, dict):
+        return None
+    motion_range = coerce_float(observability.get("targetMotionRangeRatio"))
+    min_motion_range = coerce_float(observability.get("minTargetMotionRangeRatio"))
+    if motion_range is None or min_motion_range is None:
+        return None
+    strong_motion = (
+        bool(observability.get("passed"))
+        and bool(source_integrity.get("passed"))
+        and motion_range >= max(0.02, min_motion_range * 2.0)
+    )
+
+    pose_samples = []
+    for sample in pose_payload.get("dominantPoseSamples") or []:
+        if not isinstance(sample, dict):
+            continue
+        timestamp = coerce_float(sample.get("timeSeconds"))
+        bbox = sample.get("bbox")
+        if timestamp is None or timestamp < start_seconds or timestamp > end_seconds:
+            continue
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        coordinates = [coerce_float(value) for value in bbox]
+        if any(value is None for value in coordinates):
+            continue
+        pose_samples.append([float(value) for value in coordinates if value is not None])
+
+    normalized_roi: list[float] | None = None
+    if len(pose_samples) >= 3:
+        x1 = min(bbox[0] for bbox in pose_samples)
+        y1 = min(bbox[1] for bbox in pose_samples)
+        x2 = max(bbox[2] for bbox in pose_samples)
+        y2 = max(bbox[3] for bbox in pose_samples)
+        padding_x = max(0.02, (x2 - x1) * 0.12)
+        padding_y = max(0.02, (y2 - y1) * 0.12)
+        normalized_roi = [
+            max(0.0, x1 - padding_x),
+            max(0.0, y1 - padding_y),
+            min(1.0, x2 + padding_x),
+            min(1.0, y2 + padding_y),
+        ]
+
+    return {
+        "available": True,
+        "strongMotion": strong_motion,
+        "targetMotionRangeRatio": motion_range,
+        "minTargetMotionRangeRatio": min_motion_range,
+        "sourceWindowIntegrityPassed": bool(source_integrity.get("passed")),
+        "sampleCount": len(pose_samples),
+        "normalizedPersonRoi": normalized_roi,
+    }
+
+
+def source_review_temporal_change_metrics(
+    frame_paths: list[Path],
+    *,
+    pose_motion_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Conservatively reject only frozen or nearly frozen sampled sequences."""
     resolved_paths = source_review_temporal_frame_paths(frame_paths)
     try:
@@ -6942,6 +7109,12 @@ def source_review_temporal_change_metrics(frame_paths: list[Path]) -> dict[str, 
         }
 
     frames: list[Any] = []
+    roi_frames: list[Any] = []
+    normalized_roi = (
+        pose_motion_evidence.get("normalizedPersonRoi")
+        if isinstance(pose_motion_evidence, dict)
+        else None
+    )
     for path in resolved_paths:
         frame = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if frame is None:
@@ -6952,6 +7125,21 @@ def source_review_temporal_change_metrics(frame_paths: list[Path]) -> dict[str, 
             interpolation=cv2.INTER_AREA,
         )
         frames.append(resized.astype(np.float32))
+        if isinstance(normalized_roi, list) and len(normalized_roi) == 4:
+            height, width = frame.shape[:2]
+            x1 = max(0, min(width - 1, round(float(normalized_roi[0]) * width)))
+            y1 = max(0, min(height - 1, round(float(normalized_roi[1]) * height)))
+            x2 = max(x1 + 1, min(width, round(float(normalized_roi[2]) * width)))
+            y2 = max(y1 + 1, min(height, round(float(normalized_roi[3]) * height)))
+            crop = frame[y1:y2, x1:x2]
+            if crop.size:
+                roi_frames.append(
+                    cv2.resize(
+                        crop,
+                        (SOURCE_REVIEW_TEMPORAL_ANALYSIS_WIDTH, SOURCE_REVIEW_TEMPORAL_ANALYSIS_HEIGHT),
+                        interpolation=cv2.INTER_AREA,
+                    ).astype(np.float32)
+                )
     if len(frames) < 3:
         return {
             "available": False,
@@ -6960,33 +7148,51 @@ def source_review_temporal_change_metrics(frame_paths: list[Path]) -> dict[str, 
             "frameCount": len(frames),
         }
 
-    adjacent_deltas = [
-        float(np.mean(np.abs(current - previous)) / 255.0)
-        for previous, current in zip(frames, frames[1:])
-    ]
-    first_frame_deltas = [
-        float(np.mean(np.abs(frame - frames[0])) / 255.0)
-        for frame in frames[1:]
-    ]
-    near_duplicate_pair_ratio = sum(
-        delta <= SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA
-        for delta in adjacent_deltas
-    ) / len(adjacent_deltas)
-    max_temporal_range = max(first_frame_deltas, default=0.0)
-    near_identical = (
-        near_duplicate_pair_ratio >= SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO
-        and max_temporal_range <= SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE
+    def summarize_temporal_change(samples: list[Any]) -> dict[str, float]:
+        adjacent_deltas = [
+            float(np.mean(np.abs(current - previous)) / 255.0)
+            for previous, current in zip(samples, samples[1:])
+        ]
+        first_frame_deltas = [
+            float(np.mean(np.abs(frame - samples[0])) / 255.0)
+            for frame in samples[1:]
+        ]
+        return {
+            "meanAdjacentDelta": float(np.mean(adjacent_deltas)),
+            "medianAdjacentDelta": float(np.median(adjacent_deltas)),
+            "maxAdjacentDelta": max(adjacent_deltas, default=0.0),
+            "nearDuplicatePairRatio": sum(
+                delta <= SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA for delta in adjacent_deltas
+            )
+            / len(adjacent_deltas),
+            "maxTemporalRangeFromFirst": max(first_frame_deltas, default=0.0),
+        }
+
+    global_change = summarize_temporal_change(frames)
+    roi_change = summarize_temporal_change(roi_frames) if len(roi_frames) == len(frames) else None
+
+    def is_near_identical(change: dict[str, float]) -> bool:
+        return (
+            change["nearDuplicatePairRatio"] >= SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO
+            and change["maxTemporalRangeFromFirst"] <= SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE
+        )
+
+    global_near_identical = is_near_identical(global_change)
+    roi_near_identical = is_near_identical(roi_change) if roi_change is not None else True
+    strong_pose_motion = bool(
+        isinstance(pose_motion_evidence, dict) and pose_motion_evidence.get("strongMotion")
     )
+    near_identical = global_near_identical and roi_near_identical and not strong_pose_motion
     return {
         "available": True,
         "nearIdenticalFrames": near_identical,
         "reason": "near_identical_sampled_frames" if near_identical else "meaningful_temporal_change_detected",
         "frameCount": len(frames),
-        "meanAdjacentDelta": float(np.mean(adjacent_deltas)),
-        "medianAdjacentDelta": float(np.median(adjacent_deltas)),
-        "maxAdjacentDelta": max(adjacent_deltas, default=0.0),
-        "nearDuplicatePairRatio": near_duplicate_pair_ratio,
-        "maxTemporalRangeFromFirst": max_temporal_range,
+        **global_change,
+        "globalNearIdenticalFrames": global_near_identical,
+        "personRoiTemporalChange": roi_change,
+        "personRoiNearIdenticalFrames": roi_near_identical if roi_change is not None else None,
+        "poseMotionEvidence": pose_motion_evidence,
         "nearDuplicateFrameDeltaThreshold": SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA,
         "nearDuplicatePairRatioThreshold": SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO,
         "maxStaticTemporalRangeThreshold": SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE,
@@ -7018,12 +7224,17 @@ def planned_adaptive_chunk_indexes(
     if chunk_count <= 0:
         return []
     review_limit = resolved_vision_chunk_review_limit(settings)
-    hard_limit = chunk_count if review_limit is None else max(1, min(review_limit, chunk_count))
     ordered = prioritized_review_chunk_indexes(prepared, chunk_count)
     if review_limit is None:
         return ordered
     if not settings.vision_adaptive_chunk_review:
-        return ordered[:hard_limit]
+        return ordered[: max(1, min(review_limit, chunk_count))]
+    # The configured cap controls expensive initial VLM review. Keep fallback
+    # windows available so deterministic rejects cannot hide a valid interval.
+    hard_limit = min(
+        chunk_count,
+        max(1, review_limit) + max(0, settings.vision_expand_chunks_per_candidate),
+    )
     initial_budget = max(1, min(settings.vision_initial_chunks_per_candidate, hard_limit))
     expansion_budget = max(0, settings.vision_expand_chunks_per_candidate)
     budget = min(hard_limit, initial_budget + expansion_budget)
@@ -7188,7 +7399,12 @@ def adaptive_review_stop_reason(
         initial_budget = min(initial_budget, max(1, review_limit))
     if planned_budget is not None:
         initial_budget = min(initial_budget, planned_budget)
-    if review_limit is not None and len(chunk_scores) >= initial_budget and max(chunk_scores, default=0.0) < 0.50:
+    if (
+        review_limit is not None
+        and is_final_planned_chunk
+        and len(chunk_scores) >= initial_budget
+        and max(chunk_scores, default=0.0) < 0.50
+    ):
         return "all_diagnostic_chunks_bad"
     best_score, best_reasons, _, _ = max(chunk_results, key=lambda item: item[0])
     valid_chunk_ratio = sum(1 for score in chunk_scores if score >= 0.50) / max(1, len(chunk_scores))
@@ -7249,6 +7465,7 @@ def build_vision_timing_payload(
     early_stop_reason: str,
 ) -> dict[str, Any]:
     review_limit = resolved_vision_chunk_review_limit(settings)
+    planned_chunk_budget = len(planned_adaptive_chunk_indexes(prepared, settings))
     payload: dict[str, Any] = {
         "previewPreparationElapsedSeconds": round_elapsed(prepared.preview_preparation_elapsed_seconds),
         "previewDownloadElapsedSeconds": round_elapsed(prepared.preview_download_elapsed_seconds),
@@ -7264,7 +7481,8 @@ def build_vision_timing_payload(
             "fullTimelineReview": review_limit is None,
             "initialChunkBudget": max(1, settings.vision_initial_chunks_per_candidate),
             "expansionChunkBudget": max(0, settings.vision_expand_chunks_per_candidate),
-            "maxChunkBudget": review_limit,
+            "configuredChunkLimit": review_limit,
+            "maxChunkBudget": planned_chunk_budget,
             "earlyStopReason": early_stop_reason,
             "reviewedChunkCount": len(reviewed_chunks),
             "plannedChunkCount": prepared.chunk_count,

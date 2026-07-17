@@ -34,8 +34,10 @@ from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_sec
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTP_MODEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
+    DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -214,6 +216,8 @@ def build_settings(args: argparse.Namespace, *, semantic: bool = False, vision: 
         llama_cpp_model=args.llama_cpp_model,
         llama_cpp_server_command=args.llama_cpp_server_command,
         llama_cpp_mmproj=args.llama_cpp_mmproj,
+        llama_cpp_mtp_model=None if args.no_llama_cpp_mtp else args.llama_cpp_mtp_model,
+        llama_cpp_spec_draft_n_max=args.llama_cpp_spec_draft_n_max,
         llama_cpp_backend=args.llama_cpp_backend,
         llama_cpp_n_predict=args.llama_cpp_n_predict,
         llama_cpp_temperature=args.llama_cpp_temperature,
@@ -430,6 +434,8 @@ def build_bake_request_for_pre_wham(args: argparse.Namespace, run_dir: Path) -> 
         llama_cpp_model=args.llama_cpp_model,
         llama_cpp_server_command=args.llama_cpp_server_command,
         llama_cpp_mmproj=args.llama_cpp_mmproj,
+        llama_cpp_mtp_model=None if args.no_llama_cpp_mtp else args.llama_cpp_mtp_model,
+        llama_cpp_spec_draft_n_max=args.llama_cpp_spec_draft_n_max,
         llama_cpp_backend=args.llama_cpp_backend,
         llama_cpp_n_predict=args.llama_cpp_n_predict,
         llama_cpp_temperature=args.llama_cpp_temperature,
@@ -1082,6 +1088,9 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     parser.add_argument("--llama-cpp-server-command")
     parser.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
+    parser.add_argument("--llama-cpp-mtp-model", default=DEFAULT_LLAMA_CPP_MTP_MODEL)
+    parser.add_argument("--no-llama-cpp-mtp", action="store_true")
+    parser.add_argument("--llama-cpp-spec-draft-n-max", type=int, default=DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX)
     parser.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
     parser.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
     parser.add_argument(

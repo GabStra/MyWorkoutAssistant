@@ -36,10 +36,12 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_MMAP,
     DEFAULT_LLAMA_CPP_MMPROJ,
     DEFAULT_LLAMA_CPP_MODEL,
+    DEFAULT_LLAMA_CPP_MTP_MODEL,
     DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_PARALLEL,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET,
     DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE,
+    DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
@@ -449,6 +451,13 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     youtube_search.add_argument("--llama-cpp-server-command")
     youtube_search.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
+    youtube_search.add_argument("--llama-cpp-mtp-model", default=DEFAULT_LLAMA_CPP_MTP_MODEL)
+    youtube_search.add_argument("--no-llama-cpp-mtp", action="store_true")
+    youtube_search.add_argument(
+        "--llama-cpp-spec-draft-n-max",
+        type=int,
+        default=DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
+    )
     youtube_search.add_argument("--llama-cpp-backend", default="gpu")
     youtube_search.add_argument("--llama-cpp-n-predict", type=int, default=512)
     youtube_search.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
@@ -660,7 +669,12 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--segment-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-end-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-min-seconds", type=float, default=2.0)
-    bake_and_rank.add_argument("--segment-max-seconds", type=float, default=20.0)
+    bake_and_rank.add_argument(
+        "--segment-max-seconds",
+        type=float,
+        default=0.0,
+        help="Maximum selected source duration; 0 derives it from the exercise and source metadata.",
+    )
     bake_and_rank.add_argument("--segment-refinement-window-seconds", type=float, default=2.0)
     bake_and_rank.add_argument("--segment-refinement-overlap-seconds", type=float, default=1.0)
     bake_and_rank.add_argument("--segment-refinement-frames-per-window", type=int, default=0)
@@ -782,6 +796,13 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
     bake_and_rank.add_argument("--llama-cpp-server-command")
     bake_and_rank.add_argument("--llama-cpp-mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
+    bake_and_rank.add_argument("--llama-cpp-mtp-model", default=DEFAULT_LLAMA_CPP_MTP_MODEL)
+    bake_and_rank.add_argument("--no-llama-cpp-mtp", action="store_true")
+    bake_and_rank.add_argument(
+        "--llama-cpp-spec-draft-n-max",
+        type=int,
+        default=DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
+    )
     bake_and_rank.add_argument("--llama-cpp-backend", default="gpu")
     bake_and_rank.add_argument("--llama-cpp-n-predict", type=int, default=512)
     bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
@@ -1029,6 +1050,7 @@ def build_youtube_ranking_settings(
         "vision_adaptive_chunk_review": not args.no_vision_adaptive_chunk_review,
         "exercise_motion_contract_enabled": not args.no_exercise_motion_contract,
         "llama_cpp_base_url": None if args.no_llama_cpp else args.llama_cpp_base_url,
+        "llama_cpp_mtp_model": None if args.no_llama_cpp_mtp else args.llama_cpp_mtp_model,
         "llama_cpp_auto_start_server": not args.no_llama_cpp_auto_start_server,
     }
     return YouTubeRankingSettings(**_request_kwargs(args, YouTubeRankingSettings, overrides))
@@ -1070,6 +1092,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "motion_tuning_enabled": not args.skip_motion_tuning,
         "classify_support_dominance": not args.no_classify_support_dominance,
         "llama_cpp_mmproj_offload": not args.no_llama_cpp_mmproj_offload,
+        "llama_cpp_mtp_model": None if args.no_llama_cpp_mtp else args.llama_cpp_mtp_model,
         "llama_cpp_cont_batching": not args.no_llama_cpp_cont_batching,
         "llama_cpp_auto_start_server": not args.no_llama_cpp_auto_start_server,
     }

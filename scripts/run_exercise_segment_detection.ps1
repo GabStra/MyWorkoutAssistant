@@ -5,11 +5,13 @@ param(
     [string]$ExerciseName,
     [string]$OutputSlug,
     [string]$Workspace = "build/exercise_motion",
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(4).gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(5).gguf",
+    [string]$LlamaCppMtpModel = "C:\\Users\\gabri\\Downloads\\mtp-gemma-4-12B-it(1).gguf",
+    [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b9936-bin-win-cuda-12.4-x64\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b10038-bin-win-cuda-12.4-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
@@ -92,7 +94,7 @@ function Get-LlamaCppServerCommand {
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    $fallback = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe"
+    $fallback = "C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }
@@ -104,6 +106,8 @@ function Resolve-LlamaCppServerProcess {
         [string]$Command,
         [string]$ModelPath,
         [string]$MmprojPath,
+        [string]$MtpModelPath,
+        [int]$SpecDraftNMax,
         [string]$Backend,
         [string]$HostAddress,
         [int]$Port,
@@ -141,6 +145,14 @@ function Resolve-LlamaCppServerProcess {
     )
     if ($ParallelSlots -gt 1) {
         $args += @("--parallel", "$ParallelSlots")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($MtpModelPath)) {
+        $args += @(
+            "--model-draft", $MtpModelPath,
+            "--spec-type", "draft-mtp",
+            "--spec-draft-n-max", "$SpecDraftNMax"
+        )
+        $args += if ($Backend -eq "gpu") { @("--gpu-layers-draft", "all") } else { @("--gpu-layers-draft", "0") }
     }
     if ($CtxSize -gt 0) {
         $args += @("--ctx-size", "$CtxSize")
@@ -392,6 +404,9 @@ if ($UseLiteRt) {
     if (-not [string]::IsNullOrWhiteSpace($LlamaCppMmproj) -and -not (Test-Path -LiteralPath $LlamaCppMmproj)) {
         throw "Could not find Llama.cpp mmproj file '$LlamaCppMmproj'."
     }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppMtpModel) -and -not (Test-Path -LiteralPath $LlamaCppMtpModel)) {
+        throw "Could not find Llama.cpp MTP model file '$LlamaCppMtpModel'."
+    }
     if ($LlamaCppServerPort -lt 1 -or $LlamaCppServerPort -gt 65535) {
         throw "LlamaCppServerPort must be between 1 and 65535."
     }
@@ -411,6 +426,8 @@ if ($UseLiteRt) {
             -Command $llamaCppServerCommand `
             -ModelPath $LlamaCppModel `
             -MmprojPath $LlamaCppMmproj `
+            -MtpModelPath $LlamaCppMtpModel `
+            -SpecDraftNMax $LlamaCppSpecDraftNMax `
             -Backend $LlamaCppBackend `
             -HostAddress $serverHost `
             -Port $LlamaCppServerPort `

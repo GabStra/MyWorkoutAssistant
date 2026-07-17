@@ -47,6 +47,7 @@ DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
 WHAM_GLOBAL_CACHE_VERSION = 1
+WHAM_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
 SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "import ctypes, os, pathlib, site; "
     "_dll_dirs=[str(_p) for _root in site.getsitepackages() "
@@ -134,11 +135,13 @@ class GenerateRequest:
     non_dominant_damping: float = 1.0
     non_dominant_radius_scale: float = 1.0
     motion_tuning_enabled: bool = True
+    ground_contact_mode: str = "unknown"
     export_wham_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
     output_crop_start_seconds: float | None = None
     output_crop_end_seconds: float | None = None
+    allow_incomplete_wham_boundary_crop: bool = False
     wham_output_rotation_degrees: float = 0.0
     youtube_cookies: Path | None = None
 
@@ -228,6 +231,37 @@ def global_wham_results_pkl(request: GenerateRequest, input_video_path: Path) ->
     return cache_dir.expanduser().resolve() / wham_content_cache_key(request, input_video_path) / "wham_output.pkl"
 
 
+def local_wham_cache_matches_input(
+    request: GenerateRequest,
+    *,
+    input_video_path: Path,
+    results_pkl: Path,
+) -> bool:
+    manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return payload.get("cacheKey") == wham_content_cache_key(request, input_video_path)
+
+
+def write_local_wham_cache_manifest(
+    request: GenerateRequest,
+    *,
+    input_video_path: Path,
+    results_pkl: Path,
+) -> Path:
+    manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
+    payload = {
+        "schemaVersion": 1,
+        "cacheKey": wham_content_cache_key(request, input_video_path),
+        "sourceInputVideo": str(input_video_path),
+        "resultsPkl": str(results_pkl),
+    }
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
+
+
 def reusable_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path | None:
     if not request.reuse_wham_cache:
         return None
@@ -235,7 +269,15 @@ def reusable_wham_results_pkl(request: GenerateRequest, input_video_path: Path) 
         PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham",
         input_video_path,
     )
-    if local.is_file() and local.stat().st_size > 0:
+    if (
+        local.is_file()
+        and local.stat().st_size > 0
+        and local_wham_cache_matches_input(
+            request,
+            input_video_path=input_video_path,
+            results_pkl=local,
+        )
+    ):
         return local
     shared = global_wham_results_pkl(request, input_video_path)
     if shared.is_file() and shared.stat().st_size > 0:
@@ -377,6 +419,12 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             record_timing("whamRunSeconds", stage_started)
             timings["wham"] = wham_result.timing_payload()
             wham_results_pkl = wham_result.results_pkl
+            local_cache_manifest_path = write_local_wham_cache_manifest(
+                request,
+                input_video_path=input_video_path,
+                results_pkl=wham_results_pkl,
+            )
+            timings["wham"]["localCacheManifestPath"] = str(local_cache_manifest_path)
             global_cache_path = publish_global_wham_results(
                 request,
                 input_video_path=input_video_path,
@@ -504,6 +552,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             raw_clip,
             start_seconds=request.output_crop_start_seconds,
             end_seconds=request.output_crop_end_seconds,
+            allow_boundary_truncation=request.allow_incomplete_wham_boundary_crop,
         )
         save_motion_json(raw_motion_json_path, raw_clip)
         record_timing("cropInferenceContextSeconds", stage_started)
@@ -531,6 +580,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             one_euro_derivative_cutoff=request.one_euro_derivative_cutoff,
             motion_threshold=request.motion_threshold,
             padding_frames=request.padding_frames,
+            ground_contact_mode=request.ground_contact_mode,
         )
         record_timing("cleanupMotionSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -562,6 +612,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             "ground_plane_fitting",
             "support_global_translation_stabilization",
             "root_translation_one_euro_xz",
+            "contract_aware_vertical_grounding",
             "structural_ik_refinement",
         ]
     else:
@@ -690,6 +741,7 @@ def crop_motion_clip_to_input_window(
     *,
     start_seconds: float | None,
     end_seconds: float | None,
+    allow_boundary_truncation: bool = False,
 ) -> MotionClip:
     """Remove inference-only video context and rebase retained motion to zero."""
     start = max(0.0, float(start_seconds or 0.0))
@@ -711,13 +763,13 @@ def crop_motion_clip_to_input_window(
         3.0 * frame_duration_seconds,
         0.05 * requested_duration_seconds if requested_duration_seconds is not None else 0.0,
     )
-    coverage_failures: list[str] = []
+    boundary_coverage_failures: list[str] = []
     if retained[0].time_sec > start + frame_tolerance_seconds:
-        coverage_failures.append(
+        boundary_coverage_failures.append(
             f"starts at {retained[0].time_sec:.3f}s instead of {start:.3f}s"
         )
     if end != float("inf") and retained[-1].time_sec < end - frame_tolerance_seconds:
-        coverage_failures.append(
+        boundary_coverage_failures.append(
             f"ends at {retained[-1].time_sec:.3f}s instead of {end:.3f}s"
         )
     largest_internal_gap_seconds = max(
@@ -728,11 +780,11 @@ def crop_motion_clip_to_input_window(
         default=0.0,
     )
     internal_gap_tolerance_seconds = 2.5 * frame_duration_seconds
-    if largest_internal_gap_seconds > internal_gap_tolerance_seconds + 1e-6:
-        coverage_failures.append(
-            f"contains an internal {largest_internal_gap_seconds:.3f}s tracking gap"
-        )
-    if coverage_failures:
+    internal_gap_failure = largest_internal_gap_seconds > internal_gap_tolerance_seconds + 1e-6
+    coverage_failures = list(boundary_coverage_failures)
+    if internal_gap_failure:
+        coverage_failures.append(f"contains an internal {largest_internal_gap_seconds:.3f}s tracking gap")
+    if internal_gap_failure or (boundary_coverage_failures and not allow_boundary_truncation):
         raise IncompleteWhamTrackingError(
             "WHAM tracking does not cover the complete requested output window: "
             + "; ".join(coverage_failures)
@@ -768,6 +820,8 @@ def crop_motion_clip_to_input_window(
                     else max(0.0, end - retained[-1].time_sec)
                 ),
                 "largestInternalGapSeconds": largest_internal_gap_seconds,
+                "boundaryTruncationAccepted": bool(boundary_coverage_failures),
+                "boundaryCoverageFailures": boundary_coverage_failures,
             },
         },
     )

@@ -2672,7 +2672,11 @@ def refine_selected_chunk_boundaries(
             encoding="utf-8",
         )
         return selected_span
-    if refined_duration < parent_duration * settings.min_boundary_refinement_duration_ratio:
+    minimum_refined_duration = boundary_refinement_min_duration_seconds(
+        parent_duration=parent_duration,
+        settings=settings,
+    )
+    if refined_duration < minimum_refined_duration:
         (output_dir / "boundary_refinement_decision.json").write_text(
             json.dumps(
                 {
@@ -2682,6 +2686,8 @@ def refine_selected_chunk_boundaries(
                     "selected_span": asdict(selected_span),
                     "refined_span": asdict(refined),
                     "min_duration_ratio": settings.min_boundary_refinement_duration_ratio,
+                    "min_segment_seconds": settings.min_segment_seconds,
+                    "minimum_refined_duration_seconds": minimum_refined_duration,
                 },
                 indent=2,
             ),
@@ -2701,6 +2707,17 @@ def refine_selected_chunk_boundaries(
         encoding="utf-8",
     )
     return refined
+
+
+def boundary_refinement_min_duration_seconds(
+    *,
+    parent_duration: float,
+    settings: DetectionSettings,
+) -> float:
+    return max(
+        float(settings.min_segment_seconds),
+        max(0.0, parent_duration) * settings.min_boundary_refinement_duration_ratio,
+    )
 
 
 def build_boundary_refinement_prompt(

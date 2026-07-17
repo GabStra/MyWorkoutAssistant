@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import statistics
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
 
@@ -45,6 +46,10 @@ ONE_EURO_BETA = 0.05
 ONE_EURO_D_CUTOFF = 1.0
 SUPPORT_GROUND_HEIGHT_QUANTILE = 0.30
 FOOT_CONTACT_GROUND_QUANTILE = 0.20
+KINEMATIC_OUTLIER_STEP_RATIO = 8.0
+KINEMATIC_OUTLIER_BODY_RATIO = 0.08
+KINEMATIC_OUTLIER_MAX_RUN_STEPS = 2
+VERTICAL_GROUNDING_MEDIAN_WINDOW = 9
 
 LEFT_FOOT_GROUP = ("left_foot", "left_ankle", "l_ankle")
 RIGHT_FOOT_GROUP = ("right_foot", "right_ankle", "r_ankle")
@@ -70,9 +75,11 @@ def cleanup_motion_clip(
     one_euro_derivative_cutoff: float = ONE_EURO_D_CUTOFF,
     motion_threshold: float = 0.015,
     padding_frames: int = 3,
+    ground_contact_mode: str = "unknown",
 ) -> tuple[MotionClip, CleanupStats]:
+    repaired_clip, repaired_joint_outliers = repair_isolated_joint_position_outliers(clip)
     trimmed_clip, start_trim, end_trim = trim_static_edges(
-        clip,
+        repaired_clip,
         motion_threshold=motion_threshold,
         padding_frames=padding_frames,
     )
@@ -94,17 +101,21 @@ def cleanup_motion_clip(
         beta=one_euro_beta,
         derivative_cutoff=one_euro_derivative_cutoff,
     )
-    avg_root_after = average_joint_axis(smoothed, root_joint, axis=1)
+    vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
+        smoothed,
+        ground_contact_mode=ground_contact_mode,
+    )
+    avg_root_after = average_joint_axis(vertically_grounded, root_joint, axis=1)
     support_profile = _summarize_support_states(support_states)
     stats = CleanupStats(
         input_frames=clip.frame_count,
-        output_frames=smoothed.frame_count,
+        output_frames=vertically_grounded.frame_count,
         trimmed_start_frames=start_trim,
         trimmed_end_frames=end_trim,
         average_root_height_before=avg_root_before,
         average_root_height_after=avg_root_after,
     )
-    metadata = dict(smoothed.metadata)
+    metadata = dict(vertically_grounded.metadata)
     metadata["cleanup"] = {
         "oneEuroMinCutoff": one_euro_min_cutoff,
         "oneEuroBeta": one_euro_beta,
@@ -117,22 +128,212 @@ def cleanup_motion_clip(
         "rootJoint": root_joint,
         "supportGroundY": support_ground_y,
         "appliedPostProcessingSteps": [
+            "isolated_joint_position_outlier_repair",
             "ground_plane_fitting",
             "support_global_translation_stabilization",
             "root_translation_one_euro_xz",
+            "contract_aware_vertical_grounding",
             "support_contact_detection",
         ],
         "supportProfile": support_profile,
+        "repairedJointPositionOutliers": repaired_joint_outliers,
+        "verticalGrounding": vertical_grounding,
         "footContacts": support_states,
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
-        fps=smoothed.fps,
-        joint_names=smoothed.joint_names,
-        frames=smoothed.frames,
-        source=smoothed.source,
+        fps=vertically_grounded.fps,
+        joint_names=vertically_grounded.joint_names,
+        frames=vertically_grounded.frames,
+        source=vertically_grounded.source,
         metadata=metadata,
     ), stats
+
+
+def stabilize_vertical_floor_contact(
+    clip: MotionClip,
+    *,
+    ground_contact_mode: str,
+    median_window: int = VERTICAL_GROUNDING_MEDIAN_WINDOW,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Remove vertical root drift without changing the articulated pose."""
+    normalized_mode = str(ground_contact_mode or "unknown").strip().casefold()
+    if normalized_mode not in {"continuous", "intermittent"} or clip.frame_count < 2:
+        return clip, {
+            "applied": False,
+            "groundContactMode": normalized_mode,
+            "reason": (
+                "insufficient_frames"
+                if clip.frame_count < 2
+                else "ground_contact_mode_does_not_allow_grounding"
+            ),
+        }
+
+    lower_envelope = [min(point[1] for point in frame.joints.values()) for frame in clip.frames]
+    floor_height = percentile(lower_envelope, 0.10)
+    smoothed_envelope = rolling_median(lower_envelope, window=median_window)
+    if normalized_mode == "continuous":
+        corrected_mask = [True] * clip.frame_count
+        corrections = [height - floor_height for height in smoothed_envelope]
+    else:
+        contact_tolerance = max(0.06, median_motion_body_height(clip) * 0.05)
+        corrected_mask = [height <= floor_height + contact_tolerance for height in smoothed_envelope]
+        corrections = [
+            height - floor_height if corrected else 0.0
+            for height, corrected in zip(smoothed_envelope, corrected_mask)
+        ]
+    if not any(corrected_mask):
+        return clip, {
+            "applied": False,
+            "groundContactMode": normalized_mode,
+            "reason": "no_floor_contact_frames",
+        }
+
+    grounded_frames = [
+        MotionFrame(
+            time_sec=frame.time_sec,
+            joints={
+                name: (point[0], point[1] - correction, point[2])
+                for name, point in frame.joints.items()
+            },
+        )
+        for frame, correction in zip(clip.frames, corrections)
+    ]
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=grounded_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    ), {
+        "applied": True,
+        "groundContactMode": normalized_mode,
+        "floorHeight": floor_height,
+        "medianWindowFrames": median_window,
+        "correctedFrameCount": sum(corrected_mask),
+        "maxAbsCorrection": max(abs(value) for value in corrections),
+    }
+
+
+def rolling_median(values: list[float], *, window: int) -> list[float]:
+    radius = max(0, int(window) // 2)
+    return [
+        statistics.median(values[max(0, index - radius) : min(len(values), index + radius + 1)])
+        for index in range(len(values))
+    ]
+
+
+def repair_isolated_joint_position_outliers(
+    clip: MotionClip,
+    *,
+    step_ratio_threshold: float = KINEMATIC_OUTLIER_STEP_RATIO,
+    body_ratio_threshold: float = KINEMATIC_OUTLIER_BODY_RATIO,
+    max_run_steps: int = KINEMATIC_OUTLIER_MAX_RUN_STEPS,
+) -> tuple[MotionClip, list[dict[str, object]]]:
+    """Interpolate only short joint-local jumps that return to the tracked path.
+
+    Measurements are root-relative so legitimate whole-body translation is not
+    altered. A run must have a stable sample on both sides; persistent tracking
+    loss and boundary discontinuities are deliberately left for validation to
+    reject.
+    """
+    if clip.frame_count < 4 or max_run_steps < 2:
+        return clip, []
+    root_joint = find_first_joint(clip, DEFAULT_ROOT_JOINTS)
+    body_height = median_motion_body_height(clip)
+    if body_height <= 1e-6:
+        return clip, []
+
+    frame_joints = [dict(frame.joints) for frame in clip.frames]
+    repairs: list[dict[str, object]] = []
+    for joint_name in clip.joint_names:
+        if joint_name == root_joint:
+            continue
+        relative_points = [
+            tuple(frame.joints[joint_name][axis] - frame.joints[root_joint][axis] for axis in range(3))
+            for frame in clip.frames
+        ]
+        steps = [point_distance_3d(relative_points[index - 1], relative_points[index]) for index in range(1, len(relative_points))]
+        positive_steps = [step for step in steps if step > 1e-7]
+        if len(positive_steps) < 2:
+            continue
+        median_step = statistics.median(positive_steps)
+        if median_step <= 1e-7:
+            continue
+        outlier_step_indices = [
+            index
+            for index, step in enumerate(steps, start=1)
+            if step / median_step >= step_ratio_threshold and step / body_height >= body_ratio_threshold
+        ]
+        for run_start, run_end in consecutive_integer_runs(outlier_step_indices):
+            run_steps = run_end - run_start + 1
+            # Two consecutive jump steps identify an interior point (or short
+            # span) that leaves and returns to the surrounding tracked path.
+            if run_steps != 2 or run_steps > max_run_steps:
+                continue
+            first_repaired_frame = run_start
+            last_repaired_frame = run_end - 1
+            left_frame = first_repaired_frame - 1
+            right_frame = last_repaired_frame + 1
+            if left_frame < 0 or right_frame >= clip.frame_count:
+                continue
+            left_point = frame_joints[left_frame][joint_name]
+            right_point = frame_joints[right_frame][joint_name]
+            repaired_count = last_repaired_frame - first_repaired_frame + 1
+            for offset, frame_index in enumerate(range(first_repaired_frame, last_repaired_frame + 1), start=1):
+                weight = offset / (repaired_count + 1)
+                frame_joints[frame_index][joint_name] = tuple(
+                    left_point[axis] * (1.0 - weight) + right_point[axis] * weight
+                    for axis in range(3)
+                )
+            repairs.append(
+                {
+                    "joint": joint_name,
+                    "firstFrame": first_repaired_frame,
+                    "lastFrame": last_repaired_frame,
+                    "outlierStepCount": run_steps,
+                }
+            )
+    if not repairs:
+        return clip, []
+    repaired_frames = [
+        MotionFrame(time_sec=frame.time_sec, joints=frame_joints[index])
+        for index, frame in enumerate(clip.frames)
+    ]
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=repaired_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    ), repairs
+
+
+def consecutive_integer_runs(values: list[int]) -> list[tuple[int, int]]:
+    if not values:
+        return []
+    runs: list[tuple[int, int]] = []
+    run_start = previous = values[0]
+    for value in values[1:]:
+        if value != previous + 1:
+            runs.append((run_start, previous))
+            run_start = value
+        previous = value
+    runs.append((run_start, previous))
+    return runs
+
+
+def median_motion_body_height(clip: MotionClip) -> float:
+    heights = []
+    for frame in clip.frames:
+        y_values = [point[1] for point in frame.joints.values()]
+        if y_values:
+            heights.append(max(y_values) - min(y_values))
+    return statistics.median(heights) if heights else 0.0
+
+
+def point_distance_3d(left: Point3, right: Point3) -> float:
+    return math.sqrt(sum((left[axis] - right[axis]) ** 2 for axis in range(3)))
 
 
 def smooth_root_translation(

@@ -1,7 +1,9 @@
-DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Downloads\\llama-b9936-bin-win-cuda-12.4-x64"
+DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Downloads\\llama-b10038-bin-win-cuda-12.4-x64"
 DEFAULT_LLAMA_CPP_SERVER_COMMAND = f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe"
-DEFAULT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf"
-DEFAULT_LLAMA_CPP_MMPROJ = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(4).gguf"
+DEFAULT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
+DEFAULT_LLAMA_CPP_MMPROJ = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(5).gguf"
+DEFAULT_LLAMA_CPP_MTP_MODEL = "C:\\Users\\gabri\\Downloads\\mtp-gemma-4-12B-it(1).gguf"
+DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX = 3
 DEFAULT_TEXT_LLAMA_CPP_MODEL = DEFAULT_LLAMA_CPP_MODEL
 DEFAULT_TEXT_LLAMA_CPP_MMPROJ = None
 DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL = DEFAULT_TEXT_LLAMA_CPP_MODEL

@@ -41,13 +41,15 @@ param(
     [switch]$UseSourceAsIs,
     [double]$SegmentStartSeconds = -1.0,
     [double]$SegmentEndSeconds = -1.0,
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(4).gguf",
+    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(5).gguf",
+    [string]$LlamaCppMtpModel = "C:\\Users\\gabri\\Downloads\\mtp-gemma-4-12B-it(1).gguf",
+    [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
     [string]$YouTubeCookies,
     [string]$YouTubeCookiesPath,
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b9936-bin-win-cuda-12.4-x64\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b10038-bin-win-cuda-12.4-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
@@ -311,6 +313,8 @@ elseif (-not $SkipSegmentDetection) {
         -UseLiteRt:$UseLiteRt.IsPresent `
         -LlamaCppModel $LlamaCppModel `
         -LlamaCppMmproj $LlamaCppMmproj `
+        -LlamaCppMtpModel $LlamaCppMtpModel `
+        -LlamaCppSpecDraftNMax $LlamaCppSpecDraftNMax `
         -LlamaCppBackend $LlamaCppBackend `
         -LlamaCppServerCommand $LlamaCppServerCommand `
         -LlamaCppServerPort $LlamaCppServerPort `

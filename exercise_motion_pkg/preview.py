@@ -35,6 +35,13 @@ PREVIEW_SKELETON_CHAINS = [
     ["neck", "left_collar", "left_shoulder", "left_elbow", "left_wrist", "left_hand"],
     ["neck", "right_collar", "right_shoulder", "right_elbow", "right_wrist", "right_hand"],
 ]
+PREVIEW_BONE_CHAINS_ROOT_OUTWARD = (
+    ("pelvis", "spine1", "spine2", "spine3", "neck", "head"),
+    ("neck", "left_collar", "left_shoulder", "left_elbow", "left_wrist", "left_hand"),
+    ("neck", "right_collar", "right_shoulder", "right_elbow", "right_wrist", "right_hand"),
+    ("pelvis", "left_hip", "left_knee", "left_ankle", "left_foot"),
+    ("pelvis", "right_hip", "right_knee", "right_ankle", "right_foot"),
+)
 
 JOINT_ALIASES = {
     "spine1": ("spine1", "spine"),
@@ -66,6 +73,8 @@ HINGE_LIMITS = (
 MIN_LOOP_DURATION_SECONDS = 2.0
 MAX_DETECTED_LOOPS = 8
 MIN_PREVIEW_LOOP_MOTION_BODY_RATIO = 0.08
+MAX_PREVIEW_LOOP_BOUNDARY_SAMPLES = 80
+MAX_PREVIEW_LOOP_MOTION_SAMPLES = 24
 ORIENTATION_PRIMARY_SUPPORT_JOINTS = (
     "left_foot",
     "right_foot",
@@ -231,6 +240,7 @@ def write_preview_html(
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
+        "groundVisualClearance": UNIFORM_CAPSULE_RADIUS,
         "spineposeMotionFusion": (
             clip.metadata.get("spineposeMotionFusion")
             if isinstance(clip.metadata, dict) and isinstance(clip.metadata.get("spineposeMotionFusion"), dict)
@@ -1252,6 +1262,9 @@ def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
         for frame in clip.frames
     ]
     metadata = dict(clip.metadata)
+    ground = metadata.get("ground")
+    if isinstance(ground, dict):
+        metadata["ground"] = _translate_ground_payload(ground, translation=center)
     metadata["previewCenterOffset"] = {
         "space": "fixed_root_motion_bounds",
         "point": list(center),
@@ -1274,6 +1287,7 @@ def _clip_is_preview_refined(clip: MotionClip) -> bool:
 def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
     flip_vertical = _preview_requires_vertical_flip(clip)
     frames = [_transform_frame_for_preview(frame, flip_vertical=flip_vertical) for frame in clip.frames]
+    bone_length_reference_frames = frames
     frames = _suppress_preview_outlier_frames(frames)
     frames = _suppress_translation_bursts(frames)
     frames = _stabilize_unrealistic_segment_motion(frames)
@@ -1281,6 +1295,10 @@ def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
     frames = _smooth_preview_frames(frames)
     frames, bilateral_symmetry = _stabilize_bilateral_joint_symmetry(frames)
     frames, horizontal_torso_stabilization = _stabilize_horizontal_rendered_torso_plane(frames)
+    frames, bone_length_preservation = _preserve_preview_bone_lengths(
+        frames,
+        reference_frames=bone_length_reference_frames,
+    )
     metadata = dict(clip.metadata)
     metadata[PREVIEW_REFINEMENT_METADATA_KEY] = {
         "prepared": True,
@@ -1289,6 +1307,7 @@ def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
         "motionLineAligned": False,
         "bilateralJointSymmetry": bilateral_symmetry,
         "horizontalRenderedTorsoPlaneStabilization": horizontal_torso_stabilization,
+        "boneLengthPreservation": bone_length_preservation,
     }
     ground = metadata.get("ground")
     if isinstance(ground, dict):
@@ -1916,6 +1935,85 @@ def _horizontal_point_track_range(points: list[tuple[float, float, float]]) -> f
         max(math.hypot(point[0] - center_x, point[2] - center_z) for point in points) *
         2.0
     )
+
+
+def _preserve_preview_bone_lengths(
+    frames: list[MotionFrame],
+    *,
+    reference_frames: list[MotionFrame],
+) -> tuple[list[MotionFrame], dict[str, object]]:
+    """Restore one stable reference length per bone after joint-wise cleanup."""
+    if not frames or not reference_frames:
+        return frames, {"applied": False, "reason": "no_frames", "boneCount": 0}
+
+    joint_names = set().union(*(frame.joints.keys() for frame in reference_frames))
+    edges = [
+        (parent, child)
+        for chain in PREVIEW_BONE_CHAINS_ROOT_OUTWARD
+        for parent, child in zip(chain, chain[1:])
+        if parent in joint_names and child in joint_names
+    ]
+    reference_lengths: dict[tuple[str, str], float] = {}
+    for parent, child in edges:
+        lengths = [
+            _point_distance(frame.joints[parent], frame.joints[child])
+            for frame in reference_frames
+            if parent in frame.joints and child in frame.joints
+        ]
+        length = _median([value for value in lengths if value > 1e-7])
+        if length > 1e-7:
+            reference_lengths[(parent, child)] = length
+    if not reference_lengths:
+        return frames, {"applied": False, "reason": "no_resolved_bones", "boneCount": 0}
+
+    projected_frames: list[MotionFrame] = []
+    max_correction = 0.0
+    corrected_joint_count = 0
+    for frame_index, frame in enumerate(frames):
+        joints = dict(frame.joints)
+        reference_frame = reference_frames[min(frame_index, len(reference_frames) - 1)]
+        for edge in edges:
+            target_length = reference_lengths.get(edge)
+            if target_length is None:
+                continue
+            parent_name, child_name = edge
+            parent = joints.get(parent_name)
+            child = joints.get(child_name)
+            if parent is None or child is None:
+                continue
+            direction = _subtract_points(child, parent)
+            direction_length = _vector_length(direction)
+            if direction_length <= 1e-7:
+                reference_parent = reference_frame.joints.get(parent_name)
+                reference_child = reference_frame.joints.get(child_name)
+                if reference_parent is None or reference_child is None:
+                    continue
+                direction = _subtract_points(reference_child, reference_parent)
+                direction_length = _vector_length(direction)
+            if direction_length <= 1e-7:
+                continue
+            scale = target_length / direction_length
+            projected_child = (
+                parent[0] + direction[0] * scale,
+                parent[1] + direction[1] * scale,
+                parent[2] + direction[2] * scale,
+            )
+            max_correction = max(max_correction, _point_distance(child, projected_child))
+            joints[child_name] = projected_child
+            corrected_joint_count += 1
+        projected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+
+    return projected_frames, {
+        "applied": True,
+        "reason": "post_refinement_forward_kinematic_projection",
+        "boneCount": len(reference_lengths),
+        "correctedJointCount": corrected_joint_count,
+        "maxCorrection": max_correction,
+        "referenceLengths": {
+            f"{parent}:{child}": length
+            for (parent, child), length in reference_lengths.items()
+        },
+    }
 
 
 def _stabilize_bilateral_joint_symmetry(
@@ -3155,6 +3253,37 @@ def _rotate_ground_payload(
     return rotated
 
 
+def _translate_ground_payload(
+    ground_payload: dict[str, object],
+    *,
+    translation: tuple[float, float, float],
+) -> dict[str, object]:
+    translated = json.loads(json.dumps(ground_payload))
+    for plane_key in ("renderGroundPlane", "motionGroundPlane"):
+        plane = translated.get(plane_key)
+        if not isinstance(plane, dict):
+            continue
+        normal = plane.get("normal")
+        offset = plane.get("offset")
+        if not isinstance(normal, list) or len(normal) != 3 or not isinstance(offset, (int, float)):
+            continue
+        plane["offset"] = float(offset) + sum(
+            float(normal[axis]) * float(translation[axis])
+            for axis in range(3)
+        )
+    for origin_key in ("renderGroundOrigin", "motionGroundOrigin"):
+        origin = translated.get(origin_key)
+        if not isinstance(origin, dict):
+            continue
+        point = origin.get("point")
+        if isinstance(point, list) and len(point) == 3:
+            origin["point"] = [
+                float(point[axis]) - float(translation[axis])
+                for axis in range(3)
+            ]
+    return translated
+
+
 def _flip_ground_payload(ground_payload: dict[str, object]) -> dict[str, object]:
     flipped = json.loads(json.dumps(ground_payload))
     render_plane = flipped.get("renderGroundPlane")
@@ -3889,8 +4018,11 @@ def _detect_preview_loops(clip: MotionClip) -> list[dict[str, object]]:
     support_states = _extract_preview_support_states(clip)
     use_support_state_veto = not dominant_groups
     candidates: list[dict[str, object]] = []
-    for start_index in range(0, clip.frame_count - minimum_frames):
-        for end_index in range(start_index + minimum_frames, clip.frame_count):
+    boundary_indexes = _preview_loop_boundary_indexes(clip.frame_count)
+    for start_index in boundary_indexes:
+        for end_index in boundary_indexes:
+            if end_index < start_index + minimum_frames:
+                continue
             if not _preview_loop_motion_is_meaningful(
                 clip,
                 start_index=start_index,
@@ -3969,6 +4101,19 @@ def _detect_preview_loops(clip: MotionClip) -> list[dict[str, object]]:
     return selected
 
 
+def _preview_loop_boundary_indexes(frame_count: int) -> list[int]:
+    """Bound exhaustive loop search while retaining the full clip timeline."""
+    if frame_count <= 0:
+        return []
+    if frame_count <= MAX_PREVIEW_LOOP_BOUNDARY_SAMPLES:
+        return list(range(frame_count))
+    stride = max(1, math.ceil((frame_count - 1) / (MAX_PREVIEW_LOOP_BOUNDARY_SAMPLES - 1)))
+    indexes = list(range(0, frame_count, stride))
+    if indexes[-1] != frame_count - 1:
+        indexes.append(frame_count - 1)
+    return indexes
+
+
 def _preview_loop_motion_is_meaningful(
     clip: MotionClip,
     *,
@@ -3977,7 +4122,11 @@ def _preview_loop_motion_is_meaningful(
     key_joints: list[str],
     root_joint: str | None,
 ) -> bool:
-    frames = clip.frames[start_index:end_index + 1]
+    frame_span = end_index - start_index + 1
+    sample_stride = max(1, math.ceil(frame_span / MAX_PREVIEW_LOOP_MOTION_SAMPLES))
+    frames = clip.frames[start_index:end_index + 1:sample_stride]
+    if frames and frames[-1] is not clip.frames[end_index]:
+        frames = [*frames, clip.frames[end_index]]
     if len(frames) < 2:
         return False
     points = [point for frame in frames for point in frame.joints.values()]
@@ -4638,6 +4787,7 @@ def _build_html(payload: dict[str, object]) -> str:
     let lockYRoot = false;
     let lockPlantedFeet = false;
     let lockPlantedHands = false;
+    let sourceFootSupportEvidence = null;
     let activeRenderFrame = null;
     let activeHandSupportAnchor = null;
     let activeVerticalMovementAnchor = null;
@@ -4645,6 +4795,8 @@ def _build_html(payload: dict[str, object]) -> str:
     let footLockCorrections = new Map();
     let lockedJointFrameKey = null;
     let lockedJointPositions = new Map();
+    let stableLegPoleVectorsKey = null;
+    let stableLegPoleVectors = new Map();
     let frameShoulderLevelingKey = null;
     let frameShoulderLevelingTransform = null;
     let lockedHandMovementAlignmentKey = null;
@@ -4663,6 +4815,7 @@ def _build_html(payload: dict[str, object]) -> str:
     let currentLoop = null;
     let currentAutoAlignment = currentLoop?.autoAlignment ?? defaultAutoAlignment;
     let playbackState = buildPlaybackState(payload.frames, currentLoop);
+    let renderingBakedWearPayload = false;
     let comparisonPlaybackState = buildPlaybackState(comparisonFrames, currentLoop);
     let rawComparisonPlaybackState = buildPlaybackState(rawComparisonFrames, currentLoop);
     let activeRootAnchor = null;
@@ -5418,9 +5571,26 @@ def _build_html(payload: dict[str, object]) -> str:
     function refreshGroundPlacement() {{
       const bounds = getCachedSceneBounds(fixedRoot);
       refreshSceneBasis();
+      const renderGroundPlane = renderingBakedWearPayload
+        ? null
+        : payload.ground?.renderGroundPlane;
+      const groundNormal = renderGroundPlane?.normal;
+      const groundOffset = Number(renderGroundPlane?.offset);
+      const normalY = Array.isArray(groundNormal) && groundNormal.length >= 3
+        ? Number(groundNormal[1])
+        : Number.NaN;
+      const authoritativeFloorY = Number.isFinite(groundOffset)
+        && Number.isFinite(normalY)
+        && Math.abs(normalY) >= 0.8
+        ? -groundOffset / normalY
+        : null;
+      const visualClearance = Math.max(0, Number(payload.groundVisualClearance) || 0);
+      const floorY = authoritativeFloorY == null
+        ? bounds.minY + 0.08 - visualClearance
+        : authoritativeFloorY - visualClearance;
       const localCenter = new THREE.Vector3(
         (bounds.minX + bounds.maxX) * 0.5,
-        bounds.minY - 0.06,
+        floorY,
         (bounds.minZ + bounds.maxZ) * 0.5
       );
       localCenter.sub(sceneOriginOffset);
@@ -5484,6 +5654,8 @@ def _build_html(payload: dict[str, object]) -> str:
       footLockCorrections = new Map();
       lockedJointFrameKey = null;
       lockedJointPositions = new Map();
+      stableLegPoleVectorsKey = null;
+      stableLegPoleVectors = new Map();
     }}
 
     function getCachedSceneBounds(currentFixedRoot) {{
@@ -6717,7 +6889,12 @@ def _build_html(payload: dict[str, object]) -> str:
       const weightedTranslation = new THREE.Vector3();
       let totalWeight = 0;
       for (const target of activeTargets) {{
-        if (!isFootLockTarget(target) || !basePositions.has(target.jointName)) {{
+        if (
+          !isFootLockTarget(target)
+          || !String(target.jointName).endsWith("_ankle")
+          || target.sourceConfirmedContinuousSupport
+          || !basePositions.has(target.jointName)
+        ) {{
           continue;
         }}
         const targetWeight = Math.max(0, Math.min(1, Number(target.weight) || 0));
@@ -6764,6 +6941,17 @@ def _build_html(payload: dict[str, object]) -> str:
       return footSampleForFrame(frame, jointName);
     }}
 
+    function sourceConfirmsContinuousFootSupport(jointName) {{
+      if (!sourceFootSupportEvidence || typeof sourceFootSupportEvidence !== "object") {{
+        return false;
+      }}
+      const side = String(jointName).startsWith("left_")
+        ? "left"
+        : (String(jointName).startsWith("right_") ? "right" : null);
+      const evidence = side ? sourceFootSupportEvidence?.feet?.[side] : null;
+      return Boolean(evidence?.continuousSupport);
+    }}
+
     function buildLockTargetsForJoint(frames, jointName, targetsByFrameKey) {{
       const samples = frames.map((frame, index) => {{
         const point = lockSampleForFrame(frame, jointName);
@@ -6774,6 +6962,8 @@ def _build_html(payload: dict[str, object]) -> str:
         return;
       }}
       const isHandJoint = jointName.includes("hand") || jointName.includes("wrist");
+      const sourceConfirmedContinuousSupport = !isHandJoint
+        && sourceConfirmsContinuousFootSupport(jointName);
       const contactSpeedMetersPerSecond = isHandJoint ? 0.25 : 0.32;
       const edgeSpeeds = samples.slice(0, -1).map((sample, index) => {{
         const next = samples[index + 1];
@@ -6786,7 +6976,7 @@ def _build_html(payload: dict[str, object]) -> str:
         );
         return next.point.distanceTo(sample.point) / deltaSeconds;
       }});
-      const plantedSamples = samples.filter((sample, index) => {{
+      const plantedSamples = sourceConfirmedContinuousSupport ? validSamples : samples.filter((sample, index) => {{
         if (!sample) {{
           return false;
         }}
@@ -6808,7 +6998,8 @@ def _build_html(payload: dict[str, object]) -> str:
         - Math.min(...validSamples.map((sample) => sample.point.z));
       const fullRangeRatio = Math.hypot(xRange, yRange, zRange)
         / Math.max(estimateAlignmentSkeletonScale(frames), 1e-6);
-      const continuousSupport = plantedSamples.length / validSamples.length >= 0.8
+      const continuousSupport = sourceConfirmedContinuousSupport
+        || plantedSamples.length / validSamples.length >= 0.8
         || fullRangeRatio <= 0.10;
       if (continuousSupport) {{
         for (const sample of validSamples) {{
@@ -6864,10 +7055,13 @@ def _build_html(payload: dict[str, object]) -> str:
         if (run.length < minimumContactFrames) {{
           continue;
         }}
+        const anchorSamples = sourceConfirmedContinuousSupport
+          ? run.slice(0, Math.max(3, Math.round((Number(payload.fps) || 30) * 0.15)))
+          : run;
         const anchorPoint = new THREE.Vector3(
-          medianValue(run.map((sample) => sample.point.x)),
-          medianValue(run.map((sample) => sample.point.y)),
-          medianValue(run.map((sample) => sample.point.z))
+          medianValue(anchorSamples.map((sample) => sample.point.x)),
+          medianValue(anchorSamples.map((sample) => sample.point.y)),
+          medianValue(anchorSamples.map((sample) => sample.point.z))
         );
         const touchesStart = run[0].index === 0;
         const touchesEnd = run[run.length - 1].index === frames.length - 1;
@@ -6885,6 +7079,7 @@ def _build_html(payload: dict[str, object]) -> str:
             anchorY: anchorPoint.y,
             anchorZ: anchorPoint.z,
             weight: Math.min(startWeight, endWeight),
+            sourceConfirmedContinuousSupport,
           }});
         }}
       }}
@@ -6950,6 +7145,116 @@ def _build_html(payload: dict[str, object]) -> str:
       return computeFootLockCorrections().get(frameFootLockKey(frame)) ?? null;
     }}
 
+    function computeStableLegPoleVectors() {{
+      const cacheKey = `${{buildSceneBoundsCacheKey(fixedRoot)}}|stable-leg-bend|${{manualModelRotationCacheKey()}}`;
+      if (stableLegPoleVectorsKey === cacheKey) {{
+        return stableLegPoleVectors;
+      }}
+      stableLegPoleVectorsKey = cacheKey;
+      stableLegPoleVectors = new Map();
+      const frames = playbackState.boundsFrames ?? playbackState.frames ?? [];
+      const bodyLateralSamples = [];
+      let referenceBodyLateral = null;
+      for (const frame of frames) {{
+        for (const [leftName, rightName] of [
+          ["left_hip", "right_hip"],
+          ["left_shoulder", "right_shoulder"],
+        ]) {{
+          const left = lockSampleForFrame(frame, leftName);
+          const right = lockSampleForFrame(frame, rightName);
+          if (!left || !right) {{
+            continue;
+          }}
+          const lateral = right.clone().sub(left);
+          lateral.y = 0;
+          if (lateral.lengthSq() <= 1e-8) {{
+            continue;
+          }}
+          lateral.normalize();
+          if (!referenceBodyLateral) {{
+            referenceBodyLateral = lateral.clone();
+          }} else if (lateral.dot(referenceBodyLateral) < 0) {{
+            lateral.negate();
+          }}
+          bodyLateralSamples.push(lateral);
+        }}
+      }}
+      let stableBodyLateral = null;
+      if (bodyLateralSamples.length >= 3) {{
+        stableBodyLateral = new THREE.Vector3(
+          medianValue(bodyLateralSamples.map((axis) => axis.x)),
+          medianValue(bodyLateralSamples.map((axis) => axis.y)),
+          medianValue(bodyLateralSamples.map((axis) => axis.z))
+        );
+        if (stableBodyLateral.lengthSq() <= 1e-8) {{
+          stableBodyLateral = null;
+        }} else {{
+          stableBodyLateral.normalize();
+        }}
+      }}
+      stableBodyLateral = stableBodyLateral ?? sceneRight.clone();
+      const stableBodyUp = axisY.clone();
+      const stableBodyForward = new THREE.Vector3().crossVectors(
+        stableBodyLateral,
+        stableBodyUp
+      ).normalize();
+      for (const side of ["left", "right"]) {{
+        const poleComponents = [];
+        let referencePole = null;
+        for (const frame of frames) {{
+          const hip = lockSampleForFrame(frame, `${{side}}_hip`);
+          const knee = lockSampleForFrame(frame, `${{side}}_knee`);
+          const ankle = lockSampleForFrame(frame, `${{side}}_ankle`);
+          if (!hip || !knee || !ankle) {{
+            continue;
+          }}
+          const legAxis = ankle.clone().sub(hip);
+          if (legAxis.lengthSq() <= 1e-8) {{
+            continue;
+          }}
+          legAxis.normalize();
+          const kneeOffset = knee.clone().sub(hip);
+          const bendDirection = kneeOffset
+            .clone()
+            .sub(legAxis.clone().multiplyScalar(kneeOffset.dot(legAxis)));
+          if (bendDirection.lengthSq() <= 1e-8) {{
+            continue;
+          }}
+          bendDirection.normalize();
+          if (!referencePole) {{
+            referencePole = bendDirection.clone();
+          }} else if (bendDirection.dot(referencePole) < 0) {{
+            bendDirection.negate();
+          }}
+          poleComponents.push([
+            bendDirection.dot(stableBodyLateral),
+            bendDirection.dot(stableBodyUp),
+            bendDirection.dot(stableBodyForward),
+          ]);
+        }}
+        if (poleComponents.length < 3) {{
+          continue;
+        }}
+        const stablePoleVector = new THREE.Vector3()
+          .addScaledVector(
+            stableBodyLateral,
+            medianValue(poleComponents.map((components) => components[0]))
+          )
+          .addScaledVector(
+            stableBodyUp,
+            medianValue(poleComponents.map((components) => components[1]))
+          )
+          .addScaledVector(
+            stableBodyForward,
+            medianValue(poleComponents.map((components) => components[2]))
+          );
+        if (stablePoleVector.lengthSq() > 1e-8) {{
+          stableLegPoleVectors.set(side, stablePoleVector.normalize());
+        }}
+      }}
+      return stableLegPoleVectors;
+    }}
+
     function computeLockedJointPositions(frame, frameTranslation) {{
       if ((!lockPlantedFeet && !lockPlantedHands) || !frame) {{
         lockedJointFrameKey = null;
@@ -7004,6 +7309,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockedJointPositions.set(jointName, translatedPoint.clone());
         }}
       }}
+      const stablePoleVectors = computeStableLegPoleVectors();
       for (const side of ["left", "right"]) {{
         const ankleName = `${{side}}_ankle`;
         const footName = `${{side}}_foot`;
@@ -7021,17 +7327,64 @@ def _build_html(payload: dict[str, object]) -> str:
           continue;
         }}
         const originalAnkle = basePositions.get(ankleName);
+        const originalHip = basePositions.get(`${{side}}_hip`);
+        const originalKnee = basePositions.get(`${{side}}_knee`);
+        let kneeLateralConstraint = null;
+        if (
+          originalHip
+          && originalKnee
+          && basePositions.has("left_hip")
+          && basePositions.has("right_hip")
+        ) {{
+          const bodyLateralAxis = basePositions.get("right_hip")
+            .clone()
+            .sub(basePositions.get("left_hip"));
+          bodyLateralAxis.y = 0;
+          const originalLegAxis = originalAnkle.clone().sub(originalHip);
+          const originalLegLengthSquared = originalLegAxis.lengthSq();
+          if (
+            bodyLateralAxis.lengthSq() > 1e-8
+            && originalLegLengthSquared > 1e-8
+          ) {{
+            bodyLateralAxis.normalize();
+            const hipToKnee = originalKnee.clone().sub(originalHip);
+            const alongFraction = Math.max(0, Math.min(
+              1,
+              hipToKnee.dot(originalLegAxis) / originalLegLengthSquared
+            ));
+            const kneeFromLegLine = hipToKnee
+              .clone()
+              .sub(originalLegAxis.clone().multiplyScalar(alongFraction));
+            kneeLateralConstraint = {{
+              bodyLateralAxis,
+              signedDeviation: kneeFromLegLine.dot(bodyLateralAxis),
+            }};
+          }}
+        }}
         const ankleCorrection = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
           .sub(originalAnkle)
           .multiplyScalar(targetWeight);
         const maxLocalCorrection = 0.025;
-        if (ankleCorrection.length() > maxLocalCorrection) {{
+        if (target.sourceConfirmedContinuousSupport) {{
+          const horizontalCorrection = new THREE.Vector3(
+            ankleCorrection.x,
+            0,
+            ankleCorrection.z
+          );
+          if (horizontalCorrection.length() > maxLocalCorrection) {{
+            horizontalCorrection.setLength(maxLocalCorrection);
+          }}
+          ankleCorrection.x = horizontalCorrection.x;
+          ankleCorrection.z = horizontalCorrection.z;
+        }} else if (ankleCorrection.length() > maxLocalCorrection) {{
           ankleCorrection.setLength(maxLocalCorrection);
         }}
         const blendedTarget = originalAnkle.clone().add(ankleCorrection);
         const solved = solveLegIkChain(
           chain.map((jointName) => basePositions.get(jointName).clone()),
-          blendedTarget
+          blendedTarget,
+          stablePoleVectors.get(side) ?? null,
+          kneeLateralConstraint
         );
         chain.forEach((jointName, index) => {{
           lockedJointPositions.set(jointName, solved[index]);
@@ -7105,7 +7458,12 @@ def _build_html(payload: dict[str, object]) -> str:
       return lockedJointPositions;
     }}
 
-    function solveLegIkChain(points, target) {{
+    function solveLegIkChain(
+      points,
+      target,
+      stablePoleVector = null,
+      kneeLateralConstraint = null
+    ) {{
       if (points.length < 3) {{
         return points.map((point) => point.clone());
       }}
@@ -7140,17 +7498,25 @@ def _build_html(payload: dict[str, object]) -> str:
       const sourceBendDirection = sourceKneeOffset
         .clone()
         .sub(originalAxis.clone().multiplyScalar(sourceKneeOffset.dot(originalAxis)));
-      let bendDirection = sourceBendDirection
+      const preferredBendDirection = stablePoleVector instanceof THREE.Vector3
+        && stablePoleVector.lengthSq() > 1e-8
+        ? stablePoleVector.clone()
+        : sourceBendDirection.clone();
+      let bendDirection = preferredBendDirection
         .clone()
-        .sub(targetAxis.clone().multiplyScalar(sourceBendDirection.dot(targetAxis)));
+        .sub(targetAxis.clone().multiplyScalar(preferredBendDirection.dot(targetAxis)));
+      if (bendDirection.lengthSq() <= 1e-8) {{
+        bendDirection = sourceBendDirection
+          .clone()
+          .sub(targetAxis.clone().multiplyScalar(sourceBendDirection.dot(targetAxis)));
+      }}
       if (bendDirection.lengthSq() <= 1e-8) {{
         bendDirection = projectedAxis(sceneRight, targetAxis)
           ?? projectedAxis(sceneForward, targetAxis)
           ?? projectedAxis(axisY, targetAxis)
           ?? new THREE.Vector3(1, 0, 0);
-      }} else {{
-        bendDirection.normalize();
       }}
+      bendDirection.normalize();
 
       const kneeAlongAxis = (
         (upperLength * upperLength) - (lowerLength * lowerLength) + (solvedDistance * solvedDistance)
@@ -7159,6 +7525,39 @@ def _build_html(payload: dict[str, object]) -> str:
         (upperLength * upperLength) - (kneeAlongAxis * kneeAlongAxis),
         0
       ));
+      if (
+        kneeBendDistance > 1e-6
+        && kneeLateralConstraint?.bodyLateralAxis instanceof THREE.Vector3
+        && Number.isFinite(Number(kneeLateralConstraint.signedDeviation))
+      ) {{
+        const lateralAxis = kneeLateralConstraint.bodyLateralAxis.clone().normalize();
+        const lateralInBendPlane = lateralAxis
+          .clone()
+          .sub(targetAxis.clone().multiplyScalar(lateralAxis.dot(targetAxis)));
+        const lateralProjectionMagnitude = lateralInBendPlane.length();
+        if (lateralProjectionMagnitude > 1e-6) {{
+          lateralInBendPlane.normalize();
+          const desiredLateralCoefficient = Math.max(-0.98, Math.min(
+            0.98,
+            Number(kneeLateralConstraint.signedDeviation)
+              / (kneeBendDistance * lateralProjectionMagnitude)
+          ));
+          const orthogonalBendDirection = new THREE.Vector3()
+            .crossVectors(targetAxis, lateralInBendPlane)
+            .normalize();
+          if (orthogonalBendDirection.dot(bendDirection) < 0) {{
+            orthogonalBendDirection.negate();
+          }}
+          bendDirection = lateralInBendPlane
+            .clone()
+            .multiplyScalar(desiredLateralCoefficient)
+            .addScaledVector(
+              orthogonalBendDirection,
+              Math.sqrt(Math.max(0, 1 - desiredLateralCoefficient * desiredLateralCoefficient))
+            )
+            .normalize();
+        }}
+      }}
       const solvedKnee = root
         .clone()
         .addScaledVector(targetAxis, kneeAlongAxis)
@@ -7598,6 +7997,9 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function toBaseWorldPoint(point, frameTranslation, applySceneOriginOffset = true, jointName = null, currentFixedRoot = fixedRoot) {{
+      if (renderingBakedWearPayload) {{
+        return new THREE.Vector3(Number(point[0]), Number(point[1]), Number(point[2]));
+      }}
       const lockedPositions = computeLockedJointPositions(activeRenderFrame, frameTranslation);
       const lockedPosition = typeof jointName === "string" && lockedPositions.has(jointName)
         ? lockedPositions.get(jointName)
@@ -7861,6 +8263,11 @@ def _build_html(payload: dict[str, object]) -> str:
       }});
     }}
 
+    function normalizeViewYawDegrees(value) {{
+      const degrees = Number(value) || 0.0;
+      return ((degrees + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
+    }}
+
     function alignBakedSagittalPlaneToGridAxis(frames) {{
       const alignment = estimateBakedSagittalPlaneAlignment(frames);
       if (manualModelRotationOverridesAutoOrientation()) {{
@@ -7899,6 +8306,7 @@ def _build_html(payload: dict[str, object]) -> str:
         lockYDrift,
         lockPlantedFeet,
         lockPlantedHands,
+        sourceFootSupportEvidence,
         sceneInverted,
         manualModelRotationDegrees: manualModelRotationPayload(),
         manualModelRotationAxisSemantics: manualModelRotationAxisSemanticsPayload(),
@@ -7938,6 +8346,12 @@ def _build_html(payload: dict[str, object]) -> str:
       frames = wearCoordinateNormalization.frames;
       const bakedSagittalPlaneAlignment = alignBakedSagittalPlaneToGridAxis(frames);
       frames = bakedSagittalPlaneAlignment.frames;
+      const bakedSagittalYawDegrees = bakedSagittalPlaneAlignment.alignment?.applied
+        ? Number(bakedSagittalPlaneAlignment.alignment.yawDegrees) || 0.0
+        : 0.0;
+      const wearViewYawDegrees = normalizeViewYawDegrees(
+        selectedPreviewSettings.cameraYawDegrees + bakedSagittalYawDegrees
+      );
       const sourceTimelineFrames = frames.filter((frame) => !frame.syntheticLoopBridge);
       const timelineFrames = sourceTimelineFrames.length > 0 ? sourceTimelineFrames : frames;
       const sourceStartFrame = timelineFrames.length > 0 ? timelineFrames[0].sourceFrameIndex : 0;
@@ -7969,6 +8383,7 @@ def _build_html(payload: dict[str, object]) -> str:
           lockYDrift: selectedPreviewSettings.lockYDrift,
           lockPlantedFeet: selectedPreviewSettings.lockPlantedFeet,
           lockPlantedHands: selectedPreviewSettings.lockPlantedHands,
+          sourceFootSupportEvidence: selectedPreviewSettings.sourceFootSupportEvidence,
           invertScene: selectedPreviewSettings.sceneInverted,
           manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
           manualModelRotationAxisSemantics: selectedPreviewSettings.manualModelRotationAxisSemantics,
@@ -7983,9 +8398,11 @@ def _build_html(payload: dict[str, object]) -> str:
           rawWhamPassthrough: Boolean(payload.rawWhamPassthrough),
         }},
         wearDisplay: {{
-          viewYawDegrees: selectedPreviewSettings.cameraYawDegrees,
+          viewYawDegrees: wearViewYawDegrees,
           viewPitchDegrees: selectedPreviewSettings.cameraPitchDegrees,
-          source: "selected_preview_camera",
+          source: "selected_preview_camera_compensated_for_baked_sagittal_alignment",
+          selectedPreviewYawDegrees: selectedPreviewSettings.cameraYawDegrees,
+          bakedSagittalYawDegrees,
         }},
         loop: {{
           enabled: currentLoop != null,
@@ -8056,6 +8473,10 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function applyAutomationSettings(options = {{}}) {{
+      if (renderingBakedWearPayload) {{
+        renderingBakedWearPayload = false;
+        applyActiveRange();
+      }}
       if (Object.prototype.hasOwnProperty.call(options, "fixedRoot")) {{
         fixedRoot = Boolean(options.fixedRoot);
         fixedRootInput.checked = fixedRoot;
@@ -8079,6 +8500,12 @@ def _build_html(payload: dict[str, object]) -> str:
       if (Object.prototype.hasOwnProperty.call(options, "sceneInverted")) {{
         sceneInverted = Boolean(options.sceneInverted);
         sceneInvertedInput.checked = sceneInverted;
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "sourceFootSupportEvidence")) {{
+        sourceFootSupportEvidence = options.sourceFootSupportEvidence
+          && typeof options.sourceFootSupportEvidence === "object"
+          ? options.sourceFootSupportEvidence
+          : null;
       }}
       const manualRotation = options.manualModelRotationDegrees;
       if (manualRotation && typeof manualRotation === "object") {{
@@ -8143,6 +8570,44 @@ def _build_html(payload: dict[str, object]) -> str:
       await nextAnimationFrame();
       draw();
       return renderer.domElement.toDataURL("image/png");
+    }}
+
+    function configureBakedWearPayloadForReview(exportPayload, options = {{}}) {{
+      const frames = Array.isArray(exportPayload?.frames) ? exportPayload.frames : [];
+      if (frames.length === 0) {{
+        throw new Error("Cannot review an empty baked Wear payload.");
+      }}
+      renderingBakedWearPayload = true;
+      playbackState = {{ frames, boundsFrames: frames, loopable: false }};
+      fixedRoot = false;
+      lockYRoot = false;
+      lockPlantedFeet = false;
+      lockPlantedHands = false;
+      autoWorldAlignmentEnabled = false;
+      sceneInverted = false;
+      manualModelRotationXDegrees = 0.0;
+      manualModelRotationYDegrees = 0.0;
+      manualModelRotationZDegrees = 0.0;
+      currentAutoAlignment = [];
+      sceneOriginOffset.set(0.0, 0.0, 0.0);
+      activeRootAnchor = null;
+      activeHandSupportAnchor = null;
+      activeVerticalMovementAnchor = null;
+      const nextVlmReviewStyle = Boolean(options.vlmReviewStyle);
+      if (vlmReviewStyle !== nextVlmReviewStyle) {{
+        vlmReviewStyle = nextVlmReviewStyle;
+        applyVlmReviewStyle();
+      }}
+      showBoundsHelper = Boolean(options.showBoundsHelper);
+      const wearDisplay = exportPayload.wearDisplay ?? {{}};
+      yaw = (Number(wearDisplay.viewYawDegrees) || 0.0) * Math.PI / 180.0;
+      pitch = Math.max(
+        -1.2,
+        Math.min(1.2, (Number(wearDisplay.viewPitchDegrees) || 0.0) * Math.PI / 180.0)
+      );
+      cameraTouched = true;
+      invalidateSceneBoundsCache();
+      applySceneReframe();
     }}
 
     const automationBakeOptions = [
@@ -8316,6 +8781,10 @@ def _build_html(payload: dict[str, object]) -> str:
       }},
       async renderFrame(frameIndex, options = {{}}) {{
         applyAutomationSettings(options);
+        return await renderDeterministicFrame(frameIndex);
+      }},
+      async renderBakedWearFrame(exportPayload, frameIndex, options = {{}}) {{
+        configureBakedWearPayloadForReview(exportPayload, options);
         return await renderDeterministicFrame(frameIndex);
       }},
     }};
@@ -8866,6 +9335,9 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function applyPreviewMotionTuning(frame) {{
+      if (renderingBakedWearPayload) {{
+        return frame;
+      }}
       const sourceFrame = getInterpolatedSourceMotionFrame(frame);
       if (!sourceFrame) {{
         return frame;

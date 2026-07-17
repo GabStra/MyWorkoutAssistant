@@ -57,7 +57,7 @@ param(
     [double]$SegmentPaddingSeconds = 0.35,
     [double]$SegmentEndPaddingSeconds = 0.35,
     [double]$SegmentMinSeconds = 2.0,
-    [double]$SegmentMaxSeconds = 20.0,
+    [double]$SegmentMaxSeconds = 0.0,
     [switch]$SkipPreWhamSourceValidation,
     [switch]$NoExerciseMotionContract,
     [switch]$RankPreviewVariants,
@@ -76,9 +76,12 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12b-it-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b9936-bin-win-cuda-12.4-x64\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(4).gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(5).gguf",
+    [AllowEmptyString()]
+    [string]$LlamaCppMtpModel = "C:\Users\gabri\Downloads\mtp-gemma-4-12B-it(1).gguf",
+    [int]$LlamaCppSpecDraftNMax = 3,
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 512,
     [double]$LlamaCppTemperature = 1.0,
@@ -388,6 +391,11 @@ $argsList = @(
     "--llama-cpp-request-timeout-seconds", "$LlamaCppRequestTimeoutSeconds",
     "--artifact-retention", $ArtifactRetention
 )
+if (-not [string]::IsNullOrWhiteSpace($LlamaCppMtpModel)) {
+    $argsList += @("--llama-cpp-mtp-model", $LlamaCppMtpModel, "--llama-cpp-spec-draft-n-max", "$LlamaCppSpecDraftNMax")
+} else {
+    $argsList += "--no-llama-cpp-mtp"
+}
 if ($FinalOutputValidation -and -not $SkipFinalOutputValidation) {
     $argsList += "--final-output-validation"
 }

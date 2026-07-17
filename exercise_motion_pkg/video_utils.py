@@ -307,52 +307,10 @@ def convert_video_to_webm(
             output_path=output_path,
             ffmpeg=ffmpeg_path,
         )
-
-    try:
-        import cv2
-    except ImportError as exc:
-        raise RuntimeError(
-            "opencv-python is required for WebM conversion when ffmpeg is unavailable. Install with: pip install -e .[motion]"
-        ) from exc
-
-    metadata = read_basic_video_metadata(source_path)
-    if metadata.fps <= 0 or metadata.width <= 0 or metadata.height <= 0:
-        raise RuntimeError(f"Could not determine video metadata for WebM conversion: {source_path}")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    capture = cv2.VideoCapture(str(source_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"Could not open video: {source_path}")
-
-    writer = None
-    try:
-        for codec in ("VP90", "VP80"):
-            writer = cv2.VideoWriter(
-                str(output_path),
-                cv2.VideoWriter_fourcc(*codec),
-                metadata.fps,
-                (metadata.width, metadata.height),
-            )
-            if writer.isOpened():
-                break
-            writer.release()
-            writer = None
-        if writer is None or not writer.isOpened():
-            raise RuntimeError(f"Could not open WebM video writer for output: {output_path}")
-
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            writer.write(frame)
-    finally:
-        capture.release()
-        if writer is not None:
-            writer.release()
-
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError(f"WebM video was not created correctly: {output_path}")
-    return output_path
+    raise RuntimeError(
+        "FFmpeg is required for reliable VP9/WebM conversion. "
+        "Set MWA_FFMPEG_PATH or install imageio-ffmpeg."
+    )
 
 
 def _trim_video_with_ffmpeg(

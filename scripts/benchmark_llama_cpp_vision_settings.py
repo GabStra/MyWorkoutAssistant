@@ -107,6 +107,8 @@ def start_server(
     startup_timeout_seconds: float,
     log_path: Path,
     reasoning: bool,
+    mtp_model: str | None,
+    spec_draft_n_max: int,
 ) -> tuple[subprocess.Popen[str], float]:
     command = [
         server_command,
@@ -149,6 +151,19 @@ def start_server(
         command.extend(["--image-max-tokens", str(profile.image_max_tokens)])
     if profile.mtmd_batch_max_tokens is not None:
         command.extend(["--mtmd-batch-max-tokens", str(profile.mtmd_batch_max_tokens)])
+    if mtp_model:
+        command.extend(
+            [
+                "--model-draft",
+                mtp_model,
+                "--spec-type",
+                "draft-mtp",
+                "--spec-draft-n-max",
+                str(max(1, spec_draft_n_max)),
+                "--gpu-layers-draft",
+                "all",
+            ]
+        )
     if reasoning:
         command.extend(
             [
@@ -304,6 +319,8 @@ def run_profile(
             startup_timeout_seconds=args.startup_timeout_seconds,
             log_path=log_path,
             reasoning=not args.disable_reasoning,
+            mtp_model=args.mtp_model,
+            spec_draft_n_max=args.spec_draft_n_max,
         )
         result["startupSeconds"] = round(startup_seconds, 3)
         payload = build_payload(
@@ -362,6 +379,8 @@ def main() -> int:
     parser.add_argument("--server-command", default=DEFAULT_LLAMA_CPP_SERVER_COMMAND)
     parser.add_argument("--model", default=DEFAULT_LLAMA_CPP_MODEL)
     parser.add_argument("--mmproj", default=DEFAULT_LLAMA_CPP_MMPROJ)
+    parser.add_argument("--mtp-model")
+    parser.add_argument("--spec-draft-n-max", type=int, default=3)
     parser.add_argument("--port-base", type=int, default=8190)
     parser.add_argument("--requests", type=int, default=8)
     parser.add_argument("--request-concurrency", type=int, default=4)
