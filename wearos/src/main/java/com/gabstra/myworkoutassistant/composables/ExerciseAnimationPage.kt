@@ -69,7 +69,7 @@ fun ExerciseAnimationPage(
                 skeletonJson = movementJson.orEmpty(),
                 modifier = modifier.fillMaxSize(),
                 animated = true,
-                orbitView = true,
+                orbitView = false,
             )
         }
 
