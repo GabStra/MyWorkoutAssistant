@@ -20,6 +20,9 @@ BBOX_CONF = float(os.environ.get("WHAM_BBOX_CONF", "0.5"))
 TRACKING_THR = float(os.environ.get("WHAM_TRACKING_THR", "0.1"))
 MINIMUM_FRAMES = int(os.environ.get("WHAM_MINIMUM_TRACK_FRAMES", "30"))
 MINIMUM_JOINTS = int(os.environ.get("WHAM_MINIMUM_JOINTS", "6"))
+DUPLICATE_BBOX_IOU_THRESHOLD = float(
+    os.environ.get("WHAM_DUPLICATE_BBOX_IOU_THRESHOLD", "0.9")
+)
 COCO_KEYPOINTS = 17
 
 DEFAULT_POSE_CONFIG = osp.join(
@@ -122,6 +125,23 @@ def _bbox_iou(a, b):
     return 0.0 if denom <= 0.0 else inter / denom
 
 
+def _deduplicate_overlapping_bboxes(bboxes, scores, iou_threshold):
+    """Keep the highest-confidence box for effectively identical detections."""
+    bboxes = np.asarray(bboxes, dtype=np.float32)
+    scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+    if len(bboxes) <= 1:
+        return bboxes
+
+    kept_indices = []
+    for index in np.argsort(-scores):
+        if all(
+            _bbox_iou(bboxes[index], bboxes[kept_index]) < iou_threshold
+            for kept_index in kept_indices
+        ):
+            kept_indices.append(int(index))
+    return bboxes[kept_indices]
+
+
 class DetectionModel(object):
     def __init__(self, device, mmpose_cfg=None):
         self.cfg = _runtime_cfg(mmpose_cfg)
@@ -203,6 +223,12 @@ class DetectionModel(object):
             verbose=False,
         )[0]
         bboxes = detected.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
+        scores = detected.boxes.conf.detach().cpu().numpy().astype(np.float32)
+        bboxes = _deduplicate_overlapping_bboxes(
+            bboxes,
+            scores,
+            DUPLICATE_BBOX_IOU_THRESHOLD,
+        )
         if len(bboxes) == 0:
             self.frame_id += 1
             self.pose_results_last = []
