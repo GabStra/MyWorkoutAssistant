@@ -5077,6 +5077,37 @@ def support_lock_baseline_safety_metrics(
     numerical_tolerance = body_span * 0.0025
     material_tolerance = body_span * 0.005
     rejection_reasons: list[str] = []
+    rigid_translation_residuals: list[float] = []
+    for baseline_frame, corrected_frame in zip(baseline_frames, corrected_frames):
+        baseline_joints = baseline_frame.get("joints")
+        corrected_joints = corrected_frame.get("joints")
+        if not isinstance(baseline_joints, dict) or not isinstance(corrected_joints, dict):
+            continue
+        joint_deltas = [
+            [
+                float(corrected_joints[name][axis]) - float(baseline_point[axis])
+                for axis in range(3)
+            ]
+            for name, baseline_point in baseline_joints.items()
+            if is_point3(baseline_point) and is_point3(corrected_joints.get(name))
+        ]
+        if not joint_deltas:
+            continue
+        median_delta = [
+            statistics.median(delta[axis] for delta in joint_deltas)
+            for axis in range(3)
+        ]
+        rigid_translation_residuals.append(
+            max(
+                (math.dist(delta, median_delta) for delta in joint_deltas),
+                default=0.0,
+            )
+        )
+    max_rigid_translation_residual = max(rigid_translation_residuals, default=math.inf)
+    is_per_frame_rigid_translation = (
+        bool(rigid_translation_residuals)
+        and max_rigid_translation_residual <= numerical_tolerance
+    )
     side_metrics: dict[str, Any] = {}
     for side in ("left", "right"):
         baseline_deviations = knee_line_lateral_deviations(
@@ -5118,6 +5149,45 @@ def support_lock_baseline_safety_metrics(
             rejection_reasons.append(f"support_lock_{side}_knee_side_crossing")
         if materially_worsened_range:
             rejection_reasons.append(f"support_lock_{side}_knee_lateral_instability")
+        baseline_hip_angles = joint_angle_track_degrees(
+            baseline_frames,
+            proximal_joint=f"{side}_shoulder",
+            center_joint=f"{side}_hip",
+            distal_joint=f"{side}_knee",
+        )
+        corrected_hip_angles = joint_angle_track_degrees(
+            corrected_frames,
+            proximal_joint=f"{side}_shoulder",
+            center_joint=f"{side}_hip",
+            distal_joint=f"{side}_knee",
+        )
+        hip_angle_deviations = []
+        if baseline_hip_angles and len(baseline_hip_angles) == len(corrected_hip_angles):
+            baseline_center = statistics.median(baseline_hip_angles)
+            corrected_center = statistics.median(corrected_hip_angles)
+            hip_angle_deviations = [
+                abs(
+                    (corrected - corrected_center)
+                    - (baseline - baseline_center)
+                )
+                for baseline, corrected in zip(baseline_hip_angles, corrected_hip_angles)
+            ]
+        max_centered_hip_angle_deviation_degrees = max(
+            hip_angle_deviations,
+            default=math.inf,
+        )
+        # A foot-contact correction owns the distal leg. Rewriting the
+        # shoulder-hip-knee angle moves the source pose error upstream instead
+        # of repairing it, so treat preservation as an invariant rather than a
+        # movement-specific range heuristic.
+        max_allowed_centered_hip_angle_deviation_degrees = 0.5
+        upstream_pose_changed = (
+            not hip_angle_deviations
+            or max_centered_hip_angle_deviation_degrees
+            > max_allowed_centered_hip_angle_deviation_degrees
+        )
+        if upstream_pose_changed:
+            rejection_reasons.append(f"support_lock_{side}_upstream_leg_pose_changed")
         side_metrics[side] = {
             "baselineMedian": baseline_median,
             "correctedMedian": corrected_median,
@@ -5131,15 +5201,21 @@ def support_lock_baseline_safety_metrics(
             "allowedRangeIncrease": allowed_range_increase,
             "introducedSideCrossing": introduced_side_crossing,
             "materiallyWorsenedRange": materially_worsened_range,
+            "maxCenteredHipAngleDeviationDegrees": max_centered_hip_angle_deviation_degrees,
+            "maxAllowedCenteredHipAngleDeviationDegrees": max_allowed_centered_hip_angle_deviation_degrees,
+            "upstreamLegPoseChanged": upstream_pose_changed,
         }
-    pelvis_deviations = paired_joint_position_deviations(
+    pelvis_deviations = paired_joint_radial_trajectory_deviations(
         baseline_frames,
         corrected_frames,
         joint_name="pelvis",
     )
     max_pelvis_deviation = max(pelvis_deviations, default=0.0)
     max_allowed_pelvis_deviation = body_span * 0.01
-    if max_pelvis_deviation > max_allowed_pelvis_deviation:
+    if (
+        max_pelvis_deviation > max_allowed_pelvis_deviation
+        and not is_per_frame_rigid_translation
+    ):
         rejection_reasons.append("support_lock_pelvis_trajectory_changed")
     return {
         "passed": not rejection_reasons,
@@ -5150,7 +5226,41 @@ def support_lock_baseline_safety_metrics(
         "sides": side_metrics,
         "maxPelvisDeviation": max_pelvis_deviation,
         "maxAllowedPelvisDeviation": max_allowed_pelvis_deviation,
+        "maxRigidTranslationResidual": max_rigid_translation_residual,
+        "isPerFrameRigidTranslation": is_per_frame_rigid_translation,
     }
+
+
+def joint_angle_track_degrees(
+    frames: list[dict[str, Any]],
+    *,
+    proximal_joint: str,
+    center_joint: str,
+    distal_joint: str,
+) -> list[float]:
+    angles: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints") if isinstance(frame, dict) else None
+        proximal = joints.get(proximal_joint) if isinstance(joints, dict) else None
+        center = joints.get(center_joint) if isinstance(joints, dict) else None
+        distal = joints.get(distal_joint) if isinstance(joints, dict) else None
+        if not all(is_point3(point) for point in (proximal, center, distal)):
+            continue
+        proximal_vector = [
+            float(proximal[index]) - float(center[index]) for index in range(3)
+        ]
+        distal_vector = [
+            float(distal[index]) - float(center[index]) for index in range(3)
+        ]
+        proximal_length = math.sqrt(sum(value * value for value in proximal_vector))
+        distal_length = math.sqrt(sum(value * value for value in distal_vector))
+        if proximal_length <= 1e-8 or distal_length <= 1e-8:
+            continue
+        cosine = sum(
+            proximal_vector[index] * distal_vector[index] for index in range(3)
+        ) / (proximal_length * distal_length)
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+    return angles
 
 
 def knee_line_lateral_deviations(
@@ -5220,8 +5330,176 @@ def paired_joint_position_deviations(
     return deviations
 
 
+def paired_joint_radial_trajectory_deviations(
+    baseline_frames: list[dict[str, Any]],
+    corrected_frames: list[dict[str, Any]],
+    *,
+    joint_name: str,
+) -> list[float]:
+    baseline_points = joint_points_from_frames(baseline_frames, joint_name=joint_name)
+    corrected_points = joint_points_from_frames(corrected_frames, joint_name=joint_name)
+    if not baseline_points or len(baseline_points) != len(corrected_points):
+        return []
+    baseline_origin = baseline_points[0]
+    corrected_origin = corrected_points[0]
+    return [
+        abs(
+            math.dist(baseline_point, baseline_origin)
+            - math.dist(corrected_point, corrected_origin)
+        )
+        for baseline_point, corrected_point in zip(baseline_points, corrected_points)
+    ]
+
+
+def joint_points_from_frames(
+    frames: list[dict[str, Any]],
+    *,
+    joint_name: str,
+) -> list[list[float]]:
+    points: list[list[float]] = []
+    for frame in frames:
+        joints = frame.get("joints") if isinstance(frame, dict) else None
+        point = joints.get(joint_name) if isinstance(joints, dict) else None
+        if is_point3(point):
+            points.append([float(value) for value in point])
+    return points
+
+
+def source_confirmed_support_stationarity_metrics(
+    motion_payload: dict[str, Any],
+    source_foot_support_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Check that WHAM preserves support which is stationary in source pixels.
+
+    This deliberately reuses the normalized stationarity limits which produced
+    the source evidence.  It is a contradiction check, not an exercise-specific
+    motion heuristic: unsupported, moving, or unavailable feet do not fail it.
+    """
+    feet = (
+        source_foot_support_evidence.get("feet")
+        if isinstance(source_foot_support_evidence, dict)
+        else None
+    )
+    confirmed_sides = [
+        side
+        for side in ("left", "right")
+        if isinstance(feet, dict)
+        and isinstance(feet.get(side), dict)
+        and bool(feet[side].get("continuousSupport"))
+    ]
+    if not confirmed_sides:
+        return {
+            "required": False,
+            "evaluated": False,
+            "passed": True,
+            "reason": "no_source_confirmed_continuous_foot_support",
+            "rejectionReasons": [],
+            "sides": {},
+        }
+
+    frames = motion_frames_from_export_payload(motion_payload)
+    body_spans = [body_span_for_frame(frame) for frame in frames]
+    body_spans = [span for span in body_spans if span > 1e-6]
+    body_span = statistics.median(body_spans) if body_spans else 0.0
+    if len(frames) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT or body_span <= 1e-6:
+        return {
+            "required": True,
+            "evaluated": False,
+            "passed": True,
+            "reason": "baseline_support_measurement_unavailable",
+            "rejectionReasons": [],
+            "frameCount": len(frames),
+            "bodySpan": body_span,
+            "sides": {},
+        }
+
+    chunk_range_threshold = float(
+        source_foot_support_evidence.get(
+            "chunkCenterRangeRatioThreshold",
+            SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD,
+        )
+    )
+    endpoint_threshold = float(
+        source_foot_support_evidence.get(
+            "endpointDisplacementRatioThreshold",
+            SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD,
+        )
+    )
+    rejection_reasons: list[str] = []
+    side_metrics: dict[str, Any] = {}
+    evaluated_side_count = 0
+    for side in confirmed_sides:
+        source_side = feet[side]
+        joint_name = str(source_side.get("jointName") or f"{side}_ankle")
+        points = joint_points_from_frames(frames, joint_name=joint_name)
+        coverage_ratio = len(points) / len(frames)
+        chunk_size = max(3, math.ceil(len(points) / 5)) if points else 3
+        chunk_centers = [
+            [statistics.median(point[axis] for point in chunk) for axis in range(3)]
+            for start in range(0, len(points), chunk_size)
+            if len(chunk := points[start : start + chunk_size]) >= 3
+        ]
+        if coverage_ratio < 0.60 or len(chunk_centers) < 2:
+            side_metrics[side] = {
+                "jointName": joint_name,
+                "evaluated": False,
+                "sampleCount": len(points),
+                "coverageRatio": coverage_ratio,
+                "chunkCenterCount": len(chunk_centers),
+            }
+            continue
+        evaluated_side_count += 1
+        axis_ranges = [
+            max(point[axis] for point in chunk_centers)
+            - min(point[axis] for point in chunk_centers)
+            for axis in range(3)
+        ]
+        chunk_center_range_ratio = math.sqrt(
+            sum(value * value for value in axis_ranges)
+        ) / body_span
+        endpoint_displacement_ratio = math.dist(
+            chunk_centers[0], chunk_centers[-1]
+        ) / body_span
+        stationary = bool(
+            chunk_center_range_ratio <= chunk_range_threshold
+            and endpoint_displacement_ratio <= endpoint_threshold
+        )
+        if not stationary:
+            rejection_reasons.append(
+                f"{side}_source_confirmed_support_slides"
+            )
+        side_metrics[side] = {
+            "jointName": joint_name,
+            "evaluated": True,
+            "stationary": stationary,
+            "sampleCount": len(points),
+            "coverageRatio": coverage_ratio,
+            "chunkCenterCount": len(chunk_centers),
+            "chunkCenterRangeRatio": chunk_center_range_ratio,
+            "endpointDisplacementRatio": endpoint_displacement_ratio,
+        }
+    return {
+        "required": True,
+        "evaluated": evaluated_side_count > 0,
+        "passed": not rejection_reasons,
+        "reason": (
+            "motion_preserves_source_confirmed_support"
+            if not rejection_reasons
+            else "motion_contradicts_source_confirmed_support"
+        ),
+        "rejectionReasons": rejection_reasons,
+        "frameCount": len(frames),
+        "bodySpan": body_span,
+        "chunkCenterRangeRatioThreshold": chunk_range_threshold,
+        "endpointDisplacementRatioThreshold": endpoint_threshold,
+        "sides": side_metrics,
+    }
+
+
 def prefer_baseline_safe_support_lock_artifacts(
     artifacts: list[BakedLoopArtifact],
+    *,
+    source_foot_support_evidence: dict[str, Any] | None = None,
 ) -> list[BakedLoopArtifact]:
     baseline = next(
         (
@@ -5233,22 +5511,44 @@ def prefer_baseline_safe_support_lock_artifacts(
     )
     if baseline is None:
         return artifacts
-    safe_artifacts: list[BakedLoopArtifact] = []
+    baseline_support_metrics = source_confirmed_support_stationarity_metrics(
+        baseline.export_payload,
+        source_foot_support_evidence,
+    )
+    baseline.export_payload["sourceConfirmedBaselineSupportGate"] = (
+        baseline_support_metrics
+    )
+    baseline.skeleton_path.write_text(
+        json.dumps(baseline.export_payload, indent=2),
+        encoding="utf-8",
+    )
+    non_foot_lock_artifacts: list[BakedLoopArtifact] = []
+    safe_foot_lock_artifacts: list[BakedLoopArtifact] = []
     for artifact in artifacts:
         if not bool(artifact.settings_options.get("lockPlantedFeet")):
-            safe_artifacts.append(artifact)
+            non_foot_lock_artifacts.append(artifact)
             continue
         metrics = support_lock_baseline_safety_metrics(
             baseline.export_payload,
             artifact.export_payload,
         )
+        support_repair_metrics = source_confirmed_support_stationarity_metrics(
+            artifact.export_payload,
+            source_foot_support_evidence,
+        )
         artifact.export_payload["supportLockBaselineSafetyGate"] = metrics
+        artifact.export_payload["sourceConfirmedSupportRepairGate"] = (
+            support_repair_metrics
+        )
         artifact.skeleton_path.write_text(
             json.dumps(artifact.export_payload, indent=2),
             encoding="utf-8",
         )
-        if bool(metrics.get("passed")):
-            safe_artifacts.append(artifact)
+        if bool(metrics.get("passed")) and bool(support_repair_metrics.get("passed")):
+            safe_foot_lock_artifacts.append(artifact)
+    if not bool(baseline_support_metrics.get("passed")):
+        return safe_foot_lock_artifacts
+    safe_artifacts = non_foot_lock_artifacts + safe_foot_lock_artifacts
     return safe_artifacts or [baseline]
 
 
@@ -11471,8 +11771,40 @@ def process_ranked_candidate(
             ]
             loop_artifacts = prefer_kinematically_safe_baked_artifacts(loop_artifacts)
             baseline_safe_artifacts = prefer_baseline_safe_support_lock_artifacts(
-                loop_artifacts
+                loop_artifacts,
+                source_foot_support_evidence=source_foot_support_evidence,
             )
+            baseline_artifact = next(
+                (
+                    artifact
+                    for artifact in loop_artifacts
+                    if artifact.settings_variant_id == "adaptive-baseline"
+                ),
+                None,
+            )
+            baseline_support_gate = (
+                baseline_artifact.export_payload.get(
+                    "sourceConfirmedBaselineSupportGate"
+                )
+                if baseline_artifact is not None
+                else None
+            )
+            if isinstance(baseline_support_gate, dict) and not bool(
+                baseline_support_gate.get("passed")
+            ):
+                result_payload["rejectedSourceClips"].append(
+                    {
+                        "loopIndex": eligible_loop.loop_index,
+                        "sourceClipIndex": eligible_loop.loop_index,
+                        "durationSec": eligible_loop.duration_sec,
+                        "reason": "source_confirmed_baseline_support_drift",
+                        "settingsVariantId": baseline_artifact.settings_variant_id,
+                        "settingsVariantLabel": baseline_artifact.settings_variant_label,
+                        "skeletonPath": str(baseline_artifact.skeleton_path),
+                        "reviewVideoPath": str(baseline_artifact.review_video_path),
+                        "sourceConfirmedBaselineSupportGate": baseline_support_gate,
+                    }
+                )
             baseline_safe_artifact_ids = {id(artifact) for artifact in baseline_safe_artifacts}
             for unsafe_artifact in loop_artifacts:
                 safety_gate = unsafe_artifact.export_payload.get(
@@ -11501,7 +11833,13 @@ def process_ranked_candidate(
                     {
                         "loopIndex": eligible_loop.loop_index,
                         "sourceClipIndex": eligible_loop.loop_index,
-                        "reason": "bake_missing_artifact",
+                        "reason": (
+                            "source_confirmed_support_unrepaired"
+                            if isinstance(baseline_support_gate, dict)
+                            and not bool(baseline_support_gate.get("passed"))
+                            else "bake_missing_artifact"
+                        ),
+                        "sourceConfirmedBaselineSupportGate": baseline_support_gate,
                     }
                 )
                 continue
@@ -13297,6 +13635,73 @@ def bake_preview_loops_with_playwright(
                         adaptive_preview_settings=adaptive_settings,
                     )
                 )
+                if (
+                    variant_id == "adaptive-baseline"
+                    and isinstance(source_foot_support_evidence, dict)
+                ):
+                    corrected_payload, correction_metrics = (
+                        apply_source_contact_sequence_correction(
+                            export_payload,
+                            source_foot_support_evidence,
+                        )
+                    )
+                    if bool(correction_metrics.get("applied")):
+                        corrected_variant_id = "adaptive-contact-sequence-correction"
+                        corrected_label = f"{artifact_base_label}.contact-sequence-correction"
+                        corrected_skeleton_path = (
+                            wear_dir / f"skeleton.baked.{corrected_label}.json"
+                        )
+                        corrected_skeleton_path.write_text(
+                            json.dumps(corrected_payload, indent=2),
+                            encoding="utf-8",
+                        )
+                        corrected_review_path = review_dir / f"{corrected_label}.webm"
+                        corrected_frame_indices = dense_loop_review_video_frame_indices(
+                            corrected_payload
+                        )
+                        corrected_frame_data_urls = [
+                            page.evaluate(
+                                """({ exportPayload, frameIndex, options }) => window.exerciseMotionAutomation.renderBakedWearFrame(exportPayload, frameIndex, options)""",
+                                {
+                                    "exportPayload": corrected_payload,
+                                    "frameIndex": frame_index,
+                                    "options": options,
+                                },
+                            )
+                            for frame_index in corrected_frame_indices
+                        ]
+                        corrected_review_path, corrected_video_quality = (
+                            write_validated_review_video_from_data_urls(
+                                corrected_frame_data_urls,
+                                corrected_review_path,
+                                fps=parse_review_video_fps(
+                                    corrected_payload,
+                                    frame_count=len(corrected_frame_data_urls),
+                                ),
+                            )
+                        )
+                        if bool(corrected_video_quality.get("passed", False)):
+                            corrected_options = {
+                                **options,
+                                "lockPlantedFeet": True,
+                                "contactSequenceCorrection": True,
+                            }
+                            artifacts.append(
+                                BakedLoopArtifact(
+                                    loop_index=eligible_loop.loop_index,
+                                    skeleton_path=corrected_skeleton_path,
+                                    review_video_path=corrected_review_path,
+                                    export_payload=corrected_payload,
+                                    settings_variant_id=corrected_variant_id,
+                                    settings_variant_label="Contact sequence correction",
+                                    settings_options=corrected_options,
+                                    cleanup_interpretation="contact_sequence_correction",
+                                    adaptive_preview_settings={
+                                        "source": "python_post_wham_contact_sequence_correction",
+                                        "metrics": correction_metrics,
+                                    },
+                                )
+                            )
         browser.close()
     return artifacts
 
@@ -13766,6 +14171,15 @@ def append_final_support_lock_trial_variants(
         }
 
     planned_variants = list(variants)
+    source_contact_evidence = preview_settings_hint.get("sourceFootSupportEvidence")
+    python_foot_contact_correction_available = bool(
+        source_contact_intervals_from_evidence(
+            source_contact_evidence
+            if isinstance(source_contact_evidence, dict)
+            else None,
+            frame_count=2,
+        )
+    )
     for index, variant in enumerate(variants):
         baseline_options = dict(
             variant.get("options")
@@ -13796,6 +14210,7 @@ def append_final_support_lock_trial_variants(
             has_foot_support_data
             and foot_lock_recommended
             and not bool(effective_options.get("lockPlantedFeet"))
+            and not python_foot_contact_correction_available
         )
         lock_hands = (
             has_hand_support_data
@@ -13823,6 +14238,7 @@ def append_final_support_lock_trial_variants(
                     "handSupportLockTrialRecommended": preview_settings_hint.get("handSupportLockTrialRecommended"),
                     "forceLockPlantedFeet": preview_settings_hint.get("forceLockPlantedFeet"),
                     "forceLockPlantedHands": preview_settings_hint.get("forceLockPlantedHands"),
+                    "footLockSupersededByContactSequenceCorrection": python_foot_contact_correction_available,
                 },
             )
             continue
@@ -14536,6 +14952,276 @@ def motion_frames_from_export_payload(export_payload: dict[str, Any]) -> list[di
     if frames:
         return frames
     return [frame for frame in frames_value if isinstance(frame, dict)]
+
+
+def source_contact_intervals_from_evidence(
+    source_support_evidence: dict[str, Any] | None,
+    *,
+    frame_count: int,
+) -> list[dict[str, Any]]:
+    """Normalize source support evidence into frame-bounded contact intervals.
+
+    The generic ``contacts`` form supports changing contacts and non-foot
+    supports. The legacy feet evidence remains supported as a full-clip
+    interval, so existing source analysis does not need exercise-specific
+    special cases.
+    """
+    if not isinstance(source_support_evidence, dict) or frame_count <= 0:
+        return []
+    intervals: list[dict[str, Any]] = []
+    contacts = source_support_evidence.get("contacts")
+    if isinstance(contacts, list):
+        for contact in contacts:
+            if not isinstance(contact, dict):
+                continue
+            joint_name = str(contact.get("jointName") or "").strip()
+            if not joint_name:
+                continue
+            try:
+                start_frame = max(0, int(contact.get("startFrame", 0)))
+                end_frame = min(
+                    frame_count - 1,
+                    int(contact.get("endFrame", frame_count - 1)),
+                )
+                confidence = max(0.0, min(1.0, float(contact.get("confidence", 1.0))))
+            except (TypeError, ValueError):
+                continue
+            if end_frame < start_frame or confidence <= 0.0:
+                continue
+            intervals.append(
+                {
+                    "jointName": joint_name,
+                    "startFrame": start_frame,
+                    "endFrame": end_frame,
+                    "confidence": confidence,
+                    "supportKind": str(contact.get("supportKind") or "contact"),
+                }
+            )
+    feet = source_support_evidence.get("feet")
+    if isinstance(feet, dict):
+        for side in ("left", "right"):
+            foot = feet.get(side)
+            if not isinstance(foot, dict) or not bool(foot.get("continuousSupport")):
+                continue
+            joint_name = str(foot.get("jointName") or f"{side}_ankle")
+            if any(
+                interval["jointName"] == joint_name
+                and interval["startFrame"] == 0
+                and interval["endFrame"] == frame_count - 1
+                for interval in intervals
+            ):
+                continue
+            try:
+                confidence = max(0.0, min(1.0, float(foot.get("confidence", 1.0))))
+            except (TypeError, ValueError):
+                confidence = 1.0
+            intervals.append(
+                {
+                    "jointName": joint_name,
+                    "startFrame": 0,
+                    "endFrame": frame_count - 1,
+                    "confidence": confidence,
+                    "supportKind": "foot",
+                }
+            )
+    return intervals
+
+
+def smooth_translation_track(
+    translations: list[list[float]],
+    active_weights: list[float],
+) -> list[list[float]]:
+    """Smooth contact correction without leaking it through contact gaps."""
+    if len(translations) < 3:
+        return [list(value) for value in translations]
+    smoothed = [list(value) for value in translations]
+    for _ in range(2):
+        previous = [list(value) for value in smoothed]
+        for index in range(1, len(previous) - 1):
+            if active_weights[index] <= 0.0:
+                continue
+            neighbors = [
+                neighbor
+                for neighbor in (index - 1, index, index + 1)
+                if active_weights[neighbor] > 0.0
+            ]
+            total_weight = sum(active_weights[neighbor] for neighbor in neighbors)
+            if total_weight <= 1e-8:
+                continue
+            smoothed[index] = [
+                sum(
+                    previous[neighbor][axis] * active_weights[neighbor]
+                    for neighbor in neighbors
+                )
+                / total_weight
+                for axis in range(3)
+            ]
+    return smoothed
+
+
+def apply_source_contact_sequence_correction(
+    export_payload: dict[str, Any],
+    source_support_evidence: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reduce source-confirmed contact drift using rigid whole-body offsets.
+
+    Every joint in a frame receives the exact same translation. This makes the
+    correction incapable of changing a joint angle, bone length, limb
+    symmetry, or knee trajectory relative to the body. Conflicting contacts
+    are solved by a confidence-weighted compromise rather than independent IK.
+    """
+    corrected_payload = copy.deepcopy(export_payload)
+    frames_value = corrected_payload.get("frames")
+    if not isinstance(frames_value, list):
+        return corrected_payload, {
+            "applied": False,
+            "reason": "frames_unavailable",
+            "contactIntervals": [],
+        }
+    frames = [frame for frame in frames_value if isinstance(frame, dict)]
+    intervals = source_contact_intervals_from_evidence(
+        source_support_evidence,
+        frame_count=len(frames),
+    )
+    if len(frames) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT or not intervals:
+        return corrected_payload, {
+            "applied": False,
+            "reason": "source_contact_intervals_unavailable",
+            "contactIntervals": intervals,
+        }
+
+    desired = [[0.0, 0.0, 0.0] for _ in frames]
+    active_weights = [0.0 for _ in frames]
+    interval_metrics: list[dict[str, Any]] = []
+    for interval in intervals:
+        start = int(interval["startFrame"])
+        end = int(interval["endFrame"])
+        joint_name = str(interval["jointName"])
+        samples: list[tuple[int, list[float]]] = []
+        for frame_index in range(start, end + 1):
+            joints = frames[frame_index].get("joints")
+            point = joints.get(joint_name) if isinstance(joints, dict) else None
+            if is_point3(point):
+                samples.append((frame_index, [float(value) for value in point[:3]]))
+        if len(samples) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+            continue
+        anchor_sample_count = max(3, min(len(samples), math.ceil(len(samples) * 0.10)))
+        anchor_samples = [point for _, point in samples[:anchor_sample_count]]
+        anchor = [statistics.median(point[axis] for point in anchor_samples) for axis in range(3)]
+        confidence = float(interval["confidence"])
+        before_distances: list[float] = []
+        for frame_index, point in samples:
+            delta = [anchor[axis] - point[axis] for axis in range(3)]
+            for axis in range(3):
+                desired[frame_index][axis] += delta[axis] * confidence
+            active_weights[frame_index] += confidence
+            before_distances.append(math.dist(point, anchor))
+        interval_metrics.append(
+            {
+                **interval,
+                "anchor": anchor,
+                "sampleCount": len(samples),
+                "anchorSampleCount": anchor_sample_count,
+                "baselineMaxDistanceFromAnchor": max(before_distances, default=0.0),
+            }
+        )
+    for frame_index, weight in enumerate(active_weights):
+        if weight > 0.0:
+            desired[frame_index] = [value / weight for value in desired[frame_index]]
+    translations = smooth_translation_track(desired, active_weights)
+
+    # Preserve the original world-space origin. Only relative drift is owned by
+    # contact correction; absolute placement remains owned by the bake.
+    first_active = next((index for index, weight in enumerate(active_weights) if weight > 0.0), None)
+    if first_active is not None:
+        origin_offset = translations[first_active]
+        translations = [
+            [translation[axis] - origin_offset[axis] for axis in range(3)]
+            if active_weights[index] > 0.0
+            else [0.0, 0.0, 0.0]
+            for index, translation in enumerate(translations)
+        ]
+
+    for frame, translation in zip(frames, translations):
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        for joint_name, point in list(joints.items()):
+            if not is_point3(point):
+                continue
+            translated = list(point)
+            for axis in range(3):
+                translated[axis] = float(translated[axis]) + translation[axis]
+            joints[joint_name] = translated
+        root_translation = frame.get("rootTranslationApplied")
+        if is_point3(root_translation):
+            updated_root_translation = list(root_translation)
+            for axis in range(3):
+                updated_root_translation[axis] = (
+                    float(updated_root_translation[axis]) + translation[axis]
+                )
+            frame["rootTranslationApplied"] = updated_root_translation
+
+    baseline_weighted_squared_error = 0.0
+    corrected_weighted_squared_error = 0.0
+    weighted_error_sample_count = 0.0
+    for interval_metric in interval_metrics:
+        anchor = interval_metric["anchor"]
+        confidence = float(interval_metric["confidence"])
+        joint_name = str(interval_metric["jointName"])
+        for frame_index in range(
+            int(interval_metric["startFrame"]),
+            int(interval_metric["endFrame"]) + 1,
+        ):
+            baseline_joints = export_payload["frames"][frame_index].get("joints")
+            corrected_joints = frames[frame_index].get("joints")
+            baseline_point = (
+                baseline_joints.get(joint_name)
+                if isinstance(baseline_joints, dict)
+                else None
+            )
+            corrected_point = (
+                corrected_joints.get(joint_name)
+                if isinstance(corrected_joints, dict)
+                else None
+            )
+            if not is_point3(baseline_point) or not is_point3(corrected_point):
+                continue
+            baseline_weighted_squared_error += (
+                math.dist([float(value) for value in baseline_point[:3]], anchor) ** 2
+            ) * confidence
+            corrected_weighted_squared_error += (
+                math.dist([float(value) for value in corrected_point[:3]], anchor) ** 2
+            ) * confidence
+            weighted_error_sample_count += confidence
+    baseline_rms_contact_error = math.sqrt(
+        baseline_weighted_squared_error / weighted_error_sample_count
+    ) if weighted_error_sample_count > 0.0 else math.inf
+    corrected_rms_contact_error = math.sqrt(
+        corrected_weighted_squared_error / weighted_error_sample_count
+    ) if weighted_error_sample_count > 0.0 else math.inf
+    translation_magnitudes = [math.dist([0.0, 0.0, 0.0], value) for value in translations]
+    frame_steps = [
+        math.dist(translations[index - 1], translations[index])
+        for index in range(1, len(translations))
+    ]
+    metrics = {
+        "schemaVersion": 1,
+        "applied": (
+            any(value > 1e-8 for value in translation_magnitudes)
+            and corrected_rms_contact_error + 1e-9 < baseline_rms_contact_error
+        ),
+        "reason": "source_contact_rigid_sequence_correction",
+        "contactIntervals": interval_metrics,
+        "maxTranslation": max(translation_magnitudes, default=0.0),
+        "maxFrameTranslationStep": max(frame_steps, default=0.0),
+        "baselineRmsContactError": baseline_rms_contact_error,
+        "correctedRmsContactError": corrected_rms_contact_error,
+        "translationTrack": translations,
+        "posePreservation": "per_frame_rigid_translation",
+    }
+    corrected_payload["sourceContactSequenceCorrection"] = metrics
+    return corrected_payload, metrics
 
 
 def body_span_for_frame(frame: dict[str, Any]) -> float:

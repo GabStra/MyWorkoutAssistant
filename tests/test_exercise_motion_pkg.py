@@ -29109,6 +29109,41 @@ def test_source_confirmed_foot_support_prioritizes_feet_lock_trial() -> None:
     assert bake_and_rank_module.source_confirmed_support_lock_selection_priority(source_confirmed_lock) == 1
 
 
+def test_source_contact_evidence_replaces_hard_foot_ik_trial() -> None:
+    base_options = bake_and_rank_module.build_preview_bake_base_options(
+        motion_tuning_enabled=True
+    )
+    evidence = {
+        "feet": {
+            "left": {"jointName": "left_ankle", "continuousSupport": True},
+            "right": {"jointName": "right_ankle", "continuousSupport": True},
+        }
+    }
+    hint = {
+        "leftFootMotionRatio": 0.02,
+        "rightFootMotionRatio": 0.03,
+        "footSupportLockTrialRecommended": True,
+        "sourceFootSupportEvidence": evidence,
+    }
+    baseline = {
+        "id": "adaptive-baseline",
+        "label": "Adaptive baseline",
+        "options": {},
+        "adaptivePreviewSettings": {},
+    }
+
+    variants = bake_and_rank_module.append_final_support_lock_trial_variants(
+        [baseline],
+        base_options=base_options,
+        preview_settings_hint=hint,
+        motion_tuning_enabled=True,
+    )
+
+    assert variants == [baseline]
+    skipped = baseline["adaptivePreviewSettings"]["skippedVariantTrials"]
+    assert skipped[0]["details"]["footLockSupersededByContactSequenceCorrection"] is True
+
+
 def test_support_lock_baseline_safety_gate_rejects_new_knee_side_crossing() -> None:
     def payload(left_knee_offsets: list[float]) -> dict[str, object]:
         frames = []
@@ -29119,6 +29154,8 @@ def test_support_lock_baseline_safety_gate_rejects_new_knee_side_crossing() -> N
                     "timeSec": index / 30,
                     "joints": {
                         "head": [0.0, 1.8, 0.0],
+                        "left_shoulder": [-0.2, 1.6, 0.0],
+                        "right_shoulder": [0.2, 1.6, 0.0],
                         "pelvis": [0.0, 1.0, 0.0],
                         "left_hip": [-0.2, 1.0, 0.0],
                         "right_hip": [0.2, 1.0, 0.0],
@@ -29149,6 +29186,331 @@ def test_support_lock_baseline_safety_gate_rejects_new_knee_side_crossing() -> N
     assert preserved_metrics["passed"] is True
     assert collapsed_metrics["passed"] is False
     assert "support_lock_left_knee_side_crossing" in collapsed_metrics["rejectionReasons"]
+
+
+def test_support_lock_baseline_safety_gate_rejects_upstream_leg_pose_change(
+    tmp_path: Path,
+) -> None:
+    def payload(right_knee_x_values: list[float]) -> dict[str, object]:
+        return {
+            "frames": [
+                {
+                    "frameIndex": index,
+                    "timeSec": index / 30,
+                    "joints": {
+                        "head": [0.0, 1.8, 0.0],
+                        "left_shoulder": [-0.2, 1.6, 0.0],
+                        "right_shoulder": [0.2, 1.6, 0.0],
+                        "pelvis": [0.0, 1.0, 0.0],
+                        "left_hip": [-0.2, 1.0, 0.0],
+                        "right_hip": [0.2, 1.0, 0.0],
+                        "left_knee": [-0.25, 0.5, 0.0],
+                        "right_knee": [right_knee_x_values[index], 0.5, 0.0],
+                        "left_ankle": [-0.2, 0.0, 0.0],
+                        "right_ankle": [0.2, 0.0, 0.0],
+                        "left_foot": [-0.2, -0.05, 0.1],
+                        "right_foot": [0.2, -0.05, 0.1],
+                    },
+                }
+                for index in range(len(right_knee_x_values))
+            ]
+        }
+
+    baseline = payload([0.25] * 6)
+    corrected = payload([0.25, 0.28, 0.31, 0.34, 0.37, 0.40])
+
+    metrics = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline,
+        corrected,
+    )
+
+    assert metrics["passed"] is False
+    assert "support_lock_right_upstream_leg_pose_changed" in metrics["rejectionReasons"]
+    assert metrics["sides"]["right"]["upstreamLegPoseChanged"] is True
+
+    baseline_path = tmp_path / "baseline.json"
+    corrected_path = tmp_path / "corrected.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    corrected_path.write_text(json.dumps(corrected), encoding="utf-8")
+    baseline_artifact = BakedLoopArtifact(
+        loop_index=-1,
+        skeleton_path=baseline_path,
+        review_video_path=tmp_path / "baseline.webm",
+        export_payload=baseline,
+        settings_variant_id="adaptive-baseline",
+        settings_options={"lockPlantedFeet": False},
+    )
+    corrected_artifact = BakedLoopArtifact(
+        loop_index=-1,
+        skeleton_path=corrected_path,
+        review_video_path=tmp_path / "corrected.webm",
+        export_payload=corrected,
+        settings_variant_id="adaptive-feet-lock-trial",
+        settings_options={"lockPlantedFeet": True},
+    )
+
+    selected = bake_and_rank_module.prefer_baseline_safe_support_lock_artifacts(
+        [baseline_artifact, corrected_artifact]
+    )
+
+    assert selected == [baseline_artifact]
+    assert corrected_artifact.export_payload["supportLockBaselineSafetyGate"]["passed"] is False
+
+
+def test_source_confirmed_support_requires_safe_effective_lock_or_rejects_candidate(
+    tmp_path: Path,
+) -> None:
+    source_evidence = {
+        "chunkCenterRangeRatioThreshold": 0.12,
+        "endpointDisplacementRatioThreshold": 0.08,
+        "feet": {
+            "left": {"jointName": "left_ankle", "continuousSupport": False},
+            "right": {"jointName": "right_ankle", "continuousSupport": True},
+        },
+    }
+
+    def payload(*, ankle_drift: float, corrupt_knee: bool = False) -> dict[str, object]:
+        frames = []
+        for index in range(15):
+            phase = index / 14
+            frames.append(
+                {
+                    "frameIndex": index,
+                    "timeSec": index / 30,
+                    "joints": {
+                        "head": [0.0, 1.8, 0.0],
+                        "left_shoulder": [-0.2, 1.6, 0.0],
+                        "right_shoulder": [0.2, 1.6, 0.0],
+                        "pelvis": [0.0, 1.0, 0.0],
+                        "left_hip": [-0.2, 1.0, 0.0],
+                        "right_hip": [0.2, 1.0, 0.0],
+                        "left_knee": [-0.25, 0.5, 0.0],
+                        "right_knee": [0.25 + (0.2 * phase if corrupt_knee else 0.0), 0.5, 0.0],
+                        "left_ankle": [-0.2, 0.0, 0.0],
+                        "right_ankle": [0.2, 0.0, ankle_drift * phase],
+                        "left_foot": [-0.2, -0.05, 0.1],
+                        "right_foot": [0.2, -0.05, 0.1 + ankle_drift * phase],
+                    },
+                }
+            )
+        return {"frames": frames}
+
+    def artifact(
+        name: str,
+        export_payload: dict[str, object],
+        *,
+        lock_feet: bool,
+    ) -> BakedLoopArtifact:
+        skeleton_path = tmp_path / f"{name}.json"
+        skeleton_path.write_text(json.dumps(export_payload), encoding="utf-8")
+        return BakedLoopArtifact(
+            loop_index=-1,
+            skeleton_path=skeleton_path,
+            review_video_path=tmp_path / f"{name}.webm",
+            export_payload=export_payload,
+            settings_variant_id=(
+                "adaptive-feet-lock-trial" if lock_feet else "adaptive-baseline"
+            ),
+            settings_options={"lockPlantedFeet": lock_feet},
+        )
+
+    sliding_baseline = artifact(
+        "sliding-baseline",
+        payload(ankle_drift=0.4),
+        lock_feet=False,
+    )
+    unsafe_lock = artifact(
+        "unsafe-lock",
+        payload(ankle_drift=0.0, corrupt_knee=True),
+        lock_feet=True,
+    )
+
+    rejected = bake_and_rank_module.prefer_baseline_safe_support_lock_artifacts(
+        [sliding_baseline, unsafe_lock],
+        source_foot_support_evidence=source_evidence,
+    )
+
+    assert rejected == []
+    baseline_gate = sliding_baseline.export_payload["sourceConfirmedBaselineSupportGate"]
+    assert baseline_gate["passed"] is False
+    assert "right_source_confirmed_support_slides" in baseline_gate["rejectionReasons"]
+    assert unsafe_lock.export_payload["supportLockBaselineSafetyGate"]["passed"] is False
+
+    safe_lock = artifact(
+        "safe-lock",
+        payload(ankle_drift=0.0),
+        lock_feet=True,
+    )
+    repaired = bake_and_rank_module.prefer_baseline_safe_support_lock_artifacts(
+        [sliding_baseline, safe_lock],
+        source_foot_support_evidence=source_evidence,
+    )
+
+    assert repaired == [safe_lock]
+    assert safe_lock.export_payload["supportLockBaselineSafetyGate"]["passed"] is True
+    assert safe_lock.export_payload["sourceConfirmedSupportRepairGate"]["passed"] is True
+
+    stationary_baseline = artifact(
+        "stationary-baseline",
+        payload(ankle_drift=0.0),
+        lock_feet=False,
+    )
+    preserved = bake_and_rank_module.prefer_baseline_safe_support_lock_artifacts(
+        [stationary_baseline, unsafe_lock],
+        source_foot_support_evidence=source_evidence,
+    )
+
+    assert preserved == [stationary_baseline]
+    assert stationary_baseline.export_payload["sourceConfirmedBaselineSupportGate"]["passed"] is True
+
+
+def test_support_lock_baseline_safety_gate_ignores_global_rigid_reorientation() -> None:
+    def payload(*, yaw_degrees: float, translation: tuple[float, float, float]) -> dict[str, object]:
+        yaw = math.radians(yaw_degrees)
+
+        def transform(point: list[float]) -> list[float]:
+            x, y, z = point
+            return [
+                x * math.cos(yaw) + z * math.sin(yaw) + translation[0],
+                y + translation[1],
+                z * math.cos(yaw) - x * math.sin(yaw) + translation[2],
+            ]
+
+        frames = []
+        for index in range(6):
+            pelvis_y = 1.0 - index * 0.03
+            joints = {
+                "head": [0.0, pelvis_y + 0.8, 0.0],
+                "left_shoulder": [-0.2, pelvis_y + 0.6, 0.0],
+                "right_shoulder": [0.2, pelvis_y + 0.6, 0.0],
+                "pelvis": [0.0, pelvis_y, 0.0],
+                "left_hip": [-0.2, pelvis_y, 0.0],
+                "right_hip": [0.2, pelvis_y, 0.0],
+                "left_knee": [-0.25, pelvis_y - 0.5, 0.0],
+                "right_knee": [0.25, pelvis_y - 0.5, 0.0],
+                "left_ankle": [-0.2, pelvis_y - 1.0, 0.0],
+                "right_ankle": [0.2, pelvis_y - 1.0, 0.0],
+                "left_foot": [-0.2, pelvis_y - 1.05, 0.1],
+                "right_foot": [0.2, pelvis_y - 1.05, 0.1],
+            }
+            frames.append(
+                {
+                    "frameIndex": index,
+                    "timeSec": index / 30,
+                    "joints": {name: transform(point) for name, point in joints.items()},
+                }
+            )
+        return {"frames": frames}
+
+    baseline = payload(yaw_degrees=0.0, translation=(0.0, 0.0, 0.0))
+    reoriented = payload(yaw_degrees=37.0, translation=(0.4, -0.2, 0.3))
+
+    metrics = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline,
+        reoriented,
+    )
+
+    assert metrics["passed"] is True
+    assert metrics["maxPelvisDeviation"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_contact_sequence_correction_preserves_pose_and_elevated_supports() -> None:
+    frames = []
+    for index in range(15):
+        drift = index * 0.02
+        joints = {
+            "head": [0.0, 1.8 - drift, 0.0],
+            "left_shoulder": [-0.2, 1.6 - drift, 0.0],
+            "right_shoulder": [0.2, 1.6 - drift, 0.0],
+            "pelvis": [0.0, 1.0 - drift, 0.0],
+            "left_hip": [-0.2, 1.0 - drift, 0.0],
+            "right_hip": [0.2, 1.0 - drift, 0.0],
+            "left_knee": [-0.2, 0.5 - drift, 0.0],
+            "right_knee": [0.2, 0.7 - drift, 0.0],
+            "left_ankle": [-0.2, 0.0 - drift, 0.0],
+            "right_ankle": [0.2, 0.4 - drift, 0.0],
+            "left_foot": [-0.2, -0.05 - drift, 0.1],
+            "right_foot": [0.2, 0.35 - drift, 0.1],
+        }
+        frames.append({"frameIndex": index, "timeSec": index / 30, "joints": joints})
+    baseline = {"frames": frames}
+    evidence = {
+        "feet": {
+            "left": {"jointName": "left_ankle", "continuousSupport": True},
+            "right": {"jointName": "right_ankle", "continuousSupport": True},
+        }
+    }
+
+    corrected, correction_metrics = (
+        bake_and_rank_module.apply_source_contact_sequence_correction(
+            baseline,
+            evidence,
+        )
+    )
+
+    corrected_frames = corrected["frames"]
+    left_y = [frame["joints"]["left_ankle"][1] for frame in corrected_frames]
+    right_y = [frame["joints"]["right_ankle"][1] for frame in corrected_frames]
+    height_separation = [right - left for left, right in zip(left_y, right_y)]
+    safety = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline,
+        corrected,
+    )
+    assert correction_metrics["applied"] is True
+    assert max(left_y) - min(left_y) < 0.03
+    assert max(right_y) - min(right_y) < 0.03
+    assert height_separation == pytest.approx([0.4] * len(frames))
+    assert safety["passed"] is True
+    assert safety["isPerFrameRigidTranslation"] is True
+
+
+def test_contact_sequence_correction_preserves_locomotion_across_contact_intervals() -> None:
+    frames = []
+    for index in range(20):
+        travel = index * 0.08
+        contact_error = index * 0.004
+        joints = {
+            "head": [travel, 1.8, 0.0],
+            "left_shoulder": [travel - 0.2, 1.6, 0.0],
+            "right_shoulder": [travel + 0.2, 1.6, 0.0],
+            "pelvis": [travel, 1.0, 0.0],
+            "left_hip": [travel - 0.2, 1.0, 0.0],
+            "right_hip": [travel + 0.2, 1.0, 0.0],
+            "left_knee": [travel - 0.2, 0.5, 0.0],
+            "right_knee": [travel + 0.2, 0.5, 0.0],
+            # Each stance foot is nearly fixed in world space; the small drift
+            # is the reconstruction error the correction owns.
+            "left_ankle": [contact_error if index < 10 else travel - 0.2, 0.0, 0.0],
+            "right_ankle": [travel + 0.2 if index < 10 else 0.8 + contact_error, 0.0, 0.0],
+            "left_foot": [contact_error if index < 10 else travel - 0.2, -0.05, 0.1],
+            "right_foot": [travel + 0.2 if index < 10 else 0.8 + contact_error, -0.05, 0.1],
+        }
+        frames.append({"frameIndex": index, "timeSec": index / 30, "joints": joints})
+    baseline = {"frames": frames}
+    evidence = {
+        "contacts": [
+            {"jointName": "left_ankle", "startFrame": 0, "endFrame": 9},
+            {"jointName": "right_ankle", "startFrame": 10, "endFrame": 19},
+        ]
+    }
+
+    corrected, _ = bake_and_rank_module.apply_source_contact_sequence_correction(
+        baseline,
+        evidence,
+    )
+
+    baseline_pelvis = [frame["joints"]["pelvis"][0] for frame in frames]
+    corrected_pelvis = [frame["joints"]["pelvis"][0] for frame in corrected["frames"]]
+    baseline_travel = baseline_pelvis[-1] - baseline_pelvis[0]
+    corrected_travel = corrected_pelvis[-1] - corrected_pelvis[0]
+    assert corrected_travel == pytest.approx(baseline_travel, abs=0.10)
+    assert corrected_travel > 1.4
+    safety = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline,
+        corrected,
+    )
+    assert safety["passed"] is True
+    assert safety["isPerFrameRigidTranslation"] is True
 
 
 def test_caption_owned_gpu_work_releases_resident_vision_session() -> None:
