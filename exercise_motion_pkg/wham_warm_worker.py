@@ -33,6 +33,12 @@ def load_wham_once() -> dict[str, Any]:
     started = time.perf_counter()
     import torch
 
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
     wham_repo_path = Path.cwd()
     if str(wham_repo_path) not in sys.path:
         sys.path.insert(0, str(wham_repo_path))
@@ -53,6 +59,35 @@ def load_wham_once() -> dict[str, Any]:
     network = build_network(cfg, smpl)
     network.eval()
     demo.smpl = smpl
+    original_detection_model = demo.DetectionModel
+    original_feature_extractor = demo.FeatureExtractor
+    preprocessing_models: dict[str, Any] = {}
+    preprocessing_load_seconds = 0.0
+
+    def cached_detection_model(device, *args, **kwargs):
+        nonlocal preprocessing_load_seconds
+        model = preprocessing_models.get("detector")
+        if model is None:
+            load_started = time.perf_counter()
+            model = original_detection_model(device, *args, **kwargs)
+            preprocessing_models["detector"] = model
+            preprocessing_load_seconds += time.perf_counter() - load_started
+        model.initialize_tracking()
+        return model
+
+    def cached_feature_extractor(device, flip_eval=False, *args, **kwargs):
+        nonlocal preprocessing_load_seconds
+        cache_key = f"extractor:{device}:{bool(flip_eval)}"
+        model = preprocessing_models.get(cache_key)
+        if model is None:
+            load_started = time.perf_counter()
+            model = original_feature_extractor(device, flip_eval, *args, **kwargs)
+            preprocessing_models[cache_key] = model
+            preprocessing_load_seconds += time.perf_counter() - load_started
+        return model
+
+    demo.DetectionModel = cached_detection_model
+    demo.FeatureExtractor = cached_feature_extractor
     gpu_name = None
     try:
         gpu_name = torch.cuda.get_device_name()
@@ -64,6 +99,8 @@ def load_wham_once() -> dict[str, Any]:
         "network": network,
         "loadSeconds": round(time.perf_counter() - started, 3),
         "gpuName": gpu_name,
+        "preprocessingModels": preprocessing_models,
+        "preprocessingLoadSeconds": lambda: preprocessing_load_seconds,
     }
 
 
@@ -90,6 +127,10 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
         output_root = Path(str(job["outputRoot"]))
         output_path = sequence_output_dir(output_root, video_path)
         output_path.mkdir(parents=True, exist_ok=True)
+        preprocessing_cache_hit = (output_path / "tracking_results.pth").is_file() and (
+            output_path / "slam_results.pth"
+        ).is_file()
+        preprocessing_load_before = wham_state["preprocessingLoadSeconds"]()
         wham_state["demo"].args = SimpleNamespace(run_smplify=bool(job.get("runSmplify", True)))
         with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open("w", encoding="utf-8") as stderr_handle:
             with contextlib.redirect_stdout(stdout_handle), contextlib.redirect_stderr(stderr_handle):
@@ -112,6 +153,15 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
                 "outputDir": str(output_path),
                 "resultsPkl": str(results_pkl),
                 "elapsedSeconds": round(time.perf_counter() - started, 3),
+                "timings": {
+                    "workerModelLoadSeconds": wham_state["loadSeconds"],
+                    "preprocessingModelLoadSeconds": round(
+                        wham_state["preprocessingLoadSeconds"]() - preprocessing_load_before,
+                        3,
+                    ),
+                    "preprocessingCacheHit": preprocessing_cache_hit,
+                    "jobElapsedSeconds": round(time.perf_counter() - started, 3),
+                },
             }
         )
     except Exception as exc:

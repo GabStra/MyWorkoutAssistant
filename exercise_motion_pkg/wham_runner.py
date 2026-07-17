@@ -8,7 +8,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from typing import Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
@@ -48,6 +48,7 @@ class WhamRunResult:
     warm_worker: bool = False
     warm_worker_job_id: str | None = None
     warm_worker_session_dir: Path | None = None
+    stage_timings: dict[str, float | bool] = field(default_factory=dict)
 
     def timing_payload(self) -> dict[str, Any]:
         return {
@@ -68,6 +69,7 @@ class WhamRunResult:
             "resultsPkl": str(self.results_pkl),
             "dockerLockWaitSeconds": round(self.docker_lock_wait_seconds, 3) if self.use_docker else 0.0,
             "gpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
+            "stageTimings": self.stage_timings,
         }
 
 
@@ -348,6 +350,7 @@ def run_wham_with_warm_worker(
         warm_worker=True,
         warm_worker_job_id=job_id,
         warm_worker_session_dir=session_dir,
+        stage_timings=dict(result_payload.get("timings") or {}),
     )
 
 

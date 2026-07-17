@@ -14,6 +14,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $resolvedWhamRepoPath "demo.py"))) {
 
 $detectorSource = Join-Path $patchRoot "detector.py"
 $detectorTarget = Join-Path $resolvedWhamRepoPath "lib\models\preproc\detector.py"
+$extractorSource = Join-Path $patchRoot "extractor.py"
+$extractorTarget = Join-Path $resolvedWhamRepoPath "lib\models\preproc\extractor.py"
 $siteCustomizeSource = Join-Path $patchRoot "sitecustomize.py"
 $siteCustomizeTarget = Join-Path $resolvedWhamRepoPath "sitecustomize.py"
 $configSource = Join-Path $patchRoot "configs\VIT"
@@ -39,6 +41,9 @@ function Update-TextInFile {
 if (-not (Test-Path -LiteralPath $detectorSource)) {
     throw "Missing detector patch: $detectorSource"
 }
+if (-not (Test-Path -LiteralPath $extractorSource)) {
+    throw "Missing feature extractor patch: $extractorSource"
+}
 if (-not (Test-Path -LiteralPath $configSource)) {
     throw "Missing VIT config patch directory: $configSource"
 }
@@ -57,6 +62,7 @@ if (Test-Path -LiteralPath $detectorTarget) {
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $detectorTarget) | Out-Null
 New-Item -ItemType Directory -Force -Path $configTarget | Out-Null
 Copy-Item -LiteralPath $detectorSource -Destination $detectorTarget -Force
+Copy-Item -LiteralPath $extractorSource -Destination $extractorTarget -Force
 Copy-Item -LiteralPath $siteCustomizeSource -Destination $siteCustomizeTarget -Force
 Copy-Item -Path (Join-Path $configSource "*") -Destination $configTarget -Force
 
@@ -82,6 +88,7 @@ Update-TextInFile -PathValue $whamHmr2 -Find "torch.load(checkpoint_pth, map_loc
 
 Write-Host "Applied WHAM MMPose 1.x detector patch to $resolvedWhamRepoPath"
 Write-Host "Detector: $detectorTarget"
+Write-Host "Batched feature extractor: $extractorTarget"
 Write-Host "Torch checkpoint compatibility: $siteCustomizeTarget"
 Write-Host "ViTPose config directory: $configTarget"
 Write-Host "Applied DPVO PyTorch 2.9 extension patches."
