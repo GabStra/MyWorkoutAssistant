@@ -50,7 +50,12 @@ function Invoke-WhamProcess {
         [string]$DockerContainerName
     )
 
-    $effectiveTimeoutSeconds = [Math]::Min(200.0, [Math]::Max(1.0, $TimeoutSeconds))
+    $effectiveTimeoutSeconds = if ($TimeoutSeconds -gt 0.0) {
+        [Math]::Max(1.0, $TimeoutSeconds)
+    }
+    else {
+        $null
+    }
     $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $processInfo.FileName = $FilePath
     $processInfo.WorkingDirectory = $WorkingDirectory
@@ -66,7 +71,17 @@ function Invoke-WhamProcess {
     [void]$process.Start()
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $completed = $process.WaitForExit([int]($effectiveTimeoutSeconds * 1000))
+    $completed = if ($null -eq $effectiveTimeoutSeconds) {
+        $process.WaitForExit()
+        $true
+    }
+    else {
+        $timeoutMilliseconds = [int][Math]::Min(
+            [int]::MaxValue,
+            [Math]::Ceiling($effectiveTimeoutSeconds * 1000.0)
+        )
+        $process.WaitForExit($timeoutMilliseconds)
+    }
     if (-not $completed) {
         if (-not [string]::IsNullOrWhiteSpace($DockerContainerName)) {
             & docker rm -f $DockerContainerName *> $null
