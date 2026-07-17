@@ -2593,10 +2593,10 @@ def test_baked_sagittal_alignment_resolves_opposite_body_axis_to_positive_x_forw
     left = aligned_frames[0]["joints"]["left_shoulder"]  # type: ignore[index]
     right = aligned_frames[0]["joints"]["right_shoulder"]  # type: ignore[index]
 
-    assert alignment["targetDirection"] == "-z"
-    assert float(alignment["yawDegrees"]) == pytest.approx(-90.0)
+    assert alignment["targetDirection"] == "+x"
+    assert float(alignment["yawDegrees"]) == pytest.approx(90.0)
     assert abs(float(right[0]) - float(left[0])) < 1e-8  # type: ignore[index]
-    assert float(right[2]) < float(left[2])  # type: ignore[index]
+    assert float(right[2]) > float(left[2])  # type: ignore[index]
 
 
 def test_compute_preview_auto_alignment_levels_inverted_upright_spine_without_flipping_it() -> None:
@@ -18394,7 +18394,7 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
 ) -> None:
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"video")
-    captured: dict[str, Path] = {}
+    captured: dict[str, Any] = {}
 
     def fake_detect_exercise_segment(**kwargs: object) -> DetectionResult:
         return DetectionResult(
@@ -18424,6 +18424,9 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
     def fake_run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         assert request.video_path is not None
         captured["video_path"] = request.video_path
+        captured["allow_incomplete_wham_boundary_crop"] = (
+            request.allow_incomplete_wham_boundary_crop
+        )
         root = request.workspace / request.exercise_slug
         for directory in ("cleaned", "preview", "raw", "retarget", "wear", "input", "logs"):
             (root / directory).mkdir(parents=True, exist_ok=True)
@@ -18456,6 +18459,15 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
 
     monkeypatch.setattr(bake_and_rank_module, "detect_exercise_segment", fake_detect_exercise_segment)
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "prepare_wham_inference_video",
+        lambda *, candidate_workspace, selected_video_path, padding_seconds=0.0: (
+            selected_video_path,
+            None,
+            None,
+        ),
+    )
     monkeypatch.setattr(bake_and_rank_module, "run_generation_pipeline", fake_run_generation_pipeline)
 
     result = bake_and_rank_module.generate_candidate_motion(
@@ -18481,6 +18493,7 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
     assert captured["video_path"].name == "selected_segment.mp4"
     assert captured["trim_start"] == pytest.approx(2.5)
     assert captured["trim_end"] == pytest.approx(12.0)
+    assert captured["allow_incomplete_wham_boundary_crop"] is False
     assert (tmp_path / "build" / "clean-and-jerk-001-clean-and-jerk" / "segment_detection" / "segment_detection.json").exists()
 
 
@@ -27426,6 +27439,26 @@ def test_source_cut_candidate_windows_honor_full_cycle_min_duration_floor() -> N
         window.start_seconds == pytest.approx(42.48) and window.end_seconds == pytest.approx(46.48)
         for window in windows
     )
+
+
+def test_source_video_boundary_sweep_can_refine_below_estimated_rep_duration() -> None:
+    specs = bake_and_rank_module.build_source_video_pyramid_candidate_windows(
+        window=DetectionWindow(index=0, start_seconds=10.0, end_seconds=18.0),
+        chunk_estimate=SimpleNamespace(rep_duration_min_sec=3.0, rep_duration_max_sec=8.0),
+        min_duration_floor_seconds=3.0,
+    )
+
+    boundary_specs = [
+        spec
+        for spec in specs
+        if spec.chunking.get("strategy") == "progressive_start_anchored_end_boundary_sweep"
+    ]
+
+    assert boundary_specs
+    assert min(spec.window.end_seconds - spec.window.start_seconds for spec in boundary_specs) == pytest.approx(
+        bake_and_rank_module.SOURCE_CUT_REFINEMENT_MIN_SECONDS
+    )
+    assert all(spec.window.start_seconds == pytest.approx(10.0) for spec in boundary_specs)
 
 
 def test_source_cut_full_cycle_rejects_too_short_parent_before_vlm(

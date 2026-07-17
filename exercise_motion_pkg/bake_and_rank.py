@@ -388,7 +388,6 @@ SOURCE_CUT_PROGRESSIVE_MIN_CLUSTER_OVERLAP_RATIO = 0.25
 SOURCE_CUT_MAX_VLM_CANDIDATES = 4
 SOURCE_CUT_MAX_MATERIALIZED_CANDIDATES = 16
 SOURCE_CUT_MAX_RENDER_WORKERS = 4
-SOURCE_CUT_END_BOUNDARY_SWEEP_FLOOR_RATIO = 0.80
 SOURCE_CUT_END_BOUNDARY_SWEEP_MAX_WINDOWS = 9
 WHAM_INFERENCE_CONTEXT_PADDING_SECONDS = 1.25
 SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
@@ -12070,7 +12069,11 @@ def generate_candidate_motion(
         export_wham_smpl_preview=request.export_wham_smpl_preview,
         output_crop_start_seconds=output_crop_start_seconds,
         output_crop_end_seconds=output_crop_end_seconds,
-        allow_incomplete_wham_boundary_crop=True,
+        # A materially boundary-truncated WHAM track no longer represents the
+        # source interval which passed segment validation.  Reject it here so
+        # bake-and-rank can try another source/window instead of asking later
+        # validators to judge a rebased, incomplete movement.
+        allow_incomplete_wham_boundary_crop=False,
         wham_output_rotation_degrees=wham_output_rotation_degrees,
     )
     preflight_payload: dict[str, Any] = {
@@ -17683,10 +17686,12 @@ def build_source_video_pyramid_candidate_windows(
                 position_count=len(deduped_offsets),
             )
 
-    boundary_floor = max(
-        SOURCE_CUT_REFINEMENT_MIN_SECONDS,
-        robust_floor * SOURCE_CUT_END_BOUNDARY_SWEEP_FLOOR_RATIO,
-    )
+    # Rep-duration estimates are useful for prioritizing the main pyramid, but
+    # they are not reliable enough to define a legal cut boundary.  Sweep down
+    # to the technical sampling floor so a fast, complete repetition can end
+    # cleanly before a following partial repetition begins.  Pose-cycle and VLM
+    # boundary validation still decide whether any short window is usable.
+    boundary_floor = SOURCE_CUT_REFINEMENT_MIN_SECONDS
     boundary_ceiling = min(robust_floor, duration)
     if boundary_floor + 0.05 < boundary_ceiling:
         span = boundary_ceiling - boundary_floor
