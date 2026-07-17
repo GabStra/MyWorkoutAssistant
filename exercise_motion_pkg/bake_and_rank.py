@@ -10209,9 +10209,13 @@ def write_selected_section_preview_html(
         else f"Loop {item.loop_index + 1}"
     )
     preview_path = workspace / filename
-    video_rel = relative_html_path(item.review_video_path, workspace)
-    fallback_mp4 = item.review_video_path.with_suffix(".mp4")
-    fallback_rel = relative_html_path(fallback_mp4, workspace) if fallback_mp4 != item.review_video_path else None
+    review_preview_path = browser_compatible_video_path(
+        item.review_video_path,
+        create=True,
+    )
+    if review_preview_path is None:
+        raise RuntimeError(f"Selected review video is unavailable: {item.review_video_path}")
+    video_rel = relative_html_path(review_preview_path, workspace)
     interactive_rel = relative_html_path(item.candidate_workspace / "preview" / "motion_preview.html", workspace)
     interactive_query = urlencode(
         {
@@ -10245,19 +10249,10 @@ def write_selected_section_preview_html(
         if selected_input_preview_path is not None
         else None
     )
-    selected_input_rel = (
-        relative_html_path(selected_input_path, workspace)
-        if selected_input_path is not None
-        else None
-    )
     title = html.escape(f"{item.exercise_name} - Selected {loop_label}")
     source_elements = [
-        f'      <source src="{html.escape(video_rel)}" type="{mime_type_for_video_path(item.review_video_path)}">'
+        f'      <source src="{html.escape(video_rel)}" type="{mime_type_for_video_path(review_preview_path)}">'
     ]
-    if fallback_rel is not None and fallback_mp4.exists():
-        source_elements.append(
-            f'      <source src="{html.escape(fallback_rel)}" type="{mime_type_for_video_path(fallback_mp4)}">'
-        )
     selected_input_elements = (
         [
             f'      <source src="{html.escape(selected_input_preview_rel)}" type="{mime_type_for_video_path(selected_input_preview_path)}">'
@@ -10341,7 +10336,7 @@ def write_selected_section_preview_html(
       <a href="{html.escape(video_rel)}">Open review video</a>
       <a href="{html.escape(interactive_preview_rel)}">Open interactive preview</a>
       <a href="{html.escape(skeleton_rel)}">Open selected skeleton JSON</a>
-{f'      <a href="{html.escape(selected_input_rel)}">Open selected source input</a>' if selected_input_rel is not None else ""}
+{f'      <a href="{html.escape(selected_input_preview_rel)}">Open selected source input</a>' if selected_input_preview_rel is not None else ""}
 {f'      <a href="{html.escape(skeleton_no_lock_rel)}">Open selected skeleton JSON (no feet lock)</a>' if skeleton_no_lock_rel is not None else ""}
 {f'      <a href="{html.escape(skeleton_no_hand_lock_rel)}">Open selected skeleton JSON (no hand lock)</a>' if skeleton_no_hand_lock_rel is not None else ""}
     </div>
@@ -10360,25 +10355,28 @@ def browser_compatible_selected_source_video_path(
     create: bool,
 ) -> Path | None:
     """Return a browser-decodable copy without changing the exact selected source artifact."""
-    if selected_input_path is None or not selected_input_path.exists():
+    return browser_compatible_video_path(selected_input_path, create=create)
+
+
+def browser_compatible_video_path(
+    video_path: Path | None,
+    *,
+    create: bool,
+) -> Path | None:
+    """Return a WebM artifact which Chromium can decode reliably."""
+    if video_path is None or not video_path.exists():
         return None
-    if selected_input_path.suffix.lower() == ".webm":
-        return selected_input_path
-    browser_path = selected_input_path.with_name(f"{selected_input_path.stem}.browser.webm")
+    if video_path.suffix.lower() == ".webm":
+        return video_path
+    browser_path = video_path.with_name(f"{video_path.stem}.browser.webm")
     if browser_path.exists() and browser_path.stat().st_size > 0:
         return browser_path
     if not create:
         return None
-    try:
-        return convert_video_to_webm(
-            source_path=selected_input_path,
-            output_path=browser_path,
-        )
-    except Exception:
-        # The original source remains linked from the preview for diagnosis, but
-        # embedding a codec the browser cannot decode would produce a misleading
-        # playback control with "No video with supported format".
-        return None
+    return convert_video_to_webm(
+        source_path=video_path,
+        output_path=browser_path,
+    )
 
 
 def normalize_artifact_retention_mode(mode: str | None) -> str:
@@ -16981,7 +16979,7 @@ def write_validated_review_video_from_data_urls(
     fps: float,
 ) -> tuple[Path, dict[str, Any]]:
     candidate_paths = [output_path]
-    if output_path.suffix.casefold() == ".webm":
+    if output_path.suffix.casefold() == ".webm" and resolve_ffmpeg_path() is not None:
         candidate_paths.append(output_path.with_suffix(".mp4"))
     attempts: list[dict[str, Any]] = []
     final_path = output_path

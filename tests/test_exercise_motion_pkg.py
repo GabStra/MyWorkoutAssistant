@@ -6356,6 +6356,7 @@ def test_review_video_export_falls_back_to_mp4_after_invalid_webm(
         }
 
     monkeypatch.setattr(bake_and_rank_module, "write_review_video_from_data_urls", fake_write)
+    monkeypatch.setattr(bake_and_rank_module, "resolve_ffmpeg_path", lambda: "ffmpeg")
     monkeypatch.setattr(bake_and_rank_module, "review_video_render_quality_metrics", fake_quality)
     monkeypatch.setattr(
         bake_and_rank_module,
@@ -6373,6 +6374,31 @@ def test_review_video_export_falls_back_to_mp4_after_invalid_webm(
     assert selected_path.suffix == ".mp4"
     assert quality["passed"] is True
     assert quality["codecFallbackUsed"] is True
+
+
+def test_review_video_export_does_not_fall_back_to_browser_unsafe_mp4_without_ffmpeg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    written_paths: list[Path] = []
+
+    def fake_write(data_urls: list[str], output_path: Path, *, fps: float) -> None:
+        written_paths.append(output_path)
+        raise RuntimeError("ffmpeg unavailable")
+
+    monkeypatch.setattr(bake_and_rank_module, "resolve_ffmpeg_path", lambda: None)
+    monkeypatch.setattr(bake_and_rank_module, "write_review_video_from_data_urls", fake_write)
+
+    selected_path, quality = bake_and_rank_module.write_validated_review_video_from_data_urls(
+        ["frame"],
+        tmp_path / "preview.webm",
+        fps=12.0,
+    )
+
+    assert written_paths == [tmp_path / "preview.webm"]
+    assert selected_path.suffix == ".webm"
+    assert quality["passed"] is False
+    assert quality["rejectionReasons"] == ["review_video_encode_failed"]
 
 
 def test_review_video_render_quality_rejects_leading_blank_export(tmp_path: Path) -> None:
@@ -28329,6 +28355,22 @@ def test_browser_compatible_selected_source_video_uses_webm_companion(
 
     assert browser_path == tmp_path / "selected_source_section.browser.webm"
     assert browser_path.read_bytes() == b"vp9"
+
+
+def test_browser_compatible_video_conversion_failure_is_not_silently_ignored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "review.mp4"
+    source.write_bytes(b"mp4v")
+
+    def fail_conversion(*, source_path: Path, output_path: Path) -> Path:
+        raise RuntimeError("FFmpeg is required")
+
+    monkeypatch.setattr(bake_and_rank_module, "convert_video_to_webm", fail_conversion)
+
+    with pytest.raises(RuntimeError, match="FFmpeg is required"):
+        bake_and_rank_module.browser_compatible_video_path(source, create=True)
 
 
 def test_final_selection_rejects_best_loop_below_min_score(tmp_path: Path) -> None:
