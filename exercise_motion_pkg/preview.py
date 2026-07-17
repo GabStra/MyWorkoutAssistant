@@ -93,19 +93,14 @@ YAW_ALIGNMENT_PAIRS = (
     ("left_hand", "right_hand"),
     ("left_wrist", "right_wrist"),
 )
-BAKED_SAGITTAL_PLANE_TARGET_AXIS = "negative_z"
-BAKED_SAGITTAL_PLANE_TARGET_NORMAL = (0.0, -1.0)
+BAKED_SAGITTAL_PLANE_TARGET_AXIS = "positive_x"
+BAKED_SAGITTAL_PLANE_TARGET_FORWARD = (1.0, 0.0)
+BAKED_SAGITTAL_PLANE_TARGET_NORMAL = (0.0, 1.0)
 BAKED_SAGITTAL_PLANE_ALIGNMENT_MIN_DEGREES = 0.5
 BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS = (
     ("left_shoulder", "right_shoulder", 2.0),
     ("left_collar", "right_collar", 1.5),
     ("left_hip", "right_hip", 1.8),
-    ("left_knee", "right_knee", 0.8),
-    ("left_ankle", "right_ankle", 0.8),
-    ("left_foot", "right_foot", 0.8),
-    ("left_elbow", "right_elbow", 0.6),
-    ("left_wrist", "right_wrist", 0.6),
-    ("left_hand", "right_hand", 0.6),
 )
 MOVEMENT_PLANE_ALIGNMENT_MIN_RANGE_RATIO = 0.035
 MOVEMENT_PLANE_ALIGNMENT_MIN_COHERENCE = 0.55
@@ -850,8 +845,9 @@ def _sagittal_plane_alignment_base_payload(
     return {
         "enabled": True,
         "targetAxis": BAKED_SAGITTAL_PLANE_TARGET_AXIS,
+        "targetForward": [BAKED_SAGITTAL_PLANE_TARGET_FORWARD[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_FORWARD[1]],
         "targetNormal": [BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1]],
-        "targetAxisMeaning": "body_lateral_axis_sagittal_plane_normal",
+        "targetAxisMeaning": "body_sagittal_forward_axis",
         "normalSource": normal_source,
         "applied": False,
         "status": status,
@@ -879,13 +875,18 @@ def _build_horizontal_normal_alignment_payload(
 
     normal_x /= normal_length
     normal_z /= normal_length
-    current_angle = math.atan2(normal_z, normal_x)
+    # WHAM/SMPL bilateral joints use the directed anatomical basis
+    # forward = world-up x (right - left). Reversing this cross product
+    # preserves the sagittal plane but makes the character face backward.
+    forward_x = normal_z
+    forward_z = -normal_x
+    current_angle = math.atan2(forward_z, forward_x)
     target_angle = math.atan2(
-        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1],
-        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0],
+        BAKED_SAGITTAL_PLANE_TARGET_FORWARD[1],
+        BAKED_SAGITTAL_PLANE_TARGET_FORWARD[0],
     )
     yaw_radians = _normalize_signed_angle(current_angle - target_angle)
-    target_direction = "-z"
+    target_direction = "+x"
 
     bounds = _compute_transformed_joint_bounds(frames)
     pivot = _bounds_center(bounds)
@@ -898,10 +899,16 @@ def _build_horizontal_normal_alignment_payload(
         "yawRadians": yaw_radians if applied else 0.0,
         "yawDegrees": math.degrees(yaw_radians) if applied else 0.0,
         "horizontalNormalBefore": [normal_x, 0.0, normal_z],
+        "horizontalForwardBefore": [forward_x, 0.0, forward_z],
         "horizontalNormalAfter": (
             [BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1]]
             if applied
             else [normal_x, 0.0, normal_z]
+        ),
+        "horizontalForwardAfter": (
+            [BAKED_SAGITTAL_PLANE_TARGET_FORWARD[0], 0.0, BAKED_SAGITTAL_PLANE_TARGET_FORWARD[1]]
+            if applied
+            else [forward_x, 0.0, forward_z]
         ),
         "pivot": _point_to_list(pivot),
         "coherence": coherence,
@@ -970,7 +977,7 @@ def _estimate_baked_movement_plane_alignment(
             "movementPlaneRangeRatio": float(best["rangeRatio"]),
             "movementPlaneHorizontalRange": float(best["horizontalRange"]),
             "movementPlaneDirection": [axis_x, 0.0, axis_z],
-            "fallbackNormalSource": "right_minus_left_bilateral_joints",
+            "fallbackNormalSource": "robust_torso_bilateral_axis",
         },
     )
 
@@ -1123,15 +1130,16 @@ def _point_track_range_along_direction_2d(
 def _estimate_baked_sagittal_plane_alignment(
     frames: list[dict[str, object]],
 ) -> dict[str, object]:
-    accumulated_x = 0.0
-    accumulated_z = 0.0
-    total_weight = 0.0
-    sample_count = 0
+    frame_normals: list[tuple[float, float]] = []
+    pair_sample_count = 0
 
     for frame in frames:
         joints = frame.get("joints")
         if not isinstance(joints, dict):
             continue
+        frame_x = 0.0
+        frame_z = 0.0
+        frame_weight = 0.0
         for left_name, right_name, pair_weight in BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS:
             left = joints.get(left_name)
             right = joints.get(right_name)
@@ -1142,37 +1150,63 @@ def _estimate_baked_sagittal_plane_alignment(
             length = math.hypot(dx, dz)
             if length <= 1e-5:
                 continue
-            weight = float(pair_weight) * length
-            accumulated_x += dx / length * weight
-            accumulated_z += dz / length * weight
-            total_weight += weight
-            sample_count += 1
+            weight = float(pair_weight)
+            frame_x += dx / length * weight
+            frame_z += dz / length * weight
+            frame_weight += weight
+            pair_sample_count += 1
+        frame_length = math.hypot(frame_x, frame_z)
+        if frame_weight > 0.0 and frame_length > 1e-5:
+            frame_normals.append((frame_x / frame_length, frame_z / frame_length))
 
     base_payload = _sagittal_plane_alignment_base_payload(
-        sample_count=sample_count,
-        normal_source="right_minus_left_bilateral_joints",
-        status="not_enough_bilateral_joint_evidence",
+        sample_count=len(frame_normals),
+        normal_source="robust_torso_bilateral_axis",
+        status="not_enough_torso_bilateral_evidence",
     )
-    if sample_count <= 0 or total_weight <= 1e-6:
+    if not frame_normals:
         return base_payload
 
-    averaged_x = accumulated_x / total_weight
-    averaged_z = accumulated_z / total_weight
-    averaged_length = math.hypot(averaged_x, averaged_z)
-    coherence = min(1.0, averaged_length)
-    if averaged_length <= 1e-5:
-        return {
-            **base_payload,
-            "status": "ambiguous_bilateral_joint_evidence",
-            "coherence": coherence,
-        }
+    angles = [math.atan2(normal_z, normal_x) for normal_x, normal_z in frame_normals]
+    reference_angle = math.atan2(
+        sum(normal_z for _, normal_z in frame_normals),
+        sum(normal_x for normal_x, _ in frame_normals),
+    )
+    unwrapped_angles = sorted(
+        reference_angle + _normalize_signed_angle(angle - reference_angle)
+        for angle in angles
+    )
+    middle = len(unwrapped_angles) // 2
+    robust_angle = (
+        unwrapped_angles[middle]
+        if len(unwrapped_angles) % 2
+        else (unwrapped_angles[middle - 1] + unwrapped_angles[middle]) * 0.5
+    )
+    robust_x = math.cos(robust_angle)
+    robust_z = math.sin(robust_angle)
+    coherence = max(
+        0.0,
+        min(
+            1.0,
+            sum(robust_x * normal_x + robust_z * normal_z for normal_x, normal_z in frame_normals)
+            / len(frame_normals),
+        ),
+    )
 
     return _build_horizontal_normal_alignment_payload(
         frames,
         base_payload=base_payload,
-        normal_x=averaged_x,
-        normal_z=averaged_z,
+        normal_x=robust_x,
+        normal_z=robust_z,
         coherence=coherence,
+        extra={
+            "estimator": "circular_median_of_per_frame_torso_axes",
+            "pairSampleCount": pair_sample_count,
+            "torsoPairs": [
+                [left_name, right_name]
+                for left_name, right_name, _ in BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS
+            ],
+        },
     )
 
 
@@ -4853,7 +4887,9 @@ def _build_html(payload: dict[str, object]) -> str:
 
     const scene = new THREE.Scene();
     const perspectiveCamera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
+    const bakedWearCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
     scene.add(perspectiveCamera);
+    scene.add(bakedWearCamera);
 
     const ambientLight = new THREE.AmbientLight(0x29404b, 0.5);
     scene.add(ambientLight);
@@ -4868,6 +4904,9 @@ def _build_html(payload: dict[str, object]) -> str:
 
     const grid = new THREE.GridHelper(3.5, 10, 0x1ed6e3, 0x15242c);
     scene.add(grid);
+    const bakedWearGrid = new THREE.GridHelper(1, 4, 0x1ed6e3, 0x1ed6e3);
+    bakedWearGrid.visible = false;
+    scene.add(bakedWearGrid);
     const mergedBoundsHelper = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
       new THREE.LineBasicMaterial({{ color: 0x38f7ff, transparent: true, opacity: 0.82 }})
@@ -5030,6 +5069,7 @@ def _build_html(payload: dict[str, object]) -> str:
     const sceneUp = new THREE.Vector3(0, 1, 0);
     const sceneRight = new THREE.Vector3(1, 0, 0);
     const sceneForward = new THREE.Vector3(0, 0, 1);
+    let bakedWearReviewBounds = null;
 
     function isTorsoCapsule(capsule) {{
       const key = `${{capsule.start}}->${{capsule.end}}`;
@@ -5302,7 +5342,8 @@ def _build_html(payload: dict[str, object]) -> str:
       directionalLight.intensity = vlmReviewStyle ? 1.45 : 1.8;
       rimLight.color.setHex(vlmReviewStyle ? 0x35526f : 0x2df0ff);
       rimLight.intensity = vlmReviewStyle ? 0.55 : 1.35;
-      grid.visible = !vlmReviewStyle;
+      grid.visible = !renderingBakedWearPayload && !vlmReviewStyle;
+      bakedWearGrid.visible = renderingBakedWearPayload;
 
       if (vlmReviewStyle) {{
         setLitMaterial(limbMaterial, 0x2563eb, 0x000000, 0.0, 0.74, 0.0);
@@ -5569,11 +5610,27 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function refreshGroundPlacement() {{
+      if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
+        const bounds = bakedWearReviewBounds.sourceBounds;
+        const height = Math.max(0.001, bounds.maxY - bounds.minY);
+        const width = Math.max(0.001, bounds.maxX - bounds.minX);
+        const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
+        const floorSize = Math.max(width, depth) * 1.24;
+        bakedWearGrid.position.set(
+          (bounds.minX + bounds.maxX) * 0.5,
+          bounds.minY - height * 0.014,
+          (bounds.minZ + bounds.maxZ) * 0.5
+        );
+        bakedWearGrid.quaternion.identity();
+        bakedWearGrid.scale.set(floorSize, 1.0, floorSize);
+        bakedWearGrid.visible = true;
+        grid.visible = false;
+        return;
+      }}
+      bakedWearGrid.visible = false;
       const bounds = getCachedSceneBounds(fixedRoot);
       refreshSceneBasis();
-      const renderGroundPlane = renderingBakedWearPayload
-        ? null
-        : payload.ground?.renderGroundPlane;
+      const renderGroundPlane = payload.ground?.renderGroundPlane;
       const groundNormal = renderGroundPlane?.normal;
       const groundOffset = Number(renderGroundPlane?.offset);
       const normalY = Array.isArray(groundNormal) && groundNormal.length >= 3
@@ -7567,14 +7624,15 @@ def _build_html(payload: dict[str, object]) -> str:
 
     function previewSagittalPlaneAlignmentBasePayload(
       sampleCount,
-      normalSource = "right_minus_left_bilateral_joints",
-      status = "not_enough_bilateral_joint_evidence"
+      normalSource = "robust_torso_bilateral_axis",
+      status = "not_enough_torso_bilateral_evidence"
     ) {{
       return {{
         enabled: true,
-        targetAxis: "negative_z",
-        targetNormal: [0.0, 0.0, -1.0],
-        targetAxisMeaning: "body_lateral_axis_sagittal_plane_normal",
+        targetAxis: "positive_x",
+        targetForward: [1.0, 0.0, 0.0],
+        targetNormal: [0.0, 0.0, 1.0],
+        targetAxisMeaning: "body_sagittal_forward_axis",
         normalSource,
         applied: false,
         status,
@@ -7606,9 +7664,12 @@ def _build_html(payload: dict[str, object]) -> str:
       }}
       const resolvedNormalX = normalX / normalLength;
       const resolvedNormalZ = normalZ / normalLength;
-      const currentAngle = Math.atan2(resolvedNormalZ, resolvedNormalX);
-      const targetDirection = "-z";
-      const yawRadians = normalizeSignedRadians(currentAngle + Math.PI / 2);
+      // WHAM/SMPL facing is world-up x (right - left), not the inverse.
+      const forwardX = resolvedNormalZ;
+      const forwardZ = -resolvedNormalX;
+      const currentAngle = Math.atan2(forwardZ, forwardX);
+      const targetDirection = "+x";
+      const yawRadians = normalizeSignedRadians(currentAngle);
       const yawDegrees = yawRadians * 180 / Math.PI;
       const applied = Math.abs(yawDegrees) >= 0.5;
       const bounds = computeBakedWearBounds(frames);
@@ -7621,9 +7682,13 @@ def _build_html(payload: dict[str, object]) -> str:
         yawRadians: applied ? yawRadians : 0.0,
         yawDegrees: applied ? yawDegrees : 0.0,
         horizontalNormalBefore: [resolvedNormalX, 0.0, resolvedNormalZ],
+        horizontalForwardBefore: [forwardX, 0.0, forwardZ],
         horizontalNormalAfter: applied
-          ? [0.0, 0.0, -1.0]
+          ? [0.0, 0.0, 1.0]
           : [resolvedNormalX, 0.0, resolvedNormalZ],
+        horizontalForwardAfter: applied
+          ? [1.0, 0.0, 0.0]
+          : [forwardX, 0.0, forwardZ],
         pivot,
         coherence,
         ...extra,
@@ -7877,17 +7942,13 @@ def _build_html(payload: dict[str, object]) -> str:
           movementPlaneRangeRatio: best.rangeRatio,
           movementPlaneHorizontalRange: best.horizontalRange,
           movementPlaneDirection: [directionX / directionLength, 0.0, directionZ / directionLength],
-          fallbackNormalSource: "right_minus_left_bilateral_joints",
+          fallbackNormalSource: "robust_torso_bilateral_axis",
         }}
       );
     }}
 
     function estimatePreviewSagittalPlaneAlignment(currentFixedRoot = fixedRoot) {{
       const frames = playbackState.boundsFrames ?? playbackState.frames ?? [];
-      let accumulatedX = 0.0;
-      let accumulatedZ = 0.0;
-      let totalWeight = 0.0;
-      let sampleCount = 0;
       const alignmentFrames = [];
       const previousActiveFrame = activeRenderFrame;
       const previousSuppressPreviewSagittalPlaneAlignment = suppressPreviewSagittalPlaneAlignment;
@@ -7898,7 +7959,6 @@ def _build_html(payload: dict[str, object]) -> str:
         for (const frame of frames) {{
           activeRenderFrame = frame;
           const frameTranslation = currentFixedRoot ? getFrameTranslation(frame, currentFixedRoot) : [0, 0, 0];
-          const transformedPoints = new Map();
           const transformedJoints = {{}};
           for (const jointName of payload.jointNames) {{
             const point = frame?.joints?.[jointName];
@@ -7906,26 +7966,7 @@ def _build_html(payload: dict[str, object]) -> str:
               continue;
             }}
             const worldPoint = toBaseWorldPoint(point, frameTranslation, false, jointName, currentFixedRoot);
-            transformedPoints.set(jointName, worldPoint);
             transformedJoints[jointName] = [worldPoint.x, worldPoint.y, worldPoint.z];
-          }}
-          for (const [leftName, rightName, pairWeight] of sagittalPlaneAlignmentPairs) {{
-            const left = transformedPoints.get(leftName);
-            const right = transformedPoints.get(rightName);
-            if (!left || !right) {{
-              continue;
-            }}
-            const dx = right.x - left.x;
-            const dz = right.z - left.z;
-            const length = Math.hypot(dx, dz);
-            if (!Number.isFinite(length) || length <= 1e-5) {{
-              continue;
-            }}
-            const weight = Number(pairWeight) * length;
-            accumulatedX += dx / length * weight;
-            accumulatedZ += dz / length * weight;
-            totalWeight += weight;
-            sampleCount += 1;
           }}
           if (Object.keys(transformedJoints).length > 0) {{
             alignmentFrames.push({{ joints: transformedJoints }});
@@ -7937,29 +7978,27 @@ def _build_html(payload: dict[str, object]) -> str:
         activeRenderFrame = previousActiveFrame;
       }}
 
-      const basePayload = previewSagittalPlaneAlignmentBasePayload(sampleCount);
-      if (sampleCount <= 0 || totalWeight <= 1e-6) {{
+      const estimate = estimateRobustTorsoBilateralNormal(alignmentFrames);
+      const basePayload = previewSagittalPlaneAlignmentBasePayload(
+        estimate.frameNormals.length,
+        "robust_torso_bilateral_axis",
+        "not_enough_torso_bilateral_evidence"
+      );
+      if (!estimate.normal) {{
         return basePayload;
-      }}
-
-      const averagedX = accumulatedX / totalWeight;
-      const averagedZ = accumulatedZ / totalWeight;
-      const averagedLength = Math.hypot(averagedX, averagedZ);
-      const coherence = Math.min(1.0, averagedLength);
-      if (!Number.isFinite(averagedLength) || averagedLength <= 1e-5) {{
-        return {{
-          ...basePayload,
-          status: "ambiguous_bilateral_joint_evidence",
-          coherence,
-        }};
       }}
 
       return sagittalAlignmentPayloadFromNormal(
         alignmentFrames,
         basePayload,
-        averagedX,
-        averagedZ,
-        coherence,
+        estimate.normal[0],
+        estimate.normal[1],
+        estimate.coherence,
+        {{
+          estimator: "circular_median_of_per_frame_torso_axes",
+          pairSampleCount: estimate.pairSampleCount,
+          torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
+        }}
       );
     }}
 
@@ -8075,6 +8114,49 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
+    function stableWearReviewBounds(exportPayload, frames) {{
+      const fallback = computeBakedWearBounds(frames);
+      const exported = exportPayload?.bounds ?? {{}};
+      const finiteOrFallback = (name) => {{
+        const value = Number(exported[name]);
+        return Number.isFinite(value) ? value : Number(fallback[name]);
+      }};
+      const minX = finiteOrFallback("minX");
+      const maxX = finiteOrFallback("maxX");
+      const minY = finiteOrFallback("minY");
+      const maxY = finiteOrFallback("maxY");
+      const minZ = finiteOrFallback("minZ");
+      const maxZ = finiteOrFallback("maxZ");
+      const height = Math.max(0.001, maxY - minY);
+      const width = Math.max(0.001, maxX - minX);
+      const depth = Math.max(0.001, maxZ - minZ);
+      const horizontalPadding = Math.max(width, depth) * 0.28;
+      const bottomPadding = height * 0.04;
+      const topPadding = height * 0.20;
+      const stable = {{
+        minX: minX - horizontalPadding,
+        maxX: maxX + horizontalPadding,
+        minY: minY - bottomPadding,
+        maxY: maxY + topPadding,
+        minZ: minZ - horizontalPadding,
+        maxZ: maxZ + horizontalPadding,
+        sourceBounds: {{ minX, maxX, minY, maxY, minZ, maxZ }},
+      }};
+      stable.center = new THREE.Vector3(
+        (stable.minX + stable.maxX) * 0.5,
+        (stable.minY + stable.maxY) * 0.5,
+        (stable.minZ + stable.maxZ) * 0.5
+      );
+      const halfWidth = Math.max(0.001, (stable.maxX - stable.minX) * 0.5);
+      const halfHeight = Math.max(0.001, (stable.maxY - stable.minY) * 0.5);
+      const halfDepth = Math.max(0.001, (stable.maxZ - stable.minZ) * 0.5);
+      stable.radius = Math.max(
+        0.001,
+        Math.sqrt(halfWidth ** 2 + halfHeight ** 2 + halfDepth ** 2)
+      );
+      return stable;
+    }}
+
     function sanitizedPlaybackSpeed(value) {{
       const parsed = Number(value);
       if (!Number.isFinite(parsed)) {{
@@ -8122,12 +8204,6 @@ def _build_html(payload: dict[str, object]) -> str:
       ["left_shoulder", "right_shoulder", 2.0],
       ["left_collar", "right_collar", 1.5],
       ["left_hip", "right_hip", 1.8],
-      ["left_knee", "right_knee", 0.8],
-      ["left_ankle", "right_ankle", 0.8],
-      ["left_foot", "right_foot", 0.8],
-      ["left_elbow", "right_elbow", 0.6],
-      ["left_wrist", "right_wrist", 0.6],
-      ["left_hand", "right_hand", 0.6],
     ];
 
     const movementPlaneAlignmentMinRangeRatio = 0.035;
@@ -8178,13 +8254,14 @@ def _build_html(payload: dict[str, object]) -> str:
       return Array.isArray(point) && point.length >= 3 ? point : null;
     }}
 
-    function estimateBakedSagittalPlaneAlignment(frames) {{
-      let accumulatedX = 0.0;
-      let accumulatedZ = 0.0;
-      let totalWeight = 0.0;
-      let sampleCount = 0;
+    function estimateRobustTorsoBilateralNormal(frames) {{
+      const frameNormals = [];
+      let pairSampleCount = 0;
 
       for (const frame of frames) {{
+        let frameX = 0.0;
+        let frameZ = 0.0;
+        let frameWeight = 0.0;
         for (const [leftName, rightName, pairWeight] of sagittalPlaneAlignmentPairs) {{
           const left = serializedJointPoint(frame, leftName);
           const right = serializedJointPoint(frame, rightName);
@@ -8197,37 +8274,74 @@ def _build_html(payload: dict[str, object]) -> str:
           if (!Number.isFinite(length) || length <= 1e-5) {{
             continue;
           }}
-          const weight = Number(pairWeight) * length;
-          accumulatedX += dx / length * weight;
-          accumulatedZ += dz / length * weight;
-          totalWeight += weight;
-          sampleCount += 1;
+          const weight = Number(pairWeight);
+          frameX += dx / length * weight;
+          frameZ += dz / length * weight;
+          frameWeight += weight;
+          pairSampleCount += 1;
+        }}
+        const frameLength = Math.hypot(frameX, frameZ);
+        if (frameWeight > 0.0 && Number.isFinite(frameLength) && frameLength > 1e-5) {{
+          frameNormals.push([frameX / frameLength, frameZ / frameLength]);
         }}
       }}
 
-      const basePayload = previewSagittalPlaneAlignmentBasePayload(sampleCount);
-      if (sampleCount <= 0 || totalWeight <= 1e-6) {{
-        return basePayload;
+      if (frameNormals.length === 0) {{
+        return {{ frameNormals, pairSampleCount, normal: null, coherence: 0.0 }};
       }}
 
-      const averagedX = accumulatedX / totalWeight;
-      const averagedZ = accumulatedZ / totalWeight;
-      const averagedLength = Math.hypot(averagedX, averagedZ);
-      const coherence = Math.min(1.0, averagedLength);
-      if (!Number.isFinite(averagedLength) || averagedLength <= 1e-5) {{
-        return {{
-          ...basePayload,
-          status: "ambiguous_bilateral_joint_evidence",
-          coherence,
-        }};
+      const referenceAngle = Math.atan2(
+        frameNormals.reduce((total, normal) => total + normal[1], 0.0),
+        frameNormals.reduce((total, normal) => total + normal[0], 0.0)
+      );
+      const unwrappedAngles = frameNormals
+        .map((normal) => referenceAngle + normalizeSignedRadians(
+          Math.atan2(normal[1], normal[0]) - referenceAngle
+        ))
+        .sort((left, right) => left - right);
+      const middle = Math.floor(unwrappedAngles.length / 2);
+      const robustAngle = unwrappedAngles.length % 2 === 1
+        ? unwrappedAngles[middle]
+        : (unwrappedAngles[middle - 1] + unwrappedAngles[middle]) * 0.5;
+      const robustX = Math.cos(robustAngle);
+      const robustZ = Math.sin(robustAngle);
+      const coherence = Math.max(0.0, Math.min(
+        1.0,
+        frameNormals.reduce(
+          (total, normal) => total + robustX * normal[0] + robustZ * normal[1],
+          0.0
+        ) / frameNormals.length
+      ));
+      return {{
+        frameNormals,
+        pairSampleCount,
+        normal: [robustX, robustZ],
+        coherence,
+      }};
+    }}
+
+    function estimateBakedSagittalPlaneAlignment(frames) {{
+      const estimate = estimateRobustTorsoBilateralNormal(frames);
+      const basePayload = previewSagittalPlaneAlignmentBasePayload(
+        estimate.frameNormals.length,
+        "robust_torso_bilateral_axis",
+        "not_enough_torso_bilateral_evidence"
+      );
+      if (!estimate.normal) {{
+        return basePayload;
       }}
 
       return sagittalAlignmentPayloadFromNormal(
         frames,
         basePayload,
-        averagedX,
-        averagedZ,
-        coherence,
+        estimate.normal[0],
+        estimate.normal[1],
+        estimate.coherence,
+        {{
+          estimator: "circular_median_of_per_frame_torso_axes",
+          pairSampleCount: estimate.pairSampleCount,
+          torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
+        }}
       );
     }}
 
@@ -8360,6 +8474,7 @@ def _build_html(payload: dict[str, object]) -> str:
       const sourceEndTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec) || sourceStartTimeSec : sourceStartTimeSec;
       const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
       const durationSec = sourceDurationSec / exportPlaybackSpeed;
+      const bakedBounds = computeBakedWearBounds(frames);
       return {{
         schemaVersion: 1,
         kind: "wearPreviewSkeleton",
@@ -8425,7 +8540,7 @@ def _build_html(payload: dict[str, object]) -> str:
           previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
           bakedSagittalPlaneAlignment: bakedSagittalPlaneAlignment.alignment,
         }},
-        bounds: computeBakedWearBounds(frames),
+        bounds: bakedBounds,
         topology: {{
           skeletonChains,
           capsules: payload.capsules,
@@ -8475,6 +8590,7 @@ def _build_html(payload: dict[str, object]) -> str:
     function applyAutomationSettings(options = {{}}) {{
       if (renderingBakedWearPayload) {{
         renderingBakedWearPayload = false;
+        bakedWearReviewBounds = null;
         applyActiveRange();
       }}
       if (Object.prototype.hasOwnProperty.call(options, "fixedRoot")) {{
@@ -8579,6 +8695,7 @@ def _build_html(payload: dict[str, object]) -> str:
       }}
       renderingBakedWearPayload = true;
       playbackState = {{ frames, boundsFrames: frames, loopable: false }};
+      bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
       fixedRoot = false;
       lockYRoot = false;
       lockPlantedFeet = false;
@@ -9215,6 +9332,34 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function updateCamera() {{
+      if (renderingBakedWearPayload && bakedWearReviewBounds) {{
+        const bounds = bakedWearReviewBounds;
+        const distance = bounds.radius * 4.2;
+        const horizontalDistance = Math.cos(pitch) * distance;
+        cameraTarget.copy(bounds.center);
+        bakedWearCamera.position.copy(cameraTarget)
+          .addScaledVector(axisX, Math.sin(yaw) * horizontalDistance)
+          .addScaledVector(axisZ, Math.cos(yaw) * horizontalDistance)
+          .addScaledVector(axisY, Math.sin(pitch) * distance);
+        bakedWearCamera.up.copy(axisY);
+        bakedWearCamera.lookAt(cameraTarget);
+        const aspect = viewport.clientWidth / Math.max(1, viewport.clientHeight);
+        let halfWidth = bounds.radius * 1.08;
+        let halfHeight = bounds.radius * 1.08;
+        if (aspect >= 1.0) {{
+          halfWidth = halfHeight * aspect;
+        }} else {{
+          halfHeight = halfWidth / Math.max(0.001, aspect);
+        }}
+        bakedWearCamera.left = -halfWidth;
+        bakedWearCamera.right = halfWidth;
+        bakedWearCamera.bottom = -halfHeight;
+        bakedWearCamera.top = halfHeight;
+        bakedWearCamera.near = 0.01;
+        bakedWearCamera.far = bounds.radius * 9.0;
+        bakedWearCamera.updateProjectionMatrix();
+        return;
+      }}
       const zoomScale = 240 / Math.max(120, zoom);
       const framingMargin = vlmReviewStyle ? 1.05 : 1.28;
       const distance = getCameraFitDistance() * zoomScale * framingMargin;
@@ -9779,7 +9924,10 @@ def _build_html(payload: dict[str, object]) -> str:
       updateSceneForFrame(frame);
       updateCamera();
       frameIndexNode.textContent = String(Math.max(0, Math.min(playbackState.frames.length - 1, Math.floor(frameCursor))));
-      renderer.render(scene, perspectiveCamera);
+      renderer.render(
+        scene,
+        renderingBakedWearPayload ? bakedWearCamera : perspectiveCamera
+      );
     }}
 
     function requestPreviewRedraw() {{

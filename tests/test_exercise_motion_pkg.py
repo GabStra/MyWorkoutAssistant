@@ -855,7 +855,7 @@ def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_pat
     }
 
 
-def test_choose_readable_preview_camera_yaw_maximizes_screen_motion() -> None:
+def test_choose_readable_preview_camera_yaw_uses_fixed_isometric_projection() -> None:
     payload = {
         "jointNames": ["pelvis", "right_hand", "head"],
         "frames": [
@@ -872,15 +872,15 @@ def test_choose_readable_preview_camera_yaw_maximizes_screen_motion() -> None:
     }
 
     yaw, diagnostics = bake_and_rank_module.choose_readable_preview_camera_yaw(payload)
-    scores = {
-        float(candidate["yawDegrees"]): float(candidate["readabilityScore"])
-        for candidate in diagnostics["candidates"]
-    }
-
-    assert scores[yaw] == pytest.approx(max(scores.values()))
+    assert yaw == pytest.approx(135.0)
+    assert diagnostics["strategy"] == "fixed_orthographic_isometric_projection"
+    assert diagnostics["selectedPitchDegrees"] == pytest.approx(
+        math.degrees(math.asin(1.0 / math.sqrt(3.0)))
+    )
+    assert len(diagnostics["candidates"]) == 1
     assert bake_and_rank_module.with_fixed_preview_camera_options(
-        {"cameraYawDegrees": yaw}
-    )["cameraYawDegrees"] == yaw
+        {"cameraYawDegrees": 15.0}
+    )["cameraYawDegrees"] == pytest.approx(135.0)
 
 
 def test_prepare_wham_inference_video_adds_context_and_returns_exact_output_crop(
@@ -2047,7 +2047,8 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "function computeLockedJointPositions(frame, frameTranslation)" in text
     assert "function computeLockedFootBodyTranslation(activeTargets, basePositions)" in text
     assert "lockedJointPositions.set(jointName, translatedPoint.clone());" in text
-    assert "function solveLegIkChain(points, target)" in text
+    assert "function solveLegIkChain(" in text
+    assert "stablePoleVector = null" in text
     assert "const lockedPosition = typeof jointName === \"string\" && lockedPositions.has(jointName)" in text
     assert "const verticalCorrection = lockedPosition" in text
     assert "sourceIndexA: frameSourceIndexForMotionTuning(startFrame)" in text
@@ -2078,6 +2079,10 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "new THREE.WebGLRenderer" in text
     assert "new THREE.PerspectiveCamera" in text
     assert "new THREE.GridHelper" in text
+    assert "const bakedWearGrid = new THREE.GridHelper(1, 4" in text
+    assert "const floorSize = Math.max(width, depth) * 1.24;" in text
+    assert "bounds.minY - height * 0.014" in text
+    assert "bakedWearGrid.scale.set(floorSize, 1.0, floorSize);" in text
     assert "new THREE.LineSegments(" in text
     assert "new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1))" in text
     assert "new THREE.DirectionalLight" in text
@@ -2163,7 +2168,8 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "function refreshPauseLabel()" in text
     assert "function resetCameraOrbitFromBounds()" in text
     assert "const boundingRadius = Math.sqrt(width * width + height * height + depth * depth) * 0.5;" in text
-    assert "const distance = getCameraFitDistance() * zoomScale * 1.28;" in text
+    assert "const framingMargin = vlmReviewStyle ? 1.05 : 1.28;" in text
+    assert "const distance = getCameraFitDistance() * zoomScale * framingMargin;" in text
     assert "yaw -= deltaX * 0.01;" in text
     assert "let playbackDirection = 1;" in text
     assert "<select id=\"cameraMode\">" not in text
@@ -2173,7 +2179,14 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "World rotation:" not in text
     assert "World translation:" not in text
     assert "<button id=\"resetTransform\" type=\"button\">Reset world transform</button>" not in text
-    assert "new THREE.OrthographicCamera" not in text
+    assert "const bakedWearCamera = new THREE.OrthographicCamera" in text
+    assert "function stableWearReviewBounds(exportPayload, frames)" in text
+    assert "const horizontalPadding = Math.max(width, depth) * 0.28;" in text
+    assert "const bottomPadding = height * 0.04;" in text
+    assert "const topPadding = height * 0.20;" in text
+    assert "cameraTarget.copy(bounds.center);" in text
+    assert "let halfWidth = bounds.radius * 1.08;" in text
+    assert "renderingBakedWearPayload ? bakedWearCamera : perspectiveCamera" in text
     assert "playbackDirection = -1;" not in text
     assert "deltaSeconds * payload.fps * speed" in text
 
@@ -2507,13 +2520,64 @@ def test_baked_sagittal_alignment_uses_body_axis_not_movement_direction() -> Non
         float(right_shoulder[2]) - float(left_shoulder[2]),  # type: ignore[index]
     )
 
-    assert alignment["normalSource"] == "right_minus_left_bilateral_joints"
-    assert alignment["targetDirection"] == "-z"
+    assert alignment["normalSource"] == "robust_torso_bilateral_axis"
+    assert alignment["targetDirection"] == "+x"
+    assert alignment["horizontalForwardAfter"] == pytest.approx([1.0, 0.0, 0.0])
     assert abs(lateral_delta[0]) < 1e-8
-    assert lateral_delta[1] < 0.0
+    assert lateral_delta[1] > 0.0
 
 
-def test_baked_sagittal_alignment_resolves_opposite_body_axis_to_negative_z() -> None:
+def test_baked_sagittal_alignment_ignores_asymmetric_limb_placement() -> None:
+    yaw = math.radians(37.0)
+
+    def rotate_y(point: tuple[float, float, float]) -> list[float]:
+        x, y, z = point
+        return [
+            x * math.cos(yaw) + z * math.sin(yaw),
+            y,
+            z * math.cos(yaw) - x * math.sin(yaw),
+        ]
+
+    frames = [
+        {
+            "joints": {
+                "left_shoulder": rotate_y((-0.30, 1.7, 0.0)),
+                "right_shoulder": rotate_y((0.30, 1.7, 0.0)),
+                "left_collar": rotate_y((-0.12, 1.76, 0.0)),
+                "right_collar": rotate_y((0.12, 1.76, 0.0)),
+                "left_hip": rotate_y((-0.17, 0.92, 0.0)),
+                "right_hip": rotate_y((0.17, 0.92, 0.0)),
+                # Split-stance limbs point in a different horizontal direction
+                # and must not be interpreted as the torso's lateral axis.
+                "left_knee": rotate_y((-0.12, 0.52, 0.55)),
+                "right_knee": rotate_y((0.12, 0.52, -0.55)),
+                "left_ankle": rotate_y((-0.10, 0.0, 1.0)),
+                "right_ankle": rotate_y((0.10, 0.0, -1.0)),
+                "left_foot": rotate_y((-0.10, 0.0, 1.18)),
+                "right_foot": rotate_y((0.10, 0.0, -1.18)),
+            }
+        }
+        for _ in range(12)
+    ]
+
+    aligned_frames, alignment = _align_baked_sagittal_plane_to_grid_axis(frames)
+    left_shoulder = aligned_frames[0]["joints"]["left_shoulder"]  # type: ignore[index]
+    right_shoulder = aligned_frames[0]["joints"]["right_shoulder"]  # type: ignore[index]
+    shoulder_dx = float(right_shoulder[0]) - float(left_shoulder[0])  # type: ignore[index]
+    shoulder_dz = float(right_shoulder[2]) - float(left_shoulder[2])  # type: ignore[index]
+
+    assert alignment["normalSource"] == "robust_torso_bilateral_axis"
+    assert alignment["estimator"] == "circular_median_of_per_frame_torso_axes"
+    assert alignment["torsoPairs"] == [
+        ["left_shoulder", "right_shoulder"],
+        ["left_collar", "right_collar"],
+        ["left_hip", "right_hip"],
+    ]
+    assert abs(shoulder_dx) < 1e-8
+    assert shoulder_dz > 0.0
+
+
+def test_baked_sagittal_alignment_resolves_opposite_body_axis_to_positive_x_forward() -> None:
     frames = [
         {
             "joints": {

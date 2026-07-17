@@ -164,9 +164,10 @@ REVIEW_VIDEO_MAX_LEADING_BLANK_FRAMES = 2
 REVIEW_VIDEO_ENCODE_FIDELITY_SAMPLE_FRAMES = 8
 REVIEW_VIDEO_ENCODE_FIDELITY_MAX_MEAN_ABS_ERROR = 35.0
 REVIEW_VIDEO_ENCODE_FIDELITY_MAX_FRAME_MEAN_ABS_ERROR = 70.0
-FIXED_PREVIEW_CAMERA_YAW_DEGREES = 45.0
-PREVIEW_CAMERA_YAW_CANDIDATES_DEGREES = (0.0, 30.0, 60.0, 90.0, 120.0, 150.0)
-FIXED_PREVIEW_CAMERA_PITCH_DEGREES = 30.0
+# Orthographic isometric view from the (+X, +Y, -Z) corner. At these angles
+# the three world axes are equally foreshortened and +X projects lower-left.
+FIXED_PREVIEW_CAMERA_YAW_DEGREES = 135.0
+FIXED_PREVIEW_CAMERA_PITCH_DEGREES = math.degrees(math.asin(1.0 / math.sqrt(3.0)))
 DEFAULT_RANK_FRAME_WIDTH = 640
 DEFAULT_MIN_SELECTED_SCORE = 0.55
 DEFAULT_FALLBACK_CANDIDATES = 12
@@ -15737,41 +15738,26 @@ def optional_float_or_default(value: Any, default: float) -> float:
 
 def with_fixed_preview_camera_options(options: dict[str, Any]) -> dict[str, Any]:
     fixed = dict(options)
-    fixed.setdefault("cameraYawDegrees", FIXED_PREVIEW_CAMERA_YAW_DEGREES)
+    fixed["cameraYawDegrees"] = FIXED_PREVIEW_CAMERA_YAW_DEGREES
     fixed["cameraPitchDegrees"] = FIXED_PREVIEW_CAMERA_PITCH_DEGREES
     return fixed
 
 
 def choose_readable_preview_camera_yaw(payload: dict[str, Any]) -> tuple[float, dict[str, Any]]:
-    candidates = [
-        compute_preview_readability_metrics_from_payload(
-            payload,
-            camera_yaw_degrees=yaw,
-        )
-        for yaw in PREVIEW_CAMERA_YAW_CANDIDATES_DEGREES
-    ]
-    best = max(
-        candidates,
-        key=lambda metrics: (
-            parse_optional_float(metrics.get("previewReadabilityScore")) or 0.0,
-            -abs((parse_optional_float(metrics.get("cameraYawDegrees")) or 0.0) - FIXED_PREVIEW_CAMERA_YAW_DEGREES),
-        ),
+    metrics = compute_preview_readability_metrics_from_payload(
+        payload,
+        camera_yaw_degrees=FIXED_PREVIEW_CAMERA_YAW_DEGREES,
     )
-    selected_yaw = parse_optional_float(best.get("cameraYawDegrees"))
-    if selected_yaw is None:
-        selected_yaw = FIXED_PREVIEW_CAMERA_YAW_DEGREES
-    return selected_yaw, {
-        "strategy": "maximize_deterministic_screen_motion_readability",
-        "selectedYawDegrees": selected_yaw,
-        "selectedReadabilityScore": best.get("previewReadabilityScore"),
-        "candidates": [
-            {
-                "yawDegrees": metrics.get("cameraYawDegrees"),
-                "readabilityScore": metrics.get("previewReadabilityScore"),
-                "screenMotionShare": metrics.get("screenMotionShare"),
-            }
-            for metrics in candidates
-        ],
+    return FIXED_PREVIEW_CAMERA_YAW_DEGREES, {
+        "strategy": "fixed_orthographic_isometric_projection",
+        "selectedYawDegrees": FIXED_PREVIEW_CAMERA_YAW_DEGREES,
+        "selectedPitchDegrees": FIXED_PREVIEW_CAMERA_PITCH_DEGREES,
+        "selectedReadabilityScore": metrics.get("previewReadabilityScore"),
+        "candidates": [{
+            "yawDegrees": metrics.get("cameraYawDegrees"),
+            "readabilityScore": metrics.get("previewReadabilityScore"),
+            "screenMotionShare": metrics.get("screenMotionShare"),
+        }],
     }
 
 
