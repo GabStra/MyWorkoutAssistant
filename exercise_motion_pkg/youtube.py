@@ -5826,6 +5826,7 @@ class LlamaCppVisionRanker:
 
         self.settings = settings
         self.process: subprocess.Popen[str] | None = None
+        self.server_log_path: Path | None = None
         self._server_recovery_lock = threading.Lock()
         self.gpu_lock: GlobalGpuLock | None = None
         self.gpu_lock_wait_seconds = 0.0
@@ -5851,6 +5852,10 @@ class LlamaCppVisionRanker:
                 recovery_callback=self._recover_llama_cpp_server_after_vlm_failure,
             )
         except Exception:
+            # A server can have bound the port or allocated GPU resources before
+            # its readiness probe fails. Do not let that partial process poison
+            # subsequent discovery retries.
+            self._stop_owned_llama_cpp_server(force=True)
             self._release_gpu_lock()
             raise
 
@@ -6024,35 +6029,81 @@ class LlamaCppVisionRanker:
             args.extend(["--gpu-layers", "all"])
         else:
             args.extend(["--gpu-layers", "0"])
+        args_without_mtp: list[str] | None = None
+        if mtp_model_path is not None:
+            mtp_option_names = {
+                "--model-draft",
+                "--spec-type",
+                "--spec-draft-n-max",
+                "--gpu-layers-draft",
+            }
+            args_without_mtp = []
+            skip_next = False
+            for argument in args:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if argument in mtp_option_names:
+                    skip_next = True
+                    continue
+                args_without_mtp.append(argument)
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        self.process = subprocess.Popen(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            creationflags=creationflags,
-        )
         deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
         last_chat_error: str | None = None
+        active_args = args
+        mtp_fallback_used = False
         while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                break
-            if self._is_healthy():
-                chat_ready, last_chat_error = self._chat_completions_ready()
-                if chat_ready:
-                    return
-                if time.monotonic() >= deadline:
+            log_directory = Path(tempfile.gettempdir()) / "myworkoutassistant-llama-server"
+            log_directory.mkdir(parents=True, exist_ok=True)
+            self.server_log_path = log_directory / f"llama-server-{os.getpid()}-{time.time_ns()}.log"
+            with self.server_log_path.open("w", encoding="utf-8", errors="replace") as server_log:
+                self.process = subprocess.Popen(
+                    active_args,
+                    stdout=server_log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    creationflags=creationflags,
+                )
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
                     break
+                if self._is_healthy():
+                    chat_ready, last_chat_error = self._chat_completions_ready()
+                    if chat_ready:
+                        return
                 time.sleep(1.0)
-                continue
-            if time.monotonic() >= deadline:
+            if self.process.poll() is None:
                 break
+            server_log_tail = self._server_log_tail()
+            if (
+                args_without_mtp is not None
+                and not mtp_fallback_used
+                and "failed to load draft model" in server_log_tail.lower()
+            ):
+                active_args = args_without_mtp
+                mtp_fallback_used = True
+                continue
             time.sleep(1.0)
-        detail = f" Last chat readiness error: {last_chat_error}" if last_chat_error else ""
+        detail_parts = []
+        if last_chat_error:
+            detail_parts.append(f"Last chat readiness error: {last_chat_error}")
+        server_log_tail = self._server_log_tail()
+        if server_log_tail:
+            detail_parts.append(f"Server log tail ({self.server_log_path}): {server_log_tail}")
+        detail = f" {' '.join(detail_parts)}" if detail_parts else ""
         raise RuntimeError(
             f"llama-server did not become healthy at {self.settings.llama_cpp_base_url} "
             f"within {self.settings.llama_cpp_server_startup_timeout_seconds:.0f} seconds.{detail}"
         )
+
+    def _server_log_tail(self) -> str:
+        if self.server_log_path is None:
+            return ""
+        try:
+            lines = self.server_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        return " | ".join(line.strip() for line in lines[-12:] if line.strip())
 
     def _wait_for_chat_completions_ready(self) -> None:
         if self.settings.llama_cpp_base_url is None:
