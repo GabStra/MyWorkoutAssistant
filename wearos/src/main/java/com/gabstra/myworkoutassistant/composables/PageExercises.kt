@@ -71,7 +71,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
-import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -728,7 +727,7 @@ fun PageExercises(
             .semantics { contentDescription = "Exercise sets viewer" }
     ) {
         val topSection = headerOverlayHeightDp + WorkoutPagerPageSafeAreaPadding.calculateTopPadding()
-        val stepIndicatorReservedHeightDp = 14.dp
+        val stepIndicatorReservedHeightDp = 30.dp
         val listContentPadding = PaddingValues(
             top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
             bottom = stepIndicatorReservedHeightDp,
@@ -762,6 +761,18 @@ fun PageExercises(
                 itemSpacingDp -
                 stepIndicatorReservedHeightDp
             ).coerceAtLeast(0.dp)
+
+        val maximumVisibleRows = 4
+        val visibleRowsHeight =
+            selectedRowHeightDp * maximumVisibleRows +
+                    itemSpacingDp * (maximumVisibleRows - 1)
+
+        // One spacing exists between the invisible header spacer and the first row.
+        val firstRowTop = topSection + itemSpacingDp
+
+        val footerMaskHeight = (
+                maxHeight - firstRowTop - visibleRowsHeight
+                ).coerceAtLeast(stepIndicatorReservedHeightDp)
 
         LaunchedEffect(targetItemIndex, selectedPageIndex.value, selectedRowScrollOffsetPx) {
             val targetIndex = targetItemIndex ?: return@LaunchedEffect
@@ -869,16 +880,23 @@ fun PageExercises(
             }
         }
 
-        WorkoutStepIndicatorText(
-            stepLabel = selectedStepLabel,
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .height(stepIndicatorReservedHeightDp)
-                .wrapContentHeight(Alignment.Bottom)
+                .height(footerMaskHeight)
                 .background(MaterialTheme.colorScheme.background)
-        )
+        ) {
+            WorkoutStepIndicatorText(
+                stepLabel = selectedStepLabel,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .height(stepIndicatorReservedHeightDp)
+                    .wrapContentHeight(Alignment.Bottom)
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxSize(),
