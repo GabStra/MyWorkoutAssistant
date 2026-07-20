@@ -929,6 +929,7 @@ class AppViewModel(
 
     fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {
         equipments = newEquipments
+        scheduleWorkoutSave(getApplication<Application>())
     }
 
     var accessoryEquipments: List<AccessoryEquipment>
@@ -939,6 +940,7 @@ class AppViewModel(
 
     fun updateAccessoryEquipments(newAccessories: List<AccessoryEquipment>) {
         accessoryEquipments = newAccessories
+        scheduleWorkoutSave(getApplication<Application>())
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {

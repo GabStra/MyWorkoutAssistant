@@ -572,7 +572,6 @@ fun AccessoriesBottomBar(
                             item.id != selectedAccessory.id
                         }
                         appViewModel.updateAccessoryEquipments(newAccessories)
-                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
@@ -773,7 +772,6 @@ fun EquipmentsBottomBar(
                             item.id != selectedEquipment.id
                         }
                         appViewModel.updateEquipments(newEquipments)
-                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
