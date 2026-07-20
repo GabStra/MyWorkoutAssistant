@@ -5,6 +5,7 @@ param(
 
     [string]$EquipmentJson,
     [string]$WorkspaceRoot = "build/exercise_motion/workout-plan",
+    [string]$MobilePackageOutputJson = "",
     [ValidateSet("quality", "fast", "max")]
     [string]$SpeedProfile = "fast",
     [string[]]$OnlyExerciseSlug = @(),
@@ -115,6 +116,7 @@ param(
     [double]$MinSelectedScore = 0.55,
     [bool]$FinalOutputValidation = $true,
     [switch]$SkipFinalOutputValidation,
+    [switch]$TwoScaleSourceValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
@@ -162,6 +164,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $script:LastProgressDetailByLogPath = @{}
+$script:LiveLogStateByPath = @{}
 
 function Get-RepoRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -1115,7 +1118,7 @@ function Start-InitialDiscoveryJob {
         }
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-        "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        "[$(Get-Date -Format o)] initial discovery stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
         $attemptMaxCandidates = [Math]::Max($BaseMaxCandidates, $targetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
@@ -1123,21 +1126,48 @@ function Start-InitialDiscoveryJob {
         $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
         $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $attemptDiscoveryArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
 
-        "[$(Get-Date -Format o)] initial discovery attempt 1 started; target suitable candidates $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
-        $exitCode = $LASTEXITCODE
-        $stopwatch.Stop()
-        $counts = Get-CandidateCounts -Path $CandidatesPath
-        "[$(Get-Date -Format o)] initial discovery attempt 1 finished with exit code $exitCode; recommended $($counts.recommendedCount), candidates $($counts.candidateCount), elapsed $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 3))s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        $maxTransientServerAttempts = 3
+        $discoveryAttempts = @()
+        $discoverySeconds = 0.0
+        for ($attemptIndex = 1; $attemptIndex -le $maxTransientServerAttempts; $attemptIndex += 1) {
+            "[$(Get-Date -Format o)] initial discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
+            $exitCode = $LASTEXITCODE
+            $stopwatch.Stop()
+            $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            $discoverySeconds = [Math]::Round(($discoverySeconds + $elapsedSeconds), 3)
+            $counts = Get-CandidateCounts -Path $CandidatesPath
+            "[$(Get-Date -Format o)] initial discovery attempt $attemptIndex finished with exit code $exitCode; recommended $($counts.recommendedCount), candidates $($counts.candidateCount), elapsed ${elapsedSeconds}s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            $discoveryAttempts += [ordered]@{
+                attemptIndex = $attemptIndex
+                stage = "initial_discovery"
+                exitCode = $exitCode
+                targetSuitableCount = $targetSuitableCount
+                candidateCount = $counts.candidateCount
+                recommendedCount = $counts.recommendedCount
+                elapsedSeconds = $elapsedSeconds
+            }
+            if ($exitCode -eq 0) {
+                break
+            }
+            $logTail = (Get-Content -LiteralPath $LogPath -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
+            $isTransientServerStartupFailure = $logTail -match "llama-server did not become healthy"
+            if (-not $isTransientServerStartupFailure -or $attemptIndex -ge $maxTransientServerAttempts) {
+                break
+            }
+            "[$(Get-Date -Format o)] retrying initial discovery after transient llama-server startup failure" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            Start-Sleep -Seconds 5
+        }
         [pscustomobject]@{
             exitCode = $exitCode
             stage = "initial_discovery"
             logPath = $LogPath
             candidateCount = $counts.candidateCount
             recommendedCount = $counts.recommendedCount
-            discoverySeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-            attemptIndex = 1
+            discoverySeconds = $discoverySeconds
+            attempts = $discoveryAttempts
+            attemptIndex = $discoveryAttempts.Count
             targetSuitableCount = $targetSuitableCount
         }
     } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise
@@ -1281,7 +1311,10 @@ function Start-BakeJob {
             "[$(Get-Date -Format o)] movement generation started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
             "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-        $targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)
+        # Begin at the requested initial review target. Starting at the maximum
+        # makes a zero-recommendation discovery look as though every retry has
+        # already been consumed, so the exercise is never rediscovered.
+        $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
         $attemptIndex = 1
         $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $CandidatesPath)
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
@@ -1289,6 +1322,8 @@ function Start-BakeJob {
         $bakeSecondsTotal = 0.0
         $discoveryAttemptCount = 0
         $bakeAttemptCount = 0
+        $maxTransientServerAttempts = 3
+        $transientBakeFailureCount = 0
         $attempts = @()
         while ($true) {
             if ($useExistingCandidates) {
@@ -1324,22 +1359,36 @@ function Start-BakeJob {
                     }
                 }
 
-                "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
-                $discoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-                & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
-                $discoveryExitCode = $LASTEXITCODE
-                $discoveryStopwatch.Stop()
-                $discoverySeconds = [Math]::Round($discoveryStopwatch.Elapsed.TotalSeconds, 3)
-                $discoverySecondsTotal = [Math]::Round(($discoverySecondsTotal + $discoverySeconds), 3)
-                $discoveryAttemptCount += 1
-                $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
-                $attempts += [ordered]@{
-                    attemptIndex = $attemptIndex
-                    stage = "discovery"
-                    exitCode = $discoveryExitCode
-                    targetSuitableCount = $targetSuitableCount
-                    recommendedCount = $recommendedCount
-                    elapsedSeconds = $discoverySeconds
+                for ($serverAttempt = 1; $serverAttempt -le $maxTransientServerAttempts; $serverAttempt += 1) {
+                    "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount (server attempt $serverAttempt/$maxTransientServerAttempts)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    $discoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
+                    $discoveryExitCode = $LASTEXITCODE
+                    $discoveryStopwatch.Stop()
+                    $discoverySeconds = [Math]::Round($discoveryStopwatch.Elapsed.TotalSeconds, 3)
+                    $discoverySecondsTotal = [Math]::Round(($discoverySecondsTotal + $discoverySeconds), 3)
+                    $discoveryAttemptCount += 1
+                    $recommendedCount = Get-RecommendedCandidateCount -Path $CandidatesPath
+                    "[$(Get-Date -Format o)] discovery attempt $attemptIndex finished with exit code $discoveryExitCode; recommended $recommendedCount, elapsed ${discoverySeconds}s (server attempt $serverAttempt/$maxTransientServerAttempts)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    $attempts += [ordered]@{
+                        attemptIndex = $attemptIndex
+                        stage = "discovery"
+                        serverAttempt = $serverAttempt
+                        exitCode = $discoveryExitCode
+                        targetSuitableCount = $targetSuitableCount
+                        recommendedCount = $recommendedCount
+                        elapsedSeconds = $discoverySeconds
+                    }
+                    if ($discoveryExitCode -eq 0) {
+                        break
+                    }
+                    $logTail = (Get-Content -LiteralPath $LogPath -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
+                    $isTransientServerStartupFailure = $logTail -match "llama-server did not become healthy"
+                    if (-not $isTransientServerStartupFailure -or $serverAttempt -ge $maxTransientServerAttempts) {
+                        break
+                    }
+                    "[$(Get-Date -Format o)] retrying discovery after transient llama-server startup failure" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    Start-Sleep -Seconds 5
                 }
                 if ($discoveryExitCode -ne 0) {
                     [pscustomobject]@{
@@ -1396,6 +1445,7 @@ function Start-BakeJob {
             $bakeAttemptCount += 1
 
             $selectedResultCount = Get-SelectedResultCount -Workspace $BakeWorkspace
+            "[$(Get-Date -Format o)] bake attempt $attemptIndex finished with exit code $bakeExitCode; selected $selectedResultCount/$MaxSelectedResults result(s), elapsed ${bakeSeconds}s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             $attempts += [ordered]@{
                 attemptIndex = $attemptIndex
                 stage = "bake"
@@ -1426,6 +1476,14 @@ function Start-BakeJob {
                 return
             }
             if ($bakeExitCode -ne 0 -and -not (Test-SelectionManifest -Workspace $BakeWorkspace)) {
+                $logTail = (Get-Content -LiteralPath $LogPath -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
+                $isTransientServerStartupFailure = $logTail -match "llama-server did not become healthy"
+                if ($isTransientServerStartupFailure -and $transientBakeFailureCount -lt ($maxTransientServerAttempts - 1)) {
+                    $transientBakeFailureCount += 1
+                    "[$(Get-Date -Format o)] retrying bake after transient llama-server startup failure" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    Start-Sleep -Seconds 5
+                    continue
+                }
                 [pscustomobject]@{
                     exitCode = $bakeExitCode
                     stage = "bake"
@@ -1847,6 +1905,47 @@ function Complete-BakeJob {
     }
 }
 
+function Test-UsefulProgressLogLine {
+    param([string]$Line)
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return $false
+    }
+    $usefulPatterns = @(
+        "initial discovery attempt",
+        "bake stage started",
+        "using pre-discovered candidates",
+        "discovery attempt",
+        "bake attempt",
+        "\[bake-and-rank\] candidate .* starting$",
+        "\[bake-and-rank\] candidate .* status=",
+        "\[bake-and-rank\] candidate .* rejected_",
+        "\[bake-and-rank\] candidate .* accepted score=",
+        "\[bake-and-rank\] candidate skipped:",
+        "\[bake-and-rank\] candidate .* selected",
+        "\[bake-and-rank\] source family blocked",
+        "\[bake-and-rank\] Stopped after",
+        "\[youtube\] full download attempt",
+        "rejections=\d+/\d+",
+        "selected \d+/\d+ result",
+        "no recommended candidates",
+        "no selected Wear skeleton",
+        "finished with exit code",
+        "returned exit code",
+        "retrying .* after transient",
+        "failed",
+        "Traceback",
+        "Exception",
+        "ERROR"
+    )
+    foreach ($pattern in $usefulPatterns) {
+        if ($Line -match $pattern) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Get-LatestUsefulLogLine {
     param(
         [string]$Path,
@@ -1858,22 +1957,6 @@ function Get-LatestUsefulLogLine {
     }
 
     $lines = @(Get-Content -LiteralPath $Path -Tail 80 -ErrorAction SilentlyContinue)
-    $usefulPatterns = @(
-        "initial discovery attempt",
-        "bake stage started",
-        "using pre-discovered candidates",
-        "discovery attempt",
-        "bake attempt",
-        "selected \d+/\d+ result",
-        "no recommended candidates",
-        "no selected Wear skeleton",
-        "finished with exit code",
-        "returned exit code",
-        "failed",
-        "Traceback",
-        "Exception",
-        "ERROR"
-    )
     for ($index = $lines.Count - 1; $index -ge 0; $index -= 1) {
         $line = [string]$lines[$index]
         if (-not [string]::IsNullOrWhiteSpace($line)) {
@@ -1881,14 +1964,48 @@ function Get-LatestUsefulLogLine {
             if ($Detailed) {
                 return $trimmed
             }
-            foreach ($pattern in $usefulPatterns) {
-                if ($trimmed -match $pattern) {
-                    return $trimmed
-                }
+            if (Test-UsefulProgressLogLine -Line $trimmed) {
+                return $trimmed
             }
         }
     }
     return $null
+}
+
+function Write-LiveLogUpdates {
+    param([object[]]$RunningJobs)
+
+    foreach ($job in $RunningJobs) {
+        $path = [string]$job.WorkItem.logPath
+        $latestLine = Get-LatestUsefulLogLine -Path $path
+        if (-not $latestLine) {
+            continue
+        }
+        if ($script:LiveLogStateByPath.ContainsKey($path) -and $script:LiveLogStateByPath[$path] -eq $latestLine) {
+            continue
+        }
+        $script:LiveLogStateByPath[$path] = $latestLine
+        $script:LastProgressDetailByLogPath[$path] = $latestLine
+        Write-Host ("  progress: {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+    }
+}
+
+function Initialize-ExerciseRunLog {
+    param(
+        [string]$Path,
+        [string]$RunId
+    )
+
+    $logDirectory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+    if (Test-Path -LiteralPath $Path) {
+        $historyDirectory = Join-Path $logDirectory "log_history"
+        New-Item -ItemType Directory -Force -Path $historyDirectory | Out-Null
+        $historyName = "bake.{0}.{1}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"), $RunId
+        Copy-Item -LiteralPath $Path -Destination (Join-Path $historyDirectory $historyName)
+    }
+    "[$(Get-Date -Format o)] workout-plan movement run started; run id $RunId" |
+        Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
 function Write-ProgressSnapshot {
@@ -2245,6 +2362,7 @@ if ($PosePrefilter -or -not $SkipPosePrefilter) {
 }
 
 $workItems = @()
+$movementRunId = [guid]::NewGuid().ToString("N")
 $usedSlugs = @{}
 $exerciseIndex = 0
 foreach ($exercise in $exerciseList.exercises) {
@@ -2302,6 +2420,7 @@ foreach ($exercise in $exerciseList.exercises) {
     $logPath = Join-Path $exerciseWorkspace "bake.log"
 
     New-Item -ItemType Directory -Force -Path $exerciseWorkspace | Out-Null
+    Initialize-ExerciseRunLog -Path $logPath -RunId $movementRunId
     New-OneExercisePlanJson -Exercise $exercise -OutPath $exercisePlanPath
 
     $discoveryArgs = @($youtubeBaseArgs)
@@ -2395,6 +2514,9 @@ foreach ($exercise in $exerciseList.exercises) {
     }
     if ($SkipFinalOutputValidation) {
         $bakeArgs += "--skip-final-output-validation"
+    }
+    if ($TwoScaleSourceValidation) {
+        $bakeArgs += "--two-scale-source-validation"
     }
     if ($NoExerciseMotionContract) {
         $bakeArgs += "--no-exercise-motion-contract"
@@ -2575,6 +2697,7 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
                 continue
             }
 
+            Write-LiveLogUpdates -RunningJobs $runningJobs
             $now = Get-Date
             if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
                 Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingDiscoveryItems.Count + $pendingBakeItems.Count) -DetailedLogs:$DetailedProgressLogs
@@ -2617,16 +2740,21 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
                         $discoverySeconds = 0.0
                     }
                     $workItem.discoverySeconds = Add-OptionalSeconds -Current $workItem.discoverySeconds -Value $discoverySeconds
-                    $workItem.discoveryAttemptCount = [int]$workItem.discoveryAttemptCount + 1
+                    $initialDiscoveryAttempts = @(Get-ObjectProperty -Object $jobResult -Name "attempts")
+                    $workItem.discoveryAttemptCount = [int]$workItem.discoveryAttemptCount + [Math]::Max(1, $initialDiscoveryAttempts.Count)
                     $workItem.candidateCount = Get-ObjectProperty -Object $jobResult -Name "candidateCount"
-                    $workItem.attempts += [ordered]@{
-                        attemptIndex = 1
-                        stage = "initial_discovery"
-                        exitCode = if ($jobResult) { $jobResult.exitCode } else { $null }
-                        targetSuitableCount = if ($jobResult) { $jobResult.targetSuitableCount } else { $workItem.candidateReviewTargetSuitableCount }
-                        candidateCount = if ($jobResult) { $jobResult.candidateCount } else { 0 }
-                        recommendedCount = if ($jobResult) { $jobResult.recommendedCount } else { 0 }
-                        elapsedSeconds = $discoverySeconds
+                    if ($initialDiscoveryAttempts.Count -gt 0) {
+                        $workItem.attempts += $initialDiscoveryAttempts
+                    } else {
+                        $workItem.attempts += [ordered]@{
+                            attemptIndex = 1
+                            stage = "initial_discovery"
+                            exitCode = if ($jobResult) { $jobResult.exitCode } else { $null }
+                            targetSuitableCount = if ($jobResult) { $jobResult.targetSuitableCount } else { $workItem.candidateReviewTargetSuitableCount }
+                            candidateCount = if ($jobResult) { $jobResult.candidateCount } else { 0 }
+                            recommendedCount = if ($jobResult) { $jobResult.recommendedCount } else { 0 }
+                            elapsedSeconds = $discoverySeconds
+                        }
                     }
 
                     if ($status -eq "failed") {
@@ -2726,3 +2854,35 @@ $summary | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $summaryPath -Enc
 Write-Host "Workout plan JSON: $resolvedWorkoutPlanJson"
 Write-Host "Workout-plan exercises JSON: $exerciseListPath"
 Write-Host "Summary JSON: $summaryPath"
+
+if (-not [string]::IsNullOrWhiteSpace($MobilePackageOutputJson)) {
+    $incompleteExercises = @(
+        $summaryItems | Where-Object {
+            $_.status -ne "completed" -or
+            [string]::IsNullOrWhiteSpace([string]$_.selectedWearSkeletonPath) -or
+            -not (Test-Path -LiteralPath ([string]$_.selectedWearSkeletonPath))
+        }
+    )
+    if ($incompleteExercises.Count -gt 0) {
+        $incompleteExerciseNames = @(
+            $incompleteExercises | ForEach-Object { $_.exerciseName }
+        ) -join ", "
+        throw "Mobile package was not created because these requested exercises are incomplete: $incompleteExerciseNames"
+    }
+
+    $mobilePackageBuilder = Join-Path $PSScriptRoot "build_workout_plan_movement_package.ps1"
+    if (-not (Test-Path -LiteralPath $mobilePackageBuilder)) {
+        throw "Mobile package builder not found: $mobilePackageBuilder"
+    }
+    $resolvedRequestedMobilePackageOutputJson = [System.IO.Path]::GetFullPath($MobilePackageOutputJson)
+    & $mobilePackageBuilder `
+        -WorkoutPlanPackageJson $resolvedWorkoutPlanJson `
+        -MotionSummaryJson $summaryPath `
+        -OutputJson $resolvedRequestedMobilePackageOutputJson `
+        -StrictIdMatch
+    if ($LASTEXITCODE -ne 0) {
+        throw "Mobile package builder failed with exit code $LASTEXITCODE."
+    }
+    $resolvedMobilePackageOutputJson = (Resolve-Path -LiteralPath $resolvedRequestedMobilePackageOutputJson).Path
+    Write-Host "Mobile workout-plan package: $resolvedMobilePackageOutputJson"
+}

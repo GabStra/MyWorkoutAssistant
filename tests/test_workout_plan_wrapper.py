@@ -218,6 +218,93 @@ def test_workout_plan_wrapper_starts_with_initial_suitable_target() -> None:
     assert '$targetSuitableCount = [Math]::Max(1, $MaxTargetSuitableCount)' not in script
 
 
+def test_workout_plan_wrapper_mobile_package_output_is_strict_and_completion_gated() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+
+    assert '[string]$MobilePackageOutputJson = ""' in script
+    assert 'Mobile package was not created because these requested exercises are incomplete' in script
+    assert '-WorkoutPlanPackageJson $resolvedWorkoutPlanJson' in script
+    assert '-MotionSummaryJson $summaryPath' in script
+    assert '-OutputJson $resolvedRequestedMobilePackageOutputJson' in script
+    assert '-StrictIdMatch' in script
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workspace = tmp_path / "workspace"
+    mobile_package = tmp_path / "workout_plan_with_movements.json"
+    wham_repo = tmp_path / "WHAM"
+    body_models = wham_repo / "dataset" / "body_models"
+    body_models.mkdir(parents=True)
+    workout_plan = write_workout_plan(tmp_path, exercise_count=1)
+    plan_payload = json.loads(workout_plan.read_text(encoding="utf-8"))
+    plan_payload.update(
+        {
+            "name": "Generated Plan",
+            "workouts": [
+                {
+                    "workoutComponents": [
+                        {
+                            "type": "Exercise",
+                            "id": "bench",
+                            "name": "Barbell Bench Press",
+                            "sets": [],
+                        }
+                    ]
+                }
+            ],
+            "equipments": [],
+            "accessoryEquipments": [],
+        }
+    )
+    workout_plan.write_text(json.dumps(plan_payload), encoding="utf-8")
+    _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-WorkoutPlanJson",
+            str(workout_plan),
+            "-WorkspaceRoot",
+            str(workspace),
+            "-MobilePackageOutputJson",
+            str(mobile_package),
+            "-WhamRepoPath",
+            str(wham_repo),
+            "-BodyModelRoot",
+            str(body_models),
+            "-PythonCommand",
+            str(fake_cmd),
+            "-NoWhamDocker",
+            "-SkipVisionRanking",
+            "-SkipSemanticGate",
+            "-SkipLlamaCppQueryPlanner",
+            "-SkipPosePrefilter",
+            "-SkipPreWhamSourceValidation",
+            "-SkipFinalOutputValidation",
+        ],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Mobile workout-plan package: {mobile_package}" in result.stdout
+    package = json.loads(mobile_package.read_text(encoding="utf-8"))
+    exercise = package["workouts"][0]["workoutComponents"][0]
+    assert exercise["movementRef"]["movementId"] == "exercise-motion:bench"
+    assert len(package["exerciseMovements"]) == 1
+
+
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
 def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -272,6 +359,8 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "progress:" in result.stdout
+    assert "finished with exit code 0" in result.stdout
     commands = command_log.read_text(encoding="utf-8").splitlines()
     first_bake_index = commands.index("bake-and-rank")
     assert commands.count("find-youtube-videos") == 3
@@ -304,6 +393,10 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
     assert summary["effectiveCandidateBudget"]["fallbackCandidates"] == 6
     assert [item["status"] for item in summary["exercises"]] == ["completed", "completed", "completed"]
     for exercise in summary["exercises"]:
+        exercise_log = Path(exercise["logPath"]).read_text(encoding="utf-8")
+        assert "workout-plan movement run started; run id " in exercise_log
+        assert "initial discovery attempt 1 finished with exit code 0" in exercise_log
+        assert "bake attempt 1 finished with exit code 0; selected 1/1 result(s)" in exercise_log
         assert [attempt["stage"] for attempt in exercise["attempts"]] == [
             "initial_discovery",
             "pre_discovered_candidates",
