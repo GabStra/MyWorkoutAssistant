@@ -801,7 +801,13 @@ def _align_baked_sagittal_plane_to_grid_axis(
     if not bool(alignment.get("applied")):
         return frames, alignment
 
-    yaw_radians = float(alignment["yawRadians"])
+    rotation_axis_value = alignment.get("rotationAxis")
+    rotation_axis = (
+        (float(rotation_axis_value[0]), float(rotation_axis_value[1]), float(rotation_axis_value[2]))
+        if _is_serialized_point(rotation_axis_value)
+        else (0.0, 1.0, 0.0)
+    )
+    rotation_radians = float(alignment.get("rotationRadians", alignment.get("yawRadians", 0.0)))
     pivot_value = alignment.get("pivot")
     pivot = (
         (
@@ -812,8 +818,6 @@ def _align_baked_sagittal_plane_to_grid_axis(
         if _is_serialized_point(pivot_value)
         else (0.0, 0.0, 0.0)
     )
-    cos_yaw = math.cos(yaw_radians)
-    sin_yaw = math.sin(yaw_radians)
     rotated_frames: list[dict[str, object]] = []
     for frame in frames:
         joints = frame.get("joints")
@@ -822,13 +826,16 @@ def _align_baked_sagittal_plane_to_grid_axis(
             for joint_name, point in joints.items():
                 if not _is_serialized_point(point):
                     continue
-                x = float(point[0]) - pivot[0]
-                y = float(point[1])
-                z = float(point[2]) - pivot[2]
+                centered = (
+                    float(point[0]) - pivot[0],
+                    float(point[1]) - pivot[1],
+                    float(point[2]) - pivot[2],
+                )
+                rotated = _rotate_point(centered, axis=rotation_axis, angle=rotation_radians)
                 rotated_joints[joint_name] = [
-                    x * cos_yaw + z * sin_yaw + pivot[0],
-                    y,
-                    z * cos_yaw - x * sin_yaw + pivot[2],
+                    rotated[0] + pivot[0],
+                    rotated[1] + pivot[1],
+                    rotated[2] + pivot[2],
                 ]
         rotated_frame = dict(frame)
         rotated_frame["joints"] = rotated_joints
@@ -910,6 +917,74 @@ def _build_horizontal_normal_alignment_payload(
             if applied
             else [forward_x, 0.0, forward_z]
         ),
+        "pivot": _point_to_list(pivot),
+        "coherence": coherence,
+        **(extra or {}),
+    }
+
+
+def _build_full_normal_alignment_payload(
+    frames: list[dict[str, object]],
+    *,
+    base_payload: dict[str, object],
+    normal: tuple[float, float, float],
+    coherence: float,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    resolved_normal = _normalize(normal)
+    if _vector_length(resolved_normal) <= 1e-5:
+        return {
+            **base_payload,
+            "status": "ambiguous_alignment_normal",
+            "coherence": coherence,
+            **(extra or {}),
+        }
+    positive_target_normal = (
+        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[0],
+        0.0,
+        BAKED_SAGITTAL_PLANE_TARGET_NORMAL[1],
+    )
+    # A plane normal is undirected: n and -n describe the same sagittal plane.
+    # Pick the antipode requiring the smaller rotation.  Forcing every normal
+    # to +Z can turn an upright skeleton onto its side when the estimator
+    # happens to return the equivalent -Z normal.
+    target_sign = 1.0 if _dot(resolved_normal, positive_target_normal) >= 0.0 else -1.0
+    target_normal = tuple(component * target_sign for component in positive_target_normal)
+    rotation = _rotation_between_vectors(
+        resolved_normal,
+        target_normal,
+        minimum_degrees=BAKED_SAGITTAL_PLANE_ALIGNMENT_MIN_DEGREES,
+    )
+    bounds = _compute_transformed_joint_bounds(frames)
+    pivot = _bounds_center(bounds)
+    horizontal_length = math.hypot(resolved_normal[0], resolved_normal[2])
+    horizontal_normal = (
+        [resolved_normal[0] / horizontal_length, 0.0, resolved_normal[2] / horizontal_length]
+        if horizontal_length > 1e-5
+        else [0.0, 0.0, 0.0]
+    )
+    applied = rotation is not None
+    rotation_axis, rotation_radians = rotation if rotation is not None else ((0.0, 1.0, 0.0), 0.0)
+    horizontal_forward = [horizontal_normal[2], 0.0, -horizontal_normal[0]]
+    yaw_radians = _normalize_signed_angle(math.atan2(horizontal_forward[2], horizontal_forward[0]))
+    return {
+        **base_payload,
+        "applied": applied,
+        "status": "applied" if applied else "already_aligned",
+        "targetDirection": "+x" if target_sign > 0.0 else "-x",
+        "resolvedTargetNormal": _point_to_list(target_normal),
+        "targetNormalSign": int(target_sign),
+        "rotationAxis": _point_to_list(rotation_axis),
+        "rotationRadians": rotation_radians,
+        "rotationDegrees": math.degrees(rotation_radians),
+        "yawRadians": yaw_radians,
+        "yawDegrees": math.degrees(yaw_radians),
+        "normalBefore": _point_to_list(resolved_normal),
+        "normalAfter": _point_to_list(target_normal if applied else resolved_normal),
+        "horizontalNormalBefore": horizontal_normal,
+        "horizontalForwardBefore": horizontal_forward,
+        "horizontalNormalAfter": [target_normal[0], 0.0, target_normal[2]] if applied else horizontal_normal,
+        "horizontalForwardAfter": [target_sign, 0.0, 0.0] if applied else horizontal_forward,
         "pivot": _point_to_list(pivot),
         "coherence": coherence,
         **(extra or {}),
@@ -1130,7 +1205,7 @@ def _point_track_range_along_direction_2d(
 def _estimate_baked_sagittal_plane_alignment(
     frames: list[dict[str, object]],
 ) -> dict[str, object]:
-    frame_normals: list[tuple[float, float]] = []
+    frame_normals: list[tuple[float, float, float]] = []
     pair_sample_count = 0
 
     for frame in frames:
@@ -1138,6 +1213,7 @@ def _estimate_baked_sagittal_plane_alignment(
         if not isinstance(joints, dict):
             continue
         frame_x = 0.0
+        frame_y = 0.0
         frame_z = 0.0
         frame_weight = 0.0
         for left_name, right_name, pair_weight in BAKED_SAGITTAL_PLANE_ALIGNMENT_PAIRS:
@@ -1146,18 +1222,20 @@ def _estimate_baked_sagittal_plane_alignment(
             if not _is_serialized_point(left) or not _is_serialized_point(right):
                 continue
             dx = float(right[0]) - float(left[0])
+            dy = float(right[1]) - float(left[1])
             dz = float(right[2]) - float(left[2])
-            length = math.hypot(dx, dz)
+            length = math.sqrt(dx * dx + dy * dy + dz * dz)
             if length <= 1e-5:
                 continue
             weight = float(pair_weight)
             frame_x += dx / length * weight
+            frame_y += dy / length * weight
             frame_z += dz / length * weight
             frame_weight += weight
             pair_sample_count += 1
-        frame_length = math.hypot(frame_x, frame_z)
+        frame_length = math.sqrt(frame_x * frame_x + frame_y * frame_y + frame_z * frame_z)
         if frame_weight > 0.0 and frame_length > 1e-5:
-            frame_normals.append((frame_x / frame_length, frame_z / frame_length))
+            frame_normals.append((frame_x / frame_length, frame_y / frame_length, frame_z / frame_length))
 
     base_payload = _sagittal_plane_alignment_base_payload(
         sample_count=len(frame_normals),
@@ -1167,40 +1245,29 @@ def _estimate_baked_sagittal_plane_alignment(
     if not frame_normals:
         return base_payload
 
-    angles = [math.atan2(normal_z, normal_x) for normal_x, normal_z in frame_normals]
-    reference_angle = math.atan2(
-        sum(normal_z for _, normal_z in frame_normals),
-        sum(normal_x for normal_x, _ in frame_normals),
+    robust_normal = _normalize(
+        (
+            _median([normal[0] for normal in frame_normals]),
+            _median([normal[1] for normal in frame_normals]),
+            _median([normal[2] for normal in frame_normals]),
+        )
     )
-    unwrapped_angles = sorted(
-        reference_angle + _normalize_signed_angle(angle - reference_angle)
-        for angle in angles
-    )
-    middle = len(unwrapped_angles) // 2
-    robust_angle = (
-        unwrapped_angles[middle]
-        if len(unwrapped_angles) % 2
-        else (unwrapped_angles[middle - 1] + unwrapped_angles[middle]) * 0.5
-    )
-    robust_x = math.cos(robust_angle)
-    robust_z = math.sin(robust_angle)
     coherence = max(
         0.0,
         min(
             1.0,
-            sum(robust_x * normal_x + robust_z * normal_z for normal_x, normal_z in frame_normals)
+            sum(_dot(robust_normal, normal) for normal in frame_normals)
             / len(frame_normals),
         ),
     )
 
-    return _build_horizontal_normal_alignment_payload(
+    return _build_full_normal_alignment_payload(
         frames,
         base_payload=base_payload,
-        normal_x=robust_x,
-        normal_z=robust_z,
+        normal=robust_normal,
         coherence=coherence,
         extra={
-            "estimator": "circular_median_of_per_frame_torso_axes",
+            "estimator": "component_median_of_per_frame_3d_torso_axes",
             "pairSampleCount": pair_sample_count,
             "torsoPairs": [
                 [left_name, right_name]
@@ -7695,6 +7762,61 @@ def _build_html(payload: dict[str, object]) -> str:
       }};
     }}
 
+    function sagittalAlignmentPayloadFrom3dNormal(frames, basePayload, normal, coherence, extra = {{}}) {{
+      const source = new THREE.Vector3(
+        Number(normal?.[0]),
+        Number(normal?.[1]),
+        Number(normal?.[2])
+      );
+      if (![source.x, source.y, source.z].every(Number.isFinite) || source.length() <= 1e-5) {{
+        return {{ ...basePayload, status: "ambiguous_alignment_normal", coherence, ...extra }};
+      }}
+      source.normalize();
+      // A plane normal has no direction: n and -n identify the same plane.
+      // Resolve to the nearest antipode so alignment cannot needlessly rotate
+      // an upright athlete onto their side.
+      const targetSign = source.z >= 0.0 ? 1.0 : -1.0;
+      const target = new THREE.Vector3(0.0, 0.0, targetSign);
+      const alignment = Math.max(-1.0, Math.min(1.0, source.dot(target)));
+      const rotationRadians = Math.acos(alignment);
+      const applied = Math.abs(rotationRadians * 180 / Math.PI) >= 0.5;
+      const rotationAxis = new THREE.Vector3().crossVectors(source, target);
+      if (rotationAxis.length() <= 1e-6) {{
+        rotationAxis.set(0.0, 1.0, 0.0);
+      }} else {{
+        rotationAxis.normalize();
+      }}
+      const horizontalLength = Math.hypot(source.x, source.z);
+      const horizontalNormal = horizontalLength > 1e-5
+        ? [source.x / horizontalLength, 0.0, source.z / horizontalLength]
+        : [0.0, 0.0, 0.0];
+      const horizontalForward = [horizontalNormal[2], 0.0, -horizontalNormal[0]];
+      const yawRadians = normalizeSignedRadians(Math.atan2(horizontalForward[2], horizontalForward[0]));
+      const bounds = computeBakedWearBounds(frames);
+      return {{
+        ...basePayload,
+        applied,
+        status: applied ? "applied" : "already_aligned",
+        targetDirection: targetSign > 0.0 ? "+x" : "-x",
+        resolvedTargetNormal: [target.x, target.y, target.z],
+        targetNormalSign: targetSign,
+        rotationAxis: [rotationAxis.x, rotationAxis.y, rotationAxis.z],
+        rotationRadians: applied ? rotationRadians : 0.0,
+        rotationDegrees: applied ? rotationRadians * 180 / Math.PI : 0.0,
+        yawRadians,
+        yawDegrees: yawRadians * 180 / Math.PI,
+        normalBefore: [source.x, source.y, source.z],
+        normalAfter: applied ? [target.x, target.y, target.z] : [source.x, source.y, source.z],
+        horizontalNormalBefore: horizontalNormal,
+        horizontalForwardBefore: horizontalForward,
+        horizontalNormalAfter: applied ? [target.x, 0.0, target.z] : horizontalNormal,
+        horizontalForwardAfter: applied ? [targetSign, 0.0, 0.0] : horizontalForward,
+        pivot: bounds.center ?? [0, 0, 0],
+        coherence,
+        ...extra,
+      }};
+    }}
+
     function medianNumber(values) {{
       const sorted = values.filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
       if (sorted.length === 0) {{
@@ -7988,14 +8110,13 @@ def _build_html(payload: dict[str, object]) -> str:
         return basePayload;
       }}
 
-      return sagittalAlignmentPayloadFromNormal(
+      return sagittalAlignmentPayloadFrom3dNormal(
         alignmentFrames,
         basePayload,
-        estimate.normal[0],
-        estimate.normal[1],
+        estimate.normal,
         estimate.coherence,
         {{
-          estimator: "circular_median_of_per_frame_torso_axes",
+          estimator: "component_median_of_per_frame_3d_torso_axes",
           pairSampleCount: estimate.pairSampleCount,
           torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
         }}
@@ -8019,19 +8140,16 @@ def _build_html(payload: dict[str, object]) -> str:
       if (!alignment?.applied) {{
         return point;
       }}
-      const yawRadians = Number(alignment.yawRadians) || 0.0;
       const pivot = Array.isArray(alignment.pivot) && alignment.pivot.length >= 3
         ? alignment.pivot
         : [0.0, 0.0, 0.0];
-      const x = point.x - Number(pivot[0]);
-      const z = point.z - Number(pivot[2]);
-      const cosYaw = Math.cos(yawRadians);
-      const sinYaw = Math.sin(yawRadians);
-      point.set(
-        x * cosYaw + z * sinYaw + Number(pivot[0]),
-        point.y,
-        z * cosYaw - x * sinYaw + Number(pivot[2])
-      );
+      const axis = Array.isArray(alignment.rotationAxis) && alignment.rotationAxis.length >= 3
+        ? new THREE.Vector3(...alignment.rotationAxis.map(Number)).normalize()
+        : new THREE.Vector3(0.0, 1.0, 0.0);
+      const angle = Number(alignment.rotationRadians ?? alignment.yawRadians) || 0.0;
+      point.sub(new THREE.Vector3(...pivot.map(Number)));
+      point.applyAxisAngle(axis, angle);
+      point.add(new THREE.Vector3(...pivot.map(Number)));
       return point;
     }}
 
@@ -8260,6 +8378,7 @@ def _build_html(payload: dict[str, object]) -> str:
 
       for (const frame of frames) {{
         let frameX = 0.0;
+        let frameY = 0.0;
         let frameZ = 0.0;
         let frameWeight = 0.0;
         for (const [leftName, rightName, pairWeight] of sagittalPlaneAlignmentPairs) {{
@@ -8269,20 +8388,22 @@ def _build_html(payload: dict[str, object]) -> str:
             continue;
           }}
           const dx = Number(right[0]) - Number(left[0]);
+          const dy = Number(right[1]) - Number(left[1]);
           const dz = Number(right[2]) - Number(left[2]);
-          const length = Math.hypot(dx, dz);
+          const length = Math.hypot(dx, dy, dz);
           if (!Number.isFinite(length) || length <= 1e-5) {{
             continue;
           }}
           const weight = Number(pairWeight);
           frameX += dx / length * weight;
+          frameY += dy / length * weight;
           frameZ += dz / length * weight;
           frameWeight += weight;
           pairSampleCount += 1;
         }}
-        const frameLength = Math.hypot(frameX, frameZ);
+        const frameLength = Math.hypot(frameX, frameY, frameZ);
         if (frameWeight > 0.0 && Number.isFinite(frameLength) && frameLength > 1e-5) {{
-          frameNormals.push([frameX / frameLength, frameZ / frameLength]);
+          frameNormals.push([frameX / frameLength, frameY / frameLength, frameZ / frameLength]);
         }}
       }}
 
@@ -8290,32 +8411,22 @@ def _build_html(payload: dict[str, object]) -> str:
         return {{ frameNormals, pairSampleCount, normal: null, coherence: 0.0 }};
       }}
 
-      const referenceAngle = Math.atan2(
-        frameNormals.reduce((total, normal) => total + normal[1], 0.0),
-        frameNormals.reduce((total, normal) => total + normal[0], 0.0)
-      );
-      const unwrappedAngles = frameNormals
-        .map((normal) => referenceAngle + normalizeSignedRadians(
-          Math.atan2(normal[1], normal[0]) - referenceAngle
-        ))
-        .sort((left, right) => left - right);
-      const middle = Math.floor(unwrappedAngles.length / 2);
-      const robustAngle = unwrappedAngles.length % 2 === 1
-        ? unwrappedAngles[middle]
-        : (unwrappedAngles[middle - 1] + unwrappedAngles[middle]) * 0.5;
-      const robustX = Math.cos(robustAngle);
-      const robustZ = Math.sin(robustAngle);
+      const robust = new THREE.Vector3(
+        medianNumber(frameNormals.map((normal) => normal[0])),
+        medianNumber(frameNormals.map((normal) => normal[1])),
+        medianNumber(frameNormals.map((normal) => normal[2]))
+      ).normalize();
       const coherence = Math.max(0.0, Math.min(
         1.0,
         frameNormals.reduce(
-          (total, normal) => total + robustX * normal[0] + robustZ * normal[1],
+          (total, normal) => total + robust.x * normal[0] + robust.y * normal[1] + robust.z * normal[2],
           0.0
         ) / frameNormals.length
       ));
       return {{
         frameNormals,
         pairSampleCount,
-        normal: [robustX, robustZ],
+        normal: [robust.x, robust.y, robust.z],
         coherence,
       }};
     }}
@@ -8331,44 +8442,42 @@ def _build_html(payload: dict[str, object]) -> str:
         return basePayload;
       }}
 
-      return sagittalAlignmentPayloadFromNormal(
+      return sagittalAlignmentPayloadFrom3dNormal(
         frames,
         basePayload,
-        estimate.normal[0],
-        estimate.normal[1],
+        estimate.normal,
         estimate.coherence,
         {{
-          estimator: "circular_median_of_per_frame_torso_axes",
+          estimator: "component_median_of_per_frame_3d_torso_axes",
           pairSampleCount: estimate.pairSampleCount,
           torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
         }}
       );
     }}
 
-    function rotateBakedWearFramesAroundY(frames, alignment) {{
+    function rotateBakedWearFramesToSagittalPlane(frames, alignment) {{
       if (!alignment?.applied) {{
         return frames;
       }}
-      const yawRadians = Number(alignment.yawRadians) || 0.0;
+      const axis = Array.isArray(alignment.rotationAxis) && alignment.rotationAxis.length >= 3
+        ? new THREE.Vector3(...alignment.rotationAxis.map(Number)).normalize()
+        : new THREE.Vector3(0.0, 1.0, 0.0);
+      const angle = Number(alignment.rotationRadians ?? alignment.yawRadians) || 0.0;
       const pivot = Array.isArray(alignment.pivot) && alignment.pivot.length >= 3
         ? alignment.pivot
         : [0.0, 0.0, 0.0];
-      const cosYaw = Math.cos(yawRadians);
-      const sinYaw = Math.sin(yawRadians);
+      const pivotVector = new THREE.Vector3(...pivot.map(Number));
       return frames.map((frame) => {{
         const joints = {{}};
         for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
-          const x = Number(point[0]) - Number(pivot[0]);
-          const y = Number(point[1]);
-          const z = Number(point[2]) - Number(pivot[2]);
-          joints[jointName] = [
-            x * cosYaw + z * sinYaw + Number(pivot[0]),
-            y,
-            z * cosYaw - x * sinYaw + Number(pivot[2]),
-          ];
+          const rotated = new THREE.Vector3(...point.map(Number))
+            .sub(pivotVector)
+            .applyAxisAngle(axis, angle)
+            .add(pivotVector);
+          joints[jointName] = [rotated.x, rotated.y, rotated.z];
         }}
         return {{
           ...frame,
@@ -8392,8 +8501,14 @@ def _build_html(payload: dict[str, object]) -> str:
             applied: false,
             status: "skipped_manual_model_rotation",
             skippedReason: "manual_model_rotation_is_orientation_override",
+            suggestedRotationAxis: alignment?.rotationAxis ?? null,
+            suggestedRotationRadians: Number(alignment?.rotationRadians) || 0.0,
+            suggestedRotationDegrees: Number(alignment?.rotationDegrees) || 0.0,
             suggestedYawRadians: Number(alignment?.yawRadians) || 0.0,
             suggestedYawDegrees: Number(alignment?.yawDegrees) || 0.0,
+            rotationAxis: [0.0, 1.0, 0.0],
+            rotationRadians: 0.0,
+            rotationDegrees: 0.0,
             yawRadians: 0.0,
             yawDegrees: 0.0,
             horizontalNormalAfter: alignment?.horizontalNormalBefore ?? alignment?.horizontalNormalAfter,
@@ -8402,7 +8517,7 @@ def _build_html(payload: dict[str, object]) -> str:
         }};
       }}
       return {{
-        frames: rotateBakedWearFramesAroundY(frames, alignment),
+        frames: rotateBakedWearFramesToSagittalPlane(frames, alignment),
         alignment,
       }};
     }}

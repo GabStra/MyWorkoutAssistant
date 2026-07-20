@@ -2567,14 +2567,14 @@ def test_baked_sagittal_alignment_ignores_asymmetric_limb_placement() -> None:
     shoulder_dz = float(right_shoulder[2]) - float(left_shoulder[2])  # type: ignore[index]
 
     assert alignment["normalSource"] == "robust_torso_bilateral_axis"
-    assert alignment["estimator"] == "circular_median_of_per_frame_torso_axes"
+    assert alignment["estimator"] == "component_median_of_per_frame_3d_torso_axes"
     assert alignment["torsoPairs"] == [
         ["left_shoulder", "right_shoulder"],
         ["left_collar", "right_collar"],
         ["left_hip", "right_hip"],
     ]
     assert abs(shoulder_dx) < 1e-8
-    assert shoulder_dz > 0.0
+    assert abs(shoulder_dz) > 0.0
 
 
 def test_baked_sagittal_alignment_resolves_opposite_body_axis_to_positive_x_forward() -> None:
@@ -2597,6 +2597,65 @@ def test_baked_sagittal_alignment_resolves_opposite_body_axis_to_positive_x_forw
     assert float(alignment["yawDegrees"]) == pytest.approx(90.0)
     assert abs(float(right[0]) - float(left[0])) < 1e-8  # type: ignore[index]
     assert float(right[2]) > float(left[2])  # type: ignore[index]
+
+
+def test_baked_sagittal_alignment_removes_vertical_component_from_full_3d_normal() -> None:
+    tilt = math.radians(8.0)
+    normal = (0.0, -math.sin(tilt), math.cos(tilt))
+    frames = [
+        {
+            "joints": {
+                "left_shoulder": [0.0, 1.7 + normal[1] * -0.3, normal[2] * -0.3],
+                "right_shoulder": [0.0, 1.7 + normal[1] * 0.3, normal[2] * 0.3],
+                "left_collar": [0.0, 1.75 + normal[1] * -0.12, normal[2] * -0.12],
+                "right_collar": [0.0, 1.75 + normal[1] * 0.12, normal[2] * 0.12],
+                "left_hip": [0.0, 0.9 + normal[1] * -0.16, normal[2] * -0.16],
+                "right_hip": [0.0, 0.9 + normal[1] * 0.16, normal[2] * 0.16],
+            }
+        }
+        for _ in range(8)
+    ]
+
+    aligned_frames, alignment = _align_baked_sagittal_plane_to_grid_axis(frames)
+    left = aligned_frames[0]["joints"]["left_shoulder"]  # type: ignore[index]
+    right = aligned_frames[0]["joints"]["right_shoulder"]  # type: ignore[index]
+    delta = [float(right[index]) - float(left[index]) for index in range(3)]  # type: ignore[index]
+    length = math.sqrt(sum(component * component for component in delta))
+
+    assert alignment["normalBefore"][1] == pytest.approx(-math.sin(tilt), abs=1e-6)  # type: ignore[index]
+    assert alignment["normalAfter"] == pytest.approx([0.0, 0.0, 1.0])
+    assert alignment["rotationDegrees"] == pytest.approx(8.0)
+    assert abs(delta[0] / length) < 1e-8
+    assert abs(delta[1] / length) < 1e-8
+    assert delta[2] / length > 0.999999
+
+
+def test_baked_sagittal_alignment_uses_nearest_plane_normal_antipode() -> None:
+    normal = (0.268109, 0.141394, -0.952956)
+    frames = [
+        {
+            "joints": {
+                "pelvis": [0.0, 0.9, 0.0],
+                "neck": [0.0, 1.7, 0.0],
+                "left_shoulder": [-normal[0] * 0.3, 1.65 - normal[1] * 0.3, -normal[2] * 0.3],
+                "right_shoulder": [normal[0] * 0.3, 1.65 + normal[1] * 0.3, normal[2] * 0.3],
+                "left_hip": [-normal[0] * 0.16, 0.9 - normal[1] * 0.16, -normal[2] * 0.16],
+                "right_hip": [normal[0] * 0.16, 0.9 + normal[1] * 0.16, normal[2] * 0.16],
+            }
+        }
+        for _ in range(8)
+    ]
+
+    aligned_frames, alignment = _align_baked_sagittal_plane_to_grid_axis(frames)
+    pelvis = aligned_frames[0]["joints"]["pelvis"]  # type: ignore[index]
+    neck = aligned_frames[0]["joints"]["neck"]  # type: ignore[index]
+    spine = [float(neck[index]) - float(pelvis[index]) for index in range(3)]  # type: ignore[index]
+    spine_length = math.sqrt(sum(component * component for component in spine))
+
+    assert alignment["targetNormalSign"] == -1
+    assert alignment["resolvedTargetNormal"] == pytest.approx([0.0, 0.0, -1.0])
+    assert float(alignment["rotationDegrees"]) < 20.0
+    assert spine[1] / spine_length > 0.9
 
 
 def test_compute_preview_auto_alignment_levels_inverted_upright_spine_without_flipping_it() -> None:
@@ -26222,6 +26281,25 @@ def test_source_cut_scorecard_parser_rejects_missing_fields_and_invalid_json() -
     ]
 
     assert bake_and_rank_module.parse_source_cut_candidate_choice("not json", candidates) is None
+    assert bake_and_rank_module.parse_source_cut_candidate_choice(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": "A",
+                        "approved": True,
+                        "confidence": 5,
+                        "completeMovement": True,
+                        "startBoundaryClean": True,
+                        "finishBoundaryClean": True,
+                        "setupOrFiller": False,
+                        "reject": [],
+                    }
+                ]
+            }
+        ),
+        candidates,
+    ) is None
 
     ranking = bake_and_rank_module.parse_source_cut_candidate_choice(
         json.dumps({"candidates": [{"id": "A", "exercise_match": 0.95}]}),
@@ -26516,6 +26594,53 @@ def test_movement_cut_scorecard_rejects_invalid_json_and_missing_fields() -> Non
     row = ranking.payload["movementCutScorecardCandidates"][0]
     assert "full_movement" in row["missingFields"]
     assert "source_cut_scorecard_missing_full_movement" in row["rejectionReasons"]
+
+
+def test_cut_candidate_review_retries_out_of_range_confidence_with_schema_correction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bake_and_rank_module, "write_cut_candidate_vlm_review_debug", lambda **_: None)
+    candidate = bake_and_rank_module.SourceCutCandidate(
+        candidate_id="A",
+        window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=3.0),
+        frame_paths=[Path("a.jpg")],
+    )
+    prompts: list[str] = []
+
+    def caption_images(*, frame_paths: list[Path], prompt: str, **kwargs: object) -> str:
+        prompts.append(prompt)
+        confidence = 5 if len(prompts) == 1 else 0.95
+        return json.dumps(
+            {
+                "candidates": [
+                    {
+                        "id": "A",
+                        "approved": True,
+                        "confidence": confidence,
+                        "completeMovement": True,
+                        "startBoundaryClean": True,
+                        "finishBoundaryClean": True,
+                        "setupOrFiller": False,
+                        "reject": [],
+                    }
+                ]
+            }
+        )
+
+    result = bake_and_rank_module.rank_cut_candidate_with_caption_images(
+        candidate=candidate,
+        caption_images=caption_images,
+        prompt_builder=lambda _: "classify",
+        parser=lambda raw, item: bake_and_rank_module.parse_source_cut_candidate_choice(
+            raw,
+            [item],
+        ),
+    )
+
+    assert len(prompts) == 2
+    assert "5, 95" in prompts[1]
+    assert len(result.rankings) == 1
+    assert result.rankings[0].score == pytest.approx(0.95)
 
 
 def write_source_cut_test_frames(
@@ -26856,6 +26981,39 @@ def test_source_phase_gate_uses_contract_joints_instead_of_larger_unrelated_moti
     assert metrics["preferredJointRegion"] == "upper_body"
     assert metrics["dominantJointSelection"] in {"preferred", "returning_joint_angle"}
     assert all(token not in metrics["dominantJoint"] for token in ("eye", "ear", "knee"))
+
+
+def test_source_phase_gate_accepts_coherent_low_amplitude_cycle_above_clip_noise() -> None:
+    metrics = bake_and_rank_module.full_repetition_phase_completeness_metrics_from_source_pose_payload(
+        source_phase_payload_with_unrelated_motion(
+            [0.00, 0.01, 0.02, 0.03, 0.04, 0.03, 0.02, 0.01, 0.00],
+            unrelated_offsets=[0.0] * 9,
+        ),
+        exercise_name="Low-amplitude upper-body repetition",
+        ranking_payload={"exerciseMotionContract": upper_limb_return_contract()},
+        chunk_estimate=SimpleNamespace(movement_complexity="compound"),
+    )
+
+    assert metrics["dominantMotionRangeRatio"] < 0.12
+    assert metrics["phaseSignalEvidence"]["resolved"] is True
+    assert metrics["motionResolutionMethod"] == "clip_noise_separation"
+    assert metrics["passed"] is True
+
+
+def test_source_phase_gate_rejects_low_amplitude_tracking_jitter() -> None:
+    metrics = bake_and_rank_module.full_repetition_phase_completeness_metrics_from_source_pose_payload(
+        source_phase_payload_with_unrelated_motion(
+            [0.00, 0.01, -0.01, 0.01, -0.01, 0.01, 0.00],
+            unrelated_offsets=[0.0] * 7,
+        ),
+        exercise_name="Low-amplitude upper-body repetition",
+        ranking_payload={"exerciseMotionContract": upper_limb_return_contract()},
+        chunk_estimate=SimpleNamespace(movement_complexity="compound"),
+    )
+
+    assert metrics["passed"] is False
+    assert metrics["reason"] == "source_pose_dominant_motion_not_resolved_from_clip_noise"
+    assert metrics["phaseSignalEvidence"]["resolved"] is False
 
 
 def test_source_phase_gate_uses_all_primary_regions_for_mixed_hinge_contract() -> None:
@@ -29673,10 +29831,14 @@ def test_preview_manual_yaw_bypasses_auto_orientation_with_and_without_feet_lock
             )
 
             unrotated_x_range, unrotated_z_range = joint_horizontal_ranges(unrotated_payload, "right_knee")
-            rotated_x_range, rotated_z_range = joint_horizontal_ranges(rotated_payload, "right_knee")
 
             assert unrotated_x_range > unrotated_z_range * 2.0
-            assert rotated_z_range > rotated_x_range * 2.0
+            rotated_first_frame = rotated_payload["frames"][0]
+            rotated_left_hip = rotated_first_frame["joints"]["left_hip"]
+            rotated_right_hip = rotated_first_frame["joints"]["right_hip"]
+            rotated_hip_dx = float(rotated_right_hip[0]) - float(rotated_left_hip[0])
+            rotated_hip_dz = float(rotated_right_hip[2]) - float(rotated_left_hip[2])
+            assert abs(rotated_hip_dz) > abs(rotated_hip_dx) * 2.0
             assert rotated_payload["selectedPreviewSettings"]["lockPlantedFeet"] is lock_planted_feet
             assert rotated_payload["selectedPreviewSettings"]["manualModelRotationDegrees"]["y"] == 90.0
             assert (

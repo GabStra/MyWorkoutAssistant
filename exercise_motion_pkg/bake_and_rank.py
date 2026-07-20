@@ -82,6 +82,7 @@ from exercise_motion_pkg.segment_detection import (
     DetectionWindow,
     SupportDominanceResult,
     build_frame_contact_sheet,
+    build_frame_contact_sheets,
     classify_support_dominance_from_frames,
     detect_exercise_segment,
     draw_contact_sheet_tile_label,
@@ -637,6 +638,55 @@ def robust_phase_track_values(values: list[float]) -> list[float]:
             neighborhood = numeric[index - 1 : index + 2]
         smoothed.append(float(statistics.median(neighborhood)))
     return smoothed
+
+
+def phase_track_signal_evidence(values: list[float]) -> dict[str, Any]:
+    """Resolve motion against noise measured from the same pose track.
+
+    This deliberately avoids a fixed body-size or exercise-specific amplitude
+    floor.  A phase excursion is usable when it separates from the track's
+    endpoint variability and from the high-frequency residual removed by the
+    deterministic median smoother.
+    """
+    raw_values = [float(value) for value in values]
+    smoothed_values = robust_phase_track_values(raw_values)
+    if not smoothed_values:
+        return {
+            "resolved": False,
+            "reason": "empty_phase_track",
+            "smoothedValues": smoothed_values,
+        }
+
+    endpoint_sample_count = max(1, int(round(math.sqrt(len(smoothed_values)) / 2.0)))
+    endpoint_values = (
+        smoothed_values[:endpoint_sample_count]
+        + smoothed_values[-endpoint_sample_count:]
+    )
+    baseline = float(statistics.median(endpoint_values))
+    baseline_deviations = [abs(value - baseline) for value in endpoint_values]
+    endpoint_noise = float(statistics.median(baseline_deviations)) if baseline_deviations else 0.0
+
+    residuals = [abs(raw - smooth) for raw, smooth in zip(raw_values, smoothed_values)]
+    residual_noise = float(statistics.median(residuals)) if residuals else 0.0
+    noise_envelope = endpoint_noise + residual_noise
+    turning_excursion = max(abs(value - baseline) for value in smoothed_values)
+    resolved = turning_excursion > noise_envelope and turning_excursion > 0.0
+    return {
+        "resolved": resolved,
+        "reason": "phase_excursion_separates_from_clip_noise" if resolved else "phase_excursion_not_resolved_from_clip_noise",
+        "smoothedValues": smoothed_values,
+        "endpointSampleCount": endpoint_sample_count,
+        "baselineValue": baseline,
+        "endpointNoise": endpoint_noise,
+        "residualNoise": residual_noise,
+        "noiseEnvelope": noise_envelope,
+        "turningExcursion": turning_excursion,
+        "excursionToNoiseRatio": (
+            turning_excursion / noise_envelope
+            if noise_envelope > 1e-12
+            else None
+        ),
+    }
 
 
 def has_exactly_one_major_repetition_cycle(values: list[float]) -> tuple[bool, list[str]]:
@@ -1965,6 +2015,7 @@ class BakeAndRankRequest:
     max_adaptive_preview_settings: int = 3
     classify_support_dominance: bool = True
     final_output_validation: bool = False
+    two_scale_source_validation: bool = False
     final_output_validation_min_score: float = DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE
     llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
     llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL
@@ -3809,6 +3860,32 @@ def validate_final_output_with_caption_images(
         item,
         output_dir=output_dir / "source",
     )
+    two_scale_source_validation: dict[str, Any] | None = None
+    if request.two_scale_source_validation:
+        two_scale_source_validation = validate_two_scale_source_with_caption_images(
+            item,
+            uniform_sheet_paths=source_sheet_paths,
+            output_dir=output_dir / "two-scale-source",
+            caption_images=caption_images,
+        )
+        if not two_scale_source_validation.get("passed", False):
+            rejection_reasons = [
+                str(reason)
+                for reason in two_scale_source_validation.get("rejectionReasons", [])
+                if str(reason)
+            ] or ["two_scale_source_validation_failed"]
+            return {
+                "enabled": True,
+                "backend": "llama_cpp_vision_two_scale_source",
+                "passed": False,
+                "score": 0.0,
+                "rejectionReasons": rejection_reasons,
+                "hardRejectionReasons": rejection_reasons,
+                "sourceContactSheetPaths": [str(path) for path in source_sheet_paths],
+                "previewContactSheetPaths": [],
+                "twoScaleSourceValidation": two_scale_source_validation,
+                "skippedReasons": ["final_output_preview_validation_skipped_source_rejection"],
+            }
     preview_sheet_paths = final_output_preview_contact_sheets(
         item,
         output_dir=output_dir / "preview",
@@ -3904,6 +3981,7 @@ def validate_final_output_with_caption_images(
             "sourceContactSheetPaths": [str(path) for path in source_sheet_paths],
             "previewContactSheetPaths": [str(path) for path in preview_sheet_paths],
             "sourceContextProvidedToValidator": has_source_context,
+            "twoScaleSourceValidation": two_scale_source_validation,
             "validatorImageOrder": (
                 ["source_contact_sheets", "preview_contact_sheets"]
                 if has_source_context
@@ -4010,6 +4088,296 @@ def final_output_source_contact_sheets(item: ReviewItem, *, output_dir: Path) ->
         output_dir=output_dir,
         frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
     )
+
+
+def select_two_scale_motion_peak_indices(scores: list[float], fps: float) -> list[int]:
+    if len(scores) < 2:
+        return []
+    minimum_peak_distance = max(1, int(round(max(fps, 1.0) * 0.15)))
+    selected: list[int] = []
+
+    def add_if_separated(frame_index: int) -> None:
+        if all(abs(frame_index - existing) >= minimum_peak_distance for existing in selected):
+            selected.append(frame_index)
+
+    for frame_index in sorted(range(1, len(scores)), key=lambda index: (-scores[index], index)):
+        add_if_separated(frame_index)
+        if len(selected) >= 6:
+            break
+    temporal_bin_count = min(6, len(scores) - 1)
+    for bin_index in range(temporal_bin_count):
+        start = 1 + ((len(scores) - 1) * bin_index) // temporal_bin_count
+        end = 1 + ((len(scores) - 1) * (bin_index + 1)) // temporal_bin_count
+        if start < end:
+            add_if_separated(max(range(start, end), key=lambda index: (scores[index], -index)))
+    return sorted(selected)
+
+
+def final_output_source_video_window(item: ReviewItem) -> tuple[Path, DetectionWindow] | None:
+    selected_input = selected_input_video_path_for_review_item(item)
+    if selected_input is None:
+        return None
+    exact_selected_input = selected_source_section_video_path_for_review_item(item, create=False)
+    if exact_selected_input is not None and exact_selected_input != selected_input:
+        metadata = read_basic_video_metadata(exact_selected_input)
+        return exact_selected_input, DetectionWindow(
+            index=0,
+            start_seconds=0.0,
+            end_seconds=max(0.1, metadata.duration_seconds),
+        )
+    metadata = read_basic_video_metadata(selected_input)
+    return selected_input, selected_source_section_window_for_review_item(
+        item,
+        source_video_path=selected_input,
+        source_duration_seconds=max(0.0, metadata.duration_seconds),
+    )
+
+
+def final_output_motion_contact_sheets(item: ReviewItem, *, output_dir: Path) -> list[Path]:
+    source = final_output_source_video_window(item)
+    if source is None:
+        return []
+    video_path, window = source
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return []
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        return []
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    effective_fps = fps if fps > 0.0 else 30.0
+    start_frame = max(0, int(math.floor(window.start_seconds * effective_fps)))
+    end_frame = max(start_frame + 1, int(math.ceil(window.end_seconds * effective_fps)))
+    capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    frames: list[Any] = []
+    scores: list[float] = []
+    previous_gray: Any | None = None
+    try:
+        for _frame_index in range(start_frame, end_frame):
+            ok, frame = capture.read()
+            if not ok:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+            score = 0.0 if previous_gray is None else float(np.mean(cv2.absdiff(gray, previous_gray)))
+            frames.append(frame)
+            scores.append(score)
+            previous_gray = gray
+    finally:
+        capture.release()
+    peak_indices = select_two_scale_motion_peak_indices(scores, effective_fps)
+    if not peak_indices:
+        return []
+    neighborhood = max(1, int(round(effective_fps * 0.067)))
+    selected_indices = sorted(
+        {
+            min(len(frames) - 1, max(0, peak_index + offset * neighborhood))
+            for peak_index in peak_indices
+            for offset in (-2, -1, 0, 1, 2)
+        }
+    )
+    frames_dir = output_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    frame_paths: list[Path] = []
+    timestamps: list[float] = []
+    for sequence_index, relative_index in enumerate(selected_indices, start=1):
+        absolute_index = start_frame + relative_index
+        frame_path = frames_dir / f"motion_{sequence_index:03d}_{absolute_index:06d}.jpg"
+        ok = cv2.imwrite(str(frame_path), frames[relative_index], [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+        if not ok:
+            return []
+        frame_paths.append(frame_path)
+        timestamps.append(absolute_index / effective_fps)
+    return build_frame_contact_sheets(
+        frame_paths=frame_paths,
+        timestamps=timestamps,
+        output_dir=output_dir / "contact-sheets",
+        columns=4,
+        tile_width=320,
+        frames_per_sheet=16,
+        jpeg_quality=90,
+        sequence_labels=True,
+    )
+
+
+def two_scale_named_equipment(exercise_name: str) -> str:
+    lowered = exercise_name.casefold()
+    for equipment in ("barbell", "dumbbell", "cable", "kettlebell"):
+        if equipment in lowered:
+            return equipment
+    return "none"
+
+
+def call_two_scale_source_gate(
+    caption_images: Callable[..., str],
+    *,
+    frame_paths: list[Path],
+    prompt: str,
+) -> tuple[str, dict[str, Any] | None]:
+    raw = call_caption_images_json(
+        caption_images,
+        frame_paths=frame_paths,
+        prompt=prompt,
+        max_tokens=256,
+        request_timeout_seconds=300.0,
+        disable_reasoning=True,
+        json_response=True,
+        temperature=0.0,
+        top_p=1.0,
+        top_k=1,
+    )
+    return raw, extract_json_object(raw)
+
+
+def validate_two_scale_source_with_caption_images(
+    item: ReviewItem,
+    *,
+    uniform_sheet_paths: list[Path],
+    output_dir: Path,
+    caption_images: Callable[..., str],
+) -> dict[str, Any]:
+    try:
+        motion_sheet_paths = final_output_motion_contact_sheets(
+            item,
+            output_dir=output_dir / "motion",
+        )
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "passed": False,
+            "rejectionReasons": ["two_scale_source_frame_generation_failed"],
+            "error": f"{type(exc).__name__}: {exc}",
+            "uniformContactSheetPaths": [str(path) for path in uniform_sheet_paths],
+            "motionContactSheetPaths": [],
+        }
+    if not uniform_sheet_paths or not motion_sheet_paths:
+        return {
+            "enabled": True,
+            "passed": False,
+            "rejectionReasons": ["two_scale_source_frames_missing"],
+            "uniformContactSheetPaths": [str(path) for path in uniform_sheet_paths],
+            "motionContactSheetPaths": [str(path) for path in motion_sheet_paths],
+        }
+    exercise_name = item.exercise_name
+    equipment = two_scale_named_equipment(exercise_name)
+    prompts = {
+        "identity": (
+            "You verify only exercise identity in chronological motion-focused contact sheets.\n"
+            f"Target exercise: {exercise_name}\n"
+            "Inspect every visible frame. Judge visible body action and visibly used equipment, not titles. "
+            "Use uncertain when the frames do not visibly prove the answer. Return JSON only with exactly:\n"
+            '{"verdict":"match|mismatch|uncertain","observedAction":"short visible description","evidence":"short frame evidence"}'
+        ),
+        "uniform": (
+            "You inspect one uniformly sampled chronological contact sheet.\n"
+            f"Target exercise: {exercise_name}\n"
+            "Inspect every numbered tile. Unrelated action means talking, pointing, instruction gestures, setup, "
+            "cleanup, waiting, equipment handling, or a different exercise. A normal phase or transition within a "
+            "repetition is not unrelated. Return JSON only with exactly:\n"
+            '{"unrelatedActionVisible":false,"unrelatedTileNumbers":[],"evidence":"short visible evidence"}'
+        ),
+        "motion": (
+            "You inspect one motion-focused chronological contact sheet.\n"
+            f"Target exercise: {exercise_name}\nNamed equipment to check: {equipment}\n"
+            "Target-exercise action means its defining body action visibly changes across tiles, not merely a static pose. "
+            "Named equipment is engaged only when visibly used by the performer; equipment on a floor, rack, or in the "
+            "background is absent. Use not_applicable only when named equipment is none. Return JSON only with exactly:\n"
+            '{"targetExerciseActionVisible":false,"namedEquipmentEngagedStatus":"engaged|absent|unclear|not_applicable","evidence":"short visible evidence"}'
+        ),
+        "completeness": (
+            "You verify only movement-phase completeness in chronological uniformly sampled contact sheets. "
+            "A complete execution visibly shows an initial state, action phase, turning point, and return or stable finish. "
+            "Return JSON only with exactly:\n"
+            '{"startStateVisible":false,"actionPhaseVisible":false,"turningPointVisible":false,"returnOrFinishVisible":false,"complete":false,"evidence":"short frame evidence"}'
+        ),
+    }
+    raw_identity, identity = call_two_scale_source_gate(
+        caption_images,
+        frame_paths=motion_sheet_paths,
+        prompt=prompts["identity"],
+    )
+    uniform_results: list[dict[str, Any] | None] = []
+    uniform_raw: list[str] = []
+    for sheet_path in uniform_sheet_paths:
+        raw, parsed = call_two_scale_source_gate(
+            caption_images,
+            frame_paths=[sheet_path],
+            prompt=prompts["uniform"],
+        )
+        uniform_raw.append(raw)
+        uniform_results.append(parsed)
+    motion_results: list[dict[str, Any] | None] = []
+    motion_raw: list[str] = []
+    for sheet_path in motion_sheet_paths:
+        raw, parsed = call_two_scale_source_gate(
+            caption_images,
+            frame_paths=[sheet_path],
+            prompt=prompts["motion"],
+        )
+        motion_raw.append(raw)
+        motion_results.append(parsed)
+    raw_completeness, completeness = call_two_scale_source_gate(
+        caption_images,
+        frame_paths=uniform_sheet_paths,
+        prompt=prompts["completeness"],
+    )
+    identity_passed = isinstance(identity, dict) and identity.get("verdict") == "match"
+    uniform_passed = bool(uniform_results) and all(
+        isinstance(result, dict)
+        and result.get("unrelatedActionVisible") is False
+        and result.get("unrelatedTileNumbers") == []
+        for result in uniform_results
+    )
+    motion_passed = any(
+        isinstance(result, dict)
+        and result.get("targetExerciseActionVisible") is True
+        and result.get("namedEquipmentEngagedStatus") in {"engaged", "not_applicable"}
+        for result in motion_results
+    )
+    completeness_keys = (
+        "startStateVisible",
+        "actionPhaseVisible",
+        "turningPointVisible",
+        "returnOrFinishVisible",
+        "complete",
+    )
+    completeness_passed = isinstance(completeness, dict) and all(
+        completeness.get(key) is True for key in completeness_keys
+    )
+    rejection_reasons = []
+    if not identity_passed:
+        rejection_reasons.append("two_scale_source_identity_failed")
+    if not uniform_passed:
+        rejection_reasons.append("two_scale_source_contamination_detected")
+    if not motion_passed:
+        rejection_reasons.append("two_scale_source_motion_not_verified")
+    if not completeness_passed:
+        rejection_reasons.append("two_scale_source_incomplete_movement")
+    result = {
+        "enabled": True,
+        "passed": not rejection_reasons,
+        "rejectionReasons": rejection_reasons,
+        "uniformContactSheetPaths": [str(path) for path in uniform_sheet_paths],
+        "motionContactSheetPaths": [str(path) for path in motion_sheet_paths],
+        "gates": {
+            "identity": {"passed": identity_passed, "response": identity, "rawResponse": raw_identity},
+            "uniform": {"passed": uniform_passed, "responses": uniform_results, "rawResponses": uniform_raw},
+            "motion": {"passed": motion_passed, "responses": motion_results, "rawResponses": motion_raw},
+            "completeness": {
+                "passed": completeness_passed,
+                "response": completeness,
+                "rawResponse": raw_completeness,
+            },
+        },
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "two_scale_source_validation.json").write_text(
+        json.dumps(result, indent=2),
+        encoding="utf-8",
+    )
+    return result
 
 
 def final_output_preview_contact_sheets(item: ReviewItem, *, output_dir: Path) -> list[Path]:
@@ -10120,6 +10488,7 @@ def bake_and_rank_request_from_selection_manifest(
         max_adaptive_preview_settings=int(manifest.get("maxAdaptivePreviewSettings") or 3),
         classify_support_dominance=False,
         final_output_validation=bool(manifest.get("finalOutputValidationEnabled", False)),
+        two_scale_source_validation=bool(manifest.get("twoScaleSourceValidationEnabled", False)),
         final_output_validation_min_score=float(
             manifest.get("finalOutputValidationMinScore")
             or DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE
@@ -13173,7 +13542,8 @@ def validate_exact_pre_wham_source_video(
 ) -> dict[str, Any]:
     required = observable_motion_spec_requires_return(exercise_motion_contract)
     cache_key_payload = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
+        "phaseSignalResolution": "clip_noise_separation_v1",
         "videoSha256": file_sha256(source_video_path),
         "exerciseName": exercise_name,
         "exerciseMotionContract": exercise_motion_contract,
@@ -13213,7 +13583,7 @@ def validate_exact_pre_wham_source_video(
     }
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
-        json.dumps({"schemaVersion": 2, "cacheKey": cache_key, "metrics": metrics}, indent=2),
+        json.dumps({"schemaVersion": 3, "cacheKey": cache_key, "metrics": metrics}, indent=2),
         encoding="utf-8",
     )
     return metrics
@@ -13649,6 +14019,18 @@ def bake_preview_loops_with_playwright(
                     if bool(correction_metrics.get("applied")):
                         corrected_variant_id = "adaptive-contact-sequence-correction"
                         corrected_label = f"{artifact_base_label}.contact-sequence-correction"
+                        corrected_options = {
+                            **options,
+                            "lockPlantedFeet": True,
+                            "contactSequenceCorrection": True,
+                        }
+                        for preview_settings_key in (
+                            "selectedPreviewSettings",
+                            "bakedPreviewConfiguration",
+                        ):
+                            preview_settings = corrected_payload.get(preview_settings_key)
+                            if isinstance(preview_settings, dict):
+                                preview_settings["lockPlantedFeet"] = True
                         corrected_skeleton_path = (
                             wear_dir / f"skeleton.baked.{corrected_label}.json"
                         )
@@ -13666,7 +14048,7 @@ def bake_preview_loops_with_playwright(
                                 {
                                     "exportPayload": corrected_payload,
                                     "frameIndex": frame_index,
-                                    "options": options,
+                                    "options": corrected_options,
                                 },
                             )
                             for frame_index in corrected_frame_indices
@@ -13682,11 +14064,6 @@ def bake_preview_loops_with_playwright(
                             )
                         )
                         if bool(corrected_video_quality.get("passed", False)):
-                            corrected_options = {
-                                **options,
-                                "lockPlantedFeet": True,
-                                "contactSequenceCorrection": True,
-                            }
                             artifacts.append(
                                 BakedLoopArtifact(
                                     loop_index=eligible_loop.loop_index,
@@ -19085,16 +19462,17 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
             movement_complexity=complexity,
         )
     raw_motion_range = float(dominant["range"])
-    values = robust_phase_track_values(values)
+    signal_evidence = phase_track_signal_evidence(values)
+    values = signal_evidence["smoothedValues"]
     motion_range = raw_motion_range
     phase_motion_range = max(values) - min(values)
     range_normalization = parse_optional_float(dominant.get("rangeNormalization")) or body_height
     motion_range_ratio = motion_range / range_normalization
-    if motion_range_ratio < FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO:
+    if not bool(signal_evidence["resolved"]):
         return {
             "required": True,
             "passed": False,
-            "reason": "source_pose_dominant_motion_too_small_for_phase_gate",
+            "reason": "source_pose_dominant_motion_not_resolved_from_clip_noise",
             "movementComplexity": complexity,
             "targetMotionProfile": target_motion_profile.get("profile") if target_motion_profile is not None else None,
             "observableMotionSpec": observable_spec,
@@ -19108,7 +19486,8 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
             "dominantMotionRange": motion_range,
             "dominantMotionRawRange": raw_motion_range,
             "dominantMotionRangeRatio": motion_range_ratio,
-            "minDominantMotionRangeRatio": FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO,
+            "motionResolutionMethod": "clip_noise_separation",
+            "phaseSignalEvidence": {key: value for key, value in signal_evidence.items() if key != "smoothedValues"},
         }
 
     min_value = min(values)
@@ -19152,7 +19531,8 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
         "dominantMotionRawRange": raw_motion_range,
         "phaseMotionRange": phase_motion_range,
         "dominantMotionRangeRatio": motion_range_ratio,
-        "minDominantMotionRangeRatio": FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO,
+        "motionResolutionMethod": "clip_noise_separation",
+        "phaseSignalEvidence": {key: value for key, value in signal_evidence.items() if key != "smoothedValues"},
         "startValue": float(values[0]),
         "endValue": float(values[-1]),
         "minValue": float(min_value),
@@ -19778,11 +20158,24 @@ def legacy_source_cut_scorecard_thresholds(*, has_contract: bool) -> dict[str, f
 
 def parse_source_cut_scorecard_score(value: Any) -> float | None:
     score = parse_optional_float(value)
-    if score is None:
+    if score is None or not math.isfinite(score) or not 0.0 <= score <= 1.0:
         return None
-    if score > 1.0:
-        score = score / 100.0
-    return clamp_unit(score)
+    return score
+
+
+def source_cut_scorecard_payload_has_valid_confidence(payload: dict[str, Any]) -> bool:
+    candidates = source_cut_scorecard_candidate_payloads(payload)
+    if not candidates:
+        return False
+    classifier_candidates = [
+        candidate
+        for candidate in candidates
+        if any(key in candidate for key in ("approved", "accepted", "valid", "pass"))
+    ]
+    return all(
+        parse_source_cut_scorecard_score(candidate.get("confidence")) is not None
+        for candidate in classifier_candidates
+    )
 
 
 def source_cut_scorecard_candidate_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -20242,6 +20635,23 @@ def source_cut_scorecard_row(
             if isinstance(phase_metrics, dict)
             else None
         )
+        phase_signal_evidence = (
+            phase_metrics.get("phaseSignalEvidence")
+            if isinstance(phase_metrics, dict)
+            else None
+        )
+        phase_resolved_from_clip_noise = bool(
+            isinstance(phase_signal_evidence, dict)
+            and phase_signal_evidence.get("resolved") is True
+        )
+        legacy_high_margin_phase_evidence = bool(
+            phase_range_ratio is not None
+            and minimum_phase_range_ratio is not None
+            and phase_range_ratio >= minimum_phase_range_ratio * 2.0
+            and endpoint_phase_delta_ratio is not None
+            and maximum_endpoint_delta_ratio is not None
+            and endpoint_phase_delta_ratio <= maximum_endpoint_delta_ratio * 0.4
+        )
         # Deterministic pose coverage is evidence about technical observability,
         # not exercise identity.  Keep the diagnostic, but never let it erase a
         # semantic rejection such as wrong exercise, setup/filler, or partial
@@ -20251,12 +20661,7 @@ def source_cut_scorecard_row(
             and candidate.motion_coverage.get("passed") is True
             and isinstance(phase_metrics, dict)
             and phase_metrics.get("passed") is True
-            and phase_range_ratio is not None
-            and minimum_phase_range_ratio is not None
-            and phase_range_ratio >= minimum_phase_range_ratio * 2.0
-            and endpoint_phase_delta_ratio is not None
-            and maximum_endpoint_delta_ratio is not None
-            and endpoint_phase_delta_ratio <= maximum_endpoint_delta_ratio * 0.4
+            and (phase_resolved_from_clip_noise or legacy_high_margin_phase_evidence)
             and isinstance(topology_evidence, dict)
             and topology_evidence.get("passed") is True
             and not (
@@ -20533,7 +20938,7 @@ def parse_source_cut_candidate_choice(
     payload = extract_json_object_with_trailing_repair(raw)
     if not isinstance(payload, dict):
         return None
-    if not source_cut_scorecard_candidate_payloads(payload):
+    if not source_cut_scorecard_payload_has_valid_confidence(payload):
         return None
     return build_source_cut_scorecard_ranking(
         payload,
@@ -20555,7 +20960,7 @@ def parse_movement_cut_candidate_choice(
     payload = extract_json_object_with_trailing_repair(raw)
     if not isinstance(payload, dict):
         return None
-    if not source_cut_scorecard_candidate_payloads(payload):
+    if not source_cut_scorecard_payload_has_valid_confidence(payload):
         return None
     ranking = build_movement_cut_scorecard_ranking(
         payload,
@@ -21252,12 +21657,25 @@ def rank_cut_candidate_with_caption_images(
     candidate_ids = [candidate.candidate_id]
     request_kwargs = dict(caption_image_kwargs or {})
     prompt = prompt_builder(candidate)
+    raw: str | None = None
+    ranking: LoopRanking | None = None
     try:
-        raw = caption_images(
-            frame_paths=list(candidate.frame_paths),
-            prompt=prompt,
-            **request_kwargs,
-        )
+        for request_attempt in range(2):
+            attempt_prompt = prompt
+            if request_attempt > 0:
+                attempt_prompt += (
+                    "\nYour previous response violated the JSON schema. Return the same requested JSON schema again. "
+                    "Every confidence value must be a decimal number from 0.0 through 1.0 inclusive; values such as "
+                    "5, 95, and strings such as 95% are invalid."
+                )
+            raw = caption_images(
+                frame_paths=list(candidate.frame_paths),
+                prompt=attempt_prompt,
+                **request_kwargs,
+            )
+            ranking = parser(raw, candidate)
+            if ranking is not None:
+                break
     except Exception as exc:
         write_cut_candidate_vlm_review_debug(
             candidate=candidate,
@@ -21304,7 +21722,6 @@ def rank_cut_candidate_with_caption_images(
             errors=[cut_candidate_error_payload(candidate_ids, exc)],
             reviewed_candidate_ids=candidate_ids,
         )
-    ranking = parser(raw, candidate)
     write_cut_candidate_vlm_review_debug(
         candidate=candidate,
         prompt=prompt,
@@ -23736,6 +24153,7 @@ def build_selection_manifest(
         "maxFinalOutputRejections": max_final_output_rejections_for_request(request),
         "exerciseMotionContractEnabled": request.exercise_motion_contract_enabled,
         "finalOutputValidationEnabled": request.final_output_validation,
+        "twoScaleSourceValidationEnabled": request.two_scale_source_validation,
         "finalOutputValidationMinScore": request.final_output_validation_min_score,
         "minSelectedScore": request.min_selected_score,
         "maxSelectedResults": max_selected_results_for_request(request),

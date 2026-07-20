@@ -803,6 +803,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX,
     )
+    bake_and_rank.add_argument(
+        "--two-scale-source-validation",
+        action="store_true",
+        help="Validate source identity and purity with uniform and deterministic motion-focused contact sheets.",
+    )
     bake_and_rank.add_argument("--llama-cpp-backend", default="gpu")
     bake_and_rank.add_argument("--llama-cpp-n-predict", type=int, default=512)
     bake_and_rank.add_argument("--llama-cpp-temperature", type=float, default=DEFAULT_LLAMA_CPP_TEMPERATURE)
@@ -1089,6 +1094,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "final_output_validation": (
             args.final_output_validation and not args.skip_final_output_validation
         ),
+        "two_scale_source_validation": args.two_scale_source_validation,
         "motion_tuning_enabled": not args.skip_motion_tuning,
         "classify_support_dominance": not args.no_classify_support_dominance,
         "llama_cpp_mmproj_offload": not args.no_llama_cpp_mmproj_offload,
