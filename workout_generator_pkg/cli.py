@@ -1165,7 +1165,7 @@ def emit_exercise_definition(
     profile = get_exercise_emission_profile(exercise_entry.get("exerciseType"))
     load_field = _load_field_for_exercise_type(exercise_entry.get("exerciseType"))
     exact_load_instruction = ""
-    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and load_field:
+    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and exercise_entry["targetSetPrescriptions"] and load_field:
         exact_load_instruction = (
             f"- Copy targetSetPrescriptions exactly into the emitted work sets using `{load_field}` and `reps`.\n"
             "- Emit exactly one work set per targetSetPrescriptions item in workSetIndex order.\n"

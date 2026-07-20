@@ -866,7 +866,7 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
     expected_load_field = _load_field_for_exercise_type(plan_type)
 
     target_set_prescriptions = plan_ex.get("targetSetPrescriptions")
-    if isinstance(target_set_prescriptions, list) and expected_load_field is not None:
+    if isinstance(target_set_prescriptions, list) and target_set_prescriptions and expected_load_field is not None:
         target_set_type = _work_set_type_for_exercise_type(plan_type)
         normalized_targets, target_issues = _normalize_target_set_prescriptions(
             target_set_prescriptions,

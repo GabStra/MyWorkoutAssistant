@@ -496,7 +496,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- If user provided sets/reps/rest structure, copy exact work-set counts and exact rest values into numWorkSets and restBetweenSetsSeconds for any exercise type when they are known.\n"
     "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds.\n"
     "- intraSetRestInSeconds means the exact rest in whole seconds between the two sides of one logical unilateral set, for example left side, then rest, then right side.\n"
-    "- If an exercise is unilateral or single-side work (for example single-arm row, split squat, lunge, step-up, single-leg calf raise), set intraSetRestInSeconds to the exact positive integer side-to-side rest.\n"
+    "- CRITICAL: Every unilateral or single-side exercise (for example single-arm row, split squat, lunge, step-up, single-leg calf raise) MUST include an LLM-chosen exact positive integer intraSetRestInSeconds. null, 0, and omission are invalid; never rely on a generator default.\n"
     "- If the exercise is not unilateral, set intraSetRestInSeconds to null.\n"
     "- For timed exercises, numWorkSets counts timed work intervals and must be a positive integer when provided; omit minReps/maxReps for COUNTUP/COUNTDOWN.\n"
     "- restBetweenSetsSeconds must always be exact integers in seconds, never ranges.\n"

@@ -248,6 +248,21 @@ def validate_equipment_references(exercise, equipment_ids, accessory_ids=None):
     return True, None
 
 
+def _is_calibration_placeholder_load(exercise, set_item):
+    if set_item.get("subCategory") == "CalibrationPendingSet":
+        return True
+    if not exercise.get("requiresLoadCalibration"):
+        return False
+
+    exercise_type = exercise.get("exerciseType")
+    set_type = set_item.get("type")
+    return (
+        (exercise_type == "WEIGHT" and set_type == "WeightSet" and set_item.get("weight") == 0)
+        or
+        (exercise_type == "BODY_WEIGHT" and set_type == "BodyWeightSet" and set_item.get("additionalWeight") == 0)
+    )
+
+
 def validate_equipment_weight_combinations(exercise, equipment_dict):
     """
     Validate that WeightSet weights and BodyWeightSet additionalWeight values
@@ -301,6 +316,8 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
     
     for set_index, set_item in enumerate(sets):
         set_type = set_item.get("type")
+        if _is_calibration_placeholder_load(exercise, set_item):
+            continue
         
         if exercise_type == "WEIGHT" and set_type == "WeightSet":
             weight = set_item.get("weight", 0.0)
@@ -398,6 +415,8 @@ def fix_equipment_weights(exercise, equipment_dict):
     
     for set_index, set_item in enumerate(sets):
         set_type = set_item.get("type")
+        if _is_calibration_placeholder_load(exercise, set_item):
+            continue
         
         if exercise_type == "WEIGHT" and set_type == "WeightSet":
             weight = set_item.get("weight", 0.0)

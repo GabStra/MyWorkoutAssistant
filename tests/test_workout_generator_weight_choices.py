@@ -249,6 +249,96 @@ def test_validate_equipment_weights_reports_nearest_selectable_total_without_mut
     assert "nearest selectable weight: 60.0kg" in error_message
 
 
+def test_validate_equipment_weights_allows_zero_load_when_calibration_is_required():
+    equipment = {
+        "id": "EQUIPMENT_0",
+        "type": "BARBELL",
+        "name": "Test Barbell",
+        "availablePlates": [{"weight": 20.0, "thickness": 10.0}],
+        "sleeveLength": 100,
+        "barWeight": 20.0,
+    }
+    exercise = {
+        "id": "EXERCISE_0",
+        "type": "Exercise",
+        "name": "Bench Press",
+        "exerciseType": "WEIGHT",
+        "equipmentId": "EQUIPMENT_0",
+        "requiresLoadCalibration": True,
+        "sets": [
+            {
+                "id": "SET_0",
+                "type": "WeightSet",
+                "reps": 8,
+                "weight": 0.0,
+                "subCategory": "WorkSet",
+            },
+        ],
+    }
+
+    is_valid, error_message, invalid_weights = validate_equipment_weight_combinations(
+        exercise,
+        {"EQUIPMENT_0": equipment},
+    )
+
+    assert is_valid is True
+    assert error_message is None
+    assert invalid_weights == []
+
+
+def test_contract_allows_empty_target_prescriptions_without_exact_loads():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bench Press",
+                "exerciseType": "WEIGHT",
+                "requiredAccessoryEquipmentIds": [],
+                "targetSetPrescriptions": [],
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "type": "Exercise",
+            "enabled": True,
+            "name": "Bench Press",
+            "notes": "",
+            "exerciseType": "WEIGHT",
+            "minReps": 6,
+            "maxReps": 8,
+            "equipmentId": "EQUIPMENT_0",
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
+            "progressionMode": "AUTO_REGULATION",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_CHEST"],
+            "secondaryMuscleGroups": [],
+            "requiresLoadCalibration": True,
+            "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "MODERATE_COMPOUND",
+            "sets": [
+                {
+                    "id": "SET_0",
+                    "type": "WeightSet",
+                    "reps": 8,
+                    "weight": 0.0,
+                    "subCategory": "CalibrationPendingSet",
+                }
+            ],
+        }
+    }
+
+    validate_exercise_definitions_contract(plan_index, exercise_definitions)
+
+
 def test_fix_set_errors_backfills_rest_set_subcategory_for_legacy_payloads():
     sets = [
         {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 40.0, "subCategory": "WorkSet"},
@@ -1006,6 +1096,11 @@ def test_plan_index_requires_intra_set_rest_for_unilateral_exercise():
         validate_plan_index_contract(plan_index)
 
     assert "must include a positive intraSetRestInSeconds in the PlanIndex" in str(exc_info.value)
+
+
+def test_plan_index_prompt_requires_llm_selected_unilateral_rest():
+    assert "never rely on a generator default" in PLAN_INDEX_SYSTEM_PROMPT
+    assert "null, 0, and omission are invalid" in PLAN_INDEX_SYSTEM_PROMPT
 
 
 def test_plan_index_accepts_exercise_ids_and_rest_on_workout_entries():
