@@ -801,13 +801,17 @@ def _align_baked_sagittal_plane_to_grid_axis(
     if not bool(alignment.get("applied")):
         return frames, alignment
 
-    rotation_axis_value = alignment.get("rotationAxis")
-    rotation_axis = (
-        (float(rotation_axis_value[0]), float(rotation_axis_value[1]), float(rotation_axis_value[2]))
-        if _is_serialized_point(rotation_axis_value)
-        else (0.0, 1.0, 0.0)
+    rotation_sequence_value = alignment.get("rotationSequence")
+    rotation_sequence = (
+        [step for step in rotation_sequence_value if isinstance(step, dict)]
+        if isinstance(rotation_sequence_value, list)
+        else [
+            {
+                "axis": alignment.get("rotationAxis", [0.0, 1.0, 0.0]),
+                "radians": alignment.get("rotationRadians", alignment.get("yawRadians", 0.0)),
+            }
+        ]
     )
-    rotation_radians = float(alignment.get("rotationRadians", alignment.get("yawRadians", 0.0)))
     pivot_value = alignment.get("pivot")
     pivot = (
         (
@@ -831,7 +835,19 @@ def _align_baked_sagittal_plane_to_grid_axis(
                     float(point[1]) - pivot[1],
                     float(point[2]) - pivot[2],
                 )
-                rotated = _rotate_point(centered, axis=rotation_axis, angle=rotation_radians)
+                rotated = centered
+                for rotation_step in rotation_sequence:
+                    axis_value = rotation_step.get("axis")
+                    axis = (
+                        (float(axis_value[0]), float(axis_value[1]), float(axis_value[2]))
+                        if _is_serialized_point(axis_value)
+                        else (0.0, 1.0, 0.0)
+                    )
+                    rotated = _rotate_point(
+                        rotated,
+                        axis=axis,
+                        angle=float(rotation_step.get("radians", 0.0)),
+                    )
                 rotated_joints[joint_name] = [
                     rotated[0] + pivot[0],
                     rotated[1] + pivot[1],
@@ -963,28 +979,41 @@ def _build_full_normal_alignment_payload(
         if horizontal_length > 1e-5
         else [0.0, 0.0, 0.0]
     )
-    applied = rotation is not None
+    facing_yaw_radians = math.pi if target_sign < 0.0 else 0.0
+    applied = rotation is not None or facing_yaw_radians != 0.0
     rotation_axis, rotation_radians = rotation if rotation is not None else ((0.0, 1.0, 0.0), 0.0)
+    rotation_sequence = []
+    if rotation is not None:
+        rotation_sequence.append(
+            {"axis": _point_to_list(rotation_axis), "radians": rotation_radians, "reason": "level_sagittal_plane"}
+        )
+    if facing_yaw_radians != 0.0:
+        rotation_sequence.append(
+            {"axis": [0.0, 1.0, 0.0], "radians": facing_yaw_radians, "reason": "resolve_positive_x_facing"}
+        )
     horizontal_forward = [horizontal_normal[2], 0.0, -horizontal_normal[0]]
     yaw_radians = _normalize_signed_angle(math.atan2(horizontal_forward[2], horizontal_forward[0]))
     return {
         **base_payload,
         "applied": applied,
         "status": "applied" if applied else "already_aligned",
-        "targetDirection": "+x" if target_sign > 0.0 else "-x",
+        "targetDirection": "+x",
         "resolvedTargetNormal": _point_to_list(target_normal),
         "targetNormalSign": int(target_sign),
+        "rotationSequence": rotation_sequence,
+        "facingYawRadians": facing_yaw_radians,
+        "facingYawDegrees": math.degrees(facing_yaw_radians),
         "rotationAxis": _point_to_list(rotation_axis),
         "rotationRadians": rotation_radians,
         "rotationDegrees": math.degrees(rotation_radians),
         "yawRadians": yaw_radians,
         "yawDegrees": math.degrees(yaw_radians),
         "normalBefore": _point_to_list(resolved_normal),
-        "normalAfter": _point_to_list(target_normal if applied else resolved_normal),
+        "normalAfter": _point_to_list(positive_target_normal if applied else resolved_normal),
         "horizontalNormalBefore": horizontal_normal,
         "horizontalForwardBefore": horizontal_forward,
-        "horizontalNormalAfter": [target_normal[0], 0.0, target_normal[2]] if applied else horizontal_normal,
-        "horizontalForwardAfter": [target_sign, 0.0, 0.0] if applied else horizontal_forward,
+        "horizontalNormalAfter": [positive_target_normal[0], 0.0, positive_target_normal[2]] if applied else horizontal_normal,
+        "horizontalForwardAfter": [1.0, 0.0, 0.0] if applied else horizontal_forward,
         "pivot": _point_to_list(pivot),
         "coherence": coherence,
         **(extra or {}),
@@ -7779,7 +7808,9 @@ def _build_html(payload: dict[str, object]) -> str:
       const target = new THREE.Vector3(0.0, 0.0, targetSign);
       const alignment = Math.max(-1.0, Math.min(1.0, source.dot(target)));
       const rotationRadians = Math.acos(alignment);
-      const applied = Math.abs(rotationRadians * 180 / Math.PI) >= 0.5;
+      const levelingApplied = Math.abs(rotationRadians * 180 / Math.PI) >= 0.5;
+      const facingYawRadians = targetSign < 0.0 ? Math.PI : 0.0;
+      const applied = levelingApplied || facingYawRadians !== 0.0;
       const rotationAxis = new THREE.Vector3().crossVectors(source, target);
       if (rotationAxis.length() <= 1e-6) {{
         rotationAxis.set(0.0, 1.0, 0.0);
@@ -7797,20 +7828,26 @@ def _build_html(payload: dict[str, object]) -> str:
         ...basePayload,
         applied,
         status: applied ? "applied" : "already_aligned",
-        targetDirection: targetSign > 0.0 ? "+x" : "-x",
+        targetDirection: "+x",
         resolvedTargetNormal: [target.x, target.y, target.z],
         targetNormalSign: targetSign,
+        rotationSequence: [
+          ...(levelingApplied ? [{{ axis: [rotationAxis.x, rotationAxis.y, rotationAxis.z], radians: rotationRadians, reason: "level_sagittal_plane" }}] : []),
+          ...(facingYawRadians !== 0.0 ? [{{ axis: [0.0, 1.0, 0.0], radians: facingYawRadians, reason: "resolve_positive_x_facing" }}] : []),
+        ],
+        facingYawRadians,
+        facingYawDegrees: facingYawRadians * 180 / Math.PI,
         rotationAxis: [rotationAxis.x, rotationAxis.y, rotationAxis.z],
         rotationRadians: applied ? rotationRadians : 0.0,
         rotationDegrees: applied ? rotationRadians * 180 / Math.PI : 0.0,
         yawRadians,
         yawDegrees: yawRadians * 180 / Math.PI,
         normalBefore: [source.x, source.y, source.z],
-        normalAfter: applied ? [target.x, target.y, target.z] : [source.x, source.y, source.z],
+        normalAfter: applied ? [0.0, 0.0, 1.0] : [source.x, source.y, source.z],
         horizontalNormalBefore: horizontalNormal,
         horizontalForwardBefore: horizontalForward,
-        horizontalNormalAfter: applied ? [target.x, 0.0, target.z] : horizontalNormal,
-        horizontalForwardAfter: applied ? [targetSign, 0.0, 0.0] : horizontalForward,
+        horizontalNormalAfter: applied ? [0.0, 0.0, 1.0] : horizontalNormal,
+        horizontalForwardAfter: applied ? [1.0, 0.0, 0.0] : horizontalForward,
         pivot: bounds.center ?? [0, 0, 0],
         coherence,
         ...extra,
@@ -8143,10 +8180,9 @@ def _build_html(payload: dict[str, object]) -> str:
       const pivot = Array.isArray(alignment.pivot) && alignment.pivot.length >= 3
         ? alignment.pivot
         : [0.0, 0.0, 0.0];
-      const axis = Array.isArray(alignment.rotationAxis) && alignment.rotationAxis.length >= 3
-        ? new THREE.Vector3(...alignment.rotationAxis.map(Number)).normalize()
-        : new THREE.Vector3(0.0, 1.0, 0.0);
-      const angle = Number(alignment.rotationRadians ?? alignment.yawRadians) || 0.0;
+      const rotationSequence = Array.isArray(alignment.rotationSequence)
+        ? alignment.rotationSequence
+        : [{{ axis: alignment.rotationAxis ?? [0.0, 1.0, 0.0], radians: alignment.rotationRadians ?? alignment.yawRadians }}];
       point.sub(new THREE.Vector3(...pivot.map(Number)));
       point.applyAxisAngle(axis, angle);
       point.add(new THREE.Vector3(...pivot.map(Number)));
@@ -8473,10 +8509,14 @@ def _build_html(payload: dict[str, object]) -> str:
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
-          const rotated = new THREE.Vector3(...point.map(Number))
-            .sub(pivotVector)
-            .applyAxisAngle(axis, angle)
-            .add(pivotVector);
+          const rotated = new THREE.Vector3(...point.map(Number)).sub(pivotVector);
+          for (const step of rotationSequence) {{
+            const axis = Array.isArray(step?.axis) && step.axis.length >= 3
+              ? new THREE.Vector3(...step.axis.map(Number)).normalize()
+              : new THREE.Vector3(0.0, 1.0, 0.0);
+            rotated.applyAxisAngle(axis, Number(step?.radians) || 0.0);
+          }}
+          rotated.add(pivotVector);
           joints[jointName] = [rotated.x, rotated.y, rotated.z];
         }}
         return {{

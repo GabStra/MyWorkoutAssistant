@@ -2654,8 +2654,14 @@ def test_baked_sagittal_alignment_uses_nearest_plane_normal_antipode() -> None:
 
     assert alignment["targetNormalSign"] == -1
     assert alignment["resolvedTargetNormal"] == pytest.approx([0.0, 0.0, -1.0])
+    assert alignment["targetDirection"] == "+x"
+    assert alignment["facingYawDegrees"] == pytest.approx(180.0)
+    assert alignment["normalAfter"] == pytest.approx([0.0, 0.0, 1.0])
     assert float(alignment["rotationDegrees"]) < 20.0
     assert spine[1] / spine_length > 0.9
+    left = aligned_frames[0]["joints"]["left_shoulder"]  # type: ignore[index]
+    right = aligned_frames[0]["joints"]["right_shoulder"]  # type: ignore[index]
+    assert float(right[2]) > float(left[2])  # type: ignore[index]
 
 
 def test_compute_preview_auto_alignment_levels_inverted_upright_spine_without_flipping_it() -> None:
