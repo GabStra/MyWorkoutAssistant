@@ -62,6 +62,33 @@ class WorkoutSetStateFactoryTest {
     }
 
     @Test
+    fun `superset keeps calibration load selection before work rounds`() {
+        val calibrationExercise = createExercise("Calibration press", intraSetRestInSeconds = null)
+        val normalExercise = createExercise("Row", intraSetRestInSeconds = null)
+        val calibrationSelection = createCalibrationLoadSelection(calibrationExercise)
+        val calibrationWorkSet = createSetState(calibrationExercise)
+        val normalWorkSet = createSetState(normalExercise)
+
+        val states = WorkoutSupersetAssemblyService().assembleSupersetChildStates(
+            superset = Superset(
+                id = UUID.randomUUID(),
+                enabled = true,
+                exercises = listOf(calibrationExercise, normalExercise),
+                restSecondsByExercise = emptyMap()
+            ),
+            queues = listOf(
+                mutableListOf(calibrationSelection, calibrationWorkSet),
+                mutableListOf(normalWorkSet)
+            )
+        )
+
+        assertEquals(
+            listOf(calibrationSelection, calibrationWorkSet, normalWorkSet),
+            states
+        )
+    }
+
+    @Test
     fun `buildUnilateralSetBlock creates distinct states for each side`() {
         val factory = WorkoutSetStateFactory()
         val exercise = Exercise(
@@ -172,4 +199,28 @@ class WorkoutSetStateFactoryTest {
         isWarmupSet = false,
         equipmentId = null
     )
+
+    private fun createCalibrationLoadSelection(exercise: Exercise): WorkoutState.CalibrationLoadSelection {
+        val calibrationSet = WeightSet(
+            id = UUID.randomUUID(),
+            reps = 10,
+            weight = 0.0,
+            subCategory = SetSubCategory.CalibrationSet
+        )
+        return WorkoutState.CalibrationLoadSelection(
+            exerciseId = exercise.id,
+            calibrationSet = calibrationSet,
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(
+                WeightSetData(
+                    actualReps = 10,
+                    actualWeight = 0.0,
+                    volume = 0.0
+                )
+            ),
+            equipmentId = null,
+            currentBodyWeight = 0.0
+        )
+    }
 }

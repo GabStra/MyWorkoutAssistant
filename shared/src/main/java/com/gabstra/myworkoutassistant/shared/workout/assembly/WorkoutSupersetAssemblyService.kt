@@ -17,6 +17,15 @@ class WorkoutSupersetAssemblyService {
     ): MutableList<WorkoutState> {
         val out = mutableListOf<WorkoutState>()
 
+        // Calibration load selection is a required pre-workout step. Keep one selection per
+        // superset member ahead of warm-ups and work rounds so the normal confirmation flow can
+        // insert that exercise's warm-ups and calibration execution states into this container.
+        for (queue in queues) {
+            while (queue.firstOrNull() is WorkoutState.CalibrationLoadSelection) {
+                out.add(queue.removeAt(0))
+            }
+        }
+
         var anyWarmups = true
         while (anyWarmups) {
             anyWarmups = false
