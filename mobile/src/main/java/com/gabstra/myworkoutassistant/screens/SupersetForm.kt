@@ -251,6 +251,16 @@ fun SupersetForm(
                 )
             }
 
+            selectedExercises
+                .filter { it.movementRef != null }
+                .forEach { exercise ->
+                    Spacer(Modifier.height(Spacing.md))
+                    ExerciseMovementCard(
+                        exercise = exercise,
+                        title = "${exercise.name} movement",
+                    )
+                }
+
             if (selectedExercises.size >= 2) {
                 Spacer(Modifier.height(Spacing.md))
                 val restSummary = "Rest times for ${selectedExercises.size} exercises"

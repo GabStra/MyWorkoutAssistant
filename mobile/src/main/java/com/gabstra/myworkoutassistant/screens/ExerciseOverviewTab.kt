@@ -80,6 +80,11 @@ fun ExerciseOverviewTab(
             .verticalScroll(scrollState)
             .padding(horizontal = Spacing.md)
     ) {
+        ExerciseMovementCard(exercise = exercise)
+        if (exercise.movementRef != null) {
+            Spacer(modifier = Modifier.height(Spacing.md))
+        }
+
         if (sets.isEmpty()) {
             Row(
                 modifier = Modifier

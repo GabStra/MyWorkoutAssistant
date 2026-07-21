@@ -1,22 +1,53 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+@Composable
+fun ExerciseMovementCard(
+    exercise: Exercise,
+    title: String = "Movement",
+    modifier: Modifier = Modifier,
+) {
+    if (exercise.movementRef == null) return
+
+    var expanded by remember(exercise.id) { mutableStateOf(true) }
+    CollapsibleSection(
+        title = title,
+        summary = "Movement: ${exercise.movementRef?.movementId}",
+        expanded = expanded,
+        onToggle = { expanded = !expanded },
+        modifier = modifier,
+    ) {
+        ExerciseMovementPreviewPage(
+            exercise = exercise,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f),
+        )
+    }
+}
 
 @Composable
 fun ExerciseMovementPreviewPage(
