@@ -562,7 +562,7 @@ fun TimedDurationSetScreen(
                         modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
