@@ -68,11 +68,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = shouldRunReleaseOptimizations
-            isShrinkResources = false
+            isShrinkResources = shouldRunReleaseOptimizations
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
-                "proguard-release-fast.pro"
+                rootProject.file("proguard-gson-reflection.pro")
             )
             testProguardFiles(rootProject.file("proguard-android-test.pro"))
             if (hasReleaseSigning) {
@@ -172,8 +172,8 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")
-    implementation("com.openai:openai-java:4.41.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
+    implementation("com.openai:openai-java:4.43.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
@@ -187,7 +187,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-rc01")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
     androidTestImplementation("androidx.concurrent:concurrent-futures:1.3.0")
     androidTestImplementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
 

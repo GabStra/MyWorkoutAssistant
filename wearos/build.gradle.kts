@@ -62,12 +62,15 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = shouldRunReleaseOptimizations
-            isShrinkResources = false
+            isShrinkResources = shouldRunReleaseOptimizations
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
-                "proguard-release-fast.pro"
+                rootProject.file("proguard-gson-reflection.pro")
             )
+            if (e2eTestBuildType == "release") {
+                proguardFile("proguard-release-e2e.pro")
+            }
             testProguardFiles(rootProject.file("proguard-android-test.pro"))
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
@@ -107,6 +110,7 @@ android {
         named("androidTest") {
             kotlin.directories.add("src/androidTest/java")
             assets.directories.add(rootProject.file("testdata/e2e-movement-assets").path)
+            assets.directories.add(file("src/main/res/raw").path)
         }
         named("test") {
             kotlin.directories.add("src/test/java")
@@ -119,7 +123,7 @@ dependencies {
     implementation(project(":motion-renderer"))
     implementation("androidx.wear.compose:compose-material-core:1.6.2")
     implementation("androidx.navigation:navigation-compose:2.9.8")
-    implementation("androidx.compose.ui:ui-graphics:1.11.3")
+    implementation("androidx.compose.ui:ui-graphics:1.11.4")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -188,6 +192,7 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-rc01")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
+    androidTestImplementation("androidx.tracing:tracing:1.2.0")
     androidTestImplementation(kotlin("stdlib"))
 }

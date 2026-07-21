@@ -30,7 +30,8 @@ android {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
+                rootProject.file("proguard-gson-reflection.pro")
             )
         }
     }
@@ -58,7 +59,7 @@ android {
 
 dependencies {
     implementation("androidx.compose.runtime:runtime")
-    implementation("androidx.compose.ui:ui-graphics:1.11.3")
+    implementation("androidx.compose.ui:ui-graphics:1.11.4")
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
