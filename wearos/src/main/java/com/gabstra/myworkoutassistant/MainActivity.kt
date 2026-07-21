@@ -79,6 +79,7 @@ import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
+import com.gabstra.myworkoutassistant.screens.WorkoutExercisesScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -537,6 +538,13 @@ fun WearApp(
                                     appViewModel,
                                     hapticsViewModel,
                                     hrViewModel
+                                )
+                            }
+                            composable(Screen.WorkoutExercises.route) {
+                                WorkoutExercisesScreen(
+                                    navController = navController,
+                                    sourceViewModel = appViewModel,
+                                    hapticsViewModel = hapticsViewModel,
                                 )
                             }
                             composable(Screen.Workout.route) {

@@ -583,6 +583,7 @@ fun PageExercises(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
+    showAllAsCompleted: Boolean = false,
     onPageSelected: (Exercise, UUID?) -> Unit
 ) {
     val pageItems = remember(viewModel.allWorkoutStates.size, viewModel.supersetIdByExerciseId, viewModel.exercisesBySupersetId) {
@@ -640,6 +641,7 @@ fun PageExercises(
     // Item 0 is the spacer used to reserve room for the fixed header overlay.
     val firstSetListItemIndex = 1
     val selectedProgressState = when {
+        showAllAsCompleted -> ProgressState.PAST
         selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
         selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
         else -> ProgressState.CURRENT
@@ -890,11 +892,11 @@ fun PageExercises(
             WorkoutStepIndicatorText(
                 stepLabel = selectedStepLabel,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    //.offset(y = -WorkoutPagerLayoutTokens.BottomIndicatorSpacing)
                     .padding(horizontal = 20.dp)
                     .height(stepIndicatorReservedHeightDp)
-                    .wrapContentHeight(Alignment.Bottom)
+                    .wrapContentHeight(Alignment.Top)
             )
         }
 

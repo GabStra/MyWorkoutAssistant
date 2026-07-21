@@ -302,7 +302,29 @@ fun WorkoutDetailScreen(
                                 }
                             )
                         }
+                    }
 
+                    if (hasExercises) {
+                        item {
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                        item {
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .semantics { contentDescription = "View workout exercises" }
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec),
+                                transformation = SurfaceTransformation(spec),
+                                text = "Exercises",
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    navController.navigate(Screen.WorkoutExercises.route)
+                                }
+                            )
+                        }
+                    }
+
+                    if (hasWorkoutRecord) {
                         item {
                             ButtonWithText(
                                 modifier = Modifier
