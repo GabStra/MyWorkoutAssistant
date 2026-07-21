@@ -40,7 +40,6 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("com.google.android.filament:filament-android:1.72.0")
-    implementation("com.google.android.filament:filamat-android:1.72.0")
+    implementation("com.google.android.filament:filament-android:1.73.0")
     implementation("com.google.code.gson:gson:2.14.0")
 }

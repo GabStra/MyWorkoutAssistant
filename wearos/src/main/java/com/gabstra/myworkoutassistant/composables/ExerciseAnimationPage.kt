@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
@@ -27,6 +29,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ExerciseAnimationPage(
     exercise: Exercise,
+    isActive: Boolean = true,
+    dragRotationHorizontalInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val movementRef = exercise.movementRef
@@ -46,6 +50,8 @@ fun ExerciseAnimationPage(
             modifier = modifier.fillMaxSize(),
             animated = true,
             orbitView = true,
+            dragRotationHorizontalInset = dragRotationHorizontalInset,
+            isRenderingActive = isActive,
         )
         return
     }
@@ -69,7 +75,9 @@ fun ExerciseAnimationPage(
                 skeletonJson = movementJson.orEmpty(),
                 modifier = modifier.fillMaxSize(),
                 animated = true,
-                orbitView = false,
+                orbitView = true,
+                dragRotationHorizontalInset = dragRotationHorizontalInset,
+                isRenderingActive = isActive,
             )
         }
 

@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.e2e.fixtures
 
 import android.content.Context
-import com.gabstra.myworkoutassistant.R
+import androidx.test.platform.app.InstrumentationRegistry
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
@@ -21,8 +21,10 @@ object SnatchAnimationWorkoutStoreFixture {
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
-        val movementJson = context.resources
-            .openRawResource(R.raw.pull_up_preview_skeleton)
+        val movementJson = InstrumentationRegistry.getInstrumentation()
+            .context
+            .assets
+            .open("pull_up_preview_skeleton.json")
             .bufferedReader()
             .use { reader -> reader.readText() }
         val movementRef = ExerciseMovementRef.forWearSkeletonJson(

@@ -198,15 +198,15 @@ fun CustomHorizontalPager(
                 userScrollEnabled = userScrollEnabled,
                 beyondViewportPageCount = beyondViewportPageCount,
             ) { page ->
-                val isMoving =
-                    pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f
+                val isMoving = movingPlaceholder != null &&
+                    (pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
-                    if (isMoving && movingPlaceholder != null) {
+                    if (isMoving) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            movingPlaceholder()
+                            movingPlaceholder.invoke(this)
                         }
                     } else if (animatePages) {
                         CustomAnimatedPage(

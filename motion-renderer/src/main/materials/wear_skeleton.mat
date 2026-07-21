@@ -1,0 +1,15 @@
+material {
+    name : "Wear skeleton vertex colors",
+    requires : [
+        color
+    ],
+    shadingModel : unlit,
+    doubleSided : false
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = getColor();
+    }
+}

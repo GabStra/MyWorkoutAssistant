@@ -87,6 +87,9 @@ import java.lang.reflect.Field
 import java.time.LocalDateTime
 import java.util.UUID
 
+private val MovementPagerGestureGutter = 40.dp
+private val MovementViewportBottomSpacing = 12.5.dp
+
 private enum class ExerciseHorizontalPage {
     BUTTONS,
     PLATES,
@@ -304,6 +307,14 @@ fun ExerciseScreen(
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
         )
+        val exerciseNameComposable: @Composable () -> Unit = {
+            ExerciseNameText(
+                text = exercise.name,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center
+            )
+        }
         val exerciseTitleComposable: @Composable () -> Unit = {
             Column(
                 modifier = Modifier
@@ -312,16 +323,11 @@ fun ExerciseScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.5.dp),
             ) {
-                ExerciseNameText(
-                    text = exercise.name,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    textAlign = TextAlign.Center
-                )
+                exerciseNameComposable()
                 activeExerciseContext?.let { context ->
                     Text(
                         text = context,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
@@ -390,11 +396,36 @@ fun ExerciseScreen(
                     }
 
                     ExerciseHorizontalPage.ANIMATION -> {
-                        Box(modifier = pageModifier) {
-                            ExerciseAnimationPage(
-                                exercise = exercise,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
+                                        start = 45.dp,
+                                        end = 45.dp,
+                                    )
+                            ) {
+                                exerciseNameComposable()
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .padding(
+                                        top = 5.dp,
+                                        bottom = MovementViewportBottomSpacing,
+                                    )
+                                    .clipToBounds()
+                            ) {
+                                ExerciseAnimationPage(
+                                    exercise = exercise,
+                                    isActive = horizontalPagerState.currentPage == pageIndex &&
+                                        !horizontalPagerState.isScrollInProgress,
+                                    dragRotationHorizontalInset = MovementPagerGestureGutter,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
 
@@ -1351,13 +1382,6 @@ private fun buildExerciseInfoSections(
         setCounter?.let { (current, total) ->
             add(if (total > 1) "$setLabel $current of $total" else setLabel)
         }
-        if (
-            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
-            exercise.minReps > 0 &&
-            exercise.maxReps >= exercise.minReps
-        ) {
-            add("Target ${exercise.minReps}–${exercise.maxReps} reps")
-        }
         if (supersetExercises.isNotEmpty()) {
             val position = supersetExercises.indexOf(exercise)
             if (position >= 0) {
@@ -1377,9 +1401,24 @@ private fun buildExerciseInfoSections(
             else -> Unit
         }
     }
+    val targetReps = if (
+        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+        exercise.minReps > 0 &&
+        exercise.maxReps >= exercise.minReps
+    ) {
+        if (exercise.minReps == exercise.maxReps) {
+            exercise.minReps.toString()
+        } else {
+            "${exercise.minReps}-${exercise.maxReps}"
+        }
+    } else {
+        null
+    }
 
     return buildList {
+        add(TitledLinesSection("Exercise", listOf(exercise.name)))
         if (sessionLines.isNotEmpty()) add(TitledLinesSection("Session", sessionLines))
+        targetReps?.let { add(TitledLinesSection("Target reps", listOf(it))) }
         if (statusLines.isNotEmpty()) add(TitledLinesSection("Status", statusLines))
         plateauReason?.let { add(TitledLinesSection("Plateau", listOf(it))) }
         equipmentName?.let { add(TitledLinesSection("Equipment", listOf(it))) }
@@ -1395,7 +1434,9 @@ private fun buildActiveExerciseContextLabel(
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
 ): String? = listOfNotNull(
-    setCounter?.let { (current, total) -> "$current/$total" },
+    setCounter
+        ?.takeIf { (_, total) -> total > 1 }
+        ?.let { (current, total) -> "$current/$total" },
     if (unilateralSideIndex != null && intraSetTotal != null) {
         "SIDE $unilateralSideIndex/$intraSetTotal"
     } else {
