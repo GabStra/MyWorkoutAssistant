@@ -126,7 +126,7 @@ class WearWorkoutDriver(
     }
 
     /**
-     * Navigates to the Exercises page (PageExercises) by swiping left until it is visible.
+     * Navigates to the Exercises page (ExercisesPage) by swiping left until it is visible.
      * Works from RestScreen or ExerciseScreen where the pager includes an exercises tab.
      *
      * @param maxSwipes Maximum number of swipes to attempt

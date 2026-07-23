@@ -24,9 +24,9 @@ import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageCalibrationLoad
-import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.CalibrationLoadPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -38,7 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class CalibrationPageType {
-    BUTTONS, EXERCISES, CALIBRATION_LOAD, CALIBRATION_RIR
+    BUTTONS, INFO, EXERCISES, MOVEMENT, CALIBRATION_LOAD, CALIBRATION_RIR
 }
 
 private const val CALIBRATION_LOAD_PAGER_AUTO_RETURN_DELAY_MS = 15000L
@@ -65,7 +65,9 @@ fun CalibrationLoadScreen(
     val pageTypes = remember {
         mutableListOf<CalibrationPageType>().apply {
             add(CalibrationPageType.BUTTONS)
+            add(CalibrationPageType.INFO)
             add(CalibrationPageType.CALIBRATION_LOAD)
+            if (exercise.movementRef != null) add(CalibrationPageType.MOVEMENT)
             add(CalibrationPageType.EXERCISES)
         }
     }
@@ -152,18 +154,23 @@ fun CalibrationLoadScreen(
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
-
-            Box(
-                modifier = Modifier
+            val pageModifier = when (pageType) {
+                CalibrationPageType.BUTTONS,
+                CalibrationPageType.EXERCISES -> Modifier.fillMaxSize()
+                else -> Modifier
                     .fillMaxSize()
                     .padding(WorkoutPagerPageSafeAreaPadding)
                     .clipToBounds()
+            }
+
+            Box(
+                modifier = pageModifier
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
                         key(pageType, pageIndex) {
-                            // Create a temporary Set state from calibration state for PageButtons
-                            // PageButtons already handles calibration states, but it needs WorkoutState.Set
+                            // Create a temporary Set state from calibration state for ControlsPage
+                            // ControlsPage already handles calibration states, but it needs WorkoutState.Set
                             // We'll create a mock Set state that represents the calibration set
                             val mockSetState = remember(state) {
                                 WorkoutState.Set(
@@ -190,7 +197,7 @@ fun CalibrationLoadScreen(
                                 )
                             }
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageButtons(
+                                ControlsPage(
                                     updatedState = mockSetState,
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -204,7 +211,7 @@ fun CalibrationLoadScreen(
                     CalibrationPageType.EXERCISES -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageExercises(
+                                ExercisesPage(
                                     selectedExercise = selectedExercise,
                                     selectedRestPageId = null,
                                     workoutState = state,
@@ -219,6 +226,25 @@ fun CalibrationLoadScreen(
                         }
                     }
 
+                    CalibrationPageType.INFO -> {
+                        CalibrationExerciseInfoPage(
+                            sections = buildCalibrationExerciseInfoSections(
+                                viewModel = viewModel,
+                                exercise = exercise,
+                                equipmentId = state.equipmentId,
+                                status = "Calibration",
+                            ),
+                        )
+                    }
+
+                    CalibrationPageType.MOVEMENT -> {
+                        CalibrationExerciseMovementPage(
+                            exercise = exercise,
+                            isActive = pagerState.currentPage == pageIndex &&
+                                !pagerState.isScrollInProgress,
+                        )
+                    }
+
                     CalibrationPageType.CALIBRATION_LOAD -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
@@ -227,7 +253,7 @@ fun CalibrationLoadScreen(
                                         .fillMaxSize()
                                         .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
                                 ) {
-                                    PageCalibrationLoad(
+                                    CalibrationLoadPage(
                                         modifier = Modifier.fillMaxSize(),
                                         viewModel = viewModel,
                                         hapticsViewModel = hapticsViewModel,

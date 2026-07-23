@@ -13,8 +13,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
 import java.util.UUID
 
-object PageExercisesScrollBenchmarkFixture {
-    const val WORKOUT_NAME = "Page Exercises Scroll Benchmark"
+object ExercisesPageScrollBenchmarkFixture {
+    const val WORKOUT_NAME = "Exercises Page Scroll Benchmark"
     const val ROW_COUNT = 80
 
     fun setupWorkoutStore(context: Context) {
@@ -51,7 +51,7 @@ object PageExercisesScrollBenchmarkFixture {
         val workout = Workout(
             id = UUID.randomUUID(),
             name = WORKOUT_NAME,
-            description = "Synthetic benchmark workout for PageExercises vertical scrolling.",
+            description = "Synthetic benchmark workout for ExercisesPage vertical scrolling.",
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,

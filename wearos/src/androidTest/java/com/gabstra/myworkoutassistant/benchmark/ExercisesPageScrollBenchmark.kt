@@ -14,34 +14,34 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class PageExercisesScrollBenchmark : WearBaseE2ETest() {
+class ExercisesPageScrollBenchmark : WearBaseE2ETest() {
     private val measuredIterations = 5
     private val maxScrollSwipes = 80
-    private val bottomRowLabel = PageExercisesScrollBenchmarkFixture.ROW_COUNT.toString()
+    private val bottomRowLabel = ExercisesPageScrollBenchmarkFixture.ROW_COUNT.toString()
 
     override fun prepareAppStateBeforeLaunch() {
-        PageExercisesScrollBenchmarkFixture.setupWorkoutStore(context)
+        ExercisesPageScrollBenchmarkFixture.setupWorkoutStore(context)
     }
 
     @Test
-    fun pageExercisesScrollToBottomBenchmark() {
+    fun exercisesPageScrollToBottomBenchmark() {
         val workoutDriver = createWorkoutDriver()
-        startWorkout(PageExercisesScrollBenchmarkFixture.WORKOUT_NAME)
+        startWorkout(ExercisesPageScrollBenchmarkFixture.WORKOUT_NAME)
 
         val onExercisesPage = workoutDriver.navigateToExercisesPage()
         require(onExercisesPage) { "Exercises page did not become visible for benchmark" }
 
-        require(waitForRowSettled("1")) { "Top PageExercises row was not visible before benchmark" }
+        require(waitForRowSettled("1")) { "Top ExercisesPage row was not visible before benchmark" }
 
         scrollToRowSettled(bottomRowLabel, ScrollGesture.UP)
         scrollToRowSettled("1", ScrollGesture.DOWN)
 
-        val measurements = mutableListOf<PageExercisesScrollMeasurement>()
+        val measurements = mutableListOf<ExercisesPageScrollMeasurement>()
 
         resetFrameStats()
         repeat(measuredIterations) {
             scrollToRowSettled("1", ScrollGesture.DOWN)
-            require(isRowVisible("1")) { "Top PageExercises row was not visible before measured iteration ${it + 1}" }
+            require(isRowVisible("1")) { "Top ExercisesPage row was not visible before measured iteration ${it + 1}" }
             measurements += measureScrollToRow(bottomRowLabel)
         }
         val frameStats = collectFrameStats()
@@ -51,8 +51,8 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
         val swipes = measurements.map { it.swipes }
         val scrollMsPerSwipe = measurements.map { it.scrollMs.toDouble() / it.swipes }
         val totalMsPerSwipe = measurements.map { it.totalMs.toDouble() / it.swipes }
-        val result = PageExercisesScrollBenchmarkResult(
-            rows = PageExercisesScrollBenchmarkFixture.ROW_COUNT,
+        val result = ExercisesPageScrollBenchmarkResult(
+            rows = ExercisesPageScrollBenchmarkFixture.ROW_COUNT,
             iterations = measuredIterations,
             scrollMs = scrollMs,
             medianScrollMs = scrollMs.median(),
@@ -70,7 +70,7 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
             idleWaitMs = measurements.map { it.idleWaitMs },
             frameStats = frameStats
         )
-        emitBenchmarkMetric("BENCHMARK_METRIC PageExercisesScroll ${result.toJson()}")
+        emitBenchmarkMetric("BENCHMARK_METRIC ExercisesPageScroll ${result.toJson()}")
     }
 
     private fun emitBenchmarkMetric(metricLine: String) {
@@ -98,7 +98,7 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
         error("Row '$label' was not visible after $maxScrollSwipes ${gesture.name.lowercase()} swipes")
     }
 
-    private fun measureScrollToRow(label: String): PageExercisesScrollMeasurement {
+    private fun measureScrollToRow(label: String): ExercisesPageScrollMeasurement {
         val startedAt = SystemClock.elapsedRealtime()
         var gestureMs = 0L
         var rowLookupMs = 0L
@@ -118,7 +118,7 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
             rowLookupMs += SystemClock.elapsedRealtime() - lookupStartedAt
 
             if (rowVisible) {
-                return PageExercisesScrollMeasurement(
+                return ExercisesPageScrollMeasurement(
                     totalMs = SystemClock.elapsedRealtime() - startedAt,
                     swipes = index + 1,
                     gestureMs = gestureMs,
@@ -159,9 +159,9 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
         runShellCommand("dumpsys gfxinfo ${context.packageName} reset")
     }
 
-    private fun collectFrameStats(): PageExercisesFrameStats? {
+    private fun collectFrameStats(): ExercisesPageFrameStats? {
         val output = runShellCommand("dumpsys gfxinfo ${context.packageName}")
-        return PageExercisesFrameStats.fromGfxInfo(output)
+        return ExercisesPageFrameStats.fromGfxInfo(output)
     }
 
     private fun runShellCommand(command: String): String {
@@ -180,7 +180,7 @@ class PageExercisesScrollBenchmark : WearBaseE2ETest() {
     }
 }
 
-private data class PageExercisesScrollMeasurement(
+private data class ExercisesPageScrollMeasurement(
     val totalMs: Long,
     val swipes: Int,
     val gestureMs: Long,
@@ -190,7 +190,7 @@ private data class PageExercisesScrollMeasurement(
     val scrollMs: Long = (totalMs - rowLookupMs).coerceAtLeast(0L)
 }
 
-private data class PageExercisesScrollBenchmarkResult(
+private data class ExercisesPageScrollBenchmarkResult(
     val rows: Int,
     val iterations: Int,
     val scrollMs: List<Long>,
@@ -207,7 +207,7 @@ private data class PageExercisesScrollBenchmarkResult(
     val gestureMs: List<Long>,
     val rowLookupMs: List<Long>,
     val idleWaitMs: List<Long>,
-    val frameStats: PageExercisesFrameStats?
+    val frameStats: ExercisesPageFrameStats?
 ) {
     fun toJson(): String {
         return buildString {
@@ -234,7 +234,7 @@ private data class PageExercisesScrollBenchmarkResult(
     }
 }
 
-private data class PageExercisesFrameStats(
+private data class ExercisesPageFrameStats(
     val totalFrames: Int?,
     val jankyFrames: Int?,
     val jankyFramePercent: Double?,
@@ -258,12 +258,12 @@ private data class PageExercisesFrameStats(
     }
 
     companion object {
-        fun fromGfxInfo(output: String): PageExercisesFrameStats? {
+        fun fromGfxInfo(output: String): ExercisesPageFrameStats? {
             val totalFrames = output.findInt("Total frames rendered:\\s*(\\d+)")
             val jankyMatch = Regex("Janky frames:\\s*(\\d+)\\s*\\(([^%]+)%\\)").find(output)
             val jankyFrames = jankyMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
             val jankyPercent = jankyMatch?.groupValues?.getOrNull(2)?.trim()?.toDoubleOrNull()
-            val stats = PageExercisesFrameStats(
+            val stats = ExercisesPageFrameStats(
                 totalFrames = totalFrames,
                 jankyFrames = jankyFrames,
                 jankyFramePercent = jankyPercent,

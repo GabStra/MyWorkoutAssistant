@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +23,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
 @Composable
-fun PageMuscles(
+fun MusclesPage(
     exercise: Exercise
 ) {
     val muscleGroups = exercise.muscleGroups ?: emptySet()
@@ -83,7 +85,7 @@ fun PageMuscles(
 
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
-private fun PageMusclesPreview() {
+private fun MusclesPagePreview() {
     MaterialTheme(
         colorScheme = darkScheme,
         typography = baseline,
@@ -122,6 +124,6 @@ private fun PageMusclesPreview() {
             )
         )
         
-        PageMuscles(exercise = sampleExercise)
+        MusclesPage(exercise = sampleExercise)
     }
 }

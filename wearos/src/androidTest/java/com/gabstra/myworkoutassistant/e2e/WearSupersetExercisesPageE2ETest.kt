@@ -10,11 +10,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * E2E tests validating that PageExercises shows unified superset sets
+ * E2E tests validating that ExercisesPage shows unified superset sets
  * (A1, B1, REST, A2, B2, ...) instead of per-exercise sets when viewing a superset.
  */
 @RunWith(AndroidJUnit4::class)
-class WearSupersetPageExercisesE2ETest : WearBaseE2ETest() {
+class WearSupersetExercisesPageE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
@@ -24,12 +24,12 @@ class WearSupersetPageExercisesE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun supersetPageExercises_showsUnifiedSets() {
+    fun supersetExercisesPage_showsUnifiedSets() {
         SupersetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
         startWorkout(SupersetWorkoutStoreFixture.getWorkoutName())
 
-        // Complete first set (A1) to reach rest screen - PageExercises is reachable from Rest
+        // Complete first set (A1) to reach rest screen - ExercisesPage is reachable from Rest
         workoutDriver.completeCurrentSet()
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
 
@@ -48,17 +48,17 @@ class WearSupersetPageExercisesE2ETest : WearBaseE2ETest() {
         // than asserting raw weight text rendering.
         val supersetA1Found = workoutDriver.findWithScrollFallback(By.desc("A1")) != null
         require(supersetA1Found) {
-            "Set identifier A1 not visible - PageExercises should show unified superset sets"
+            "Set identifier A1 not visible - ExercisesPage should show unified superset sets"
         }
 
         val supersetB1Found = workoutDriver.findWithScrollFallback(By.desc("B1")) != null
         require(supersetB1Found) {
-            "Set identifier B1 not visible - PageExercises should show unified superset sets (A1, B1, ...)"
+            "Set identifier B1 not visible - ExercisesPage should show unified superset sets (A1, B1, ...)"
         }
 
         val restRowFound = workoutDriver.findWithScrollFallback(By.textContains("REST")) != null
         require(restRowFound) {
-            "REST row not visible - unified superset PageExercises should include rest states"
+            "REST row not visible - unified superset ExercisesPage should include rest states"
         }
     }
 }

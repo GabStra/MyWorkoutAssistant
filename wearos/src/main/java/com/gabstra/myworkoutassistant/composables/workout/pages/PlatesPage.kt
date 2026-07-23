@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
@@ -456,7 +458,7 @@ internal fun resolvePlateDisplayFrame(
 
 @SuppressLint("DefaultLocale")
 @Composable
-fun PagePlates(
+fun PlatesPage(
     updatedState: WorkoutState.Set,
     equipment: WeightLoadedEquipment?,
     hapticsViewModel: HapticsViewModel,
@@ -478,7 +480,7 @@ fun PagePlates(
         return
     }
 
-    PagePlatesContent(
+    PlatesPageContent(
         updatedState = updatedState,
         equipment = equipment,
         hapticsViewModel = hapticsViewModel,
@@ -488,7 +490,7 @@ fun PagePlates(
 
 @SuppressLint("DefaultLocale")
 @Composable
-private fun PagePlatesContent(
+private fun PlatesPageContent(
     updatedState: WorkoutState.Set,
     equipment: WeightLoadedEquipment?,
     hapticsViewModel: HapticsViewModel? = null,
@@ -913,7 +915,7 @@ private fun BarbellVisualization(
     platesBeforeCurrentStep: List<Double>? = null, // Plates state before current step (for REMOVE highlighting)
     previousPlates: List<Double>? = null, // Initial previous plate configuration used as the color baseline
     currentStepIndex: Int = -1, // Current step index (-1 idle / between loops, 0..last while stepping)
-    isFinalState: Boolean, // Set only by PagePlates animation logic (settled / preview / no-op), not derived here
+    isFinalState: Boolean, // Set only by PlatesPage animation logic (settled / preview / no-op), not derived here
     viewportWidth: Dp? = null, // When set, bar and plates use this width; labels use full canvas (content) width
 ) {
 
@@ -1245,7 +1247,7 @@ private data class PlateData(
 
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
-private fun PagePlatesPreview() {
+private fun PlatesPagePreview() {
     val previewBarbell = Barbell(
         id = UUID.randomUUID(),
         name = "Preview Barbell",
@@ -1312,7 +1314,7 @@ private fun PagePlatesPreview() {
     )
 
     MyWorkoutAssistantTheme {
-        PagePlatesContent(
+        PlatesPageContent(
             updatedState = previewState,
             equipment = previewBarbell,
             animateSteps = false

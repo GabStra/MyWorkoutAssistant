@@ -21,8 +21,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.wear.compose.material3.CircularProgressIndicator
 import com.gabstra.myworkoutassistant.composables.LoadingText
-import com.gabstra.myworkoutassistant.composables.PageExercises
-import com.gabstra.myworkoutassistant.composables.buildPageExercisesItems
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.buildExercisesPageItems
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -63,7 +64,7 @@ fun WorkoutExercisesScreen(
     }
 
     val pageItems = remember(workoutState, previewViewModel.allWorkoutStates.size) {
-        buildPageExercisesItems(previewViewModel)
+        buildExercisesPageItems(previewViewModel)
     }
     LaunchedEffect(pageItems) {
         if (selectedExercise == null) {
@@ -73,15 +74,7 @@ fun WorkoutExercisesScreen(
 
     val exercise = selectedExercise
     if (isHydrating || exercise == null || pageItems.isEmpty()) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = "Loading exercises")
-        }
+        FullScreenLoadingIndicator(text = "Loading exercises")
         return
     }
 
@@ -89,7 +82,7 @@ fun WorkoutExercisesScreen(
         ?: previewViewModel.allWorkoutStates.firstOrNull()
         ?: return
     var selectedRestPageId by remember(selectedWorkoutId) { mutableStateOf<java.util.UUID?>(null) }
-    PageExercises(
+    ExercisesPage(
         selectedExercise = exercise,
         selectedRestPageId = selectedRestPageId,
         workoutState = previewWorkoutState,

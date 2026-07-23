@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -41,7 +43,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PageCalibrationLoad(
+fun CalibrationLoadPage(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
@@ -221,23 +223,33 @@ fun PageCalibrationLoad(
                 onPlusLongPress = { onPlusClick() },
                 onCloseClick = { onClosePicker() }
             ) {
-                ScalableText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(
-                            onClick = {
-                                updateInteractionTime()
-                            },
-                            onLongClick = {
-                                onClosePicker()
-                            },
-                            onDoubleClick = {
-                            }
-                        ),
-                    text = weightText,
-                    style = itemStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    exerciseTitleComposable()
+                    SetValueSection(
+                        label = "WEIGHT (KG)",
+                        headerStyle = headerStyle,
+                    ) {
+                        ScalableText(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = {
+                                        updateInteractionTime()
+                                    },
+                                    onLongClick = {
+                                        onClosePicker()
+                                    },
+                                    onDoubleClick = {},
+                                ),
+                            text = weightText,
+                            style = itemStyle,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                }
             }
         } else {
             // Initial state: show exercise info, header, and two-column layout (weight + reps)

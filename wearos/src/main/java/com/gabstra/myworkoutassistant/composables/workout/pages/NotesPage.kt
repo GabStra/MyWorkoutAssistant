@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.workoutPagerTitleTextStyle
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +17,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
 @Composable
-fun PageNotes(notes: String) {
+fun NotesPage(notes: String) {
     val scrollState = rememberScrollState()
     Box(
         modifier = Modifier

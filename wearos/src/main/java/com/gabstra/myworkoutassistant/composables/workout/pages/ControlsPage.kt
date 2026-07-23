@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -61,7 +63,7 @@ import kotlinx.coroutines.launch
 
 
 @Composable
-fun PageButtons(
+fun ControlsPage(
     updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
@@ -173,7 +175,7 @@ fun PageButtons(
         ) {
             if (showNavigationSection) {
                 item {
-                    PageButtonsSectionHeader(
+                    ControlsPageSectionHeader(
                         text = "Navigation",
                         modifier = Modifier
                             .fillMaxWidth()
@@ -250,7 +252,7 @@ fun PageButtons(
             }
             if (showExerciseSection) {
                 item {
-                    PageButtonsSectionHeader(
+                    ControlsPageSectionHeader(
                         text = "Exercise",
                         modifier = Modifier
                             .fillMaxWidth()
@@ -340,7 +342,7 @@ fun PageButtons(
                 }
             }
             item {
-                PageButtonsSectionHeader(
+                ControlsPageSectionHeader(
                     text = "Preferences",
                     modifier = Modifier
                         .fillMaxWidth()
@@ -354,6 +356,14 @@ fun PageButtons(
             }
             item {
                 val alertSoundEnabled = screenState.isAlertSoundEnabled
+                val updateAlertSoundEnabled: (Boolean) -> Unit = { enabled ->
+                    viewModel.setAlertSoundEnabled(enabled)
+                    if (enabled) {
+                        hapticsViewModel.doHardVibrationWithBeep()
+                    } else {
+                        hapticsViewModel.doGentleVibration()
+                    }
+                }
 
                 FilledTonalButton(
                     modifier = Modifier
@@ -367,8 +377,7 @@ fun PageButtons(
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.setAlertSoundEnabled(!alertSoundEnabled)
+                        updateAlertSoundEnabled(!alertSoundEnabled)
                     }
                 ) {
                     Row(
@@ -398,10 +407,7 @@ fun PageButtons(
                         }
                         Switch(
                             checked = alertSoundEnabled,
-                            onCheckedChange = {
-                                hapticsViewModel.doGentleVibration()
-                                viewModel.setAlertSoundEnabled(it)
-                            },
+                            onCheckedChange = updateAlertSoundEnabled,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -490,7 +496,7 @@ fun PageButtons(
                 Spacer(modifier = Modifier.height(10.dp))
             }
             item {
-                PageButtonsSectionHeader(
+                ControlsPageSectionHeader(
                     text = "Session",
                     modifier = Modifier
                         .fillMaxWidth()
@@ -669,7 +675,7 @@ fun PageButtons(
 }
 
 @Composable
-private fun PageButtonsSectionHeader(
+private fun ControlsPageSectionHeader(
     text: String,
     modifier: Modifier = Modifier
 ) {

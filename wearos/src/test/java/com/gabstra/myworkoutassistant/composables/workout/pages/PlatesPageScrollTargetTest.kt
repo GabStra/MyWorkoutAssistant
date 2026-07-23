@@ -1,9 +1,9 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class PagePlatesScrollTargetTest {
+class PlatesPageScrollTargetTest {
     @Test
     fun `keeps the plate stack centered when labels already fit`() {
         val target = resolveInitialBarbellScrollTargetPx(

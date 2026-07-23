@@ -1,4 +1,7 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.workoutPagerTitleTextStyle
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,7 +65,7 @@ private fun TitledLinesSectionItem(
  * Use for content like "Equipment: Barbell" and "Accessories: Bench, Rings".
  */
 @Composable
-fun PageTitledLines(
+fun TitledLinesPage(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {

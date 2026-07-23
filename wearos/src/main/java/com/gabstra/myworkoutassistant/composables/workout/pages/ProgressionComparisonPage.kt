@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -113,7 +115,7 @@ fun PlaceholderSetRow(
 }
 
 @Composable
-fun PageProgressionComparison(
+fun ProgressionComparisonPage(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     exercise: Exercise,

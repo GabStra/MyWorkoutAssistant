@@ -50,11 +50,11 @@ import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageExercises
-import com.gabstra.myworkoutassistant.composables.PageNotes
-import com.gabstra.myworkoutassistant.composables.PagePlates
-import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.NotesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
 import com.gabstra.myworkoutassistant.composables.SetTableRow
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.composables.TimeViewer
@@ -543,14 +543,14 @@ fun RestScreen(
             when (horizontalPageTypes[pageIndex]) {
                 RestHorizontalPage.BUTTONS -> {
                     if (setStateForPages != null) {
-                        PageButtons(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
+                        ControlsPage(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
                     }
                 }
 
                 RestHorizontalPage.PLATES -> {
                     if (setStateForPages != null && equipment != null) {
                         Box(modifier = pageModifier) {
-                            PagePlates(setStateForPages, equipment, hapticsViewModel, viewModel)
+                            PlatesPage(setStateForPages, equipment, hapticsViewModel, viewModel)
                         }
                     }
                 }
@@ -581,7 +581,7 @@ fun RestScreen(
                 RestHorizontalPage.PROGRESSION_COMPARISON -> {
                     if (setStateForPages != null) {
                         Box(modifier = pageModifier) {
-                            PageProgressionComparison(
+                            ProgressionComparisonPage(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exercise = exerciseForPages,
@@ -595,13 +595,13 @@ fun RestScreen(
 
                 RestHorizontalPage.NOTES -> {
                     Box(modifier = pageModifier) {
-                        PageNotes(exerciseForPages.notes)
+                        NotesPage(exerciseForPages.notes)
                     }
                 }
 
                 RestHorizontalPage.EXERCISES -> {
                     if (nextState != null) {
-                        PageExercises(
+                        ExercisesPage(
                             selectedExercise = selectedExercise,
                             selectedRestPageId = selectedRestPageId,
                             workoutState = state,

@@ -14,7 +14,7 @@ import java.util.UUID
 
 /**
  * Fixture for a workout with a superset (Exercise A + Exercise B, 2 rounds each).
- * Used to validate that PageExercises shows unified sets (A1, B1, REST, A2, B2)
+ * Used to validate that ExercisesPage shows unified sets (A1, B1, REST, A2, B2)
  * instead of per-exercise sets.
  */
 object SupersetWorkoutStoreFixture {

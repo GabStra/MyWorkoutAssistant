@@ -3,7 +3,7 @@ package com.gabstra.myworkoutassistant.e2e
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
-import com.gabstra.myworkoutassistant.composables.PageExercisesRestSemantics
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPageRestSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.ExerciseToExerciseRestWorkoutStoreFixture
 import org.junit.Before
@@ -11,7 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class WearExerciseRestPageExercisesE2ETest : WearBaseE2ETest() {
+class WearExerciseRestExercisesPageE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
@@ -21,7 +21,7 @@ class WearExerciseRestPageExercisesE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun pageExercises_showsStandaloneRestPageBetweenExercises() {
+    fun exercisesPage_showsStandaloneRestPageBetweenExercises() {
         ExerciseToExerciseRestWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
         startWorkout(ExerciseToExerciseRestWorkoutStoreFixture.getWorkoutName())
@@ -36,25 +36,19 @@ class WearExerciseRestPageExercisesE2ETest : WearBaseE2ETest() {
         require(onExercisesPage) { "Exercises page did not appear from inter-exercise rest" }
 
         val restDurationVisible = device.wait(
-            Until.hasObject(By.descContains(PageExercisesRestSemantics.restDurationRowDescription(""))),
+            Until.hasObject(By.descContains(ExercisesPageRestSemantics.restDurationRowDescription(""))),
             3_000
         )
-        require(restDurationVisible) { "Rest duration row semantics were not visible on PageExercises" }
+        require(restDurationVisible) { "Rest duration row semantics were not visible on ExercisesPage" }
 
-        val transitionVisible = device.wait(
-            Until.hasObject(By.desc(PageExercisesRestSemantics.BetweenExercisesTransitionDescription)),
+        val upNextVisible = device.wait(
+            Until.hasObject(By.text("UP NEXT")),
             3_000
         )
-        require(transitionVisible) { "Between-exercises transition arrow was not visible on PageExercises" }
-
-        val previousExerciseVisible = device.wait(
-            Until.hasObject(By.desc(PageExercisesRestSemantics.previousExerciseDescription("Bench Press"))),
-            3_000
-        )
-        require(previousExerciseVisible) { "Previous exercise semantics were not visible on inter-exercise rest page" }
+        require(upNextVisible) { "UP NEXT label was not visible on the inter-exercise rest page" }
 
         val nextExerciseVisible = device.wait(
-            Until.hasObject(By.desc(PageExercisesRestSemantics.nextExerciseDescription("Barbell Row"))),
+            Until.hasObject(By.desc(ExercisesPageRestSemantics.nextExerciseDescription("Barbell Row"))),
             3_000
         )
         require(nextExerciseVisible) { "Next exercise semantics were not visible on inter-exercise rest page" }

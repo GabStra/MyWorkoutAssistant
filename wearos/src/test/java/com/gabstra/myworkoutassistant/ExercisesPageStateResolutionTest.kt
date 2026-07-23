@@ -2,12 +2,12 @@ package com.gabstra.myworkoutassistant
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.AnnotatedString
-import com.gabstra.myworkoutassistant.composables.PageExercisesItem
-import com.gabstra.myworkoutassistant.composables.buildPageExercisesItems
-import com.gabstra.myworkoutassistant.composables.resolvePageExercisesActiveState
-import com.gabstra.myworkoutassistant.composables.resolvePageExercisesItemIndex
-import com.gabstra.myworkoutassistant.composables.resolvePageExercisesDisplayCounter
-import com.gabstra.myworkoutassistant.composables.resolvePageExercisesCurrentItemIndex
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPageItem
+import com.gabstra.myworkoutassistant.composables.workout.pages.buildExercisesPageItems
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageActiveState
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageCurrentItemIndex
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageDisplayCounter
+import com.gabstra.myworkoutassistant.composables.workout.pages.resolveExercisesPageItemIndex
 import com.gabstra.myworkoutassistant.shared.workout.display.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.screens.setCurrentWorkoutState
@@ -31,14 +31,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
 
-class PageExercisesStateResolutionTest {
+class ExercisesPageStateResolutionTest {
 
     @Test
     fun `intra exercise rest state resolves to next executable state for exercises page`() {
         val upcomingSetState = createSetState()
         val restState = createRestState(nextState = upcomingSetState)
 
-        val resolvedState = resolvePageExercisesActiveState(workoutState = restState)
+        val resolvedState = resolveExercisesPageActiveState(workoutState = restState)
 
         assertSame(upcomingSetState, resolvedState)
     }
@@ -48,7 +48,7 @@ class PageExercisesStateResolutionTest {
         val fallbackSetState = createSetState()
         val restState = createRestState(nextState = null)
 
-        val resolvedState = resolvePageExercisesActiveState(
+        val resolvedState = resolveExercisesPageActiveState(
             workoutState = restState,
             fallbackSetState = fallbackSetState
         )
@@ -64,7 +64,7 @@ class PageExercisesStateResolutionTest {
             nextState = upcomingSetState
         )
 
-        val resolvedState = resolvePageExercisesActiveState(workoutState = interExerciseRestState)
+        val resolvedState = resolveExercisesPageActiveState(workoutState = interExerciseRestState)
 
         assertSame(interExerciseRestState, resolvedState)
     }
@@ -82,13 +82,13 @@ class PageExercisesStateResolutionTest {
     fun `non rest state remains unchanged`() {
         val setState = createSetState()
 
-        val resolvedState = resolvePageExercisesActiveState(workoutState = setState)
+        val resolvedState = resolveExercisesPageActiveState(workoutState = setState)
 
         assertSame(setState, resolvedState)
     }
 
     @Test
-    fun `page exercises inserts rest page between exercise containers`() {
+    fun `exercises page inserts rest page between exercise containers`() {
         val firstExercise = createExercise(name = "Bench Press")
         val secondExercise = createExercise(name = "Row")
         val firstSet = createSetState(exerciseId = firstExercise.id)
@@ -114,13 +114,13 @@ class PageExercisesStateResolutionTest {
             currentState = restState
         )
 
-        val items = buildPageExercisesItems(viewModel)
+        val items = buildExercisesPageItems(viewModel)
 
         assertEquals(3, items.size)
-        assertEquals(PageExercisesItem.ExercisePage(firstExercise), items[0])
-        assertTrue(items[1] is PageExercisesItem.RestPage)
-        assertEquals(PageExercisesItem.ExercisePage(secondExercise), items[2])
-        val restPage = items[1] as PageExercisesItem.RestPage
+        assertEquals(ExercisesPageItem.ExercisePage(firstExercise), items[0])
+        assertTrue(items[1] is ExercisesPageItem.RestPage)
+        assertEquals(ExercisesPageItem.ExercisePage(secondExercise), items[2])
+        val restPage = items[1] as ExercisesPageItem.RestPage
         assertEquals(AnnotatedString(firstExercise.name), restPage.previousDisplayName)
         assertEquals(AnnotatedString(secondExercise.name), restPage.nextDisplayName)
     }
@@ -151,9 +151,9 @@ class PageExercisesStateResolutionTest {
             ),
             currentState = restState
         )
-        val items = buildPageExercisesItems(viewModel)
+        val items = buildExercisesPageItems(viewModel)
 
-        val index = resolvePageExercisesCurrentItemIndex(
+        val index = resolveExercisesPageCurrentItemIndex(
             items = items,
             workoutState = restState,
             fallbackSetState = secondSet,
@@ -189,9 +189,9 @@ class PageExercisesStateResolutionTest {
             ),
             currentState = restState
         )
-        val items = buildPageExercisesItems(viewModel)
+        val items = buildExercisesPageItems(viewModel)
 
-        val index = resolvePageExercisesItemIndex(
+        val index = resolveExercisesPageItemIndex(
             items = items,
             selectedExercise = secondExercise,
             viewModel = viewModel
@@ -226,9 +226,9 @@ class PageExercisesStateResolutionTest {
             ),
             currentState = restState
         )
-        val items = buildPageExercisesItems(viewModel)
+        val items = buildExercisesPageItems(viewModel)
 
-        val counter = resolvePageExercisesDisplayCounter(
+        val counter = resolveExercisesPageDisplayCounter(
             items = items,
             selectedPageIndex = 1
         )
@@ -270,8 +270,8 @@ class PageExercisesStateResolutionTest {
             exercisesBySupersetId = mapOf(supersetId to listOf(supersetFirst, supersetSecond))
         )
 
-        val items = buildPageExercisesItems(viewModel)
-        val restPage = items[1] as PageExercisesItem.RestPage
+        val items = buildExercisesPageItems(viewModel)
+        val restPage = items[1] as ExercisesPageItem.RestPage
 
         assertEquals(AnnotatedString(firstExercise.name), restPage.previousDisplayName)
         assertEquals(

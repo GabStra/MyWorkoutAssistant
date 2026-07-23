@@ -35,7 +35,7 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
-import com.gabstra.myworkoutassistant.composables.ExerciseAnimationPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExerciseAnimationPage
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOption
 import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOverlay
@@ -43,14 +43,14 @@ import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageExercises
-import com.gabstra.myworkoutassistant.composables.PageMuscles
-import com.gabstra.myworkoutassistant.composables.PageNotes
-import com.gabstra.myworkoutassistant.composables.PagePlates
-import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
-import com.gabstra.myworkoutassistant.composables.PageTitledLines
-import com.gabstra.myworkoutassistant.composables.TitledLinesSection
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.MusclesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.NotesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
@@ -361,7 +361,7 @@ fun ExerciseScreen(
                     .clipToBounds()
                 when (pageTypes[pageIndex]) {
                     ExerciseHorizontalPage.BUTTONS -> {
-                        PageButtons(
+                        ControlsPage(
                             updatedState = state,
                             viewModel = viewModel,
                             hapticsViewModel = hapticsViewModel,
@@ -377,7 +377,7 @@ fun ExerciseScreen(
                     ExerciseHorizontalPage.PLATES -> {
                         if (equipment != null) {
                             Box(modifier = pageModifier) {
-                                PagePlates(state, equipment, hapticsViewModel, viewModel)
+                                PlatesPage(state, equipment, hapticsViewModel, viewModel)
                             }
                         }
                     }
@@ -455,12 +455,12 @@ fun ExerciseScreen(
                                 plateauReason = plateauReason,
                             )
                         }
-                        PageTitledLines(modifier = Modifier.fillMaxSize(), sections = infoSections)
+                        TitledLinesPage(modifier = Modifier.fillMaxSize(), sections = infoSections)
                     }
 
                     ExerciseHorizontalPage.MUSCLES -> {
                         Box(modifier = pageModifier) {
-                            PageMuscles(exercise = exercise)
+                            MusclesPage(exercise = exercise)
                         }
                     }
 
@@ -469,7 +469,7 @@ fun ExerciseScreen(
                             horizontalPagerState.currentPage == progressionPageIndex &&
                             !horizontalPagerState.isScrollInProgress
                         Box(modifier = pageModifier) {
-                            PageProgressionComparison(
+                            ProgressionComparisonPage(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exercise = exercise,
@@ -481,12 +481,12 @@ fun ExerciseScreen(
 
                     ExerciseHorizontalPage.NOTES -> {
                         Box(modifier = pageModifier) {
-                            PageNotes(exercise.notes)
+                            NotesPage(exercise.notes)
                         }
                     }
 
                     ExerciseHorizontalPage.EXERCISES -> {
-                        PageExercises(
+                        ExercisesPage(
                             selectedExercise = selectedExercise,
                             selectedRestPageId = selectedRestPageId,
                             workoutState = state,

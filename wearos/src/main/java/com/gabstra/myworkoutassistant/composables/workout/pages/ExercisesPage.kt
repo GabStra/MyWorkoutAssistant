@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -95,19 +97,19 @@ private fun getRepresentativeExercise(viewModel: AppViewModel, exerciseOrSuperse
     }
 }
 
-internal sealed class PageExercisesItem {
+internal sealed class ExercisesPageItem {
     abstract val representativeExercise: Exercise
 
     data class ExercisePage(
         val exercise: Exercise,
-    ) : PageExercisesItem() {
+    ) : ExercisesPageItem() {
         override val representativeExercise: Exercise = exercise
     }
 
     data class SupersetPage(
         val supersetId: UUID,
         val exercises: List<Exercise>,
-    ) : PageExercisesItem() {
+    ) : ExercisesPageItem() {
         override val representativeExercise: Exercise = exercises.first()
     }
 
@@ -116,42 +118,42 @@ internal sealed class PageExercisesItem {
         val previousDisplayName: AnnotatedString,
         val nextDisplayName: AnnotatedString,
         override val representativeExercise: Exercise,
-    ) : PageExercisesItem()
+    ) : ExercisesPageItem()
 }
 
-private data class PageExercisesStateMatchKey(
+private data class ExercisesPageStateMatchKey(
     val type: String,
     val exerciseId: UUID?,
     val setLikeId: UUID?,
     val order: UInt?,
 )
 
-private fun buildPageExercisesStateMatchKey(state: WorkoutState?): PageExercisesStateMatchKey? = when (state) {
-    is WorkoutState.Set -> PageExercisesStateMatchKey(
+private fun buildExercisesPageStateMatchKey(state: WorkoutState?): ExercisesPageStateMatchKey? = when (state) {
+    is WorkoutState.Set -> ExercisesPageStateMatchKey(
         type = "set",
         exerciseId = state.exerciseId,
         setLikeId = state.set.id,
         order = state.setIndex
     )
-    is WorkoutState.Rest -> PageExercisesStateMatchKey(
+    is WorkoutState.Rest -> ExercisesPageStateMatchKey(
         type = "rest",
         exerciseId = state.exerciseId,
         setLikeId = state.set.id,
         order = state.order
     )
-    is WorkoutState.CalibrationLoadSelection -> PageExercisesStateMatchKey(
+    is WorkoutState.CalibrationLoadSelection -> ExercisesPageStateMatchKey(
         type = "calibration_load",
         exerciseId = state.exerciseId,
         setLikeId = state.calibrationSet.id,
         order = state.setIndex
     )
-    is WorkoutState.CalibrationRIRSelection -> PageExercisesStateMatchKey(
+    is WorkoutState.CalibrationRIRSelection -> ExercisesPageStateMatchKey(
         type = "calibration_rir",
         exerciseId = state.exerciseId,
         setLikeId = state.calibrationSet.id,
         order = state.setIndex
     )
-    is WorkoutState.AutoRegulationRIRSelection -> PageExercisesStateMatchKey(
+    is WorkoutState.AutoRegulationRIRSelection -> ExercisesPageStateMatchKey(
         type = "auto_regulation_rir",
         exerciseId = state.exerciseId,
         setLikeId = state.workSet.id,
@@ -160,7 +162,7 @@ private fun buildPageExercisesStateMatchKey(state: WorkoutState?): PageExercises
     else -> null
 }
 
-internal fun resolvePageExercisesActiveState(
+internal fun resolveExercisesPageActiveState(
     workoutState: WorkoutState?,
     fallbackSetState: WorkoutState.Set? = null,
 ): WorkoutState? {
@@ -224,20 +226,20 @@ private fun resolveSequenceItemDisplayName(
     }
 }
 
-internal fun buildPageExercisesItems(viewModel: AppViewModel): List<PageExercisesItem> {
+internal fun buildExercisesPageItems(viewModel: AppViewModel): List<ExercisesPageItem> {
     val sequenceItems = viewModel.getWorkoutSequenceItems()
     return sequenceItems.mapIndexedNotNull { index, item ->
         when (item) {
             is WorkoutStateSequenceItem.Container -> {
                 when (val container = item.container) {
                     is WorkoutStateContainer.ExerciseState -> {
-                        viewModel.exercisesById[container.exerciseId]?.let(PageExercisesItem::ExercisePage)
+                        viewModel.exercisesById[container.exerciseId]?.let(ExercisesPageItem::ExercisePage)
                     }
                     is WorkoutStateContainer.SupersetState -> {
                         viewModel.exercisesBySupersetId[container.supersetId]
                             ?.takeIf { it.isNotEmpty() }
                             ?.let { exercises ->
-                                PageExercisesItem.SupersetPage(
+                                ExercisesPageItem.SupersetPage(
                                     supersetId = container.supersetId,
                                     exercises = exercises
                                 )
@@ -262,7 +264,7 @@ internal fun buildPageExercisesItems(viewModel: AppViewModel): List<PageExercise
                     ?.let { resolveSequenceItemDisplayName(viewModel, it) }
                     ?: AnnotatedString(nextExercise.name)
 
-                PageExercisesItem.RestPage(
+                ExercisesPageItem.RestPage(
                     restState = item.rest,
                     previousDisplayName = previousDisplayName,
                     nextDisplayName = nextDisplayName,
@@ -273,8 +275,8 @@ internal fun buildPageExercisesItems(viewModel: AppViewModel): List<PageExercise
     }
 }
 
-internal fun resolvePageExercisesItemIndex(
-    items: List<PageExercisesItem>,
+internal fun resolveExercisesPageItemIndex(
+    items: List<ExercisesPageItem>,
     selectedExercise: Exercise,
     viewModel: AppViewModel,
 ): Int {
@@ -282,40 +284,40 @@ internal fun resolvePageExercisesItemIndex(
 
     val directExerciseOrSupersetIndex = items.indexOfFirst { page ->
         when (page) {
-            is PageExercisesItem.ExercisePage -> page.exercise.id == selectedExercise.id
-            is PageExercisesItem.SupersetPage -> page.supersetId == selectedExerciseOrSupersetId
-            is PageExercisesItem.RestPage -> false
+            is ExercisesPageItem.ExercisePage -> page.exercise.id == selectedExercise.id
+            is ExercisesPageItem.SupersetPage -> page.supersetId == selectedExerciseOrSupersetId
+            is ExercisesPageItem.RestPage -> false
         }
     }
     if (directExerciseOrSupersetIndex >= 0) return directExerciseOrSupersetIndex
 
     val restIndex = items.indexOfFirst { page ->
-        page is PageExercisesItem.RestPage && page.representativeExercise.id == selectedExercise.id
+        page is ExercisesPageItem.RestPage && page.representativeExercise.id == selectedExercise.id
     }
     return restIndex.takeIf { it >= 0 } ?: 0
 }
 
-internal fun resolvePageExercisesDisplayCounter(
-    items: List<PageExercisesItem>,
+internal fun resolveExercisesPageDisplayCounter(
+    items: List<ExercisesPageItem>,
     selectedPageIndex: Int,
 ): String? {
     if (items.isEmpty() || selectedPageIndex !in items.indices) return null
 
     val countedPageIndices = items.mapIndexedNotNull { index, item ->
-        index.takeIf { item !is PageExercisesItem.RestPage }
+        index.takeIf { item !is ExercisesPageItem.RestPage }
     }
     if (countedPageIndices.size <= 1) return null
 
     val selectedItem = items[selectedPageIndex]
     val displayIndex = when (selectedItem) {
-        is PageExercisesItem.RestPage -> {
+        is ExercisesPageItem.RestPage -> {
             countedPageIndices.indexOfFirst { index ->
                 when (val item = items[index]) {
-                    is PageExercisesItem.ExercisePage ->
+                    is ExercisesPageItem.ExercisePage ->
                         item.exercise.id == selectedItem.representativeExercise.id
-                    is PageExercisesItem.SupersetPage ->
+                    is ExercisesPageItem.SupersetPage ->
                         item.exercises.any { exercise -> exercise.id == selectedItem.representativeExercise.id }
-                    is PageExercisesItem.RestPage -> false
+                    is ExercisesPageItem.RestPage -> false
                 }
             }
         }
@@ -325,8 +327,8 @@ internal fun resolvePageExercisesDisplayCounter(
     return "${displayIndex + 1}/${countedPageIndices.size}"
 }
 
-internal fun resolvePageExercisesCurrentItemIndex(
-    items: List<PageExercisesItem>,
+internal fun resolveExercisesPageCurrentItemIndex(
+    items: List<ExercisesPageItem>,
     workoutState: WorkoutState?,
     fallbackSetState: WorkoutState.Set? = null,
     viewModel: AppViewModel,
@@ -334,12 +336,12 @@ internal fun resolvePageExercisesCurrentItemIndex(
     if (items.isEmpty()) return -1
     if (workoutState is WorkoutState.Rest && workoutState.exerciseId == null) {
         val restIndex = items.indexOfFirst { page ->
-            page is PageExercisesItem.RestPage && page.restState == workoutState
+            page is ExercisesPageItem.RestPage && page.restState == workoutState
         }
         if (restIndex >= 0) return restIndex
     }
 
-    val activeState = resolvePageExercisesActiveState(workoutState, fallbackSetState)
+    val activeState = resolveExercisesPageActiveState(workoutState, fallbackSetState)
     val activeExerciseId = when (activeState) {
         is WorkoutState.Set -> activeState.exerciseId
         is WorkoutState.CalibrationLoadSelection -> activeState.exerciseId
@@ -351,19 +353,19 @@ internal fun resolvePageExercisesCurrentItemIndex(
     val activeExerciseOrSupersetId = resolveExerciseOrSupersetId(viewModel, activeExerciseId)
     return items.indexOfFirst { page ->
         when (page) {
-            is PageExercisesItem.ExercisePage -> page.exercise.id == activeExerciseId
-            is PageExercisesItem.SupersetPage -> page.supersetId == activeExerciseOrSupersetId
-            is PageExercisesItem.RestPage -> false
+            is ExercisesPageItem.ExercisePage -> page.exercise.id == activeExerciseId
+            is ExercisesPageItem.SupersetPage -> page.supersetId == activeExerciseOrSupersetId
+            is ExercisesPageItem.RestPage -> false
         }
     }.takeIf { it >= 0 } ?: 0
 }
 
 private fun resolvePageCurrentSet(
-    pageItem: PageExercisesItem,
+    pageItem: ExercisesPageItem,
     activeWorkoutState: WorkoutState?,
 ): com.gabstra.myworkoutassistant.shared.sets.Set? {
     return when (pageItem) {
-        is PageExercisesItem.RestPage -> when (activeWorkoutState) {
+        is ExercisesPageItem.RestPage -> when (activeWorkoutState) {
             is WorkoutState.Set -> activeWorkoutState.set
             is WorkoutState.CalibrationLoadSelection -> activeWorkoutState.calibrationSet
             is WorkoutState.CalibrationRIRSelection -> activeWorkoutState.calibrationSet
@@ -396,11 +398,11 @@ private fun buildSupersetDisplayName(exercises: List<Exercise>): AnnotatedString
 
 private fun shouldUseWeightHeader(
     viewModel: AppViewModel,
-    pageItem: PageExercisesItem,
+    pageItem: ExercisesPageItem,
 ): Boolean {
-    if (pageItem is PageExercisesItem.RestPage) return false
+    if (pageItem is ExercisesPageItem.RestPage) return false
 
-    val supersetId = (pageItem as? PageExercisesItem.SupersetPage)?.supersetId
+    val supersetId = (pageItem as? ExercisesPageItem.SupersetPage)?.supersetId
         ?: viewModel.supersetIdByExerciseId[pageItem.representativeExercise.id]
 
     if (supersetId == null) {
@@ -418,7 +420,7 @@ private fun shouldUseWeightHeader(
 @Composable
 private fun ExercisePageFixedHeader(
     modifier: Modifier = Modifier,
-    pageItem: PageExercisesItem,
+    pageItem: ExercisesPageItem,
     displayCounter: String?,
     useWeightHeader: Boolean,
     canSelectPrevious: Boolean,
@@ -433,28 +435,28 @@ private fun ExercisePageFixedHeader(
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        PageExercisesNavigationHeader(
+        ExercisesPageNavigationHeader(
             canSelectPrevious = canSelectPrevious,
             canSelectNext = canSelectNext,
             onSelectPrevious = onSelectPrevious,
             onSelectNext = onSelectNext,
         ) {
             when (pageItem) {
-                is PageExercisesItem.SupersetPage -> ExerciseNameText(
+                is ExercisesPageItem.SupersetPage -> ExerciseNameText(
                     text = buildSupersetDisplayName(pageItem.exercises),
                     modifier = Modifier
                         .fillMaxWidth(),
                     style = titleStyle,
                     textAlign = TextAlign.Center
                 )
-                is PageExercisesItem.ExercisePage -> ExerciseNameText(
+                is ExercisesPageItem.ExercisePage -> ExerciseNameText(
                     text = AnnotatedString(pageItem.exercise.name),
                     modifier = Modifier
                         .fillMaxWidth(),
                     style = titleStyle,
                     textAlign = TextAlign.Center
                 )
-                is PageExercisesItem.RestPage -> error("Rest pages use RestPageFixedHeader")
+                is ExercisesPageItem.RestPage -> error("Rest pages use RestPageFixedHeader")
             }
         }
 
@@ -463,10 +465,10 @@ private fun ExercisePageFixedHeader(
             contentAlignment = Alignment.Center
         ) {
             when (pageItem) {
-                is PageExercisesItem.SupersetPage -> {
+                is ExercisesPageItem.SupersetPage -> {
                     SupersetMetadataStrip(containerLabel = displayCounter)
                 }
-                is PageExercisesItem.ExercisePage -> {
+                is ExercisesPageItem.ExercisePage -> {
                     ExerciseMetadataStrip(
                         exerciseLabel = displayCounter,
                         supersetExerciseIndex = null,
@@ -475,7 +477,7 @@ private fun ExercisePageFixedHeader(
                         currentSideIndex = null
                     )
                 }
-                is PageExercisesItem.RestPage -> error("Rest pages use RestPageFixedHeader")
+                is ExercisesPageItem.RestPage -> error("Rest pages use RestPageFixedHeader")
             }
         }*/
 
@@ -493,7 +495,7 @@ private fun ExercisePageFixedHeader(
 @Composable
 private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
-    pageItem: PageExercisesItem.RestPage,
+    pageItem: ExercisesPageItem.RestPage,
     canSelectPrevious: Boolean,
     canSelectNext: Boolean,
     onSelectPrevious: () -> Unit,
@@ -504,7 +506,7 @@ private fun RestPageFixedHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        PageExercisesNavigationHeader(
+        ExercisesPageNavigationHeader(
             canSelectPrevious = canSelectPrevious,
             canSelectNext = canSelectNext,
             onSelectPrevious = onSelectPrevious,
@@ -522,7 +524,13 @@ private fun RestPageFixedHeader(
 
                 ExerciseNameText(
                     text = pageItem.nextDisplayName,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            contentDescription = ExercisesPageRestSemantics.nextExerciseDescription(
+                                pageItem.nextDisplayName.text
+                            )
+                        },
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center
                 )
@@ -532,7 +540,7 @@ private fun RestPageFixedHeader(
 }
 
 @Composable
-private fun PageExercisesNavigationHeader(
+private fun ExercisesPageNavigationHeader(
     canSelectPrevious: Boolean,
     canSelectNext: Boolean,
     onSelectPrevious: () -> Unit,
@@ -620,7 +628,7 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     .background(backgroundColor, shape)
                     .border(BorderStroke(1.dp, borderColor), shape)
                     .semantics {
-                        contentDescription = PageExercisesRestSemantics.restDurationRowDescription(formattedRest)
+                        contentDescription = ExercisesPageRestSemantics.restDurationRowDescription(formattedRest)
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -646,7 +654,7 @@ private fun TransformingLazyColumnScope.InvisibleListSpacer(height: Dp) {
 }
 
 @Composable
-fun PageExercises(
+fun ExercisesPage(
     selectedExercise: Exercise,
     selectedRestPageId: UUID? = null,
     workoutState: WorkoutState?,
@@ -657,10 +665,10 @@ fun PageExercises(
     onPageSelected: (Exercise, UUID?) -> Unit
 ) {
     val pageItems = remember(viewModel.allWorkoutStates.size, viewModel.supersetIdByExerciseId, viewModel.exercisesBySupersetId) {
-        buildPageExercisesItems(viewModel)
+        buildExercisesPageItems(viewModel)
     }
     val activeWorkoutState = remember(workoutState, viewModel.allWorkoutStates.size) {
-        resolvePageExercisesActiveState(
+        resolveExercisesPageActiveState(
             workoutState = workoutState,
             fallbackSetState = viewModel.getFirstSetStateAfterCurrent()
         )
@@ -670,10 +678,10 @@ fun PageExercises(
         derivedStateOf {
             if (selectedRestPageId != null) {
                 pageItems.indexOfFirst { page ->
-                    page is PageExercisesItem.RestPage && page.restState.set.id == selectedRestPageId
+                    page is ExercisesPageItem.RestPage && page.restState.set.id == selectedRestPageId
                 }.takeIf { it >= 0 } ?: 0
             } else {
-                resolvePageExercisesItemIndex(
+                resolveExercisesPageItemIndex(
                     items = pageItems,
                     selectedExercise = selectedExercise,
                     viewModel = viewModel
@@ -683,7 +691,7 @@ fun PageExercises(
     }
     val currentPageIndex = remember(pageItems, workoutState, currentExercise.id, viewModel.allWorkoutStates.size) {
         derivedStateOf {
-            resolvePageExercisesCurrentItemIndex(
+            resolveExercisesPageCurrentItemIndex(
                 items = pageItems,
                 workoutState = workoutState,
                 fallbackSetState = viewModel.getFirstSetStateAfterCurrent(),
@@ -700,12 +708,12 @@ fun PageExercises(
             hapticsViewModel.doGentleVibration()
             onPageSelected(
                 page.representativeExercise,
-                (page as? PageExercisesItem.RestPage)?.restState?.set?.id
+                (page as? ExercisesPageItem.RestPage)?.restState?.set?.id
             )
         }
     }
     val displayCounter = remember(pageItems, selectedPageIndex.value) {
-        resolvePageExercisesDisplayCounter(
+        resolveExercisesPageDisplayCounter(
             items = pageItems,
             selectedPageIndex = selectedPageIndex.value
         )
@@ -731,7 +739,7 @@ fun PageExercises(
         liveWorkoutState
     }
     val selectedPageCurrentSet = selectedPageItem?.let { page ->
-        if (page is PageExercisesItem.RestPage) null else resolvePageCurrentSet(page, activeWorkoutState)
+        if (page is ExercisesPageItem.RestPage) null else resolvePageCurrentSet(page, activeWorkoutState)
     }
     val selectedPagePreparedRowsKey = remember(
         selectedPageItem,
@@ -742,7 +750,7 @@ fun PageExercises(
         Triple(
             selectedPageItem,
             selectedPageCurrentSet?.id,
-            buildPageExercisesStateMatchKey(selectedSetStateToMatch) to viewModel.allWorkoutStates.size
+            buildExercisesPageStateMatchKey(selectedSetStateToMatch) to viewModel.allWorkoutStates.size
         )
     }
     val selectedPagePreparedRows = remember(
@@ -750,8 +758,8 @@ fun PageExercises(
     ) {
         val pageItem = selectedPageItem
         val currentSet = selectedPageCurrentSet
-        if (pageItem != null && pageItem !is PageExercisesItem.RestPage && currentSet != null) {
-            buildPageExercisesPreparedRows(
+        if (pageItem != null && pageItem !is ExercisesPageItem.RestPage && currentSet != null) {
+            buildExercisesPagePreparedRows(
                 viewModel = viewModel,
                 exercise = pageItem.representativeExercise,
                 currentSet = currentSet,
@@ -768,7 +776,7 @@ fun PageExercises(
     ) {
         when {
             selectedPageItem == null -> null
-            selectedPageItem is PageExercisesItem.RestPage -> firstSetListItemIndex
+            selectedPageItem is ExercisesPageItem.RestPage -> firstSetListItemIndex
             selectedPagePreparedRows == null -> null
             else -> (firstSetListItemIndex + selectedPagePreparedRows.setIndex).coerceAtLeast(firstSetListItemIndex)
         }
@@ -794,7 +802,7 @@ fun PageExercises(
     }
     val isSelectedPageScrollable = remember(selectedPageItem, selectedPagePreparedRows) {
         when (selectedPageItem) {
-            is PageExercisesItem.RestPage,
+            is ExercisesPageItem.RestPage,
             null -> false
             else -> (selectedPagePreparedRows?.rowModels?.size ?: 0) > 1
         }
@@ -830,7 +838,7 @@ fun PageExercises(
             )
         }
         val rowMaxWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
-        val fittedRows = rememberPageExercisesFittedRows(
+        val fittedRows = rememberExercisesPageFittedRows(
             preparedRows = selectedPagePreparedRows,
             rowMaxWidth = rowMaxWidth,
             rowMaxHeight = selectedRowHeightDp,
@@ -884,7 +892,7 @@ fun PageExercises(
                 }
             }
         ) { _ ->
-            if (selectedPageItem is PageExercisesItem.RestPage) {
+            if (selectedPageItem is ExercisesPageItem.RestPage) {
                 TransformingLazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -941,7 +949,7 @@ fun PageExercises(
                     .background(MaterialTheme.colorScheme.background)
             ) {
                 when (selectedPageItem) {
-                    is PageExercisesItem.RestPage -> RestPageFixedHeader(
+                    is ExercisesPageItem.RestPage -> RestPageFixedHeader(
                         modifier = Modifier
                             .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
                             .height(headerOverlayHeightDp)
@@ -990,7 +998,7 @@ fun PageExercises(
     }
 }
 
-private data class PageExercisesPreviewFixture(
+private data class ExercisesPagePreviewFixture(
     val viewModel: AppViewModel,
     val firstExercise: Exercise,
     val supersetExercise: Exercise,
@@ -1002,13 +1010,13 @@ private data class PageExercisesPreviewFixture(
     val restState: WorkoutState.Rest,
 )
 
-private data class PageExercisesManySetsPreviewFixture(
+private data class ExercisesPageManySetsPreviewFixture(
     val viewModel: AppViewModel,
     val exercise: Exercise,
     val lastSetState: WorkoutState.Set,
 )
 
-private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
+private fun buildExercisesPagePreviewFixture(): ExercisesPagePreviewFixture {
     val viewModel = AppViewModel()
     val firstExercise = Exercise(
         id = UUID.fromString("71000000-0000-0000-0000-000000000001"),
@@ -1281,7 +1289,7 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
     setFieldValue(viewModel, "stateMachine", stateMachine)
     setCurrentWorkoutState(viewModel, restState)
 
-    return PageExercisesPreviewFixture(
+    return ExercisesPagePreviewFixture(
         viewModel = viewModel,
         firstExercise = firstExercise,
         supersetExercise = supersetExerciseA,
@@ -1294,7 +1302,7 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
     )
 }
 
-private fun buildPageExercisesManySetsPreviewFixture(): PageExercisesManySetsPreviewFixture {
+private fun buildExercisesPageManySetsPreviewFixture(): ExercisesPageManySetsPreviewFixture {
     val viewModel = AppViewModel()
     val exerciseId = UUID.fromString("74000000-0000-0000-0000-000000000001")
     val sets = (1..18).map { index ->
@@ -1366,7 +1374,7 @@ private fun buildPageExercisesManySetsPreviewFixture(): PageExercisesManySetsPre
     setFieldValue(viewModel, "stateMachine", WorkoutStateMachine.fromSequence(sequence, startIndex = setStates.lastIndex))
     setCurrentWorkoutState(viewModel, lastSetState)
 
-    return PageExercisesManySetsPreviewFixture(
+    return ExercisesPageManySetsPreviewFixture(
         viewModel = viewModel,
         exercise = exercise,
         lastSetState = lastSetState
@@ -1375,18 +1383,18 @@ private fun buildPageExercisesManySetsPreviewFixture(): PageExercisesManySetsPre
 
 @Preview(
     name = "Standalone Rest Page",
-    group = "PageExercises",
+    group = "ExercisesPage",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun PageExercisesRestPagePreview() {
-    val fixture = remember { buildPageExercisesPreviewFixture() }
+private fun ExercisesPageRestPagePreview() {
+    val fixture = remember { buildExercisesPagePreviewFixture() }
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
 
     MyWorkoutAssistantTheme {
-        PageExercises(
+        ExercisesPage(
             selectedExercise = fixture.selectedExercise,
             selectedRestPageId = fixture.restState.set.id,
             workoutState = fixture.restState,
@@ -1400,18 +1408,18 @@ private fun PageExercisesRestPagePreview() {
 
 @Preview(
     name = "Normal Exercise Page",
-    group = "PageExercises",
+    group = "ExercisesPage",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun PageExercisesExercisePagePreview() {
-    val fixture = remember { buildPageExercisesPreviewFixture() }
+private fun ExercisesPageExercisePagePreview() {
+    val fixture = remember { buildExercisesPagePreviewFixture() }
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
 
     MyWorkoutAssistantTheme {
-        PageExercises(
+        ExercisesPage(
             selectedExercise = fixture.firstExercise,
             selectedRestPageId = null,
             workoutState = fixture.firstSetState,
@@ -1425,18 +1433,18 @@ private fun PageExercisesExercisePagePreview() {
 
 @Preview(
     name = "Exercise Page Done Sets Filled",
-    group = "PageExercises",
+    group = "ExercisesPage",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun PageExercisesExercisePageDoneSetsPreview() {
-    val fixture = remember { buildPageExercisesPreviewFixture() }
+private fun ExercisesPageExercisePageDoneSetsPreview() {
+    val fixture = remember { buildExercisesPagePreviewFixture() }
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
 
     MyWorkoutAssistantTheme {
-        PageExercises(
+        ExercisesPage(
             selectedExercise = fixture.firstExercise,
             selectedRestPageId = null,
             workoutState = fixture.firstExerciseSecondSetState,
@@ -1450,18 +1458,18 @@ private fun PageExercisesExercisePageDoneSetsPreview() {
 
 @Preview(
     name = "Superset Exercise Page",
-    group = "PageExercises",
+    group = "ExercisesPage",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun PageExercisesSupersetPagePreview() {
-    val fixture = remember { buildPageExercisesPreviewFixture() }
+private fun ExercisesPageSupersetPagePreview() {
+    val fixture = remember { buildExercisesPagePreviewFixture() }
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
 
     MyWorkoutAssistantTheme {
-        PageExercises(
+        ExercisesPage(
             selectedExercise = fixture.supersetExercise,
             selectedRestPageId = null,
             workoutState = fixture.supersetSetState,
@@ -1475,18 +1483,18 @@ private fun PageExercisesSupersetPagePreview() {
 
 @Preview(
     name = "Many Sets Last Selected",
-    group = "PageExercises",
+    group = "ExercisesPage",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun PageExercisesManySetsLastSelectedPreview() {
-    val fixture = remember { buildPageExercisesManySetsPreviewFixture() }
+private fun ExercisesPageManySetsLastSelectedPreview() {
+    val fixture = remember { buildExercisesPageManySetsPreviewFixture() }
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
 
     MyWorkoutAssistantTheme {
-        PageExercises(
+        ExercisesPage(
             selectedExercise = fixture.exercise,
             selectedRestPageId = null,
             workoutState = fixture.lastSetState,

@@ -494,9 +494,9 @@ fun SetTableRow(
 }
 
 @Composable
-private fun FastPageExercisesSetTableRow(
-    rowModel: PageExercisesRowModel,
-    fittedRow: PageExercisesFittedRow?,
+private fun FastExercisesPageSetTableRow(
+    rowModel: ExercisesPageRowModel,
+    fittedRow: ExercisesPageFittedRow?,
     enableFadingText: Boolean,
     hideSetListRowText: Boolean,
     modifier: Modifier = Modifier,
@@ -516,10 +516,10 @@ private fun FastPageExercisesSetTableRow(
             ),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        FastPageExercisesCellText(
+        FastExercisesPageCellText(
             modifier = Modifier
                 .weight(1f)
-                .height(fittedRow?.setText?.containerHeight ?: PageExercisesSetRowInnerHeight)
+                .height(fittedRow?.setText?.containerHeight ?: ExercisesPageSetRowInnerHeight)
                 .then(
                     if (!rowModel.setIdentifier.isNullOrBlank()) {
                         Modifier.semantics(mergeDescendants = false) {
@@ -537,10 +537,10 @@ private fun FastPageExercisesSetTableRow(
             hideSetListRowText = hideSetListRowText,
         )
 
-        FastPageExercisesCellText(
+        FastExercisesPageCellText(
             modifier = Modifier
                 .weight(rowModel.valueWeight)
-                .height(fittedRow?.valueText?.containerHeight ?: PageExercisesSetRowInnerHeight),
+                .height(fittedRow?.valueText?.containerHeight ?: ExercisesPageSetRowInnerHeight),
             text = rowModel.valueText.orEmpty(),
             fittedText = fittedRow?.valueText,
             enableFadingText = enableFadingText,
@@ -549,10 +549,10 @@ private fun FastPageExercisesSetTableRow(
             hideSetListRowText = hideSetListRowText,
         )
         rowModel.repsText?.let { repsText ->
-            FastPageExercisesCellText(
+            FastExercisesPageCellText(
                 modifier = Modifier
                     .weight(1f)
-                    .height(fittedRow?.repsText?.containerHeight ?: PageExercisesSetRowInnerHeight),
+                    .height(fittedRow?.repsText?.containerHeight ?: ExercisesPageSetRowInnerHeight),
                 text = repsText,
                 fittedText = fittedRow?.repsText,
                 enableFadingText = enableFadingText,
@@ -563,15 +563,15 @@ private fun FastPageExercisesSetTableRow(
         } ?: Spacer(
             modifier = Modifier
                 .weight(1f)
-                .height(PageExercisesSetRowInnerHeight)
+                .height(ExercisesPageSetRowInnerHeight)
         )
     }
 }
 
 @Composable
-private fun FastPageExercisesCellText(
+private fun FastExercisesPageCellText(
     text: String,
-    fittedText: PageExercisesFittedTextCell?,
+    fittedText: ExercisesPageFittedTextCell?,
     enableFadingText: Boolean,
     color: Color,
     style: TextStyle,
@@ -601,7 +601,7 @@ private fun FastPageExercisesCellText(
 private fun CenteredLabelRow(
     modifier: Modifier,
     text: String,
-    fittedText: PageExercisesFittedTextCell?,
+    fittedText: ExercisesPageFittedTextCell?,
     textColor: Color,
     hideSetListRowText: Boolean,
 ) {
@@ -628,14 +628,14 @@ private fun CenteredLabelRow(
     }
 }
 
-private val PageExercisesSetRowHeight = 25.dp
-private val PageExercisesSetRowPadding = 2.5.dp
-private val PageExercisesSetRowInnerHeight = PageExercisesSetRowHeight - PageExercisesSetRowPadding * 2
-private val PageExercisesCenteredRowHorizontalPadding = 5.dp
-private val PageExercisesCenteredRowVerticalPadding = 2.5.dp
+private val ExercisesPageSetRowHeight = 25.dp
+private val ExercisesPageSetRowPadding = 2.5.dp
+private val ExercisesPageSetRowInnerHeight = ExercisesPageSetRowHeight - ExercisesPageSetRowPadding * 2
+private val ExercisesPageCenteredRowHorizontalPadding = 5.dp
+private val ExercisesPageCenteredRowVerticalPadding = 2.5.dp
 
 @Immutable
-internal data class PageExercisesFittedTextCell(
+internal data class ExercisesPageFittedTextCell(
     val text: String,
     val fontSize: TextUnit,
     val inkWidth: Dp,
@@ -645,32 +645,32 @@ internal data class PageExercisesFittedTextCell(
 )
 
 @Immutable
-internal data class PageExercisesFittedRow(
+internal data class ExercisesPageFittedRow(
     val key: String,
-    val setText: PageExercisesFittedTextCell? = null,
-    val valueText: PageExercisesFittedTextCell? = null,
-    val repsText: PageExercisesFittedTextCell? = null,
-    val centeredText: PageExercisesFittedTextCell? = null,
+    val setText: ExercisesPageFittedTextCell? = null,
+    val valueText: ExercisesPageFittedTextCell? = null,
+    val repsText: ExercisesPageFittedTextCell? = null,
+    val centeredText: ExercisesPageFittedTextCell? = null,
 )
 
 @Immutable
-internal data class PageExercisesFittedRows(
-    val preparedRows: PageExercisesPreparedRows,
-    val rowsByKey: Map<String, PageExercisesFittedRow>,
+internal data class ExercisesPageFittedRows(
+    val preparedRows: ExercisesPagePreparedRows,
+    val rowsByKey: Map<String, ExercisesPageFittedRow>,
 )
 
-private data class PageExercisesTextFitKey(
+private data class ExercisesPageTextFitKey(
     val text: String,
     val widthPx: Int,
     val heightPx: Int,
 )
 
 @Composable
-internal fun rememberPageExercisesFittedRows(
-    preparedRows: PageExercisesPreparedRows?,
+internal fun rememberExercisesPageFittedRows(
+    preparedRows: ExercisesPagePreparedRows?,
     rowMaxWidth: Dp,
-    rowMaxHeight: Dp = PageExercisesSetRowHeight,
-): PageExercisesFittedRows? {
+    rowMaxHeight: Dp = ExercisesPageSetRowHeight,
+): ExercisesPageFittedRows? {
     if (preparedRows == null) return null
 
     val density = LocalDensity.current
@@ -680,7 +680,7 @@ internal fun rememberPageExercisesFittedRows(
     val densityValue = density.density
     val fontScale = density.fontScale
     val textFitCache = remember(baseStyle, densityValue, fontScale) {
-        mutableMapOf<PageExercisesTextFitKey, PageExercisesFittedTextCell>()
+        mutableMapOf<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>()
     }
 
     return remember(
@@ -691,7 +691,7 @@ internal fun rememberPageExercisesFittedRows(
         densityValue,
         fontScale,
     ) {
-        buildPageExercisesFittedRows(
+        buildExercisesPageFittedRows(
             preparedRows = preparedRows,
             rowMaxWidth = rowMaxWidth,
             rowMaxHeight = rowMaxHeight,
@@ -703,23 +703,23 @@ internal fun rememberPageExercisesFittedRows(
     }
 }
 
-private fun buildPageExercisesFittedRows(
-    preparedRows: PageExercisesPreparedRows,
+private fun buildExercisesPageFittedRows(
+    preparedRows: ExercisesPagePreparedRows,
     rowMaxWidth: Dp,
     rowMaxHeight: Dp,
     baseStyle: TextStyle,
     textMeasurer: TextMeasurer,
     density: Density,
-    cache: MutableMap<PageExercisesTextFitKey, PageExercisesFittedTextCell>,
-): PageExercisesFittedRows {
-    val setInnerWidth = (rowMaxWidth - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
-    val setInnerHeight = (rowMaxHeight - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
-    val centeredWidth = (rowMaxWidth - PageExercisesCenteredRowHorizontalPadding * 2).coerceAtLeast(0.dp)
-    val centeredHeight = (rowMaxHeight - PageExercisesCenteredRowVerticalPadding * 2).coerceAtLeast(0.dp)
+    cache: MutableMap<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>,
+): ExercisesPageFittedRows {
+    val setInnerWidth = (rowMaxWidth - ExercisesPageSetRowPadding * 2).coerceAtLeast(0.dp)
+    val setInnerHeight = (rowMaxHeight - ExercisesPageSetRowPadding * 2).coerceAtLeast(0.dp)
+    val centeredWidth = (rowMaxWidth - ExercisesPageCenteredRowHorizontalPadding * 2).coerceAtLeast(0.dp)
+    val centeredHeight = (rowMaxHeight - ExercisesPageCenteredRowVerticalPadding * 2).coerceAtLeast(0.dp)
 
     val rows = preparedRows.rowModels.associate { rowModel ->
         val fittedRow = when (rowModel.contentType) {
-            PageExercisesRowContentType.Set -> {
+            ExercisesPageRowContentType.Set -> {
                 // Every set row uses the same three-column grid. Timed sets leave the
                 // trailing column empty so their value remains centered in the middle column.
                 val totalWeight = 1f + rowModel.valueWeight + 1f
@@ -727,9 +727,9 @@ private fun buildPageExercisesFittedRows(
                 val valueTextWidth = setInnerWidth * (rowModel.valueWeight / totalWeight)
                 val repsTextWidth = setInnerWidth * (1f / totalWeight)
 
-                PageExercisesFittedRow(
+                ExercisesPageFittedRow(
                     key = rowModel.key,
-                    setText = fitPageExercisesTextCell(
+                    setText = fitExercisesPageTextCell(
                         text = rowModel.setText.orEmpty(),
                         containerWidth = setTextWidth,
                         containerHeight = setInnerHeight,
@@ -738,7 +738,7 @@ private fun buildPageExercisesFittedRows(
                         density = density,
                         cache = cache,
                     ),
-                    valueText = fitPageExercisesTextCell(
+                    valueText = fitExercisesPageTextCell(
                         text = rowModel.valueText.orEmpty(),
                         containerWidth = valueTextWidth,
                         containerHeight = setInnerHeight,
@@ -748,7 +748,7 @@ private fun buildPageExercisesFittedRows(
                         cache = cache,
                     ),
                     repsText = rowModel.repsText?.let { repsText ->
-                        fitPageExercisesTextCell(
+                        fitExercisesPageTextCell(
                             text = repsText,
                             containerWidth = repsTextWidth,
                             containerHeight = setInnerHeight,
@@ -760,11 +760,11 @@ private fun buildPageExercisesFittedRows(
                     },
                 )
             }
-            PageExercisesRowContentType.CalibrationLoad,
-            PageExercisesRowContentType.Rest,
-            PageExercisesRowContentType.CalibrationRir -> PageExercisesFittedRow(
+            ExercisesPageRowContentType.CalibrationLoad,
+            ExercisesPageRowContentType.Rest,
+            ExercisesPageRowContentType.CalibrationRir -> ExercisesPageFittedRow(
                 key = rowModel.key,
-                centeredText = fitPageExercisesTextCell(
+                centeredText = fitExercisesPageTextCell(
                     text = rowModel.centeredText.orEmpty(),
                     containerWidth = centeredWidth,
                     containerHeight = centeredHeight,
@@ -779,24 +779,24 @@ private fun buildPageExercisesFittedRows(
         rowModel.key to fittedRow
     }
 
-    return PageExercisesFittedRows(
+    return ExercisesPageFittedRows(
         preparedRows = preparedRows,
         rowsByKey = rows,
     )
 }
 
-private fun fitPageExercisesTextCell(
+private fun fitExercisesPageTextCell(
     text: String,
     containerWidth: Dp,
     containerHeight: Dp,
     baseStyle: TextStyle,
     textMeasurer: TextMeasurer,
     density: Density,
-    cache: MutableMap<PageExercisesTextFitKey, PageExercisesFittedTextCell>,
-): PageExercisesFittedTextCell {
+    cache: MutableMap<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>,
+): ExercisesPageFittedTextCell {
     val widthPx = with(density) { containerWidth.toPx() }.toInt().coerceAtLeast(0)
     val heightPx = with(density) { containerHeight.toPx() }.toInt().coerceAtLeast(0)
-    val key = PageExercisesTextFitKey(
+    val key = ExercisesPageTextFitKey(
         text = text,
         widthPx = widthPx,
         heightPx = heightPx,
@@ -815,7 +815,7 @@ private fun fitPageExercisesTextCell(
         )
         val inkWidthPx = with(density) { layout.widthDp.toPx() }
 
-        PageExercisesFittedTextCell(
+        ExercisesPageFittedTextCell(
             text = text,
             fontSize = layout.fontSize,
             inkWidth = layout.widthDp,
@@ -838,7 +838,7 @@ private fun pageExercisesBaseTextStyle(style: TextStyle): TextStyle {
 
 @Composable
 private fun FastFittedTextCell(
-    fittedText: PageExercisesFittedTextCell,
+    fittedText: ExercisesPageFittedTextCell,
     color: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
@@ -854,7 +854,7 @@ private fun FastFittedTextCell(
 
 @Composable
 private fun FastFittedFadingTextCell(
-    fittedText: PageExercisesFittedTextCell,
+    fittedText: ExercisesPageFittedTextCell,
     enableFadingText: Boolean,
     color: Color,
     style: TextStyle,
@@ -872,7 +872,7 @@ private fun FastFittedFadingTextCell(
 
 @Composable
 private fun FastFittedTextCellContent(
-    fittedText: PageExercisesFittedTextCell,
+    fittedText: ExercisesPageFittedTextCell,
     color: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
@@ -898,7 +898,7 @@ private fun FastFittedTextCellContent(
 
 @Composable
 private fun MarqueeFittedTextCell(
-    fittedText: PageExercisesFittedTextCell,
+    fittedText: ExercisesPageFittedTextCell,
     color: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
@@ -940,7 +940,7 @@ private fun MarqueeFittedTextCell(
 
 @Composable
 private fun PlainFittedTextCell(
-    fittedText: PageExercisesFittedTextCell,
+    fittedText: ExercisesPageFittedTextCell,
     color: Color,
     style: TextStyle,
     modifier: Modifier = Modifier,
@@ -966,7 +966,7 @@ private fun PlainFittedTextCell(
     }
 }
 
-internal enum class PageExercisesRowContentType {
+internal enum class ExercisesPageRowContentType {
     Set,
     Rest,
     CalibrationLoad,
@@ -974,16 +974,16 @@ internal enum class PageExercisesRowContentType {
 }
 
 @Immutable
-internal data class PageExercisesPreparedRows(
-    val rowModels: List<PageExercisesRowModel>,
+internal data class ExercisesPagePreparedRows(
+    val rowModels: List<ExercisesPageRowModel>,
     val setIndex: Int
 )
 
 @Immutable
-internal data class PageExercisesRowModel(
+internal data class ExercisesPageRowModel(
     val rowIndex: Int,
     val key: String,
-    val contentType: PageExercisesRowContentType,
+    val contentType: ExercisesPageRowContentType,
     val setIdentifier: String? = null,
     val semanticsLabel: String? = null,
     val setText: String? = null,
@@ -993,18 +993,18 @@ internal data class PageExercisesRowModel(
     val centeredText: String? = null
 )
 
-private data class PageExercisesSetRowTexts(
+private data class ExercisesPageSetRowTexts(
     val valueText: String,
     val repsText: String?,
     val valueWeight: Float
 )
 
-internal fun buildPageExercisesPreparedRows(
+internal fun buildExercisesPagePreparedRows(
     viewModel: AppViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     stateToMatch: WorkoutState?,
-): PageExercisesPreparedRows {
+): ExercisesPagePreparedRows {
     val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
     val displayRows = if (supersetId != null) {
         buildSupersetSetDisplayRows(viewModel = viewModel, supersetId = supersetId)
@@ -1021,9 +1021,9 @@ internal fun buildPageExercisesPreparedRows(
     val unilateralSideBadgeByRowIndex = buildUnilateralSideBadgeByRowIndex(displayRows)
     val hasUnconfirmedLoadByExerciseId = buildHasUnconfirmedLoadByExerciseId(viewModel, displayRows)
 
-    return PageExercisesPreparedRows(
+    return ExercisesPagePreparedRows(
         rowModels = displayRows.mapIndexed { rowIndex, displayRow ->
-            buildPageExercisesRowModel(
+            buildExercisesPageRowModel(
                 viewModel = viewModel,
                 displayRow = displayRow,
                 rowIndex = rowIndex,
@@ -1079,13 +1079,13 @@ private fun buildHasUnconfirmedLoadByExerciseId(
     }
 }
 
-private fun buildPageExercisesRowModel(
+private fun buildExercisesPageRowModel(
     viewModel: AppViewModel,
     displayRow: ExerciseSetDisplayRow,
     rowIndex: Int,
     sideBadge: String?,
     hasUnconfirmedLoadSelectionForExercise: Boolean,
-): PageExercisesRowModel {
+): ExercisesPageRowModel {
     return when (displayRow) {
         is ExerciseSetDisplayRow.SetRow -> {
             val setState = displayRow.state
@@ -1100,16 +1100,16 @@ private fun buildPageExercisesRowModel(
                 !sideBadge.isNullOrBlank() -> sideBadge
                 else -> null
             }
-            val rowTexts = buildPageExercisesSetRowTexts(
+            val rowTexts = buildExercisesPageSetRowTexts(
                 viewModel = viewModel,
                 setState = setState,
                 hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
             )
 
-            PageExercisesRowModel(
+            ExercisesPageRowModel(
                 rowIndex = rowIndex,
-                key = buildPageExercisesRowKey(displayRow, rowIndex),
-                contentType = PageExercisesRowContentType.Set,
+                key = buildExercisesPageRowKey(displayRow, rowIndex),
+                contentType = ExercisesPageRowContentType.Set,
                 setIdentifier = setIdentifier,
                 semanticsLabel = rowSetContentDescription,
                 setText = rowSetContentDescription.orEmpty(),
@@ -1119,34 +1119,34 @@ private fun buildPageExercisesRowModel(
             )
         }
 
-        is ExerciseSetDisplayRow.RestRow -> PageExercisesRowModel(
+        is ExerciseSetDisplayRow.RestRow -> ExercisesPageRowModel(
             rowIndex = rowIndex,
-            key = buildPageExercisesRowKey(displayRow, rowIndex),
-            contentType = PageExercisesRowContentType.Rest,
+            key = buildExercisesPageRowKey(displayRow, rowIndex),
+            contentType = ExercisesPageRowContentType.Rest,
             centeredText = buildWorkoutRestRowLabel(displayRow.state)
         )
 
-        is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> PageExercisesRowModel(
+        is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> ExercisesPageRowModel(
             rowIndex = rowIndex,
-            key = buildPageExercisesRowKey(displayRow, rowIndex),
-            contentType = PageExercisesRowContentType.CalibrationLoad,
+            key = buildExercisesPageRowKey(displayRow, rowIndex),
+            contentType = ExercisesPageRowContentType.CalibrationLoad,
             centeredText = "SET LOAD"
         )
 
-        is ExerciseSetDisplayRow.CalibrationRIRRow -> PageExercisesRowModel(
+        is ExerciseSetDisplayRow.CalibrationRIRRow -> ExercisesPageRowModel(
             rowIndex = rowIndex,
-            key = buildPageExercisesRowKey(displayRow, rowIndex),
-            contentType = PageExercisesRowContentType.CalibrationRir,
+            key = buildExercisesPageRowKey(displayRow, rowIndex),
+            contentType = ExercisesPageRowContentType.CalibrationRir,
             centeredText = "SET RIR"
         )
     }
 }
 
-private fun buildPageExercisesSetRowTexts(
+private fun buildExercisesPageSetRowTexts(
     viewModel: AppViewModel,
     setState: WorkoutState.Set,
     hasUnconfirmedLoadSelectionForExercise: Boolean,
-): PageExercisesSetRowTexts {
+): ExercisesPageSetRowTexts {
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
@@ -1167,7 +1167,7 @@ private fun buildPageExercisesSetRowTexts(
                 isPendingCalibration -> "TBD"
                 else -> weightText
             }
-            PageExercisesSetRowTexts(
+            ExercisesPageSetRowTexts(
                 valueText = displayWeightText,
                 repsText = currentSetData.actualReps.toString(),
                 valueWeight = 2f
@@ -1186,20 +1186,20 @@ private fun buildPageExercisesSetRowTexts(
                 isPendingCalibration -> "TBD"
                 else -> baseWeightText
             }
-            PageExercisesSetRowTexts(
+            ExercisesPageSetRowTexts(
                 valueText = displayWeightText,
                 repsText = currentSetData.actualReps.toString(),
                 valueWeight = 2f
             )
         }
 
-        is TimedDurationSetData -> PageExercisesSetRowTexts(
+        is TimedDurationSetData -> ExercisesPageSetRowTexts(
             valueText = FormatTime(currentSetData.startTimer / 1000),
             repsText = null,
             valueWeight = 2f
         )
 
-        is EnduranceSetData -> PageExercisesSetRowTexts(
+        is EnduranceSetData -> ExercisesPageSetRowTexts(
             valueText = FormatTime(currentSetData.startTimer / 1000),
             repsText = null,
             valueWeight = 2f
@@ -1209,7 +1209,7 @@ private fun buildPageExercisesSetRowTexts(
     }
 }
 
-private fun buildPageExercisesRowKey(row: ExerciseSetDisplayRow, rowIndex: Int): String {
+private fun buildExercisesPageRowKey(row: ExerciseSetDisplayRow, rowIndex: Int): String {
     return buildString {
         append(row::class.simpleName ?: "row")
         append(":")
@@ -1226,12 +1226,12 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
     transformationSpec: TransformationSpec,
     stateToMatch: WorkoutState?,
     progressState: ProgressState = ProgressState.CURRENT,
-    preparedRows: PageExercisesPreparedRows? = null,
-    fittedRows: PageExercisesFittedRows? = null,
+    preparedRows: ExercisesPagePreparedRows? = null,
+    fittedRows: ExercisesPageFittedRows? = null,
     enableFadingText: Boolean = true,
     hideSetListRowText: Boolean = false,
 ) {
-    val rows = fittedRows?.preparedRows ?: preparedRows ?: buildPageExercisesPreparedRows(
+    val rows = fittedRows?.preparedRows ?: preparedRows ?: buildExercisesPagePreparedRows(
         viewModel = viewModel,
         exercise = exercise,
         currentSet = currentSet,
@@ -1241,7 +1241,7 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
 
     @Composable
     fun MeasuredSetTableRow(
-        rowModel: PageExercisesRowModel,
+        rowModel: ExercisesPageRowModel,
     ) {
         val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
         val completedColor = MaterialTheme.colorScheme.onBackground
@@ -1262,7 +1262,7 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
             .border(BorderStroke(1.dp, rowAccentColor), RoundedCornerShape(25))
 
         when (rowModel.contentType) {
-            PageExercisesRowContentType.Set -> FastPageExercisesSetTableRow(
+            ExercisesPageRowContentType.Set -> FastExercisesPageSetTableRow(
                 rowModel = rowModel,
                 fittedRow = fittedRows?.rowsByKey?.get(rowModel.key),
                 enableFadingText = enableFadingText,
@@ -1270,21 +1270,21 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
                 modifier = rowModifier,
                 textColor = rowAccentColor
             )
-            PageExercisesRowContentType.CalibrationLoad -> CenteredLabelRow(
+            ExercisesPageRowContentType.CalibrationLoad -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,
             )
-            PageExercisesRowContentType.Rest -> CenteredLabelRow(
+            ExercisesPageRowContentType.Rest -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = rowAccentColor,
                 hideSetListRowText = hideSetListRowText,
             )
-            PageExercisesRowContentType.CalibrationRir -> CenteredLabelRow(
+            ExercisesPageRowContentType.CalibrationRir -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,

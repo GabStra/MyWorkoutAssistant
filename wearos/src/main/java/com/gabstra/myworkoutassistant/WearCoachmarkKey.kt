@@ -14,10 +14,10 @@ enum class WearCoachmarkKey {
     RestExercisesPager,
 
     // Navigation / pages
-    PageExercises,
-    PagePlates,
-    PageNotes,
-    PageButtons,
+    ExercisesPage,
+    PlatesPage,
+    NotesPage,
+    ControlsPage,
 
     // Set screens
     SetTimer,

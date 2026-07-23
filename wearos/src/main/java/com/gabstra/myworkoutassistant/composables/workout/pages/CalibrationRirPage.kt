@@ -1,4 +1,6 @@
-package com.gabstra.myworkoutassistant.composables
+package com.gabstra.myworkoutassistant.composables.workout.pages
+
+import com.gabstra.myworkoutassistant.composables.*
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -38,7 +40,7 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PageCalibrationRIR(
+fun CalibrationRirPage(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
@@ -280,7 +282,7 @@ fun PageCalibrationRIR(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PageCalibrationRIR(
+fun CalibrationRirPage(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
