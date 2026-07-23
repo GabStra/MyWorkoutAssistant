@@ -1661,16 +1661,16 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) {
-        withContext(Dispatchers.Main) {
-            rebuildScreenState()
-        }
+        Log.d(WORKOUT_SYNC_LOG_TAG, "Syncing workout definition change to phone")
         val client = dataClient ?: return
-        runCatching {
-            WorkoutHistoryTransferCoordinator.sendMutex.withLock {
-                sendWorkoutStore(client, updatedWorkoutStore)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                WorkoutHistoryTransferCoordinator.sendMutex.withLock {
+                    sendWorkoutStore(client, updatedWorkoutStore)
+                }
+            }.onFailure { exception ->
+                Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
             }
-        }.onFailure { exception ->
-            Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
         }
     }
 

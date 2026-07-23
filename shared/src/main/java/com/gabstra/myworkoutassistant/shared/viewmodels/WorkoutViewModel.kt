@@ -2169,12 +2169,32 @@ open class WorkoutViewModel(
             oldHistory = oldMachine.history
         ) ?: return false
 
+        val selectedEquipment = equipmentId?.let(::getEquipmentById)
+        val selectedEquipmentWeights = getWeightByEquipment(selectedEquipment)
         val preservedSetData = copySetData(currentState.currentSetData).let { setData ->
             when {
                 setData is BodyWeightSetData && equipmentId == null -> {
                     setData.copy(
                         additionalWeight = 0.0,
                         volume = setData.copy(additionalWeight = 0.0).calculateVolume()
+                    )
+                }
+                setData is BodyWeightSetData && selectedEquipmentWeights.isNotEmpty() -> {
+                    val closestWeight = selectedEquipmentWeights.minByOrNull {
+                        kotlin.math.abs(it - setData.additionalWeight)
+                    } ?: setData.additionalWeight
+                    setData.copy(
+                        additionalWeight = closestWeight,
+                        volume = setData.copy(additionalWeight = closestWeight).calculateVolume()
+                    )
+                }
+                setData is WeightSetData && selectedEquipmentWeights.isNotEmpty() -> {
+                    val closestWeight = selectedEquipmentWeights.minByOrNull {
+                        kotlin.math.abs(it - setData.actualWeight)
+                    } ?: setData.actualWeight
+                    setData.copy(
+                        actualWeight = closestWeight,
+                        volume = setData.copy(actualWeight = closestWeight).calculateVolume()
                     )
                 }
                 else -> setData
@@ -2203,6 +2223,7 @@ open class WorkoutViewModel(
             _selectedWorkout.value = updatedWorkout
             initializeExercisesMaps(updatedWorkout)
             workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+            onWorkoutDefinitionChanged(updatedWorkoutStore)
 
             val workoutSequence = generateWorkoutStates()
             val initialMachine = initializeStateMachine(workoutSequence, 0)
@@ -2256,7 +2277,6 @@ open class WorkoutViewModel(
             updateStateFlowsFromMachine()
             rebuildScreenState()
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
-            onWorkoutDefinitionChanged(updatedWorkoutStore)
             return true
         } finally {
             setRefreshing(false)
