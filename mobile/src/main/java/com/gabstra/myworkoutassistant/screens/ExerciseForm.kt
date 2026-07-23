@@ -1305,7 +1305,7 @@ fun ExerciseForm(
                             equipmentId = selectedEquipmentId.value,
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
-                            progressionMode = if (requiresLoadCalibration.value) ProgressionMode.OFF else progressionMode.value,
+                            progressionMode = progressionMode.value,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {
