@@ -12468,7 +12468,7 @@ def normalize_wham_input_orientation(
     candidate_workspace: Path,
     selected_video_path: Path,
 ) -> tuple[Path, float]:
-    """Present strongly sideways subjects upright to WHAM and return the inverse output rotation."""
+    """Present strongly sideways subjects upright to WHAM and return its camera-space rotation."""
     rotation = wham_input_quarter_turn_from_candidate(ranked_candidate.candidate)
     if rotation == 0:
         return selected_video_path, 0.0
@@ -12485,7 +12485,7 @@ def normalize_wham_input_orientation(
             {
                 "schemaVersion": 1,
                 "inputRotationDegrees": rotation,
-                "outputRotationDegrees": -rotation,
+                "outputRotationDegrees": rotation,
                 "sourceVideoPath": str(selected_video_path),
                 "normalizedVideoPath": str(output_path),
             },
@@ -12493,7 +12493,11 @@ def normalize_wham_input_orientation(
         ) + "\n",
         encoding="utf-8",
     )
-    return output_path, float(-rotation)
+    # WHAM emits camera-space coordinates for the already-rotated inference
+    # frames. Preserve that quarter-turn when mapping those coordinates into
+    # the preview basis; negating it mirrors the image-space convention and
+    # turns horizontal exercises upside down.
+    return output_path, float(rotation)
 
 
 def wham_input_quarter_turn_from_candidate(candidate: dict[str, Any]) -> int:

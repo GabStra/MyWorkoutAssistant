@@ -29968,6 +29968,59 @@ def test_wham_input_quarter_turn_uses_torso_direction_for_sideways_subject() -> 
     assert bake_and_rank_module.wham_input_quarter_turn_from_candidate(candidate) == 90
 
 
+def test_normalize_wham_input_orientation_preserves_camera_space_rotation_sign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    samples = [
+        {
+            "keypoints": {
+                "left_shoulder": [0.70, 0.40, 0.9],
+                "right_shoulder": [0.70, 0.50, 0.9],
+                "left_hip": [0.35, 0.42, 0.9],
+                "right_hip": [0.35, 0.52, 0.9],
+            }
+        }
+        for _ in range(4)
+    ]
+    ranked_candidate = bake_and_rank_module.RankedCandidate(
+        exercise_index=0,
+        candidate_rank=1,
+        exercise_id="bench-press",
+        exercise_name="Dumbbell Bench Press",
+        exercise_slug="dumbbell-bench-press",
+        candidate={"visionPayload": {"posePrefilter": {"dominantPoseSamples": samples}}},
+    )
+    selected_video_path = tmp_path / "selected.mp4"
+    selected_video_path.write_bytes(b"video")
+
+    def fake_rotate_video_quarter_turn(*, source_path: Path, output_path: Path, counter_clockwise: bool) -> None:
+        assert source_path == selected_video_path
+        assert counter_clockwise is True
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"rotated")
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "rotate_video_quarter_turn",
+        fake_rotate_video_quarter_turn,
+    )
+
+    normalized_path, output_rotation = bake_and_rank_module.normalize_wham_input_orientation(
+        ranked_candidate=ranked_candidate,
+        candidate_workspace=tmp_path,
+        selected_video_path=selected_video_path,
+    )
+
+    metadata = json.loads(
+        (tmp_path / "input" / "wham_orientation_normalization.json").read_text(encoding="utf-8")
+    )
+    assert normalized_path == tmp_path / "input" / "wham_inference_upright.mp4"
+    assert output_rotation == pytest.approx(90.0)
+    assert metadata["inputRotationDegrees"] == 90
+    assert metadata["outputRotationDegrees"] == 90
+
+
 def test_wham_input_quarter_turn_keeps_upright_subject_unchanged() -> None:
     samples = [
         {

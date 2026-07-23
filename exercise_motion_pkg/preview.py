@@ -8184,7 +8184,16 @@ def _build_html(payload: dict[str, object]) -> str:
         ? alignment.rotationSequence
         : [{{ axis: alignment.rotationAxis ?? [0.0, 1.0, 0.0], radians: alignment.rotationRadians ?? alignment.yawRadians }}];
       point.sub(new THREE.Vector3(...pivot.map(Number)));
-      point.applyAxisAngle(axis, angle);
+      for (const rotation of rotationSequence) {{
+        const axisValues = Array.isArray(rotation?.axis) && rotation.axis.length >= 3
+          ? rotation.axis.map(Number)
+          : [0.0, 1.0, 0.0];
+        const angle = Number(rotation?.radians ?? 0.0);
+        const axis = new THREE.Vector3(...axisValues);
+        if (axis.lengthSq() > 1e-12 && Number.isFinite(angle) && Math.abs(angle) > 1e-12) {{
+          point.applyAxisAngle(axis.normalize(), angle);
+        }}
+      }}
       point.add(new THREE.Vector3(...pivot.map(Number)));
       return point;
     }}
