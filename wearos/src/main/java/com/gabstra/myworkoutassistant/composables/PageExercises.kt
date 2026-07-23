@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,13 +10,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +47,8 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
@@ -418,6 +421,10 @@ private fun ExercisePageFixedHeader(
     pageItem: PageExercisesItem,
     displayCounter: String?,
     useWeightHeader: Boolean,
+    canSelectPrevious: Boolean,
+    canSelectNext: Boolean,
+    onSelectPrevious: () -> Unit,
+    onSelectNext: () -> Unit,
 ) {
     val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
 
@@ -426,7 +433,12 @@ private fun ExercisePageFixedHeader(
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        PageExercisesNavigationHeader(
+            canSelectPrevious = canSelectPrevious,
+            canSelectNext = canSelectNext,
+            onSelectPrevious = onSelectPrevious,
+            onSelectNext = onSelectNext,
+        ) {
             when (pageItem) {
                 is PageExercisesItem.SupersetPage -> ExerciseNameText(
                     text = buildSupersetDisplayName(pageItem.exercises),
@@ -482,27 +494,85 @@ private fun ExercisePageFixedHeader(
 private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem.RestPage,
+    canSelectPrevious: Boolean,
+    canSelectNext: Boolean,
+    onSelectPrevious: () -> Unit,
+    onSelectNext: () -> Unit,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        PageExercisesNavigationHeader(
+            canSelectPrevious = canSelectPrevious,
+            canSelectNext = canSelectNext,
+            onSelectPrevious = onSelectPrevious,
+            onSelectNext = onSelectNext,
         ) {
-            Text(
-                text = "UP NEXT",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            ) {
+                Text(
+                    text = "UP NEXT",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
 
-            ExerciseNameText(
-                text = pageItem.nextDisplayName,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                textAlign = TextAlign.Center
+                ExerciseNameText(
+                    text = pageItem.nextDisplayName,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PageExercisesNavigationHeader(
+    canSelectPrevious: Boolean,
+    canSelectNext: Boolean,
+    onSelectPrevious: () -> Unit,
+    onSelectNext: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 44.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
+        IconButton(
+            onClick = onSelectPrevious,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .size(48.dp),
+            enabled = canSelectPrevious,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = "Previous workout step",
+                modifier = Modifier.size(32.dp),
+            )
+        }
+        IconButton(
+            onClick = onSelectNext,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .size(48.dp),
+            enabled = canSelectNext,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Next workout step",
+                modifier = Modifier.size(32.dp),
             )
         }
     }
@@ -625,6 +695,15 @@ fun PageExercises(
     val selectedPageItem = pageItems.getOrNull(selectedPageIndex.value)
     val liveWorkoutState by viewModel.workoutState.collectAsState()
     val pageCount = pageItems.size
+    val selectPageAt: (Int) -> Unit = { pageIndex ->
+        pageItems.getOrNull(pageIndex)?.let { page ->
+            hapticsViewModel.doGentleVibration()
+            onPageSelected(
+                page.representativeExercise,
+                (page as? PageExercisesItem.RestPage)?.restState?.set?.id
+            )
+        }
+    }
     val displayCounter = remember(pageItems, selectedPageIndex.value) {
         resolvePageExercisesDisplayCounter(
             items = pageItems,
@@ -868,6 +947,10 @@ fun PageExercises(
                             .height(headerOverlayHeightDp)
                             .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
+                        canSelectPrevious = selectedPageIndex.value > 0,
+                        canSelectNext = selectedPageIndex.value < pageCount - 1,
+                        onSelectPrevious = { selectPageAt(selectedPageIndex.value - 1) },
+                        onSelectNext = { selectPageAt(selectedPageIndex.value + 1) },
                     )
                     else -> ExercisePageFixedHeader(
                         modifier = Modifier
@@ -876,7 +959,11 @@ fun PageExercises(
                             .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
                         displayCounter = displayCounter,
-                        useWeightHeader = useWeightHeader
+                        useWeightHeader = useWeightHeader,
+                        canSelectPrevious = selectedPageIndex.value > 0,
+                        canSelectNext = selectedPageIndex.value < pageCount - 1,
+                        onSelectPrevious = { selectPageAt(selectedPageIndex.value - 1) },
+                        onSelectNext = { selectPageAt(selectedPageIndex.value + 1) },
                     )
                 }
             }
@@ -900,50 +987,6 @@ fun PageExercises(
             )
         }
 
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-                    .clickable(enabled = selectedPageIndex.value > 0) {
-                        hapticsViewModel.doGentleVibration()
-                        val previousPage = pageItems[selectedPageIndex.value - 1]
-                        onPageSelected(
-                            previousPage.representativeExercise,
-                            (previousPage as? PageExercisesItem.RestPage)?.restState?.set?.id
-                        )
-                    }
-                    .then(if (pageCount > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-            }
-            Spacer(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-                    .clickable(enabled = selectedPageIndex.value < pageCount - 1) {
-                        hapticsViewModel.doGentleVibration()
-                        val nextPage = pageItems[selectedPageIndex.value + 1]
-                        onPageSelected(
-                            nextPage.representativeExercise,
-                            (nextPage as? PageExercisesItem.RestPage)?.restState?.set?.id
-                        )
-                    }
-                    .then(if (pageCount > 1) Modifier else Modifier.alpha(0f)),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-            }
-        }
     }
 }
 
