@@ -11,6 +11,45 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
 
 class WorkoutSupersetAssemblyService {
+    /**
+     * Builds a history-free superset sequence for editors and previews, then routes it through
+     * the same scheduler used by an active workout.
+     */
+    fun assemblePreviewChildStates(superset: Superset): List<WorkoutState> {
+        val setStateFactory = WorkoutSetStateFactory()
+        val queues = superset.exercises.map { exercise ->
+            exercise.sets
+                .filterNot { it is RestSet }
+                .flatMapIndexed { setIndex, set ->
+                    val isWarmup = setStateFactory.isWarmupSet(set)
+                    val isCalibration = setStateFactory.isCalibrationSet(set)
+                    val setData = initializeSetData(set)
+                    val setState = setStateFactory.buildWorkoutSetState(
+                        exercise = exercise,
+                        set = set,
+                        setIndex = setIndex,
+                        previousSetData = null,
+                        currentSetData = setData,
+                        historySet = null,
+                        plateChangeResult = null,
+                        exerciseInfo = null,
+                        progressionState = null,
+                        isWarmupSet = isWarmup,
+                        bodyWeightKg = 0.0,
+                        isUnilateral = setStateFactory.isUnilateralExercise(exercise),
+                        isCalibrationSet = isCalibration,
+                        isCalibrationManagedWorkSet = false,
+                        getEquipmentById = { null }
+                    )
+                    setStateFactory.buildUnilateralSetBlock(exercise, setState, setIndex)
+                        ?.childStates
+                        ?: listOf(setState)
+                }
+                .toMutableList()
+        }
+        return assembleSupersetChildStates(superset, queues)
+    }
+
     fun assembleSupersetChildStates(
         superset: Superset,
         queues: List<MutableList<WorkoutState>>

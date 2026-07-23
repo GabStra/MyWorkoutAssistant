@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -17,6 +18,47 @@ import org.junit.Test
 import java.util.UUID
 
 class WorkoutSetStateFactoryTest {
+
+    @Test
+    fun `superset preview uses runtime assembly order and omits trailing rest`() {
+        val firstExercise = createExercise("Press", null).copy(
+            sets = listOf(createWeightSet(), createWeightSet())
+        )
+        val secondExercise = createExercise("Row", null).copy(
+            sets = listOf(createWeightSet(), createWeightSet())
+        )
+        val superset = Superset(
+            id = UUID.randomUUID(),
+            enabled = true,
+            exercises = listOf(firstExercise, secondExercise),
+            restSecondsByExercise = mapOf(firstExercise.id to 15, secondExercise.id to 60)
+        )
+
+        val states = WorkoutSupersetAssemblyService().assemblePreviewChildStates(superset)
+
+        assertEquals(
+            listOf(
+                firstExercise.id,
+                firstExercise.id,
+                secondExercise.id,
+                secondExercise.id,
+                firstExercise.id,
+                firstExercise.id,
+                secondExercise.id
+            ),
+            states.map { state ->
+                when (state) {
+                    is WorkoutState.Set -> state.exerciseId
+                    is WorkoutState.Rest -> state.exerciseId
+                    else -> error("Unexpected state: $state")
+                }
+            }
+        )
+        assertEquals(
+            listOf(15, 60, 15),
+            states.filterIsInstance<WorkoutState.Rest>().map { (it.set as RestSet).timeInSeconds }
+        )
+    }
 
     @Test
     fun `superset keeps a unilateral set and its intra-set rest together`() {
@@ -198,6 +240,13 @@ class WorkoutSetStateFactoryTest {
         progressionState = null,
         isWarmupSet = false,
         equipmentId = null
+    )
+
+    private fun createWeightSet(): WeightSet = WeightSet(
+        id = UUID.randomUUID(),
+        reps = 10,
+        weight = 12.5,
+        subCategory = SetSubCategory.WorkSet
     )
 
     private fun createCalibrationLoadSelection(exercise: Exercise): WorkoutState.CalibrationLoadSelection {
