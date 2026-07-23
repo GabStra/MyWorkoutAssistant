@@ -15,7 +15,12 @@ import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 
 @Composable
-fun LoadingScreen(appViewModel: AppViewModel, text: String = "Loading", extraContent: @Composable () -> Unit = {}) {
+fun LoadingScreen(
+    appViewModel: AppViewModel,
+    text: String = "Loading",
+    showIndicator: Boolean = true,
+    extraContent: @Composable () -> Unit = {},
+) {
     BackHandler(true) {
         // Do nothing
     }
@@ -25,8 +30,10 @@ fun LoadingScreen(appViewModel: AppViewModel, text: String = "Loading", extraCon
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        CircularProgressIndicator()
-        Spacer(Modifier.height(8.dp))
+        if (showIndicator) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(8.dp))
+        }
         LoadingText(baseText = text)
         extraContent()
     }

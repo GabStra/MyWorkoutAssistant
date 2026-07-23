@@ -952,7 +952,11 @@ fun WorkoutsScreen(
                 null -> "Preparing sync..."
             },
             useOpaqueBackground = true,
-            progress = syncProgress?.let { animatedSyncProgress },
+            progress = if (syncPhase == SyncPhase.TRANSFERRING) {
+                syncProgress?.let { animatedSyncProgress }
+            } else {
+                null
+            },
             onCancel = onCancelSync,
         )
         LoadingOverlay(

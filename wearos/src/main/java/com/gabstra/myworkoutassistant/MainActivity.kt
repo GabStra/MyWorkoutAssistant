@@ -600,14 +600,22 @@ fun WearApp(
                                     animationSpec = tween(durationMillis = 400)
                                 )
 
-                                CircularProgressIndicator(
-                                    progress = animatedProgress,
-                                    modifier = Modifier
-                                        .fillMaxSize(),
-                                    strokeWidth = 4.dp,
-                                    indicatorColor = MaterialTheme.colorScheme.primary,
-                                    trackColor = MediumDarkGray,
-                                )
+                                if (syncPhase == SyncPhase.TRANSFERRING) {
+                                    CircularProgressIndicator(
+                                        progress = animatedProgress,
+                                        modifier = Modifier.fillMaxSize(),
+                                        strokeWidth = 4.dp,
+                                        indicatorColor = MaterialTheme.colorScheme.primary,
+                                        trackColor = MediumDarkGray,
+                                    )
+                                } else {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.fillMaxSize(),
+                                        strokeWidth = 4.dp,
+                                        indicatorColor = MaterialTheme.colorScheme.primary,
+                                        trackColor = MediumDarkGray,
+                                    )
+                                }
 
                                 val syncStageText = when (syncPhase) {
                                     SyncPhase.CONNECTING -> "Connecting to phone"
@@ -615,7 +623,11 @@ fun WearApp(
                                     SyncPhase.PROCESSING -> "Processing data"
                                     SyncPhase.COMPLETED -> "Sync complete"
                                 }
-                                LoadingScreen(appViewModel, syncStageText)
+                                LoadingScreen(
+                                    appViewModel = appViewModel,
+                                    text = syncStageText,
+                                    showIndicator = false,
+                                )
                             }
                         }
                         SyncStatusBadge(
