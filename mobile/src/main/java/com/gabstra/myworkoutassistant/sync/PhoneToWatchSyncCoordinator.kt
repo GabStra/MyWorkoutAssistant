@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.core.content.edit
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import android.net.Uri
 import com.gabstra.myworkoutassistant.checkWearSyncEndpoint
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
@@ -23,6 +25,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import com.google.android.gms.tasks.Tasks
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
 
 /**
  * Coordinates automatic phone→Wear sync after phone-originated persistence:
@@ -51,7 +57,9 @@ object PhoneToWatchSyncCoordinator {
     private val pendingFollowUp = AtomicBoolean(false)
     private val pendingManualOverride = AtomicBoolean(false)
     private val isWorkerRunning = AtomicBoolean(false)
+    private val activeTransactionId = AtomicReference<String?>(null)
     private val automaticSyncState = AutomaticSyncFingerprintState()
+    private val activeWorkerSyncState = AtomicReference<ManualSyncUiState?>(null)
     private val _manualSyncProgress = MutableStateFlow<Float?>(null)
     val manualSyncProgress = _manualSyncProgress.asStateFlow()
     private val _manualSyncUiState = MutableStateFlow<ManualSyncUiState?>(null)
@@ -252,7 +260,10 @@ object PhoneToWatchSyncCoordinator {
             debounceJob?.cancel()
             debounceJob = null
             if (hasRunningWork || isWorkerRunning.get()) {
-                setManualSyncState(SyncPhase.CONNECTING, 0f)
+                setManualSyncState(activeWorkerSyncState.get() ?: ManualSyncUiState(
+                    SyncPhase.CONNECTING,
+                    0f
+                ))
                 Log.d(TAG, "manual sync: attached foreground state to running worker")
                 return true
             }
@@ -264,7 +275,9 @@ object PhoneToWatchSyncCoordinator {
         }
         val workerStartedDuringEndpointProbe = hasRunningSyncWork(appContext)
         mutex.withLock {
-            setManualSyncState(SyncPhase.CONNECTING, 0f)
+            setManualSyncState(
+                activeWorkerSyncState.get() ?: ManualSyncUiState(SyncPhase.CONNECTING, 0f)
+            )
             if (workerStartedDuringEndpointProbe || isWorkerRunning.get()) {
                 Log.d(TAG, "manual sync: attached foreground state to worker started during endpoint probe")
             } else {
@@ -273,6 +286,48 @@ object PhoneToWatchSyncCoordinator {
             }
         }
         return true
+    }
+
+    internal fun onTransactionStarted(transactionId: String) {
+        activeTransactionId.set(transactionId)
+        activeWorkerSyncState.set(ManualSyncUiState(SyncPhase.CONNECTING, 0f))
+    }
+
+    fun cancelManualSyncToWatch(context: Context) {
+        val appContext = context.applicationContext
+        val transactionId = activeTransactionId.getAndSet(null)
+        clearManualSyncState()
+        clearPendingSyncFlags(appContext)
+        WorkManager.getInstance(appContext)
+            .cancelUniqueWork(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+        if (transactionId != null) {
+            scope.launch(Dispatchers.IO) {
+                publishSyncCancellation(appContext, transactionId)
+            }
+        }
+        Log.d(TAG, "manual sync cancelled transaction=$transactionId")
+    }
+
+    private suspend fun publishSyncCancellation(context: Context, transactionId: String) {
+        val dataClient = Wearable.getDataClient(context)
+        val path = DataLayerPaths.buildPath(DataLayerPaths.SYNC_CANCEL_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(path).apply {
+            dataMap.putString("transactionId", transactionId)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+        try {
+            Tasks.await(dataClient.putDataItem(request))
+            delay(500)
+            val uri = Uri.Builder().scheme("wear").path(path).build()
+            Tasks.await(
+                dataClient.deleteDataItems(
+                    uri,
+                    com.google.android.gms.wearable.DataClient.FILTER_LITERAL
+                )
+            )
+        } catch (exception: Exception) {
+            Log.w(TAG, "Failed to publish sync cancellation transaction=$transactionId", exception)
+        }
     }
 
     internal fun onWorkerSyncAttemptSucceeded(
@@ -323,8 +378,10 @@ object PhoneToWatchSyncCoordinator {
     }
 
     internal fun updateManualSyncState(phase: SyncPhase, progress: Float) {
+        val state = ManualSyncUiState(phase, progress.coerceIn(0f, 1f))
+        activeWorkerSyncState.set(state)
         if (_manualSyncUiState.value != null) {
-            setManualSyncState(phase, progress)
+            setManualSyncState(state)
         }
     }
 
@@ -333,12 +390,17 @@ object PhoneToWatchSyncCoordinator {
     }
 
     private fun setManualSyncState(phase: SyncPhase, progress: Float) {
-        val normalizedProgress = progress.coerceIn(0f, 1f)
-        _manualSyncProgress.value = normalizedProgress
-        _manualSyncUiState.value = ManualSyncUiState(phase, normalizedProgress)
+        setManualSyncState(ManualSyncUiState(phase, progress.coerceIn(0f, 1f)))
+    }
+
+    private fun setManualSyncState(state: ManualSyncUiState) {
+        _manualSyncProgress.value = state.progress
+        _manualSyncUiState.value = state
     }
 
     private fun clearManualSyncState() {
+        activeTransactionId.set(null)
+        activeWorkerSyncState.set(null)
         _manualSyncProgress.value = null
         _manualSyncUiState.value = null
     }

@@ -1467,6 +1467,17 @@ class DataLayerListenerService : WearableListenerService() {
                         transactionId?.let { tid ->
                             SyncHandshakeManager.reportProgress(tid, phase, progress)
                         }
+                        scope.launch {
+                            runCatching {
+                                Tasks.await(dataClient.deleteDataItems(dataEvent.dataItem.uri))
+                            }.onFailure { exception ->
+                                Log.w(
+                                    "DataLayerSync",
+                                    "Failed to remove consumed sync progress event at $path",
+                                    exception
+                                )
+                            }
+                        }
                     }
 
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_PHASE_PREFIX) -> {

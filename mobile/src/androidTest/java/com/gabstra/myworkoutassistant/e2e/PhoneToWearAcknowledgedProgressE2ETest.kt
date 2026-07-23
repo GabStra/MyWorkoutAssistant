@@ -7,6 +7,9 @@ import androidx.work.WorkManager
 import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -20,6 +23,43 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PhoneToWearAcknowledgedProgressE2ETest {
+
+    @Test
+    fun manualSync_startedFromMainThreadReachesWearEndpoint() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val result = CompletableDeferred<Boolean>()
+
+        CoroutineScope(Dispatchers.Main).launch {
+            result.complete(PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context))
+        }
+
+        assertTrue(withTimeout(30_000L) { result.await() })
+        PhoneToWatchSyncCoordinator.cancelManualSyncToWatch(context)
+    }
+
+    @Test
+    fun manualSync_cancelClearsUiAndCancelsWorker() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+        PhoneToWatchSyncCoordinator.install(context)
+        assertTrue(PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context))
+        withTimeout(30_000L) {
+            PhoneToWatchSyncCoordinator.manualSyncUiState.first { it != null }
+        }
+
+        PhoneToWatchSyncCoordinator.cancelManualSyncToWatch(context)
+
+        assertEquals(null, PhoneToWatchSyncCoordinator.manualSyncUiState.value)
+        withTimeout(30_000L) {
+            WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+                .first { workInfos ->
+                    workInfos.isNotEmpty() &&
+                        workInfos.all { it.state.isFinished }
+                }
+        }
+        Unit
+    }
 
     @Test
     fun foregroundSync_attachesToJustEnqueuedRestoreWorker() = runBlocking {

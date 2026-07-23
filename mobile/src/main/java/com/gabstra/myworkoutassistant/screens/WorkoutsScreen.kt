@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -104,6 +105,7 @@ fun WorkoutsScreen(
     isExportingWorkoutDataForLlm: Boolean = false,
     workoutDataExportStatus: String = "Exporting workout data...",
     onSyncClick: () -> Unit,
+    onCancelSync: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onImportWorkoutsClick: () -> Unit,
@@ -118,6 +120,11 @@ fun WorkoutsScreen(
     onViewErrorLogs: () -> Unit,
     selectedTabIndex: Int
 ) {
+    val animatedSyncProgress by animateFloatAsState(
+        targetValue = syncProgress ?: 0f,
+        animationSpec = tween(durationMillis = 400),
+        label = "Wear-acknowledged sync progress"
+    )
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
     val context = LocalContext.current
     val externalSessionDatabase = remember(context) {
@@ -945,7 +952,8 @@ fun WorkoutsScreen(
                 null -> "Preparing sync..."
             },
             useOpaqueBackground = true,
-            progress = syncProgress,
+            progress = syncProgress?.let { animatedSyncProgress },
+            onCancel = onCancelSync,
         )
         LoadingOverlay(
             isVisible = rememberMinimumLoadingVisibility(

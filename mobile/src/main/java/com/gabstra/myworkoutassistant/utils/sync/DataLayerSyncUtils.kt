@@ -255,7 +255,10 @@ object SyncHandshakeManager {
  * Checks if at least one Wear node is connected before attempting background sync.
  * Retries up to 3 times with exponential backoff.
  */
-suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
+suspend fun checkConnection(
+    context: android.content.Context,
+    maxRetries: Int = 3
+): Boolean = withContext(Dispatchers.IO) {
     var attempt = 0
     while (attempt < maxRetries) {
         try {
@@ -269,7 +272,7 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
             
             if (hasConnection) {
                 Log.d("DataLayerSync", "Connection verified: ${nodes.size} node(s) connected")
-                return true
+                return@withContext true
             } else {
                 Log.w("DataLayerSync", "No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
             }
@@ -286,7 +289,7 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
     }
     
     Log.e("DataLayerSync", "Connection check failed after $maxRetries attempts")
-    return false
+    false
 }
 
 suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
@@ -488,29 +491,32 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
 }
 
 suspend fun checkWearSyncEndpoint(context: android.content.Context): Boolean {
-    if (!checkConnection(context, maxRetries = 1)) {
-        return false
-    }
+    return withContext(Dispatchers.IO) {
+        if (!checkConnection(context, maxRetries = 1)) {
+            return@withContext false
+        }
 
-    val transactionId = UUID.randomUUID().toString()
-    val dataClient = Wearable.getDataClient(context)
-    val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
-    return try {
-        val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
-        val request = PutDataMapRequest.create(requestPath).apply {
-            dataMap.putString("transactionId", transactionId)
-            dataMap.putString("timestamp", System.currentTimeMillis().toString())
-        }.asPutDataRequest().setUrgent()
-        Tasks.await(dataClient.putDataItem(request))
-        withTimeoutOrNull(5_000L) {
-            ackWaiter.await()
-            true
-        } ?: false
-    } catch (exception: Exception) {
-        Log.w("DataLayerSync", "Wear sync endpoint probe failed: ${exception.message}")
-        false
-    } finally {
-        SyncHandshakeManager.cleanup(transactionId)
+        val transactionId = UUID.randomUUID().toString()
+        val dataClient = Wearable.getDataClient(context)
+        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+        try {
+            val requestPath =
+                DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
+            val request = PutDataMapRequest.create(requestPath).apply {
+                dataMap.putString("transactionId", transactionId)
+                dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            }.asPutDataRequest().setUrgent()
+            Tasks.await(dataClient.putDataItem(request))
+            withTimeoutOrNull(5_000L) {
+                ackWaiter.await()
+                true
+            } ?: false
+        } catch (exception: Exception) {
+            Log.w("DataLayerSync", "Wear sync endpoint probe failed: ${exception.message}")
+            false
+        } finally {
+            SyncHandshakeManager.cleanup(transactionId)
+        }
     }
 }
 
@@ -665,9 +671,11 @@ suspend fun sendAppBackup(
     dataClient: DataClient,
     appBackup: AppBackup,
     context: android.content.Context? = null,
-    onProgress: (SyncPhase, Float) -> Unit = { _, _ -> }
+    onProgress: (SyncPhase, Float) -> Unit = { _, _ -> },
+    onTransactionStarted: (String) -> Unit = {}
 ) {
     val transactionId = UUID.randomUUID().toString()
+    onTransactionStarted(transactionId)
     SyncHandshakeManager.registerProgressListener(transactionId, onProgress)
     Log.d("DataLayerSync", "Starting app backup, transactionId=$transactionId")
     try {

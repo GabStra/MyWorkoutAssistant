@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -80,6 +81,7 @@ fun LoadingOverlay(
     text: String = "Loading...",
     useOpaqueBackground: Boolean = false,
     progress: Float? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     if (isVisible) {
         val interactionSource = remember { MutableInteractionSource() }
@@ -114,6 +116,12 @@ fun LoadingOverlay(
                 }
                 Spacer(Modifier.height(Spacing.md))
                 Text(text = text, style = MaterialTheme.typography.bodyLarge)
+                if (onCancel != null) {
+                    Spacer(Modifier.height(Spacing.sm))
+                    TextButton(onClick = onCancel) {
+                        Text("Cancel")
+                    }
+                }
             }
         }
     }

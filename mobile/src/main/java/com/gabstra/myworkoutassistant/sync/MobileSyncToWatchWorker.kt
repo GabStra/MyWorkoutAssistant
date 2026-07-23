@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
@@ -155,12 +156,18 @@ class MobileSyncToWatchWorker(
                     TAG,
                     "SYNC_TRACE event=worker_start side=mobile channel=full_backup"
                 )
-                sendAppBackup(dataClient, appBackup, context) { phase, acknowledgedProgress ->
-                    PhoneToWatchSyncCoordinator.updateManualSyncState(
-                        phase,
-                        acknowledgedProgress
-                    )
-                }
+                sendAppBackup(
+                    dataClient = dataClient,
+                    appBackup = appBackup,
+                    context = context,
+                    onProgress = { phase, acknowledgedProgress ->
+                        PhoneToWatchSyncCoordinator.updateManualSyncState(
+                            phase,
+                            acknowledgedProgress
+                        )
+                    },
+                    onTransactionStarted = PhoneToWatchSyncCoordinator::onTransactionStarted
+                )
             }
             Log.d(
                 TAG,
@@ -173,6 +180,9 @@ class MobileSyncToWatchWorker(
             )
             Result.success()
         }.getOrElse { exception ->
+            if (exception is CancellationException) {
+                throw exception
+            }
             if (exception is WorkoutStoreValidationException) {
                 Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
                 if (isManualSync) {

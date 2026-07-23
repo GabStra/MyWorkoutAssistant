@@ -1286,6 +1286,9 @@ fun MyWorkoutAssistantNavHost(
                             onSyncClick = {
                                 syncWithWatch()
                             },
+                            onCancelSync = {
+                                PhoneToWatchSyncCoordinator.cancelManualSyncToWatch(context)
+                            },
                             onOpenSettingsClick = {
                                 appViewModel.setScreenData(ScreenData.Settings())
                             },

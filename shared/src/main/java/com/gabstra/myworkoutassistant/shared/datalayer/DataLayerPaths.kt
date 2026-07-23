@@ -13,6 +13,7 @@ object DataLayerPaths {
     const val SYNC_ACK_PREFIX = "/sync/ack"
     const val SYNC_COMPLETE_PREFIX = "/sync/complete"
     const val SYNC_ERROR_PREFIX = "/sync/error"
+    const val SYNC_CANCEL_PREFIX = "/sync/cancel"
     const val SYNC_PROGRESS_PREFIX = "/sync/progress"
     const val SYNC_PHASE_PREFIX = "/sync/phase"
     const val WORKOUT_HISTORY_START_PREFIX = "/workoutHistory/start"

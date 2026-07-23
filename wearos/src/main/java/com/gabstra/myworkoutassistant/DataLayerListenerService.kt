@@ -929,6 +929,38 @@ class DataLayerListenerService : WearableListenerService() {
                 }
                 val path = uri.path ?: return@forEach
                 when {
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_CANCEL_PREFIX) -> {
+                        val cancelledTransactionId = DataLayerPaths.parseTransactionId(
+                            path,
+                            DataLayerPaths.SYNC_CANCEL_PREFIX
+                        )
+                        if (
+                            cancelledTransactionId != null &&
+                            (currentTransactionId == null || currentTransactionId == cancelledTransactionId)
+                        ) {
+                            removeTimeout()
+                            removeRetryTimeout()
+                            backupChunks = mutableMapOf()
+                            receivedChunkIndices = mutableSetOf()
+                            expectedChunks = 0
+                            hasStartedSync = false
+                            ignoreUntilStartOrEnd = false
+                            currentTransactionId = null
+                            val intent = Intent(INTENT_ID).apply {
+                                putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                setPackage(packageName)
+                            }
+                            sendBroadcast(intent)
+                            DataLayerSyncForegroundHelper.startFromServiceCreated(
+                                this@DataLayerListenerService
+                            )
+                            Log.d(
+                                "DataLayerSync",
+                                "Cancelled app backup transaction: $cancelledTransactionId"
+                            )
+                        }
+                    }
+
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {
                         val transactionId = DataLayerPaths.parseTransactionId(
                             path,
@@ -1297,7 +1329,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 transactionId?.let { tid ->
                                     val progressPath = DataLayerPaths.buildPath(
                                         DataLayerPaths.SYNC_PROGRESS_PREFIX,
-                                        tid
+                                        tid,
+                                        receivedChunkIndices.size
                                     )
                                     val progressRequest = PutDataMapRequest.create(progressPath).apply {
                                         dataMap.putFloat("progress", progress)
