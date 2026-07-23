@@ -64,6 +64,18 @@
                 <data android:pathPrefix="/sync/phase" />
             </intent-filter>
             <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" />
+                <data android:host="*" />
+                <data android:pathPrefix="/sync/progress" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" />
+                <data android:host="*" />
+                <data android:pathPrefix="/sync/cancel" />
+            </intent-filter>
+            <intent-filter>
                 <!-- DATA_CHANGED with path filters (no deprecated BIND_LISTENER) -->
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <data android:scheme="wear"/>
@@ -90,6 +102,7 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/sync/error"/>
+                <data android:pathPrefix="/sync/cancel"/>
                 <data android:pathPrefix="/sync/progress"/>
                 <data android:pathPrefix="/sync/phase"/>
             </intent-filter>

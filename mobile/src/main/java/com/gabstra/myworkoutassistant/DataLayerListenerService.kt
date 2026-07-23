@@ -33,6 +33,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
 import com.gabstra.myworkoutassistant.shared.datalayer.decideWorkoutSessionHeartbeatApply
@@ -1345,6 +1346,28 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         try {
+            if (DataLayerPaths.matchesPrefix(
+                    messageEvent.path,
+                    DataLayerPaths.SYNC_PROGRESS_PREFIX
+                )
+            ) {
+                val transactionId = DataLayerPaths.parseTransactionId(
+                    messageEvent.path,
+                    DataLayerPaths.SYNC_PROGRESS_PREFIX
+                ) ?: return
+                val update = SyncProgressUpdate.fromByteArray(messageEvent.data) ?: return
+                SyncHandshakeManager.reportProgress(
+                    transactionId,
+                    update.phase,
+                    update.progress
+                )
+                Log.d(
+                    "DataLayerSync",
+                    "Received acknowledged progress ${update.progress} for transaction $transactionId"
+                )
+                return
+            }
+
             if (!DataLayerPaths.matchesPrefix(
                     messageEvent.path,
                     DataLayerPaths.SYNC_PHASE_PREFIX
@@ -1456,6 +1479,7 @@ class DataLayerListenerService : WearableListenerService() {
                     }
 
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_PROGRESS_PREFIX) -> {
+                        val progressUri = dataEvent.dataItem.uri
                         val transactionId = DataLayerPaths.parseTransactionId(
                             path,
                             DataLayerPaths.SYNC_PROGRESS_PREFIX
@@ -1469,7 +1493,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                         scope.launch {
                             runCatching {
-                                Tasks.await(dataClient.deleteDataItems(dataEvent.dataItem.uri))
+                                Tasks.await(dataClient.deleteDataItems(progressUri))
                             }.onFailure { exception ->
                                 Log.w(
                                     "DataLayerSync",

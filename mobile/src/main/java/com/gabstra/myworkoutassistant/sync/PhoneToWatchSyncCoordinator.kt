@@ -311,11 +311,18 @@ object PhoneToWatchSyncCoordinator {
     private suspend fun publishSyncCancellation(context: Context, transactionId: String) {
         val dataClient = Wearable.getDataClient(context)
         val path = DataLayerPaths.buildPath(DataLayerPaths.SYNC_CANCEL_PREFIX, transactionId)
+        val payload = transactionId.toByteArray(Charsets.UTF_8)
         val request = PutDataMapRequest.create(path).apply {
             dataMap.putString("transactionId", transactionId)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
         try {
+            val connectedNodes = Tasks.await(Wearable.getNodeClient(context).connectedNodes)
+            connectedNodes.forEach { node ->
+                Tasks.await(
+                    Wearable.getMessageClient(context).sendMessage(node.id, path, payload)
+                )
+            }
             Tasks.await(dataClient.putDataItem(request))
             delay(500)
             val uri = Uri.Builder().scheme("wear").path(path).build()
