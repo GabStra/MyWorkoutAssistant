@@ -8,6 +8,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.sendAppBackup
@@ -33,6 +34,7 @@ class MobileSyncToWatchWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        val isManualSync = inputData.getBoolean(INPUT_IS_MANUAL_SYNC, false)
         return runCatching {
             val context = applicationContext
             val dataClient = Wearable.getDataClient(context)
@@ -153,7 +155,12 @@ class MobileSyncToWatchWorker(
                     TAG,
                     "SYNC_TRACE event=worker_start side=mobile channel=full_backup"
                 )
-                sendAppBackup(dataClient, appBackup, context)
+                sendAppBackup(dataClient, appBackup, context) { phase, acknowledgedProgress ->
+                    PhoneToWatchSyncCoordinator.updateManualSyncState(
+                        phase,
+                        acknowledgedProgress
+                    )
+                }
             }
             Log.d(
                 TAG,
@@ -161,16 +168,23 @@ class MobileSyncToWatchWorker(
             )
             PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(
                 context.applicationContext,
-                workoutStoreFingerprint
+                workoutStoreFingerprint,
+                isManualSync
             )
             Result.success()
         }.getOrElse { exception ->
             if (exception is WorkoutStoreValidationException) {
                 Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
+                if (isManualSync) {
+                    PhoneToWatchSyncCoordinator.onManualSyncFailed()
+                }
                 return Result.failure()
             }
             Log.e(TAG, "SYNC_TRACE event=worker_retry side=mobile channel=full_backup", exception)
             Log.e(TAG, "Mobile sync worker failed", exception)
+            if (isManualSync) {
+                PhoneToWatchSyncCoordinator.onManualSyncFailed()
+            }
             val shouldRetry = PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
             if (shouldRetry) {
                 Result.retry()
@@ -185,6 +199,7 @@ class MobileSyncToWatchWorker(
     companion object {
         private const val TAG = "MobileSyncToWatchWorker"
         const val UNIQUE_WORK_NAME = "mobile_sync_to_watch"
+        private const val INPUT_IS_MANUAL_SYNC = "is_manual_sync"
         private val workerSyncMutex = Mutex()
 
         fun enqueue(context: Context) {
@@ -192,11 +207,16 @@ class MobileSyncToWatchWorker(
         }
 
         fun enqueueManual(context: Context) {
-            enqueueInternal(context, ExistingWorkPolicy.REPLACE)
+            enqueueInternal(context, ExistingWorkPolicy.REPLACE, isManualSync = true)
         }
 
-        private fun enqueueInternal(context: Context, policy: ExistingWorkPolicy) {
+        private fun enqueueInternal(
+            context: Context,
+            policy: ExistingWorkPolicy,
+            isManualSync: Boolean = false
+        ) {
             val request = OneTimeWorkRequestBuilder<MobileSyncToWatchWorker>()
+                .setInputData(workDataOf(INPUT_IS_MANUAL_SYNC to isManualSync))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(

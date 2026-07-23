@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
@@ -1286,8 +1287,26 @@ class DataLayerListenerService : WearableListenerService() {
 
                                 val progressIntent = Intent(INTENT_ID).apply {
                                     putExtra(APP_BACKUP_PROGRESS_UPDATE, "$progress")
+                                    putExtra(
+                                        APP_BACKUP_PHASE_UPDATE,
+                                        SyncPhase.TRANSFERRING.name
+                                    )
                                 }.apply { setPackage(packageName) }
                                 sendBroadcast(progressIntent)
+
+                                transactionId?.let { tid ->
+                                    val progressPath = DataLayerPaths.buildPath(
+                                        DataLayerPaths.SYNC_PROGRESS_PREFIX,
+                                        tid
+                                    )
+                                    val progressRequest = PutDataMapRequest.create(progressPath).apply {
+                                        dataMap.putFloat("progress", progress)
+                                        dataMap.putString("phase", SyncPhase.TRANSFERRING.name)
+                                        dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                                        dataMap.putString("transactionId", tid)
+                                    }.asPutDataRequest().setUrgent()
+                                    dataClient.putDataItem(progressRequest)
+                                }
                             }
 
                             if (isLastChunk || isLastRetryChunk) {
@@ -1298,9 +1317,47 @@ class DataLayerListenerService : WearableListenerService() {
                                 if (!ignoreUntilStartOrEnd) {
                                     removeTimeout()
 
+                                    val processingIntent = Intent(INTENT_ID).apply {
+                                        putExtra(APP_BACKUP_PROGRESS_UPDATE, "1.0")
+                                        putExtra(
+                                            APP_BACKUP_PHASE_UPDATE,
+                                            SyncPhase.PROCESSING.name
+                                        )
+                                        setPackage(packageName)
+                                    }
+                                    sendBroadcast(processingIntent)
                                     scope.launch(Dispatchers.IO) {
                                         var processingStep = "initialization"
                                         try {
+                                            transactionId?.let { tid ->
+                                                val processingPath = DataLayerPaths.buildPath(
+                                                    DataLayerPaths.SYNC_PHASE_PREFIX,
+                                                    tid
+                                                )
+                                                val processingPayload =
+                                                    SyncPhase.PROCESSING.name.toByteArray(
+                                                        Charsets.UTF_8
+                                                    )
+                                                val connectedNodes = Tasks.await(
+                                                    Wearable.getNodeClient(this@DataLayerListenerService)
+                                                        .connectedNodes
+                                                )
+                                                connectedNodes.forEach { node ->
+                                                    Tasks.await(
+                                                        Wearable.getMessageClient(
+                                                            this@DataLayerListenerService
+                                                        ).sendMessage(
+                                                            node.id,
+                                                            processingPath,
+                                                            processingPayload
+                                                        )
+                                                    )
+                                                }
+                                                Log.d(
+                                                    "DataLayerSync",
+                                                    "Published PROCESSING phase for transaction $tid"
+                                                )
+                                            }
                                             processingStep = "validating chunks"
                                             
                                             // Log chunk reception details
@@ -1526,21 +1583,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                 // is not running (dynamic WearDataLayerReceiver would not receive APP_BACKUP_END).
                                                 WorkoutAlarmScheduler(applicationContext).rescheduleAllWorkouts()
 
-                                                // Sync-complete notification is only posted from this full chunked backup path
-                                                // (phone MobileSyncToWatchWorker → sendAppBackup). Smaller paths (e.g. workout
-                                                // store JSON only) do not call showSyncCompleteNotification.
-                                                val intent = Intent(INTENT_ID).apply {
-                                                    putExtra(
-                                                        APP_BACKUP_END_JSON,
-                                                        APP_BACKUP_END_JSON
-                                                    )
-                                                    setPackage(packageName)
-                                                }
-                                                sendBroadcast(intent)
-                                                Log.d(
-                                                    "DataLayerSync",
-                                                    "Backup completed and broadcast sent for transaction: $transactionId"
-                                                )
                                                 val legacyAppInForeground = MyApplication.isAppInForeground()
                                                 val processLifecycleState =
                                                     ProcessLifecycleOwner.get().lifecycle.currentState
@@ -1557,7 +1599,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 }
 
                                                 // Send completion acknowledgment
-                                                transactionId?.let { tid ->
+                                                val completionPublished = transactionId?.let { tid ->
                                                     try {
                                                         Log.d(
                                                             "DataLayerSync",
@@ -1579,6 +1621,14 @@ class DataLayerListenerService : WearableListenerService() {
                                                             "timestamp",
                                                             timestamp
                                                         )
+                                                        completeDataMapRequest.dataMap.putFloat(
+                                                            "progress",
+                                                            1f
+                                                        )
+                                                        completeDataMapRequest.dataMap.putString(
+                                                            "phase",
+                                                            SyncPhase.COMPLETED.name
+                                                        )
 
                                                         val completeRequest =
                                                             completeDataMapRequest.asPutDataRequest()
@@ -1594,14 +1644,32 @@ class DataLayerListenerService : WearableListenerService() {
                                                             "DataLayerSync",
                                                             "Successfully sent SYNC_COMPLETE for transaction: $tid (backup)"
                                                         )
+                                                        true
                                                     } catch (exception: Exception) {
                                                         Log.e(
                                                             "DataLayerSync",
                                                             "Failed to send SYNC_COMPLETE for transaction: $tid",
                                                             exception
                                                         )
+                                                        false
                                                     }
+                                                } ?: false
+
+                                                check(completionPublished) {
+                                                    "Failed to publish SYNC_COMPLETE for transaction: $transactionId"
                                                 }
+
+                                                // Dismiss the Wear sync screen only after the processed-data
+                                                // acknowledgment has been successfully published to the phone.
+                                                val intent = Intent(INTENT_ID).apply {
+                                                    putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
+                                                    setPackage(packageName)
+                                                }
+                                                sendBroadcast(intent)
+                                                Log.d(
+                                                    "DataLayerSync",
+                                                    "Backup completion acknowledged and broadcast sent for transaction: $transactionId"
+                                                )
 
                                                 markTransactionCompleted(transactionId)
                                                 backupChunks = mutableMapOf()
@@ -1906,6 +1974,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val APP_BACKUP_END_JSON = "appBackupEndJson"
         const val APP_BACKUP_FAILED = "appBackupFailed"
         const val APP_BACKUP_PROGRESS_UPDATE = "progress_update"
+        const val APP_BACKUP_PHASE_UPDATE = "phase_update"
         const val SYNC_COMPLETE = "syncComplete"
         const val TRANSACTION_ID = "transactionId"
         const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections

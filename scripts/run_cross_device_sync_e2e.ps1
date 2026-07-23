@@ -4,6 +4,7 @@ Param(
     [string]$WearPhoneToWatchMovementVisibilityTestClass = "PhoneToWearMovementVisibilityE2ETest",
     [string]$WearVsLastComparisonTestClass = "PhoneToWearVsLastComparisonE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
+    [string]$MobileAcknowledgedProgressTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneToWearAcknowledgedProgressE2ETest",
     [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
     [string]$MobileObserverTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
@@ -20,6 +21,7 @@ Param(
     [switch]$MovementVisibilityOnly = $false,
     [switch]$SkipWearRebuildAfterFirstRun = $true,
     [switch]$FastTimeoutProfile = $false,
+    [switch]$VerifyMissingWearAppGuard = $false,
     [string]$TimingOutputPath
 )
 
@@ -609,6 +611,30 @@ try {
     Stage-MobileBackupFile -phoneSerial $phoneSerial -appPackage $AppPackage -backupPath $MobileBackupPath
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+    if ($VerifyMissingWearAppGuard) {
+        Write-Host "Uninstalling Wear app to verify the phone availability guard..." -ForegroundColor Cyan
+        & adb -s $watchSerial uninstall $AppPackage | Out-Host
+        Start-Sleep -Seconds 3
+        Run-MobileInstrumentationClass `
+            -phoneSerial $phoneSerial `
+            -className "com.gabstra.myworkoutassistant.e2e.PhoneToWearUnavailableAppE2ETest" `
+            -appPackage $AppPackage `
+            -fastTimeoutProfile:$FastTimeoutProfile
+        Write-Host "Missing Wear app guard verified successfully." -ForegroundColor Green
+
+        Write-Host "Uninstalling phone app to verify the reciprocal Wear availability guard..." -ForegroundColor Cyan
+        & adb -s $phoneSerial uninstall $AppPackage | Out-Host
+        Start-Sleep -Seconds 3
+        Invoke-WearRunnerClass `
+            -className "WearToPhoneUnavailableAppE2ETest" `
+            -watchSerial $watchSerial `
+            -timingPath (Join-Path $logsDir "wear_missing_phone_$timestamp.json") `
+            -skipAssemble:$false `
+            -skipInstall:$false `
+            -fastProfile:$FastTimeoutProfile
+        Write-Host "Missing counterpart app guards verified in both directions." -ForegroundColor Green
+        return
+    }
     Reset-WearAppState -watchSerial $watchSerial -appPackage $AppPackage
 
     $mobilePrepPhase = [System.Diagnostics.Stopwatch]::StartNew()
@@ -621,6 +647,11 @@ try {
     Wait-ForWatchWorkoutStoreSync -watchSerial $watchSerial -appPackage $AppPackage -expectedWorkoutName $ExpectedWorkoutName
     Bring-PhoneAppToForeground -phoneSerial $phoneSerial -appPackage $AppPackage
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    if (-not [string]::IsNullOrWhiteSpace($MobileAcknowledgedProgressTestClass)) {
+        Write-Host "Verifying receiver-acknowledged phone->Wear sync progress and completion..." -ForegroundColor Cyan
+        Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileAcknowledgedProgressTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    }
 
     $wearClassTimings = [ordered]@{}
     $skipAssemble = $false

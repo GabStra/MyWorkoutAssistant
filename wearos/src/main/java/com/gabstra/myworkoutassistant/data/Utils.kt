@@ -751,7 +751,9 @@ internal object WorkoutHistoryRetryProtocol {
 }
 
 /**
- * Checks if at least one connected node exists before attempting sync.
+ * Checks whether the paired phone transport is reachable before attempting sync.
+ * The transaction handshake remains the authoritative check that the phone app is installed
+ * and listening; static capability discovery can temporarily return an empty set after installs.
  * Retries up to 3 times with exponential backoff.
  */
 suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
@@ -759,17 +761,20 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
     while (attempt < maxRetries) {
         try {
             Log.d("WorkoutSync", "checkConnection: Checking connection (attempt ${attempt + 1}/$maxRetries)")
-            val nodeClient = Wearable.getNodeClient(context)
-            val nodes = Tasks.await(nodeClient.connectedNodes, 10, java.util.concurrent.TimeUnit.SECONDS)
+            val nodes = Tasks.await(
+                Wearable.getNodeClient(context).connectedNodes,
+                10,
+                java.util.concurrent.TimeUnit.SECONDS
+            )
             val hasConnection = nodes.isNotEmpty()
             
             Log.d("WorkoutSync", "checkConnection: Found ${nodes.size} connected node(s): ${nodes.map { it.id }}")
             
             if (hasConnection) {
-                Log.d("WorkoutSync", "checkConnection: Connection verified: ${nodes.size} node(s) connected")
+                Log.d("WorkoutSync", "checkConnection: Paired phone transport reachable: ${nodes.size} node(s)")
                 return true
             } else {
-                Log.w("WorkoutSync", "checkConnection: No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
+                Log.w("WorkoutSync", "checkConnection: No paired phone transport found (attempt ${attempt + 1}/$maxRetries)")
             }
         } catch (e: Exception) {
             Log.w("WorkoutSync", "checkConnection: Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}", e)
@@ -911,8 +916,7 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
             dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
-        dataClient.putDataItem(request)
-        delay(100)
+        Tasks.await(dataClient.putDataItem(request))
 
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(1)
         Log.d(
@@ -999,6 +1003,8 @@ private suspend fun sendWorkoutHistoryStoreInternal(
     usedTransactionId: String
 ): Pair<Boolean, String> {
     try {
+        cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient)
+
         // Check if phone is connected before attempting sync
         // This prevents sync attempts when phone is not available
         if (context != null) {
@@ -1273,6 +1279,34 @@ private suspend fun sendWorkoutHistoryStoreInternal(
         return Pair(false, usedTransactionId)
     } finally {
         cleanupWorkoutHistoryTransactionDataItems(dataClient, usedTransactionId)
+    }
+}
+
+internal suspend fun cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient: DataClient) {
+    listOf(
+        DataLayerPaths.WORKOUT_HISTORY_START_PREFIX,
+        DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX
+    ).forEach { pathPrefix ->
+        try {
+            val uri = Uri.Builder()
+                .scheme("wear")
+                .path(pathPrefix)
+                .build()
+            val deletedCount = Tasks.await(
+                dataClient.deleteDataItems(uri, DataClient.FILTER_PREFIX)
+            )
+            if (deletedCount > 0) {
+                Log.d(
+                    "DataLayerSync",
+                    "Removed $deletedCount abandoned workout-history DataItem(s) for prefix=$pathPrefix"
+                )
+            }
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to remove abandoned workout-history DataItems for prefix=$pathPrefix: ${exception.message}"
+            )
+        }
     }
 }
 

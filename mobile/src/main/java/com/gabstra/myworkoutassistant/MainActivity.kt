@@ -483,7 +483,8 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    var isSyncing by remember { mutableStateOf(false) }
+    val manualSyncUiState by PhoneToWatchSyncCoordinator.manualSyncUiState.collectAsState()
+    val isSyncing = manualSyncUiState != null
     var isExportingWorkoutDataForLlm by remember { mutableStateOf(false) }
     var workoutDataExportStatus by remember { mutableStateOf("Exporting workout data...") }
 
@@ -523,17 +524,6 @@ fun MyWorkoutAssistantNavHost(
             },
             showDismiss = false
         )
-    }
-    
-    // Timeout mechanism to clear stuck sync state after 10 seconds
-    LaunchedEffect(isSyncing) {
-        if (isSyncing) {
-            delay(10000L) // 10 seconds timeout
-            if (isSyncing) {
-                // Only reset if still syncing (sync didn't complete)
-                isSyncing = false
-            }
-        }
     }
     
     var importPlanResultMessage by remember { mutableStateOf<String?>(null) }
@@ -1218,8 +1208,14 @@ fun MyWorkoutAssistantNavHost(
     val syncWithWatch = {
         scope.launch {
             appViewModel.flushWorkoutSave(context)
-            PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
-            isSyncing = true
+            val syncStarted = PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
+            if (!syncStarted) {
+                Toast.makeText(
+                    context,
+                    "Wear app is not installed or reachable. Sync will retry in the background.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -1283,6 +1279,8 @@ fun MyWorkoutAssistantNavHost(
                             workoutScheduleDao,
                             healthConnectClient,
                             isSyncing = isSyncing,
+                            syncPhase = manualSyncUiState?.phase,
+                            syncProgress = manualSyncUiState?.progress,
                             isExportingWorkoutDataForLlm = isExportingWorkoutDataForLlm,
                             workoutDataExportStatus = workoutDataExportStatus,
                             onSyncClick = {

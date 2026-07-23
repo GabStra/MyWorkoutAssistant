@@ -72,6 +72,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
@@ -98,6 +99,8 @@ fun WorkoutsScreen(
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     healthConnectClient: HealthConnectClient,
     isSyncing: Boolean = false,
+    syncPhase: SyncPhase? = null,
+    syncProgress: Float? = null,
     isExportingWorkoutDataForLlm: Boolean = false,
     workoutDataExportStatus: String = "Exporting workout data...",
     onSyncClick: () -> Unit,
@@ -934,8 +937,15 @@ fun WorkoutsScreen(
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
         LoadingOverlay(
             isVisible = isSyncing,
-            text = "Syncing...",
-            useOpaqueBackground = true
+            text = when (syncPhase) {
+                SyncPhase.CONNECTING -> "Connecting to watch..."
+                SyncPhase.TRANSFERRING -> "Sending data to watch..."
+                SyncPhase.PROCESSING -> "Watch is processing received data..."
+                SyncPhase.COMPLETED -> "Sync complete"
+                null -> "Preparing sync..."
+            },
+            useOpaqueBackground = true,
+            progress = syncProgress,
         )
         LoadingOverlay(
             isVisible = rememberMinimumLoadingVisibility(

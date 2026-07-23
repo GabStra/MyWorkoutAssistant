@@ -83,6 +83,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutExercisesScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
@@ -593,6 +594,7 @@ fun WearApp(
                             }
                             composable(Screen.Loading.route) {
                                 val progress by appViewModel.backupProgress
+                                val syncPhase by appViewModel.backupSyncPhase
                                 val animatedProgress by animateFloatAsState(
                                     targetValue = progress,
                                     animationSpec = tween(durationMillis = 400)
@@ -607,7 +609,13 @@ fun WearApp(
                                     trackColor = MediumDarkGray,
                                 )
 
-                                LoadingScreen(appViewModel, "Syncing with phone")
+                                val syncStageText = when (syncPhase) {
+                                    SyncPhase.CONNECTING -> "Connecting to phone"
+                                    SyncPhase.TRANSFERRING -> "Receiving data"
+                                    SyncPhase.PROCESSING -> "Processing data"
+                                    SyncPhase.COMPLETED -> "Sync complete"
+                                }
+                                LoadingScreen(appViewModel, syncStageText)
                             }
                         }
                         SyncStatusBadge(

@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.core.content.edit
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.gabstra.myworkoutassistant.checkWearSyncEndpoint
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,6 +16,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -25,6 +30,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * and one follow-up enqueue after a successful sync when pending was set.
  */
 object PhoneToWatchSyncCoordinator {
+    data class ManualSyncUiState(
+        val phase: SyncPhase,
+        val progress: Float
+    )
+
     private const val TAG = "PhoneToWatchSyncCoordinator"
     private const val DEBOUNCE_MS = 30_000L
     /** Defer follow-up enqueue until [MobileSyncToWatchWorker.doWork] has returned so WorkManager is not still RUNNING. */
@@ -42,6 +52,10 @@ object PhoneToWatchSyncCoordinator {
     private val pendingManualOverride = AtomicBoolean(false)
     private val isWorkerRunning = AtomicBoolean(false)
     private val automaticSyncState = AutomaticSyncFingerprintState()
+    private val _manualSyncProgress = MutableStateFlow<Float?>(null)
+    val manualSyncProgress = _manualSyncProgress.asStateFlow()
+    private val _manualSyncUiState = MutableStateFlow<ManualSyncUiState?>(null)
+    val manualSyncUiState = _manualSyncUiState.asStateFlow()
 
     private var installed = false
 
@@ -94,6 +108,12 @@ object PhoneToWatchSyncCoordinator {
             calculateWorkoutStoreHash(workoutStore)
         }
     }
+
+    private suspend fun hasRunningSyncWork(context: Context): Boolean =
+        WorkManager.getInstance(context.applicationContext)
+            .getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+            .first()
+            .any { workInfo -> workInfo.state == WorkInfo.State.RUNNING }
 
     /**
      * Subscribes to WorkManager state for the mobile sync worker. Call once from [android.app.Activity.onCreate] or equivalent.
@@ -225,23 +245,41 @@ object PhoneToWatchSyncCoordinator {
     /**
      * User chose "Sync with Watch" from the menu: cancel debounce and ensure a sync runs (or pending tail if busy).
      */
-    suspend fun requestManualSyncToWatch(context: Context) {
+    suspend fun requestManualSyncToWatch(context: Context): Boolean {
         val appContext = context.applicationContext
+        val hasRunningWork = hasRunningSyncWork(appContext)
         mutex.withLock {
             debounceJob?.cancel()
             debounceJob = null
-            if (isWorkerRunning.get()) {
-                setPendingManualOverride(appContext, true)
-                setPendingFollowUp(appContext, false)
-                Log.d(TAG, "manual sync: worker running, immediate manual follow-up requested")
-            } else {
-                MobileSyncToWatchWorker.enqueueManual(appContext)
-                Log.d(TAG, "manual sync: replaced pending work and enqueued mobile sync to watch")
+            if (hasRunningWork || isWorkerRunning.get()) {
+                setManualSyncState(SyncPhase.CONNECTING, 0f)
+                Log.d(TAG, "manual sync: attached foreground state to running worker")
+                return true
             }
         }
+
+        if (!checkWearSyncEndpoint(appContext)) {
+            Log.d(TAG, "manual sync: Wear endpoint unavailable; foreground sync not started")
+            return false
+        }
+        val workerStartedDuringEndpointProbe = hasRunningSyncWork(appContext)
+        mutex.withLock {
+            setManualSyncState(SyncPhase.CONNECTING, 0f)
+            if (workerStartedDuringEndpointProbe || isWorkerRunning.get()) {
+                Log.d(TAG, "manual sync: attached foreground state to worker started during endpoint probe")
+            } else {
+                MobileSyncToWatchWorker.enqueueManual(appContext)
+                Log.d(TAG, "manual sync: replaced delayed pending work and enqueued immediate mobile sync to watch")
+            }
+        }
+        return true
     }
 
-    internal fun onWorkerSyncAttemptSucceeded(appContext: Context, sentWorkoutStoreFingerprint: String) {
+    internal fun onWorkerSyncAttemptSucceeded(
+        appContext: Context,
+        sentWorkoutStoreFingerprint: String,
+        wasManualSync: Boolean
+    ) {
         scope.launch {
             delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
             mutex.withLock {
@@ -258,12 +296,18 @@ object PhoneToWatchSyncCoordinator {
                     } else {
                         Log.d(TAG, "after successful sync, skipped pending follow-up because latest automatic state was already sent")
                     }
+                    if (wasManualSync || _manualSyncProgress.value != null) {
+                        clearManualSyncState()
+                    }
+                } else if (wasManualSync || _manualSyncProgress.value != null) {
+                    clearManualSyncState()
                 }
             }
         }
     }
 
     internal fun onWorkerSyncAttemptWillRetry(appContext: Context): Boolean {
+        clearManualSyncState()
         if (pendingManualOverride.compareAndSet(true, false)) {
             setPendingManualOverride(appContext, false)
             scope.launch {
@@ -276,5 +320,26 @@ object PhoneToWatchSyncCoordinator {
         setPendingFollowUp(appContext, false)
         Log.d(TAG, "worker will retry; cleared pending (retry sends latest state)")
         return true
+    }
+
+    internal fun updateManualSyncState(phase: SyncPhase, progress: Float) {
+        if (_manualSyncUiState.value != null) {
+            setManualSyncState(phase, progress)
+        }
+    }
+
+    internal fun onManualSyncFailed() {
+        clearManualSyncState()
+    }
+
+    private fun setManualSyncState(phase: SyncPhase, progress: Float) {
+        val normalizedProgress = progress.coerceIn(0f, 1f)
+        _manualSyncProgress.value = normalizedProgress
+        _manualSyncUiState.value = ManualSyncUiState(phase, normalizedProgress)
+    }
+
+    private fun clearManualSyncState() {
+        _manualSyncProgress.value = null
+        _manualSyncUiState.value = null
     }
 }

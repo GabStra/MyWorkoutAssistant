@@ -79,6 +79,7 @@ fun LoadingOverlay(
     isVisible: Boolean,
     text: String = "Loading...",
     useOpaqueBackground: Boolean = false,
+    progress: Float? = null,
 ) {
     if (isVisible) {
         val interactionSource = remember { MutableInteractionSource() }
@@ -99,10 +100,18 @@ fun LoadingOverlay(
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray,
-                )
+                if (progress == null) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                }
                 Spacer(Modifier.height(Spacing.md))
                 Text(text = text, style = MaterialTheme.typography.bodyLarge)
             }
