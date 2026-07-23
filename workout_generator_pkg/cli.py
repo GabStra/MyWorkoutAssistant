@@ -1401,7 +1401,9 @@ def emit_workout_structure(
         rest_to_next_instruction = (
             "CRITICAL - Rest between exercises: Use these EXACT rest durations (in seconds) after each exercise, in order: "
             + ", ".join(pairs) + ". "
-            "Do NOT use 180 or 120 unless listed. After the last exercise the value is 0: do NOT add a Rest component after the last exercise.\n\n"
+            "Do NOT use 180 or 120 unless listed. A 0 value means no rest after that exercise. "
+            "For standalone exercises, emit a Rest component only when the listed value is positive. "
+            "For grouped exercises, follow the Superset rules below instead.\n\n"
         )
     superset_instruction = ""
     superset_groups = workout_entry.get("supersetGroups")
@@ -1439,7 +1441,9 @@ def emit_workout_structure(
                 "- For each listed group, emit exactly one componentType='Superset' containing those exerciseIds in the same order.\n"
                 "- Do NOT emit grouped exercises as standalone Exercise components.\n"
                 "- Do NOT insert Rest components between exercises that belong to the same superset group.\n"
-                "- Use restToNextSeconds to populate restSecondsByExercise for the grouped exercises.\n"
+                "- Populate restSecondsByExercise with exactly one entry for every grouped exercise, using its exact restToNextSeconds value.\n"
+                "- Each map value is rest immediately AFTER its keyed exercise during every round. For [A, B, C], A is rest before B, B is rest before C, and C is rest before A in the next round.\n"
+                "- The last grouped exercise's value is the between-round rest even if it is the final exercise in the workout. The runtime omits it after the final round.\n"
                 "- Keep all non-superset exercises as normal Exercise components in the original workout.exerciseIds order.\n\n"
             )
     retry_instruction = ""

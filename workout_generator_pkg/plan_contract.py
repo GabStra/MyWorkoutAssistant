@@ -516,12 +516,32 @@ def _collect_contract_issues_plan_index(
                 )
             )
 
+        if isinstance(rest_to_next, list):
+            for idx, value in enumerate(rest_to_next):
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    issues.append(
+                        ContractIssue(
+                            "invalid_rest_to_next_value",
+                            f"Workout '{wo_name}' restToNextSeconds[{idx}] must be a non-negative integer in seconds.",
+                        )
+                    )
+
         normalized_superset_groups, superset_issues = _normalize_superset_groups(
             superset_groups,
             wo_name,
             exercise_id_set,
         )
         issues.extend(superset_issues)
+        if normalized_superset_groups and not (
+            isinstance(rest_to_next, list)
+            and len(rest_to_next) == len(exercise_ids_in_workout)
+        ):
+            issues.append(
+                ContractIssue(
+                    "missing_superset_rest_contract",
+                    f"Workout '{wo_name}' must provide one restToNextSeconds value per exercise when supersetGroups is used.",
+                )
+            )
         for group in normalized_superset_groups:
             start_idx = _find_subsequence(exercise_ids_in_workout, group)
             if start_idx is None:
@@ -988,6 +1008,19 @@ def _extract_superset_groups_from_structure(workout_structure: Dict[str, Any]) -
     return groups
 
 
+def _extract_superset_rest_maps_from_structure(
+    workout_structure: Dict[str, Any],
+) -> Dict[Tuple[str, ...], Any]:
+    rest_maps: Dict[Tuple[str, ...], Any] = {}
+    for component in (workout_structure.get("workoutComponents", []) or []):
+        if not isinstance(component, dict) or component.get("componentType") != "Superset":
+            continue
+        exercise_ids = component.get("exerciseIds", []) or []
+        if all(isinstance(ex_id, str) and ex_id for ex_id in exercise_ids):
+            rest_maps[tuple(exercise_ids)] = component.get("restSecondsByExercise")
+    return rest_maps
+
+
 def validate_workout_structures_contract(
     plan_index: Dict[str, Any],
     workout_structures: Dict[str, Dict[str, Any]],
@@ -1075,6 +1108,25 @@ def validate_workout_structures_contract(
                     f"Workout '{wo_name}' ({wo_id}) superset groups mismatch: expected {expected_superset_groups}, got {actual_superset_groups}.",
                 )
             )
+
+        rest_to_next = wo.get("restToNextSeconds")
+        if (
+            expected_superset_groups
+            and isinstance(rest_to_next, list)
+            and len(rest_to_next) == len(expected)
+        ):
+            rest_by_exercise = dict(zip(expected, rest_to_next))
+            actual_rest_maps = _extract_superset_rest_maps_from_structure(structure)
+            for group in expected_superset_groups:
+                expected_rest_map = {exercise_id: rest_by_exercise[exercise_id] for exercise_id in group}
+                actual_rest_map = actual_rest_maps.get(tuple(group))
+                if actual_rest_map != expected_rest_map:
+                    issues.append(
+                        ContractIssue(
+                            "workout_superset_rest_mismatch",
+                            f"Workout '{wo_name}' ({wo_id}) superset {group} rest map mismatch: expected {expected_rest_map}, got {actual_rest_map}.",
+                        )
+                    )
 
         for ex_id in refs:
             if ex_id not in known_exercise_ids:

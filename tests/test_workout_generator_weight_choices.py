@@ -59,6 +59,8 @@ def test_superset_prompts_require_structured_group_preservation():
     assert "supersetGroups" in PLAN_INDEX_SYSTEM_PROMPT
     assert "Superset rules:" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
     assert "exerciseIds and restSecondsByExercise mapping" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
+    assert "rest inserted immediately after that exercise during every work round" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
+    assert "last grouped exercise therefore carries the between-round rest" in PLAN_INDEX_SYSTEM_PROMPT
 
 
 def test_exercise_prompt_includes_generate_warmup_sets_guidance():
@@ -1136,6 +1138,29 @@ def test_plan_index_accepts_explicit_superset_groups_when_contiguous():
     validate_plan_index_contract(plan_index)
 
 
+def test_plan_index_requires_explicit_rests_for_superset_groups():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {"id": "EXERCISE_0", "name": "Press", "exerciseType": "WEIGHT"},
+            {"id": "EXERCISE_1", "name": "Row", "exerciseType": "WEIGHT"},
+        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_0", "EXERCISE_1"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
+        }],
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_plan_index_contract(plan_index)
+
+    assert "must provide one restToNextSeconds value per exercise" in str(exc_info.value)
+
+
 def test_plan_index_rejects_non_contiguous_superset_groups():
     plan_index = {
         "planName": "Test Plan",
@@ -1454,6 +1479,15 @@ def test_workout_structure_contract_accepts_matching_superset_group():
     }
 
     validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
+
+    rest_map = workout_structures["WORKOUT_0"]["workoutComponents"][1]["restSecondsByExercise"]
+    rest_map["EXERCISE_0"] = 60
+    rest_map["EXERCISE_1"] = 0
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
+
+    assert "rest map mismatch" in str(exc_info.value)
 
 
 def test_placeholder_id_manager_converts_rest_seconds_by_exercise_map_keys_to_uuids():

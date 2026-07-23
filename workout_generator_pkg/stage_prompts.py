@@ -351,8 +351,8 @@ WORKOUT_STRUCTURE_EXAMPLE = {
             "enabled": True,
             "exerciseIds": ["EXERCISE_1", "EXERCISE_2"],
             "restSecondsByExercise": {
-                "EXERCISE_1": 60,
-                "EXERCISE_2": 60,
+                "EXERCISE_1": 0,
+                "EXERCISE_2": 90,
             },
         },
     ],
@@ -384,8 +384,12 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
     "- Include a warm-up exercise reference only if it already exists in the workout plan entry's exerciseIds.\n"
     "- Do not invent or prepend EXERCISE_WARMUP when it is not present in the workout plan entry.\n\n"
     "Superset rules:\n"
-    "- Include exerciseIds and restSecondsByExercise mapping.\n"
-    "- Superset must include at least one valid exercise.\n\n"
+    "- Include exerciseIds and restSecondsByExercise mapping with exactly one entry for every grouped exercise ID.\n"
+    "- restSecondsByExercise[exerciseId] is the exact rest inserted immediately after that exercise during every work round.\n"
+    "- For ordered exercises [A, B, C], A's value is the rest before B, B's value is the rest before C, and C's value is the rest before A in the next round.\n"
+    "- The runtime automatically omits C's rest after the final round; do not create a separate Rest component for an internal superset transition.\n"
+    "- Use 0 when the next grouped exercise should start immediately. Never omit a map entry and never invent a fallback.\n"
+    "- Superset must include at least two valid exercises.\n\n"
     "Output format:\n"
     f"{json.dumps(WORKOUT_STRUCTURE_EXAMPLE, indent=2)}\n\n"
     "Generate workout structure based on the conversation and exercise list."
@@ -537,7 +541,10 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Each supersetGroups item must be an object with exerciseIds containing the exact grouped exercises in order.\n"
     "- Superset exerciseIds must be a contiguous subsequence of workout.exerciseIds.\n"
     "- Do not rely on hasSupersets alone; when any exercises are supersetted, supersetGroups must encode the exact grouping.\n"
-    "- Use restToNextSeconds alongside supersetGroups: for a superset, grouped exercises usually have 0 rest to the next grouped exercise and the last grouped exercise carries the post-superset rest.\n\n"
+    "- When the plan uses supersets, restToNextSeconds is required and supplies the future restSecondsByExercise value for each grouped exercise.\n"
+    "- Inside an ordered superset [A, B, C], A's value is rest before B, B's value is rest before C, and C's value is rest before A in the next round.\n"
+    "- The last grouped exercise therefore carries the between-round rest even when it is the final exercise in the workout; it is not an outer Rest component after the completed superset.\n"
+    "- Unless the user requested otherwise, use 0 between grouped exercises and choose one exact recovery duration after the final grouped exercise.\n\n"
     "Output format:\n"
     f"{json.dumps(PLAN_INDEX_EXAMPLE, indent=2)}\n\n"
     "Generate the PlanIndex based on the conversation context."

@@ -1667,6 +1667,11 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                 exercise_ids_placeholder = component_spec.get("exerciseIds", [])
                 superset_exercises = []
                 rest_seconds_by_exercise = {}
+                emitted_rest_map = component_spec.get("restSecondsByExercise")
+                if not isinstance(emitted_rest_map, dict) or set(emitted_rest_map) != set(exercise_ids_placeholder):
+                    raise ValueError(
+                        "Superset restSecondsByExercise must contain exactly one entry for every exerciseId"
+                    )
 
                 for ex_id_placeholder in exercise_ids_placeholder:
                     if ex_id_placeholder in exercise_definitions:
@@ -1678,7 +1683,12 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         strip_rep_range_fields_for_timed_exercises(exercise)
                         superset_exercises.append(exercise)
                         # Map the placeholder ID to rest seconds
-                        rest_seconds_by_exercise[ex_id_placeholder] = component_spec.get("restSecondsByExercise", {}).get(ex_id_placeholder, 60)
+                        rest_seconds = emitted_rest_map[ex_id_placeholder]
+                        if not isinstance(rest_seconds, int) or isinstance(rest_seconds, bool) or rest_seconds < 0:
+                            raise ValueError(
+                                f"Superset rest after {ex_id_placeholder} must be a non-negative integer"
+                            )
+                        rest_seconds_by_exercise[ex_id_placeholder] = rest_seconds
 
                 # Only create Superset if it has at least one exercise
                 if superset_exercises:
