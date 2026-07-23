@@ -24,24 +24,43 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+private const val InitialMovementRetryDelayMillis = 100L
+private const val MaximumMovementRetryDelayMillis = 1_000L
+private const val MovementLoopRestartFadeMillis = 250
+
 @Composable
 fun ExerciseMovementCard(
     exercise: Exercise,
     title: String = "Movement",
     modifier: Modifier = Modifier,
 ) {
-    if (exercise.movementRef == null) return
+    val movementRef = exercise.movementRef ?: return
+    val context = LocalContext.current
+    val movementJson by produceState<String?>(initialValue = null, movementRef) {
+        var retryDelayMillis = InitialMovementRetryDelayMillis
+        while (true) {
+            val loadedJson = withContext(Dispatchers.IO) {
+                ExerciseMovementStorage.readMovementJson(context, movementRef)
+            }
+            if (loadedJson != null) {
+                value = loadedJson
+                return@produceState
+            }
+            delay(retryDelayMillis)
+            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MaximumMovementRetryDelayMillis)
+        }
+    }
 
     var expanded by remember(exercise.id) { mutableStateOf(true) }
     CollapsibleSection(
         title = title,
-        summary = "Movement: ${exercise.movementRef?.movementId}",
+        summary = "Movement: ${movementRef.movementId}",
         expanded = expanded,
         onToggle = { expanded = !expanded },
         modifier = modifier,
     ) {
         ExerciseMovementPreviewPage(
-            exercise = exercise,
+            movementJson = movementJson,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f),
@@ -51,32 +70,9 @@ fun ExerciseMovementCard(
 
 @Composable
 fun ExerciseMovementPreviewPage(
-    exercise: Exercise,
+    movementJson: String?,
     modifier: Modifier = Modifier,
 ) {
-    val movementRef = exercise.movementRef
-    if (movementRef == null) {
-        MovementStatusMessage(
-            text = "No movement",
-            modifier = modifier,
-        )
-        return
-    }
-
-    val context = LocalContext.current
-    val movementJson by produceState<String?>(initialValue = null, movementRef) {
-        while (true) {
-            val loadedJson = withContext(Dispatchers.IO) {
-                ExerciseMovementStorage.readMovementJson(context, movementRef)
-            }
-            if (loadedJson != null) {
-                value = loadedJson
-                return@produceState
-            }
-            delay(1_000)
-        }
-    }
-
     val backgroundColor = MaterialTheme.colorScheme.background
     val primaryFill = MaterialTheme.colorScheme.primary
 
@@ -88,6 +84,7 @@ fun ExerciseMovementPreviewPage(
             primaryFill = primaryFill,
             animated = true,
             orbitView = true,
+            loopRestartFadeMillis = MovementLoopRestartFadeMillis,
             dragRotationEnabled = true,
         )
     } else {

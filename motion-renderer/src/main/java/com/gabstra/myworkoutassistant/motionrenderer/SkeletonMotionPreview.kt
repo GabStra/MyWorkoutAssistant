@@ -3,7 +3,7 @@ package com.gabstra.myworkoutassistant.motionrenderer
 import android.content.Context
 import android.view.Choreographer
 import android.view.Surface
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
@@ -519,7 +519,7 @@ private fun WearSkeletonRenderer(
 private class WearSkeletonFilamentView(
     context: Context,
 ) : FrameLayout(context), Choreographer.FrameCallback {
-    private val surfaceView = SurfaceView(context)
+    private val renderView = TextureView(context)
     private val choreographer = Choreographer.getInstance()
     private val skeletonRenderer = WearSkeletonFilamentRenderer(context)
     private var rendering = false
@@ -532,10 +532,10 @@ private class WearSkeletonFilamentView(
         contentDescription = SkeletonPreviewContentDescription
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         addView(
-            surfaceView,
+            renderView,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
         )
-        skeletonRenderer.attachTo(surfaceView)
+        skeletonRenderer.attachTo(renderView)
     }
 
     fun updateSkeletonState(
@@ -672,7 +672,7 @@ private class WearSkeletonFilamentRenderer(
         }
     }
 
-    fun attachTo(surfaceView: SurfaceView) {
+    fun attachTo(renderView: TextureView) {
         uiHelper.setRenderCallback(
             object : UiHelper.RendererCallback {
                 override fun onNativeWindowChanged(surface: Surface) {
@@ -696,7 +696,7 @@ private class WearSkeletonFilamentRenderer(
                 }
             }
         )
-        uiHelper.attachTo(surfaceView)
+        uiHelper.attachTo(renderView)
     }
 
     fun updateScene(
