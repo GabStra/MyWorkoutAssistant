@@ -48,6 +48,7 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
@@ -187,15 +188,9 @@ fun WorkoutDetailScreen(
 
     // Show loading screen while checking workout record (with minimum display time to prevent flashing)
     if (showLoading || isCheckingWorkoutRecord) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS)
-        }
+        FullScreenLoadingIndicator(
+            text = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS,
+        )
         return
     }
 

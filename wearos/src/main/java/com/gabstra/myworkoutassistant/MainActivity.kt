@@ -48,7 +48,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
@@ -57,6 +56,7 @@ import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.RecoveryDialog
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -82,7 +82,6 @@ import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutExercisesScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
@@ -600,33 +599,17 @@ fun WearApp(
                                     animationSpec = tween(durationMillis = 400)
                                 )
 
-                                if (syncPhase == SyncPhase.TRANSFERRING) {
-                                    CircularProgressIndicator(
-                                        progress = animatedProgress,
-                                        modifier = Modifier.fillMaxSize(),
-                                        strokeWidth = 4.dp,
-                                        indicatorColor = MaterialTheme.colorScheme.primary,
-                                        trackColor = MediumDarkGray,
-                                    )
-                                } else {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.fillMaxSize(),
-                                        strokeWidth = 4.dp,
-                                        indicatorColor = MaterialTheme.colorScheme.primary,
-                                        trackColor = MediumDarkGray,
-                                    )
-                                }
-
                                 val syncStageText = when (syncPhase) {
                                     SyncPhase.CONNECTING -> "Connecting to phone"
                                     SyncPhase.TRANSFERRING -> "Receiving data"
                                     SyncPhase.PROCESSING -> "Processing data"
                                     SyncPhase.COMPLETED -> "Sync complete"
                                 }
-                                LoadingScreen(
-                                    appViewModel = appViewModel,
+                                FullScreenLoadingIndicator(
                                     text = syncStageText,
-                                    showIndicator = false,
+                                    progress = animatedProgress.takeIf {
+                                        syncPhase == SyncPhase.TRANSFERRING
+                                    },
                                 )
                             }
                         }
