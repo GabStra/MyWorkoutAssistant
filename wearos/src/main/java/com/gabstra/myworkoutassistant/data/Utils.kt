@@ -5,10 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
-import android.media.AudioManager
-import android.media.ToneGenerator
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
@@ -37,7 +33,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.DataLayerListenerService
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -79,15 +74,11 @@ import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -543,24 +534,6 @@ fun Modifier.verticalLazyColumnScrollbar(
         }
     }
 }
-
-@OptIn(DelicateCoroutinesApi::class)
-fun VibrateAndBeep(context: Context) {
-    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-
-    GlobalScope.launch(Dispatchers.Default) {
-        val vibratorJob = launch(start = CoroutineStart.LAZY){
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
-        }
-
-        val toneJob= launch(start = CoroutineStart.LAZY){
-            HapticsHelper(context).playBeep()
-        }
-        joinAll(toneJob,vibratorJob)
-    }
-}
-
-
 
 fun Context.findActivity(): Activity? {
     var currentContext = this
