@@ -1116,7 +1116,7 @@ def emit_exercise_definition(
     provided_equipment=None,
     logger=None,
     contract_error_context=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     """
     Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.

@@ -191,7 +191,7 @@ def execute_workout_generation(
     script_dir=None,
     deps=None,
     force_use_reasoner=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     deps = deps or resolve_pipeline_deps()
     test_connection = deps.test_connection

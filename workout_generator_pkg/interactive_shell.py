@@ -229,7 +229,7 @@ def handle_function_call(
     script_dir=None,
     deps=None,
     force_use_reasoner=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     deps = deps or resolve_shell_deps()
     execute_workout_generation = deps.execute_workout_generation
@@ -352,11 +352,20 @@ def main(deps=None):
         action="store_true",
         help="Use reasoner for plan index and chat model for emitters (faster overall)",
     )
-    parser.add_argument(
+    calibration_group = parser.add_mutually_exclusive_group()
+    calibration_group.add_argument(
         "--allow-educated-load-guesses",
+        dest="allow_educated_load_guesses",
         action="store_true",
-        help="Allow the generator to keep requiresLoadCalibration=false for load-based exercises when you explicitly want educated starting-load guesses",
+        help="Use emitted starting loads when complete (default; retained for command compatibility)",
     )
+    calibration_group.add_argument(
+        "--require-load-calibration",
+        dest="allow_educated_load_guesses",
+        action="store_false",
+        help="Require calibration for every weight-loaded exercise",
+    )
+    parser.set_defaults(allow_educated_load_guesses=True)
     args = parser.parse_args()
     force_use_reasoner = (
         "hybrid"

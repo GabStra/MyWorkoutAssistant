@@ -472,7 +472,7 @@ def _has_complete_explicit_work_set_loads(exercise):
     return False
 
 
-def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses=False):
+def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses=True):
     """Set requiresLoadCalibration deterministically from generator policy and exercise data."""
     if not isinstance(exercise, dict):
         return exercise
@@ -649,7 +649,7 @@ def finalize_and_validate_exercise_definition(
     equipment_subset=None,
     accessory_subset=None,
     all_equipment_candidates=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     """
     Finalize one emitted exercise and validate it before adding it to exercise_definitions.
@@ -1496,12 +1496,12 @@ def remove_none_from_workout_components(workout_store, logger=None):
     return workout_store
 
 
-def ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=False):
+def ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=True):
     """
     Ensure all exercises have a boolean requiresLoadCalibration value.
-    Default behavior is strict calibration for load-based exercises. When
-    allow_educated_load_guesses=True, preserve explicit false values and only
-    backfill missing ones.
+    By default, complete emitted work-set loads are accepted as educated starting loads and
+    calibration is required only when those loads are unavailable. Pass
+    allow_educated_load_guesses=False to require strict calibration for every loaded exercise.
     
     Args:
         workout_store: WorkoutStore dict (may be modified in place)
@@ -1873,7 +1873,7 @@ def fix_set_errors(sets):
     return fixed
 
 
-def fix_exercise_errors(exercises, allow_educated_load_guesses=False):
+def fix_exercise_errors(exercises, allow_educated_load_guesses=True):
     """Fix common exercise errors including muscle groups and sets."""
     if not isinstance(exercises, list):
         return exercises

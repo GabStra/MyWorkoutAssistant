@@ -36,12 +36,16 @@ def test_finalize_strict_mode_forces_calibration_for_weight_exercise():
         }
     ]
 
-    normalized = finalize_and_validate_exercise_definition(exercise, equipment_subset=equipment_subset)
+    normalized = finalize_and_validate_exercise_definition(
+        exercise,
+        equipment_subset=equipment_subset,
+        allow_educated_load_guesses=False,
+    )
 
     assert normalized["requiresLoadCalibration"] is True
 
 
-def test_finalize_disables_calibration_for_loaded_weight_exercise_when_enabled():
+def test_finalize_disables_calibration_for_loaded_weight_exercise_by_default():
     exercise = {
         "id": "EXERCISE_0",
         "type": "Exercise",
@@ -78,13 +82,12 @@ def test_finalize_disables_calibration_for_loaded_weight_exercise_when_enabled()
     normalized = finalize_and_validate_exercise_definition(
         exercise,
         equipment_subset=equipment_subset,
-        allow_educated_load_guesses=True,
     )
 
     assert normalized["requiresLoadCalibration"] is False
 
 
-def test_ensure_requires_load_calibration_uses_explicit_work_set_loads_when_enabled():
+def test_ensure_requires_load_calibration_uses_explicit_work_set_loads_by_default():
     workout_store = {
         "workouts": [
             {
@@ -112,7 +115,7 @@ def test_ensure_requires_load_calibration_uses_explicit_work_set_loads_when_enab
         ]
     }
 
-    ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=True)
+    ensure_requiresLoadCalibration(workout_store)
     components = workout_store["workouts"][0]["workoutComponents"]
 
     assert components[0]["requiresLoadCalibration"] is False
