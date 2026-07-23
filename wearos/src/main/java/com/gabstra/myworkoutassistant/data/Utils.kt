@@ -729,7 +729,10 @@ internal object WorkoutHistoryRetryProtocol {
  * and listening; static capability discovery can temporarily return an empty set after installs.
  * Retries up to 3 times with exponential backoff.
  */
-suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
+suspend fun checkConnection(
+    context: android.content.Context,
+    maxRetries: Int = 3
+): Boolean = withContext(Dispatchers.IO) {
     var attempt = 0
     while (attempt < maxRetries) {
         try {
@@ -745,7 +748,7 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
             
             if (hasConnection) {
                 Log.d("WorkoutSync", "checkConnection: Paired phone transport reachable: ${nodes.size} node(s)")
-                return true
+                return@withContext true
             } else {
                 Log.w("WorkoutSync", "checkConnection: No paired phone transport found (attempt ${attempt + 1}/$maxRetries)")
             }
@@ -762,7 +765,7 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
     }
     
     Log.e("DataLayerSync", "Connection check failed after $maxRetries attempts")
-    return false
+    false
 }
 
 suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
@@ -1366,11 +1369,11 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     }
 }
 
-private fun sendOpenPageRequestToPhone(
+private suspend fun sendOpenPageRequestToPhone(
     dataClient: DataClient,
     page: String
-): Boolean {
-    return try {
+): Boolean = withContext(Dispatchers.IO) {
+    try {
         val request = PutDataMapRequest.create("/openPagePath").apply {
             dataMap.putString("page", page)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
