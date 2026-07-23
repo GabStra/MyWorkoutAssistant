@@ -6,15 +6,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,24 +46,16 @@ fun SyncStatusBadge(
     ) {
         Box(
             modifier = Modifier
-                .height(24.dp)
-                .width(34.dp)
+                .size(28.dp)
                 .background(
                     color = Color.Black,
-                    shape = RoundedCornerShape(50)
-                )
-                .border(
-                    BorderStroke(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-                    ),
-                    shape = RoundedCornerShape(50)
+                    shape = CircleShape
                 ),
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator(
                 modifier = Modifier
-                    .size(14.dp)
+                    .size(18.dp)
                     .semantics { contentDescription = "Syncing" },
                 strokeWidth = 2.dp,
                 colors = ProgressIndicatorDefaults.colors(
