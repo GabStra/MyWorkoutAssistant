@@ -15,6 +15,7 @@ import java.util.UUID
  */
 object CompletionWorkoutStoreFixture {
     private const val WORKOUT_NAME = "Test Workout"
+    private val WORKOUT_ID = UUID.fromString("0b9f28cc-13da-42af-a6fa-c741e4d67655")
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
@@ -47,7 +48,7 @@ object CompletionWorkoutStoreFixture {
         )
 
         val workout = Workout(
-            id = UUID.randomUUID(),
+            id = WORKOUT_ID,
             name = WORKOUT_NAME,
             description = "Test Description",
             workoutComponents = listOf(exercise),
@@ -75,6 +76,7 @@ object CompletionWorkoutStoreFixture {
     }
 
     fun getWorkoutName(): String = WORKOUT_NAME
-}
 
+    fun getWorkoutId(): UUID = WORKOUT_ID
+}
 

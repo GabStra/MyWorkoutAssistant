@@ -193,6 +193,5 @@ dependencies {
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
-    androidTestImplementation("androidx.tracing:tracing:1.2.0")
     androidTestImplementation(kotlin("stdlib"))
 }

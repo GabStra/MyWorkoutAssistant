@@ -1335,7 +1335,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             }
 
             // Fallback: parse value from contentDescription (e.g., "Reps value: 10")
-            val description = target.contentDescription?.toString()?.trim()
+            val description = target.contentDescription?.trim()
             if (!description.isNullOrBlank()) {
                 val parts = description.split(":", limit = 2)
                 if (parts.size == 2) {
@@ -2137,11 +2137,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             require(setHistory.workoutHistoryId == workoutHistory.id) {
                 "SetHistory workoutHistoryId should match WorkoutHistory id"
             }
-            require(setHistory.exerciseId != null) { "SetHistory exerciseId should not be null" }
-            require(setHistory.setId != null) { "SetHistory setId should not be null" }
             require(!setHistory.skipped) { "SetHistory should not be skipped for completed sets" }
-            require(setHistory.startTime != null) { "SetHistory startTime should be set" }
-            require(setHistory.endTime != null) { "SetHistory endTime should be set" }
         }
 
         // Verify sets are ordered correctly

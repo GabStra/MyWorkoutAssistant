@@ -156,7 +156,9 @@ fun ControlsPage(
     val keepScreenOnOverride by viewModel.keepScreenOn
 
     ScreenScaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { contentDescription = "Workout controls page" },
         scrollState = state,
         scrollIndicator = {
             ScrollIndicator(
@@ -169,7 +171,9 @@ fun ControlsPage(
         }
     ) { _ ->
         TransformingLazyColumn(
-            modifier = Modifier.padding(horizontal = 20.dp),
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .semantics { contentDescription = "Workout controls page" },
             contentPadding = WorkoutPagerPageSafeAreaPadding,
             state = state
         ) {
@@ -192,7 +196,6 @@ fun ControlsPage(
                 item {
                     ButtonWithText(
                         modifier = Modifier
-                            .semantics { contentDescription = "Skip exercise action" }
                             .fillMaxWidth()
                             .then(
                                 if (isInspectionMode) Modifier else Modifier.transformedHeight(
@@ -512,6 +515,7 @@ fun ControlsPage(
                 item {
                     ButtonWithText(
                         modifier = Modifier
+                            .semantics { contentDescription = "Skip exercise action" }
                             .fillMaxWidth()
                             .then(
                                 if (isInspectionMode) Modifier else Modifier.transformedHeight(

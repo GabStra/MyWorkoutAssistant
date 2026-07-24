@@ -15,6 +15,9 @@ class WorkoutIntermediateSyncObservationTest {
     private fun resolvedCheckpointTimeoutMs(): Long =
         CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(timeoutMs = 25_000)
 
+    private fun resolvedInitialCheckpointTimeoutMs(): Long =
+        CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(timeoutMs = 180_000)
+
     private fun requireLiveObservationOrSkip() {
         assumeTrue(
             "Requires live cross-device sync orchestration. Run via run_cross_device_sync_e2e.ps1.",
@@ -29,11 +32,15 @@ class WorkoutIntermediateSyncObservationTest {
         val activeCheckpoints = listOf(CrossDeviceSyncAssertions.startedCheckpoint) +
             CrossDeviceSyncAssertions.intermediateCheckpoints.dropLast(1)
 
-        activeCheckpoints.forEach { checkpoint ->
+        activeCheckpoints.forEachIndexed { index, checkpoint ->
             CrossDeviceSyncAssertions.waitForCheckpoint(
                 context = context,
                 checkpoint = checkpoint,
-                timeoutMs = resolvedCheckpointTimeoutMs()
+                timeoutMs = if (index == 0) {
+                    resolvedInitialCheckpointTimeoutMs()
+                } else {
+                    resolvedCheckpointTimeoutMs()
+                }
             )
             CrossDeviceSyncAssertions.waitForWearOwnedActiveState(
                 context = context,

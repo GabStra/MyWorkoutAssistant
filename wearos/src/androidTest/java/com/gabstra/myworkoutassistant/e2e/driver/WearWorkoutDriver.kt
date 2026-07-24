@@ -111,18 +111,19 @@ class WearWorkoutDriver(
     fun navigateToPagerPage(direction: Direction) {
         val width = device.displayWidth
         val height = device.displayHeight
-        val swipeY = (height * 0.20).toInt().coerceAtLeast(1)
+        val swipeY = (height * 0.50).toInt().coerceAtLeast(1)
 
         if (direction == Direction.LEFT) {
             val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
             val endX = (width * 0.2).toInt().coerceAtLeast(0)
-            device.swipe(startX, swipeY, endX, swipeY, 5)
+            device.swipe(startX, swipeY, endX, swipeY, 20)
         } else {
             val startX = (width * 0.2).toInt().coerceAtLeast(0)
             val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
-            device.swipe(startX, swipeY, endX, swipeY, 5)
+            device.swipe(startX, swipeY, endX, swipeY, 20)
         }
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        SystemClock.sleep(750)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     /**
@@ -188,12 +189,6 @@ class WearWorkoutDriver(
     ): Boolean {
         fun probe(): Boolean = isOnButtonsPage() || (canProceed?.invoke() == true)
 
-        if (probe()) {
-            return true
-        }
-
-        device.pressBack()
-        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         if (probe()) {
             return true
         }
@@ -623,18 +618,25 @@ class WearWorkoutDriver(
         if (!waitForWeightSetScreen(timeoutMs)) {
             return readWeightFromScreenFallback(timeoutMs)
         }
-        val deadline = System.currentTimeMillis() + 3_000
-        repeat(5) {
-            if (System.currentTimeMillis() >= deadline) return null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
             val target = device.findObject(By.descContains(SetValueSemantics.WeightValueDescription))
                 ?: device.findObject(By.descContains(SetValueSemantics.WeightSetTypeDescription))
             if (target != null) {
                 val raw = readValueTextFromNode(target)
-                raw?.replace(",", ".")?.toDoubleOrNull()?.let { return it }
+                raw?.let(::parseLeadingNumber)?.let { return it }
             }
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         }
-        return readWeightFromScreenFallback(1_000)
+        return readWeightFromScreenFallback(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    private fun parseLeadingNumber(value: String): Double? {
+        return Regex("""[-+]?\d+(?:[.,]\d+)?""")
+            .find(value)
+            ?.value
+            ?.replace(",", ".")
+            ?.toDoubleOrNull()
     }
 
     /**
@@ -754,29 +756,19 @@ class WearWorkoutDriver(
             By.text("Skip exercise"),
             By.desc("Skip exercise")
         )
-        val buttonsPageAnchors = arrayOf(
-            By.text("Keep screen on"),
-            By.textContains("Screen can dim"),
-            By.textContains("This exercise keeps the screen on"),
-            By.text("Back"),
-            By.text("Go Home"),
-            By.desc("Go Home")
-        )
-
         fun findSkipExerciseAction(waitMs: Long = 400): UiObject2? {
             return device.wait(Until.findObject(By.desc("Skip exercise action")), waitMs)
                 ?: device.wait(Until.findObject(By.text("Skip exercise")), waitMs)
                 ?: device.wait(Until.findObject(By.desc("Skip exercise")), waitMs)
         }
 
-        fun isOnButtonsPage(): Boolean {
-            return buttonsPageAnchors.any(device::hasObject) || skipActionSelectors.any(device::hasObject)
-        }
-
         fun scrollButtonsPageDownUntilSkipVisible(): UiObject2? {
             findSkipExerciseAction()?.let { return it }
 
-            val scrollable = device.findObject(By.scrollable(true))
+            val scrollable = device.findObject(By.desc("Workout controls page"))
+                ?: device.findObjects(By.scrollable(true)).firstOrNull { candidate ->
+                    candidate.contentDescription != "Horizontal workout pager"
+                }
             if (scrollable != null) {
                 skipActionSelectors.forEach { selector ->
                     runCatching {
@@ -785,7 +777,7 @@ class WearWorkoutDriver(
                 }
             }
 
-            repeat(6) {
+            repeat(20) {
                 verticalSwipe(Direction.DOWN)
                 device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
                 findSkipExerciseAction()?.let { return it }
@@ -794,9 +786,7 @@ class WearWorkoutDriver(
             return null
         }
 
-        fun openSkipExerciseDialog() {
-            val action = scrollButtonsPageDownUntilSkipVisible()
-            require(action != null) { "Could not find 'Skip exercise' after scrolling the buttons page." }
+        fun openSkipExerciseDialog(action: UiObject2) {
             clickObjectOrAncestorInternal(action)
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
 
@@ -810,10 +800,21 @@ class WearWorkoutDriver(
             require(dialogAppeared) { "Skip exercise dialog did not appear" }
         }
 
-        require(navigateToButtonsPage(::isOnButtonsPage, canProceed = { findSkipExerciseAction(1_000) != null })) {
-            "Could not navigate to the buttons page before attempting to skip the exercise."
+        navigateToPagerPage(Direction.RIGHT)
+        navigateToPagerPage(Direction.RIGHT)
+        navigateToPagerPage(Direction.RIGHT)
+        val skipAction = scrollButtonsPageDownUntilSkipVisible()
+        require(skipAction != null) {
+            val visibleTexts = device.findObjects(By.text(Pattern.compile(".+")))
+                .mapNotNull { it.text }
+                .distinct()
+            val visibleDescriptions = device.findObjects(By.desc(Pattern.compile(".+")))
+                .mapNotNull { it.contentDescription }
+                .distinct()
+            "Could not find 'Skip exercise' after navigating to and scrolling the controls page. " +
+                "visibleTexts=$visibleTexts visibleDescriptions=$visibleDescriptions"
         }
-        openSkipExerciseDialog()
+        openSkipExerciseDialog(skipAction)
         longPressByDesc("Done", timeoutMs)
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }

@@ -403,10 +403,12 @@ if ($TestMethod) {
     $classArgument = "com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
 } else {
     $excludedBenchmarkClasses = @(
-        "com.gabstra.myworkoutassistant.benchmark.PageExercisesScrollBenchmark"
+        "com.gabstra.myworkoutassistant.benchmark.ExercisesPageScrollBenchmark"
     )
     $excludedCrossDeviceClasses = @(
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceFinishEarlySyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearEquipmentChangeCrossDeviceProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceSetSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceInsertedSetSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceInsertedRestSyncProducerE2ETest",
@@ -421,6 +423,7 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearSetBadgeE2ETest",
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearMidSessionSetBadgeRefreshE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearOpenPhoneAppE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearToPhoneTransportConnectionE2ETest",
         "com.gabstra.myworkoutassistant.e2e.ExactBackupPhoneToWearResumeRecordVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.ExactBackupPhoneToWearResumeVisibilityE2ETest",
         "com.gabstra.myworkoutassistant.e2e.ResumePhoneToWearWorkoutHistorySyncVerificationE2ETest",
@@ -436,7 +439,8 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncLateStaleRetryProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncRetryRecoveryProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearResumeCrossDeviceSyncProducerE2ETest",
-        "com.gabstra.myworkoutassistant.e2e.WearResumeDiscardCrossDeviceSyncProducerE2ETest"
+        "com.gabstra.myworkoutassistant.e2e.WearResumeDiscardCrossDeviceSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearWorkoutHeartbeatProducerE2ETest"
     )
     $excludedClasses = @()
     $excludedClasses += $excludedBenchmarkClasses
