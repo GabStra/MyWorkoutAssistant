@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.data
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -22,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.util.size
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
@@ -257,7 +257,7 @@ private class WhoopBleClient(
         }
     }
 
-    @TargetApi(GATT_CONNECTION_SETTINGS_API)
+    @RequiresApi(GATT_CONNECTION_SETTINGS_API)
     @SuppressLint("MissingPermission")
     private fun connectGattWithConnectionSettings(device: BluetoothDevice): BluetoothGatt? {
         val settings = BluetoothGattConnectionSettings.Builder()

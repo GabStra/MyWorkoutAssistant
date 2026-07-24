@@ -31,9 +31,9 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ExerciseAnimationPage(
     exercise: Exercise,
+    modifier: Modifier = Modifier,
     isActive: Boolean = true,
     dragRotationHorizontalInset: Dp = 0.dp,
-    modifier: Modifier = Modifier,
 ) {
     val movementRef = exercise.movementRef
     if (movementRef == null) {
