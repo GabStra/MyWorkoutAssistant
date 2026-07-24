@@ -68,29 +68,6 @@ data class WorkoutStateMachine(
             require(startIndex < machine.allStates.size) { "startIndex must be < allStates.size" }
             return machine
         }
-
-        /**
-         * Creates a new state machine from a flat list of states (backward compatibility).
-         * Wraps all states in a single ExerciseState container.
-         */
-        @Deprecated("Use fromSequence instead", ReplaceWith("fromSequence"))
-        fun fromStates(
-            states: List<WorkoutState>,
-            timeProvider: () -> LocalDateTime = { LocalDateTime.now() },
-            startIndex: Int = 0
-        ): WorkoutStateMachine {
-            require(states.isNotEmpty()) { "States list cannot be empty" }
-            require(startIndex >= 0) { "startIndex must be >= 0" }
-            require(startIndex < states.size) { "startIndex must be < states.size" }
-            // Create a dummy exercise container for backward compatibility (each state as Normal)
-            val dummyExerciseId = UUID.randomUUID()
-            val container = WorkoutStateContainer.ExerciseState(
-                exerciseId = dummyExerciseId,
-                childItems = states.map { ExerciseChildItem.Normal(it) }.toMutableList()
-            )
-            val sequence = listOf(WorkoutStateSequenceItem.Container(container))
-            return WorkoutStateMachine(sequence, currentIndex = startIndex, timeProvider)
-        }
     }
 
     /**
@@ -578,4 +555,3 @@ data class WorkoutStateMachine(
     }
 
 }
-

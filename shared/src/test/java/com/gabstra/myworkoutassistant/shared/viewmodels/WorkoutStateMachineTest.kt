@@ -1,4 +1,4 @@
-@file:Suppress("DEPRECATION", "USELESS_CAST")
+@file:Suppress("USELESS_CAST")
 
 package com.gabstra.myworkoutassistant.shared.viewmodels
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
@@ -30,6 +30,26 @@ class WorkoutStateMachineTest {
     private val setId2 = UUID.randomUUID()
     private val setId3 = UUID.randomUUID()
     private val restSetId1 = UUID.randomUUID()
+
+    private fun createStateMachine(
+        states: List<WorkoutState>,
+        startIndex: Int = 0,
+    ): WorkoutStateMachine {
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(
+                WorkoutStateContainer.ExerciseState(
+                    exerciseId = exerciseId1,
+                    childItems = states
+                        .map(ExerciseChildItem::Normal)
+                        .toMutableList(),
+                ),
+            ),
+        )
+        return WorkoutStateMachine.fromSequence(
+            sequence = sequence,
+            startIndex = startIndex,
+        )
+    }
 
     private fun createSetState(exerciseId: UUID, setId: UUID, setIndex: UInt): WorkoutState.Set {
         return WorkoutState.Set(
@@ -74,7 +94,7 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
 
         val states = listOf(set1, rest1, set2)
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
 
         assertEquals(set1, machine.currentState)
         assertTrue(machine.isAtStart)
@@ -92,7 +112,7 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
 
         val states = listOf(set1, rest1, set2)
-        var machine = WorkoutStateMachine.fromStates(states)
+        var machine = createStateMachine(states)
 
         // Advance to rest
         machine = machine.next()
@@ -115,7 +135,7 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val states = listOf(set1)
 
-        var machine = WorkoutStateMachine.fromStates(states)
+        var machine = createStateMachine(states)
         val beforeNext = machine.currentState
 
         machine = machine.next() // Try to advance from last state
@@ -130,7 +150,7 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
 
         val states = listOf(set1, rest1, set2)
-        var machine = WorkoutStateMachine.fromStates(states)
+        var machine = createStateMachine(states)
 
         // Advance to set2
         machine = machine.next() // set1 -> rest1
@@ -159,7 +179,7 @@ class WorkoutStateMachineTest {
         val rest1 = createRestState(restSetId1)
         val states = listOf(set1, rest1)
 
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
         val beforeUndo = machine.currentState
 
         val afterUndo = machine.undo()
@@ -176,7 +196,7 @@ class WorkoutStateMachineTest {
         val set3 = createSetState(exerciseId2, setId3, 1u)
 
         val states = listOf(set1, rest1, set2, rest2, set3)
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
 
         // Skip until we find a Set with different exerciseId
         val newMachine = machine.skipUntil { state ->
@@ -192,7 +212,7 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val states = listOf(set1, rest1)
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
 
         // Skip until predicate that never matches
         val newMachine = machine.skipUntil { state ->
@@ -212,7 +232,7 @@ class WorkoutStateMachineTest {
         val set3 = createSetState(exerciseId1, setId1, 2u) // Same setId as set1 (unilateral)
 
         val states = listOf(set1, rest1, set2, rest2, set3)
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
 
         // Reposition to setId2 (should find set2)
         val repositioned = machine.repositionToSetId(setId2)
@@ -229,7 +249,7 @@ class WorkoutStateMachineTest {
         val rest1 = createRestState(restSetId1)
         val states = listOf(set1, rest1)
 
-        val machine = WorkoutStateMachine.fromStates(states)
+        val machine = createStateMachine(states)
         val notFoundId = UUID.randomUUID()
 
         val repositioned = machine.repositionToSetId(notFoundId)
@@ -244,7 +264,7 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
 
         val states = listOf(set1, rest1, set2)
-        var machine = WorkoutStateMachine.fromStates(states)
+        var machine = createStateMachine(states)
 
         // At start
         assertEquals(emptyList<WorkoutState>(), machine.history)
@@ -263,7 +283,7 @@ class WorkoutStateMachineTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun testEmptyStatesThrows() {
-        WorkoutStateMachine.fromStates(emptyList())
+        createStateMachine(emptyList())
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -436,7 +456,7 @@ class WorkoutStateMachineTest {
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
 
-        val machine = WorkoutStateMachine.fromStates(listOf(set1, rest1, set2), startIndex = 2)
+        val machine = createStateMachine(listOf(set1, rest1, set2), startIndex = 2)
         val previousNonRestIndex = machine.findPreviousNonRestIndex()
 
         assertEquals(0, previousNonRestIndex)
@@ -448,7 +468,7 @@ class WorkoutStateMachineTest {
         val calibrationSet = createSetState(exerciseId1, UUID.randomUUID(), 1u).copy(isCalibrationSet = true)
         val currentSet = createSetState(exerciseId1, setId2, 2u)
 
-        val machine = WorkoutStateMachine.fromStates(
+        val machine = createStateMachine(
             listOf(workSet, calibrationSet, currentSet),
             startIndex = 2
         )
@@ -463,7 +483,7 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
-        val machine = WorkoutStateMachine.fromStates(listOf(set1, rest1, set2))
+        val machine = createStateMachine(listOf(set1, rest1, set2))
 
         WorkoutStateEditor.populateRestNextState(machine)
 

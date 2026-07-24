@@ -76,7 +76,7 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -729,9 +729,9 @@ private fun buildRestPreviewFixture(): RestPreviewFixture {
     viewModel.supersetIdByExerciseId = emptyMap()
     viewModel.exercisesBySupersetId = emptyMap()
 
-    val stateMachine = WorkoutStateMachine.fromStates(
-        listOf(restState, nextState),
-        { REST_PREVIEW_FIXED_NOW },
+    val stateMachine = createPreviewWorkoutStateMachine(
+        states = listOf(restState, nextState),
+        timeProvider = { REST_PREVIEW_FIXED_NOW },
         startIndex = 0
     )
     setFieldValue(viewModel, "stateMachine", stateMachine)

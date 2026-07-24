@@ -47,7 +47,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.LinkedList
@@ -557,7 +557,11 @@ private fun ExerciseIndicatorPreview() {
         )
         // Set state machine so allWorkoutStates getter returns preview states; current set is workoutState1_3 (index 2)
         try {
-            val machine = WorkoutStateMachine.fromStates(previewStates, { java.time.LocalDateTime.now() }, startIndex = 2)
+            val machine = createPreviewWorkoutStateMachine(
+                states = previewStates,
+                timeProvider = { java.time.LocalDateTime.now() },
+                startIndex = 2,
+            )
             val stateMachineField = viewModel::class.java.superclass
                 ?.declaredFields?.find { it.name == "stateMachine" }
             stateMachineField?.isAccessible = true

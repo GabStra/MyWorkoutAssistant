@@ -79,7 +79,7 @@ import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKi
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -913,7 +913,10 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
     }
 
     val workoutStates = listOf(state) + extraMainSetStates + altState
-    val stateMachine = WorkoutStateMachine.fromStates(workoutStates, { now }, startIndex = 0)
+    val stateMachine = createPreviewWorkoutStateMachine(
+        states = workoutStates,
+        timeProvider = { now },
+    )
     val supersetId = UUID.fromString("10000000-0000-0000-0000-000000000301")
 
     viewModel.exercisesById = buildMap {
