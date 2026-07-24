@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsForProgressionLifecycle
 
 enum class SetComparison {
@@ -67,20 +68,24 @@ private fun compareRepsAndWeight(
     afterReps: Int,
     afterWeight: Double,
     plannedNextSet: SimpleSet? = null,
-): SetComparison = when {
-    afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
-    plannedNextSet != null &&
+): SetComparison {
+    val baseline = listOf(SimpleSet(beforeWeight, beforeReps))
+    val current = listOf(SimpleSet(afterWeight, afterReps))
+    val result = if (plannedNextSet != null) {
         compareSetListsForProgressionLifecycle(
             current = listOf(SimpleSet(afterWeight, afterReps)),
-            baseline = listOf(SimpleSet(beforeWeight, beforeReps)),
+            baseline = baseline,
             plannedNextSets = listOf(plannedNextSet),
-        ) == Ternary.ABOVE -> SetComparison.BETTER
-    (afterWeight > beforeWeight && afterReps < beforeReps) ||
-        (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
-    (afterWeight == beforeWeight && afterReps > beforeReps) ||
-        (afterReps == beforeReps && afterWeight > beforeWeight) ||
-        (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
-    else -> SetComparison.WORSE
+        )
+    } else {
+        compareSetListsUnordered(current, baseline)
+    }
+    return when (result) {
+        Ternary.ABOVE -> SetComparison.BETTER
+        Ternary.EQUAL -> SetComparison.EQUAL
+        Ternary.BELOW -> SetComparison.WORSE
+        Ternary.MIXED -> SetComparison.MIXED
+    }
 }
 
 private fun compareDurationMs(beforeDurationMs: Int, afterDurationMs: Int): SetComparison = when {
@@ -117,13 +122,13 @@ fun compareSets(
             )
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData ->
             compareDurationMs(
-                beforeSetData.endTimer - beforeSetData.startTimer,
-                afterSetData.endTimer - afterSetData.startTimer,
+                beforeSetData.startTimer - beforeSetData.endTimer,
+                afterSetData.startTimer - afterSetData.endTimer,
             )
         beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData ->
             compareDurationMs(
-                beforeSetData.endTimer - beforeSetData.startTimer,
-                afterSetData.endTimer - afterSetData.startTimer,
+                beforeSetData.startTimer - beforeSetData.endTimer,
+                afterSetData.startTimer - afterSetData.endTimer,
             )
         else -> SetComparison.EQUAL
     }
@@ -178,14 +183,14 @@ fun calculateSetDifference(
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData ->
             setDifferenceForElapsedSeconds(
                 comparison = comparison,
-                beforeElapsedSeconds = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000,
-                afterElapsedSeconds = (afterSetData.endTimer - afterSetData.startTimer) / 1000,
+                beforeElapsedSeconds = (beforeSetData.startTimer - beforeSetData.endTimer) / 1000,
+                afterElapsedSeconds = (afterSetData.startTimer - afterSetData.endTimer) / 1000,
             )
         beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData ->
             setDifferenceForElapsedSeconds(
                 comparison = comparison,
-                beforeElapsedSeconds = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000,
-                afterElapsedSeconds = (afterSetData.endTimer - afterSetData.startTimer) / 1000,
+                beforeElapsedSeconds = (beforeSetData.startTimer - beforeSetData.endTimer) / 1000,
+                afterElapsedSeconds = (afterSetData.startTimer - afterSetData.endTimer) / 1000,
             )
         else -> SetDifference(comparison = comparison)
     }

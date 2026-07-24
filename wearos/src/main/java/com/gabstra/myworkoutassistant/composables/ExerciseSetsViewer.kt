@@ -72,6 +72,24 @@ import java.util.UUID
 
 enum class ProgressState { PAST, CURRENT, FUTURE }
 
+@Composable
+internal fun progressRowAccentColor(
+    progressState: ProgressState,
+    rowIndex: Int,
+    currentRowIndex: Int,
+): Color {
+    val completedColor = MaterialTheme.colorScheme.onBackground
+    return when (progressState) {
+        ProgressState.PAST -> completedColor
+        ProgressState.CURRENT -> when {
+            rowIndex == currentRowIndex -> MaterialTheme.colorScheme.primary
+            rowIndex < currentRowIndex -> completedColor
+            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+        }
+        ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+}
+
 private fun trendPreferHigher(current: Int, previous: Int): SetTrendIndicator? = when {
     current > previous -> SetTrendIndicator(glyph = "↑", color = Green)
     current < previous -> SetTrendIndicator(glyph = "↓", color = Red)
@@ -239,13 +257,13 @@ internal fun trendForTime(setState: WorkoutState.Set): SetTrendIndicator? {
     val curr = setState.currentSetData
     return when {
         curr is TimedDurationSetData && prev is TimedDurationSetData -> {
-            val beforeDuration = prev.endTimer - prev.startTimer
-            val afterDuration = curr.endTimer - curr.startTimer
+            val beforeDuration = prev.startTimer - prev.endTimer
+            val afterDuration = curr.startTimer - curr.endTimer
             trendPreferHigher(afterDuration, beforeDuration)
         }
         curr is EnduranceSetData && prev is EnduranceSetData -> {
-            val beforeDuration = prev.endTimer - prev.startTimer
-            val afterDuration = curr.endTimer - curr.startTimer
+            val beforeDuration = prev.startTimer - prev.endTimer
+            val afterDuration = curr.startTimer - curr.endTimer
             trendPreferHigher(afterDuration, beforeDuration)
         }
         else -> null
@@ -1243,17 +1261,11 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
     fun MeasuredSetTableRow(
         rowModel: ExercisesPageRowModel,
     ) {
-        val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-        val completedColor = MaterialTheme.colorScheme.onBackground
-        val rowAccentColor = when (progressState) {
-            ProgressState.PAST -> completedColor
-            ProgressState.CURRENT -> when {
-                rowModel.rowIndex == setIndex -> MaterialTheme.colorScheme.primary
-                rowModel.rowIndex < setIndex -> completedColor
-                else -> currentExercisePendingColor
-            }
-            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
-        }
+        val rowAccentColor = progressRowAccentColor(
+            progressState = progressState,
+            rowIndex = rowModel.rowIndex,
+            currentRowIndex = setIndex,
+        )
 
         val rowModifier = Modifier
             .fillMaxWidth()

@@ -22,8 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +38,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -65,6 +66,34 @@ private fun isWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Bool
     is WeightSet -> set.subCategory == SetSubCategory.WorkSet
     is BodyWeightSet -> set.subCategory == SetSubCategory.WorkSet
     is EnduranceSet, is TimedDurationSet -> true
+}
+
+internal fun canCompareProgressionSetData(before: SetData?, after: SetData?): Boolean = when {
+    before is WeightSetData && after is WeightSetData -> true
+    before is BodyWeightSetData && after is BodyWeightSetData -> true
+    before is EnduranceSetData && after is EnduranceSetData -> true
+    before is TimedDurationSetData && after is TimedDurationSetData -> true
+    else -> false
+}
+
+internal fun buildHistoricalComparisonStates(
+    templateStates: List<WorkoutState.Set>,
+    histories: List<SetHistory>,
+): List<WorkoutState.Set> {
+    val templateStateBySetId = templateStates.associateBy { it.set.id }
+    return histories.mapNotNull { history ->
+        templateStateBySetId[history.setId]?.copy(
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(history.setData),
+            historicalSetData = history.setData,
+            hasNoHistory = false,
+            startTime = history.startTime,
+            skipped = history.skipped,
+            equipmentId = history.equipmentIdSnapshot
+                ?: templateStateBySetId[history.setId]?.equipmentId,
+            hasBeenExecuted = true,
+        )
+    }
 }
 
 @Composable
@@ -127,7 +156,13 @@ fun ProgressionComparisonPage(
     }
 
     val progressionState = progressionData?.second
-    val isRetry = progressionState == ProgressionState.RETRY
+    val progressionContextLabel = when (progressionState) {
+        ProgressionState.PROGRESS -> "Progress"
+        ProgressionState.RETRY -> "Repeat"
+        ProgressionState.DELOAD -> "Deload"
+        ProgressionState.FAILED -> "Failed"
+        null -> null
+    }
 
     // Memoize previous set states - only compute once per exercise
     val previousSetStates = remember(exercise.id) {
@@ -166,10 +201,14 @@ fun ProgressionComparisonPage(
                             .find { it.id == exercise.id }
 
                     if (lastSessionExercise != null) {
-                        val states = viewModel.createStatesFromExercise(lastSessionExercise)
-                        previousSetStates.value = states.filterIsInstance<WorkoutState.Set>()
+                        val templateStates = viewModel.createStatesFromExercise(lastSessionExercise)
+                            .filterIsInstance<WorkoutState.Set>()
                             .filter { isWorkSet(it.set) }
                             .distinctBy { it.set.id }
+                        previousSetStates.value = buildHistoricalComparisonStates(
+                            templateStates = templateStates,
+                            histories = viewModel.getAllSetHistoriesByExerciseId(exercise.id),
+                        )
                     }
                 }
             }
@@ -244,9 +283,9 @@ fun ProgressionComparisonPage(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isRetry) {
+                if (progressionContextLabel != null) {
                     Text(
-                        text = "Repeat",
+                        text = progressionContextLabel,
                         style = baseStyle,
                         color = secondaryTextColor
                     )
@@ -301,11 +340,15 @@ fun ProgressionComparisonPage(
             }
         }
 
-        val plannedNextSet = progressionData
-            ?.first
-            ?.sets
-            ?.getOrNull(currentSetIndex)
-            ?.let { SimpleSet(it.weight, it.reps) }
+        val plannedNextSet = if (progressionState == ProgressionState.PROGRESS) {
+            progressionData
+                .first
+                .sets
+                .getOrNull(currentSetIndex)
+                ?.let { SimpleSet(it.weight, it.reps) }
+        } else {
+            null
+        }
 
         val setDifference by remember(
             beforeSetData,
@@ -327,62 +370,32 @@ fun ProgressionComparisonPage(
         }
         val differenceText = setDifference.displayText
         val comparison = setDifference.comparison
+        val hasCompletedCurrentSessionSet =
+            currentSetIndex < setIndex || afterSetState?.hasBeenExecuted == true
+        val hasValidComparison =
+            hasCompletedCurrentSessionSet &&
+                canCompareProgressionSetData(beforeSetData, afterSetData)
 
-        val rowIndex = currentSetIndex
-        val borderColor by remember(
-            currentSetIndex,
-            setIndex,
-            colorScheme.primary,
-            colorScheme.onBackground,
-            colorScheme.surfaceContainerHigh,
-        ) {
-            derivedStateOf {
-                when {
-                    rowIndex == setIndex -> colorScheme.primary
-                    rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground border
-                    else -> colorScheme.surfaceContainerHigh // Future set: subtle outline
-                }
-            }
-        }
-        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.background) {
-            derivedStateOf {
-                when {
-                    rowIndex == setIndex -> colorScheme.primary
-                    else -> colorScheme.background
-                }
-            }
-        }
-        val textColor by remember(
-            currentSetIndex,
-            setIndex,
-            colorScheme.onPrimary,
-            colorScheme.onBackground,
-            colorScheme.surfaceContainerHigh,
-        ) {
-            derivedStateOf {
-                when {
-                    rowIndex == setIndex -> colorScheme.onPrimary
-                    rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground text
-                    else -> colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
-                }
-            }
-        }
+        val rowAccentColor = progressRowAccentColor(
+            progressState = ProgressState.CURRENT,
+            rowIndex = currentSetIndex,
+            currentRowIndex = setIndex,
+        )
+        val previousRowAccentColor = colorScheme.onBackground
         val shape = remember { RoundedCornerShape(25) }
 
         // Previous set row or placeholder
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(27.5.dp)
-                .padding(horizontal = 10.dp),
+                .height(25.dp)
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val previousRowModifier = Modifier
                 .fillMaxSize()
-                .height(25.dp)
-                .padding(bottom = 2.5.dp)
-                .border(BorderStroke(1.dp, borderColor), shape)
-                .background(backgroundColor, shape)
+                .border(BorderStroke(1.dp, previousRowAccentColor), shape)
+                .background(colorScheme.background, shape)
                 .clip(shape)
 
             if (currentSetIndex < previousSetStates.value.size) {
@@ -391,16 +404,21 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = previousSetStates.value[currentSetIndex],
+                    setIdentifier = buildSetIdentifier(
+                        viewModel = viewModel,
+                        exerciseId = exercise.id,
+                        setState = previousSetStates.value[currentSetIndex],
+                    ),
                     index = currentSetIndex,
                     isCurrentSet = false,
-                    textColor = textColor
+                    textColor = previousRowAccentColor
                 )
             } else {
                 Box(modifier = previousRowModifier) {
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
-                        textColor = textColor
+                        textColor = previousRowAccentColor
                     )
                 }
             }
@@ -410,18 +428,24 @@ fun ProgressionComparisonPage(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 2.5.dp),
+                .height(30.dp)
+                .padding(horizontal = 20.dp, vertical = 5.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val comparisonColor = colorForSetComparisonSummary(comparison)
+            val comparisonColor = if (hasValidComparison) {
+                colorForSetComparisonSummary(comparison)
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
 
-            SetComparisonDeltaIcon(comparison = comparison, iconSize = 20.dp)
-
-            Spacer(modifier = Modifier.width(5.dp))
+            if (hasValidComparison) {
+                SetComparisonDeltaIcon(comparison = comparison, iconSize = 20.dp)
+                Spacer(modifier = Modifier.width(5.dp))
+            }
 
             ScalableText(
-                text = differenceText,
+                text = if (hasValidComparison) differenceText else "Not available",
                 style = MaterialTheme.typography.bodySmall,
                 color = comparisonColor
             )
@@ -431,16 +455,14 @@ fun ProgressionComparisonPage(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(27.5.dp)
-                .padding(horizontal = 10.dp),
+                .height(25.dp)
+                .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val currentRowModifier = Modifier
                 .fillMaxSize()
-                .height(25.dp)
-                .padding(bottom = 2.5.dp)
-                .border(BorderStroke(1.dp, borderColor), shape)
-                .background(backgroundColor, shape)
+                .border(BorderStroke(1.dp, rowAccentColor), shape)
+                .background(colorScheme.background, shape)
                 .clip(shape)
 
             if (currentSetIndex < progressionSetStates.size) {
@@ -449,16 +471,21 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = progressionSetStates[currentSetIndex],
+                    setIdentifier = buildSetIdentifier(
+                        viewModel = viewModel,
+                        exerciseId = exercise.id,
+                        setState = progressionSetStates[currentSetIndex],
+                    ),
                     index = currentSetIndex,
                     isCurrentSet = false,
-                    textColor = textColor
+                    textColor = rowAccentColor
                 )
             } else {
                 Box(modifier = currentRowModifier) {
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
-                        textColor = textColor
+                        textColor = rowAccentColor
                     )
                 }
             }
