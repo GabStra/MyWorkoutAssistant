@@ -222,7 +222,6 @@ class AppViewModel(
     private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
 
     override fun onCleared() {
-        super.onCleared()
         // #region agent log
         Log.d(DEBUG_TAG, "AppViewModel.onCleared ViewModelId=${System.identityHashCode(this)} viewModelScope cancelled")
         // #endregion
@@ -1284,17 +1283,6 @@ class AppViewModel(
         )
     }
     
-    /**
-     * Deletes workout plans that become empty after workouts are deleted.
-     * Only deletes non-"Unassigned" plans that have no remaining workouts.
-     * 
-     * @param affectedPlanIds List of plan IDs that may have become empty (should be collected before workouts are deleted)
-     *                        This parameter is kept for backward compatibility but all plans are now checked.
-     */
-    fun deleteEmptyWorkoutPlans(@Suppress("UNUSED_PARAMETER") affectedPlanIds: List<UUID>) {
-        setWorkoutStoreState(workoutStore)
-    }
-
     /**
      * Schedules a debounced save of the workout store.
      * If a save is already scheduled, it cancels the previous one and schedules a new one.

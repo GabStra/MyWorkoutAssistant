@@ -1353,7 +1353,9 @@ fun ExerciseForm(
 
 private fun validateWearSkeletonJson(json: String) {
     val root = JsonParser.parseString(json).asJsonObject
-    root.getAsJsonObject("bounds")
+    require(root.has("bounds") && root["bounds"].isJsonObject) {
+        "Movement JSON is missing bounds."
+    }
     val frames = root.getAsJsonArray("frames")
     require(frames.size() > 0) { "Movement JSON has no frames." }
     val joints = frames[0].asJsonObject.getAsJsonObject("joints")

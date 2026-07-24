@@ -31,8 +31,8 @@ private const val MovementLoopRestartFadeMillis = 250
 @Composable
 fun ExerciseMovementCard(
     exercise: Exercise,
-    title: String = "Movement",
     modifier: Modifier = Modifier,
+    title: String = "Movement",
 ) {
     val movementRef = exercise.movementRef ?: return
     val context = LocalContext.current

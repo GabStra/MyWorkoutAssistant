@@ -71,7 +71,9 @@ class HapticsViewModel(
         haptics.vibrateHard(); delay(200); haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
 
-    override fun onCleared() { super.onCleared(); haptics.release() }
+    override fun onCleared() {
+        haptics.release()
+    }
 }
 
 class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvider.Factory {
