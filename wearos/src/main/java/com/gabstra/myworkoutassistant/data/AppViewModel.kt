@@ -1441,10 +1441,15 @@ open class AppViewModel : WorkoutViewModel() {
         }
 
         if (recoveryApplied && checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
-            val stateAligned = doesCurrentStateMatchCheckpointType(checkpoint)
+            val expectedStateType = if (shouldRestartCalibration) {
+                RecoveryStateType.CALIBRATION_LOAD
+            } else {
+                checkpoint.stateType
+            }
+            val stateAligned = doesCurrentStateMatchRecoveryType(expectedStateType)
             if (!stateAligned) {
                 recoveryApplied = moveToRecoveredState(
-                    stateType = checkpoint.stateType.name,
+                    stateType = expectedStateType.name,
                     exerciseId = checkpoint.exerciseId,
                     setId = checkpoint.setId,
                     setIndex = checkpoint.setIndex,
@@ -1481,9 +1486,9 @@ open class AppViewModel : WorkoutViewModel() {
         onEnd()
     }
 
-    private fun doesCurrentStateMatchCheckpointType(checkpoint: WorkoutRecoveryCheckpoint): Boolean {
+    private fun doesCurrentStateMatchRecoveryType(stateType: RecoveryStateType): Boolean {
         val state = workoutState.value
-        return when (checkpoint.stateType) {
+        return when (stateType) {
             RecoveryStateType.SET -> state is WorkoutState.Set
             RecoveryStateType.REST -> state is WorkoutState.Rest
             RecoveryStateType.CALIBRATION_LOAD -> state is WorkoutState.CalibrationLoadSelection
