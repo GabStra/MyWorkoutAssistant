@@ -56,7 +56,7 @@ android {
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 36
+        targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -173,7 +173,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
-    implementation("com.openai:openai-java:4.43.0")
+    implementation("com.openai:openai-java:4.45.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
