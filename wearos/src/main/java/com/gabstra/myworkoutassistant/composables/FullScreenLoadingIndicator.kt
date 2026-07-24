@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +39,10 @@ fun FullScreenLoadingIndicator(
                 trackColor = MediumDarkGray,
             )
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             LoadingText(baseText = text)
             content()
         }

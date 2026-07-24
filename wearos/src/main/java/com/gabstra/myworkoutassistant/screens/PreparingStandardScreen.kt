@@ -2,14 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,15 +11,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.CircularProgressIndicator
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
@@ -97,30 +82,5 @@ fun PreparingStandardScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.CenterStart
-    ){
-        Column(horizontalAlignment = Alignment.CenterHorizontally){
-            Text(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Preparing HR sensor",
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(15.dp))
-
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                LoadingText(baseText =  "Please wait")
-            }
-        }
-    }
+    FullScreenLoadingIndicator(text = "Preparing HR sensor")
 }
