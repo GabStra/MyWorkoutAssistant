@@ -1565,220 +1565,22 @@ def _transform_frame_for_preview(frame: MotionFrame, *, flip_vertical: bool) -> 
     return MotionFrame(time_sec=frame.time_sec, joints=joints)
 
 
-def _estimate_support_plane_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    support_points = _collect_floor_support_points(frames)
-    if len(support_points) < 6:
-        return None
-    averaged = _fit_support_plane_normal(support_points)
-    if _vector_length(averaged) <= 1e-6:
-        return None
-    if averaged[1] < 0.0:
-        averaged = (-averaged[0], -averaged[1], -averaged[2])
-    up = (0.0, 1.0, 0.0)
-    alignment = max(-1.0, min(1.0, _dot(averaged, up)))
-    if alignment >= math.cos(math.radians(8.0)):
-        return None
-    axis = _cross(averaged, up)
-    if _vector_length(axis) <= 1e-6:
-        axis = (1.0, 0.0, 0.0)
-    axis = _normalize(axis)
-    angle = math.acos(alignment)
-    return (axis, angle)
 
 
-def _collect_floor_support_points(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    primary_points: list[tuple[float, float, float]] = []
-    fallback_points: list[tuple[float, float, float]] = []
-    for frame in frames:
-        primary_points.extend(
-            frame.joints[joint_name]
-            for joint_name in ORIENTATION_PRIMARY_SUPPORT_JOINTS
-            if joint_name in frame.joints
-        )
-        fallback_points.extend(
-            frame.joints[joint_name]
-            for joint_name in ORIENTATION_FALLBACK_SUPPORT_JOINTS
-            if joint_name in frame.joints
-        )
-    combined_points = primary_points + fallback_points
-    if len(primary_points) >= 6 and _support_points_have_plane_span(primary_points):
-        return primary_points
-    if len(combined_points) >= 6 and _support_points_have_plane_span(combined_points):
-        return combined_points
-    return primary_points if len(primary_points) >= 6 else fallback_points
 
 
-def _support_points_have_plane_span(points: list[tuple[float, float, float]]) -> bool:
-    if len(points) < 3:
-        return False
-    span_x = max(point[0] for point in points) - min(point[0] for point in points)
-    span_y = max(point[1] for point in points) - min(point[1] for point in points)
-    span_z = max(point[2] for point in points) - min(point[2] for point in points)
-    axis_spans = sorted((span_x, span_y, span_z), reverse=True)
-    return (span_x >= 0.08 and span_z >= 0.08) or (axis_spans[0] >= 0.08 and axis_spans[1] >= 0.08)
 
 
-def _fit_support_plane_normal(
-    support_points: list[tuple[float, float, float]],
-) -> tuple[float, float, float]:
-    normal_3d = _fit_support_plane_normal_3d(support_points)
-    if normal_3d is not None:
-        return normal_3d
-    coefficients = _fit_support_plane_coefficients(support_points)
-    if coefficients is None:
-        return (0.0, 1.0, 0.0)
-    slope_x, slope_z, _ = coefficients
-    normal = _normalize((-slope_x, 1.0, -slope_z))
-    return normal or (0.0, 1.0, 0.0)
 
 
-def _fit_support_plane_normal_3d(
-    support_points: list[tuple[float, float, float]],
-) -> tuple[float, float, float] | None:
-    if len(support_points) < 3:
-        return None
-    sampled_points = _sample_support_points_for_plane_fit(support_points, max_points=80)
-    centroid = (
-        sum(point[0] for point in sampled_points) / len(sampled_points),
-        sum(point[1] for point in sampled_points) / len(sampled_points),
-        sum(point[2] for point in sampled_points) / len(sampled_points),
-    )
-    centered = [_subtract_points(point, centroid) for point in sampled_points]
-    weighted_normals: list[tuple[float, tuple[float, float, float]]] = []
-    reference_normal: tuple[float, float, float] | None = None
-    reference_area = 0.0
-    for left_index in range(len(centered)):
-        left = centered[left_index]
-        if _vector_length(left) <= 1e-5:
-            continue
-        for right_index in range(left_index + 1, len(centered)):
-            right = centered[right_index]
-            if _vector_length(right) <= 1e-5:
-                continue
-            normal = _cross(left, right)
-            area = _vector_length(normal)
-            if area <= 1e-5:
-                continue
-            normalized = _normalize(normal)
-            if area > reference_area:
-                reference_area = area
-                reference_normal = normalized
-            weighted_normals.append((area, normalized))
-    if reference_normal is None or reference_area <= 1e-5:
-        return None
-
-    min_area = reference_area * 0.10
-    accumulated = (0.0, 0.0, 0.0)
-    total_weight = 0.0
-    for area, normal in weighted_normals:
-        if area < min_area:
-            continue
-        oriented_normal = normal
-        if _dot(oriented_normal, reference_normal) < 0.0:
-            oriented_normal = (-oriented_normal[0], -oriented_normal[1], -oriented_normal[2])
-        accumulated = (
-            accumulated[0] + oriented_normal[0] * area,
-            accumulated[1] + oriented_normal[1] * area,
-            accumulated[2] + oriented_normal[2] * area,
-        )
-        total_weight += area
-    if total_weight <= 1e-5:
-        return None
-    normal = _normalize(accumulated)
-    if _vector_length(normal) <= 1e-6:
-        return None
-    return normal
 
 
-def _sample_support_points_for_plane_fit(
-    support_points: list[tuple[float, float, float]],
-    *,
-    max_points: int,
-) -> list[tuple[float, float, float]]:
-    if len(support_points) <= max_points:
-        return support_points
-    last_index = len(support_points) - 1
-    return [
-        support_points[round(index * last_index / (max_points - 1))]
-        for index in range(max_points)
-    ]
 
 
-def _fit_support_plane_coefficients(
-    support_points: list[tuple[float, float, float]],
-) -> tuple[float, float, float] | None:
-    if len(support_points) < 3:
-        return None
-    filtered_points = list(support_points)
-    for _ in range(2):
-        solution = _solve_support_plane_regression(filtered_points)
-        if solution is None:
-            return None
-        slope_x, slope_z, intercept = solution
-        residuals = [
-            abs((slope_x * point[0]) + (slope_z * point[2]) + intercept - point[1])
-            for point in filtered_points
-        ]
-        if not residuals:
-            return solution
-        median_residual = _median(residuals)
-        threshold = max(0.03, median_residual * 2.5)
-        refined_points = [
-            point
-            for point, residual in zip(filtered_points, residuals)
-            if residual <= threshold
-        ]
-        if len(refined_points) < 3 or len(refined_points) == len(filtered_points):
-            return solution
-        filtered_points = refined_points
-    return _solve_support_plane_regression(filtered_points)
 
 
-def _solve_support_plane_regression(
-    support_points: list[tuple[float, float, float]],
-) -> tuple[float, float, float] | None:
-    count = float(len(support_points))
-    sum_x = sum(point[0] for point in support_points)
-    sum_z = sum(point[2] for point in support_points)
-    sum_y = sum(point[1] for point in support_points)
-    sum_xx = sum(point[0] * point[0] for point in support_points)
-    sum_zz = sum(point[2] * point[2] for point in support_points)
-    sum_xz = sum(point[0] * point[2] for point in support_points)
-    sum_xy = sum(point[0] * point[1] for point in support_points)
-    sum_zy = sum(point[2] * point[1] for point in support_points)
-    matrix = [
-        [sum_xx, sum_xz, sum_x, sum_xy],
-        [sum_xz, sum_zz, sum_z, sum_zy],
-        [sum_x, sum_z, count, sum_y],
-    ]
-    return _solve_3x3_augmented(matrix)
 
 
-def _solve_3x3_augmented(
-    matrix: list[list[float]],
-) -> tuple[float, float, float] | None:
-    rows = [row[:] for row in matrix]
-    size = 3
-    for pivot_index in range(size):
-        pivot_row = max(range(pivot_index, size), key=lambda index: abs(rows[index][pivot_index]))
-        if abs(rows[pivot_row][pivot_index]) <= 1e-8:
-            return None
-        if pivot_row != pivot_index:
-            rows[pivot_index], rows[pivot_row] = rows[pivot_row], rows[pivot_index]
-        pivot_value = rows[pivot_index][pivot_index]
-        for column_index in range(pivot_index, size + 1):
-            rows[pivot_index][column_index] /= pivot_value
-        for row_index in range(size):
-            if row_index == pivot_index:
-                continue
-            factor = rows[row_index][pivot_index]
-            if abs(factor) <= 1e-10:
-                continue
-            for column_index in range(pivot_index, size + 1):
-                rows[row_index][column_index] -= factor * rows[pivot_index][column_index]
-    return (rows[0][3], rows[1][3], rows[2][3])
 
 
 def _estimate_support_profile_yaw_rotation(
@@ -1849,222 +1651,30 @@ def _compute_preview_auto_alignment(
     return [support_profile_rotation] if support_profile_rotation is not None else []
 
 
-def _is_large_non_yaw_rotation(
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    axis, angle = rotation
-    normalized_axis = _normalize(axis)
-    if _vector_length(normalized_axis) <= 1e-6:
-        return False
-    wrapped_angle = abs(math.atan2(math.sin(angle), math.cos(angle)))
-    return abs(normalized_axis[1]) < 0.5 and wrapped_angle >= math.radians(45.0)
 
 
-def _estimate_shoulder_floor_level_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    shoulder_axes: list[tuple[float, float, float]] = []
-    for frame in frames:
-        left = frame.joints.get("left_shoulder")
-        right = frame.joints.get("right_shoulder")
-        if left is None or right is None:
-            continue
-        axis = _normalize(_subtract_points(right, left))
-        if _vector_length(axis) > 1e-6:
-            shoulder_axes.append(axis)
-    if len(shoulder_axes) < 3:
-        return None
-    shoulder_axis = _normalize(_average_preview_points(shoulder_axes))
-    horizontal_axis = (shoulder_axis[0], 0.0, shoulder_axis[2])
-    if _vector_length(horizontal_axis) <= 1e-6:
-        return None
-    return _rotation_between_vectors(shoulder_axis, horizontal_axis, minimum_degrees=1.0)
 
 
-def _estimate_dominant_movement_to_nearest_world_axis_rotation(
-    frames: list[MotionFrame],
-    *,
-    target_axis: tuple[float, float, float] | None = None,
-) -> tuple[tuple[float, float, float], float] | None:
-    points = _dominant_movement_axis_points(frames)
-    if points is None:
-        return None
-    direction = _principal_direction_3d(points)
-    if direction is None:
-        direction = _subtract_points(points[-1], points[0])
-    if _vector_length(direction) <= 1e-6:
-        return None
-    displacement = _subtract_points(points[-1], points[0])
-    if _dot(direction, displacement) < 0.0:
-        direction = _scale_vector(direction, -1.0)
-    target = target_axis or _nearest_signed_world_axis(direction)
-    return _rotation_between_vectors(direction, target, minimum_degrees=2.0)
 
 
-def _dominant_movement_nearest_world_axis(
-    frames: list[MotionFrame],
-) -> tuple[float, float, float] | None:
-    points = _dominant_movement_axis_points(frames)
-    if points is None:
-        return None
-    direction = _principal_direction_3d(points)
-    if direction is None:
-        direction = _subtract_points(points[-1], points[0])
-    if _vector_length(direction) <= 1e-6:
-        return None
-    displacement = _subtract_points(points[-1], points[0])
-    if _dot(direction, displacement) < 0.0:
-        direction = _scale_vector(direction, -1.0)
-    return _nearest_signed_world_axis(direction)
 
 
-def _rotation_preserves_dominant_movement_alignment(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-    target_axis: tuple[float, float, float] | None,
-) -> bool:
-    if target_axis is None:
-        return True
-    before = _dominant_movement_alignment_score(frames, target_axis)
-    if before is None or before < 0.70:
-        return True
-    rotated_frames = [_rotate_frame(frame, rotation) for frame in frames]
-    after = _dominant_movement_alignment_score(rotated_frames, target_axis)
-    if after is None:
-        return True
-    return after >= max(0.70, before - 0.12)
 
 
-def _dominant_movement_alignment_score(
-    frames: list[MotionFrame],
-    target_axis: tuple[float, float, float],
-) -> float | None:
-    points = _dominant_movement_axis_points(frames)
-    if points is None:
-        return None
-    direction = _principal_direction_3d(points)
-    if direction is None:
-        direction = _subtract_points(points[-1], points[0])
-    if _vector_length(direction) <= 1e-6:
-        return None
-    return abs(_dot(_normalize(direction), _normalize(target_axis)))
 
 
-def _dominant_movement_axis_points(
-    frames: list[MotionFrame],
-) -> list[tuple[float, float, float]] | None:
-    candidates: list[tuple[float, list[tuple[float, float, float]]]] = []
-    for group_name, joint_names, root_relative, priority in DOMINANT_MOVEMENT_AXIS_GROUPS:
-        points = _group_motion_axis_points(frames, joint_names, root_relative=root_relative)
-        score = _score_motion_axis_candidate(points, priority=priority)
-        if score is not None:
-            candidates.append((score, points))
-
-    for joint_name in DOMINANT_MOVEMENT_AXIS_JOINTS:
-        points = _joint_motion_axis_points(frames, joint_name, root_relative=True)
-        _append_motion_axis_candidate(candidates, points, priority=_dominant_movement_joint_priority(joint_name))
-    for joint_name in ("pelvis", "spine2", "spine1"):
-        points = _joint_motion_axis_points(frames, joint_name, root_relative=False)
-        _append_motion_axis_candidate(candidates, points, priority=0.55)
-    body_points = [
-        point
-        for point in _smooth_motion_line_path([_frame_joint_center(frame) for frame in frames])
-        if point is not None
-    ]
-    _append_motion_axis_candidate(candidates, body_points, priority=0.45)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
-    return candidates[0][1]
 
 
-def _joint_motion_axis_points(
-    frames: list[MotionFrame],
-    joint_name: str,
-    *,
-    root_relative: bool,
-) -> list[tuple[float, float, float]]:
-    raw_points: list[tuple[float, float, float] | None] = []
-    for frame in frames:
-        point = frame.joints.get(joint_name)
-        if point is None:
-            raw_points.append(None)
-            continue
-        root = frame.joints.get("pelvis") if root_relative else None
-        raw_points.append(_subtract_points(point, root) if root is not None else point)
-    return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
 
 
-def _group_motion_axis_points(
-    frames: list[MotionFrame],
-    joint_names: tuple[str, ...],
-    *,
-    root_relative: bool,
-) -> list[tuple[float, float, float]]:
-    raw_points: list[tuple[float, float, float] | None] = []
-    for frame in frames:
-        points = [frame.joints[joint_name] for joint_name in joint_names if joint_name in frame.joints]
-        if not points:
-            raw_points.append(None)
-            continue
-        point = _average_preview_points(points)
-        root = frame.joints.get("pelvis") if root_relative else None
-        raw_points.append(_subtract_points(point, root) if root is not None else point)
-    return [point for point in _smooth_motion_line_path(raw_points) if point is not None]
 
 
-def _append_motion_axis_candidate(
-    candidates: list[tuple[float, list[tuple[float, float, float]]]],
-    points: list[tuple[float, float, float]],
-    *,
-    priority: float,
-) -> None:
-    score = _score_motion_axis_candidate(points, priority=priority)
-    if score is not None:
-        candidates.append((score, points))
 
 
-def _score_motion_axis_candidate(
-    points: list[tuple[float, float, float]],
-    *,
-    priority: float,
-) -> float | None:
-    if len(points) < 3:
-        return None
-    track_range = _point_track_range(points)
-    if track_range < DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
-        return None
-    direction = _principal_direction_3d(points) or _subtract_points(points[-1], points[0])
-    direction_length = _vector_length(direction)
-    if direction_length <= 1e-6:
-        return None
-    axis_range = _point_track_range_along_direction(points, direction)
-    residual_range = max(0.0, track_range - axis_range)
-    coherence = axis_range / max(track_range, 1e-6)
-    if coherence < 0.45 and residual_range > DOMINANT_MOVEMENT_AXIS_MIN_RANGE:
-        return None
-    return track_range * coherence * max(0.0, priority)
 
 
-def _dominant_movement_joint_priority(joint_name: str) -> float:
-    if joint_name in {"left_hand", "right_hand", "left_wrist", "right_wrist"}:
-        return 1.6
-    if joint_name in {"left_elbow", "right_elbow", "left_foot", "right_foot", "left_ankle", "right_ankle"}:
-        return 1.25
-    if joint_name in {"left_knee", "right_knee"}:
-        return 1.0
-    return 0.75
 
 
-def _horizontal_point_track_range(points: list[tuple[float, float, float]]) -> float:
-    if len(points) < 2:
-        return 0.0
-    center_x = sum(point[0] for point in points) / len(points)
-    center_z = sum(point[2] for point in points) / len(points)
-    return (
-        max(math.hypot(point[0] - center_x, point[2] - center_z) for point in points) *
-        2.0
-    )
 
 
 def _preserve_preview_bone_lengths(
@@ -2436,17 +2046,6 @@ def _stabilize_horizontal_rendered_torso_plane(
     }
 
 
-def _point_track_range_along_direction(
-    points: list[tuple[float, float, float]],
-    direction: tuple[float, float, float],
-) -> float:
-    if len(points) < 2:
-        return 0.0
-    normalized = _normalize(direction)
-    if _vector_length(normalized) <= 1e-6:
-        return 0.0
-    projections = [_dot(point, normalized) for point in points]
-    return max(projections) - min(projections)
 
 
 def _nearest_signed_world_axis(
@@ -2466,23 +2065,6 @@ def _nearest_signed_world_axis(
     return max(axes, key=lambda candidate: _dot(normalized, candidate))
 
 
-def _nearest_signed_horizontal_world_axis(
-    direction: tuple[float, float],
-) -> tuple[float, float]:
-    length = math.hypot(direction[0], direction[1])
-    if length <= 1e-8:
-        return (1.0, 0.0)
-    normalized = (direction[0] / length, direction[1] / length)
-    axes = (
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-    )
-    return max(
-        axes,
-        key=lambda candidate: normalized[0] * candidate[0] + normalized[1] * candidate[1],
-    )
 
 
 def _normalize_signed_angle(angle: float) -> float:
@@ -2493,37 +2075,10 @@ def _normalize_signed_angle(angle: float) -> float:
     return angle
 
 
-def _dominant_hand_motion_points(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    points: list[tuple[float, float, float]] = []
-    for frame in frames:
-        hand_points = [
-            frame.joints[joint_name]
-            for joint_name in ("left_hand", "right_hand", "left_wrist", "right_wrist")
-            if joint_name in frame.joints
-        ]
-        if hand_points:
-            points.append(_average_preview_points(hand_points))
-    return points
 
 
-def _dominant_body_motion_points(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    points: list[tuple[float, float, float]] = []
-    for frame in frames:
-        body_points = [
-            frame.joints[joint_name]
-            for joint_name in ("pelvis", "spine1", "spine2", "spine3", "neck", "head")
-            if joint_name in frame.joints
-        ]
-        if body_points:
-            points.append(_average_preview_points(body_points))
-    return points
 
 
-def _point_track_range(points: list[tuple[float, float, float]]) -> float:
-    if len(points) < 2:
-        return 0.0
-    center = _average_preview_points(points)
-    return max(_vector_length(_subtract_points(point, center)) for point in points) * 2.0
 
 
 def _nearest_signed_world_axis(
@@ -2539,58 +2094,10 @@ def _nearest_signed_world_axis(
     return axis if _dot(normalized, axis) >= 0.0 else _scale_vector(axis, -1.0)
 
 
-def _is_already_world_upright_with_vertical_motion(frames: list[MotionFrame]) -> bool:
-    spine_angles: list[float] = []
-    for frame in frames:
-        pelvis = frame.joints.get("pelvis")
-        neck = frame.joints.get("neck") or frame.joints.get("spine3") or frame.joints.get("head")
-        if pelvis is None or neck is None:
-            continue
-        spine = _subtract_points(neck, pelvis)
-        if _vector_length(spine) <= 1e-6:
-            continue
-        spine_angles.append(_axis_angle_degrees(spine, (0.0, 1.0, 0.0)))
-    if len(spine_angles) < 3 or _median(spine_angles) > 25.0:
-        return False
-
-    hand_axis = _dominant_hand_motion_axis(frames)
-    if hand_axis is not None and _axis_angle_degrees(hand_axis, (0.0, 1.0, 0.0)) <= 25.0:
-        return True
-
-    body_axis = _dominant_body_motion_axis(frames)
-    return body_axis is not None and _axis_angle_degrees(body_axis, (0.0, 1.0, 0.0)) <= 25.0
 
 
-def _dominant_hand_motion_axis(frames: list[MotionFrame]) -> tuple[float, float, float] | None:
-    points: list[tuple[float, float, float]] = []
-    for frame in frames:
-        hand_points = [
-            frame.joints[joint_name]
-            for joint_name in ("left_hand", "right_hand", "left_wrist", "right_wrist")
-            if joint_name in frame.joints
-        ]
-        if not hand_points:
-            continue
-        points.append(_average_preview_points(hand_points))
-    if len(points) < 3:
-        return None
-    return _subtract_points(points[-1], points[0])
 
 
-def _dominant_body_motion_axis(frames: list[MotionFrame]) -> tuple[float, float, float] | None:
-    points: list[tuple[float, float, float]] = []
-    for frame in frames:
-        body_points = [
-            frame.joints[joint_name]
-            for joint_name in ("pelvis", "spine1", "spine2", "spine3", "neck", "head")
-            if joint_name in frame.joints
-        ]
-        if not body_points:
-            continue
-        points.append(_average_preview_points(body_points))
-    if len(points) < 3:
-        return None
-    return _subtract_points(points[-1], points[0])
 
 
 def _average_preview_points(points: list[tuple[float, float, float]]) -> tuple[float, float, float]:
@@ -2613,262 +2120,24 @@ def _axis_angle_degrees(
     return math.degrees(math.acos(alignment))
 
 
-def _append_final_movement_axis_alignment(
-    rotations: list[tuple[tuple[float, float, float], float]],
-    aligned_frames: list[MotionFrame],
-) -> list[tuple[tuple[float, float, float], float]]:
-    final_rotation = _estimate_dominant_movement_axis_alignment_rotation(aligned_frames)
-    if final_rotation is not None:
-        rotations = [*rotations, final_rotation]
-        aligned_frames = [_rotate_frame(frame, final_rotation) for frame in aligned_frames]
-    upper_body_rotation = _estimate_upper_body_vertical_trend_alignment_rotation(aligned_frames)
-    if upper_body_rotation is not None:
-        rotations = [*rotations, upper_body_rotation]
-        aligned_frames = [_rotate_frame(frame, upper_body_rotation) for frame in aligned_frames]
-    all_joint_rotation = _estimate_all_joint_vertical_trend_alignment_rotation(aligned_frames)
-    if all_joint_rotation is not None:
-        rotations = [*rotations, all_joint_rotation]
-        aligned_frames = [_rotate_frame(frame, all_joint_rotation) for frame in aligned_frames]
-    bilateral_level_rotation = _estimate_global_bilateral_leveling_rotation(aligned_frames)
-    if bilateral_level_rotation is not None:
-        rotations = [*rotations, bilateral_level_rotation]
-        aligned_frames = [_rotate_frame(frame, bilateral_level_rotation) for frame in aligned_frames]
-    body_orientation_rotation = _estimate_global_body_orientation_alignment_rotation(aligned_frames)
-    if body_orientation_rotation is None:
-        return rotations
-    return [*rotations, body_orientation_rotation]
 
 
-def _estimate_dominant_movement_axis_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    if len(frames) < 3:
-        return None
-    path = _smooth_motion_line_path([_frame_motion_anchor(frame) for frame in frames])
-    valid_points = [point for point in path if point is not None]
-    if len(valid_points) < 3:
-        return None
-    direction = _principal_direction_3d(valid_points)
-    if direction is None:
-        return None
-    displacement = _subtract_points(valid_points[-1], valid_points[0])
-    if _dot(direction, displacement) < 0.0:
-        direction = (-direction[0], -direction[1], -direction[2])
-    horizontal_magnitude = math.hypot(direction[0], direction[2])
-    vertical_magnitude = abs(direction[1])
-    if vertical_magnitude >= horizontal_magnitude * 1.25:
-        target = (0.0, 1.0 if direction[1] >= 0.0 else -1.0, 0.0)
-    else:
-        target = (0.0, 0.0, 1.0)
-        if abs(direction[2]) > 1e-6 and direction[2] < 0.0:
-            target = (0.0, 0.0, -1.0)
-    return _rotation_between_vectors(direction, target, minimum_degrees=2.0)
 
 
-def _principal_direction_3d(
-    samples: list[tuple[float, float, float]],
-) -> tuple[float, float, float] | None:
-    if len(samples) < 2:
-        return None
-    mean = (
-        sum(sample[0] for sample in samples) / len(samples),
-        sum(sample[1] for sample in samples) / len(samples),
-        sum(sample[2] for sample in samples) / len(samples),
-    )
-    centered = [
-        (sample[0] - mean[0], sample[1] - mean[1], sample[2] - mean[2])
-        for sample in samples
-    ]
-    vector = _normalize(_subtract_points(samples[-1], samples[0]))
-    if _vector_length(vector) <= 1e-6:
-        vector = (0.0, 1.0, 0.0)
-    for _ in range(8):
-        next_vector = (
-            sum(item[0] * _dot(item, vector) for item in centered),
-            sum(item[1] * _dot(item, vector) for item in centered),
-            sum(item[2] * _dot(item, vector) for item in centered),
-        )
-        if _vector_length(next_vector) <= 1e-8:
-            return None
-        vector = _normalize(next_vector)
-    return vector if _vector_length(vector) > 1e-6 else None
 
 
-def _estimate_upper_body_vertical_trend_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    points = [_frame_upper_body_motion_anchor(frame) for frame in frames]
-    points = [point for point in _smooth_motion_line_path(points) if point is not None]
-    if len(points) < 3:
-        return None
-    mean_y = sum(point[1] for point in points) / len(points)
-    variance_y = sum((point[1] - mean_y) ** 2 for point in points)
-    if variance_y <= 1e-8:
-        return None
-    slopes = []
-    for axis in (0, 2):
-        mean_axis = sum(point[axis] for point in points) / len(points)
-        slopes.append(sum((point[1] - mean_y) * (point[axis] - mean_axis) for point in points) / variance_y)
-    trend = (slopes[0], 1.0, slopes[1])
-    if _vector_length((trend[0], 0.0, trend[2])) <= math.tan(math.radians(1.0)):
-        return None
-    return _rotation_between_vectors(trend, (0.0, 1.0, 0.0), minimum_degrees=1.0)
 
 
-def _estimate_dominant_vertical_body_trend_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    points = [point for point in _smooth_motion_line_path([
-        _frame_upper_body_motion_anchor(frame)
-        for frame in frames
-    ]) if point is not None]
-    if len(points) < 3:
-        return None
-    vertical_range = max(point[1] for point in points) - min(point[1] for point in points)
-    horizontal_range = max(
-        math.hypot(right[0] - left[0], right[2] - left[2])
-        for left in points
-        for right in points
-    )
-    if vertical_range < 0.05 or vertical_range < horizontal_range:
-        return None
-    return _estimate_upper_body_vertical_trend_alignment_rotation(frames)
 
 
-def _estimate_all_joint_vertical_trend_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    excluded = {"left_wrist", "right_wrist", "left_hand", "right_hand"}
-    slopes_by_joint: list[tuple[float, float, float]] = []
-    for joint_name in frames[0].joints:
-        if joint_name in excluded or any(token in joint_name for token in ("finger", "toe")):
-            continue
-        points = [frame.joints[joint_name] for frame in frames if joint_name in frame.joints]
-        if len(points) < 3:
-            continue
-        mean_y = sum(point[1] for point in points) / len(points)
-        variance_y = sum((point[1] - mean_y) ** 2 for point in points)
-        if variance_y <= 1e-8:
-            continue
-        joint_slopes = []
-        for axis in (0, 2):
-            mean_axis = sum(point[axis] for point in points) / len(points)
-            joint_slopes.append(sum((point[1] - mean_y) * (point[axis] - mean_axis) for point in points) / variance_y)
-        vertical_range = max(point[1] for point in points) - min(point[1] for point in points)
-        slopes_by_joint.append((joint_slopes[0], joint_slopes[1], vertical_range))
-    if not slopes_by_joint:
-        return None
-    total_weight = sum(max(item[2], 1e-6) for item in slopes_by_joint)
-    slopes = [
-        sum(item[0] * max(item[2], 1e-6) for item in slopes_by_joint) / total_weight,
-        sum(item[1] * max(item[2], 1e-6) for item in slopes_by_joint) / total_weight,
-    ]
-    trend = (slopes[0], 1.0, slopes[1])
-    if _vector_length((trend[0], 0.0, trend[2])) <= math.tan(math.radians(1.0)):
-        return None
-    return _rotation_between_vectors(trend, (0.0, 1.0, 0.0), minimum_degrees=1.0)
 
 
-def _estimate_global_bilateral_leveling_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    vectors: list[tuple[float, float, float]] = []
-    for frame in frames:
-        for left_joint, right_joint in (("left_shoulder", "right_shoulder"), ("left_hip", "right_hip")):
-            left = frame.joints.get(left_joint)
-            right = frame.joints.get(right_joint)
-            if left is None or right is None:
-                continue
-            vector = _subtract_points(right, left)
-            if _vector_length(vector) > 1e-5:
-                vectors.append(vector)
-    if not vectors:
-        return None
-    averaged = (
-        sum(vector[0] for vector in vectors) / len(vectors),
-        sum(vector[1] for vector in vectors) / len(vectors),
-        sum(vector[2] for vector in vectors) / len(vectors),
-    )
-    horizontal = (averaged[0], 0.0, averaged[2])
-    if _vector_length(horizontal) <= 1e-5:
-        return None
-    tilt_degrees = math.degrees(math.atan2(abs(averaged[1]), _vector_length(horizontal)))
-    if tilt_degrees <= 1.0:
-        return None
-    return _rotation_between_vectors(averaged, horizontal, minimum_degrees=1.0)
 
 
-def _estimate_global_body_orientation_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    body_axes: list[tuple[float, float, float]] = []
-    for frame in frames:
-        axis = _frame_median_bilateral_axis(frame)
-        if axis is not None:
-            body_axes.append(axis)
-    if not body_axes:
-        return None
-    reference = body_axes[0]
-    accumulated = (0.0, 0.0, 0.0)
-    for axis in body_axes:
-        oriented = axis if _dot(axis, reference) >= 0.0 else (-axis[0], -axis[1], -axis[2])
-        accumulated = (
-            accumulated[0] + oriented[0],
-            accumulated[1] + oriented[1],
-            accumulated[2] + oriented[2],
-        )
-    averaged = _normalize(accumulated)
-    horizontal = (averaged[0], 0.0, averaged[2])
-    if _vector_length(horizontal) <= 1e-5:
-        return None
-    tilt_degrees = math.degrees(math.atan2(abs(averaged[1]), _vector_length(horizontal)))
-    if tilt_degrees <= 0.75:
-        return None
-    return _rotation_between_vectors(averaged, horizontal, minimum_degrees=0.75)
 
 
-def _frame_median_bilateral_axis(frame: MotionFrame) -> tuple[float, float, float] | None:
-    vectors = []
-    for left_joint, right_joint in (("left_shoulder", "right_shoulder"), ("left_hip", "right_hip")):
-        left = frame.joints.get(left_joint)
-        right = frame.joints.get(right_joint)
-        if left is None or right is None:
-            continue
-        vector = _subtract_points(right, left)
-        if _vector_length(vector) > 1e-5:
-            vectors.append(_normalize(vector))
-    if not vectors:
-        return None
-    averaged = (
-        sum(vector[0] for vector in vectors) / len(vectors),
-        sum(vector[1] for vector in vectors) / len(vectors),
-        sum(vector[2] for vector in vectors) / len(vectors),
-    )
-    if _vector_length(averaged) <= 1e-6:
-        return None
-    return _normalize(averaged)
 
 
-def _frame_upper_body_motion_anchor(frame: MotionFrame) -> tuple[float, float, float] | None:
-    joint_names = (
-        "pelvis",
-        "spine1",
-        "spine2",
-        "spine3",
-        "neck",
-        "left_collar",
-        "right_collar",
-        "left_shoulder",
-        "right_shoulder",
-    )
-    points = [frame.joints[joint_name] for joint_name in joint_names if joint_name in frame.joints]
-    if not points:
-        return _frame_motion_anchor(frame)
-    return (
-        sum(point[0] for point in points) / len(points),
-        sum(point[1] for point in points) / len(points),
-        sum(point[2] for point in points) / len(points),
-    )
 
 
 def _classify_torso_alignment_mode(frames: list[MotionFrame]) -> str:
@@ -2890,29 +2159,6 @@ def _has_horizontal_torso_profile(frames: list[MotionFrame]) -> bool:
     return _classify_torso_alignment_mode(frames) == "horizontal_plane"
 
 
-def _estimate_torso_plane_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    normals = _collect_torso_plane_normals(frames)
-    if len(normals) < 3:
-        return None
-    reference = normals[0]
-    accumulated = (0.0, 0.0, 0.0)
-    for normal in normals:
-        oriented = normal
-        if _dot(oriented, reference) < 0.0:
-            oriented = (-oriented[0], -oriented[1], -oriented[2])
-        accumulated = (
-            accumulated[0] + oriented[0],
-            accumulated[1] + oriented[1],
-            accumulated[2] + oriented[2],
-        )
-    averaged = _normalize(accumulated)
-    if _vector_length(averaged) <= 1e-6:
-        return None
-    if averaged[1] < 0.0:
-        averaged = (-averaged[0], -averaged[1], -averaged[2])
-    return _rotation_between_vectors(averaged, (0.0, 1.0, 0.0), minimum_degrees=2.0)
 
 
 def _estimate_horizontal_spine_yaw_rotation(
@@ -3033,123 +2279,20 @@ def _rendered_torso_plane_normal_and_pivot(
     return _normalize(normal), hip_center
 
 
-def _collect_torso_plane_normals(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    normals: list[tuple[float, float, float]] = []
-    for frame in frames:
-        pelvis = frame.joints.get("pelvis")
-        left_shoulder = frame.joints.get("left_shoulder")
-        right_shoulder = frame.joints.get("right_shoulder")
-        if pelvis is None or left_shoulder is None or right_shoulder is None:
-            continue
-        left_vector = _subtract_points(left_shoulder, pelvis)
-        right_vector = _subtract_points(right_shoulder, pelvis)
-        normal = _cross(left_vector, right_vector)
-        normal_length = _vector_length(normal)
-        if normal_length <= 1e-5:
-            continue
-        normals.append((
-            normal[0] / normal_length,
-            normal[1] / normal_length,
-            normal[2] / normal_length,
-        ))
-    return normals
 
 
-def _rotation_preserves_upright_spine(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    upright_vectors = _collect_upright_spine_vectors(frames)
-    if len(upright_vectors) < 3:
-        return True
-    axis, angle = rotation
-    rotated_vectors = [
-        _rotate_point(vector, axis=axis, angle=angle)
-        for vector in upright_vectors
-    ]
-    average_verticality = sum(vector[1] for vector in rotated_vectors) / len(rotated_vectors)
-    return average_verticality >= math.cos(math.radians(8.0))
 
 
-def _rotation_preserves_body_orientation(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    if _collect_upright_spine_vectors(frames):
-        return _rotation_preserves_upright_spine(frames, rotation)
-    if _classify_torso_alignment_mode(frames) == "horizontal_plane":
-        return _rotation_preserves_horizontal_torso(frames, rotation)
-    return True
 
 
-def _rotation_preserves_body_orientation_or_pending_inversion(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    if _aligned_body_points_down(frames, []):
-        return _rotation_preserves_body_verticality(frames, rotation)
-    return _rotation_preserves_body_orientation(frames, rotation)
 
 
-def _rotation_preserves_body_verticality(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    spine_vectors = _collect_spine_vectors(frames)
-    if len(spine_vectors) < 3:
-        return True
-    before = _median([abs(vector[1]) for vector in spine_vectors])
-    axis, angle = rotation
-    rotated = [_rotate_point(vector, axis=axis, angle=angle) for vector in spine_vectors]
-    after = _median([abs(vector[1]) for vector in rotated])
-    return after >= max(0.65, before - 0.12)
 
 
-def _rotation_preserves_horizontal_torso(
-    frames: list[MotionFrame],
-    rotation: tuple[tuple[float, float, float], float],
-) -> bool:
-    spine_vectors = _collect_spine_vectors(frames)
-    if len(spine_vectors) < 3:
-        return True
-    before = _median([abs(vector[1]) for vector in spine_vectors])
-    axis, angle = rotation
-    rotated = [_rotate_point(vector, axis=axis, angle=angle) for vector in spine_vectors]
-    after = _median([abs(vector[1]) for vector in rotated])
-    return after <= max(0.18, before + 0.10)
 
 
-def _estimate_upright_spine_alignment_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    upright_vectors = _collect_upright_spine_vectors(frames)
-    if len(upright_vectors) < 3:
-        return None
-    averaged = _normalize((
-        sum(vector[0] for vector in upright_vectors) / len(upright_vectors),
-        sum(vector[1] for vector in upright_vectors) / len(upright_vectors),
-        sum(vector[2] for vector in upright_vectors) / len(upright_vectors),
-    ))
-    if _vector_length(averaged) <= 1e-6:
-        return None
-    return _rotation_between_vectors(averaged, (0.0, 1.0, 0.0), minimum_degrees=2.0)
 
 
-def _estimate_upright_spine_leveling_rotation(
-    frames: list[MotionFrame],
-) -> tuple[tuple[float, float, float], float] | None:
-    upright_vectors = _collect_upright_spine_vectors(frames)
-    if len(upright_vectors) < 3:
-        return None
-    averaged = _normalize((
-        sum(vector[0] for vector in upright_vectors) / len(upright_vectors),
-        sum(vector[1] for vector in upright_vectors) / len(upright_vectors),
-        sum(vector[2] for vector in upright_vectors) / len(upright_vectors),
-    ))
-    if _vector_length(averaged) <= 1e-6:
-        return None
-    target = (0.0, 1.0 if averaged[1] >= 0.0 else -1.0, 0.0)
-    return _rotation_between_vectors(averaged, target, minimum_degrees=2.0)
 
 
 def _collect_spine_vectors(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
@@ -3171,18 +2314,6 @@ def _collect_spine_vectors(frames: list[MotionFrame]) -> list[tuple[float, float
     return vectors
 
 
-def _collect_upright_spine_vectors(frames: list[MotionFrame]) -> list[tuple[float, float, float]]:
-    candidates: list[tuple[float, tuple[float, float, float]]] = []
-    for normalized in _collect_spine_vectors(frames):
-        verticality = abs(normalized[1])
-        if verticality < 0.65:
-            continue
-        candidates.append((verticality, normalized))
-    if not candidates:
-        return []
-    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
-    keep_count = min(len(candidates), max(3, int(math.ceil(len(candidates) * 0.20))))
-    return [vector for _, vector in candidates[:keep_count]]
 
 
 def _serialize_preview_rotations(
@@ -3229,17 +2360,6 @@ def _aligned_body_points_down(
     return _median(y_values) < -0.05
 
 
-def _extract_motion_line_samples(frames: list[MotionFrame]) -> list[tuple[float, float]]:
-    samples: list[tuple[float, float]] = []
-    smoothed = _smooth_motion_line_path([
-        _frame_motion_anchor(frame)
-        for frame in frames
-    ])
-    for point in smoothed:
-        if point is None:
-            continue
-        samples.append((point[0], point[2]))
-    return samples
 
 
 def _estimate_average_lateral_direction_2d(
@@ -3270,11 +2390,6 @@ def _estimate_average_lateral_direction_2d(
     return (averaged[0] / length, averaged[1] / length)
 
 
-def _frame_motion_anchor(frame: MotionFrame) -> tuple[float, float, float] | None:
-    pelvis = frame.joints.get("pelvis")
-    if pelvis is not None:
-        return pelvis
-    return _frame_joint_center(frame)
 
 
 def _smooth_motion_line_path(
@@ -3325,27 +2440,6 @@ def _principal_direction_2d(samples: list[tuple[float, float]]) -> tuple[float, 
     return (direction[0] / length, direction[1] / length)
 
 
-def _estimate_frame_support_normals(
-    support_points: list[tuple[float, float, float]],
-) -> list[tuple[float, float, float]]:
-    normals: list[tuple[float, float, float]] = []
-    for first in range(len(support_points) - 2):
-        for second in range(first + 1, len(support_points) - 1):
-            for third in range(second + 1, len(support_points)):
-                a = support_points[first]
-                b = support_points[second]
-                c = support_points[third]
-                normal = _cross(
-                    _subtract_points(b, a),
-                    _subtract_points(c, a),
-                )
-                if _vector_length(normal) <= 1e-6:
-                    continue
-                normal = _normalize(normal)
-                if normal[1] < 0.0:
-                    normal = (-normal[0], -normal[1], -normal[2])
-                normals.append(normal)
-    return normals
 
 
 def _rotate_frame(
@@ -3360,27 +2454,6 @@ def _rotate_frame(
     return MotionFrame(time_sec=frame.time_sec, joints=joints)
 
 
-def _rotate_ground_payload(
-    ground_payload: dict[str, object],
-    rotation: tuple[tuple[float, float, float], float],
-) -> dict[str, object]:
-    axis, angle = rotation
-    rotated = json.loads(json.dumps(ground_payload))
-    render_plane = rotated.get("renderGroundPlane")
-    if isinstance(render_plane, dict):
-        normal = render_plane.get("normal")
-        if isinstance(normal, list) and len(normal) == 3:
-            render_plane["normal"] = list(
-                _rotate_point((float(normal[0]), float(normal[1]), float(normal[2])), axis=axis, angle=angle)
-            )
-    render_origin = rotated.get("renderGroundOrigin")
-    if isinstance(render_origin, dict):
-        point = render_origin.get("point")
-        if isinstance(point, list) and len(point) == 3:
-            render_origin["point"] = list(
-                _rotate_point((float(point[0]), float(point[1]), float(point[2])), axis=axis, angle=angle)
-            )
-    return rotated
 
 
 def _translate_ground_payload(
@@ -3587,79 +2660,10 @@ def _enforce_preview_joint_limits(frames: list[MotionFrame]) -> list[MotionFrame
     return constrained
 
 
-def _level_preview_bilateral_body_axes(frames: list[MotionFrame]) -> list[MotionFrame]:
-    leveled: list[MotionFrame] = []
-    for frame in frames:
-        rotation = _estimate_frame_bilateral_leveling_rotation(frame)
-        if rotation is None:
-            leveled.append(frame)
-            continue
-        center = _frame_bilateral_leveling_center(frame)
-        if center is None:
-            leveled.append(frame)
-            continue
-        axis, angle = rotation
-        joints = {}
-        for joint_name, point in frame.joints.items():
-            local = _subtract_points(point, center)
-            rotated = _rotate_point(local, axis=axis, angle=angle)
-            joints[joint_name] = (
-                rotated[0] + center[0],
-                rotated[1] + center[1],
-                rotated[2] + center[2],
-            )
-        leveled.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
-    return leveled
 
 
-def _estimate_frame_bilateral_leveling_rotation(
-    frame: MotionFrame,
-) -> tuple[tuple[float, float, float], float] | None:
-    vectors: list[tuple[float, float, float]] = []
-    for left_joint, right_joint in (("left_shoulder", "right_shoulder"), ("left_hip", "right_hip")):
-        left = frame.joints.get(left_joint)
-        right = frame.joints.get(right_joint)
-        if left is None or right is None:
-            continue
-        vector = _subtract_points(right, left)
-        if _vector_length(vector) > 1e-5:
-            vectors.append(vector)
-    if not vectors:
-        return None
-    averaged = (
-        sum(vector[0] for vector in vectors) / len(vectors),
-        sum(vector[1] for vector in vectors) / len(vectors),
-        sum(vector[2] for vector in vectors) / len(vectors),
-    )
-    horizontal = (averaged[0], 0.0, averaged[2])
-    if _vector_length(horizontal) <= 1e-5:
-        return None
-    tilt_degrees = math.degrees(math.atan2(abs(averaged[1]), _vector_length(horizontal)))
-    if tilt_degrees <= 1.0:
-        return None
-    return _rotation_between_vectors(averaged, horizontal, minimum_degrees=1.0)
 
 
-def _frame_bilateral_leveling_center(frame: MotionFrame) -> tuple[float, float, float] | None:
-    joint_names = (
-        "pelvis",
-        "spine1",
-        "spine2",
-        "spine3",
-        "neck",
-        "left_shoulder",
-        "right_shoulder",
-        "left_hip",
-        "right_hip",
-    )
-    points = [frame.joints[joint_name] for joint_name in joint_names if joint_name in frame.joints]
-    if not points:
-        return _frame_joint_center(frame)
-    return (
-        sum(point[0] for point in points) / len(points),
-        sum(point[1] for point in points) / len(points),
-        sum(point[2] for point in points) / len(points),
-    )
 
 
 def _constrain_hinge_child(
@@ -4130,8 +3134,6 @@ def _find_root_joint(clip: MotionClip) -> str | None:
     return None
 
 
-def _is_loopable(clip: MotionClip) -> bool:
-    return bool(_detect_preview_loops(clip))
 
 
 def _detect_preview_loops(clip: MotionClip) -> list[dict[str, object]]:
@@ -4339,48 +3341,6 @@ def _preview_loop_key_joints(clip: MotionClip, *, dominant_groups: set[str]) -> 
     return key_joints
 
 
-def _build_fallback_preview_loop_candidates(
-    clip: MotionClip,
-    *,
-    minimum_frames: int,
-) -> list[dict[str, object]]:
-    if clip.frame_count <= minimum_frames:
-        return []
-    target_frames = min(
-        clip.frame_count,
-        max(minimum_frames, int(round(clip.fps * 3.0))),
-    )
-    if target_frames <= 1:
-        return []
-    step = max(1, target_frames // 2)
-    candidates: list[dict[str, object]] = []
-    start_index = 0
-    while start_index < clip.frame_count - 1 and len(candidates) < MAX_DETECTED_LOOPS:
-        end_index = min(clip.frame_count - 1, start_index + target_frames - 1)
-        if end_index - start_index + 1 < minimum_frames:
-            break
-        start_time = clip.frames[start_index].time_sec
-        end_time = clip.frames[end_index].time_sec
-        candidates.append(
-            {
-                "startFrame": start_index,
-                "endFrame": end_index,
-                "startTimeSec": start_time,
-                "endTimeSec": end_time,
-                "durationSec": end_time - start_time,
-                "score": 999.0 + len(candidates),
-                "fallback": True,
-                "label": (
-                    f"Candidate {len(candidates) + 1}: "
-                    f"{start_time:.2f}s -> {end_time:.2f}s "
-                    f"({end_time - start_time:.2f}s)"
-                ),
-            }
-        )
-        if end_index >= clip.frame_count - 1:
-            break
-        start_index += step
-    return candidates
 
 
 def _extract_preview_support_states(clip: MotionClip) -> list[dict[str, object]]:

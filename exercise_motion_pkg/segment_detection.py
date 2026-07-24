@@ -510,20 +510,6 @@ def classify_support_dominance_from_frames(
     return payload
 
 
-def classify_support_dominance_with_client(
-    *,
-    frame_paths: list[Path],
-    exercise_name: str | None,
-    client: object,
-) -> SupportDominanceResult:
-    caption_images = getattr(client, "caption_images", None)
-    if not callable(caption_images):
-        raise TypeError("support dominance classifier requires a caption_images() method")
-    return classify_support_dominance_from_frames(
-        frame_paths=frame_paths,
-        exercise_name=exercise_name,
-        caption_images=caption_images,
-    )
 
 
 def parse_support_dominance_payload(
@@ -2920,8 +2906,6 @@ def _collect_best_cluster_span(
     return build_cluster_span(detections=detections, cluster=cluster)
 
 
-def _model_execution_candidates_present(detections: list[WindowDetection]) -> bool:
-    return any(any(item.is_model_candidate for item in detection.executions) for detection in detections)
 
 
 def _collect_model_execution_candidates(
@@ -3054,17 +3038,6 @@ def _detected_span_duration(span: DetectedSpan) -> float:
     return max(0.0, span.end_seconds - span.start_seconds)
 
 
-def cluster_has_complete_rep(detections: list[WindowDetection], *, cluster: list[int]) -> bool:
-    cluster_detections = [detections[index] for index in cluster]
-    has_start = any(
-        item.contains_movement_start and item.movement_start_seconds is not None
-        for item in cluster_detections
-    )
-    has_end = any(
-        item.contains_movement_end and item.movement_end_seconds is not None
-        for item in cluster_detections
-    )
-    return has_start and has_end
 
 
 def cluster_positive_detections(

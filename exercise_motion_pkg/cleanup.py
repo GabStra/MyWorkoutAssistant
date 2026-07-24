@@ -468,78 +468,6 @@ def ground_to_floor(
     )
 
 
-def stabilize_floor_contact(
-    clip: MotionClip,
-    *,
-    root_joint: str,
-    contact_states: list[dict[str, object]] | None = None,
-    support_ground_y: float = 0.0,
-) -> MotionClip:
-    if clip.frame_count == 0:
-        return clip
-    support_joint_names = [joint for joint in DEFAULT_SUPPORT_JOINTS if joint in clip.joint_names]
-    if not support_joint_names:
-        return center_root_translation(clip, root_joint=root_joint)
-
-    support_targets: dict[str, Point3] = {}
-    supported_root_target: tuple[float, float] | None = None
-    correction_x = 0.0
-    correction_y = 0.0
-    correction_z = 0.0
-    previous_support_joint: str | None = None
-    stabilized_frames = []
-    for index, frame in enumerate(clip.frames):
-        support_joint = choose_support_joint(
-            clip,
-            frame_index=index,
-            support_joint_names=support_joint_names,
-            contact_state=contact_states[index] if contact_states is not None and index < len(contact_states) else None,
-        )
-        if support_joint is not None:
-            current_anchor = frame.joints[support_joint]
-            current_root = frame.joints[root_joint]
-            target = support_targets.get(support_joint)
-            if target is None or previous_support_joint != support_joint:
-                target = (
-                    current_anchor[0] - correction_x,
-                    support_ground_y,
-                    current_anchor[2] - correction_z,
-                )
-                support_targets[support_joint] = target
-            desired_correction_x = current_anchor[0] - target[0]
-            desired_correction_y = current_anchor[1] - target[1]
-            desired_correction_z = current_anchor[2] - target[2]
-            correction_x = desired_correction_x
-            correction_y = desired_correction_y
-            correction_z = desired_correction_z
-            supported_root_target = (
-                current_root[0] - correction_x,
-                current_root[2] - correction_z,
-            )
-        else:
-            if supported_root_target is not None:
-                current_root = frame.joints[root_joint]
-                correction_x = current_root[0] - supported_root_target[0]
-                correction_z = current_root[2] - supported_root_target[1]
-            support_heights = [frame.joints[joint_name][1] for joint_name in support_joint_names]
-            if support_heights:
-                lowest_support_height = min(support_heights)
-                excess_clearance = lowest_support_height - MAX_UNSUPPORTED_SUPPORT_CLEARANCE
-                if excess_clearance > 0.0:
-                    correction_y = max(correction_y, excess_clearance)
-        stabilized_joints = {
-            name: (coords[0] - correction_x, coords[1] - correction_y, coords[2] - correction_z)
-            for name, coords in frame.joints.items()
-        }
-        stabilized_frames.append(MotionFrame(time_sec=frame.time_sec, joints=stabilized_joints))
-        previous_support_joint = support_joint
-    return MotionClip(
-        fps=clip.fps,
-        joint_names=clip.joint_names,
-        frames=stabilized_frames,
-        source=clip.source,
-        metadata=clip.metadata,
-    )
 
 
 def estimate_support_ground_height(
@@ -764,126 +692,10 @@ def stabilize_multi_contact_support(
     )
 
 
-def stabilize_root_drift_by_support_segments(
-    clip: MotionClip,
-    *,
-    contact_states: list[dict[str, object]],
-    blend: float = SEGMENT_ROOT_STABILIZATION_BLEND,
-    min_segment_frames: int = SEGMENT_ROOT_STABILIZATION_MIN_FRAMES,
-) -> MotionClip:
-    if clip.frame_count == 0 or not contact_states or blend <= 0.0:
-        return clip
-
-    adjusted_frames: list[MotionFrame] = list(clip.frames)
-    frame_index = 0
-    while frame_index < clip.frame_count:
-        state = contact_states[frame_index] if frame_index < len(contact_states) else {}
-        support_joint = state.get("supportJoint")
-        if not isinstance(support_joint, str) or support_joint not in clip.joint_names:
-            frame_index += 1
-            continue
-
-        segment_start = frame_index
-        segment_end = frame_index + 1
-        while segment_end < clip.frame_count:
-            next_state = contact_states[segment_end] if segment_end < len(contact_states) else {}
-            if next_state.get("state") == "airborne":
-                break
-            if next_state.get("supportJoint") != support_joint:
-                break
-            segment_end += 1
-
-        if segment_end - segment_start >= min_segment_frames:
-            anchor = adjusted_frames[segment_start].joints[support_joint]
-            for index in range(segment_start + 1, segment_end):
-                current_support = adjusted_frames[index].joints[support_joint]
-                dx = (current_support[0] - anchor[0]) * blend
-                dz = (current_support[2] - anchor[2]) * blend
-                adjusted_joints = {
-                    name: (coords[0] - dx, coords[1], coords[2] - dz)
-                    for name, coords in adjusted_frames[index].joints.items()
-                }
-                adjusted_frames[index] = MotionFrame(
-                    time_sec=adjusted_frames[index].time_sec,
-                    joints=adjusted_joints,
-                )
-
-        frame_index = segment_end
-
-    return MotionClip(
-        fps=clip.fps,
-        joint_names=clip.joint_names,
-        frames=adjusted_frames,
-        source=clip.source,
-        metadata=clip.metadata,
-    )
 
 
-def center_root_translation(clip: MotionClip, *, root_joint: str) -> MotionClip:
-    first_root = clip.frames[0].joints[root_joint]
-    centered_frames = []
-    for frame in clip.frames:
-        root = frame.joints[root_joint]
-        dx = root[0] - first_root[0]
-        dz = root[2] - first_root[2]
-        centered_joints = {
-            name: (coords[0] - dx, coords[1], coords[2] - dz)
-            for name, coords in frame.joints.items()
-        }
-        centered_frames.append(MotionFrame(time_sec=frame.time_sec, joints=centered_joints))
-    return MotionClip(
-        fps=clip.fps,
-        joint_names=clip.joint_names,
-        frames=centered_frames,
-        source=clip.source,
-        metadata=clip.metadata,
-    )
 
 
-def smooth_clip(
-    clip: MotionClip,
-    *,
-    min_cutoff: float,
-    beta: float,
-    derivative_cutoff: float,
-) -> MotionClip:
-    if clip.frame_count < 3:
-        return clip
-    smoothed_frames: list[MotionFrame] = []
-    filter_state_by_joint: dict[str, tuple[Point3, Point3]] = {}
-    for index, frame in enumerate(clip.frames):
-        smoothed_joints: dict[str, Point3] = {}
-        if index == 0:
-            for joint_name in clip.joint_names:
-                coords = frame.joints[joint_name]
-                filter_state_by_joint[joint_name] = ((0.0, 0.0, 0.0), coords)
-                smoothed_joints[joint_name] = coords
-            smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
-            continue
-
-        previous_time = clip.frames[index - 1].time_sec
-        delta_time = max(frame.time_sec - previous_time, 1e-6)
-        for joint_name in clip.joint_names:
-            previous_derivative, previous_filtered = filter_state_by_joint[joint_name]
-            filtered_point, filtered_derivative = one_euro_filter_point(
-                current_point=frame.joints[joint_name],
-                previous_filtered_point=previous_filtered,
-                previous_filtered_derivative=previous_derivative,
-                delta_time=delta_time,
-                min_cutoff=min_cutoff_for_joint(joint_name, base_cutoff=min_cutoff),
-                beta=one_euro_beta_for_joint(joint_name, base_beta=beta),
-                derivative_cutoff=derivative_cutoff,
-            )
-            filter_state_by_joint[joint_name] = (filtered_derivative, filtered_point)
-            smoothed_joints[joint_name] = filtered_point
-        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
-    return MotionClip(
-        fps=clip.fps,
-        joint_names=clip.joint_names,
-        frames=smoothed_frames,
-        source=clip.source,
-        metadata=clip.metadata,
-    )
 
 
 def one_euro_filter_point(
@@ -921,32 +733,8 @@ def one_euro_filter_point(
         for axis in range(3)
     )
     return filtered_point, filtered_derivative
-def min_cutoff_for_joint(joint_name: str, *, base_cutoff: float) -> float:
-    normalized = joint_name.lower()
-    if normalized in {
-        "pelvis",
-        "spine",
-        "spine1",
-        "spine2",
-        "spine3",
-        "neck",
-        "head",
-    }:
-        return base_cutoff * 0.75
-    if any(token in normalized for token in ("ankle", "foot", "toe", "wrist", "hand")):
-        return base_cutoff * 20.0
-    return max(base_cutoff, 1e-5)
 
 
-def one_euro_beta_for_joint(joint_name: str, *, base_beta: float) -> float:
-    normalized = joint_name.lower()
-    if normalized in {"pelvis", "spine", "spine1", "spine2", "spine3"}:
-        return base_beta * 1.6
-    if any(token in normalized for token in ("ankle", "foot", "toe")):
-        return base_beta * 8.0
-    if any(token in normalized for token in ("wrist", "hand")):
-        return base_beta * 6.0
-    return base_beta
 
 
 def smoothing_alpha(cutoff: float, delta_time: float) -> float:
@@ -1049,38 +837,8 @@ def choose_anchor_foot(clip: MotionClip) -> str | None:
     return min(movement_by_foot, key=movement_by_foot.get)
 
 
-def choose_support_joint(
-    clip: MotionClip,
-    *,
-    frame_index: int,
-    support_joint_names: list[str],
-    contact_state: dict[str, object] | None = None,
-) -> str | None:
-    if contact_state is not None:
-        support_joint = contact_state.get("supportJoint") or contact_state.get("supportFoot")
-        if isinstance(support_joint, str) and support_joint in support_joint_names:
-            return support_joint
-        if contact_state.get("state") == "airborne":
-            return None
-    contacting_joints = [
-        joint_name
-        for joint_name in support_joint_names
-        if is_support_joint_in_contact(clip, frame_index=frame_index, joint_name=joint_name)
-    ]
-    if not contacting_joints:
-        return None
-    return min(
-        contacting_joints,
-        key=lambda joint_name: (
-            horizontal_frame_speed(clip, frame_index=frame_index, joint_name=joint_name),
-            clip.frames[frame_index].joints[joint_name][1],
-        ),
-    )
 
 
-def is_support_joint_in_contact(clip: MotionClip, *, frame_index: int, joint_name: str) -> bool:
-    support = clip.frames[frame_index].joints[joint_name]
-    return support[1] <= contact_height_tolerance_for_joint(joint_name, was_in_contact=False)
 
 
 def horizontal_frame_speed(clip: MotionClip, *, frame_index: int, joint_name: str) -> float:

@@ -3667,9 +3667,11 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert manifest["groundMetadata"]["renderGroundPlane"]["space"] == "motion"
     assert manifest["groundMetadata"]["renderGroundOrigin"]["space"] == "motion"
     assert manifest["postProcessing"]["steps"] == [
+        "camera_to_canonical_world_coordinates",
         "ground_plane_fitting",
         "support_global_translation_stabilization",
         "root_translation_one_euro_xz",
+        "contract_aware_vertical_grounding",
         "structural_ik_refinement",
     ]
     assert manifest["nextStage"]["status"] == "wear_preview_skeleton_ready"
@@ -3682,9 +3684,11 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert cleaned_clip.metadata["ground"]["renderGroundPlane"]["space"] == "motion"
     assert cleaned_clip.metadata["ground"]["renderGroundOrigin"]["space"] == "motion"
     assert cleaned_clip.metadata["cleanup"]["appliedPostProcessingSteps"] == [
+        "isolated_joint_position_outlier_repair",
         "ground_plane_fitting",
         "support_global_translation_stabilization",
         "root_translation_one_euro_xz",
+        "contract_aware_vertical_grounding",
         "support_contact_detection",
     ]
 

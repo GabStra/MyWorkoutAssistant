@@ -9,7 +9,6 @@ from exercise_motion_pkg.legacy_smpl_compat import ensure_legacy_smpl_runtime_co
 from exercise_motion_pkg.models import MotionClip, Point3
 from exercise_motion_pkg.preview import (
     _apply_rotations_to_point,
-    _build_preview_translation_track,
     _center_preview_clip_for_render,
     _clip_requests_raw_motion_render,
     _compute_preview_auto_alignment,

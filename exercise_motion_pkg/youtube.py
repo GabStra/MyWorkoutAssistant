@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import inspect
 import json
@@ -2303,33 +2302,6 @@ def review_windows_substantially_overlap(
     return overlap / shorter >= min_ratio
 
 
-def add_coverage_review_window(
-    windows: list[PreparedReviewWindow],
-    *,
-    duration_seconds: float,
-    window_seconds: float,
-) -> list[PreparedReviewWindow]:
-    if duration_seconds <= 0.0 or window_seconds <= 0.0:
-        return windows
-    midpoint = duration_seconds / 2.0
-    start = max(0.0, min(max(0.0, duration_seconds - window_seconds), midpoint - (window_seconds / 2.0)))
-    end = min(duration_seconds, start + window_seconds)
-    key = (round(start, 3), round(end, 3))
-    existing = {
-        (round(window.start_seconds, 3), round(window.end_seconds, 3))
-        for window in windows
-    }
-    if key in existing or end <= start:
-        return windows
-    return [
-        *windows,
-        PreparedReviewWindow(
-            index=len(windows),
-            start_seconds=start,
-            end_seconds=end,
-            source="coverage_probe",
-        ),
-    ]
 
 
 def reindex_review_windows(windows: list[PreparedReviewWindow]) -> list[PreparedReviewWindow]:
@@ -2543,10 +2515,6 @@ def rank_youtube_review_pool(
     )
 
 
-def keyword_matches_text(keyword: str, text: str) -> bool:
-    if keyword.startswith("#"):
-        return keyword in text
-    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text) is not None
 
 
 def replace_candidate(candidate: YouTubeCandidate, **changes: Any) -> YouTubeCandidate:
@@ -3158,8 +3126,6 @@ def candidate_is_semantic_visual_review_candidate(
     return semantic_gate_payload_is_unresolved(payload)
 
 
-def candidate_is_semantic_pose_candidate(candidate: YouTubeCandidate, *, settings: YouTubeRankingSettings) -> bool:
-    return candidate_is_semantic_visual_review_candidate(candidate, settings=settings)
 
 
 def rank_candidate_with_llama_cpp_semantic_gate(
@@ -4570,8 +4536,6 @@ def vision_backend_name(settings: YouTubeRankingSettings) -> str:
     return "llama-cpp-server"
 
 
-def default_llama_cpp_mmproj_path() -> str:
-    return DEFAULT_LLAMA_CPP_MMPROJ
 
 
 def default_llama_cpp_server_path() -> str:
@@ -6681,51 +6645,8 @@ def prepare_vision_review(
         raise
 
 
-def rank_candidate_with_llama_cpp(
-    exercise: ExerciseEntry,
-    candidate: YouTubeCandidate,
-    settings: YouTubeRankingSettings,
-) -> VisionRankResult:
-    ranker = LlamaCppVisionRanker(settings)
-    try:
-        return rank_candidate_with_vision_client(
-            exercise=exercise,
-            candidate=candidate,
-            settings=settings,
-            caption_images=ranker.client.caption_images,
-        )
-    finally:
-        ranker.close()
 
 
-def rank_candidate_with_vision_client(
-    *,
-    exercise: ExerciseEntry,
-    candidate: YouTubeCandidate,
-    settings: YouTubeRankingSettings,
-    caption_images: Callable[..., str],
-) -> VisionRankResult:
-    try:
-        prepared = prepare_vision_review(exercise, candidate, settings)
-        try:
-            return score_prepared_vision_review(
-                prepared=prepared,
-                settings=settings,
-                caption_images=caption_images,
-            )
-        finally:
-            prepared.close()
-    except Exception as exc:
-        if is_critical_vlm_interaction_error(exc):
-            add_vlm_context(
-                exc,
-                stage="single_candidate_vision_review",
-                exerciseName=exercise.name,
-                videoId=candidate.video_id,
-                title=candidate.title,
-            )
-            raise
-        return 0.0, ["vision_review_failed"]
 
 
 def score_prepared_vision_review(
@@ -7871,11 +7792,6 @@ def parse_payload_bool(payload: dict[str, Any], key: str) -> bool | None:
     return None
 
 
-def parse_bool_value(value: Any, *, default: bool) -> bool:
-    parsed = parse_optional_bool_value(value)
-    if parsed is not None:
-        return parsed
-    return default
 
 
 def parse_optional_bool_value(value: Any) -> bool | None:

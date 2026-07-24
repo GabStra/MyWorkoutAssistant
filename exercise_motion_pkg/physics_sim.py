@@ -318,31 +318,6 @@ def _measure_bone_lengths(
     return lengths
 
 
-def _enforce_bone_lengths(
-    *,
-    joints: dict[str, Point3],
-    target_joints: dict[str, Point3],
-    root_joint: str,
-    edges: list[tuple[str, str]],
-    bone_lengths: dict[tuple[str, str], float],
-    iterations: int,
-) -> dict[str, Point3]:
-    adjusted = dict(joints)
-    if root_joint in target_joints:
-        adjusted[root_joint] = target_joints[root_joint]
-    children_by_parent: dict[str, list[str]] = {}
-    for parent, child in edges:
-        children_by_parent.setdefault(parent, []).append(child)
-
-    for _ in range(iterations):
-        adjusted = _forward_length_pass(
-            joints=adjusted,
-            target_joints=target_joints,
-            parent=root_joint,
-            children_by_parent=children_by_parent,
-            bone_lengths=bone_lengths,
-        )
-    return adjusted
 
 
 def _reference_frame_to_joints(
@@ -899,61 +874,6 @@ def _support_state_family(support_state: object) -> str:
     return "unknown"
 
 
-def _apply_support_anchor_pass(
-    frames: list[MotionFrame],
-    *,
-    support_states: list[object],
-    support_ground_y: float,
-    blend_frames: int,
-) -> list[MotionFrame]:
-    anchored_frames: list[MotionFrame] = []
-    persistent_support_anchor: Point3 | None = None
-    persistent_support_joint: str | None = None
-    support_blend_remaining = 0
-
-    for frame_index, frame in enumerate(frames):
-        next_joints = dict(frame.joints)
-        support_joint = _support_joint_name(support_states[frame_index] if frame_index < len(support_states) else None)
-        if support_joint and support_joint in next_joints:
-            support_target = next_joints[support_joint]
-            if persistent_support_anchor is None or persistent_support_joint != support_joint:
-                if persistent_support_anchor is None:
-                    if frame_index == 0:
-                        persistent_support_anchor = support_target
-                    else:
-                        persistent_support_anchor = (support_target[0], support_ground_y, support_target[2])
-                else:
-                    support_blend_remaining = max(1, blend_frames)
-                persistent_support_joint = support_joint
-            if support_blend_remaining > 0 and persistent_support_anchor is not None:
-                desired_anchor = (support_target[0], support_ground_y, support_target[2])
-                persistent_support_anchor = _lerp_point(
-                    persistent_support_anchor,
-                    desired_anchor,
-                    1.0 / support_blend_remaining,
-                )
-                support_blend_remaining -= 1
-            elif persistent_support_anchor is not None:
-                persistent_support_anchor = (
-                    persistent_support_anchor[0],
-                    support_ground_y,
-                    persistent_support_anchor[2],
-                )
-
-            if persistent_support_anchor is not None:
-                correction = (
-                    support_target[0] - persistent_support_anchor[0],
-                    support_target[1] - persistent_support_anchor[1],
-                    support_target[2] - persistent_support_anchor[2],
-                )
-                for joint_name, point in list(next_joints.items()):
-                    next_joints[joint_name] = (
-                        point[0] - correction[0],
-                        point[1] - correction[1],
-                        point[2] - correction[2],
-                    )
-        anchored_frames.append(MotionFrame(time_sec=frame.time_sec, joints=next_joints))
-    return anchored_frames
 
 
 def _lerp_point(start: Point3, end: Point3, alpha: float) -> Point3:

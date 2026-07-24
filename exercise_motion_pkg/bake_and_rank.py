@@ -113,7 +113,6 @@ from exercise_motion_pkg.vlm_errors import (
 )
 from exercise_motion_pkg.youtube import (
     ExerciseEntry,
-    MIN_MOVING_SUBJECT_REALISM_SCORE,
     POSE_PREFILTER_HARD_REJECT_ISSUES,
     LlamaCppVisionRanker,
     YouTubeRankingSettings,
@@ -2966,60 +2965,6 @@ def blocked_parent_section_fallback_reason(
     return None
 
 
-def materialize_parent_review_item_fallback(
-    *,
-    original: SelectedArtifact,
-    rejected: SelectedArtifact,
-) -> SelectedArtifact | None:
-    original_item, original_ranking = original
-    rejected_item, rejected_ranking = rejected
-    if original_ranking is None or rejected_ranking is None:
-        return None
-    if not rejected_item.llm_time_range_cut_applied:
-        return None
-    if original_item == rejected_item:
-        return None
-    fallback_reason = materialized_parent_section_fallback_reason(rejected)
-    if fallback_reason is None:
-        return None
-    if not original_item.skeleton_path.exists() or not original_item.review_video_path.exists():
-        return None
-
-    original_score = clamp_unit(selected_artifact_score(original))
-    rejected_payload = rejected_ranking.payload if isinstance(rejected_ranking.payload, dict) else {}
-    payload = dict(original_ranking.payload or {})
-    payload.update(
-        {
-            "llmSelectedSectionParentFallback": True,
-            "llmSelectedSectionParentFallbackReason": fallback_reason,
-            "llmSelectedSectionParentFallbackRejectedChild": {
-                "score": selected_artifact_score(rejected),
-                "sectionStartSeconds": rejected_item.loop_start_seconds,
-                "sectionEndSeconds": rejected_item.loop_end_seconds,
-                "durationSeconds": rejected_item.duration_sec,
-                "reasons": rejected_ranking.reasons,
-                "materializedOutputRejectionReasons": rejected_payload.get("materializedOutputRejectionReasons"),
-            },
-        }
-    )
-    fallback_ranking = LoopRanking(
-        score=original_score,
-        reasons=dedupe_text(
-            [
-                *recomputed_materialized_reasons(original_ranking.reasons),
-                "llm_selected_section_parent_fallback",
-            ]
-        ),
-        raw_response=original_ranking.raw_response,
-        payload=payload,
-        model_score=original_score,
-        continuity_score=original_ranking.continuity_score,
-        continuity_metrics=original_ranking.continuity_metrics,
-    )
-    return (
-        original_item,
-        apply_loop_continuity_adjustment(original_item, fallback_ranking),
-    )
 
 
 def final_output_validation_approved(ranking: LoopRanking | None) -> bool:
@@ -3036,18 +2981,6 @@ def final_output_validation_approved(ranking: LoopRanking | None) -> bool:
     return parse_optional_bool(final_validation.get("approved")) is True
 
 
-def final_output_validation_selection_score(ranking: LoopRanking | None) -> float | None:
-    if not final_output_validation_approved(ranking):
-        return None
-    payload = ranking.payload if ranking is not None and isinstance(ranking.payload, dict) else {}
-    final_validation = payload.get("finalOutputValidation")
-    if not isinstance(final_validation, dict):
-        return None
-    for key in ("score", "confidence"):
-        score = parse_optional_float(final_validation.get(key))
-        if score is not None:
-            return clamp_unit(score)
-    return None
 
 
 def materialized_parent_section_fallback_reason(selected: SelectedArtifact) -> str | None:
@@ -3213,195 +3146,22 @@ def choose_top_materialized_review_items(
     return [], rejected_best
 
 
-def materialize_clean_subinterval_fallback(
-    *,
-    original: SelectedArtifact,
-    rejected: SelectedArtifact,
-    request: BakeAndRankRequest,
-) -> SelectedArtifact | None:
-    if not selected_artifact_has_kinematic_rejection(rejected):
-        return None
-    original_item, original_ranking = original
-    if original_ranking is None:
-        return None
-    windows = build_kinematic_clean_subinterval_windows(original_item, request=request)
-    if not windows:
-        return None
-    window_candidates = [
-        candidate
-        for candidate in score_review_windows_by_skeleton_motion(original_item, windows)
-        if not bool(candidate.kinematic_metrics.get("severeArtifact"))
-    ][:KINEMATIC_CLEAN_SUBINTERVAL_FALLBACK_MAX_WINDOWS]
-    best: SelectedArtifact | None = None
-    for window_candidate in window_candidates:
-        fallback_ranking = build_kinematic_clean_subinterval_ranking(
-            original_ranking,
-            window_candidate=window_candidate,
-        )
-        materialized_item, materialized_ranking = materialize_review_item_time_range(
-            original_item,
-            fallback_ranking,
-            request=request,
-            start_seconds=window_candidate.timeline_window.start_seconds,
-            end_seconds=window_candidate.timeline_window.end_seconds,
-            artifact_id="kinematic-clean-subinterval",
-            artifact_label="Kinematic clean sub-interval",
-            cut_applied=True,
-        )
-        adjusted = (
-            materialized_item,
-            apply_loop_continuity_adjustment(materialized_item, materialized_ranking or fallback_ranking),
-        )
-        if best is None or selected_artifact_score(adjusted) > selected_artifact_score(best):
-            best = adjusted
-    return best
 
 
-def recovered_artifact_is_better(current: SelectedArtifact, recovered: SelectedArtifact) -> bool:
-    if selected_artifact_has_kinematic_rejection(current) and not selected_artifact_has_kinematic_rejection(recovered):
-        return True
-    if selected_artifact_has_kinematic_rejection(recovered) and not selected_artifact_has_kinematic_rejection(current):
-        return False
-    return deterministic_artifact_score(recovered) > deterministic_artifact_score(current)
 
 
-def deterministic_artifact_score(selected: SelectedArtifact) -> float:
-    _item, ranking = selected
-    if ranking is None:
-        return 1.0
-    return ranking.score
 
 
-def selected_artifact_has_kinematic_rejection(selected: SelectedArtifact) -> bool:
-    _item, ranking = selected
-    if ranking is None:
-        return False
-    return bool(kinematic_artifact_reasons_from_ranking(ranking))
 
 
-def kinematic_artifact_reasons_from_ranking(ranking: LoopRanking) -> list[str]:
-    reasons = [
-        reason
-        for reason in ranking.reasons
-        if reason in KINEMATIC_ARTIFACT_REASON_CODES
-    ]
-    payload = ranking.payload if isinstance(ranking.payload, dict) else {}
-    metrics = payload.get("kinematicPlausibilityMetrics")
-    if isinstance(metrics, dict) and bool(metrics.get("severeArtifact")):
-        metric_reasons = metrics.get("artifactReasons")
-        if isinstance(metric_reasons, list):
-            reasons.extend(
-                str(reason)
-                for reason in metric_reasons
-                if str(reason) in KINEMATIC_ARTIFACT_REASON_CODES
-            )
-    return dedupe_text(reasons)
 
 
-def build_kinematic_clean_subinterval_windows(
-    item: ReviewItem,
-    *,
-    request: BakeAndRankRequest,
-) -> list[DetectionWindow]:
-    source_start = max(0.0, item.loop_start_seconds)
-    source_end = item.loop_end_seconds if item.loop_end_seconds > source_start else source_start + item.duration_sec
-    if source_end <= source_start:
-        return []
-    source_duration = source_end - source_start
-    max_duration = min(
-        source_duration,
-        request.max_loop_seconds if request.max_loop_seconds > 0 else source_duration,
-    )
-    durations = build_kinematic_clean_subinterval_durations(source_duration, max_duration=max_duration)
-    windows: list[DetectionWindow] = []
-    seen: set[tuple[int, int]] = set()
-    for duration in durations:
-        max_start = source_end - duration
-        starts = float_range(source_start, max_start, KINEMATIC_CLEAN_SUBINTERVAL_STEP_SECONDS)
-        if not starts or abs(starts[-1] - max_start) > 1e-6:
-            starts.append(max_start)
-        for start_seconds in starts:
-            end_seconds = min(source_end, start_seconds + duration)
-            key = (int(round(start_seconds * 1000)), int(round(end_seconds * 1000)))
-            if key in seen or end_seconds - start_seconds < KINEMATIC_CLEAN_SUBINTERVAL_MIN_SECONDS:
-                continue
-            seen.add(key)
-            windows.append(
-                DetectionWindow(
-                    index=len(windows),
-                    start_seconds=max(0.0, start_seconds - source_start),
-                    end_seconds=max(0.0, end_seconds - source_start),
-                )
-            )
-    return windows
 
 
-def build_kinematic_clean_subinterval_durations(
-    source_duration: float,
-    *,
-    max_duration: float,
-) -> list[float]:
-    min_duration = min(max_duration, KINEMATIC_CLEAN_SUBINTERVAL_MIN_SECONDS)
-    raw_durations = [
-        max_duration * ratio
-        for ratio in (0.85, 0.75, 0.66, 0.5)
-    ]
-    raw_durations.extend(min(value, max_duration) for value in (5.0, 4.0, 3.0, 2.0))
-    durations = sorted(
-        {
-            round(duration, 3)
-            for duration in raw_durations
-            if min_duration <= duration < source_duration - 0.05
-        },
-        reverse=True,
-    )
-    return durations
 
 
-def float_range(start: float, end: float, step: float) -> list[float]:
-    if end < start:
-        return []
-    values: list[float] = []
-    current = start
-    effective_step = max(step, 1e-3)
-    while current <= end + 1e-6:
-        values.append(current)
-        current += effective_step
-    return values
 
 
-def build_kinematic_clean_subinterval_ranking(
-    ranking: LoopRanking,
-    *,
-    window_candidate: ReviewWindowCandidate,
-) -> LoopRanking:
-    base_score = ranking.model_score
-    if base_score is None and isinstance(ranking.payload, dict):
-        base_score = parse_optional_float(ranking.payload.get("modelScore"))
-    if base_score is None:
-        base_score = ranking.score
-    score = min(clamp_unit(base_score), clamp_unit(window_candidate.score))
-    payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
-    payload.update(
-        {
-            "selected_section_start_seconds": window_candidate.timeline_window.start_seconds,
-            "selected_section_end_seconds": window_candidate.timeline_window.end_seconds,
-            "kinematicCleanSubintervalFallback": True,
-            "kinematicCleanSubintervalWindowScore": window_candidate.score,
-            "kinematicCleanSubintervalMotionMetrics": window_candidate.motion_metrics,
-            "kinematicCleanSubintervalContinuityMetrics": window_candidate.continuity_metrics,
-            "kinematicCleanSubintervalKinematicMetrics": window_candidate.kinematic_metrics,
-            "kinematicCleanSubintervalLoopBridgeQualityMetrics": window_candidate.loop_bridge_quality_metrics,
-            "kinematicCleanSubintervalPreviewReadabilityMetrics": window_candidate.preview_readability_metrics,
-        }
-    )
-    return LoopRanking(
-        score=score,
-        reasons=dedupe_text([*recomputed_materialized_reasons(ranking.reasons), "kinematic_clean_subinterval_fallback"]),
-        raw_response=ranking.raw_response,
-        payload=payload,
-        model_score=score,
-    )
 
 
 def selected_artifact_score(selected: SelectedArtifact) -> float:
@@ -5674,27 +5434,6 @@ def knee_line_lateral_deviations(
     return deviations
 
 
-def paired_joint_position_deviations(
-    baseline_frames: list[dict[str, Any]],
-    corrected_frames: list[dict[str, Any]],
-    *,
-    joint_name: str,
-) -> list[float]:
-    deviations: list[float] = []
-    for baseline_frame, corrected_frame in zip(baseline_frames, corrected_frames):
-        baseline_joints = baseline_frame.get("joints") if isinstance(baseline_frame, dict) else None
-        corrected_joints = corrected_frame.get("joints") if isinstance(corrected_frame, dict) else None
-        baseline_point = baseline_joints.get(joint_name) if isinstance(baseline_joints, dict) else None
-        corrected_point = corrected_joints.get(joint_name) if isinstance(corrected_joints, dict) else None
-        if not is_point3(baseline_point) or not is_point3(corrected_point):
-            continue
-        deviations.append(
-            math.dist(
-                [float(value) for value in baseline_point],
-                [float(value) for value in corrected_point],
-            )
-        )
-    return deviations
 
 
 def paired_joint_radial_trajectory_deviations(
@@ -7507,90 +7246,10 @@ def source_capture_time_range_for_item(item: ReviewItem) -> tuple[float, float] 
     return item.loop_start_seconds, item.loop_end_seconds
 
 
-def should_apply_source_capture_penalty(
-    item: ReviewItem,
-    *,
-    source_range: tuple[float, float] | None,
-    model_full_rep_motion: float | None,
-) -> bool:
-    if source_range is None:
-        return True
-    if model_full_rep_motion is None or model_full_rep_motion < LOOP_MIN_STRONG_MODEL_FULL_REP_MOTION:
-        return True
-    if item.source_skeleton_path is None or not item.source_skeleton_path.exists():
-        return True
-    return not source_range_covers_skeleton_timeline(
-        item.source_skeleton_path,
-        source_range,
-        minimum_coverage=LOOP_SOURCE_FULL_SPAN_COVERAGE_MIN,
-    )
 
 
-def source_range_covers_skeleton_timeline(
-    skeleton_path: Path,
-    source_range: tuple[float, float],
-    *,
-    minimum_coverage: float,
-) -> bool:
-    try:
-        payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    timeline = skeleton_source_timeline_bounds(payload)
-    if timeline is None:
-        return False
-    source_start, source_end = source_range
-    timeline_start, timeline_end = timeline
-    if source_end <= source_start or timeline_end <= timeline_start:
-        return False
-    overlap_start = max(source_start, timeline_start)
-    overlap_end = min(source_end, timeline_end)
-    coverage = max(0.0, overlap_end - overlap_start) / max(1e-6, timeline_end - timeline_start)
-    tolerance = max(0.05, 1.0 / max(1.0, parse_export_fps(payload)))
-    boundary_match = (
-        source_start <= timeline_start + tolerance
-        and source_end >= timeline_end - tolerance
-    )
-    return coverage >= minimum_coverage and boundary_match
 
 
-def skeleton_source_timeline_bounds(payload: dict[str, Any]) -> tuple[float, float] | None:
-    frames_value = payload.get("frames")
-    if not isinstance(frames_value, list):
-        return None
-    frames = [
-        frame
-        for frame in frames_value
-        if isinstance(frame, dict) and not bool(frame.get("syntheticLoopBridge"))
-    ]
-    if len(frames) < 2:
-        return None
-    source_times = [
-        parsed
-        for frame in frames
-        if (parsed := parse_optional_float(frame.get("sourceTimeSec"))) is not None
-    ]
-    if len(source_times) >= 2:
-        return min(source_times), max(source_times)
-    time_values = [
-        parsed
-        for frame in frames
-        if (parsed := parse_optional_float(frame.get("timeSec"))) is not None
-    ]
-    if len(time_values) >= 2:
-        return min(time_values), max(time_values)
-    duration = parse_optional_float(payload.get("durationSec"))
-    if duration is not None and duration > 0.0:
-        return 0.0, duration
-    fps = parse_export_fps(payload)
-    frame_indices = [
-        parsed
-        for frame in frames
-        if (parsed := parse_optional_float(frame.get("frameIndex"))) is not None
-    ]
-    if len(frame_indices) >= 2 and fps > 0.0:
-        return min(frame_indices) / fps, max(frame_indices) / fps
-    return 0.0, (len(frames) - 1) / max(1.0, fps)
 
 
 def compute_motion_strength_metrics(skeleton_path: Path) -> dict[str, Any]:
@@ -9579,9 +9238,6 @@ def record_timing_seconds(payload: dict[str, Any], name: str, start_time: float)
         timings[name] = elapsed_seconds(start_time)
 
 
-def build_vision_client_settings(request: BakeAndRankRequest) -> YouTubeRankingSettings:
-    return YouTubeRankingSettings(
-    )
 
 
 def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool:
@@ -11229,39 +10885,6 @@ def relative_path_for_manifest(path: Path, workspace: Path) -> str:
         return str(path)
 
 
-def build_skeleton_selection_manifest(
-    *,
-    request: BakeAndRankRequest,
-    candidate_results: list[dict[str, Any]],
-    selected_result: GenerateResult | None,
-    selected_candidate: RankedCandidate | None,
-) -> dict[str, Any]:
-    selected = None
-    if selected_result is not None and selected_candidate is not None:
-        selected = {
-            "exerciseName": selected_candidate.exercise_name,
-            "candidateRank": selected_candidate.candidate_rank,
-            "candidate": selected_candidate.candidate,
-            "manifestPath": str(selected_result.manifest_path),
-            "previewHtmlPath": str(selected_result.preview_html_path),
-            "rawPreviewHtmlPath": str(selected_result.raw_preview_html_path),
-            "wearSkeletonJsonPath": str(selected_result.wear_skeleton_json_path),
-            "cleanedMotionJsonPath": str(selected_result.cleaned_motion_json_path),
-            "rawMotionJsonPath": str(selected_result.raw_motion_json_path),
-            "copiedInputVideoPath": str(selected_result.copied_input_video_path),
-            "motionTuningEnabled": selected_result.motion_tuning_enabled,
-        }
-    return {
-        "schemaVersion": 2,
-        "pipeline": "source_video_to_single_rep_skeleton",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "candidatesJson": str(request.candidates_json),
-        "workspace": str(request.workspace),
-        "fallbackCandidates": max(1, request.fallback_candidates),
-        "motionTuningEnabled": request.motion_tuning_enabled,
-        "candidateResults": candidate_results,
-        "selected": selected,
-    }
 
 
 def relative_html_path(path: Path, root: Path) -> str:
@@ -14699,53 +14322,6 @@ def build_adaptive_preview_settings_prompt(
     )
 
 
-def parse_adaptive_preview_settings_response(
-    raw: str,
-    *,
-    base_options: dict[str, Any],
-    motion_tuning_enabled: bool,
-    max_variants: int,
-) -> list[dict[str, Any]]:
-    try:
-        payload = extract_json_object(raw)
-    except Exception:
-        return []
-    variants_payload = payload.get("variants")
-    if not isinstance(variants_payload, list):
-        return []
-    variants: list[dict[str, Any]] = []
-    seen_signatures = {preview_options_signature(base_options, motion_tuning_enabled=motion_tuning_enabled)}
-    for index, entry in enumerate(variants_payload):
-        if not isinstance(entry, dict):
-            continue
-        settings = entry.get("settings")
-        if not isinstance(settings, dict):
-            continue
-        options = sanitize_preview_settings_options(
-            settings,
-            base_options=base_options,
-            motion_tuning_enabled=motion_tuning_enabled,
-        )
-        signature = preview_options_signature(options, motion_tuning_enabled=motion_tuning_enabled)
-        if signature in seen_signatures:
-            continue
-        seen_signatures.add(signature)
-        variant_id = slugify(str(entry.get("id") or entry.get("label") or f"adaptive-{index + 1}")) or f"adaptive-{index + 1}"
-        variants.append(
-            {
-                "id": f"adaptive-{variant_id}",
-                "label": str(entry.get("label") or f"Adaptive {index + 1}"),
-                "options": options,
-                "cleanupInterpretation": str(options.get("cleanupInterpretation") or "support_lock"),
-                "adaptivePreviewSettings": {
-                    "source": "vlm_baseline_planner",
-                    "reason": str(entry.get("reason") or ""),
-                },
-            }
-        )
-        if len(variants) >= max_variants:
-            break
-    return variants
 
 
 def parse_adaptive_preview_baseline_is_sufficient(raw: str) -> bool | None:
@@ -16961,16 +16537,6 @@ def preview_tuning_option_catalog(*, motion_tuning_enabled: bool) -> list[dict[s
     ]
 
 
-def format_preview_tuning_options_for_prompt(*, motion_tuning_enabled: bool) -> str:
-    lines: list[str] = []
-    for option in preview_tuning_option_catalog(motion_tuning_enabled=motion_tuning_enabled):
-        range_text = f", range={option['range']}" if "range" in option else ""
-        lines.append(
-            "- "
-            f"{option['id']} ({option['type']}, default={option['default']}{range_text}): "
-            f"{option['description']} Use when: {option['useWhen']} Risk: {option['risk']}"
-        )
-    return "\n".join(lines)
 
 
 def preview_settings_variants(*, motion_tuning_enabled: bool = True) -> list[dict[str, Any]]:
@@ -20354,127 +19920,8 @@ def topology_evidence_rejection_reasons(
     )
 
 
-def source_cut_boundary_state_validation_prompt(movement_topology: dict[str, Any]) -> str:
-    start_state = movement_topology["startState"]
-    end_state = movement_topology["endState"]
-    return (
-        "Boundary-state verification only. The first four attached images are the START boundary in chronological order. "
-        "The last four attached images are the END boundary in chronological order. "
-        f"Target start state: {start_state['label']}. "
-        f"Target end state: {end_state['label']}. "
-        "Judge only the visible body/equipment state at each boundary. Do not infer a boundary from the middle movement and do not decide whether a complete repetition exists. "
-        "A visually different posture is mismatch even when the overall clip contains the target exercise. If the boundary is not readable, use uncertain. "
-        "Return JSON only: {\"startStateMatch\":\"match|mismatch|uncertain\",\"startObservedState\":\"max 8 words\","
-        "\"endStateMatch\":\"match|mismatch|uncertain\",\"endObservedState\":\"max 8 words\",\"confidence\":number_0_to_1}."
-    )
 
 
-def apply_source_cut_boundary_state_validation(
-    ranking: LoopRanking | None,
-    *,
-    candidate: SourceCutCandidate,
-    exercise_motion_contract: dict[str, Any] | None,
-    caption_images: Callable[..., str],
-    request_kwargs: dict[str, Any],
-) -> LoopRanking | None:
-    movement_topology = movement_topology_from_contract(exercise_motion_contract)
-    if ranking is None or ranking.score <= 0.0 or movement_topology is None:
-        return ranking
-    ongoing_action_interval = movement_topology_accepts_ongoing_action_interval(movement_topology)
-    sample_paths = [Path(path) for path in candidate.sample_frame_paths]
-    if len(sample_paths) < 8:
-        payload = dict(ranking.payload or {})
-        payload["sourceCutBoundaryStateValidation"] = {
-            "required": True,
-            "passed": False,
-            "reason": "insufficient_boundary_frames",
-            "sampleFrameCount": len(sample_paths),
-        }
-        return replace(
-            ranking,
-            score=0.0,
-            model_score=0.0,
-            reasons=dedupe_text([*ranking.reasons, "source_candidate_boundary_state_evidence_unavailable"]),
-            payload=payload,
-        )
-    boundary_paths = [*sample_paths[:4], *sample_paths[-4:]]
-    prompt = source_cut_boundary_state_validation_prompt(movement_topology)
-    try:
-        raw = call_caption_images_json(
-            caption_images,
-            frame_paths=boundary_paths,
-            prompt=prompt,
-            max_tokens=min(256, int(request_kwargs.get("max_tokens") or 256)),
-            request_timeout_seconds=request_kwargs.get("request_timeout_seconds")
-            if isinstance(request_kwargs.get("request_timeout_seconds"), (int, float))
-            else None,
-            disable_reasoning=True,
-            json_response=True,
-            temperature=0.0,
-            top_p=1.0,
-            top_k=0,
-        )
-    except Exception as exc:
-        if not isinstance(exc, CandidateWallTimeBudgetExpired) and is_critical_vlm_interaction_error(exc):
-            raise
-        payload = dict(ranking.payload or {})
-        payload["sourceCutBoundaryStateValidation"] = {
-            "required": True,
-            "passed": False,
-            "reason": (
-                "candidate_wall_time_budget_expired"
-                if isinstance(exc, CandidateWallTimeBudgetExpired)
-                else "boundary_state_validation_failed"
-            ),
-            "error": f"{type(exc).__name__}: {exc}",
-            "framePaths": [str(path) for path in boundary_paths],
-        }
-        return replace(
-            ranking,
-            score=0.0,
-            model_score=0.0,
-            payload={**payload, "score": 0.0, "modelScore": 0.0},
-            reasons=dedupe_text([*ranking.reasons, "source_candidate_boundary_state_validation_failed"]),
-        )
-    response = extract_json_object_with_trailing_repair(raw)
-    start_match = normalize_boundary_state_match(response.get("startStateMatch")) if isinstance(response, dict) else None
-    end_match = normalize_boundary_state_match(response.get("endStateMatch")) if isinstance(response, dict) else None
-    confidence = parse_source_cut_scorecard_score(response.get("confidence")) if isinstance(response, dict) else None
-    passed = bool(
-        start_match == "match"
-        and (ongoing_action_interval or end_match == "match")
-        and confidence is not None
-        and confidence >= 0.90
-    )
-    validation = {
-        "required": True,
-        "passed": passed,
-        "startStateMatch": start_match,
-        "startObservedState": str(response.get("startObservedState") or "") if isinstance(response, dict) else "",
-        "endStateMatch": end_match,
-        "endObservedState": str(response.get("endObservedState") or "") if isinstance(response, dict) else "",
-        "confidence": confidence,
-        "expectedStartState": movement_topology["startState"],
-        "expectedEndState": movement_topology["endState"],
-        "endStateRequired": not ongoing_action_interval,
-        "framePaths": [str(path) for path in boundary_paths],
-        "rawResponse": raw,
-    }
-    payload = dict(ranking.payload or {})
-    payload["sourceCutBoundaryStateValidation"] = validation
-    if passed:
-        return replace(
-            ranking,
-            payload=payload,
-            reasons=dedupe_text([*ranking.reasons, "source_candidate_boundary_states_verified"]),
-        )
-    return replace(
-        ranking,
-        score=0.0,
-        model_score=0.0,
-        payload={**payload, "score": 0.0, "modelScore": 0.0},
-        reasons=dedupe_text([*ranking.reasons, "source_candidate_boundary_state_rejected"]),
-    )
 
 
 def source_cut_scorecard_row(
@@ -21122,13 +20569,6 @@ def collect_ranking_payload_rows(rankings: Iterable[LoopRanking], key: str) -> l
     return rows
 
 
-def empty_cut_candidate_review_result() -> CutCandidateReviewResult:
-    return CutCandidateReviewResult(
-        rankings=[],
-        raw_responses=[],
-        errors=[],
-        reviewed_candidate_ids=[],
-    )
 
 
 def combine_cut_candidate_review_results(results: Iterable[CutCandidateReviewResult]) -> CutCandidateReviewResult:
@@ -22214,170 +21654,8 @@ def shortlist_source_window_specs_by_pose(
     return [spec for spec in specs if id(spec) in selected_specs]
 
 
-def deterministic_movement_cut_ranking_if_confident(
-    *,
-    candidates: list[SourceCutCandidate],
-    all_candidates: list[SourceCutCandidate],
-    visual_candidate_count: int,
-    motion_coverage_fallback: bool,
-    hard_motion_rejected_count: int,
-    use_exercise_motion_contract: bool,
-    exercise_motion_contract: dict[str, Any] | None,
-) -> LoopRanking | None:
-    if motion_coverage_fallback or not candidates:
-        return None
-    ranked = sorted(candidates, key=movement_cut_candidate_confidence_key, reverse=True)
-    selected = ranked[0]
-    selected_coverage = movement_cut_candidate_source_motion_coverage_ratio(selected)
-    selected_complete_phase = movement_cut_candidate_has_complete_phase(selected)
-    if len(ranked) > 1 and not (
-        selected_complete_phase
-        and selected_coverage >= MOVEMENT_CUT_DETERMINISTIC_DIRECT_MIN_COVERAGE_RATIO
-    ):
-        return None
-
-    score = MOVEMENT_CUT_DETERMINISTIC_DIRECT_SCORE
-    payload = {
-        "score": score,
-        "modelScore": score,
-        "selectedCandidateId": selected.candidate_id,
-        "selected_section_start_seconds": selected.window.start_seconds,
-        "selected_section_end_seconds": selected.window.end_seconds,
-        "movementCutCandidates": source_cut_candidates_payload(all_candidates),
-        "movementCutVlmInputCandidates": [],
-        "movementCutVisualIntegrityFilteredCount": len(all_candidates) - visual_candidate_count,
-        "movementCutMotionCoverageFilteredCount": visual_candidate_count - len(candidates),
-        "movementCutMotionCoverageFallback": False,
-        "movementCutHardMotionRejectedCount": hard_motion_rejected_count,
-        "exerciseMotionContractEnabled": use_exercise_motion_contract,
-        "movementCutDeterministicDirectSelection": True,
-        "movementCutSelectedCoverageRatio": selected_coverage,
-        "movementCutSelectedCompletePhase": selected_complete_phase,
-        "finalCutResponsibility": "deterministic_movement_window_selection",
-    }
-    if exercise_motion_contract is not None:
-        payload["exerciseMotionContract"] = exercise_motion_contract
-    return LoopRanking(
-        score=score,
-        reasons=[
-            "movement_cut_deterministic_direct_selection",
-            "movement_cut_candidate_window_choice",
-        ],
-        payload=payload,
-        model_score=score,
-    )
 
 
-def deterministic_source_cut_ranking_from_pose(
-    *,
-    candidate_window_specs: list[SourceWindowCandidateSpec | DetectionWindow],
-    pose_payload: dict[str, Any],
-    exercise_name: str,
-    chunk_estimate: Any,
-    exercise_motion_contract: dict[str, Any] | None,
-    source_offset_seconds: float,
-) -> LoopRanking:
-    """Select a complete source cut from pose evidence already computed during discovery."""
-    all_candidates: list[SourceCutCandidate] = []
-    for index, candidate_spec in enumerate(candidate_window_specs):
-        candidate_window = (
-            candidate_spec
-            if isinstance(candidate_spec, DetectionWindow)
-            else candidate_spec.window
-        )
-        candidate_chunking = (
-            {}
-            if isinstance(candidate_spec, DetectionWindow)
-            else candidate_spec.chunking
-        )
-        candidate = SourceCutCandidate(
-            candidate_id=source_cut_candidate_id_for_index(index),
-            window=candidate_window,
-            frame_paths=[],
-            pose_prefilter=source_cut_candidate_pose_prefilter_metrics(
-                candidate_window=candidate_window,
-                pose_payload=pose_payload,
-                source_offset_seconds=source_offset_seconds,
-            ),
-            motion_coverage=source_cut_candidate_motion_coverage_metrics(
-                candidate_window=candidate_window,
-                pose_payload=pose_payload,
-                exercise_name=exercise_name,
-                chunk_estimate=chunk_estimate,
-                exercise_motion_contract=exercise_motion_contract,
-                source_offset_seconds=source_offset_seconds,
-            ),
-            chunking=candidate_chunking,
-        )
-        all_candidates.append(candidate)
-
-    passing_candidates = [
-        candidate
-        for candidate in all_candidates
-        if source_cut_candidate_passes_motion_coverage(candidate)
-    ]
-    base_payload: dict[str, Any] = {
-        "sourceCutCandidates": source_cut_candidates_payload(all_candidates),
-        "sourceCutVlmInputCandidates": [],
-        "sourceCutVlmReviewedCandidateCount": 0,
-        "sourceCutVlmReviewedRequestCount": 0,
-        "sourceCutDeterministicDirectSelection": True,
-        "sourceCutSourcePoseSampleCount": source_pose_prefilter_sample_count(pose_payload),
-        "sourceCutMotionCoverageFilteredCount": len(all_candidates) - len(passing_candidates),
-        "sourceCutMotionCoverageDiagnosticFailedCount": len(all_candidates) - len(passing_candidates),
-        "exerciseMotionContract": exercise_motion_contract,
-    }
-    if not passing_candidates:
-        return LoopRanking(
-            score=0.0,
-            reasons=[
-                "source_candidate_window_choice_failed",
-                "source_cut_deterministic_pose_found_no_complete_cycle",
-            ],
-            payload={**base_payload, "score": 0.0, "modelScore": 0.0},
-            model_score=0.0,
-        )
-
-    estimated_min_duration = parse_optional_float(getattr(chunk_estimate, "rep_duration_min_sec", None))
-    estimated_max_duration = parse_optional_float(getattr(chunk_estimate, "rep_duration_max_sec", None))
-    if estimated_min_duration is not None and estimated_max_duration is not None:
-        target_duration = (estimated_min_duration + estimated_max_duration) * 0.5
-    else:
-        target_duration = max(
-            window_duration_seconds(candidate.window)
-            for candidate in passing_candidates
-        )
-
-    def deterministic_selection_key(candidate: SourceCutCandidate) -> tuple[int, float, float, float, float]:
-        duration = window_duration_seconds(candidate.window)
-        return (
-            1 if movement_cut_candidate_has_complete_phase(candidate) else 0,
-            movement_cut_candidate_source_motion_coverage_ratio(candidate),
-            movement_cut_candidate_target_motion_score(candidate),
-            -abs(duration - target_duration),
-            duration,
-        )
-
-    selected = max(passing_candidates, key=deterministic_selection_key)
-    score = SOURCE_CUT_DETERMINISTIC_DIRECT_SCORE
-    return LoopRanking(
-        score=score,
-        reasons=[
-            "source_cut_deterministic_pose_selection",
-            "source_candidate_window_choice",
-        ],
-        payload={
-            **base_payload,
-            "score": score,
-            "modelScore": score,
-            "selectedCandidateId": selected.candidate_id,
-            "selected_section_start_seconds": selected.window.start_seconds,
-            "selected_section_end_seconds": selected.window.end_seconds,
-            "sourceCutSelectedMotionCoverage": selected.motion_coverage,
-            "sourceCutTargetDurationSeconds": target_duration,
-        },
-        model_score=score,
-    )
 
 
 def selected_window_from_cut_ranking(ranking: LoopRanking) -> DetectionWindow | None:
@@ -23874,26 +23152,6 @@ def rank_review_item_with_caption_images(
     )
 
 
-def ranking_with_timing_metadata(
-    ranking: LoopRanking,
-    *,
-    render_seconds: float,
-    vlm_seconds: float,
-    item_total_seconds: float,
-) -> LoopRanking:
-    payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
-    payload["reviewRenderSeconds"] = render_seconds
-    payload["reviewVlmSeconds"] = vlm_seconds
-    payload["reviewItemTotalSeconds"] = item_total_seconds
-    return LoopRanking(
-        score=ranking.score,
-        reasons=ranking.reasons,
-        raw_response=ranking.raw_response,
-        payload=payload,
-        model_score=ranking.model_score,
-        continuity_score=ranking.continuity_score,
-        continuity_metrics=ranking.continuity_metrics,
-    )
 
 
 def build_deterministic_section_fallback_ranking(

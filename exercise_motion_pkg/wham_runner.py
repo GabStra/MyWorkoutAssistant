@@ -73,85 +73,8 @@ class WhamRunResult:
         }
 
 
-@dataclass(frozen=True)
-class WhamTrackingPreflightResult:
-    passed: bool
-    report_path: Path
-    stdout_log: Path
-    stderr_log: Path
-    command: list[str]
-    elapsed_seconds: float
-    payload: dict[str, Any]
 
 
-def run_wham_tracking_preflight(
-    *,
-    wham_repo_path: Path,
-    input_video: Path,
-    output_root: Path,
-    logs_dir: Path,
-    python_command: str,
-    required_start_seconds: float | None,
-    required_end_seconds: float | None,
-    use_docker: bool,
-    docker_image: str,
-    docker_gpus: str,
-    docker_shm_size: str,
-    timeout_seconds: float | None,
-) -> WhamTrackingPreflightResult:
-    output_root.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    report_path = logs_dir / "wham_tracking_preflight.json"
-    stdout_log = logs_dir / "wham_tracking_preflight.stdout.log"
-    stderr_log = logs_dir / "wham_tracking_preflight.stderr.log"
-    script_path = Path(__file__).with_name("wham_tracking_preflight.py").resolve()
-    docker_container_name = f"mwa-wham-preflight-{uuid.uuid4().hex}" if use_docker else None
-    command = build_wham_tracking_preflight_command(
-        wham_repo_path=wham_repo_path,
-        script_path=script_path,
-        input_video=input_video,
-        output_root=output_root,
-        report_path=report_path,
-        python_command=python_command,
-        required_start_seconds=required_start_seconds,
-        required_end_seconds=required_end_seconds,
-        use_docker=use_docker,
-        docker_image=docker_image,
-        docker_gpus=docker_gpus,
-        docker_shm_size=docker_shm_size,
-        docker_container_name=docker_container_name,
-    )
-    started = time.perf_counter()
-    with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open("w", encoding="utf-8") as stderr_handle:
-        with gpu_stage_lock(stage="wham_tracking_preflight"):
-            returncode = run_wham_process(
-                command,
-                cwd=str(wham_repo_path),
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-                timeout_seconds=resolve_wham_timeout_seconds(timeout_seconds),
-                docker_container_name=docker_container_name,
-            )
-    elapsed = time.perf_counter() - started
-    try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        payload = {}
-    if returncode not in {0, WHAM_TRACKING_PREFLIGHT_REJECTED_EXIT_CODE}:
-        raise RuntimeError(
-            "WHAM tracking preflight failed. Check logs:\n"
-            f"- {stdout_log}\n- {stderr_log}"
-        )
-    passed = returncode == 0 and bool(payload.get("passed"))
-    return WhamTrackingPreflightResult(
-        passed=passed,
-        report_path=report_path,
-        stdout_log=stdout_log,
-        stderr_log=stderr_log,
-        command=command,
-        elapsed_seconds=elapsed,
-        payload=payload,
-    )
 
 
 def run_wham_locally(
