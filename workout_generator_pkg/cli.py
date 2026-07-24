@@ -3,49 +3,30 @@ import os
 import sys
 import threading
 import time
-import atexit
 import uuid
 import copy
-import hashlib
-import glob
-import random
-import traceback
-import argparse
 import re
-from types import SimpleNamespace
 from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 import httpx
 from workout_generator_pkg.constants import (
     JSON_SCHEMA,
-    EXAMPLE_JSON,
     PARALLEL_LOG_REQUEST_TRUNCATE,
-    DEEPSEEK_CHAT_DEFAULT_TOKENS,
-    DEEPSEEK_CHAT_MAX_TOKENS,
-    DEEPSEEK_REASONER_DEFAULT_TOKENS,
-    DEEPSEEK_REASONER_MAX_TOKENS,
     BASE_SYSTEM_PROMPT,
     SUMMARIZATION_SYSTEM_PROMPT,
-    JSON_SYSTEM_PROMPT,
     SELF_HEAL_SYSTEM_PROMPT,
     GENERATE_WORKOUT_TOOL,
-    MUSCLE_GROUP_FIXES,
 )
 from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
 from workout_generator_pkg.stage_prompts import (
-    EQUIPMENT_EXAMPLE,
-    EQUIPMENT_SCHEMA,
     EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
     JSON_PATCH_REPAIR_SYSTEM_PROMPT,
-    PLAN_INDEX_EXAMPLE,
     PLAN_INDEX_SYSTEM_PROMPT,
-    WORKOUT_STRUCTURE_EXAMPLE,
     WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
 from workout_generator_pkg.plan_contract import (
-    ContractValidationError,
     _load_field_for_exercise_type,
     validate_single_exercise_definition_contract,
 )
@@ -320,9 +301,6 @@ class PlaceholderIdManager:
                     except (ValueError, IndexError):
                         pass
 
-def generate_uuid():
-    """Generate a new UUID string."""
-    return str(uuid.uuid4())
 
 def validate_equipment_immutability(provided_equipment, plan_index_equipment):
     """
@@ -467,49 +445,6 @@ def apply_accessory_id_rewrite(workout_store, duplicate_id_to_provided):
                     ]
 
 
-def merge_equipment(provided_equipment, plan_index_equipment, id_manager):
-    """
-    Merge provided equipment with newly created equipment from plan_index.
-    Provided equipment remains unchanged, new equipment is added.
-    
-    Args:
-        provided_equipment: Dict with 'equipments' and 'accessoryEquipments' lists (from file)
-        plan_index_equipment: Dict with 'equipments' and 'accessoryEquipments' lists (from plan_index)
-        id_manager: PlaceholderIdManager instance
-    
-    Returns:
-        dict: Merged equipment with 'equipments' and 'accessoryEquipments' lists
-    """
-    # Start with provided equipment (unchanged)
-    merged_equipments = list(provided_equipment.get("equipments", [])) if provided_equipment else []
-    merged_accessories = list(provided_equipment.get("accessoryEquipments", [])) if provided_equipment else []
-    
-    # Create sets of existing IDs to avoid duplicates
-    existing_equipment_ids = {eq.get("id") for eq in merged_equipments if eq.get("id")}
-    existing_accessory_ids = {acc.get("id") for acc in merged_accessories if acc.get("id")}
-    
-    # Add new equipment from plan_index that doesn't exist in provided equipment
-    for eq in plan_index_equipment.get("equipments", []):
-        eq_id = eq.get("id")
-        if eq_id and eq_id not in existing_equipment_ids:
-            # This is new equipment - register its ID and add it
-            id_manager.extract_placeholders_from_json(eq)
-            merged_equipments.append(eq)
-            existing_equipment_ids.add(eq_id)
-    
-    # Add new accessories from plan_index that don't exist in provided equipment
-    for acc in plan_index_equipment.get("accessoryEquipments", []):
-        acc_id = acc.get("id")
-        if acc_id and acc_id not in existing_accessory_ids:
-            # This is new accessory - register its ID and add it
-            id_manager.extract_placeholders_from_json(acc)
-            merged_accessories.append(acc)
-            existing_accessory_ids.add(acc_id)
-    
-    return {
-        "equipments": merged_equipments,
-        "accessoryEquipments": merged_accessories
-    }
 
 # Progress management functions for resume capability
 PROGRESS_DIR = "workouts/generation_progress"
@@ -813,111 +748,8 @@ class ParallelLoadingIndicator:
 
 
 
-def generate_equipment(client, messages, id_manager):
-    """Generate equipment list with placeholder IDs."""
-    equipment_messages = messages + [
-        {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
-        {"role": "user", "content": "Generate all equipment needed for the workout based on our conversation."}
-    ]
-    
-    content = json_call_with_loading(client, equipment_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty equipment JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "equipments" not in data or not isinstance(data["equipments"], list):
-            raise ValueError("Invalid equipment JSON format: missing 'equipments' array")
-        
-        # Extract and register all placeholder IDs
-        for equipment in data["equipments"]:
-            id_manager.extract_placeholders_from_json(equipment)
-        
-        # Normalize equipment immediately after generation
-        normalized_equipments = fix_equipment_errors(data["equipments"])
-        
-        return normalized_equipments
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse equipment JSON: {e}")
 
-def generate_exercises(client, messages, equipment_list, id_manager, provided_equipment=None):
-    """Generate exercise list with placeholder IDs, referencing equipment placeholders."""
-    if provided_equipment:
-        # Use formatted equipment text showing total weight combinations
-        formatted_equipment = format_equipment_for_llm(
-            provided_equipment.get("equipments", []),
-            provided_equipment.get("accessoryEquipments", [])
-        )
-        equipment_json = json.dumps(provided_equipment, indent=2)
-        equipment_content = (
-            f"{formatted_equipment}\n\n"
-            f"Use only equipment from the list above. "
-            f"All WeightSet weights and BodyWeightSet additionalWeight values must match valid combinations shown.\n\n"
-            f"Equipment JSON (for reference):\n{equipment_json}"
-        )
-    else:
-        # Fallback to original format (for Step 1 before equipment is generated)
-        equipment_json = json.dumps({"equipments": equipment_list}, indent=2)
-        equipment_content = f"Available equipment:\n{equipment_json}"
-    
-    exercise_messages = messages + [
-        {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"{equipment_content}\n\nGenerate all exercises needed for the workout based on our conversation. Reference equipment using their placeholder IDs (EQUIPMENT_0, EQUIPMENT_1, etc.)."}
-    ]
-    
-    content = json_call_with_loading(client, exercise_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty exercise JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "exercises" not in data or not isinstance(data["exercises"], list):
-            raise ValueError("Invalid exercise JSON format: missing 'exercises' array")
-        
-        # Extract and register all placeholder IDs (exercises and sets)
-        for exercise in data["exercises"]:
-            id_manager.extract_placeholders_from_json(exercise)
-        
-        # Normalize exercises immediately after generation
-        normalized_exercises = fix_exercise_errors(data["exercises"])
-        
-        return normalized_exercises
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse exercise JSON: {e}")
 
-def generate_workout_structure(client, messages, exercise_list, id_manager):
-    """Generate workout structure with placeholder IDs, referencing exercise placeholders."""
-    exercise_json = json.dumps({"exercises": exercise_list}, indent=2)
-    
-    workout_messages = messages + [
-        {"role": "system", "content": WORKOUT_STRUCTURE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Available exercises:\n{exercise_json}\n\nGenerate the workout structure based on our conversation. Reference exercises using their placeholder IDs (EXERCISE_0, EXERCISE_1, etc.).\n\nIMPORTANT: Generate a specific description for workoutMetadata.description based on the actual exercises provided above. Make it specific to the exercises in this workout (e.g., muscle groups, primary exercises, or training focus), not a generic description. Keep it under 50 characters. Make it a compact training-focus summary, not an exhaustive exercise list. Prefer at most 2 to 4 short focus terms or movement themes. Before finalizing, count the characters; if it exceeds 50, rewrite it until it is within the limit."}
-    ]
-    
-    content = json_call_with_loading(client, workout_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty workout structure JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "workoutMetadata" not in data or "workoutComponents" not in data:
-            raise ValueError("Invalid workout structure JSON format: missing 'workoutMetadata' or 'workoutComponents'")
-        
-        # Extract and register all placeholder IDs
-        id_manager.extract_placeholders_from_json(data)
-        
-        return data
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse workout structure JSON: {e}")
 
 # Chunked emitters for planner/emitter architecture
 def emit_equipment_item(equipment_id, client, context_summary, plan_index, use_reasoner=True, logger=None):

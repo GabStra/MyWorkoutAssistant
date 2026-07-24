@@ -1,6 +1,5 @@
 """Large constant definitions for workout generator."""
 
-import copy
 import json
 
 PLACEHOLDER_OR_UUID_PATTERN = (
