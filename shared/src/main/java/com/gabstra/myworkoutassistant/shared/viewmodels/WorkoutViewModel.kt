@@ -207,6 +207,7 @@ open class WorkoutViewModel(
 
     private var storeSetDataJob: Job? = null
     private val workoutRecordMutex = Mutex()
+    private val workoutPersistenceMutex = Mutex()
     private val activeSessionHydrationTrigger = AtomicReference<SessionHydrationTrigger?>(null)
     private val _isSessionHydrationInFlight = MutableStateFlow(false)
     val isSessionHydrationInFlightFlow = _isSessionHydrationInFlight.asStateFlow()
@@ -2401,43 +2402,43 @@ open class WorkoutViewModel(
             pendingCompletionEndReason = endReason
         }
         launchIO {
-            storeSetDataJob?.join()
-            val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
-                startWorkoutTime = startWorkoutTime,
-                selectedWorkout = selectedWorkout.value,
-                currentWorkoutHistory = currentWorkoutHistory,
-                endReason = endReason,
-                heartBeatRecords = heartBeatHistory.toList(),
-                progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
-                comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
-                    getProgressionComparisonBaselineSets(exerciseId).orEmpty()
-                }
-            ) ?: return@launchIO
-            val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
-                snapshot = snapshot,
-                isDone = isDone,
-                updateWorkoutStore = ::updateWorkoutStore
-            )
-            val completionContext = if (isDone) {
-                NonCancellable + dispatchers.main
-            } else {
-                dispatchers.main
-            }
-            withContext(completionContext) {
-                currentWorkoutHistory = workoutHistoryForThisPush
-                if (isDone) {
-                    pendingCompletionEndReason = workoutHistoryForThisPush.endReason
-                }
-                if (isDone) {
-                    workoutRecordMutex.withLock {
-                        _workoutRecord = null
-                        _hasWorkoutRecord.value = false
-                        _workoutResumeInfo.value = null
+            workoutPersistenceMutex.withLock {
+                storeSetDataJob?.join()
+                val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
+                    startWorkoutTime = startWorkoutTime,
+                    selectedWorkout = selectedWorkout.value,
+                    currentWorkoutHistory = currentWorkoutHistory,
+                    endReason = endReason,
+                    heartBeatRecords = heartBeatHistory.toList(),
+                    progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
+                    comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
+                        getProgressionComparisonBaselineSets(exerciseId).orEmpty()
                     }
+                ) ?: return@withLock
+                val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
+                    snapshot = snapshot,
+                    isDone = isDone,
+                    updateWorkoutStore = ::updateWorkoutStore
+                )
+                val completionContext = if (isDone) {
+                    NonCancellable + dispatchers.main
+                } else {
+                    dispatchers.main
                 }
-                onEnd()
-                if (isDone) {
-                    _completionPushCompleted.value = true
+                withContext(completionContext) {
+                    currentWorkoutHistory = workoutHistoryForThisPush
+                    if (isDone) {
+                        pendingCompletionEndReason = workoutHistoryForThisPush.endReason
+                        workoutRecordMutex.withLock {
+                            _workoutRecord = null
+                            _hasWorkoutRecord.value = false
+                            _workoutResumeInfo.value = null
+                        }
+                    }
+                    onEnd()
+                    if (isDone) {
+                        _completionPushCompleted.value = true
+                    }
                 }
             }
         }

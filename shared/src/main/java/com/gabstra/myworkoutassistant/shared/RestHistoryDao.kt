@@ -37,6 +37,15 @@ interface RestHistoryDao {
     @Query("DELETE FROM rest_history WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun deleteByWorkoutHistoryId(workoutHistoryId: UUID)
 
+    @Transaction
+    suspend fun replaceAllForWorkoutHistory(
+        workoutHistoryId: UUID,
+        restHistories: List<RestHistory>
+    ) {
+        deleteByWorkoutHistoryId(workoutHistoryId)
+        insertAllWithVersionCheck(*restHistories.toTypedArray())
+    }
+
     @Query("DELETE FROM rest_history WHERE workoutComponentId = :workoutComponentId")
     suspend fun deleteByWorkoutComponentId(workoutComponentId: UUID)
 

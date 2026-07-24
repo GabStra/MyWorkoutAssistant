@@ -351,10 +351,14 @@ internal class WorkoutPersistenceCoordinator(
         executedSetStore.replaceAll(newExecutedSetsHistory)
         executedRestStore.replaceAll(newExecutedRestHistories)
         workoutHistoryDaoRef.insertWithVersionCheck(workoutHistoryForThisPush)
-        setHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
-        setHistoryDaoRef.insertAllWithVersionCheck(*newExecutedSetsHistory.toTypedArray())
-        restHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
-        restHistoryDaoRef.insertAllWithVersionCheck(*newExecutedRestHistories.toTypedArray())
+        setHistoryDaoRef.replaceAllForWorkoutHistory(
+            workoutHistoryForThisPush.id,
+            newExecutedSetsHistory
+        )
+        restHistoryDaoRef.replaceAllForWorkoutHistory(
+            workoutHistoryForThisPush.id,
+            newExecutedRestHistories
+        )
 
         if (isDone) {
             workoutRecordDao().deleteByWorkoutId(selectedWorkoutSnapshot.id)
