@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
-import com.gabstra.myworkoutassistant.composables.*
-
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,9 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,8 +43,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
@@ -60,6 +52,15 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.composables.ExerciseNameText
+import com.gabstra.myworkoutassistant.composables.ExerciseSetsViewer
+import com.gabstra.myworkoutassistant.composables.ProgressState
+import com.gabstra.myworkoutassistant.composables.PreviousNextNavigationHeader
+import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
+import com.gabstra.myworkoutassistant.composables.WorkoutStepIndicatorText
+import com.gabstra.myworkoutassistant.composables.buildExercisesPagePreparedRows
+import com.gabstra.myworkoutassistant.composables.rememberExercisesPageFittedRows
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsHelper
@@ -435,7 +436,7 @@ private fun ExercisePageFixedHeader(
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        ExercisesPageNavigationHeader(
+        PreviousNextNavigationHeader(
             canSelectPrevious = canSelectPrevious,
             canSelectNext = canSelectNext,
             onSelectPrevious = onSelectPrevious,
@@ -506,7 +507,8 @@ private fun RestPageFixedHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        ExercisesPageNavigationHeader(
+        PreviousNextNavigationHeader(
+            modifier = Modifier.fillMaxWidth(),
             canSelectPrevious = canSelectPrevious,
             canSelectNext = canSelectNext,
             onSelectPrevious = onSelectPrevious,
@@ -535,53 +537,6 @@ private fun RestPageFixedHeader(
                     textAlign = TextAlign.Center
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ExercisesPageNavigationHeader(
-    canSelectPrevious: Boolean,
-    canSelectNext: Boolean,
-    onSelectPrevious: () -> Unit,
-    onSelectNext: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier.padding(horizontal = 44.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            content()
-        }
-        IconButton(
-            onClick = onSelectPrevious,
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .size(48.dp),
-            enabled = canSelectPrevious,
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = "Previous workout step",
-                modifier = Modifier.size(32.dp),
-            )
-        }
-        IconButton(
-            onClick = onSelectNext,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .size(48.dp),
-            enabled = canSelectNext,
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "Next workout step",
-                modifier = Modifier.size(32.dp),
-            )
         }
     }
 }
