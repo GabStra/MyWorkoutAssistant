@@ -197,11 +197,11 @@ fun ExerciseScreen(
             add(ExerciseHorizontalPage.INFO)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
-            if (showMovementPage) add(ExerciseHorizontalPage.ANIMATION)
             //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
             add(ExerciseHorizontalPage.EXERCISES)
+            if (showMovementPage) add(ExerciseHorizontalPage.ANIMATION)
         }
     }
 
@@ -376,7 +376,15 @@ fun ExerciseScreen(
 
                     ExerciseHorizontalPage.PLATES -> {
                         if (equipment != null) {
-                            Box(modifier = pageModifier) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(
+                                        top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
+                                        bottom = WorkoutPagerLayoutTokens.BottomIndicatorSpacing,
+                                    )
+                                    .clipToBounds()
+                            ) {
                                 PlatesPage(state, equipment, hapticsViewModel, viewModel)
                             }
                         }
@@ -680,10 +688,10 @@ private fun ExercisePreviewScenario.resolveOpenPageIndex(): Int? {
         pages.add(ExercisePreviewPage.PLATES)
     }
     pages.add(ExercisePreviewPage.DETAIL)
+    pages.add(ExercisePreviewPage.EXERCISES)
     if (includeMovementPage) {
         pages.add(ExercisePreviewPage.ANIMATION)
     }
-    pages.add(ExercisePreviewPage.EXERCISES)
 
     return pages.indexOf(requestedPage)
         .takeIf { it >= 0 }

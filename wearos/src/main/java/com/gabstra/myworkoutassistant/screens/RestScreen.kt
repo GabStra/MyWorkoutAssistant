@@ -522,6 +522,7 @@ fun RestScreen(
             modifier = Modifier.fillMaxSize(),
             pagerState = horizontalPagerState,
             userScrollEnabled = !isEditModeState.value,
+            animatePages = false,
             pageOverlay = { pageIndex ->
                 if (horizontalPageTypes[pageIndex] == RestHorizontalPage.REST_TIMER) {
                     hearthRateChart(Modifier.fillMaxSize())

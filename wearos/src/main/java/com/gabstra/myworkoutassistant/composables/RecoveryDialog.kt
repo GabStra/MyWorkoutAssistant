@@ -209,9 +209,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer continue option",
                                 text = "Continue",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = timerChoice == TimerRecoveryChoice.CONTINUE
-                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.CONTINUE
                                     resumeWithChoices(TimerRecoveryChoice.CONTINUE, calibrationChoice)
@@ -224,9 +221,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer restart option",
                                 text = "Restart",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = timerChoice == TimerRecoveryChoice.RESTART
-                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.RESTART
                                     resumeWithChoices(TimerRecoveryChoice.RESTART, calibrationChoice)
@@ -259,9 +253,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration continue option",
                                 text = "Continue",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = calibrationChoice == CalibrationRecoveryChoice.CONTINUE
-                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.CONTINUE
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.CONTINUE)
@@ -274,9 +265,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration restart option",
                                 text = "Restart",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = calibrationChoice == CalibrationRecoveryChoice.RESTART
-                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.RESTART
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.RESTART)
@@ -443,15 +431,6 @@ private fun OutlinedRecoveryChoiceButton(
         textColor = textColor,
         onClick = onClick
     )
-}
-
-@Composable
-private fun selectedRecoveryButtonColors(selected: Boolean): androidx.wear.compose.material3.ButtonColors {
-    return if (selected){
-        androidx.wear.compose.material3.ButtonDefaults.buttonColors()
-    } else {
-        androidx.wear.compose.material3.ButtonDefaults.filledTonalButtonColors()
-    }
 }
 
 @SuppressLint("DefaultLocale")

@@ -63,8 +63,8 @@ fun CalibrationRIRScreen(
             add(CalibrationPageType.BUTTONS)
             add(CalibrationPageType.INFO)
             add(CalibrationPageType.CALIBRATION_RIR)
-            if (exercise.movementRef != null) add(CalibrationPageType.MOVEMENT)
             add(CalibrationPageType.EXERCISES)
+            if (exercise.movementRef != null) add(CalibrationPageType.MOVEMENT)
         }
     }
 
@@ -137,6 +137,7 @@ fun CalibrationRIRScreen(
                 .fillMaxSize(),
             pagerState = pagerState,
             userScrollEnabled = allowHorizontalScrolling,
+            animatePages = false,
             pageOverlay = { pageIndex ->
                 if (pageTypes[pageIndex] == CalibrationPageType.CALIBRATION_RIR) {
                     hearthRateChart(Modifier.fillMaxSize())

@@ -40,7 +40,7 @@ fun FullScreenLoadingIndicator(
             )
         }
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp),
+            modifier = Modifier.padding(horizontal = 15.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             LoadingText(baseText = text)
