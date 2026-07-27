@@ -1,16 +1,43 @@
 package com.gabstra.myworkoutassistant.shared.workout.assembly
 
 import androidx.compose.runtime.mutableStateOf
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
 
 class WorkoutSupersetAssemblyService {
+    fun assemblePreparedPreviewChildStates(
+        superset: Superset,
+        bodyWeightKg: Double,
+        getEquipmentById: (UUID) -> WeightLoadedEquipment?,
+        getAvailableTotals: (WeightLoadedEquipment) -> kotlin.collections.Set<Double>,
+    ): List<WorkoutState> {
+        val setPreparationService = WorkoutSetPreparationService()
+        val priorExercises = mutableListOf<Exercise>()
+        val preparedExercises = superset.exercises.map { exercise ->
+            val equipment = exercise.equipmentId?.let(getEquipmentById)
+            val preparedExercise = exercise.copy(
+                sets = setPreparationService.prepareExerciseSets(
+                    exercise = exercise,
+                    priorExercises = priorExercises,
+                    equipment = equipment,
+                    bodyWeightKg = bodyWeightKg,
+                    getAvailableTotals = getAvailableTotals,
+                )
+            )
+            priorExercises += exercise
+            preparedExercise
+        }
+        return assemblePreviewChildStates(superset.copy(exercises = preparedExercises))
+    }
+
     /**
      * Builds a history-free superset sequence for editors and previews, then routes it through
      * the same scheduler used by an active workout.
@@ -79,6 +106,20 @@ class WorkoutSupersetAssemblyService {
             }
         }
 
+        var anyCalibrationSets = true
+        while (anyCalibrationSets) {
+            anyCalibrationSets = false
+            for (queue in queues) {
+                if (queue.isEmpty() || queue.first() !is WorkoutState.Set) continue
+                val setState = queue.first() as WorkoutState.Set
+                if (!setState.isCalibrationSet) continue
+
+                anyCalibrationSets = true
+                out.addAll(removeNextSetBlock(queue))
+                removeLeadingRests(queue)
+            }
+        }
+
         for (q in queues) {
             while (q.isNotEmpty() && q.first() is WorkoutState.Rest) q.removeAt(0)
         }
@@ -135,6 +176,7 @@ class WorkoutSupersetAssemblyService {
         return queue.count {
             it is WorkoutState.Set &&
                 !isWarmupSet(it) &&
+                !it.isCalibrationSet &&
                 (!it.isUnilateral || it.intraSetCounter == 1u)
         }
     }

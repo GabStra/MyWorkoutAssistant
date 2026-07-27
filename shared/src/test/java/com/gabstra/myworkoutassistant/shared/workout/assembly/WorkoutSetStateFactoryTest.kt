@@ -61,6 +61,38 @@ class WorkoutSetStateFactoryTest {
     }
 
     @Test
+    fun `prepared superset preview inserts calibration for exercises that require it`() {
+        val calibrationExercise = createExercise("Press", null).copy(
+            requiresLoadCalibration = true,
+            sets = listOf(createWeightSet())
+        )
+        val regularExercise = createExercise("Row", null).copy(
+            sets = listOf(createWeightSet())
+        )
+        val superset = Superset(
+            id = UUID.randomUUID(),
+            enabled = true,
+            exercises = listOf(calibrationExercise, regularExercise),
+            restSecondsByExercise = emptyMap()
+        )
+
+        val states = WorkoutSupersetAssemblyService().assemblePreparedPreviewChildStates(
+            superset = superset,
+            bodyWeightKg = 0.0,
+            getEquipmentById = { null },
+            getAvailableTotals = { emptySet() }
+        )
+
+        val calibrationStates = states
+            .filterIsInstance<WorkoutState.Set>()
+            .filter { it.exerciseId == calibrationExercise.id }
+
+        assertEquals(2, calibrationStates.size)
+        assertTrue(calibrationStates.first().isCalibrationSet)
+        assertTrue(!calibrationStates.last().isCalibrationSet)
+    }
+
+    @Test
     fun `superset keeps a unilateral set and its intra-set rest together`() {
         val factory = WorkoutSetStateFactory()
         val unilateralExercise = createExercise("Split squat", intraSetRestInSeconds = 30)

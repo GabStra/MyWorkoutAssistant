@@ -27,10 +27,40 @@ fun toSupersetLetter(index: Int): String {
     return builder.reverse().toString()
 }
 
+fun buildSupersetAwareRowLabel(
+    supersetPrefix: String?,
+    label: String,
+): String = supersetPrefix?.let { "$it · $label" } ?: label
+
+fun resolveSupersetExercisePrefix(
+    viewModel: WorkoutViewModel,
+    exerciseId: UUID,
+): String? = viewModel.supersetIdByExerciseId[exerciseId]
+    ?.let { supersetId -> viewModel.exercisesBySupersetId[supersetId] }
+    ?.indexOfFirst { it.id == exerciseId }
+    ?.takeIf { it >= 0 }
+    ?.let(::toSupersetLetter)
+
 enum class SetDisplayCounterKind {
     Work,
     Warmup,
     Calibration,
+}
+
+fun buildSetDisplayIdentifier(
+    current: Int,
+    supersetPrefix: String?,
+    counterKind: SetDisplayCounterKind,
+): String = when (counterKind) {
+    SetDisplayCounterKind.Work -> "${supersetPrefix.orEmpty()}$current"
+    SetDisplayCounterKind.Warmup -> buildSupersetAwareRowLabel(
+        supersetPrefix = supersetPrefix,
+        label = "W$current"
+    )
+    SetDisplayCounterKind.Calibration -> buildSupersetAwareRowLabel(
+        supersetPrefix = supersetPrefix,
+        label = "CAL"
+    )
 }
 
 fun displayCounterKindForSet(set: Set): SetDisplayCounterKind? {
@@ -69,24 +99,14 @@ fun buildWorkoutSetDisplayIdentifier(
 ): String? {
     val (current, _) = viewModel.getSetCounterForExercise(exerciseId, setState) ?: return null
 
-    val supersetPrefix = viewModel.supersetIdByExerciseId[exerciseId]
-        ?.let { supersetId -> viewModel.exercisesBySupersetId[supersetId] }
-        ?.indexOfFirst { it.id == exerciseId }
-        ?.takeIf { it >= 0 }
-        ?.let(::toSupersetLetter)
+    val supersetPrefix = resolveSupersetExercisePrefix(viewModel, exerciseId)
 
-    val baseIdentifier = if (supersetPrefix != null) {
-        "$supersetPrefix$current"
-    } else {
-        current.toString()
-    }
-
-    return when (displayCounterKindForSetState(setState)) {
-        SetDisplayCounterKind.Warmup -> "W$baseIdentifier"
-        SetDisplayCounterKind.Calibration -> "Cal"
-        SetDisplayCounterKind.Work -> baseIdentifier
-        null -> null
-    }
+    val counterKind = displayCounterKindForSetState(setState) ?: return null
+    return buildSetDisplayIdentifier(
+        current = current,
+        supersetPrefix = supersetPrefix,
+        counterKind = counterKind
+    )
 }
 
 fun buildUnilateralSideLabel(

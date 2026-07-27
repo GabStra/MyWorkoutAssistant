@@ -15,6 +15,22 @@ class ExerciseSetDisplayIdentifiersTest {
     }
 
     @Test
+    fun `buildSupersetAwareRowLabel prefixes every centered superset row category`() {
+        assertEquals("B · SET LOAD", buildSupersetAwareRowLabel("B", "SET LOAD"))
+        assertEquals("AA · SET RIR", buildSupersetAwareRowLabel("AA", "SET RIR"))
+        assertEquals("SET LOAD", buildSupersetAwareRowLabel(null, "SET LOAD"))
+    }
+
+    @Test
+    fun `set identifiers keep superset letter first for every counter kind`() {
+        assertEquals("A1", buildSetDisplayIdentifier(1, "A", SetDisplayCounterKind.Work))
+        assertEquals("B · W2", buildSetDisplayIdentifier(2, "B", SetDisplayCounterKind.Warmup))
+        assertEquals("C · CAL", buildSetDisplayIdentifier(1, "C", SetDisplayCounterKind.Calibration))
+        assertEquals("W2", buildSetDisplayIdentifier(2, null, SetDisplayCounterKind.Warmup))
+        assertEquals("CAL", buildSetDisplayIdentifier(1, null, SetDisplayCounterKind.Calibration))
+    }
+
+    @Test
     fun `buildUnilateralSideLabel returns L and R for bilateral`() {
         assertEquals("-L", buildUnilateralSideLabel(1u, 2u))
         assertEquals("-R", buildUnilateralSideLabel(2u, 2u))
