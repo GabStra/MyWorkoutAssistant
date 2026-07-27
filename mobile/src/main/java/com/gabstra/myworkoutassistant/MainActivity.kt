@@ -1116,7 +1116,10 @@ fun MyWorkoutAssistantNavHost(
             },
             title = "Restore backup?",
             body = {
-                Text("Your local data is empty. Choose a backup file to restore your workouts.")
+                Text(
+                    text = "Your local data is empty. Choose a backup file to restore your workouts.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
             },
             confirmText = "Choose file",
             onConfirm = {
