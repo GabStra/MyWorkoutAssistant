@@ -64,6 +64,8 @@ import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDis
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutSetDisplayIdentifier
+import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetAwareRowLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.resolveSupersetExercisePrefix
 import com.gabstra.myworkoutassistant.shared.workout.display.findDisplayRowIndex
 import com.gabstra.myworkoutassistant.shared.workout.display.setLikeIdOrNull
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -364,8 +366,12 @@ fun SetTableRow(
             else -> null
         }
         Row(
-            modifier = Modifier.fillMaxSize()
-                .padding(2.5.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    horizontal = ExercisesPageSetRowHorizontalPadding,
+                    vertical = ExercisesPageSetRowVerticalPadding,
+                )
                 .then(
                     rowSetContentDescription?.let { contentDescription ->
                         Modifier.semantics(mergeDescendants = false) {
@@ -524,7 +530,10 @@ private fun FastExercisesPageSetTableRow(
 
     Row(
         modifier = modifier
-            .padding(2.5.dp)
+            .padding(
+                horizontal = ExercisesPageSetRowHorizontalPadding,
+                vertical = ExercisesPageSetRowVerticalPadding,
+            )
             .then(
                 rowModel.semanticsLabel?.let { contentDescription ->
                     Modifier.semantics(mergeDescendants = false) {
@@ -647,8 +656,10 @@ private fun CenteredLabelRow(
 }
 
 private val ExercisesPageSetRowHeight = 25.dp
-private val ExercisesPageSetRowPadding = 2.5.dp
-private val ExercisesPageSetRowInnerHeight = ExercisesPageSetRowHeight - ExercisesPageSetRowPadding * 2
+private val ExercisesPageSetRowHorizontalPadding = 5.dp
+private val ExercisesPageSetRowVerticalPadding = 2.5.dp
+private val ExercisesPageSetRowInnerHeight =
+    ExercisesPageSetRowHeight - ExercisesPageSetRowVerticalPadding * 2
 private val ExercisesPageCenteredRowHorizontalPadding = 5.dp
 private val ExercisesPageCenteredRowVerticalPadding = 2.5.dp
 
@@ -730,8 +741,10 @@ private fun buildExercisesPageFittedRows(
     density: Density,
     cache: MutableMap<ExercisesPageTextFitKey, ExercisesPageFittedTextCell>,
 ): ExercisesPageFittedRows {
-    val setInnerWidth = (rowMaxWidth - ExercisesPageSetRowPadding * 2).coerceAtLeast(0.dp)
-    val setInnerHeight = (rowMaxHeight - ExercisesPageSetRowPadding * 2).coerceAtLeast(0.dp)
+    val setInnerWidth =
+        (rowMaxWidth - ExercisesPageSetRowHorizontalPadding * 2).coerceAtLeast(0.dp)
+    val setInnerHeight =
+        (rowMaxHeight - ExercisesPageSetRowVerticalPadding * 2).coerceAtLeast(0.dp)
     val centeredWidth = (rowMaxWidth - ExercisesPageCenteredRowHorizontalPadding * 2).coerceAtLeast(0.dp)
     val centeredHeight = (rowMaxHeight - ExercisesPageCenteredRowVerticalPadding * 2).coerceAtLeast(0.dp)
 
@@ -1038,24 +1051,97 @@ internal fun buildExercisesPagePreparedRows(
     } ?: 0
     val unilateralSideBadgeByRowIndex = buildUnilateralSideBadgeByRowIndex(displayRows)
     val hasUnconfirmedLoadByExerciseId = buildHasUnconfirmedLoadByExerciseId(viewModel, displayRows)
+    val displayRowSlots = expandCalibrationWarmupPlaceholderSlots(displayRows)
+    val expandedSetIndex = displayRowSlots.indexOfFirst { slot ->
+        slot.sourceRowIndex == setIndex && !slot.isWarmupPlaceholder
+    }.coerceAtLeast(0)
+    val rowModels = displayRowSlots.mapIndexed { expandedRowIndex, slot ->
+        if (slot.isWarmupPlaceholder) {
+            val loadSelectionRow = slot.displayRow as ExerciseSetDisplayRow.CalibrationLoadSelectRow
+            buildCalibrationWarmupPlaceholderRowModel(
+                viewModel = viewModel,
+                loadSelectionState = loadSelectionRow.state,
+                rowIndex = expandedRowIndex,
+            )
+        } else {
+            val displayRow = slot.displayRow
+                buildExercisesPageRowModel(
+                    viewModel = viewModel,
+                    displayRow = displayRow,
+                    rowIndex = expandedRowIndex,
+                    sideBadge = unilateralSideBadgeByRowIndex[slot.sourceRowIndex],
+                    hasUnconfirmedLoadSelectionForExercise = (displayRow as? ExerciseSetDisplayRow.SetRow)
+                        ?.state
+                        ?.exerciseId
+                        ?.let { hasUnconfirmedLoadByExerciseId[it] }
+                        ?: false
+                )
+        }
+    }
 
     return ExercisesPagePreparedRows(
-        rowModels = displayRows.mapIndexed { rowIndex, displayRow ->
-            buildExercisesPageRowModel(
-                viewModel = viewModel,
-                displayRow = displayRow,
-                rowIndex = rowIndex,
-                sideBadge = unilateralSideBadgeByRowIndex[rowIndex],
-                hasUnconfirmedLoadSelectionForExercise = (displayRow as? ExerciseSetDisplayRow.SetRow)
-                    ?.state
-                    ?.exerciseId
-                    ?.let { hasUnconfirmedLoadByExerciseId[it] }
-                    ?: false
-            )
-        },
-        setIndex = setIndex
+        rowModels = rowModels,
+        setIndex = expandedSetIndex
     )
 }
+
+internal data class CalibrationWarmupDisplayRowSlot(
+    val displayRow: ExerciseSetDisplayRow,
+    val sourceRowIndex: Int,
+    val isWarmupPlaceholder: Boolean,
+)
+
+internal fun expandCalibrationWarmupPlaceholderSlots(
+    displayRows: List<ExerciseSetDisplayRow>,
+): List<CalibrationWarmupDisplayRowSlot> = buildList {
+    displayRows.forEachIndexed { rowIndex, displayRow ->
+        add(
+            CalibrationWarmupDisplayRowSlot(
+                displayRow = displayRow,
+                sourceRowIndex = rowIndex,
+                isWarmupPlaceholder = false,
+            )
+        )
+        if (displayRow is ExerciseSetDisplayRow.CalibrationLoadSelectRow) {
+            add(
+                CalibrationWarmupDisplayRowSlot(
+                    displayRow = displayRow,
+                    sourceRowIndex = rowIndex,
+                    isWarmupPlaceholder = true,
+                )
+            )
+        }
+    }
+}
+
+private fun buildCalibrationWarmupPlaceholderRowModel(
+    viewModel: AppViewModel,
+    loadSelectionState: WorkoutState.CalibrationLoadSelection,
+    rowIndex: Int,
+): ExercisesPageRowModel {
+    val supersetPrefix = resolveSupersetExercisePrefix(
+        viewModel = viewModel,
+        exerciseId = loadSelectionState.exerciseId,
+    )
+    val setIdentifier = buildCalibrationWarmupPlaceholderSetIdentifier(supersetPrefix)
+    return ExercisesPageRowModel(
+        rowIndex = rowIndex,
+        key = "calibration-warmup-placeholder-${loadSelectionState.exerciseId}-${loadSelectionState.calibrationSet.id}",
+        contentType = ExercisesPageRowContentType.Set,
+        setIdentifier = setIdentifier,
+        semanticsLabel = "$setIdentifier, pending calibration load",
+        setText = setIdentifier,
+        valueText = "—",
+        repsText = "—",
+    )
+}
+
+internal fun buildCalibrationWarmupPlaceholderSetIdentifier(
+    supersetPrefix: String?,
+): String = buildSupersetAwareRowLabel(
+    supersetPrefix = supersetPrefix,
+    label = "W?",
+)
 
 private fun buildUnilateralSideBadgeByRowIndex(
     displayRows: List<ExerciseSetDisplayRow>,
@@ -1148,14 +1234,26 @@ private fun buildExercisesPageRowModel(
             rowIndex = rowIndex,
             key = buildExercisesPageRowKey(displayRow, rowIndex),
             contentType = ExercisesPageRowContentType.CalibrationLoad,
-            centeredText = "SET LOAD"
+            centeredText = buildSupersetAwareRowLabel(
+                supersetPrefix = resolveSupersetExercisePrefix(
+                    viewModel = viewModel,
+                    exerciseId = displayRow.state.exerciseId
+                ),
+                label = "SET LOAD"
+            )
         )
 
         is ExerciseSetDisplayRow.CalibrationRIRRow -> ExercisesPageRowModel(
             rowIndex = rowIndex,
             key = buildExercisesPageRowKey(displayRow, rowIndex),
             contentType = ExercisesPageRowContentType.CalibrationRir,
-            centeredText = "SET RIR"
+            centeredText = buildSupersetAwareRowLabel(
+                supersetPrefix = resolveSupersetExercisePrefix(
+                    viewModel = viewModel,
+                    exerciseId = displayRow.state.exerciseId
+                ),
+                label = "SET RIR"
+            )
         )
     }
 }
