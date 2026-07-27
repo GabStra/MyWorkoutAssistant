@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
-import com.gabstra.myworkoutassistant.composables.*
-
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -17,8 +15,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,19 +42,22 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.composables.LoadedPlateConfigurationOption
+import com.gabstra.myworkoutassistant.composables.LoadedPlateConfigurationPickerOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.PreviousNextNavigationHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
@@ -63,7 +67,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatWeight
-import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -82,6 +85,33 @@ private fun Double.compact(): String {
 
 private const val StopperViewportAnchorFraction = 0.44f
 private const val BarbellEndPaddingDp = 12
+private const val EmptySleeveToPlateStackFraction = 0.20f
+private const val MinPlateWidthDp = 6
+private const val MaxPlateWidthDp = 16
+
+internal fun constrainedPlateWidthPx(
+    scaledThicknessPx: Float,
+    minWidthPx: Float,
+    maxWidthPx: Float,
+    remainingSleeveWidthPx: Float,
+): Float = scaledThicknessPx
+    .coerceIn(minWidthPx, maxWidthPx)
+    .coerceAtMost(remainingSleeveWidthPx.coerceAtLeast(0f))
+
+internal fun displayedSleeveLogicalLength(
+    physicalSleeveLength: Float,
+    maxPlateThickness: Float,
+): Float {
+    if (physicalSleeveLength <= 0f) return maxPlateThickness.coerceAtLeast(1f)
+    val normalizedPlateThickness = maxPlateThickness.coerceAtLeast(0f)
+    val emptySleeveAllowance = if (normalizedPlateThickness > 0f) {
+        normalizedPlateThickness * EmptySleeveToPlateStackFraction
+    } else {
+        physicalSleeveLength * EmptySleeveToPlateStackFraction
+    }
+    return (normalizedPlateThickness + emptySleeveAllowance)
+        .coerceIn(1f, physicalSleeveLength)
+}
 
 private data class LabelBoundsPx(
     val left: Float,
@@ -120,13 +150,17 @@ private fun computePlateBoundsPx(
     val sleeveWidth = (canvasWidthPx - sleeveX - paddingEnd).coerceAtLeast(0f)
     val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
     val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
-    val minPlateWidthPx = with(density) { 4.dp.toPx() }
+    val minPlateWidthPx = with(density) { MinPlateWidthDp.dp.toPx() }
+    val maxPlateWidthPx = with(density) { MaxPlateWidthDp.dp.toPx() }
     var currentX = sleeveX
 
     plateData.forEach { plateInfo ->
-        val plateWidth = (plateInfo.thickness.toFloat() * scaleFactor)
-            .coerceAtLeast(minPlateWidthPx)
-            .coerceAtMost((sleeveX + sleeveWidth - currentX).coerceAtLeast(0f))
+        val plateWidth = constrainedPlateWidthPx(
+            scaledThicknessPx = plateInfo.thickness.toFloat() * scaleFactor,
+            minWidthPx = minPlateWidthPx,
+            maxWidthPx = maxPlateWidthPx,
+            remainingSleeveWidthPx = sleeveX + sleeveWidth - currentX,
+        )
         currentX += plateWidth
     }
 
@@ -134,8 +168,8 @@ private fun computePlateBoundsPx(
 }
 
 /**
- * Finds the initial scroll offset that keeps the plate stack centered unless doing so would
- * clip labels that can otherwise fit together in the viewport.
+ * Finds the initial scroll offset that centers the physical plate stack. When the complete
+ * plate-and-label group fits in the viewport, the target is constrained so all of it stays visible.
  */
 internal fun resolveInitialBarbellScrollTargetPx(
     plateCenterPx: Float,
@@ -155,6 +189,11 @@ internal fun resolveInitialBarbellScrollTargetPx(
     val maximumScrollForLabels = labelBoundsLeftPx.coerceIn(0f, maxScrollPx)
     return plateCenteredTarget.coerceIn(minimumScrollForLabels, maximumScrollForLabels).toInt()
 }
+
+internal fun shouldEnableBarbellHorizontalPan(
+    visualWidthPx: Float,
+    viewportWidthPx: Float,
+): Boolean = visualWidthPx > viewportWidthPx
 
 /**
  * Computes the rightmost X (in px) that plate labels will use when laid out with the same
@@ -180,7 +219,8 @@ private fun computeLabelBoundsPx(
     val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
     val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
     val labelCollisionPadding = with(density) { 6.dp.toPx() }
-    val minPlateWidthPx = with(density) { 4.dp.toPx() }
+    val minPlateWidthPx = with(density) { MinPlateWidthDp.dp.toPx() }
+    val maxPlateWidthPx = with(density) { MaxPlateWidthDp.dp.toPx() }
     val textPaint = android.graphics.Paint().apply {
         textSize = labelTextSizePx
         isAntiAlias = true
@@ -191,7 +231,12 @@ private fun computeLabelBoundsPx(
     var minLeftX = Float.POSITIVE_INFINITY
     plateData.forEachIndexed { plateIndex, plateInfo ->
         val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
-        val plateWidth = scaledThickness.coerceAtLeast(minPlateWidthPx).coerceAtMost(sleeveX + sleeveWidth - currentX)
+        val plateWidth = constrainedPlateWidthPx(
+            scaledThicknessPx = scaledThickness,
+            minWidthPx = minPlateWidthPx,
+            maxWidthPx = maxPlateWidthPx,
+            remainingSleeveWidthPx = sleeveX + sleeveWidth - currentX,
+        )
         val plateCenterX = currentX + plateWidth / 2f
         val weightText = plateInfo.weight.compact()
         val labelWidth = textPaint.measureText(weightText)
@@ -484,7 +529,12 @@ fun PlatesPage(
         updatedState = updatedState,
         equipment = equipment,
         hapticsViewModel = hapticsViewModel,
-        onHeaderTap = { hapticsViewModel.doGentleVibration() }
+        loadedPlateConfigurations = remember(updatedState.plateChangeResult, equipment) {
+            viewModel.getLoadedPlateRouteOptionsForCurrentSet().map { it.startingPlates }
+        },
+        onSelectLoadedPlateConfiguration = { plates ->
+            viewModel.selectLoadedPlateConfiguration(plates)
+        },
     )
 }
 
@@ -494,9 +544,11 @@ private fun PlatesPageContent(
     updatedState: WorkoutState.Set,
     equipment: WeightLoadedEquipment?,
     hapticsViewModel: HapticsViewModel? = null,
-    onHeaderTap: () -> Unit = {},
+    loadedPlateConfigurations: List<List<Double>> = emptyList(),
+    onSelectLoadedPlateConfiguration: (List<Double>) -> Unit = {},
     animateSteps: Boolean = true
 ) {
+    var showLoadedPlatePicker by remember(updatedState.set.id) { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -518,70 +570,39 @@ private fun PlatesPageContent(
                 textAlign = TextAlign.Center
             )
         } else {
+            val currentSideWeightTotal = remember(updatedState.plateChangeResult!!.currentPlates) {
+                updatedState.plateChangeResult!!.currentPlates.sum().round(2)
+            }
+            val currentWeightTotal = remember(equipment.barWeight, currentSideWeightTotal) {
+                (equipment.barWeight + (currentSideWeightTotal * 2)).round(2)
+            }
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val previousSideWeightTotal =
-                    remember(updatedState.plateChangeResult!!.previousPlates) {
-                        updatedState.plateChangeResult!!.previousPlates.sum().round(2)
-                    }
-                val currentSideWeightTotal =
-                    remember(updatedState.plateChangeResult!!.currentPlates) {
-                        updatedState.plateChangeResult!!.currentPlates.sum().round(2)
-                    }
-
-                val previousWeightTotal = remember(
-                    equipment.barWeight,
-                    previousSideWeightTotal
-                ) { (equipment.barWeight + (previousSideWeightTotal * 2)).round(2) }
-                val currentWeightTotal = remember(
-                    equipment.barWeight,
-                    currentSideWeightTotal
-                ) { (equipment.barWeight + (currentSideWeightTotal * 2)).round(2) }
-
-                if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
-                    val baseStyle = MaterialTheme.typography.bodySmall
-                    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
-                            append("Target: ")
-                            append(formatWeight(equipment.barWeight))
-                            if (currentSideWeightTotal != 0.0) {
-                                append(" + (")
-                                append(formatWeight(currentSideWeightTotal))
-                                append(" × 2) = ")
-                                append(formatWeight(currentWeightTotal))
-                            }
-                        }
-                    }
-
-                    ScalableFadingText(
-                        text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.Normal),
-                        color = secondaryTextColor,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(20.dp)
+                    .clickable(
+                        enabled = loadedPlateConfigurations.size > 1,
+                        onClick = {
+                            hapticsViewModel?.doGentleVibration()
+                            showLoadedPlatePicker = true
+                        },
                     )
-                } else {
-                    val baseStyle = MaterialTheme.typography.bodySmall
-                    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
-                            append("Target: ")
-                            append(formatWeight(equipment.barWeight))
-                            if (currentSideWeightTotal != 0.0) {
-                                append(" + (")
-                                append(formatWeight(currentSideWeightTotal))
-                                append(" × 2) = ")
-                                append(formatWeight(currentWeightTotal))
-                            }
-                        }
-                    }
-
-                    ScalableFadingText(
-                        text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.Normal),
-                        color = secondaryTextColor
+                    .padding(horizontal = 25.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Target ${formatWeight(currentWeightTotal)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                )
+                if (loadedPlateConfigurations.size > 1) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Change loaded plates",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
@@ -615,9 +636,6 @@ private fun PlatesPageContent(
             val currentStepIndex = displayFrame.currentStepIndex
             val isFinalState = displayFrame.isFinalState
 
-            val stepSidePlateSum = remember(animatedPlates) {
-                animatedPlates.sum().round(2)
-            }
             val showStepIndicator = animateSteps && totalFrames > 1
 
             // Compute the maximum total plate thickness encountered across all configurations
@@ -731,7 +749,10 @@ private fun PlatesPageContent(
                         PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
                     }
                 }
-                val sleeveLength = equipment.sleeveLength.toFloat()
+                val sleeveLength = displayedSleeveLogicalLength(
+                    physicalSleeveLength = equipment.sleeveLength.toFloat(),
+                    maxPlateThickness = maxLogicalThickness,
+                )
                 val minimumContentWidthPx = viewportWidthPx + barbellStartPx
                 val labelBounds = remember(
                     plateDataForWidth,
@@ -773,9 +794,14 @@ private fun PlatesPageContent(
                 }
                 val contentWidth = with(density) { contentWidthPx.toDp() }
                 val maxScrollPx = (contentWidthPx - viewportWidthPx).coerceAtLeast(0f)
-                val labelOverflowPx = (labelBounds.right + labelRightPaddingPx - viewportWidthPx)
-                    .coerceAtLeast(0f)
-                val canPanHorizontally = labelOverflowPx > 0f
+                val visualBounds = LabelBoundsPx(
+                    left = minOf(plateBounds.left, labelBounds.left),
+                    right = maxOf(plateBounds.right, labelBounds.right + labelRightPaddingPx),
+                )
+                val canPanHorizontally = shouldEnableBarbellHorizontalPan(
+                    visualWidthPx = visualBounds.width,
+                    viewportWidthPx = viewportWidthPx,
+                )
                 val horizontalPanNestedScrollConnection = remember {
                     object : NestedScrollConnection {
                         override fun onPostScroll(
@@ -794,26 +820,34 @@ private fun PlatesPageContent(
                         }
                     }
                 }
-                val initialScrollTargetPx = remember(plateBounds, viewportWidthPx, maxScrollPx, canPanHorizontally) {
-                    if (canPanHorizontally) {
-                        resolveInitialBarbellScrollTargetPx(
-                            plateCenterPx = plateBounds.center,
-                            labelBoundsLeftPx = labelBounds.left,
-                            labelBoundsRightPx = labelBounds.right,
-                            viewportWidthPx = viewportWidthPx,
-                            maxScrollPx = maxScrollPx,
-                        )
-                    } else {
-                        0
-                    }
+                val initialScrollTargetPx = remember(visualBounds, viewportWidthPx, maxScrollPx) {
+                    resolveInitialBarbellScrollTargetPx(
+                        plateCenterPx = plateBounds.center,
+                        labelBoundsLeftPx = visualBounds.left,
+                        labelBoundsRightPx = visualBounds.right,
+                        viewportWidthPx = viewportWidthPx,
+                        maxScrollPx = maxScrollPx,
+                    )
                 }
                 val scrollState = rememberScrollState()
-                LaunchedEffect(plateChangeResult, contentWidthPx, initialScrollTargetPx) {
-                    scrollState.scrollTo(initialScrollTargetPx)
+                val availableScrollPx = scrollState.maxValue
+                LaunchedEffect(
+                    plateChangeResult,
+                    contentWidthPx,
+                    initialScrollTargetPx,
+                    availableScrollPx,
+                ) {
+                    scrollState.scrollTo(initialScrollTargetPx.coerceAtMost(availableScrollPx))
                 }
                 Box(
                     modifier = Modifier
-                        .nestedScroll(horizontalPanNestedScrollConnection)
+                        .then(
+                            if (canPanHorizontally) {
+                                Modifier.nestedScroll(horizontalPanNestedScrollConnection)
+                            } else {
+                                Modifier
+                            }
+                        )
                         .horizontalScroll(
                             state = scrollState,
                             enabled = canPanHorizontally
@@ -843,58 +877,25 @@ private fun PlatesPageContent(
                 }
                     }
 
-                    if (animateSteps && totalFrames > 1 && hapticsViewModel != null) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .weight(1f)
-                                    .clickable(enabled = userStepIndex > 0) {
-                                        hapticsViewModel.doGentleVibration()
-                                        userStepIndex -= 1
-                                    },
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                            ) {}
-                            Spacer(modifier = Modifier.fillMaxHeight().weight(1f))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .weight(1f)
-                                    .clickable(enabled = userStepIndex < totalFrames - 1) {
-                                        hapticsViewModel.doGentleVibration()
-                                        userStepIndex += 1
-                                    },
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                            ) {}
-                        }
-                    }
                 }
 
                 if (showStepIndicator) {
-                    val stepIndicatorStyle = MaterialTheme.typography.bodySmall
-                    val stepIndicatorColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 50.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                    PreviousNextNavigationHeader(
+                        canSelectPrevious = userStepIndex > 0,
+                        canSelectNext = userStepIndex < totalFrames - 1,
+                        onSelectPrevious = {
+                            hapticsViewModel?.doGentleVibration()
+                            userStepIndex -= 1
+                        },
+                        onSelectNext = {
+                            hapticsViewModel?.doGentleVibration()
+                            userStepIndex += 1
+                        },
                     ) {
                         Text(
-                            text = "Step: ${userStepIndex + 1}/$totalFrames",
-                            style = stepIndicatorStyle,
-                            color = stepIndicatorColor,
-                            textAlign = TextAlign.Center,
-                        )
-                        Text(
-                            text = "Side: ${formatWeight(stepSidePlateSum)}",
-                            style = stepIndicatorStyle,
-                            color = stepIndicatorColor,
+                            text = "Step ${userStepIndex + 1}/$totalFrames",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
                         )
                     }
@@ -902,7 +903,45 @@ private fun PlatesPageContent(
             }
         }
     }
+
+    LoadedPlateConfigurationPickerOverlay(
+        show = showLoadedPlatePicker,
+        options = loadedPlateConfigurations.map { plates ->
+            val normalizedPlates = plates.sortedDescending()
+            LoadedPlateConfigurationOption(
+                plates = normalizedPlates,
+                label = formatPlateConfigurationLabel(normalizedPlates),
+                isCurrent = normalizedPlates == updatedState.plateChangeResult
+                    ?.previousPlates
+                    ?.sortedDescending(),
+            )
+        },
+        onSelect = { plates ->
+            showLoadedPlatePicker = false
+            hapticsViewModel?.doGentleVibration()
+            onSelectLoadedPlateConfiguration(plates)
+        },
+        onDismiss = { showLoadedPlatePicker = false },
+    )
 }
+
+internal fun formatPlateConfigurationLabel(plates: List<Double>): String =
+    if (plates.isEmpty()) {
+        "Bar only"
+    } else {
+        plates.sortedDescending()
+            .groupBy { it }
+            .entries
+            .joinToString(" · ") { (weight, plates) ->
+                buildString {
+                    append(weight.compact())
+                    if (plates.size > 1) {
+                        append("×")
+                        append(plates.size)
+                    }
+                }
+            }
+    }
 
 @Composable
 private fun BarbellVisualization(
@@ -940,12 +979,10 @@ private fun BarbellVisualization(
         }
     }
 
-    val sleeveLength = barbell.sleeveLength.toFloat()
-    // Total logical thickness of the *current* plates on the sleeve (in the same unit as sleeveLength)
-    val currentTotalThickness = plateData.sumOf { it.thickness }.toFloat()
-    // Extra logical length reserved beyond the outermost plate so we always show a bit of empty sleeve.
-    // This is expressed as a fraction of the sleeve length per side and capped at non-negative.
-    val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
+    val sleeveLength = displayedSleeveLogicalLength(
+        physicalSleeveLength = barbell.sleeveLength.toFloat(),
+        maxPlateThickness = maxLogicalThickness ?: plateData.sumOf { it.thickness }.toFloat(),
+    )
     val maxPlateWeight = remember(plateData) {
         plateData.maxOfOrNull { it.weight } ?: 25.0
     }
@@ -1036,7 +1073,7 @@ private fun BarbellVisualization(
         val stopperX = shaftStartX + shaftLength
         val sleeveX = stopperX + spacing + stopperWidth + spacing
         val sleeveWidth = canvasWidth - sleeveX - paddingEnd
-        // Scale against the full physical sleeve length so plate thickness remains proportional.
+        // Scale against the cropped visual sleeve length so only a small empty end remains visible.
         val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
         val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
 
@@ -1133,9 +1170,12 @@ private fun BarbellVisualization(
 
         plateData.forEachIndexed { plateIndex, plateInfo ->
             val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
-            val plateWidth = scaledThickness
-                .coerceAtLeast(4.dp.toPx())
-                .coerceAtMost(sleeveX + sleeveWidth - currentX)
+            val plateWidth = constrainedPlateWidthPx(
+                scaledThicknessPx = scaledThickness,
+                minWidthPx = MinPlateWidthDp.dp.toPx(),
+                maxWidthPx = MaxPlateWidthDp.dp.toPx(),
+                remainingSleeveWidthPx = sleeveX + sleeveWidth - currentX,
+            )
 
             val minHeightRatio = 0.3f
             val weightRatio = sqrt(
@@ -1245,61 +1285,84 @@ private data class PlateData(
     val thickness: Double
 )
 
-@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
+@Preview(
+    name = "Final plate configuration",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true,
+)
 @Composable
 private fun PlatesPagePreview() {
-    val previewBarbell = Barbell(
-        id = UUID.randomUUID(),
-        name = "Preview Barbell",
-        availablePlates = listOf(
-            Plate(20.0, 20.0),
-            Plate(20.0, 20.0),
-            Plate(10.0, 15.0),
-            Plate(10.0, 15.0),
-            Plate(5.0, 10.0),
-            Plate(5.0, 10.0),
-            Plate(2.5, 5.0),
-            Plate(2.5, 5.0)
-        ),
-        sleeveLength = 200,
-        barWeight = 20.0
-    )
-    val previewPlateChangeResult = PlateCalculator.Companion.PlateChangeResult(
-        change = PlateCalculator.Companion.PlateChange(
-            from = 60.0,
-            to = 100.0,
-            steps = listOf(
-                PlateCalculator.Companion.PlateStep(
-                    action = PlateCalculator.Companion.Action.ADD,
-                    weight = 10.0
-                ),
-                PlateCalculator.Companion.PlateStep(
-                    action = PlateCalculator.Companion.Action.ADD,
-                    weight = 10.0
-                )
-            )
-        ),
-        previousPlates = listOf(20.0),
-        currentPlates = listOf(20.0, 10.0)
-    )
+    PlatesPagePreviewContent(animateSteps = false)
+}
+
+@Preview(
+    name = "Plate change steps",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true,
+)
+@Composable
+private fun PlatesPageStepsPreview() {
+    PlatesPagePreviewContent(animateSteps = true)
+}
+
+@Composable
+private fun PlatesPagePreviewContent(animateSteps: Boolean) {
+    val previewBarbell = remember {
+        Barbell(
+            id = UUID.randomUUID(),
+            name = "Preview Barbell",
+            availablePlates = listOf(
+                Plate(20.0, 20.0),
+                Plate(20.0, 20.0),
+                Plate(10.0, 15.0),
+                Plate(10.0, 15.0),
+                Plate(5.0, 10.0),
+                Plate(5.0, 10.0),
+                Plate(2.5, 5.0),
+                Plate(2.5, 5.0)
+            ),
+            sleeveLength = 200,
+            barWeight = 20.0
+        )
+    }
+    val previewRouteOptions = remember(previewBarbell) {
+        PlateCalculator.calculateStartingPlateRouteOptions(
+            availablePlates = previewBarbell.availablePlates.map { it.weight },
+            startingWeight = 100.0,
+            targetWeights = listOf(90.0),
+            barWeight = previewBarbell.barWeight,
+        )
+    }
+    var previewPlateChangeResult by remember(previewRouteOptions) {
+        mutableStateOf(
+            previewRouteOptions
+                .first { it.startingPlates == listOf(20.0, 10.0, 10.0) }
+                .plateChangeResults
+                .single()
+        )
+    }
     val previewSetDataState = remember {
         mutableStateOf(
             WeightSetData(
                 actualReps = 5,
-                actualWeight = 100.0,
-                volume = 500.0,
+                actualWeight = 90.0,
+                volume = 450.0,
                 subCategory = SetSubCategory.WorkSet
             ) as SetData
         )
     }
-    val previewState = WorkoutState.Set(
-        exerciseId = UUID.randomUUID(),
-        set = WeightSet(
+    val previewExerciseId = remember { UUID.randomUUID() }
+    val previewSet = remember {
+        WeightSet(
             id = UUID.randomUUID(),
             reps = 5,
-            weight = 100.0,
+            weight = 90.0,
             subCategory = SetSubCategory.WorkSet
-        ),
+        )
+    }
+    val previewState = WorkoutState.Set(
+        exerciseId = previewExerciseId,
+        set = previewSet,
         setIndex = 0u,
         previousSetData = null,
         currentSetDataState = previewSetDataState,
@@ -1317,7 +1380,14 @@ private fun PlatesPagePreview() {
         PlatesPageContent(
             updatedState = previewState,
             equipment = previewBarbell,
-            animateSteps = false
+            loadedPlateConfigurations = previewRouteOptions.map { it.startingPlates },
+            onSelectLoadedPlateConfiguration = { selectedPlates ->
+                previewPlateChangeResult = previewRouteOptions
+                    .first { it.startingPlates == selectedPlates.sortedDescending() }
+                    .plateChangeResults
+                    .single()
+            },
+            animateSteps = animateSteps,
         )
     }
 }
