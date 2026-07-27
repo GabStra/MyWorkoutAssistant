@@ -186,6 +186,61 @@ class CrossDeviceWorkoutFlowHelper(
         }
     }
 
+    fun completeCalibrationSupersetWorkoutFlow(
+        expectedCalibrationCount: Int,
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+    ) {
+        var calibrationLoadCount = 0
+        var calibrationRirCount = 0
+        var completedSetCount = 0
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) break
+
+            when {
+                isCalibrationLoadScreenVisible() -> {
+                    calibrationLoadCount++
+                    device.pressBack()
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                }
+                isCalibrationRirScreenVisible() -> {
+                    calibrationRirCount++
+                    device.pressBack()
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                }
+                isRestScreenVisible() -> {
+                    if (!runCatching {
+                            workoutDriver.skipRest(timeoutMs = 4_000)
+                            true
+                        }.getOrDefault(false)
+                    ) {
+                        waitForRestAutoAdvance(E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
+                    }
+                }
+                isWeightSetScreenVisible() -> {
+                    workoutDriver.completeCurrentSet(timeoutMs = 10_000)
+                    completedSetCount++
+                }
+                else -> sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
+
+        require(isCompletionVisible() || isCompletionStateFromViewModel()) {
+            "Calibration superset did not complete. loads=$calibrationLoadCount " +
+                "rirs=$calibrationRirCount sets=$completedSetCount"
+        }
+        require(calibrationLoadCount == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount load selections, saw $calibrationLoadCount."
+        }
+        require(calibrationRirCount == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount RIR selections, saw $calibrationRirCount."
+        }
+        require(completedSetCount == expectedCalibrationCount * 2) {
+            "Expected ${expectedCalibrationCount * 2} completed sets, saw $completedSetCount."
+        }
+    }
+
     private fun isWeightSetScreenVisible(): Boolean {
         return waitForAny(
             timeoutMs = 1_000,
