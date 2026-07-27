@@ -21,6 +21,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
@@ -62,6 +64,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
+import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
@@ -402,6 +405,11 @@ fun MyWorkoutAssistantNavHost(
     var hasHealthPermissions by remember { mutableStateOf(false) }
     var showPrerequisitesDialog by remember { mutableStateOf(false) }
     var deferHealthPermissionPrompt by remember { mutableStateOf(true) }
+    var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
+    var isRestoringBackup by remember { mutableStateOf(false) }
+    val manualSyncUiState by PhoneToWatchSyncCoordinator.manualSyncUiState.collectAsState()
+    val isSyncing = manualSyncUiState != null
+    val isSyncingToWatch by PhoneToWatchSyncCoordinator.isSyncingToWatch.collectAsState()
 
     suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
         val grantedPermissions = try {
@@ -414,8 +422,8 @@ fun MyWorkoutAssistantNavHost(
         appViewModel.setHealthPermissions(hasHealthPermissions)
         appViewModel.setHealthPermissionsChecked()
 
-        if (showDialogWhenMissing) {
-            showPrerequisitesDialog = !hasHealthPermissions && !deferHealthPermissionPrompt
+        if (hasHealthPermissions) {
+            showPrerequisitesDialog = false
         }
     }
 
@@ -483,12 +491,26 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    val manualSyncUiState by PhoneToWatchSyncCoordinator.manualSyncUiState.collectAsState()
-    val isSyncing = manualSyncUiState != null
     var isExportingWorkoutDataForLlm by remember { mutableStateOf(false) }
     var workoutDataExportStatus by remember { mutableStateOf("Exporting workout data...") }
 
-    if (showPrerequisitesDialog) {
+    LaunchedEffect(
+        hasHealthPermissions,
+        deferHealthPermissionPrompt,
+        showStartupRestorePickerPrompt,
+        isRestoringBackup,
+        isSyncing,
+    ) {
+        showPrerequisitesDialog = shouldShowStartupPrerequisitesDialog(
+            hasHealthPermissions = hasHealthPermissions,
+            deferHealthPermissionPrompt = deferHealthPermissionPrompt,
+            isRestorePromptVisible = showStartupRestorePickerPrompt,
+            isRestoringBackup = isRestoringBackup,
+            isSyncingWithWatch = isSyncing,
+        )
+    }
+
+    if (showPrerequisitesDialog && !isSyncing && !isRestoringBackup) {
         StandardDialog(
             onDismissRequest = {},
             title = "Permissions required",
@@ -871,10 +893,10 @@ fun MyWorkoutAssistantNavHost(
                         // Show the success toast after all operations are complete
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
-                    // Ensure any pending save is persisted, then force the same manual
-                    // "Sync with watch" path (AppBackup worker), not passive debounce flow.
+                    // Persist the restored state and enqueue the normal non-blocking sync path.
+                    // Only an explicit user action should opt into the blocking manual-sync UI.
                     appViewModel.flushWorkoutSave(context)
-                    PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
+                    PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
                     true
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
@@ -927,12 +949,8 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
-    var isRestoringBackup by remember { mutableStateOf(false) }
-
     fun resolveStartupRestoreGate() {
         deferHealthPermissionPrompt = false
-        showPrerequisitesDialog = !hasHealthPermissions
     }
 
     LaunchedEffect(initialDataLoaded) {
@@ -1255,11 +1273,12 @@ fun MyWorkoutAssistantNavHost(
     if (!isInitialDataLoaded || isRestoringBackup) {
         LoadingScreen()
     } else {
-        AnimatedContent(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            targetState = appViewModel.currentScreenData,
+        Box(modifier = Modifier.fillMaxSize()) {
+            AnimatedContent(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                targetState = appViewModel.currentScreenData,
             // Keep AnimatedContent's notion of screen identity aligned with SaveableStateHolder.
             // Equivalent ScreenData instances can be new objects, but they must not register
             // duplicate saveable-state buckets while both old/new content are composed.
@@ -3057,6 +3076,13 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
 
+            }
+            SyncStatusBadge(
+                visible = isSyncingToWatch && !isSyncing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(2f),
+            )
         }
     }
 }

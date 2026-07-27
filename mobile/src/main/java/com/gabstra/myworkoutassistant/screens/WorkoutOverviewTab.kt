@@ -540,11 +540,10 @@ private fun WorkoutSessionActionCard(
                         text = IncompleteWorkoutStrings.DISCARD_BUTTON,
                         onClick = onRequestDeleteIncompleteWorkout
                     )
-                    AppPrimaryOutlinedButton(
+                    AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
-                        onClick = onRequestClearAllIncompleteSessions,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        onClick = onRequestClearAllIncompleteSessions
                     )
                 }
             }

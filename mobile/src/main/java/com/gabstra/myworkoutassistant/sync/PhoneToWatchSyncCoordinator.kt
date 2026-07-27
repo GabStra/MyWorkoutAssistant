@@ -64,6 +64,8 @@ object PhoneToWatchSyncCoordinator {
     val manualSyncProgress = _manualSyncProgress.asStateFlow()
     private val _manualSyncUiState = MutableStateFlow<ManualSyncUiState?>(null)
     val manualSyncUiState = _manualSyncUiState.asStateFlow()
+    private val _isSyncingToWatch = MutableStateFlow(false)
+    val isSyncingToWatch = _isSyncingToWatch.asStateFlow()
 
     private var installed = false
 
@@ -137,6 +139,7 @@ object PhoneToWatchSyncCoordinator {
                 .collect { infos ->
                     val running = infos.any { it.state == WorkInfo.State.RUNNING }
                     isWorkerRunning.set(running)
+                    _isSyncingToWatch.value = running
                 }
         }
         scope.launch {
