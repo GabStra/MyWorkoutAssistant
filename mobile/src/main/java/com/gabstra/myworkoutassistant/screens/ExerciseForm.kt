@@ -109,6 +109,15 @@ private fun getExerciseTypeDescriptions(): List<String> {
     return ExerciseType.values().map { it.toReadableString() }
 }
 
+private fun formatPercentage(value: Double): String {
+    val roundedValue = value.round(2)
+    return if (roundedValue % 1.0 == 0.0) {
+        roundedValue.toInt().toString()
+    } else {
+        roundedValue.toString()
+    }
+}
+
 @Composable
 private fun SwitchSettingRow(
     title: String,
@@ -189,7 +198,7 @@ fun ExerciseForm(
     var movementJson by remember(exercise?.id) { mutableStateOf<String?>(null) }
     var movementError by remember(exercise?.id) { mutableStateOf<String?>(null) }
     var isMovementLoading by remember { mutableStateOf(false) }
-    var expandedMovement by rememberSaveable { mutableStateOf(exercise?.movementRef != null) }
+    var expandedMovement by rememberSaveable { mutableStateOf(false) }
 
     // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
     val isUnilateral = rememberSaveable {
@@ -228,7 +237,7 @@ fun ExerciseForm(
         mutableStateOf(exercise?.deloadWeightFactor == null)
     }
     val deloadWeightFactorState = rememberSaveable {
-        mutableStateOf(exercise?.deloadWeightFactor?.toString() ?: "")
+        mutableStateOf(exercise?.deloadWeightFactor?.let { formatPercentage(it * 100) } ?: "")
     }
     val useGlobalDeloadRepsDrop = rememberSaveable {
         mutableStateOf(exercise?.deloadRepsDrop == null)
@@ -338,7 +347,11 @@ fun ExerciseForm(
             )).copy(
                 deloadFailedSessionsThreshold = if (useGlobalDeloadFailedThreshold.value) null else deloadFailedSessionsThresholdState.value.toIntOrNull(),
                 deloadCompletedSessionsInterval = if (useGlobalDeloadCompletedInterval.value) null else deloadCompletedSessionsIntervalState.value.toIntOrNull(),
-                deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) null else deloadWeightFactorState.value.toDoubleOrNull(),
+                deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) {
+                    null
+                } else {
+                    deloadWeightFactorState.value.toDoubleOrNull()?.div(100)
+                },
                 deloadRepsDrop = if (useGlobalDeloadRepsDrop.value) null else deloadRepsDropState.value.toIntOrNull(),
                 deloadCutSetsTo = if (useGlobalDeloadCutSetsTo.value) null else deloadCutSetsToState.value.toIntOrNull()
             )
@@ -371,6 +384,7 @@ fun ExerciseForm(
     var resetMuscleMapTrigger by remember { mutableIntStateOf(0) }
 
     var expandedWarmupProgression by rememberSaveable { mutableStateOf(false) }
+    var expandedDeloadOverrides by rememberSaveable { mutableStateOf(false) }
     var expandedCalibration by rememberSaveable { mutableStateOf(false) }
     var expandedEquipment by rememberSaveable { mutableStateOf(false) }
     var expandedTargetMuscles by rememberSaveable { mutableStateOf(false) }
@@ -946,133 +960,6 @@ fun ExerciseForm(
                                 )
                             }
 
-                            StyledCard(modifier = Modifier.fillMaxWidth()) {
-                                Column(
-                                    modifier = Modifier.padding(Spacing.md),
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
-                                ) {
-                                    Text(
-                                        text = "Deload",
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                    Text(
-                                        text = "Resolved: fail ${resolvedDeloadConfig.failedSessionsThreshold ?: "off"}, complete ${resolvedDeloadConfig.completedSessionsInterval ?: "off"}, weight ${resolvedDeloadConfig.weightFactor}, reps -${resolvedDeloadConfig.repsDrop}, sets ${resolvedDeloadConfig.cutSetsTo ?: "keep all"}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-
-                                    SwitchSettingRow(
-                                        title = "Use global failed-session threshold",
-                                        subtitle = "Global: ${globalDeloadConfig.failedSessionsThreshold ?: "disabled"}",
-                                        checked = useGlobalDeloadFailedThreshold.value,
-                                        onCheckedChange = { useGlobalDeloadFailedThreshold.value = it }
-                                    )
-                                    if (!useGlobalDeloadFailedThreshold.value) {
-                                        OutlinedTextField(
-                                            value = deloadFailedSessionsThresholdState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadFailedSessionsThresholdState.value = input
-                                                }
-                                            },
-                                            label = { Text("Failed sessions threshold") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global completed-session interval",
-                                        subtitle = "Global: ${globalDeloadConfig.completedSessionsInterval ?: "disabled"}",
-                                        checked = useGlobalDeloadCompletedInterval.value,
-                                        onCheckedChange = { useGlobalDeloadCompletedInterval.value = it }
-                                    )
-                                    if (!useGlobalDeloadCompletedInterval.value) {
-                                        OutlinedTextField(
-                                            value = deloadCompletedSessionsIntervalState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadCompletedSessionsIntervalState.value = input
-                                                }
-                                            },
-                                            label = { Text("Completed sessions interval") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global deload weight factor",
-                                        subtitle = "Global: ${globalDeloadConfig.weightFactor}",
-                                        checked = useGlobalDeloadWeightFactor.value,
-                                        onCheckedChange = { useGlobalDeloadWeightFactor.value = it }
-                                    )
-                                    if (!useGlobalDeloadWeightFactor.value) {
-                                        OutlinedTextField(
-                                            value = deloadWeightFactorState.value,
-                                            onValueChange = { input ->
-                                                if (
-                                                    input.isEmpty() ||
-                                                    (input.count { it == '.' } <= 1 &&
-                                                        input.all { it.isDigit() || it == '.' } &&
-                                                        !input.startsWith("."))
-                                                ) {
-                                                    deloadWeightFactorState.value = input
-                                                }
-                                            },
-                                            label = { Text("Deload weight factor") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global deload reps drop",
-                                        subtitle = "Global: ${globalDeloadConfig.repsDrop}",
-                                        checked = useGlobalDeloadRepsDrop.value,
-                                        onCheckedChange = { useGlobalDeloadRepsDrop.value = it }
-                                    )
-                                    if (!useGlobalDeloadRepsDrop.value) {
-                                        OutlinedTextField(
-                                            value = deloadRepsDropState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadRepsDropState.value = input
-                                                }
-                                            },
-                                            label = { Text("Deload reps drop") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global cut-sets target",
-                                        subtitle = "Global: ${globalDeloadConfig.cutSetsTo ?: "keep all"}",
-                                        checked = useGlobalDeloadCutSetsTo.value,
-                                        onCheckedChange = { useGlobalDeloadCutSetsTo.value = it }
-                                    )
-                                    if (!useGlobalDeloadCutSetsTo.value) {
-                                        OutlinedTextField(
-                                            value = deloadCutSetsToState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadCutSetsToState.value = input
-                                                }
-                                            },
-                                            label = { Text("Cut sets to") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    Text(
-                                        text = "If both trigger thresholds resolve to blank, automatic deload is disabled for this exercise.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -1175,28 +1062,196 @@ fun ExerciseForm(
                 Spacer(Modifier.height(Spacing.md))
             }
 
-                FormSectionTitle(text = "Advanced")
-                Spacer(Modifier.height(Spacing.xs))
+                val showDeloadOverrides =
+                    progressionMode.value != ProgressionMode.OFF &&
+                        (selectedExerciseType.value == ExerciseType.WEIGHT ||
+                            selectedExerciseType.value == ExerciseType.BODY_WEIGHT)
+                val showCalibration =
+                    selectedExerciseType.value == ExerciseType.WEIGHT ||
+                        (selectedExerciseType.value == ExerciseType.BODY_WEIGHT &&
+                            selectedEquipmentId.value != null &&
+                            selectedEquipmentId.value != viewModel.GENERIC_ID)
+
+                if (showDeloadOverrides || showCalibration) {
+                    FormSectionTitle(text = "Advanced")
+                    Spacer(Modifier.height(Spacing.xs))
+                }
+
+                if (showDeloadOverrides) {
+                    val deloadSummary =
+                        "Failed sessions before deload: ${resolvedDeloadConfig.failedSessionsThreshold ?: "Off"}\n" +
+                            "Completed sessions between deloads: ${resolvedDeloadConfig.completedSessionsInterval ?: "Off"}\n" +
+                            "Deload weight: ${formatPercentage(resolvedDeloadConfig.weightFactor * 100)}%\n" +
+                            "Reps removed from each set: ${resolvedDeloadConfig.repsDrop}\n" +
+                            "Work sets performed: ${resolvedDeloadConfig.cutSetsTo ?: "All"}"
+                    CollapsibleSection(
+                        title = "Deload overrides",
+                        summary = deloadSummary,
+                        expanded = expandedDeloadOverrides,
+                        onToggle = { expandedDeloadOverrides = !expandedDeloadOverrides }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                            Text(
+                                text = "Override the global deload defaults for this exercise only.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Text(
+                                text = "When to deload",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Failed sessions before deload: ${globalDeloadConfig.failedSessionsThreshold ?: "Off"}",
+                                checked = useGlobalDeloadFailedThreshold.value,
+                                onCheckedChange = { useGlobalDeloadFailedThreshold.value = it }
+                            )
+                            if (!useGlobalDeloadFailedThreshold.value) {
+                                OutlinedTextField(
+                                    value = deloadFailedSessionsThresholdState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadFailedSessionsThresholdState.value = input
+                                        }
+                                    },
+                                    label = { Text("Failed sessions before deload") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Completed sessions between deloads: ${globalDeloadConfig.completedSessionsInterval ?: "Off"}",
+                                checked = useGlobalDeloadCompletedInterval.value,
+                                onCheckedChange = { useGlobalDeloadCompletedInterval.value = it }
+                            )
+                            if (!useGlobalDeloadCompletedInterval.value) {
+                                OutlinedTextField(
+                                    value = deloadCompletedSessionsIntervalState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadCompletedSessionsIntervalState.value = input
+                                        }
+                                    },
+                                    label = { Text("Completed sessions between deloads") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            Text(
+                                text = "Deload adjustments",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Deload weight: ${formatPercentage(globalDeloadConfig.weightFactor * 100)}%",
+                                checked = useGlobalDeloadWeightFactor.value,
+                                onCheckedChange = { useGlobalDeloadWeightFactor.value = it }
+                            )
+                            if (!useGlobalDeloadWeightFactor.value) {
+                                OutlinedTextField(
+                                    value = deloadWeightFactorState.value,
+                                    onValueChange = { input ->
+                                        if (
+                                            input.isEmpty() ||
+                                            (input.count { it == '.' } <= 1 &&
+                                                input.all { it.isDigit() || it == '.' } &&
+                                                !input.startsWith(".") &&
+                                                (input.toDoubleOrNull() ?: 0.0) <= 100.0)
+                                        ) {
+                                            deloadWeightFactorState.value = input
+                                        }
+                                    },
+                                    label = { Text("Deload weight (%)") },
+                                    supportingText = { Text("Percentage of the normal working weight.") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Reps removed from each set: ${globalDeloadConfig.repsDrop}",
+                                checked = useGlobalDeloadRepsDrop.value,
+                                onCheckedChange = { useGlobalDeloadRepsDrop.value = it }
+                            )
+                            if (!useGlobalDeloadRepsDrop.value) {
+                                OutlinedTextField(
+                                    value = deloadRepsDropState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadRepsDropState.value = input
+                                        }
+                                    },
+                                    label = { Text("Reps removed from each set") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Work sets performed: ${globalDeloadConfig.cutSetsTo ?: "All"}",
+                                checked = useGlobalDeloadCutSetsTo.value,
+                                onCheckedChange = { useGlobalDeloadCutSetsTo.value = it }
+                            )
+                            if (!useGlobalDeloadCutSetsTo.value) {
+                                OutlinedTextField(
+                                    value = deloadCutSetsToState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadCutSetsToState.value = input
+                                        }
+                                    },
+                                    label = { Text("Work sets performed during deload") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            Text(
+                                text = "A deload starts when either trigger shown above is reached. If both show Off, automatic deload is off for this exercise.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(Spacing.md))
+                }
+
                 // ----- Calibration -----
-                if (selectedExerciseType.value == ExerciseType.WEIGHT ||
-                    (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
+                if (showCalibration) {
                     CollapsibleSection(
                         title = "Calibration",
                         summary = "Calibration mode: ${if (requiresLoadCalibration.value) "On" else "Off"}",
                         expanded = expandedCalibration,
                         onToggle = { expandedCalibration = !expandedCalibration }
                     ) {
-                        SwitchSettingRow(
-                            title = "Use Calibration mode",
-                            subtitle = "Weight will be determined by a calibration set before the first work set.",
-                            checked = requiresLoadCalibration.value,
-                            onCheckedChange = {
-                                requiresLoadCalibration.value = it
-                                if (it) {
-                                    progressionMode.value = ProgressionMode.OFF
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                            Text(
+                                text = "Use calibration when you do not yet know a reliable working weight for this exercise. At the start of the workout, the watch asks you to choose a load, complete a calibration set, and report your reps in reserve (RIR). It then adjusts the load for the remaining work sets and turns calibration off for future sessions.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            SwitchSettingRow(
+                                title = "Use Calibration mode",
+                                subtitle = "Run this setup once before the first work set.",
+                                checked = requiresLoadCalibration.value,
+                                onCheckedChange = {
+                                    requiresLoadCalibration.value = it
+                                    if (it) {
+                                        progressionMode.value = ProgressionMode.OFF
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                     Spacer(Modifier.height(Spacing.md))
                 }
@@ -1279,7 +1334,7 @@ fun ExerciseForm(
                         val deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) {
                             null
                         } else {
-                            deloadWeightFactorState.value.toDoubleOrNull()
+                            deloadWeightFactorState.value.toDoubleOrNull()?.div(100)
                         }
                         val deloadRepsDrop = if (useGlobalDeloadRepsDrop.value) {
                             null

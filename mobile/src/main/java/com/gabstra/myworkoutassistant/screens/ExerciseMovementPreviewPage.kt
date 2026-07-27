@@ -1,9 +1,17 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,8 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
-import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
@@ -29,41 +38,74 @@ private const val MaximumMovementRetryDelayMillis = 1_000L
 private const val MovementLoopRestartFadeMillis = 250
 
 @Composable
-fun ExerciseMovementCard(
+fun ExerciseMovementAction(
     exercise: Exercise,
     modifier: Modifier = Modifier,
     title: String = "Movement",
 ) {
     val movementRef = exercise.movementRef ?: return
-    val context = LocalContext.current
-    val movementJson by produceState<String?>(initialValue = null, movementRef) {
-        var retryDelayMillis = InitialMovementRetryDelayMillis
-        while (true) {
-            val loadedJson = withContext(Dispatchers.IO) {
-                ExerciseMovementStorage.readMovementJson(context, movementRef)
-            }
-            if (loadedJson != null) {
-                value = loadedJson
-                return@produceState
-            }
-            delay(retryDelayMillis)
-            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MaximumMovementRetryDelayMillis)
-        }
-    }
+    var showPreview by remember(exercise.id) { mutableStateOf(false) }
 
-    var expanded by remember(exercise.id) { mutableStateOf(true) }
-    CollapsibleSection(
-        title = title,
-        summary = "Movement: ${movementRef.movementId}",
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
-        modifier = modifier,
-    ) {
-        ExerciseMovementPreviewPage(
-            movementJson = movementJson,
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f),
+                .clickable { showPreview = true }
+                .padding(vertical = Spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "View movement",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = "View $title",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+
+    if (showPreview) {
+        val context = LocalContext.current
+        val movementJson by produceState<String?>(initialValue = null, movementRef) {
+            var retryDelayMillis = InitialMovementRetryDelayMillis
+            while (true) {
+                val loadedJson = withContext(Dispatchers.IO) {
+                    ExerciseMovementStorage.readMovementJson(context, movementRef)
+                }
+                if (loadedJson != null) {
+                    value = loadedJson
+                    return@produceState
+                }
+                delay(retryDelayMillis)
+                retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MaximumMovementRetryDelayMillis)
+            }
+        }
+        StandardDialog(
+            onDismissRequest = { showPreview = false },
+            title = title,
+            body = {
+                ExerciseMovementPreviewPage(
+                    movementJson = movementJson,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
+                )
+            },
+            dismissText = "Close",
+            onDismissButton = { showPreview = false },
+            showConfirm = false,
+            showDismiss = true,
         )
     }
 }

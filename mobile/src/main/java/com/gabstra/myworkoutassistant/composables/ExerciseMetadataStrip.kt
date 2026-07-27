@@ -1,14 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,8 +17,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
@@ -188,7 +183,6 @@ fun ExerciseMetadataStrip(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EquipmentAccessoryMetadata(
     equipmentName: String?,
@@ -200,41 +194,38 @@ fun EquipmentAccessoryMetadata(
 
     if (equipment == null && accessories.isEmpty()) return
 
-    FlowRow(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(
-            space = Spacing.xs,
-            alignment = Alignment.CenterHorizontally,
-        ),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
         if (equipment != null) {
-            MetadataChip(label = "Equipment", value = equipment)
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                        append("Equipment: ")
+                    }
+                    append(equipment)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
         }
-        accessories.forEach { accessory ->
-            MetadataChip(label = "Accessory", value = accessory)
+        if (accessories.isNotEmpty()) {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                        append("Accessories: ")
+                    }
+                    append(accessories.joinToString(" · "))
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
-    }
-}
-
-@Composable
-private fun MetadataChip(
-    label: String,
-    value: String,
-) {
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant
-        ),
-    ) {
-        Text(
-            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-            text = "$label: $value",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }

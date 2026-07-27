@@ -2061,6 +2061,7 @@ fun MyWorkoutAssistantNavHost(
 
                         var isSaving by remember { mutableStateOf(false) }
                         SupersetForm(
+                            viewModel = appViewModel,
                             onSupersetUpsert = { newSuperset ->
                                 if (isSaving) return@SupersetForm
                                 isSaving = true
@@ -2220,6 +2221,7 @@ fun MyWorkoutAssistantNavHost(
                         } else {
                             var isSaving by remember { mutableStateOf(false) }
                             SupersetForm(
+                                viewModel = appViewModel,
                                 onSupersetUpsert = { updatedSuperset ->
                                     if (isSaving) return@SupersetForm
                                     isSaving = true
@@ -2257,6 +2259,14 @@ fun MyWorkoutAssistantNavHost(
                                 },
                                 availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
                                 superset = selectedSuperset,
+                                onExerciseSettingsClick = { exercise ->
+                                    appViewModel.setScreenData(
+                                        ScreenData.EditExercise(
+                                            workoutId = selectedWorkout.id,
+                                            selectedExerciseId = exercise.id
+                                        )
+                                    )
+                                },
                                 isSaving = isSaving
                             )
                         }

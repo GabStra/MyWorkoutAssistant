@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -44,6 +45,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
@@ -64,6 +66,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAssemblyService
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildSetDisplayIdentifier
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutRestRowLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
@@ -77,10 +80,12 @@ import java.util.UUID
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SupersetForm(
+    viewModel: AppViewModel,
     onSupersetUpsert: (Superset) -> Unit,
     onCancel: () -> Unit,
     availableExercises: List<Exercise>,
     superset: Superset? = null,
+    onExerciseSettingsClick: ((Exercise) -> Unit)? = null,
     isSaving: Boolean = false
 ) {
 
@@ -106,7 +111,6 @@ fun SupersetForm(
     }
     var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
     var showAddExerciseDialog by remember { mutableStateOf(false) }
-    var showExerciseMovements by remember { mutableStateOf(false) }
     var pendingExerciseIds by remember { mutableStateOf<Set<UUID>>(emptySet()) }
     val exercisesToShow = remember(availableExercises, superset) {
         (availableExercises + (superset?.exercises ?: emptyList())).distinctBy { it.id }
@@ -253,7 +257,9 @@ fun SupersetForm(
                                             .fillMaxWidth()
                                             .combinedClickable(
                                                 onClick = {
-                                                    if (selectedExerciseId != null) {
+                                                    if (onExerciseSettingsClick != null) {
+                                                        onExerciseSettingsClick(exercise)
+                                                    } else if (selectedExerciseId != null) {
                                                         selectedExerciseId = if (isSelected) null else exercise.id
                                                     }
                                                 },
@@ -263,17 +269,33 @@ fun SupersetForm(
                                             ),
                                         borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(Spacing.md),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(Spacing.md),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                modifier = Modifier.fillMaxWidth(),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = if (onExerciseSettingsClick != null) Spacing.xl else 0.dp),
                                                 text = exercise.name,
                                                 style = MaterialTheme.typography.bodyLarge,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                textAlign = TextAlign.Center
                                             )
+                                            if (onExerciseSettingsClick != null) {
+                                                Icon(
+                                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                                    imageVector = Icons.Filled.Edit,
+                                                    contentDescription = "Edit ${exercise.name}",
+                                                    tint = if (isSelected) {
+                                                        MaterialTheme.colorScheme.primary
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -283,6 +305,7 @@ fun SupersetForm(
                         }
 
                         AppPrimaryOutlinedButton(
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
                             text = "Add exercise",
                             onClick = {
                                 pendingExerciseIds = emptySet()
@@ -371,25 +394,22 @@ fun SupersetForm(
                         enabled = true
                     )
                 }
-                SupersetExecutionPreview(previewSuperset)
+                SupersetExecutionPreview(
+                    superset = previewSuperset,
+                    viewModel = viewModel,
+                )
             }
 
             val exercisesWithMovements = selectedExercises.filter { it.movementRef != null }
             if (exercisesWithMovements.isNotEmpty()) {
                 Spacer(Modifier.height(Spacing.md))
-                CollapsibleSection(
-                    title = "Exercise movements",
-                    summary = "${exercisesWithMovements.size} available",
-                    expanded = showExerciseMovements,
-                    onToggle = { showExerciseMovements = !showExerciseMovements }
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                        exercisesWithMovements.forEach { exercise ->
-                            ExerciseMovementCard(
-                                exercise = exercise,
-                                title = "${exercise.name} movement",
-                            )
-                        }
+                FormSectionTitle(text = "Exercise movements")
+                Column {
+                    exercisesWithMovements.forEach { exercise ->
+                        ExerciseMovementAction(
+                            exercise = exercise,
+                            title = exercise.name,
+                        )
                     }
                 }
             }
@@ -519,9 +539,17 @@ fun SupersetForm(
 }
 
 @Composable
-private fun SupersetExecutionPreview(superset: Superset) {
-    val previewStates = remember(superset) {
-        WorkoutSupersetAssemblyService().assemblePreviewChildStates(superset)
+private fun SupersetExecutionPreview(
+    superset: Superset,
+    viewModel: AppViewModel,
+) {
+    val previewStates = remember(superset, viewModel.workoutStore) {
+        WorkoutSupersetAssemblyService().assemblePreparedPreviewChildStates(
+            superset = superset,
+            bodyWeightKg = viewModel.workoutStore.weightKg,
+            getEquipmentById = viewModel::getEquipmentById,
+            getAvailableTotals = { equipment -> equipment.getWeightsCombinations() },
+        )
     }
     val exerciseIndexById = remember(superset.exercises) {
         superset.exercises.mapIndexed { index, exercise -> exercise.id to index }.toMap()
@@ -541,11 +569,11 @@ private fun SupersetExecutionPreview(superset: Superset) {
                     }
                     val counter = counters[counterKey] ?: 1
                     val prefix = toSupersetLetter(exerciseIndex)
-                    val baseIdentifier = when (counterKind) {
-                        SetDisplayCounterKind.Warmup -> "W$prefix$counter"
-                        SetDisplayCounterKind.Calibration -> "Cal"
-                        SetDisplayCounterKind.Work -> "$prefix$counter"
-                    }
+                    val baseIdentifier = buildSetDisplayIdentifier(
+                        current = counter,
+                        supersetPrefix = prefix,
+                        counterKind = counterKind,
+                    )
                     val identifier = baseIdentifier + (buildUnilateralSideLabel(
                         state.intraSetCounter,
                         state.intraSetTotal
