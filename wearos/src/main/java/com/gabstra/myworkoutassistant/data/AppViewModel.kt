@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKe
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncSender
+import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncResult
 import com.gabstra.myworkoutassistant.sync.WearDirectHistorySyncClaim
 import com.gabstra.myworkoutassistant.sync.WearOutboundWorkoutHistorySyncCoordinator
 import com.gabstra.myworkoutassistant.sync.WearWorkoutHistorySyncDecision
@@ -195,6 +196,16 @@ open class AppViewModel : WorkoutViewModel() {
 
     private fun retainPendingWorkoutHistoryIds(context: Context, validIds: Set<UUID>) {
         PendingWorkoutHistorySyncTracker.retain(context, validIds)
+    }
+
+    private fun dequeueSuccessfullySyncedWorkoutHistories(
+        context: Context,
+        result: WearCompletedHistorySyncResult
+    ) {
+        PendingWorkoutHistorySyncTracker.dequeue(
+            context,
+            result.attemptedHistoryIds - result.failedHistoryIds
+        )
     }
 
     /** Call before sending a completed history so SYNC_COMPLETE can clear it from the pending queue. */
@@ -1806,6 +1817,7 @@ open class AppViewModel : WorkoutViewModel() {
                             reason = claim.reason,
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
+                        dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)
                         result.failedHistoryIds.isEmpty() &&
                             result.attemptedHistoryIds == claim.claimedHistoryIds
                     }
@@ -1826,6 +1838,7 @@ open class AppViewModel : WorkoutViewModel() {
                             reason = claim.reason,
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
+                        dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)
                         result.failedHistoryIds.isEmpty() &&
                             result.attemptedHistoryIds == claim.claimedHistoryIds
                     }
