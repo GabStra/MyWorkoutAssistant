@@ -2669,6 +2669,79 @@ open class WorkoutViewModel(
         }
     }
 
+    fun getLoadedPlateRouteOptionsForCurrentSet():
+        List<PlateCalculator.Companion.StartingPlateRouteOption> {
+        val machine = stateMachine ?: return emptyList()
+        val currentState = machine.currentState as? WorkoutState.Set ?: return emptyList()
+        val plateChangeResult = currentState.plateChangeResult ?: return emptyList()
+        val equipment = currentState.equipmentId?.let(::getEquipmentById) as? Barbell
+            ?: return emptyList()
+        val exercise = exercisesById[currentState.exerciseId] ?: return emptyList()
+        val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+            machine = machine,
+            fromIndexInclusive = machine.currentIndex,
+            exerciseId = currentState.exerciseId,
+        )
+        val remainingWeights = remainingStates.mapNotNull { state ->
+            plateTargetWeightForState(state, exercise)
+        }
+        if (remainingWeights.size != remainingStates.size) return emptyList()
+
+        return PlateCalculator.calculateStartingPlateRouteOptions(
+            availablePlates = equipment.availablePlates.map { it.weight },
+            startingWeight = plateChangeResult.change.from,
+            targetWeights = remainingWeights,
+            barWeight = equipment.barWeight,
+        )
+    }
+
+    fun selectLoadedPlateConfiguration(startingPlates: List<Double>): Job = launchDefault {
+        val machine = stateMachine ?: return@launchDefault
+        val currentState = machine.currentState as? WorkoutState.Set ?: return@launchDefault
+        val normalizedStartingPlates = startingPlates.sortedDescending()
+        val selectedRoute = getLoadedPlateRouteOptionsForCurrentSet().firstOrNull { option ->
+            option.startingPlates == normalizedStartingPlates
+        } ?: return@launchDefault
+        val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+            machine = machine,
+            fromIndexInclusive = machine.currentIndex,
+            exerciseId = currentState.exerciseId,
+        )
+        if (selectedRoute.plateChangeResults.size != remainingStates.size) return@launchDefault
+
+        _isPlateRecalculationInProgress.value = true
+        try {
+            withContext(dispatchers.main) {
+                val replacements = remainingStates.mapIndexed { index, state ->
+                    val replacement = state.copy(
+                        plateChangeResult = selectedRoute.plateChangeResults[index],
+                        loadedPlateConfigurationOverride = if (index == 0) {
+                            normalizedStartingPlates
+                        } else {
+                            null
+                        },
+                    )
+                    (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to replacement
+                }.toMap()
+                replaceSetStatesAndRefreshRestReferences(machine, replacements)
+            }
+        } finally {
+            _isPlateRecalculationInProgress.value = false
+        }
+    }
+
+    private fun plateTargetWeightForState(
+        state: WorkoutState.Set,
+        exercise: Exercise,
+    ): Double? = when (val set = state.set) {
+        is WeightSet -> (state.currentSetData as? WeightSetData)?.actualWeight ?: set.weight
+        is BodyWeightSet -> {
+            val relativeBodyWeight = bodyWeight.value * ((exercise.bodyWeightPercentage ?: 0.0) / 100)
+            relativeBodyWeight + set.additionalWeight
+        }
+        else -> null
+    }
+
     /**
      * Returns [ExerciseChildItem] list for an exercise: calibration blocks when [Exercise.requiresLoadCalibration],
      * otherwise [ExerciseChildItem.Normal] for each state.
@@ -2793,7 +2866,7 @@ open class WorkoutViewModel(
                         )
                     )
                 } else if (isCalibrationSet) {
-                    // Calibration set but no hasCalibration (shouldn't happen) – treat as normal
+                    // Calibration set but no hasCalibration (shouldn't happen) â€“ treat as normal
                     val setState = workoutSetStateFactory.buildWorkoutSetState(
                         exercise = exercise,
                         set = set,
@@ -3163,11 +3236,13 @@ open class WorkoutViewModel(
             if (weights.isEmpty()) return
 
             // Determine initialPlates: the currentPlates from the previous set's plateChangeResult, or empty if this is the first set
-            val initialPlates = WorkoutStateQueries.previousSetStateForExercise(
-                machine = machine,
-                beforeIndexExclusive = currentIndex,
-                exerciseId = currentState.exerciseId
-            )?.plateChangeResult?.currentPlates ?: emptyList()
+            val initialPlates = currentState.loadedPlateConfigurationOverride
+                ?: WorkoutStateQueries.previousSetStateForExercise(
+                    machine = machine,
+                    beforeIndexExclusive = currentIndex,
+                    exerciseId = currentState.exerciseId
+                )?.plateChangeResult?.currentPlates
+                ?: emptyList()
 
             // Recalculate plateChangeResults using the new overload (on background thread)
             val plateChangeResults = withContext(dispatchers.default) {
@@ -3185,8 +3260,7 @@ open class WorkoutViewModel(
                     (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to
                         state.copy(plateChangeResult = plateChangeResults[idx])
                 }.toMap()
-                stateMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
-                updateStateFlowsFromMachine()
+                replaceSetStatesAndRefreshRestReferences(machine, replacements)
             }
         } finally {
             _isPlateRecalculationInProgress.value = false
@@ -3221,11 +3295,13 @@ open class WorkoutViewModel(
             return
         }
 
-        val initialPlates = WorkoutStateQueries.previousSetStateForExercise(
-            machine = machine,
-            beforeIndexExclusive = firstWorkSetStateIndex,
-            exerciseId = exerciseId
-        )?.plateChangeResult?.currentPlates ?: emptyList()
+        val initialPlates = remainingStates.first().loadedPlateConfigurationOverride
+            ?: WorkoutStateQueries.previousSetStateForExercise(
+                machine = machine,
+                beforeIndexExclusive = firstWorkSetStateIndex,
+                exerciseId = exerciseId
+            )?.plateChangeResult?.currentPlates
+            ?: emptyList()
 
         val plateChangeResults = withContext(dispatchers.default) {
             getPlateChangeResults(weights, equipment, initialPlates)
@@ -3241,9 +3317,18 @@ open class WorkoutViewModel(
                 (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to
                     state.copy(plateChangeResult = plateChangeResults[idx])
             }.toMap()
-            stateMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
-            updateStateFlowsFromMachine()
+            replaceSetStatesAndRefreshRestReferences(machine, replacements)
         }
+    }
+
+    private fun replaceSetStatesAndRefreshRestReferences(
+        machine: WorkoutStateMachine,
+        replacements: Map<UUID, WorkoutState>,
+    ) {
+        val updatedMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
+        WorkoutStateEditor.populateRestNextState(updatedMachine)
+        stateMachine = updatedMachine
+        updateStateFlowsFromMachine()
     }
 
     /**
@@ -3264,15 +3349,24 @@ open class WorkoutViewModel(
         val exerciseId = setState.exerciseId
         val equipment = setState.equipmentId?.let { getEquipmentById(it) } as? Barbell ?: return
         val allStates = machine.allStates
+        val targetStateIndex = allStates.indexOf(setState)
         val firstWorkSetStateIndex = allStates.indexOfFirst { s ->
             s is WorkoutState.Set &&
                 s.exerciseId == exerciseId &&
                 (s.set is WeightSet || s.set is BodyWeightSet)
         }
         if (firstWorkSetStateIndex < 0) return
+        val persistedOverrideStateIndex = allStates.indices
+            .filter { index -> index <= targetStateIndex }
+            .lastOrNull { index ->
+                val state = allStates[index] as? WorkoutState.Set
+                state?.exerciseId == exerciseId &&
+                    state.loadedPlateConfigurationOverride != null
+            }
+        val recalculationStartIndex = persistedOverrideStateIndex ?: firstWorkSetStateIndex
         val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
             machine = machine,
-            fromIndexInclusive = firstWorkSetStateIndex,
+            fromIndexInclusive = recalculationStartIndex,
             exerciseId = exerciseId
         )
         if (remainingStates.isEmpty()) return
@@ -3291,7 +3385,7 @@ open class WorkoutViewModel(
         }
         recalculatePlatesForExerciseFromIndex(
             exerciseId = exerciseId,
-            firstWorkSetStateIndex = firstWorkSetStateIndex,
+            firstWorkSetStateIndex = recalculationStartIndex,
             weights = weights,
             equipment = equipment
         )

@@ -70,6 +70,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
         availablePlates = listOf(
             Plate(20.0, 20.0),
             Plate(10.0, 15.0),
+            Plate(10.0, 15.0),
             Plate(5.0, 10.0),
             Plate(2.5, 5.0),
             Plate(1.25, 3.0)
@@ -132,6 +133,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             upperBoundMaxHRPercent = null,
             currentBodyWeight = 70.0,
             plateChangeResult = null,
+            loadedPlateConfigurationOverride = listOf(10.0, 10.0),
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
@@ -203,6 +205,15 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             .filter { it.exerciseId == exerciseId }
 
         assertTrue("Expected 2 work set states", workSetStates.size == 2)
+        assertTrue(
+            "Recalculation should resume from the persisted loaded-plate configuration",
+            workSetStates.first().plateChangeResult?.previousPlates == listOf(10.0, 10.0),
+        )
+        val updatedFirstRest = allStates.filterIsInstance<WorkoutState.Rest>().first()
+        assertTrue(
+            "Rest should reference the replaced set state with the current plate route",
+            updatedFirstRest.nextState === workSetStates.first(),
+        )
         workSetStates.forEach { setState ->
             assertNotNull(
                 "Work set ${setState.set.id} should have plateChangeResult after recalculation",

@@ -11,6 +11,37 @@ import kotlin.math.abs
 
 class PlateCalculatorTest {
     @Test
+    fun startingPlateRouteOptions_includeOnlyCompleteRoutesAndRankByTotalChanges() {
+        val options = PlateCalculator.calculateStartingPlateRouteOptions(
+            availablePlates = listOf(20.0, 20.0, 10.0, 10.0, 5.0),
+            startingWeight = 100.0,
+            targetWeights = listOf(90.0, 110.0),
+            barWeight = 20.0,
+        )
+
+        assertEquals(
+            setOf(listOf(20.0, 20.0), listOf(20.0, 10.0, 10.0)),
+            options.map { it.startingPlates }.toSet(),
+        )
+        assertTrue(options.all { it.plateChangeResults.size == 2 })
+        assertTrue(options.zipWithNext().all { (left, right) ->
+            left.totalOperations <= right.totalOperations
+        })
+    }
+
+    @Test
+    fun startingPlateRouteOptions_areEmptyWhenALaterTargetCannotBeReached() {
+        val options = PlateCalculator.calculateStartingPlateRouteOptions(
+            availablePlates = listOf(20.0, 20.0, 10.0, 10.0),
+            startingWeight = 100.0,
+            targetWeights = listOf(90.0),
+            barWeight = 20.0,
+        )
+
+        assertTrue(options.isEmpty())
+    }
+
+    @Test
     fun addition_isCorrect() {
         assertEquals(4, 2 + 2)
     }
