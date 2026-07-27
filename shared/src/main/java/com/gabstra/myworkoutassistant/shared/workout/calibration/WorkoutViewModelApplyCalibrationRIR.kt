@@ -195,6 +195,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
             requiresLoadCalibration = false
         )
         updateWorkout(exercise, updatedExercise)
+        persistSelectedWorkoutDefinition()
         
         // Update states in state machine to reflect new set weights and remove CalibrationRIRSelection
         withContext(dispatchers.main) {

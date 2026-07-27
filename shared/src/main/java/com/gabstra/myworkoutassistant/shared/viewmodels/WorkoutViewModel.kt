@@ -2145,6 +2145,18 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    internal suspend fun persistSelectedWorkoutDefinition() {
+        val updatedWorkout = _selectedWorkout.value
+        val updatedWorkoutStore = workoutStore.copy(
+            workouts = workoutStore.workouts.map { workout ->
+                if (workout.id == updatedWorkout.id) updatedWorkout else workout
+            }
+        )
+        updateWorkoutStore(updatedWorkoutStore)
+        workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+        onWorkoutDefinitionChanged(updatedWorkoutStore)
+    }
+
     protected open suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) = Unit
 
     suspend fun updateExerciseEquipmentForCurrentWorkout(
@@ -2870,7 +2882,7 @@ open class WorkoutViewModel(
                         )
                     )
                 } else if (isCalibrationSet) {
-                    // Calibration set but no hasCalibration (shouldn't happen) Ã¢â‚¬â€œ treat as normal
+                    // Calibration set but no hasCalibration (shouldn't happen) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ treat as normal
                     val setState = workoutSetStateFactory.buildWorkoutSetState(
                         exercise = exercise,
                         set = set,
