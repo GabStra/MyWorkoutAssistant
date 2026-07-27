@@ -137,18 +137,15 @@ fun BarbellForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            FormSectionTitle(text = "Essentials")
-            StyledCard(modifier = Modifier.fillMaxWidth()) {
+            EquipmentFormSection(title = "Details") {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(Spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Barbell name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -178,38 +175,19 @@ fun BarbellForm(
                 }
             }
 
-            FormSectionTitle(text = "Plates")
             val platesSummary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}"
             CollapsibleSection(
                 title = "Available plate pairs",
                 summary = platesSummary,
                 expanded = expandedPlates,
-                onToggle = { expandedPlates = !expandedPlates }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available plate pairs",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedPlates = !expandedPlates },
+                action = {
+                    EquipmentAddButton(
+                        contentDescription = "Add plate",
+                        onClick = { showAvailablePlateDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showAvailablePlateDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add plate",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 availablePlatesState.value
                     .sortedBy { it.weight }
                     .forEachIndexed { index, plate ->
@@ -236,40 +214,22 @@ fun BarbellForm(
                     }
             }
 
-            Spacer(Modifier.height(Spacing.xl))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AppSecondaryButton(
-                    text = "Cancel",
-                    onClick = onCancel,
-                    modifier = Modifier.weight(1f)
-                )
-
-                AppPrimaryButton(
-                    text = "Save",
-                    onClick = {
-                        val newBarbell = Barbell(
-                            id = barbell?.id ?: UUID.randomUUID(),
-                            name = nameState.value.trim(),
-                            availablePlates = availablePlatesState.value,
-                            sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
-                            barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0
-                        )
-                        onUpsert(newBarbell)
-                    },
-                    enabled =
-                        nameState.value.isNotBlank() &&
-                                sleeveLengthState.value.toIntOrNull() != null &&
-                                availablePlatesState.value.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Spacer(Modifier.height(Spacing.xl))
+            EquipmentFormActions(
+                saveEnabled = nameState.value.isNotBlank() &&
+                    sleeveLengthState.value.toIntOrNull() != null &&
+                    availablePlatesState.value.isNotEmpty(),
+                onCancel = onCancel,
+                onSave = {
+                    val newBarbell = Barbell(
+                        id = barbell?.id ?: UUID.randomUUID(),
+                        name = nameState.value.trim(),
+                        availablePlates = availablePlatesState.value,
+                        sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
+                        barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0
+                    )
+                    onUpsert(newBarbell)
+                },
+            )
         }
     }
 

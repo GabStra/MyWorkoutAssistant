@@ -138,46 +138,27 @@ fun WeightVestForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            FormSectionTitle(text = "Essentials")
-            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+            EquipmentFormSection(title = "Details") {
                 OutlinedTextField(
                     value = nameState.value,
                     onValueChange = { nameState.value = it },
-                    label = { Text("Weight Vest Name", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            FormSectionTitle(text = "Weights")
             CollapsibleSection(
                 title = "Available Weights",
                 summary = "${availableWeightsState.value.size} weights",
                 expanded = expandedWeights,
-                onToggle = { expandedWeights = !expandedWeights }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available Weights",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedWeights = !expandedWeights },
+                action = {
+                    EquipmentAddButton(
+                        contentDescription = "Add weight",
+                        onClick = { showAvailableWeightsDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showAvailableWeightsDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Plate",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                     Row(
                         modifier = Modifier
@@ -199,10 +180,10 @@ fun WeightVestForm(
                 }
             }
 
-            Spacer(Modifier.height(Spacing.xl))
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Spacing.md, bottom = Spacing.xl),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {

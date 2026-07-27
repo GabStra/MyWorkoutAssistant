@@ -145,18 +145,15 @@ fun MachineForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            FormSectionTitle(text = "Essentials")
-            StyledCard(modifier = Modifier.fillMaxWidth()) {
+            EquipmentFormSection(title = "Details") {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(Spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Machine Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -174,36 +171,18 @@ fun MachineForm(
                 }
             }
 
-            FormSectionTitle(text = "Weights")
             CollapsibleSection(
                 title = "Available Weights",
                 summary = "${availableWeightsState.value.size} weights",
                 expanded = expandedAvailableWeights,
-                onToggle = { expandedAvailableWeights = !expandedAvailableWeights }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available Weights",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedAvailableWeights = !expandedAvailableWeights },
+                action = {
+                    EquipmentAddButton(
+                        contentDescription = "Add weight",
+                        onClick = { showAvailableWeightsDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showAvailableWeightsDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Weight",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                     Row(
                         modifier = Modifier
@@ -229,31 +208,14 @@ fun MachineForm(
                 title = "Extra Weights",
                 summary = "${extraWeightsState.value.size} weights",
                 expanded = expandedExtraWeights,
-                onToggle = { expandedExtraWeights = !expandedExtraWeights }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Extra Weights",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedExtraWeights = !expandedExtraWeights },
+                action = {
+                    EquipmentAddButton(
+                        contentDescription = "Add extra weight",
+                        onClick = { showExtraWeightDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showExtraWeightDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Extra Weight",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 extraWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                     Row(
                         modifier = Modifier
@@ -278,10 +240,10 @@ fun MachineForm(
                 }
             }
 
-            Spacer(Modifier.height(Spacing.xl))
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Spacing.md, bottom = Spacing.xl),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {

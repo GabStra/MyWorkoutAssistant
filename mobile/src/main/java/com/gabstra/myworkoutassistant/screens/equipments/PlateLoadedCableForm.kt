@@ -139,16 +139,15 @@ fun PlateLoadedCableForm(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            FormSectionTitle(text = "Essentials")
-            StyledCard(modifier = Modifier.fillMaxWidth()) {
+            EquipmentFormSection(title = "Details") {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Plate-Loaded Cable Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -165,36 +164,18 @@ fun PlateLoadedCableForm(
                 }
             }
 
-            FormSectionTitle(text = "Plates")
             CollapsibleSection(
                 title = "Available Plates",
                 summary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}",
                 expanded = expandedPlates,
-                onToggle = { expandedPlates = !expandedPlates }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available Plates",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedPlates = !expandedPlates },
+                action = {
+                    EquipmentAddButton(
+                        contentDescription = "Add plate",
+                        onClick = { showAvailablePlateDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showAvailablePlateDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Plate",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 availablePlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                     Row(
                         modifier = Modifier
@@ -216,10 +197,10 @@ fun PlateLoadedCableForm(
                 }
             }
 
-            Spacer(Modifier.height(Spacing.xl))
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Spacing.md, bottom = Spacing.xl),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
