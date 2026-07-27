@@ -1421,7 +1421,8 @@ open class AppViewModel : WorkoutViewModel() {
         ) {
             recoveryApplied = restoreRecoveryStateMachine(
                 sequence = runtimeSnapshot.sequenceItems,
-                currentIndex = runtimeSnapshot.currentIndex
+                currentIndex = runtimeSnapshot.currentIndex,
+                activateSession = false,
             )
         }
 
@@ -1436,7 +1437,8 @@ open class AppViewModel : WorkoutViewModel() {
                 exerciseId = checkpoint.exerciseId,
                 setId = checkpoint.setId,
                 setIndex = checkpoint.setIndex,
-                restOrder = checkpoint.restOrder
+                restOrder = checkpoint.restOrder,
+                activateSession = false,
             )
         }
 
@@ -1453,7 +1455,8 @@ open class AppViewModel : WorkoutViewModel() {
                     exerciseId = checkpoint.exerciseId,
                     setId = checkpoint.setId,
                     setIndex = checkpoint.setIndex,
-                    restOrder = checkpoint.restOrder
+                    restOrder = checkpoint.restOrder,
+                    activateSession = false,
                 )
             }
         }

@@ -830,13 +830,15 @@ open class WorkoutViewModel(
      * Updates the state flows from the current state machine.
      * Also updates [calibrationContext] from the current state so UI and apply logic can use it without scanning.
      */
-    internal fun updateStateFlowsFromMachine() {
+    internal fun updateStateFlowsFromMachine(activateSession: Boolean = true) {
         val machine = stateMachine
         if (machine != null) {
             _workoutState.value = machine.currentState
             _nextWorkoutState.value = machine.upcomingNext
             _isHistoryEmpty.value = machine.isHistoryEmpty
-            _sessionPhase.value = WorkoutSessionPhase.ACTIVE
+            if (activateSession) {
+                _sessionPhase.value = WorkoutSessionPhase.ACTIVE
+            }
             _calibrationContext.value = calibrationContextFromState(machine)
         } else {
             _calibrationContext.value = null
@@ -1990,7 +1992,8 @@ open class WorkoutViewModel(
         exerciseId: UUID?,
         setId: UUID?,
         setIndex: UInt?,
-        restOrder: UInt?
+        restOrder: UInt?,
+        activateSession: Boolean = true
     ): Boolean {
         val machine = stateMachine ?: return false
         if (machine.allStates.isEmpty()) return false
@@ -2005,7 +2008,7 @@ open class WorkoutViewModel(
         ) ?: return false
 
         stateMachine = machine.withCurrentIndex(targetIndex)
-        updateStateFlowsFromMachine()
+        updateStateFlowsFromMachine(activateSession = activateSession)
 
         val setState = _workoutState.value as? WorkoutState.Set
         if (setState != null) {
@@ -2023,7 +2026,8 @@ open class WorkoutViewModel(
 
     protected fun restoreRecoveryStateMachine(
         sequence: List<WorkoutStateSequenceItem>,
-        currentIndex: Int
+        currentIndex: Int,
+        activateSession: Boolean = true
     ): Boolean {
         if (sequence.isEmpty()) return false
         val machine = runCatching {
@@ -2033,7 +2037,7 @@ open class WorkoutViewModel(
         populateNextStateForRest(machine)
         stateMachine = machine
         populateNextStateSets()
-        updateStateFlowsFromMachine()
+        updateStateFlowsFromMachine(activateSession = activateSession)
         return true
     }
 
@@ -2866,7 +2870,7 @@ open class WorkoutViewModel(
                         )
                     )
                 } else if (isCalibrationSet) {
-                    // Calibration set but no hasCalibration (shouldn't happen) â€“ treat as normal
+                    // Calibration set but no hasCalibration (shouldn't happen) Ã¢â‚¬â€œ treat as normal
                     val setState = workoutSetStateFactory.buildWorkoutSetState(
                         exercise = exercise,
                         set = set,

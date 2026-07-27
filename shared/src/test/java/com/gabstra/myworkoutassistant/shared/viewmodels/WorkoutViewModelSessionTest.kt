@@ -3152,4 +3152,54 @@ class WorkoutViewModelSessionTest {
             viewModel.sessionPhase.value == WorkoutSessionPhase.RESUMING
         )
     }
+
+    @Test
+    fun updateStateFlowsFromMachine_canKeepRecoveryInResumingPhase() = runTest(testDispatcher) {
+        val recoveredSetState = WorkoutState.Set(
+            exerciseId = testExerciseId,
+            set = createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 80.0),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = androidx.compose.runtime.mutableStateOf(
+                WeightSetData(actualReps = 8, actualWeight = 80.0, volume = 640.0)
+            ),
+            hasNoHistory = true,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 70.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u,
+            isCalibrationSet = false
+        )
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId = testExerciseId,
+            childItems = mutableListOf(ExerciseChildItem.Normal(recoveredSetState))
+        )
+        stateMachineField.set(
+            viewModel,
+            WorkoutStateMachine.fromSequence(
+                sequence = listOf(WorkoutStateSequenceItem.Container(container)),
+                timeProvider = { LocalDateTime.now() },
+                startIndex = 0
+            )
+        )
+        val sessionPhaseField = WorkoutViewModel::class.java.getDeclaredField("_sessionPhase")
+        sessionPhaseField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (sessionPhaseField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutSessionPhase>).value =
+            WorkoutSessionPhase.RESUMING
+
+        viewModel.updateStateFlowsFromMachine(activateSession = false)
+
+        assertEquals(WorkoutSessionPhase.RESUMING, viewModel.sessionPhase.value)
+        assertEquals(recoveredSetState, viewModel.workoutState.value)
+    }
 }
