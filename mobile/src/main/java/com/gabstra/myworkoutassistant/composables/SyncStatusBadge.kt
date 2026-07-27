@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +29,9 @@ fun SyncStatusBadge(
 ) {
     AnimatedVisibility(
         visible = visible,
-        modifier = modifier.padding(top = 8.dp),
+        modifier = modifier
+            .statusBarsPadding()
+            .padding(top = 8.dp),
         enter = slideInVertically(
             animationSpec = tween(durationMillis = 220),
             initialOffsetY = { -it },
