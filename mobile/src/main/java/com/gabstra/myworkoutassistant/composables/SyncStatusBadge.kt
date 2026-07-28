@@ -44,7 +44,10 @@ fun SyncStatusBadge(
         Box(
             modifier = Modifier
                 .size(28.dp)
-                .background(color = Color.Black, shape = CircleShape),
+                .background(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = CircleShape,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             CircularProgressIndicator(
