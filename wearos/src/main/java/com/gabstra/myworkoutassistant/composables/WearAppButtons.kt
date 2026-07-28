@@ -1,10 +1,15 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonColors
 import androidx.wear.compose.material3.ButtonDefaults
@@ -78,6 +83,8 @@ fun WearTonalButton(
     transformation: SurfaceTransformation? = null,
     text: String,
     enabled: Boolean = true,
+    scaleTextToFit: Boolean = false,
+    supportingText: String? = null,
     onClick: () -> Unit,
     colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
 ) {
@@ -88,10 +95,42 @@ fun WearTonalButton(
         colors = colors,
         onClick = onClick,
     ) {
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = text,
-            textAlign = TextAlign.Center,
-        )
+        if (scaleTextToFit) {
+            val labelColor = if (enabled) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                ScalableText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(20.dp),
+                    text = text,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor,
+                    textAlign = TextAlign.Center,
+                    minTextSize = 8.sp,
+                )
+                supportingText?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = labelColor,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
+            }
+        } else {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = text,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }

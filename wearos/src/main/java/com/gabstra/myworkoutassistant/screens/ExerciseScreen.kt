@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
@@ -43,6 +45,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
+import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.MusclesPage
@@ -306,30 +309,36 @@ fun ExerciseScreen(
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
+            targetRepRange = buildTargetRepRange(exercise),
         )
         val exerciseNameComposable: @Composable () -> Unit = {
             ExerciseNameText(
                 text = exercise.name,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 45.dp),
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 textAlign = TextAlign.Center
             )
         }
         val exerciseTitleComposable: @Composable () -> Unit = {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 45.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.5.dp),
             ) {
                 exerciseNameComposable()
                 activeExerciseContext?.let { context ->
-                    Text(
+                    ScalableText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 30.dp)
+                            .height(16.dp),
                         text = context,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
+                        minTextSize = 8.sp,
                     )
                 }
             }
@@ -1412,19 +1421,7 @@ private fun buildExerciseInfoSections(
             else -> Unit
         }
     }
-    val targetReps = if (
-        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
-        exercise.minReps > 0 &&
-        exercise.maxReps >= exercise.minReps
-    ) {
-        if (exercise.minReps == exercise.maxReps) {
-            exercise.minReps.toString()
-        } else {
-            "${exercise.minReps}-${exercise.maxReps}"
-        }
-    } else {
-        null
-    }
+    val targetReps = buildTargetRepRange(exercise)
 
     return buildList {
         add(TitledLinesSection("Exercise", listOf(exercise.name)))
@@ -1440,14 +1437,31 @@ private fun buildExerciseInfoSections(
     }
 }
 
+private fun buildTargetRepRange(exercise: Exercise): String? =
+    if (
+        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+        exercise.minReps > 0 &&
+        exercise.maxReps >= exercise.minReps
+    ) {
+        if (exercise.minReps == exercise.maxReps) {
+            exercise.minReps.toString()
+        } else {
+            "${exercise.minReps}-${exercise.maxReps}"
+        }
+    } else {
+        null
+    }
+
 private fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
+    targetRepRange: String?,
 ): String? = listOfNotNull(
     setCounter
         ?.takeIf { (_, total) -> total > 1 }
         ?.let { (current, total) -> "$current/$total" },
+    targetRepRange?.let { "TARGET $it" },
     if (unilateralSideIndex != null && intraSetTotal != null) {
         "SIDE $unilateralSideIndex/$intraSetTotal"
     } else {

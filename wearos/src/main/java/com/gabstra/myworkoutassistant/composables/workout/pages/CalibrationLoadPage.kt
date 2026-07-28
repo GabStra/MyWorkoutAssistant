@@ -100,7 +100,7 @@ fun CalibrationLoadPage(
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) { 
-        typography.numeralSmall.copy(fontWeight = FontWeight.Medium) 
+        typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
     
     val weightText = if (equipment != null) {
@@ -288,7 +288,7 @@ fun CalibrationLoadPage(
 
                 Text(
                     text = "Set load for $reps reps\nat 1-2 RIR",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier

@@ -21,6 +21,8 @@ fun ButtonWithText(
     transformation: SurfaceTransformation? = null,
     text: String,
     enabled: Boolean = true,
+    scaleTextToFit: Boolean = false,
+    supportingText: String? = null,
     colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
     onClick: () -> Unit
 ) {
@@ -29,6 +31,8 @@ fun ButtonWithText(
         transformation = transformation,
         text = text,
         enabled = enabled,
+        scaleTextToFit = scaleTextToFit,
+        supportingText = supportingText,
         colors = colors,
         onClick = onClick,
     )

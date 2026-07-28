@@ -81,12 +81,10 @@ fun LoadedPlateConfigurationPickerOverlay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),
-                        text = if (option.isCurrent) {
-                            "${option.label} (Current)"
-                        } else {
-                            option.label
-                        },
+                        text = option.label,
                         enabled = !option.isCurrent,
+                        scaleTextToFit = true,
+                        supportingText = if (option.isCurrent) "(Current)" else null,
                         onClick = { onSelect(option.plates) },
                     )
                 }

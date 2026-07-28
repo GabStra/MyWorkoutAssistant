@@ -63,7 +63,7 @@ fun CalibrationRirPage(
     
     val typography = MaterialTheme.typography
     val itemStyle = remember(typography) { 
-        typography.numeralSmall.copy(fontWeight = FontWeight.Medium) 
+        typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
     }
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     
@@ -187,23 +187,25 @@ fun CalibrationRirPage(
                 onPlusLongPress = { onPlusClick() },
                 onCloseClick = { onClosePicker() }
             ) {
-                ScalableText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(
-                            onClick = {
-                                updateInteractionTime()
-                            },
-                            onLongClick = {
-                                onClosePicker()
-                            },
-                            onDoubleClick = {
-                            }
-                        ),
-                    text = rirText,
-                    style = itemStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                SetValueSection(label = "RIR", headerStyle = headerStyle) {
+                    ScalableText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = {
+                                    updateInteractionTime()
+                                },
+                                onLongClick = {
+                                    onClosePicker()
+                                },
+                                onDoubleClick = {
+                                }
+                            ),
+                        text = rirText,
+                        style = itemStyle,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
             }
         } else {
             // Initial state: show exercise info, header, and RIR value
@@ -242,7 +244,7 @@ fun CalibrationRirPage(
 
                 Text(
                     text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
@@ -402,16 +404,18 @@ fun CalibrationRirPage(
                 onPlusLongPress = { onPlusClick() },
                 onCloseClick = { onClosePicker() }
             ) {
-                ScalableText(
-                    modifier = Modifier.fillMaxWidth().combinedClickable(
-                        onClick = { updateInteractionTime() },
-                        onLongClick = { onClosePicker() },
-                        onDoubleClick = { }
-                    ),
-                    text = rirText,
-                    style = itemStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                SetValueSection(label = "RIR (AR)", headerStyle = headerStyle) {
+                    ScalableText(
+                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                            onClick = { updateInteractionTime() },
+                            onLongClick = { onClosePicker() },
+                            onDoubleClick = { }
+                        ),
+                        text = rirText,
+                        style = itemStyle,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
             }
         } else {
             Column(
@@ -440,7 +444,7 @@ fun CalibrationRirPage(
                 }
                 Text(
                     text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
