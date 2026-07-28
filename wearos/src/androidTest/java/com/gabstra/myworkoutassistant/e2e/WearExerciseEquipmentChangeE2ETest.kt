@@ -84,6 +84,16 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
             exerciseName = EquipmentChangeWorkoutStoreFixture.WEIGHT_EXERCISE_NAME,
             expectedEquipmentName = EquipmentChangeWorkoutStoreFixture.BARBELL_NAME
         )
+        val pickerRefreshDeadline = System.currentTimeMillis() + defaultTimeoutMs
+        var displayedWeight: Double? = null
+        while (System.currentTimeMillis() < pickerRefreshDeadline) {
+            displayedWeight = workoutDriver.readWeightOnSetScreen(1_000)
+            if (displayedWeight == 60.0) break
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        require(displayedWeight == 60.0) {
+            "Weight picker did not refresh to the new equipment: expected 60.0 kg, saw $displayedWeight"
+        }
     }
 
     private fun openButtonsPage() {

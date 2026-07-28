@@ -83,7 +83,7 @@ fun WeightSetScreen(
     val previousSetData = state.previousSetData as WeightSetData
     val historicalSetData = state.historicalSetData as? WeightSetData
     val comparisonSetData = historicalSetData ?: previousSetData
-    var currentSetData by remember(state.set.id) {
+    var currentSetData by remember(state.set.id, state.equipmentId) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
     val plateauReason = if (showPlateauWarning) {
@@ -178,9 +178,9 @@ fun WeightSetScreen(
         availableWeights = viewModel.getWeightByEquipment(equipment)
     }
 
-    var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
-    var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
-    var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
+    var closestWeight by remember(state.set.id, state.equipmentId) { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
 
     val cumulativeWeight = remember(currentSetData, equipment) {
         currentSetData.getWeight()

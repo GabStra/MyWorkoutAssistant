@@ -80,7 +80,7 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     val historicalSetData = state.historicalSetData as? BodyWeightSetData
     val comparisonSetData = historicalSetData ?: previousSetData
-    var currentSetData by remember(state.set.id) {
+    var currentSetData by remember(state.set.id, state.equipmentId) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
     val exercise = remember(state.exerciseId) {
@@ -170,9 +170,9 @@ fun BodyWeightSetScreen(
     }
     var availableWeights by remember(state.equipmentId) { mutableStateOf<Set<Double>>(emptySet()) }
 
-    var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
-    var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
-    var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
+    var closestWeight by remember(state.set.id, state.equipmentId) { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(equipment) {
         availableWeights = if (equipment == null) {
