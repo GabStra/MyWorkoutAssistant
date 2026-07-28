@@ -125,7 +125,13 @@ internal object WorkoutStateEditor {
         bodyWeightKg: Double,
         shouldUpdate: Boolean
     ): WorkoutState {
-        if (!shouldUpdate || state !is WorkoutState.Set || state.isWarmupSet || state.isCalibrationSet) {
+        if (
+            !shouldUpdate ||
+            state !is WorkoutState.Set ||
+            state.exerciseId != exercise.id ||
+            state.isWarmupSet ||
+            state.isCalibrationSet
+        ) {
             return state
         }
 
