@@ -14,6 +14,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
+import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.rir.applyAutoRegulationRIR
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.UUID
 
@@ -240,6 +243,85 @@ class CrossDeviceWorkoutFlowHelper(
             "Expected ${expectedCalibrationCount * 2} completed sets, saw $completedSetCount."
         }
     }
+
+    fun completeWorkoutWithCalibrationEndToEnd(
+        expectedCalibrationCount: Int,
+        expectedCompletedSetCount: Int,
+        activeViewModel: AppViewModel,
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+    ) {
+        val calibrationLoadExerciseIds = mutableSetOf<UUID>()
+        val calibrationRirExerciseIds = mutableSetOf<UUID>()
+        val completedSetIds = mutableSetOf<UUID>()
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) break
+
+            when (val currentState = activeViewModel.workoutState.value) {
+                is WorkoutState.CalibrationLoadSelection -> {
+                    calibrationLoadExerciseIds += currentState.exerciseId
+                    runOnMain { activeViewModel.confirmCalibrationLoad() }
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    calibrationRirExerciseIds += currentState.exerciseId
+                    runOnMain { activeViewModel.applyCalibrationRIR(rir = 2.0) }
+                }
+                is WorkoutState.AutoRegulationRIRSelection -> {
+                    runOnMain { activeViewModel.applyAutoRegulationRIR(rir = 2.0) }
+                }
+                is WorkoutState.Rest -> {
+                    if (!WearWorkoutStateMutationHelper.skipCurrentRest(
+                            device = device,
+                            timeoutMs = 15_000
+                        )
+                    ) {
+                        waitForRestAutoAdvance(E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
+                    }
+                }
+                is WorkoutState.Set -> {
+                    when {
+                        currentState.isCalibrationSet -> runOnMain {
+                            activeViewModel.storeSetData()
+                            activeViewModel.completeCalibrationSet()
+                        }
+                        currentState.isAutoRegulationWorkSet -> runOnMain {
+                            activeViewModel.storeSetData()
+                            activeViewModel.completeAutoRegulationSet()
+                        }
+                        else -> {
+                            val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+                                device = device,
+                                context = InstrumentationRegistry.getInstrumentation().targetContext,
+                                timeoutMs = 20_000
+                            )
+                            require(completed) { "Failed to complete set ${currentState.set.id}." }
+                        }
+                    }
+                    completedSetIds += currentState.set.id
+                    device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                }
+                else -> sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
+
+        require(isCompletionVisible() || isCompletionStateFromViewModel()) {
+            "Workout did not complete. loads=${calibrationLoadExerciseIds.size} " +
+                "rirs=${calibrationRirExerciseIds.size} sets=${completedSetIds.size}"
+        }
+        require(calibrationLoadExerciseIds.size == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount calibration loads, saw ${calibrationLoadExerciseIds.size}."
+        }
+        require(calibrationRirExerciseIds.size == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount calibration RIR entries, saw ${calibrationRirExerciseIds.size}."
+        }
+        require(completedSetIds.size == expectedCompletedSetCount) {
+            "Expected $expectedCompletedSetCount completed sets, saw ${completedSetIds.size}."
+        }
+    }
+
+    private fun runOnMain(block: () -> Unit) =
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
 
     private fun isWeightSetScreenVisible(): Boolean {
         return waitForAny(
