@@ -1309,7 +1309,12 @@ fun ExerciseForm(
                                 }
                             }
                         }
-                        val normalizedSets = (exercise?.sets ?: emptyList()).map { set ->
+                        val equipmentAdjustedSets = reconcileSetsForEquipmentChange(
+                            sets = exercise?.sets ?: emptyList(),
+                            previousEquipmentId = exercise?.equipmentId,
+                            selectedEquipment = selectedEquipmentId.value?.let(viewModel::getEquipmentById)
+                        )
+                        val normalizedSets = equipmentAdjustedSets.map { set ->
                             when (set) {
                                 is WeightSet -> set.copy(
                                     subCategory = normalizeSetSubCategory(set.subCategory)
