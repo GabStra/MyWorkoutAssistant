@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame
+from exercise_motion_pkg.render_geometry import UNIFORM_CAPSULE_RADIUS
 
 
-UNIFORM_CAPSULE_RADIUS = 0.046
 CANONICAL_CAPSULES = [
     ("pelvis", "spine1", UNIFORM_CAPSULE_RADIUS),
     ("spine1", "spine2", UNIFORM_CAPSULE_RADIUS),
@@ -218,7 +219,7 @@ def write_preview_html(
         "defaultAutoWorldAlignment": not raw_motion_review,
         "defaultAutoAlignment": default_auto_alignment,
         "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
-        "defaultCameraPitchDegrees": 0.0 if has_horizontal_torso_profile else 10.3,
+        "defaultCameraPitchDegrees": 15.0,
         "horizontalTorsoProfile": has_horizontal_torso_profile,
         "previewMaxRenderFps": min(30.0, max(12.0, float(preview_clip.fps))),
         "motionTuningEnabled": not raw_motion_review,
@@ -226,6 +227,7 @@ def write_preview_html(
         "loopable": bool(detected_loops),
         "detectedLoops": detected_loops,
         "capsules": _build_capsules(preview_clip),
+        "wearHumanoidGeometry": _wear_humanoid_geometry(),
         "frames": [
             {
                 "frameIndex": index,
@@ -235,7 +237,7 @@ def write_preview_html(
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
-        "groundVisualClearance": UNIFORM_CAPSULE_RADIUS,
+        "groundVisualClearance": 0.0,
         "spineposeMotionFusion": (
             clip.metadata.get("spineposeMotionFusion")
             if isinstance(clip.metadata, dict) and isinstance(clip.metadata.get("spineposeMotionFusion"), dict)
@@ -536,25 +538,7 @@ def build_wear_skeleton_payload(
             "skeletonChains": PREVIEW_SKELETON_CHAINS,
             "capsules": _build_capsules(preview_clip),
         },
-        "geometry": {
-            "style": "low_poly_block_humanoid",
-            "limb": {
-                "legWidth": 0.105,
-                "legDepth": 0.075,
-                "armWidth": 0.086,
-                "armDepth": 0.061,
-            },
-            "chainProfiles": [
-                {"match": "leg_bridge", "minJointCount": 8, "width": 0.14, "depth": 0.09},
-                {"match": "spine_head", "includesJoint": "head", "width": 0.1, "depth": 0.08},
-                {"match": "default", "width": 0.08, "depth": 0.055},
-            ],
-            "head": {
-                "minScale": 0.086,
-                "maxScale": 0.116,
-                "scale": [0.88, 1.08, 0.86],
-            },
-        },
+        "geometry": _wear_humanoid_geometry(),
         "frames": centered_frames,
     }
 
@@ -3127,6 +3111,59 @@ def _build_capsules(clip: MotionClip) -> list[dict[str, object]]:
     return capsules
 
 
+def _wear_humanoid_geometry() -> dict[str, object]:
+    return {
+        "style": "wear_filament_low_poly_humanoid",
+        "view": {
+            "yawDegrees": -28.0,
+            "pitchDegrees": 15.0,
+        },
+        "limbs": {
+            "scaleBasis": "segment_length",
+            "hipToKnee": {"startWidth": 0.25, "endWidth": 0.205, "depthScale": 0.44, "muscleBulgeScale": 1.16, "muscleBulgePosition": 0.42},
+            "kneeToAnkle": {"startWidth": 0.215, "endWidth": 0.16, "depthScale": 0.42, "muscleBulgeScale": 1.12, "muscleBulgePosition": 0.46},
+            "shoulderToElbow": {"startWidth": 0.27, "endWidth": 0.215, "depthScale": 0.42, "muscleBulgeScale": 1.18, "muscleBulgePosition": 0.48},
+            "elbowToWrist": {"startWidth": 0.225, "endWidth": 0.17, "depthScale": 0.40, "muscleBulgeScale": 1.10, "muscleBulgePosition": 0.40},
+            "wristToHand": {
+                "scaleBasis": "hand_and_forearm_length",
+                "handLengthStartWidth": 0.42,
+                "handLengthPalmWidth": 0.50,
+                "depthScale": 0.36,
+                "muscleBulgeScale": 1.12,
+                "muscleBulgePosition": 0.58,
+                "fill": "primary",
+            },
+        },
+        "jointCaps": {
+            "scaleBasis": "adjacent_limb_width",
+            "radialSides": 8,
+            "axialRings": 3,
+            "hipScale": 0.56,
+            "kneeScale": 0.48,
+            "elbowScale": 0.48,
+            "wristScale": 0.48,
+            "ankleScaleWithShoe": 0.42,
+        },
+        "shoe": {
+            "lengthScale": 1.45,
+            "widthScale": 0.32,
+            "heightScale": 0.28,
+        },
+        "appearance": {
+            "background": "#000000",
+            "primaryFill": "#fe6a07",
+            "jointFill": "#5a5a5a",
+            "material": "unlit_vertex_color",
+            "ambientLightLevel": 0.38,
+            "keyLightStrength": 0.48,
+            "fillLightStrength": 0.14,
+            "hemisphereLightStrength": 0.10,
+            "keyLightYawOffsetDegrees": -25.0,
+            "keyLightElevationDegrees": 50.0,
+        },
+    }
+
+
 def _find_root_joint(clip: MotionClip) -> str | None:
     for candidate in ("pelvis", "hips", "root"):
         if candidate in clip.joint_names:
@@ -3519,6 +3556,9 @@ def _localize_point(point: tuple[float, float, float], *, origin: tuple[float, f
 
 def _build_html(payload: dict[str, object]) -> str:
     payload_json = json.dumps(payload)
+    wear_exact_mesh_javascript = (
+        Path(__file__).with_name("wear_exact_mesh.js").read_text(encoding="utf-8")
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3805,6 +3845,9 @@ def _build_html(payload: dict[str, object]) -> str:
     import * as THREE from "three";
 
     const payload = {payload_json};
+    const wearHumanoidGeometry = payload.wearHumanoidGeometry ?? {{}};
+    const wearHumanoidParityEnabled =
+      wearHumanoidGeometry.style === "wear_filament_low_poly_humanoid";
     const viewport = document.getElementById("viewport");
     const speedInput = document.getElementById("speed");
     const pauseToggleButton = document.getElementById("pauseToggle");
@@ -3942,6 +3985,7 @@ def _build_html(payload: dict[str, object]) -> str:
     viewport.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
+    {wear_exact_mesh_javascript}
     const perspectiveCamera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
     const bakedWearCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
     scene.add(perspectiveCamera);
@@ -3969,7 +4013,20 @@ def _build_html(payload: dict[str, object]) -> str:
     );
     scene.add(mergedBoundsHelper);
 
-    const limbMaterial = new THREE.MeshStandardMaterial({{
+    function createHumanoidMaterial(options) {{
+      if (wearHumanoidParityEnabled) {{
+        return new THREE.MeshLambertMaterial({{
+          color: options.color,
+          flatShading: true,
+          polygonOffset: options.polygonOffset,
+          polygonOffsetFactor: options.polygonOffsetFactor,
+          polygonOffsetUnits: options.polygonOffsetUnits,
+        }});
+      }}
+      return new THREE.MeshStandardMaterial(options);
+    }}
+
+    const limbMaterial = createHumanoidMaterial({{
         color: 0x081317,
         emissive: 0x35f2ff,
         emissiveIntensity: 0.62,
@@ -3980,7 +4037,7 @@ def _build_html(payload: dict[str, object]) -> str:
         polygonOffsetUnits: 1,
         flatShading: true,
       }});
-    const torsoMaterial = new THREE.MeshStandardMaterial({{
+    const torsoMaterial = createHumanoidMaterial({{
         color: 0x0a1519,
         emissive: 0x47f6ff,
         emissiveIntensity: 0.78,
@@ -3991,7 +4048,7 @@ def _build_html(payload: dict[str, object]) -> str:
         polygonOffsetUnits: 1,
         flatShading: true,
       }});
-    const headMaterial = new THREE.MeshStandardMaterial({{
+    const headMaterial = createHumanoidMaterial({{
         color: 0x0d1a1f,
         emissive: 0x8afbff,
         emissiveIntensity: 0.9,
@@ -4159,6 +4216,23 @@ def _build_html(payload: dict[str, object]) -> str:
 
     function limbProfileForCapsule(capsule, radius) {{
       const key = `${{capsule.start}}->${{capsule.end}}`;
+      const profiles = wearHumanoidGeometry.limbs ?? {{}};
+      const resolvedProfile = key.includes("hip->") && key.includes("knee")
+        ? profiles.hipToKnee
+        : key.includes("knee->") && key.includes("ankle")
+          ? profiles.kneeToAnkle
+          : key.includes("shoulder->") && key.includes("elbow")
+            ? profiles.shoulderToElbow
+            : key.includes("elbow->") && key.includes("wrist")
+              ? profiles.elbowToWrist
+              : null;
+      if (resolvedProfile) {{
+        const width = (Number(resolvedProfile.startWidth) + Number(resolvedProfile.endWidth)) * 0.5;
+        return {{
+          width,
+          depth: width * Number(resolvedProfile.depthScale) * 2.0,
+        }};
+      }}
       if (key.includes("hip->") && key.includes("knee")) {{
         return {{ width: radius * 1.95, depth: radius * 1.42 }};
       }}
@@ -4294,7 +4368,7 @@ def _build_html(payload: dict[str, object]) -> str:
       metalness: 0.22,
       flatShading: true,
     }});
-    const jointNodeMaterial = new THREE.MeshStandardMaterial({{
+    const jointNodeMaterial = createHumanoidMaterial({{
       color: 0x0d171c,
       emissive: 0xc7ffff,
       emissiveIntensity: 0.72,
@@ -4387,6 +4461,51 @@ def _build_html(payload: dict[str, object]) -> str:
     }}
 
     function applyVlmReviewStyle() {{
+      if (wearHumanoidParityEnabled && !vlmReviewStyle) {{
+        const appearance = wearHumanoidGeometry.appearance ?? {{}};
+        const primaryFill = new THREE.Color(appearance.primaryFill ?? "#fe6a07").getHex();
+        const jointFill = new THREE.Color(appearance.jointFill ?? "#5a5a5a").getHex();
+        renderer.setClearColor(appearance.background ?? "#000000", 1);
+        renderer.toneMapping = THREE.NoToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        const ambientLightLevel = Number(appearance.ambientLightLevel ?? 0.38);
+        const keyLightStrength = Number(appearance.keyLightStrength ?? 0.48);
+        const fillLightStrength = Number(appearance.fillLightStrength ?? 0.14);
+        const hemisphereLightStrength = Number(appearance.hemisphereLightStrength ?? 0.10);
+        ambientLight.color.setHex(0xffffff);
+        ambientLight.intensity = ambientLightLevel;
+        hemiLight.intensity = hemisphereLightStrength;
+        rimLight.intensity = fillLightStrength;
+        directionalLight.color.setHex(0xffffff);
+        directionalLight.intensity = keyLightStrength;
+        const lightYaw = (
+          Number(wearHumanoidGeometry.view?.yawDegrees ?? -28.0)
+          + Number(appearance.keyLightYawOffsetDegrees ?? -25.0)
+        ) * Math.PI / 180.0;
+        const lightElevation = Number(
+          appearance.keyLightElevationDegrees ?? 50.0
+        ) * Math.PI / 180.0;
+        directionalLight.position.set(
+          Math.sin(lightYaw) * Math.cos(lightElevation),
+          Math.sin(lightElevation),
+          Math.cos(lightYaw) * Math.cos(lightElevation)
+        );
+        for (const material of [limbMaterial, torsoMaterial, headMaterial]) {{
+          setLitMaterial(material, primaryFill, 0x000000, 0.0, 1.0, 0.0);
+        }}
+        setLitMaterial(jointNodeMaterial, jointFill, 0x000000, 0.0, 1.0, 0.0);
+        setLineMaterial(limbOutlineMaterial, primaryFill, 0.0);
+        setLineMaterial(torsoOutlineMaterial, primaryFill, 0.0);
+        setLineMaterial(headOutlineMaterial, primaryFill, 0.0);
+        const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+        for (const material of gridMaterials) {{
+          material?.color?.setHex(primaryFill);
+        }}
+        grid.visible = false;
+        bakedWearGrid.visible = renderingBakedWearPayload;
+        refreshMergedBoundsHelper();
+        return;
+      }}
       renderer.setClearColor(vlmReviewStyle ? 0xf8fafc : 0x101418, 1);
       renderer.toneMappingExposure = vlmReviewStyle ? 1.18 : 1.05;
       ambientLight.color.setHex(vlmReviewStyle ? 0xffffff : 0x29404b);
@@ -8327,6 +8446,10 @@ def _build_html(payload: dict[str, object]) -> str:
       function updateConnectedSkeleton(frame, frameTranslation) {{
         connectedSkeletonHidden = false;
         for (const entry of skeletonLines) {{
+          if (wearHumanoidParityEnabled) {{
+            entry.line.visible = false;
+            continue;
+          }}
           const points = entry.jointNames
             .map((jointName) => frame.joints[jointName]
               ? toWorldPoint(frame.joints[jointName], frameTranslation, fixedRoot, true, jointName)
@@ -8341,6 +8464,10 @@ def _build_html(payload: dict[str, object]) -> str:
           entry.line.geometry.computeBoundingSphere();
         }}
         for (const entry of skeletonSurfaces) {{
+          if (wearHumanoidParityEnabled) {{
+            entry.mesh.visible = false;
+            continue;
+          }}
           const points = entry.jointNames
             .map((jointName) => frame.joints[jointName]
               ? toWorldPoint(frame.joints[jointName], frameTranslation, fixedRoot, true, jointName)
@@ -8372,9 +8499,25 @@ def _build_html(payload: dict[str, object]) -> str:
             entry.mesh.visible = false;
             continue;
           }}
+          const jointCaps = wearHumanoidGeometry.jointCaps ?? {{}};
+          const capScale = entry.jointName.includes("hip")
+            ? Number(jointCaps.hip)
+            : entry.jointName.includes("knee")
+              ? Number(jointCaps.knee)
+              : entry.jointName.includes("elbow")
+                ? Number(jointCaps.elbow)
+                : entry.jointName.includes("ankle")
+                  ? Number(jointCaps.ankle)
+                  : Number.NaN;
+          if (wearHumanoidParityEnabled && !Number.isFinite(capScale)) {{
+            entry.mesh.visible = false;
+            continue;
+          }}
           entry.mesh.visible = true;
           entry.mesh.position.copy(point);
-          const scale = entry.jointName === "head"
+          const scale = wearHumanoidParityEnabled
+            ? capScale
+            : entry.jointName === "head"
             ? 0.028
             : entry.jointName === "pelvis"
               ? 0.022
@@ -8761,6 +8904,15 @@ def _build_html(payload: dict[str, object]) -> str:
         activeRenderFrame = frame;
         const frameTranslation = getFrameTranslation(frame);
         hideConnectedSkeleton();
+        if (wearHumanoidParityEnabled) {{
+          proceduralBodyMeshes.forEach((mesh) => {{
+            mesh.visible = false;
+          }});
+          updateComparisonOverlay(getInterpolatedComparisonFrame(), frameTranslation);
+          updateWearExactMesh(frame, frameTranslation);
+          return;
+        }}
+        wearExactMesh.visible = false;
         proceduralBodyMeshes.forEach((mesh) => {{
           mesh.visible = true;
         }});

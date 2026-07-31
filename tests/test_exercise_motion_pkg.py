@@ -29,6 +29,7 @@ from exercise_motion_pkg.cleanup import (
     CleanupStats,
     choose_anchor_foot,
     cleanup_motion_clip,
+    detect_support_mode,
     detect_support_contact_states,
     estimate_support_ground_height,
     lift_clip_above_support_ground,
@@ -95,7 +96,13 @@ from exercise_motion_pkg.pose_prefilter import (
 import exercise_motion_pkg.pose_prefilter as pose_prefilter_module
 from exercise_motion_pkg.physics_bundle import write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
-from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_motion_clip
+from exercise_motion_pkg.render_geometry import support_surface_height
+from exercise_motion_pkg.spinepose_wham_correction import (
+    SPINEPOSE_FULL_SPINE_INDICES,
+    _build_spinepose_profile_candidate,
+    _extract_spinepose_points,
+    apply_spinepose_to_motion_clip,
+)
 import exercise_motion_pkg.structural_refinement as structural_refinement_module
 from exercise_motion_pkg.structural_refinement import refine_motion_clip_structurally
 from exercise_motion_pkg.preview import (
@@ -1311,6 +1318,60 @@ def test_detect_support_contact_states_uses_hands_when_feet_are_not_supporting()
     assert states[2]["supportJoint"] in {"left_hand", "right_hand"}
 
 
+def test_cleanup_uses_hands_and_knees_for_horizontal_quadruped_pose() -> None:
+    frames = []
+    for index in range(3):
+        joints = {
+            "pelvis": (0.0, 0.55, 0.0),
+            "neck": (0.65, 0.60 + index * 0.01, 0.0),
+            "left_shoulder": (0.85, 0.60, -0.2),
+            "right_shoulder": (0.85, 0.60, 0.2),
+            "left_wrist": (0.80, 0.10, -0.2),
+            "right_wrist": (0.80, 0.10, 0.2),
+            "left_hand": (0.85, 0.02, -0.2),
+            "right_hand": (0.85, 0.02, 0.2),
+            "left_hip": (-0.25, 0.52, -0.2),
+            "right_hip": (-0.25, 0.52, 0.2),
+            "left_knee": (-0.25, 0.03, -0.2),
+            "right_knee": (-0.25, 0.03, 0.2),
+            "left_foot": (-0.55, 0.20, -0.2),
+            "right_foot": (-0.55, 0.20, 0.2),
+        }
+        frames.append(MotionFrame(time_sec=index / 30.0, joints=joints))
+    clip = MotionClip(fps=30.0, joint_names=list(frames[0].joints), frames=frames)
+
+    cleaned, _ = cleanup_motion_clip(clip, motion_threshold=0.0, padding_frames=3)
+    cleanup_metadata = cleaned.metadata["cleanup"]
+
+    assert detect_support_mode(clip) == "quadruped"
+    assert cleanup_metadata["supportMode"] == "quadruped"
+    assert cleanup_metadata["supportProfile"]["leftKneeContactFrames"] == 3
+    assert cleanup_metadata["supportProfile"]["rightKneeContactFrames"] == 3
+    assert cleanup_metadata["supportProfile"]["leftFootContactFrames"] == 0
+    assert cleanup_metadata["supportProfile"]["rightFootContactFrames"] == 0
+    assert cleanup_metadata["verticalGrounding"]["applied"] is True
+    assert cleanup_metadata["verticalGrounding"]["groundContactMode"] == "continuous"
+    assert cleanup_metadata["supportSurfaceConstraint"]["solver"] == "quadruped_support"
+    assert math.isfinite(cleanup_metadata["supportSurfaceConstraint"]["sagittalPitchDegrees"])
+    lowest_support_surface = min(
+        support_surface_height(frame.joints[joint_name][1])
+        for frame in cleaned.frames
+        for joint_name in ("left_hand", "right_hand", "left_knee", "right_knee")
+    )
+    assert lowest_support_surface <= cleanup_metadata["supportGroundY"]
+    assert cleanup_metadata["supportSurfaceConstraint"]["maximumCorrection"] == 0.0
+    assert cleanup_metadata["supportSurfaceConstraint"]["maximumAbsContactResidual"] >= 0.0
+    source_thigh_length = math.dist(
+        clip.frames[0].joints["left_hip"],
+        clip.frames[0].joints["left_knee"],
+    )
+    cleaned_thigh_length = math.dist(
+        cleaned.frames[0].joints["left_hip"],
+        cleaned.frames[0].joints["left_knee"],
+    )
+    assert cleaned_thigh_length == pytest.approx(source_thigh_length)
+
+
 def test_estimate_support_ground_height_uses_contact_frames_only() -> None:
     clip = MotionClip(
         fps=30.0,
@@ -1497,6 +1558,83 @@ def test_micro_movement_tolerance_for_joint_is_stronger_for_torso_than_feet() ->
 
     assert pelvis_tolerance > foot_tolerance
     assert hand_tolerance > 0.015
+
+
+def test_head_pose_preservation_limits_abrupt_direction_changes() -> None:
+    base_joints = {
+        "pelvis": (0.0, 0.0, 0.0),
+        "neck": (0.0, 1.0, 0.0),
+        "head": (0.0, 1.1, 0.0),
+        "left_shoulder": (-0.2, 0.8, 0.0),
+        "right_shoulder": (0.2, 0.8, 0.0),
+    }
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(base_joints),
+        frames=[
+            MotionFrame(time_sec=0.0, joints=dict(base_joints)),
+            MotionFrame(time_sec=1.0 / 30.0, joints=dict(base_joints)),
+        ],
+    )
+    reference_frames = [
+        MotionFrame(time_sec=0.0, joints=dict(base_joints)),
+        MotionFrame(
+            time_sec=1.0 / 30.0,
+            joints={**base_joints, "head": (0.0, 1.0, 0.1)},
+        ),
+    ]
+    reference_clip = MotionClip(
+        fps=30.0,
+        joint_names=list(base_joints),
+        frames=reference_frames,
+    )
+
+    refined, metadata = structural_refinement_module._preserve_reference_head_pose(
+        clip,
+        reference_clip=reference_clip,
+    )
+
+    first_offset = np.subtract(refined.frames[0].joints["head"], refined.frames[0].joints["neck"])
+    second_offset = np.subtract(refined.frames[1].joints["head"], refined.frames[1].joints["neck"])
+    angular_change = math.degrees(
+        math.acos(
+            float(
+                np.clip(
+                    np.dot(first_offset, second_offset)
+                    / np.linalg.norm(first_offset)
+                    / np.linalg.norm(second_offset),
+                    -1.0,
+                    1.0,
+                )
+            )
+        )
+    )
+    assert angular_change <= 6.0 + 1e-6
+    assert np.linalg.norm(second_offset) == pytest.approx(0.1)
+    assert metadata["angularLimitedSamples"] == 1
+
+
+def test_implausible_head_offset_retains_plausible_off_axis_component() -> None:
+    frame = MotionFrame(
+        time_sec=0.0,
+        joints={
+            "pelvis": (0.0, 0.0, 0.0),
+            "neck": (0.0, 1.0, 0.0),
+            "head": (0.0, 1.1, 0.0),
+            "left_shoulder": (-0.2, 0.8, 0.0),
+            "right_shoulder": (0.2, 0.8, 0.0),
+        },
+    )
+
+    corrected, projected = structural_refinement_module._plausible_head_offset(
+        frame,
+        (0.0, -0.04, 0.09),
+    )
+
+    assert projected is True
+    assert corrected[1] > 0.0
+    assert corrected[2] > 0.0
+    assert math.dist((0.0, 0.0, 0.0), corrected) == pytest.approx(math.hypot(0.04, 0.09))
 
 
 def test_structural_refinement_preserves_leg_dominant_source_motion_without_reconstruction() -> None:
@@ -1885,7 +2023,7 @@ def test_estimate_motion_ground_plane_uses_grounded_ankles() -> None:
     plane = estimate_motion_ground_plane(clip)
 
     assert plane.normal == (0.0, 1.0, 0.0)
-    assert math.isclose(plane.offset, -0.05, rel_tol=0.0, abs_tol=1e-9)
+    assert math.isclose(plane.offset, -0.004, rel_tol=0.0, abs_tol=1e-9)
     assert plane.rms_error is not None
 
 
@@ -1929,7 +2067,7 @@ def test_estimate_motion_ground_origin_uses_grounded_contacts() -> None:
 
     origin = estimate_motion_ground_origin(clip, plane)
 
-    assert math.isclose(origin[1], 0.05, rel_tol=0.0, abs_tol=1e-9)
+    assert math.isclose(origin[1], 0.004, rel_tol=0.0, abs_tol=1e-9)
     assert math.isfinite(origin[0])
     assert math.isfinite(origin[2])
 
@@ -2259,7 +2397,39 @@ def test_preview_grid_uses_authoritative_render_ground_plane(tmp_path: Path) -> 
     write_preview_html(html_path, clip, title="Grounded preview")
 
     html = html_path.read_text(encoding="utf-8")
-    assert '"groundVisualClearance": 0.046' in html
+    assert '"groundVisualClearance": 0.0' in html
+    assert '"style": "wear_filament_low_poly_humanoid"' in html
+    assert '"material": "unlit_vertex_color"' in html
+    assert "Direct JavaScript port of buildSingleLowPolyMesh" in html
+    assert "function wearBuildHumanoid(joints)" in html
+    assert "function wearSpineRingAxes(previous, center, next, bodyAxes)" in html
+    assert "const waist = joints.spine1" in html
+    assert "const chest = joints.spine2" in html
+    assert "const upperChest = joints.spine3" in html
+    assert "const chestTop = shoulderCenter.clone()" in html
+    assert "const trapeziusTop = chestTop.clone().lerp(joints.neck, .38);" in html
+    assert "wearStrip(mesh, chestRings[chestRings.length - 1], trapeziusTopRing, primary);" in html
+    assert "const addTrapezius = (shoulder, direction) =>" not in html
+    assert "[.38, -.04, .94, .60]" in html
+    assert "wearStrip(mesh, rings[index], rings[index + 1], fill);" in html
+    assert "footForward.clone().cross(worldUp)" in html
+    assert "wearStrip(mesh, pelvisRings[0], chestRings[0], primary);" in html
+    assert "const pelvisUp = wearUnit(waist.clone().sub(hipCenter), torsoUp);" in html
+    assert "const pelvisTop = hipCenter.clone().lerp(waist, .78);" in html
+    assert "function wearDirectionalRing(" in html
+    assert "wearDirectionalRing(mesh, pelvisMid" in html
+    assert "pelvisAxes.side, pelvisAxes.forward" in html
+    assert "wearBoxRing(mesh, waist, waistAxes.side, waistAxes.forward" in html
+    assert "axes.side, axes.forward, radius, radius, 8" in html
+    assert "const segmentLength = joints[startName].distanceTo(joints[endName]);" in html
+    assert "const bulgeWidth = Math.max(startWidth, endWidth, interpolatedWidth)" in html
+    assert "wearSphere(mesh, joints.left_hip, axes" in html
+    assert 'addHand("left_wrist", "left_hand", "left_elbow");' in html
+    assert 'segmentWidth("left_elbow", "left_wrist", .17) * .48' in html
+    assert "const connectorSpan" not in html
+    assert "updateWearExactMesh(frame, frameTranslation);" in html
+    assert "new THREE.MeshBasicMaterial" in html
+    assert 'renderer.toneMapping = THREE.NoToneMapping;' in html
     assert "const authoritativeFloorY" in html
     assert ": authoritativeFloorY - visualClearance;" in html
     assert "bounds.minY - 0.06" not in html
@@ -3454,7 +3624,38 @@ def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering()
     assert payload["bounds"]["center"] == pytest.approx([0.0, 0.0, 0.0])
     assert "skeletonChains" in payload["topology"]
     assert "capsules" in payload["topology"]
-    assert payload["geometry"]["style"] == "low_poly_block_humanoid"
+    assert payload["geometry"]["style"] == "wear_filament_low_poly_humanoid"
+    assert payload["geometry"]["view"]["pitchDegrees"] == 15.0
+    assert payload["geometry"]["limbs"]["hipToKnee"] == {
+        "startWidth": 0.25,
+        "endWidth": 0.205,
+        "depthScale": 0.44,
+        "muscleBulgeScale": 1.16,
+        "muscleBulgePosition": 0.42,
+    }
+    assert payload["geometry"]["limbs"]["scaleBasis"] == "segment_length"
+    assert payload["geometry"]["jointCaps"] == {
+        "scaleBasis": "adjacent_limb_width",
+        "radialSides": 8,
+        "axialRings": 3,
+        "hipScale": 0.56,
+        "kneeScale": 0.48,
+        "elbowScale": 0.48,
+        "wristScale": 0.48,
+        "ankleScaleWithShoe": 0.42,
+    }
+    assert payload["geometry"]["appearance"] == {
+        "background": "#000000",
+        "primaryFill": "#fe6a07",
+        "jointFill": "#5a5a5a",
+        "material": "unlit_vertex_color",
+        "ambientLightLevel": 0.38,
+        "keyLightStrength": 0.48,
+        "fillLightStrength": 0.14,
+        "hemisphereLightStrength": 0.10,
+        "keyLightYawOffsetDegrees": -25.0,
+        "keyLightElevationDegrees": 50.0,
+    }
 
     pelvis_points = [
         frame["joints"]["pelvis"]
@@ -4215,6 +4416,47 @@ def test_spinepose_motion_fusion_prefers_2d_when_3d_lift_compresses_visible_moti
     assert min(spine2_depths) < -0.10
 
 
+def test_spinepose_full_body_output_extracts_named_spine_indices() -> None:
+    full_body_points = [[float(index), -float(index), 0.5] for index in range(37)]
+    frame = {
+        "people": [
+            {
+                "pose_keypoints_2d": [value for point in full_body_points for value in point]
+            }
+        ]
+    }
+
+    extraction = _extract_spinepose_points(frame, source="2d")
+
+    assert extraction is not None
+    points, confidences = extraction
+    assert [point[0] for point in points] == [float(index) for index in SPINEPOSE_FULL_SPINE_INDICES]
+    assert confidences == [0.5] * 9
+
+
+def test_spinepose_3d_profile_preserves_flexion_extension_direction() -> None:
+    frames = []
+    for direction in (1.0, -1.0):
+        points = []
+        for point_index in range(9):
+            progress = point_index / 8.0
+            points.extend(
+                [
+                    direction * 0.15 * math.sin(math.pi * progress),
+                    progress,
+                    0.0,
+                    1.0,
+                ]
+            )
+        frames.append({"people": [{"pose_keypoints_3d": points}]})
+
+    candidate = _build_spinepose_profile_candidate(frames, source="3d", smoothing_window=1)
+
+    assert candidate is not None
+    assert candidate.profiles[0][4] == pytest.approx(-candidate.profiles[1][4])
+    assert candidate.profiles[0][4] * candidate.profiles[1][4] < 0.0
+
+
 def test_spinepose_motion_fusion_skips_when_curve_quality_is_unreliable(tmp_path: Path) -> None:
     spinepose_dir = tmp_path / "spinepose"
     spinepose_dir.mkdir()
@@ -4686,6 +4928,8 @@ def test_spinepose_command_formatter_uses_current_cli_contract(tmp_path: Path) -
     assert "--video-path" not in command
     assert "--output-dir" not in command
     assert "--device" not in command
+    assert "--spine-only" in command
+    assert "--max-detections 1" in command
 
 
 def test_spinepose_command_formatter_uses_image_json_save_path_and_vis_path(tmp_path: Path) -> None:

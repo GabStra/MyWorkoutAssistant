@@ -104,11 +104,11 @@ fun HrStatusBadge(
         enter = fadeIn(animationSpec = tween(durationMillis = 300)),
         exit = fadeOut(animationSpec = tween(durationMillis = 300))
     ) {
-        val status = lastHrStatus
+        val status = hrStatus ?: lastHrStatus
         if (status != null) {
             val message = when (status) {
-                HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
-                HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+                HeartRateStatus.HIGHER_THAN_TARGET -> "Above Target"
+                HeartRateStatus.LOWER_THAN_TARGET -> "Below Target"
                 HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
             }
             val icon = when (status) {
@@ -125,31 +125,40 @@ fun HrStatusBadge(
                 Box(
                     modifier = Modifier
                         .background(
-                            color = Red,
-                            shape = RoundedCornerShape(12.dp)
+                            color = Color.Black,
+                            shape = RoundedCornerShape(14.dp)
                         )
-/*                        .border(
-                            BorderStroke(1.dp, Red),
-                            shape = RoundedCornerShape(12.dp)
-                        )*/
-                        .padding(10.dp)
+                        .padding(2.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = Color.Black,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .border(
+                                BorderStroke(1.dp, Red),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 7.5.dp, vertical = 2.5.dp)
                     ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = "HR Status",
-                            modifier = Modifier.size(15.dp),
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.size(5.dp))
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            textAlign = TextAlign.Center
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = "HR Status",
+                                modifier = Modifier.size(15.dp),
+                                tint = Red
+                            )
+                            Spacer(modifier = Modifier.width(2.5.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Red,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -343,30 +352,35 @@ private fun HeartRateDisplay(
                     )
                 }
             }
-            if(bpm != 0){
-                Box(
-                    modifier = Modifier
-                        .border(BorderStroke(1.dp, chipBorderColor), shape)
-                        .background(
-                            color = MaterialTheme.colorScheme.background,
-                            shape = shape
-                        )
-                        .width(27.5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
+            Box(
+                modifier = Modifier.width(27.5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bpm != 0 && currentZone != 0) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(2.5.dp),
-                        text = zoneText,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodySmall
-                            .copy(platformStyle = PlatformTextStyle(
-                                includeFontPadding = false
-                            )
+                            .border(BorderStroke(1.dp, chipBorderColor), shape)
+                            .background(
+                                color = MaterialTheme.colorScheme.background,
+                                shape = shape
                         ),
-                        color = chipBorderColor
-                    )
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(2.5.dp),
+                            text = zoneText,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall
+                                .copy(platformStyle = PlatformTextStyle(
+                                    includeFontPadding = false
+                                )
+                            ),
+                            color = chipBorderColor
+                        )
+                    }
                 }
             }
         }
@@ -954,5 +968,26 @@ private fun HeartRateCircularChartPreview() {
             lowerBoundMaxHRPercent = 65f,
             upperBoundMaxHRPercent = 75f
         )
+    }
+}
+
+@Preview(
+    name = "HR Above Target Badge",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun HrStatusBadgePreview() {
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            HrStatusBadge(hrStatus = HeartRateStatus.HIGHER_THAN_TARGET)
+        }
     }
 }

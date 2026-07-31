@@ -100,6 +100,7 @@ internal fun buildHistoricalComparisonStates(
 fun PlaceholderSetRow(
     modifier: Modifier = Modifier,
     exercise: Exercise,
+    rowLabel: String,
     textColor: Color = MaterialTheme.colorScheme.onBackground
 ) {
     val itemStyle = MaterialTheme.typography.numeralSmall
@@ -111,7 +112,12 @@ fun PlaceholderSetRow(
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Spacer(modifier = Modifier.width(18.dp))
+            ScalableText(
+                modifier = Modifier.weight(1f),
+                text = rowLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor
+            )
             when (exercise.exerciseType) {
                 ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT -> {
                     ScalableText(
@@ -130,12 +136,11 @@ fun PlaceholderSetRow(
 
                 ExerciseType.COUNTUP, ExerciseType.COUNTDOWN -> {
                     ScalableText(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(3f),
                         text = "-",
                         style = itemStyle,
                         color = textColor
                     )
-                    Spacer(modifier = Modifier.width(18.dp))
                 }
 
             }
@@ -404,11 +409,7 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = previousSetStates.value[currentSetIndex],
-                    setIdentifier = buildSetIdentifier(
-                        viewModel = viewModel,
-                        exerciseId = exercise.id,
-                        setState = previousSetStates.value[currentSetIndex],
-                    ),
+                    setIdentifier = "LAST",
                     index = currentSetIndex,
                     isCurrentSet = false,
                     textColor = previousRowAccentColor
@@ -418,6 +419,7 @@ fun ProgressionComparisonPage(
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
+                        rowLabel = "LAST",
                         textColor = previousRowAccentColor
                     )
                 }
@@ -471,11 +473,7 @@ fun ProgressionComparisonPage(
                     hapticsViewModel = hapticsViewModel,
                     viewModel = viewModel,
                     setState = progressionSetStates[currentSetIndex],
-                    setIdentifier = buildSetIdentifier(
-                        viewModel = viewModel,
-                        exerciseId = exercise.id,
-                        setState = progressionSetStates[currentSetIndex],
-                    ),
+                    setIdentifier = "NOW",
                     index = currentSetIndex,
                     isCurrentSet = false,
                     textColor = rowAccentColor
@@ -485,6 +483,7 @@ fun ProgressionComparisonPage(
                     PlaceholderSetRow(
                         modifier = Modifier.fillMaxSize().padding(3.dp),
                         exercise = exercise,
+                        rowLabel = "NOW",
                         textColor = rowAccentColor
                     )
                 }

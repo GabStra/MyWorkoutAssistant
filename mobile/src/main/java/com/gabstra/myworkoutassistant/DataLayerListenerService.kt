@@ -840,6 +840,13 @@ class DataLayerListenerService : WearableListenerService() {
                         errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
                     }
 
+                    // Persist the terminal state before publishing completion. The completion
+                    // observer may immediately finish instrumentation or otherwise stop this
+                    // process; leaving "Processing" persisted would make the restarted service
+                    // reject the next valid transaction as overlapping stale work.
+                    markTerminalTransaction(transactionId)
+                    clearActiveWorkoutHistoryTransactionState()
+
                     transactionId?.let { tid ->
                         processingStep = "sending sync complete acknowledgment"
                         sendWorkoutHistorySyncComplete(
@@ -868,8 +875,6 @@ class DataLayerListenerService : WearableListenerService() {
                         latestRequestedRetryGeneration = retryGenerationsUsed
                     )
                 }
-                markTerminalTransaction(transactionId)
-                clearActiveWorkoutHistoryTransactionState()
 
                 processingStep = "scheduling workout backup"
                 runCatching {

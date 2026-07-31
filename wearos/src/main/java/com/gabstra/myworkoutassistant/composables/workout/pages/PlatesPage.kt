@@ -891,6 +891,8 @@ private fun PlatesPageContent(
                             hapticsViewModel?.doGentleVibration()
                             userStepIndex += 1
                         },
+                        buttonSize = 40.dp,
+                        iconSize = 32.dp,
                     ) {
                         Text(
                             text = "Step ${userStepIndex + 1}/$totalFrames",

@@ -1183,6 +1183,7 @@ def _format_spinepose_command(
         f"--save-path {_format_shell_arg(save_path)} "
         f"--mode {mode} --model-version {model_version} "
         f"{hardware_acceleration_arg} --enable-lifting --no-lifting-panel"
+        " --spine-only --max-detections 1"
         f"{visualization_arg}"
     )
 

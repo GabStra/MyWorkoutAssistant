@@ -5,8 +5,6 @@ import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,8 +13,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
@@ -73,6 +74,7 @@ fun BodyWeightSetScreen(
     onEditModeDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
+    targetRepRange: String? = null,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
@@ -399,14 +401,11 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(35.dp),
+                modifier = Modifier.height(32.dp),
                 text = repsText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
-            )
-            SetDeltaTextSlot(
-                deltaText = repsDeltaText,
             )
         }
     }
@@ -478,14 +477,11 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(35.dp),
+                modifier = Modifier.height(32.dp),
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
-            )
-            SetDeltaTextSlot(
-                deltaText = weightDeltaText,
             )
         }
     }
@@ -500,7 +496,9 @@ fun BodyWeightSetScreen(
             verticalArrangement = Arrangement.Top
         ){
             Box(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -587,6 +585,10 @@ fun BodyWeightSetScreen(
                 SetScreen(
                     customModifier = Modifier
                 )
+                targetRepRange?.let {
+                    Spacer(modifier = Modifier.height(7.5.dp))
+                    TargetRepRangeLabel(targetRepRange = it)
+                }
             }
 
             if (isRepsInEditMode || isWeightInEditMode) {

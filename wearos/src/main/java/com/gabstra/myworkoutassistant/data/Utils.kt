@@ -791,9 +791,6 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
             Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
             Tasks.await(dataClient.putDataItem(request))
             
-            // Small delay to allow message delivery
-            delay(100)
-            
             Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
             // Wait for acknowledgment with timeout
             val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
@@ -1024,7 +1021,7 @@ private suspend fun sendWorkoutHistoryStoreInternal(
             .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
             .create()
     val jsonString = gson.toJson(workoutHistoryStore)
-    val chunkSize = 50000 // Adjust the chunk size as needed
+    val chunkSize = 90_000
     val compressedData = compressString(jsonString)
     val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
     Log.d(
@@ -1070,13 +1067,7 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                 Tasks.await(dataClient.putDataItem(request))
             }
 
-            if (!isLastChunk) {
-                delay(500)
-            }
         }
-        
-        // Small delay after last chunk to allow message delivery
-        delay(100)
 
         // Calculate dynamic timeout based on chunk count
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)

@@ -79,6 +79,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -201,7 +202,7 @@ fun ExerciseScreen(
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
             //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
-            //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
+            if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
             add(ExerciseHorizontalPage.EXERCISES)
             if (showMovementPage) add(ExerciseHorizontalPage.ANIMATION)
@@ -307,9 +308,9 @@ fun ExerciseScreen(
     key(state.exerciseId to state.set.id) {
         val activeExerciseContext = buildActiveExerciseContextLabel(
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
+            setCounterKind = displayCounterKindForSetState(state),
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
-            targetRepRange = buildTargetRepRange(exercise),
         )
         val exerciseNameComposable: @Composable () -> Unit = {
             ExerciseNameText(
@@ -406,6 +407,7 @@ fun ExerciseScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exerciseTitleComposable = exerciseTitleComposable,
+                                targetRepRange = buildTargetRepRange(exercise),
                                 onEditModeEnabled = { isEditModeEnabled = true },
                                 onEditModeDisabled = { isEditModeEnabled = false }
                             )
@@ -419,8 +421,6 @@ fun ExerciseScreen(
                                     .fillMaxWidth()
                                     .padding(
                                         top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
-                                        start = 45.dp,
-                                        end = 45.dp,
                                     )
                             ) {
                                 exerciseNameComposable()
@@ -1359,6 +1359,7 @@ private fun ExerciseDetailContent(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     exerciseTitleComposable: @Composable () -> Unit,
+    targetRepRange: String?,
     onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
 ) {
@@ -1377,6 +1378,7 @@ private fun ExerciseDetailContent(
             showPlateauWarning = false,
             extraInfo = null,
             exerciseTitleComposable = exerciseTitleComposable,
+            targetRepRange = targetRepRange,
             hapticsViewModel = hapticsViewModel,
             customComponentWrapper = { content -> content() }
         )
@@ -1421,12 +1423,9 @@ private fun buildExerciseInfoSections(
             else -> Unit
         }
     }
-    val targetReps = buildTargetRepRange(exercise)
-
     return buildList {
         add(TitledLinesSection("Exercise", listOf(exercise.name)))
         if (sessionLines.isNotEmpty()) add(TitledLinesSection("Session", sessionLines))
-        targetReps?.let { add(TitledLinesSection("Target reps", listOf(it))) }
         if (statusLines.isNotEmpty()) add(TitledLinesSection("Status", statusLines))
         plateauReason?.let { add(TitledLinesSection("Plateau", listOf(it))) }
         equipmentName?.let { add(TitledLinesSection("Equipment", listOf(it))) }
@@ -1454,17 +1453,21 @@ private fun buildTargetRepRange(exercise: Exercise): String? =
 
 private fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
+    setCounterKind: SetDisplayCounterKind?,
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
-    targetRepRange: String?,
 ): String? = listOfNotNull(
     setCounter
-        ?.takeIf { (_, total) -> total > 1 }
-        ?.let { (current, total) -> "$current/$total" },
-    targetRepRange?.let { "TARGET $it" },
-    if (unilateralSideIndex != null && intraSetTotal != null) {
-        "SIDE $unilateralSideIndex/$intraSetTotal"
-    } else {
-        null
-    }
+        ?.let { (current, total) ->
+            val label = when (setCounterKind) {
+                SetDisplayCounterKind.Warmup -> "WARM-UP"
+                SetDisplayCounterKind.Work -> "WORK SET"
+                SetDisplayCounterKind.Calibration -> "CALIBRATION"
+                null -> "SET"
+            }
+            "$label $current/$total"
+        },
+    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
+        ?.removePrefix("-")
+        ?.let { side -> "SIDE $side" }
 ).takeIf { it.isNotEmpty() }?.joinToString(" · ")

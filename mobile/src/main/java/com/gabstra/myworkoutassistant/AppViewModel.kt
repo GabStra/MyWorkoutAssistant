@@ -231,6 +231,7 @@ class AppViewModel(
     private val _isInitialDataLoaded = MutableStateFlow(false)
     private val _workoutStoreValidationError = MutableStateFlow<String?>(null)
     private var _userAge = mutableIntStateOf(0)
+    private var pendingExternalPage: String? = null
 
     /**
      * Load workout store from disk asynchronously. Call once from the UI (e.g. NavHost).
@@ -247,13 +248,37 @@ class AppViewModel(
                 setWorkoutStoreState(store, triggerSend = false)
                 refreshWorkoutHistories(store.workouts)
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             } catch (e: WorkoutStoreValidationException) {
                 Log.e(TAG, "Workout store validation failed during startup load: ${e.userMessage}")
                 _workoutStoreValidationError.value = e.userMessage
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             } catch (e: Exception) {
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             }
+        }
+    }
+
+    fun openExternalPage(page: String?) {
+        if (!_isInitialDataLoaded.value) {
+            pendingExternalPage = page
+            return
+        }
+        navigateToExternalPage(page)
+    }
+
+    private fun openPendingExternalPage() {
+        val page = pendingExternalPage ?: return
+        pendingExternalPage = null
+        navigateToExternalPage(page)
+    }
+
+    private fun navigateToExternalPage(page: String?) {
+        when (page) {
+            "workouts" -> setScreenData(ScreenData.Workouts(1))
+            "settings" -> setScreenData(ScreenData.Settings())
         }
     }
 

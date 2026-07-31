@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButton
@@ -20,6 +21,8 @@ fun PreviousNextNavigationHeader(
     canSelectNext: Boolean,
     onSelectPrevious: () -> Unit,
     onSelectNext: () -> Unit,
+    buttonSize: Dp = 48.dp,
+    iconSize: Dp = 32.dp,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -36,26 +39,26 @@ fun PreviousNextNavigationHeader(
             onClick = onSelectPrevious,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .size(48.dp),
+                .size(buttonSize),
             enabled = canSelectPrevious,
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                 contentDescription = "Previous",
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(iconSize),
             )
         }
         IconButton(
             onClick = onSelectNext,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .size(48.dp),
+                .size(buttonSize),
             enabled = canSelectNext,
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = "Next",
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(iconSize),
             )
         }
     }

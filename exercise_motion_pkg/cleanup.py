@@ -5,6 +5,11 @@ import math
 import statistics
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
+from exercise_motion_pkg.render_geometry import (
+    UNIFORM_CAPSULE_RADIUS,
+    support_joint_height_for_surface,
+    support_surface_height,
+)
 
 
 DEFAULT_FOOT_JOINTS = (
@@ -55,6 +60,8 @@ LEFT_FOOT_GROUP = ("left_foot", "left_ankle", "l_ankle")
 RIGHT_FOOT_GROUP = ("right_foot", "right_ankle", "r_ankle")
 LEFT_HAND_GROUP = ("left_hand", "left_wrist")
 RIGHT_HAND_GROUP = ("right_hand", "right_wrist")
+LEFT_KNEE_GROUP = ("left_knee",)
+RIGHT_KNEE_GROUP = ("right_knee",)
 
 
 @dataclass(frozen=True)
@@ -85,9 +92,14 @@ def cleanup_motion_clip(
     )
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
-    raw_support_states = detect_support_contact_states(trimmed_clip)
-    grounded = ground_to_floor(trimmed_clip, support_states=raw_support_states)
-    support_states = detect_support_contact_states(grounded)
+    support_mode = detect_support_mode(trimmed_clip)
+    raw_support_states = detect_support_contact_states(trimmed_clip, support_mode=support_mode)
+    grounded = ground_to_floor(
+        trimmed_clip,
+        support_states=raw_support_states,
+        support_mode=support_mode,
+    )
+    support_states = detect_support_contact_states(grounded, support_mode=support_mode)
     support_ground_y = estimate_support_ground_height(grounded, support_states)
     support_stabilized = stabilize_global_translation_from_support_contacts(
         grounded,
@@ -103,10 +115,32 @@ def cleanup_motion_clip(
     )
     vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
         smoothed,
-        ground_contact_mode=ground_contact_mode,
+        ground_contact_mode="continuous" if support_mode == "quadruped" else ground_contact_mode,
     )
-    avg_root_after = average_joint_axis(vertically_grounded, root_joint, axis=1)
-    support_profile = _summarize_support_states(support_states)
+    if support_mode == "quadruped":
+        support_constrained, support_constraint = solve_quadruped_support(
+            vertically_grounded,
+            contact_states=detect_support_contact_states(
+                vertically_grounded,
+                support_mode=support_mode,
+            ),
+        )
+    else:
+        support_constrained = vertically_grounded
+        support_constraint = {"applied": False, "reason": "upright_support_uses_existing_grounding"}
+    final_support_states = detect_support_contact_states(
+        support_constrained,
+        support_mode=support_mode,
+    )
+    final_support_ground_y = estimate_support_ground_height(
+        support_constrained,
+        final_support_states,
+    )
+    solved_ground_y = support_constraint.get("groundY")
+    if support_mode == "quadruped" and isinstance(solved_ground_y, (int, float)):
+        final_support_ground_y = float(solved_ground_y)
+    avg_root_after = average_joint_axis(support_constrained, root_joint, axis=1)
+    support_profile = _summarize_support_states(final_support_states)
     stats = CleanupStats(
         input_frames=clip.frame_count,
         output_frames=vertically_grounded.frame_count,
@@ -126,7 +160,8 @@ def cleanup_motion_clip(
         "trimmedStartFrames": start_trim,
         "trimmedEndFrames": end_trim,
         "rootJoint": root_joint,
-        "supportGroundY": support_ground_y,
+        "supportGroundY": final_support_ground_y,
+        "supportMode": support_mode,
         "appliedPostProcessingSteps": [
             "isolated_joint_position_outlier_repair",
             "ground_plane_fitting",
@@ -138,14 +173,15 @@ def cleanup_motion_clip(
         "supportProfile": support_profile,
         "repairedJointPositionOutliers": repaired_joint_outliers,
         "verticalGrounding": vertical_grounding,
-        "footContacts": support_states,
+        "supportSurfaceConstraint": support_constraint,
+        "footContacts": final_support_states,
         "reviewStatus": "needs_manual_review",
     }
     return MotionClip(
-        fps=vertically_grounded.fps,
-        joint_names=vertically_grounded.joint_names,
-        frames=vertically_grounded.frames,
-        source=vertically_grounded.source,
+        fps=support_constrained.fps,
+        joint_names=support_constrained.joint_names,
+        frames=support_constrained.frames,
+        source=support_constrained.source,
         metadata=metadata,
     ), stats
 
@@ -213,6 +249,312 @@ def stabilize_vertical_floor_contact(
         "correctedFrameCount": sum(corrected_mask),
         "maxAbsCorrection": max(abs(value) for value in corrections),
     }
+
+
+SUPPORT_CHAIN_CONSTRAINTS = {
+    "left_hand": ("left_wrist", ()),
+    "right_hand": ("right_wrist", ()),
+    "left_knee": ("left_hip", ("left_ankle", "left_foot")),
+    "right_knee": ("right_hip", ("right_ankle", "right_foot")),
+    "left_foot": ("left_ankle", ()),
+    "right_foot": ("right_ankle", ()),
+}
+
+
+def solve_quadruped_support(
+    clip: MotionClip,
+    *,
+    contact_states: list[dict[str, object]],
+) -> tuple[MotionClip, dict[str, object]]:
+    forward_axis = _horizontal_torso_axis(clip)
+    if forward_axis is None:
+        return constrain_support_surfaces(clip, contact_states=contact_states)
+    support_joint_names = sorted({
+        joint_name
+        for state in contact_states
+        for joint_name in iter_contact_joint_names(state)
+    })
+    centered_support_samples: list[tuple[float, float]] = []
+    for frame in clip.frames:
+        samples = [
+            (
+                frame.joints[joint_name][0] * forward_axis[0]
+                + frame.joints[joint_name][2] * forward_axis[2],
+                support_surface_height(frame.joints[joint_name][1]),
+            )
+            for joint_name in support_joint_names
+            if joint_name in frame.joints
+        ]
+        if len(samples) < 2:
+            continue
+        mean_forward = sum(sample[0] for sample in samples) / len(samples)
+        mean_height = sum(sample[1] for sample in samples) / len(samples)
+        centered_support_samples.extend(
+            (forward - mean_forward, height - mean_height)
+            for forward, height in samples
+        )
+    if not centered_support_samples:
+        return constrain_support_surfaces(clip, contact_states=contact_states)
+    pitch_radians = _minimum_variance_support_plane_pitch(centered_support_samples)
+    pivot_samples = [
+        frame.joints[joint_name]
+        for frame in clip.frames
+        for joint_name in support_joint_names
+        if joint_name in frame.joints
+    ]
+    if not pivot_samples:
+        return constrain_support_surfaces(clip, contact_states=contact_states)
+    pivot = (
+        statistics.median(point[0] for point in pivot_samples),
+        statistics.median(point[1] for point in pivot_samples),
+        statistics.median(point[2] for point in pivot_samples),
+    )
+    lateral_axis = (forward_axis[2], 0.0, -forward_axis[0])
+    rotated_clip = _rotate_clip_about_axis(
+        clip,
+        axis=lateral_axis,
+        angle_radians=pitch_radians,
+        pivot=pivot,
+    )
+    surface_residuals = [
+        support_surface_height(frame.joints[joint_name][1])
+        for frame in rotated_clip.frames
+        for joint_name in support_joint_names
+        if joint_name in frame.joints
+    ]
+    ground_y = statistics.median(surface_residuals)
+    centered_residuals = [value - ground_y for value in surface_residuals]
+    return rotated_clip, {
+        "applied": abs(pitch_radians) > 1e-8,
+        "strategy": "rigid_quadruped_support_plane_alignment",
+        "supportJoints": support_joint_names,
+        "groundY": ground_y,
+        "maximumCorrection": 0.0,
+        "maximumAbsContactResidual": max(
+            (abs(value) for value in centered_residuals),
+            default=0.0,
+        ),
+        "medianAbsContactResidual": statistics.median(
+            abs(value) for value in centered_residuals
+        ),
+        "solver": "quadruped_support",
+        "sagittalPitchRadians": pitch_radians,
+        "sagittalPitchDegrees": math.degrees(pitch_radians),
+        "pitchSampleCount": len(centered_support_samples),
+        "pitchSource": "analytic_minimum_variance_continuous_support_plane",
+        "rotationPivot": list(pivot),
+        "rotationAxis": list(lateral_axis),
+    }
+
+
+def _minimum_variance_support_plane_pitch(
+    samples: list[tuple[float, float]],
+) -> float:
+    forward_variance = sum(forward * forward for forward, _height in samples)
+    height_variance = sum(height * height for _forward, height in samples)
+    covariance = sum(forward * height for forward, height in samples)
+    base_angle = 0.5 * math.atan2(
+        2.0 * covariance,
+        forward_variance - height_variance,
+    )
+    candidates = (base_angle, base_angle + math.pi / 2.0)
+    best_angle = min(
+        candidates,
+        key=lambda angle: sum(
+            (height * math.cos(angle) - forward * math.sin(angle)) ** 2
+            for forward, height in samples
+        ),
+    )
+    while best_angle > math.pi / 2.0:
+        best_angle -= math.pi
+    while best_angle < -math.pi / 2.0:
+        best_angle += math.pi
+    return best_angle
+
+
+def _horizontal_torso_axis(clip: MotionClip) -> Point3 | None:
+    samples = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        neck = frame.joints.get("neck")
+        if pelvis is None or neck is None:
+            continue
+        samples.append((neck[0] - pelvis[0], 0.0, neck[2] - pelvis[2]))
+    if not samples:
+        return None
+    axis = (
+        statistics.median(point[0] for point in samples),
+        0.0,
+        statistics.median(point[2] for point in samples),
+    )
+    length = math.hypot(axis[0], axis[2])
+    if length <= 1e-6:
+        return None
+    return (axis[0] / length, 0.0, axis[2] / length)
+
+
+def _rotate_clip_about_axis(
+    clip: MotionClip,
+    *,
+    axis: Point3,
+    angle_radians: float,
+    pivot: Point3,
+) -> MotionClip:
+    cosine = math.cos(angle_radians)
+    sine = math.sin(angle_radians)
+    rotated_frames = []
+    for frame in clip.frames:
+        joints = {}
+        for name, point in frame.joints.items():
+            relative = (
+                point[0] - pivot[0],
+                point[1] - pivot[1],
+                point[2] - pivot[2],
+            )
+            cross = (
+                axis[1] * relative[2] - axis[2] * relative[1],
+                axis[2] * relative[0] - axis[0] * relative[2],
+                axis[0] * relative[1] - axis[1] * relative[0],
+            )
+            axis_dot = sum(axis[index] * relative[index] for index in range(3))
+            rotated = tuple(
+                relative[index] * cosine
+                + cross[index] * sine
+                + axis[index] * axis_dot * (1.0 - cosine)
+                + pivot[index]
+                for index in range(3)
+            )
+            joints[name] = rotated
+        rotated_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=rotated_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    )
+
+
+def constrain_support_surfaces(
+    clip: MotionClip,
+    *,
+    contact_states: list[dict[str, object]],
+    minimum_contact_ratio: float = 0.60,
+) -> tuple[MotionClip, dict[str, object]]:
+    if clip.frame_count == 0 or not contact_states:
+        return clip, {"applied": False, "reason": "no_contact_states"}
+    contact_counts: dict[str, int] = {}
+    for state in contact_states:
+        for joint_name in iter_contact_joint_names(state):
+            contact_counts[joint_name] = contact_counts.get(joint_name, 0) + 1
+    continuous_joints = [
+        joint_name
+        for joint_name, count in contact_counts.items()
+        if count / clip.frame_count >= minimum_contact_ratio
+        and joint_name in SUPPORT_CHAIN_CONSTRAINTS
+    ]
+    if not continuous_joints:
+        return clip, {"applied": False, "reason": "no_continuous_supported_chains"}
+    surface_samples = [
+        support_surface_height(frame.joints[joint_name][1])
+        for frame in clip.frames
+        for joint_name in continuous_joints
+        if joint_name in frame.joints
+    ]
+    if not surface_samples:
+        return clip, {"applied": False, "reason": "missing_support_joint_samples"}
+    minimum_reachable_ground_heights = []
+    for frame in clip.frames:
+        for joint_name in continuous_joints:
+            parent_name, _descendants = SUPPORT_CHAIN_CONSTRAINTS[joint_name]
+            joint = frame.joints.get(joint_name)
+            parent = frame.joints.get(parent_name)
+            if joint is None or parent is None:
+                continue
+            minimum_reachable_ground_heights.append(
+                parent[1] - math.dist(parent, joint) - UNIFORM_CAPSULE_RADIUS
+            )
+    ground_y = max(
+        percentile(surface_samples, 0.10),
+        max(minimum_reachable_ground_heights, default=float("-inf")),
+    )
+    target_joint_y = support_joint_height_for_surface(ground_y)
+    corrected_frames: list[MotionFrame] = []
+    maximum_correction = 0.0
+    corrected_samples = 0
+    for frame in clip.frames:
+        joints = dict(frame.joints)
+        for joint_name in continuous_joints:
+            parent_name, descendants = SUPPORT_CHAIN_CONSTRAINTS[joint_name]
+            joint = joints.get(joint_name)
+            parent = joints.get(parent_name)
+            if joint is None or parent is None:
+                continue
+            corrected_joint = _solve_supported_joint_height(
+                parent=parent,
+                joint=joint,
+                target_y=target_joint_y,
+            )
+            correction = (
+                corrected_joint[0] - joint[0],
+                corrected_joint[1] - joint[1],
+                corrected_joint[2] - joint[2],
+            )
+            correction_length = math.sqrt(sum(value * value for value in correction))
+            if correction_length <= 1e-6:
+                continue
+            joints[joint_name] = corrected_joint
+            for descendant_name in descendants:
+                descendant = joints.get(descendant_name)
+                if descendant is not None:
+                    joints[descendant_name] = (
+                        descendant[0] + correction[0],
+                        descendant[1] + correction[1],
+                        descendant[2] + correction[2],
+                    )
+            maximum_correction = max(maximum_correction, correction_length)
+            corrected_samples += 1
+        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=corrected_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    ), {
+        "applied": corrected_samples > 0,
+        "strategy": "continuous_support_surface_bone_length_preserving_rotation",
+        "supportJoints": continuous_joints,
+        "groundY": ground_y,
+        "correctedSamples": corrected_samples,
+        "maximumCorrection": maximum_correction,
+    }
+
+
+def _solve_supported_joint_height(
+    *,
+    parent: Point3,
+    joint: Point3,
+    target_y: float,
+) -> Point3:
+    bone_length = math.dist(parent, joint)
+    vertical = min(max(target_y - parent[1], -bone_length), bone_length)
+    horizontal_length = math.sqrt(max(0.0, bone_length * bone_length - vertical * vertical))
+    horizontal_x = joint[0] - parent[0]
+    horizontal_z = joint[2] - parent[2]
+    current_horizontal_length = math.hypot(horizontal_x, horizontal_z)
+    if current_horizontal_length <= 1e-6:
+        horizontal_direction = (1.0, 0.0)
+    else:
+        horizontal_direction = (
+            horizontal_x / current_horizontal_length,
+            horizontal_z / current_horizontal_length,
+        )
+    return (
+        parent[0] + horizontal_direction[0] * horizontal_length,
+        parent[1] + vertical,
+        parent[2] + horizontal_direction[1] * horizontal_length,
+    )
 
 
 def rolling_median(values: list[float], *, window: int) -> list[float]:
@@ -434,24 +776,26 @@ def ground_to_floor(
     *,
     floor_height: float | None = None,
     support_states: list[dict[str, object]] | None = None,
+    support_mode: str = "upright",
 ) -> MotionClip:
-    foot_joint_names = [joint for joint in DEFAULT_FOOT_JOINTS if joint in clip.joint_names]
-    if not foot_joint_names:
+    support_joint_names = support_joint_names_for_mode(clip, support_mode)
+    if not support_joint_names:
         return clip
     if floor_height is None:
-        lowest_foot_height = min(
-            frame.joints[joint][1]
+        lowest_support_height = min(
+            support_surface_height(frame.joints[joint][1])
             for frame in clip.frames
-            for joint in foot_joint_names
+            for joint in support_joint_names
         )
         candidates = estimate_support_floor_height(
             clip,
             support_states if support_states is not None else [],
+            support_joint_names=support_joint_names,
         )
         if not math.isfinite(candidates):
-            floor_height = lowest_foot_height
+            floor_height = lowest_support_height
         else:
-            floor_height = min(candidates, lowest_foot_height)
+            floor_height = min(candidates, lowest_support_height)
     grounded_frames = []
     for frame in clip.frames:
         grounded_joints = {
@@ -482,7 +826,7 @@ def estimate_support_ground_height(
         for joint_name in iter_contact_joint_names(state):
             coords = frame.joints.get(joint_name)
             if coords is not None:
-                support_heights.append(float(coords[1]))
+                support_heights.append(support_surface_height(coords[1]))
     if not support_heights:
         return 0.0
     return percentile(support_heights, SUPPORT_GROUND_HEIGHT_QUANTILE)
@@ -491,8 +835,12 @@ def estimate_support_ground_height(
 def estimate_support_floor_height(
     clip: MotionClip,
     contact_states: list[dict[str, object]],
+    *,
+    support_joint_names: list[str] | None = None,
 ) -> float:
-    support_joint_names = [joint for joint in DEFAULT_FOOT_JOINTS if joint in clip.joint_names]
+    support_joint_names = support_joint_names or [
+        joint for joint in DEFAULT_FOOT_JOINTS if joint in clip.joint_names
+    ]
     candidate_heights: list[float] = []
     if support_joint_names:
         for frame_index, frame in enumerate(clip.frames):
@@ -501,12 +849,12 @@ def estimate_support_floor_height(
                 for joint_name in iter_contact_joint_names(state):
                     point = frame.joints.get(joint_name)
                     if point is not None:
-                        candidate_heights.append(float(point[1]))
+                        candidate_heights.append(support_surface_height(point[1]))
             if not isinstance(state, dict) or not _support_state_has_ground_contact(state):
                 for joint_name in support_joint_names:
                     point = frame.joints.get(joint_name)
                     if point is not None:
-                        candidate_heights.append(float(point[1]))
+                        candidate_heights.append(support_surface_height(point[1]))
     if not candidate_heights:
         return float("nan")
     return percentile(candidate_heights, FOOT_CONTACT_GROUND_QUANTILE)
@@ -527,7 +875,7 @@ def lift_clip_above_support_ground(
     corrected_frames: list[MotionFrame] = []
     for frame in clip.frames:
         support_heights = [
-            frame.joints[joint_name][1]
+            support_surface_height(frame.joints[joint_name][1])
             for joint_name in support_joint_names
             if joint_name in frame.joints
         ]
@@ -583,7 +931,11 @@ def stabilize_global_translation_from_support_contacts(
             current_point = frame.joints[joint_name]
             target = support_targets.get(joint_name)
             if target is None or joint_name not in previous_contacting_joints:
-                target = (current_point[0], support_ground_y, current_point[2])
+                target = (
+                    current_point[0],
+                    support_joint_height_for_surface(support_ground_y),
+                    current_point[2],
+                )
                 support_targets[joint_name] = target
             corrections.append(
                 (
@@ -650,7 +1002,11 @@ def stabilize_multi_contact_support(
             target = support_targets.get(joint_name)
             is_new_contact = joint_name not in previous_contacting_joints
             if target is None or is_new_contact:
-                target = (current_point[0], support_ground_y, current_point[2])
+                target = (
+                    current_point[0],
+                    support_joint_height_for_surface(support_ground_y),
+                    current_point[2],
+                )
                 support_targets[joint_name] = target
             corrections.append(
                 (
@@ -849,10 +1205,45 @@ def horizontal_frame_speed(clip: MotionClip, *, frame_index: int, joint_name: st
     return horizontal_joint_distance(clip.frames[frame_index - 1], clip.frames[frame_index], joint_name)
 
 
-def detect_support_contact_states(clip: MotionClip) -> list[dict[str, object]]:
+def detect_support_mode(clip: MotionClip) -> str:
+    torso_samples: list[tuple[float, float]] = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        neck = frame.joints.get("neck")
+        if pelvis is None or neck is None:
+            continue
+        vertical = abs(neck[1] - pelvis[1])
+        horizontal = math.hypot(neck[0] - pelvis[0], neck[2] - pelvis[2])
+        torso_samples.append((vertical, horizontal))
+    if not torso_samples:
+        return "upright"
+    vertical = statistics.median(sample[0] for sample in torso_samples)
+    horizontal = statistics.median(sample[1] for sample in torso_samples)
+    required_joints = ("left_hand", "right_hand", "left_knee", "right_knee")
+    if horizontal > vertical and all(joint in clip.joint_names for joint in required_joints):
+        return "quadruped"
+    return "upright"
+
+
+def support_joint_names_for_mode(clip: MotionClip, support_mode: str) -> list[str]:
+    candidates = (
+        DEFAULT_HAND_JOINTS + LEFT_KNEE_GROUP + RIGHT_KNEE_GROUP
+        if support_mode == "quadruped"
+        else DEFAULT_FOOT_JOINTS + DEFAULT_HAND_JOINTS
+    )
+    return [joint for joint in candidates if joint in clip.joint_names]
+
+
+def detect_support_contact_states(
+    clip: MotionClip,
+    *,
+    support_mode: str | None = None,
+) -> list[dict[str, object]]:
+    support_mode = support_mode or detect_support_mode(clip)
     states: list[dict[str, object]] = []
-    left_joint = first_available_joint(clip, LEFT_FOOT_GROUP)
-    right_joint = first_available_joint(clip, RIGHT_FOOT_GROUP)
+    quadruped = support_mode == "quadruped"
+    left_joint = first_available_joint(clip, LEFT_KNEE_GROUP if quadruped else LEFT_FOOT_GROUP)
+    right_joint = first_available_joint(clip, RIGHT_KNEE_GROUP if quadruped else RIGHT_FOOT_GROUP)
     left_hand_joint = first_available_joint(clip, LEFT_HAND_GROUP)
     right_hand_joint = first_available_joint(clip, RIGHT_HAND_GROUP)
     gvhmr_static_joint_confidence = extract_gvhmr_static_joint_confidence(clip)
@@ -952,15 +1343,21 @@ def detect_support_contact_states(clip: MotionClip) -> list[dict[str, object]]:
                 "timeSec": clip.frames[frame_index].time_sec,
                 "leftFootJoint": left_joint,
                 "rightFootJoint": right_joint,
+                "leftKneeJoint": left_joint if quadruped else None,
+                "rightKneeJoint": right_joint if quadruped else None,
                 "leftHandJoint": left_hand_joint,
                 "rightHandJoint": right_hand_joint,
-                "leftInContact": left_contact,
-                "rightInContact": right_contact,
+                "leftInContact": left_contact if not quadruped else False,
+                "rightInContact": right_contact if not quadruped else False,
+                "leftKneeInContact": left_contact if quadruped else False,
+                "rightKneeInContact": right_contact if quadruped else False,
                 "leftHandInContact": left_hand_contact,
                 "rightHandInContact": right_hand_contact,
                 "supportJoint": support_joint,
                 "supportFoot": support_joint,
                 "state": state,
+                "supportMode": support_mode,
+                "contactJoints": contacting_joints,
             }
         )
         previous_left = left_contact
@@ -971,10 +1368,15 @@ def detect_support_contact_states(clip: MotionClip) -> list[dict[str, object]]:
 
 
 def iter_contact_joint_names(state: dict[str, object]) -> list[str]:
+    contact_joints = state.get("contactJoints")
+    if isinstance(contact_joints, list):
+        return [joint for joint in contact_joints if isinstance(joint, str)]
     joints: list[str] = []
     for flag_name, joint_name_field in (
         ("leftInContact", "leftFootJoint"),
         ("rightInContact", "rightFootJoint"),
+        ("leftKneeInContact", "leftKneeJoint"),
+        ("rightKneeInContact", "rightKneeJoint"),
         ("leftHandInContact", "leftHandJoint"),
         ("rightHandInContact", "rightHandJoint"),
     ):
@@ -986,7 +1388,10 @@ def iter_contact_joint_names(state: dict[str, object]) -> list[str]:
 
 
 def _support_state_has_ground_contact(state: dict[str, object]) -> bool:
-    return bool(state.get("leftInContact")) or bool(state.get("rightInContact"))
+    return any(
+        bool(state.get(name))
+        for name in ("leftInContact", "rightInContact", "leftKneeInContact", "rightKneeInContact")
+    )
 
 
 def _summarize_support_states(states: list[dict[str, object]]) -> dict[str, object]:
@@ -995,6 +1400,8 @@ def _summarize_support_states(states: list[dict[str, object]]) -> dict[str, obje
     right_foot_contacts = 0
     left_hand_contacts = 0
     right_hand_contacts = 0
+    left_knee_contacts = 0
+    right_knee_contacts = 0
     ground_contact_frames = 0
 
     for state in states:
@@ -1009,6 +1416,10 @@ def _summarize_support_states(states: list[dict[str, object]]) -> dict[str, obje
             left_hand_contacts += 1
         if bool(state.get("rightHandInContact")):
             right_hand_contacts += 1
+        if bool(state.get("leftKneeInContact")):
+            left_knee_contacts += 1
+        if bool(state.get("rightKneeInContact")):
+            right_knee_contacts += 1
         if _support_state_has_ground_contact(state):
             ground_contact_frames += 1
 
@@ -1020,6 +1431,8 @@ def _summarize_support_states(states: list[dict[str, object]]) -> dict[str, obje
         "rightFootContactFrames": right_foot_contacts,
         "leftHandContactFrames": left_hand_contacts,
         "rightHandContactFrames": right_hand_contacts,
+        "leftKneeContactFrames": left_knee_contacts,
+        "rightKneeContactFrames": right_knee_contacts,
         "groundContactFrames": ground_contact_frames,
         "handContactFrames": sum(
             1
@@ -1041,7 +1454,7 @@ def support_contact_for_joint(
         return False
     support = clip.frames[frame_index].joints[joint_name]
     height_tolerance = contact_height_tolerance_for_joint(joint_name, was_in_contact=was_in_contact)
-    if support[1] > height_tolerance:
+    if support_surface_height(support[1]) > height_tolerance:
         return False
     vertical_speed = vertical_frame_speed(clip, frame_index=frame_index, joint_name=joint_name)
     vertical_tolerance = contact_vertical_speed_tolerance_for_joint(joint_name, was_in_contact=was_in_contact)

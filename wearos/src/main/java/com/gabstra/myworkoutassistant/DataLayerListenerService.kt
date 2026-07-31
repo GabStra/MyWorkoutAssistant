@@ -1898,13 +1898,28 @@ class DataLayerListenerService : WearableListenerService() {
         transactionId: String,
         progress: Float
     ) {
+        val normalizedProgress = progress.coerceIn(0f, 1f)
+        val previousProgress = lastPublishedProgressByTransaction[transactionId]
+        if (
+            normalizedProgress < 1f &&
+            previousProgress != null &&
+            normalizedProgress - previousProgress < MIN_PROGRESS_PUBLISH_DELTA
+        ) {
+            return
+        }
+        if (normalizedProgress >= 1f) {
+            lastPublishedProgressByTransaction.remove(transactionId)
+        } else {
+            lastPublishedProgressByTransaction[transactionId] = normalizedProgress
+        }
+
         val progressPath = DataLayerPaths.buildPath(
             DataLayerPaths.SYNC_PROGRESS_PREFIX,
             transactionId
         )
         val payload = SyncProgressUpdate(
             phase = SyncPhase.TRANSFERRING,
-            progress = progress
+            progress = normalizedProgress
         ).toByteArray()
 
         scope.launch {
@@ -1926,7 +1941,7 @@ class DataLayerListenerService : WearableListenerService() {
                 }
                 Log.d(
                     "DataLayerSync",
-                    "Published acknowledged progress $progress for transaction $transactionId " +
+                    "Published acknowledged progress $normalizedProgress for transaction $transactionId " +
                         "to nodes=$targetNodeIds"
                 )
             } catch (exception: Exception) {
@@ -2039,6 +2054,8 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     companion object {
+        private const val MIN_PROGRESS_PUBLISH_DELTA = 0.1f
+        private val lastPublishedProgressByTransaction = mutableMapOf<String, Float>()
         private const val TAG = "DataLayerListenerService"
         private const val MAX_COMPLETED_TRANSACTION_IDS = 128
         private const val PREFS_COMPLETED_ORDERED = "completedTransactionIdsOrdered"

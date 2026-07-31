@@ -327,10 +327,7 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
             }.asPutDataRequest().setUrgent()
             
             Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
-            dataClient.putDataItem(request)
-            
-            // Small delay to allow message delivery
-            delay(100)
+            Tasks.await(dataClient.putDataItem(request))
             
             Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
             // Wait for acknowledgment with timeout (using default for now, context-based timeout can be added later)
@@ -551,7 +548,7 @@ suspend fun sendExerciseMovement(
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
         val compressedData = compressString(movementJson)
-        val chunkSize = 50000
+        val chunkSize = 90_000
         val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
 
         val startPath = DataLayerPaths.buildPath(DataLayerPaths.EXERCISE_MOVEMENT_START_PREFIX, transactionId)
@@ -565,9 +562,7 @@ suspend fun sendExerciseMovement(
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
-        dataClient.putDataItem(startRequest)
-
-        delay(250)
+        Tasks.await(dataClient.putDataItem(startRequest))
 
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.lastIndex
@@ -587,10 +582,7 @@ suspend fun sendExerciseMovement(
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
                 dataMap.putString("transactionId", transactionId)
             }.asPutDataRequest().setUrgent()
-            dataClient.putDataItem(request)
-            if (!isLastChunk) {
-                delay(250)
-            }
+            Tasks.await(dataClient.putDataItem(request))
         }
 
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
@@ -704,7 +696,7 @@ suspend fun sendAppBackup(
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
         val jsonString = fromAppBackupToJSON(appBackup)
-        val chunkSize = 50000 // Adjust the chunk size as needed
+        val chunkSize = 90_000
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
 
@@ -717,8 +709,6 @@ suspend fun sendAppBackup(
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
-
-        delay(500)
 
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
@@ -737,13 +727,7 @@ suspend fun sendAppBackup(
 
             Tasks.await(dataClient.putDataItem(request))
 
-            if (!isLastChunk) {
-                delay(500)
-            }
         }
-        
-        // Small delay after last chunk to allow message delivery
-        delay(100)
 
         // Calculate dynamic timeout based on chunk count
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)

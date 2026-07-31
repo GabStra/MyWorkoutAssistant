@@ -8,6 +8,7 @@ from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip
 from exercise_motion_pkg.motion_io import save_motion_json
+from exercise_motion_pkg.render_geometry import support_surface_height
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,7 @@ def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
         for joint_name in ("left_ankle", "right_ankle", "l_ankle", "r_ankle"):
             joint = frame.joints.get(joint_name)
             if joint is not None and math.isfinite(joint[1]):
-                ankle_heights.append(float(joint[1]))
+                ankle_heights.append(support_surface_height(joint[1]))
     if not ankle_heights:
         return PlaneEstimate(normal=(0.0, 1.0, 0.0), offset=0.0, rms_error=None)
 
@@ -147,14 +148,7 @@ def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
 def estimate_motion_ground_origin(clip: MotionClip, plane: PlaneEstimate) -> tuple[float, float, float]:
     ground_y = -plane.offset / plane.normal[1] if abs(plane.normal[1]) > 1e-8 else 0.0
     contact_threshold = max(0.06, (plane.rms_error or 0.0) * 1.5)
-    preferred_joint_names = (
-        "left_foot",
-        "right_foot",
-        "left_ankle",
-        "right_ankle",
-        "l_ankle",
-        "r_ankle",
-    )
+    preferred_joint_names = _support_joint_names(clip)
 
     contact_points: list[tuple[float, float]] = []
     fallback_points: list[tuple[float, float]] = []
@@ -239,14 +233,7 @@ def percentile(values: list[float], quantile: float) -> float:
 
 
 def _collect_support_heights(clip: MotionClip) -> list[float]:
-    support_joint_names = (
-        "left_foot",
-        "right_foot",
-        "left_ankle",
-        "right_ankle",
-        "l_ankle",
-        "r_ankle",
-    )
+    support_joint_names = _support_joint_names(clip)
     support_heights: list[float] = []
     for frame in clip.frames:
         supports = [
@@ -257,5 +244,20 @@ def _collect_support_heights(clip: MotionClip) -> list[float]:
         if not supports:
             continue
         support = min(supports, key=lambda point: point[1])
-        support_heights.append(float(support[1]))
+        support_heights.append(support_surface_height(support[1]))
     return support_heights
+
+
+def _support_joint_names(clip: MotionClip) -> tuple[str, ...]:
+    cleanup_metadata = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
+    support_mode = cleanup_metadata.get("supportMode") if isinstance(cleanup_metadata, dict) else None
+    if support_mode == "quadruped":
+        return ("left_hand", "right_hand", "left_knee", "right_knee")
+    return (
+        "left_foot",
+        "right_foot",
+        "left_ankle",
+        "right_ankle",
+        "l_ankle",
+        "r_ankle",
+    )

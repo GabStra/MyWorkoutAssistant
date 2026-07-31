@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
 import com.gabstra.myworkoutassistant.composables.SetTableRow
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
+import com.gabstra.myworkoutassistant.composables.SetValueSection
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
@@ -287,7 +288,11 @@ private fun RestTimerBlock(
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
                 onCloseClick = { setTimerEditMode(false) },
-                content = { textComposable(seconds = currentSeconds) }
+                content = {
+                    SetValueSection(label = "REST", headerStyle = timerHeaderStyle) {
+                        textComposable(seconds = currentSeconds)
+                    }
+                }
             )
         }
     }

@@ -142,7 +142,7 @@ open class AppViewModel : WorkoutViewModel() {
         private const val TAG = "AppViewModel"
         private const val WORKOUT_SYNC_LOG_TAG = "WorkoutSync"
         private const val SYNC_TIMEOUT_MS = 10_000L
-        private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 5_000L
+        private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 1_000L
     }
 
     private var applicationContext: android.content.Context? = null

@@ -29,6 +29,7 @@ fun ExerciseDetail(
     showPlateauWarning: Boolean = true,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable () -> Unit,
+    targetRepRange: String? = null,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
@@ -52,6 +53,7 @@ fun ExerciseDetail(
                 showPlateauWarning = showPlateauWarning,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = exerciseTitleComposable,
+                targetRepRange = targetRepRange,
                 customComponentWrapper = customComponentWrapper
             )
 
@@ -74,6 +76,7 @@ fun ExerciseDetail(
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = exerciseTitleComposable,
+                targetRepRange = targetRepRange,
                 customComponentWrapper = customComponentWrapper
             )
         }

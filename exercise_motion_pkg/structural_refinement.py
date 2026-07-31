@@ -178,6 +178,9 @@ def _preserve_reference_head_pose(
     max_correction = 0.0
     samples = 0
     projected_samples = 0
+    angular_limited_samples = 0
+    previous_target_offset: Point3 | None = None
+    previous_time_sec: float | None = None
     for frame, reference_frame in zip(clip.frames, reference_clip.frames):
         head = frame.joints.get("head")
         neck = frame.joints.get("neck")
@@ -190,6 +193,17 @@ def _preserve_reference_head_pose(
         target_offset, projected = _plausible_head_offset(frame, reference_offset)
         if projected:
             projected_samples += 1
+        if previous_target_offset is not None and previous_time_sec is not None:
+            elapsed_seconds = max(frame.time_sec - previous_time_sec, 1.0 / max(clip.fps, 1.0))
+            target_offset, angular_limited = _limit_vector_angular_change(
+                previous_target_offset,
+                target_offset,
+                max_angle_radians=math.radians(180.0) * elapsed_seconds,
+            )
+            if angular_limited:
+                angular_limited_samples += 1
+        previous_target_offset = target_offset
+        previous_time_sec = frame.time_sec
         target_head = _add(neck, target_offset)
         correction = _distance(head, target_head)
         if correction > 1e-6:
@@ -205,6 +219,8 @@ def _preserve_reference_head_pose(
         "averageCorrection": total_correction / samples if samples else 0.0,
         "maxCorrection": max_correction,
         "spineAxisProjectedSamples": projected_samples,
+        "angularLimitedSamples": angular_limited_samples,
+        "maximumAngularSpeedDegreesPerSecond": 180.0,
     }
 
 
@@ -225,9 +241,65 @@ def _plausible_head_offset(
     )
     off_axis = math.hypot(local[0], local[2])
     along_spine = local[1]
-    if along_spine > 0.0 and off_axis <= max(abs(along_spine) * 0.85, length * 0.45):
+    maximum_off_axis = max(max(along_spine, 0.0) * 0.85, length * 0.45)
+    if along_spine > 0.0 and off_axis <= maximum_off_axis:
         return reference_offset, False
-    return _scale(body_frame.up, length), True
+    corrected_along_spine = max(along_spine, length * 0.45)
+    if off_axis <= 1e-6:
+        corrected_local = (0.0, corrected_along_spine, 0.0)
+    else:
+        off_axis_scale = min(1.0, maximum_off_axis / off_axis)
+        corrected_local = (
+            local[0] * off_axis_scale,
+            corrected_along_spine,
+            local[2] * off_axis_scale,
+        )
+    corrected_world = _add(
+        _scale(body_frame.right, corrected_local[0]),
+        _add(
+            _scale(body_frame.up, corrected_local[1]),
+            _scale(body_frame.forward, corrected_local[2]),
+        ),
+    )
+    corrected_direction = _normalize(corrected_world)
+    if corrected_direction is None:
+        return _scale(body_frame.up, length), True
+    return _scale(corrected_direction, length), True
+
+
+def _limit_vector_angular_change(
+    previous: Point3,
+    target: Point3,
+    *,
+    max_angle_radians: float,
+) -> tuple[Point3, bool]:
+    previous_length = _length(previous)
+    target_length = _length(target)
+    if previous_length <= 1e-6 or target_length <= 1e-6:
+        return target, False
+    previous_direction = _scale(previous, 1.0 / previous_length)
+    target_direction = _scale(target, 1.0 / target_length)
+    cosine = max(-1.0, min(1.0, _dot(previous_direction, target_direction)))
+    angle = math.acos(cosine)
+    if angle <= max_angle_radians or angle <= 1e-6:
+        return target, False
+    blend = max_angle_radians / angle
+    sin_angle = math.sin(angle)
+    if abs(sin_angle) <= 1e-6:
+        blended_direction = _normalize(
+            _add(
+                _scale(previous_direction, 1.0 - blend),
+                _scale(target_direction, blend),
+            )
+        )
+    else:
+        blended_direction = _add(
+            _scale(previous_direction, math.sin((1.0 - blend) * angle) / sin_angle),
+            _scale(target_direction, math.sin(blend * angle) / sin_angle),
+        )
+    if blended_direction is None:
+        return target, False
+    return _scale(blended_direction, target_length), True
 
 
 

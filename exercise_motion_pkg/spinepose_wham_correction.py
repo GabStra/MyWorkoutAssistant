@@ -12,6 +12,11 @@ from exercise_motion_pkg.wham_results import load_wham_results, select_wham_subj
 
 
 SPINEPOSE_SPINE_COUNT = 9
+# SpinePose's full-body OpenPose output contains 37 points. These are the
+# ordered centerline samples used by its own --spine-only mode, from hip to
+# upper neck. Keep accepting full output for user-supplied/cached extractions.
+SPINEPOSE_FULL_KEYPOINT_COUNT = 37
+SPINEPOSE_FULL_SPINE_INDICES = (19, 26, 27, 28, 29, 30, 18, 35, 36)
 SPINEPOSE_NECK_PROFILE_PROGRESS = 6.0 / (SPINEPOSE_SPINE_COUNT - 1)
 SMPL_SPINE_JOINTS = (3, 6, 9)
 SMPL_ARM_ANCHOR_JOINTS = (13, 14)
@@ -480,17 +485,24 @@ def _build_spinepose_profile_candidate(
     source: str,
     smoothing_window: int,
 ) -> SpinePoseProfileCandidate | None:
+    extractions = [_extract_spinepose_points(frame, source=source) for frame in frames]
+    shared_3d_bend_axis = (
+        _shared_spinepose_3d_bend_axis(
+            [extraction[0] for extraction in extractions if extraction is not None]
+        )
+        if source == "3d"
+        else None
+    )
     profiles: list[list[float]] = []
     previous_profile = [0.0] * SPINEPOSE_SPINE_COUNT
     valid_frame_count = 0
     confidence_values: list[float] = []
-    for frame in frames:
-        extraction = _extract_spinepose_points(frame, source=source)
+    for extraction in extractions:
         if extraction is None:
             profiles.append(previous_profile)
             continue
         points, confidences = extraction
-        profile = _spine_curve_profile(points)
+        profile = _spine_curve_profile(points, bend_axis_3d=shared_3d_bend_axis)
         previous_profile = profile
         profiles.append(profile)
         valid_frame_count += 1
@@ -677,9 +689,17 @@ def _extract_spinepose_points(
         raise ValueError(f"Unsupported SpinePose point source: {source}")
     if not isinstance(raw_points, list) or not raw_points:
         return None
+    point_count = len(raw_points) // stride
+    if point_count >= SPINEPOSE_FULL_KEYPOINT_COUNT:
+        point_indices = SPINEPOSE_FULL_SPINE_INDICES
+    elif point_count == SPINEPOSE_SPINE_COUNT:
+        point_indices = tuple(range(SPINEPOSE_SPINE_COUNT))
+    else:
+        return None
     points: list[tuple[float, ...]] = []
     confidences: list[float] = []
-    for index in range(0, min(len(raw_points), SPINEPOSE_SPINE_COUNT * stride), stride):
+    for point_index in point_indices:
+        index = point_index * stride
         row = raw_points[index : index + stride]
         coords = row[:coordinate_count]
         if len(coords) < coordinate_count:
@@ -692,11 +712,15 @@ def _extract_spinepose_points(
     return points, confidences
 
 
-def _spine_curve_profile(points: list[tuple[float, ...]]) -> list[float]:
+def _spine_curve_profile(
+    points: list[tuple[float, ...]],
+    *,
+    bend_axis_3d: Point3 | None = None,
+) -> list[float]:
     base = points[0]
     top = points[-1]
     if len(base) >= 3 and len(top) >= 3:
-        return _spine_curve_profile_3d(points)
+        return _spine_curve_profile_3d(points, bend_axis=bend_axis_3d)
     line_x = float(top[0] - base[0])
     line_y = float(top[1] - base[1])
     line_length = math.hypot(line_x, line_y)
@@ -715,13 +739,28 @@ def _spine_curve_profile(points: list[tuple[float, ...]]) -> list[float]:
     return profile
 
 
-def _spine_curve_profile_3d(points: list[tuple[float, ...]]) -> list[float]:
+def _spine_curve_profile_3d(
+    points: list[tuple[float, ...]],
+    *,
+    bend_axis: Point3 | None = None,
+) -> list[float]:
+    residuals, line_length = _spine_curve_residuals_3d(points)
+    if line_length <= 1e-6:
+        return [0.0] * SPINEPOSE_SPINE_COUNT
+    if bend_axis is None:
+        bend_axis = _dominant_residual_axis(residuals)
+    if bend_axis is None:
+        return [0.0] * SPINEPOSE_SPINE_COUNT
+    return [_dot(residual, bend_axis) / line_length for residual in residuals]
+
+
+def _spine_curve_residuals_3d(points: list[tuple[float, ...]]) -> tuple[list[Point3], float]:
     base = _tuple_point3(points[0])
     top = _tuple_point3(points[-1])
     spine_axis = _subtract_point(top, base)
     line_length = _length(spine_axis)
     if line_length <= 1e-6:
-        return [0.0] * SPINEPOSE_SPINE_COUNT
+        return ([(0.0, 0.0, 0.0)] * SPINEPOSE_SPINE_COUNT, 0.0)
     spine_axis = _scale_point(spine_axis, 1.0 / line_length)
     residuals: list[Point3] = []
     for sample_index in range(SPINEPOSE_SPINE_COUNT):
@@ -731,10 +770,16 @@ def _spine_curve_profile_3d(points: list[tuple[float, ...]]) -> list[float]:
         residual = _subtract_point(source_point, straight_point)
         residual = _subtract_point(residual, _scale_point(spine_axis, _dot(residual, spine_axis)))
         residuals.append(residual)
-    bend_axis = _dominant_residual_axis(residuals)
-    if bend_axis is None:
-        return [0.0] * SPINEPOSE_SPINE_COUNT
-    return [_dot(residual, bend_axis) / line_length for residual in residuals]
+    return residuals, line_length
+
+
+def _shared_spinepose_3d_bend_axis(point_sequences: list[list[tuple[float, ...]]]) -> Point3 | None:
+    residuals = [
+        residual
+        for points in point_sequences
+        for residual in _spine_curve_residuals_3d(points)[0]
+    ]
+    return _dominant_residual_axis(residuals)
 
 
 def _dominant_residual_axis(residuals: list[Point3]) -> Point3 | None:

@@ -42,7 +42,7 @@ object PhoneToWatchSyncCoordinator {
     )
 
     private const val TAG = "PhoneToWatchSyncCoordinator"
-    private const val DEBOUNCE_MS = 30_000L
+    private const val DEBOUNCE_MS = 1_000L
     /** Defer follow-up enqueue until [MobileSyncToWatchWorker.doWork] has returned so WorkManager is not still RUNNING. */
     private const val FOLLOW_UP_ENQUEUE_DELAY_MS = 100L
     private const val PREFS_NAME = "phone_to_watch_sync_coordinator"

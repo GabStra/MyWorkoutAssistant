@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -80,7 +81,7 @@ fun LoadedPlateConfigurationPickerOverlay(
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 56.dp),
+                            .height(64.dp),
                         text = option.label,
                         enabled = !option.isCurrent,
                         scaleTextToFit = true,
