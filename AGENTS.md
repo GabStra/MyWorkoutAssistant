@@ -28,6 +28,9 @@
 ## Build and Compilation
 
 - Keep verification scoped to the change. Do not run broad or full Python test files/suites by default when a targeted test, parser check, or compile check covers the edited path.
+- During active iteration, batch related edits and run verification once the user has settled the requested behavior or a natural implementation checkpoint has been reached. Do not start a build or compile after every individual tweak.
+- If the user changes a value or requests another closely related adjustment while verification is pending, incorporate the adjustment and verify the final combined state rather than treating each intermediate state as a separate build checkpoint.
+- A final scoped verification is still required before reporting the implementation complete; batching changes delays verification but does not remove it.
 - For `exercise_motion_pkg` changes, prefer the smallest relevant `pytest -k ...` subset plus `python -m py_compile` for edited Python files. Run `tests/test_exercise_motion_pkg.py` in full only when explicitly requested or when the change is broad enough that focused tests cannot give meaningful coverage.
 - If a focused test failure suggests wider fallout, fix the specific issue and rerun the focused test first; ask before escalating to long-running broad suites unless the user has already requested comprehensive verification.
 - Run a build when changes can affect app binaries or compilation outputs, including:
@@ -38,13 +41,16 @@
 - A build is NOT required for non-runtime/non-compilation changes only, such as:
   - Documentation (`*.md`), comments-only edits, or planning notes
   - Pure formatting/text changes that do not alter code/resource semantics
-- Prefer the fastest sufficient verification command first (to keep iteration fast):
-  - Kotlin/Java-only changes in mobile/shared code: `./gradlew :mobile:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Kotlin/Java-only changes in wear/shared code: `./gradlew :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Kotlin/Java changes affecting both apps (mobile + wear + shared): `./gradlew :mobile:compileDebugKotlin :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Mobile app changes affecting resources/manifests/packaging: `./gradlew :mobile:assembleDebug --parallel --build-cache`
-  - Wear app changes affecting resources/manifests/packaging: `./gradlew :wearos:assembleDebug --parallel --build-cache`
-  - Changes affecting both apps' resources/manifests/packaging: `./gradlew :mobile:assembleDebug :wearos:assembleDebug --parallel --build-cache`
+- Prefer the fastest sufficient verification command first (to keep iteration fast). Request only the owning app task; Gradle builds required `shared` dependencies transitively:
+  - Kotlin/Java-only changes limited to mobile: `./gradlew :mobile:compileDebugKotlin`
+  - Kotlin/Java-only changes limited to Wear: `./gradlew :wearos:compileDebugKotlin`
+  - Shared Kotlin/Java changes used by only one app path: compile that affected app with `./gradlew :mobile:compileDebugKotlin` or `./gradlew :wearos:compileDebugKotlin`
+  - Kotlin/Java changes affecting both apps, including shared changes consumed by both: `./gradlew :mobile:compileDebugKotlin :wearos:compileDebugKotlin`
+  - Mobile app changes affecting resources/manifests/packaging: `./gradlew :mobile:assembleDebug`
+  - Wear app changes affecting resources/manifests/packaging: `./gradlew :wearos:assembleDebug`
+  - Changes affecting both apps' resources/manifests/packaging: `./gradlew :mobile:assembleDebug :wearos:assembleDebug`
+- Do not add `--parallel` or `--build-cache` routinely because both are already enabled in `gradle.properties`. Add command-line overrides only when intentionally differing from the project defaults.
+- Keep the Gradle daemon warm across an active editing session; do not stop it between ordinary verification runs.
 - Use full builds (`./gradlew :mobile:build` or `./gradlew build`) only when explicitly requested, for release-critical validation, or when changes span multiple modules with potential integration impact.
 - For specific modules, prefer debug variants before full build:
   - `./gradlew :module:compileDebugKotlin` (code-only)
