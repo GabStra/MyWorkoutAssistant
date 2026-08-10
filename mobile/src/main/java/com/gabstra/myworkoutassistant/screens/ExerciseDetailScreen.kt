@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.util.Log
@@ -344,7 +346,8 @@ fun ExerciseDetailScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in historyTabRange
         val enableHistoryActions = showHistoryActions && !historyActionsLoading
-        Scaffold(
+        BreadcrumbScaffold(
+            showTopBarDivider = false,
             topBar = {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(

@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,8 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -45,19 +45,10 @@ fun AccessoryForm(
     val nameState = rememberSaveable { mutableStateOf(accessory?.name ?: "") }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -99,7 +90,7 @@ fun AccessoryForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             EquipmentFormSection(title = "Details") {
                 OutlinedTextField(

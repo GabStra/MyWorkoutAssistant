@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens // Or your appropriate package
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
@@ -21,7 +23,6 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,7 +51,6 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
-import com.gabstra.myworkoutassistant.composables.AppTextButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
@@ -58,6 +58,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SetTable
 import com.gabstra.myworkoutassistant.composables.SetTableRowUiModel
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -125,17 +126,9 @@ fun SupersetForm(
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -473,12 +466,11 @@ fun SupersetForm(
         val unselectedExercises = exercisesToShow.filter { candidate ->
             selectedExercises.none { it.id == candidate.id }
         }
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showAddExerciseDialog = false },
-            title = { Text("Add exercises") },
-            text = {
+            title = "Add exercises",
+            body = {
                 Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     if (unselectedExercises.isEmpty()) {
@@ -519,21 +511,16 @@ fun SupersetForm(
                     }
                 }
             },
-            confirmButton = {
-                AppTextButton(
-                    text = "Add",
-                    enabled = pendingExerciseIds.isNotEmpty(),
-                    onClick = {
-                        selectedExercises = selectedExercises + unselectedExercises.filter {
-                            it.id in pendingExerciseIds
-                        }
-                        showAddExerciseDialog = false
-                    }
-                )
+            confirmText = "Add",
+            confirmEnabled = pendingExerciseIds.isNotEmpty(),
+            onConfirm = {
+                selectedExercises = selectedExercises + unselectedExercises.filter {
+                    it.id in pendingExerciseIds
+                }
+                showAddExerciseDialog = false
             },
-            dismissButton = {
-                AppTextButton(text = "Cancel", onClick = { showAddExerciseDialog = false })
-            }
+            dismissText = "Cancel",
+            onDismissButton = { showAddExerciseDialog = false },
         )
     }
 }

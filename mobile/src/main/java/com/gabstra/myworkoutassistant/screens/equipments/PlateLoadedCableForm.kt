@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -39,8 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -81,19 +81,10 @@ fun PlateLoadedCableForm(
     var expandedPlates by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -137,12 +128,12 @@ fun PlateLoadedCableForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             EquipmentFormSection(title = "Details") {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
@@ -169,6 +160,7 @@ fun PlateLoadedCableForm(
                 summary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}",
                 expanded = expandedPlates,
                 onToggle = { expandedPlates = !expandedPlates },
+                expandedContentSpacing = Spacing.sm,
                 action = {
                     EquipmentAddButton(
                         contentDescription = "Add plate",
@@ -186,7 +178,7 @@ fun PlateLoadedCableForm(
                     ) {
                         Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                             onClick = {
                                 availablePlatesState.value = availablePlatesState.value - plate
                             }
@@ -200,7 +192,7 @@ fun PlateLoadedCableForm(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = Spacing.md, bottom = Spacing.xl),
+                    .padding(bottom = Spacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -250,7 +242,7 @@ fun PlateLoadedCableForm(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(Spacing.sm))
                     OutlinedTextField(
                         value = newPlateThicknessState.value,
                         onValueChange = {

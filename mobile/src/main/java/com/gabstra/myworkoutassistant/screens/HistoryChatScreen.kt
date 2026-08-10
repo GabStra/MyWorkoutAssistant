@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
@@ -27,7 +29,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -353,7 +354,7 @@ fun HistoryChatScreen(
         }
     }
 
-    Scaffold(
+    BreadcrumbScaffold(
         modifier = Modifier.imePadding(),
         topBar = {
             TopAppBar(

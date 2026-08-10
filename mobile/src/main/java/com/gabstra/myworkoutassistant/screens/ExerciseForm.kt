@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -432,17 +434,9 @@ fun ExerciseForm(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineColor,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 title = {
                     Text(
                         modifier = Modifier

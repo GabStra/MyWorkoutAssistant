@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -52,8 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -139,21 +139,13 @@ fun WorkoutForm(
     val newGlobalId = remember { workout?.globalId ?: UUID.randomUUID() }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
+            showTopBarDivider = false,
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.drawBehind {
-                        drawLine(
-                            color = outlineVariant,
-                            start = Offset(0f, size.height),
-                            end = Offset(size.width, size.height),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    },
                     title = {
                         Text(
                             modifier = Modifier

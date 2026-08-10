@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -39,8 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -84,19 +84,10 @@ fun DumbbellsForm(
     var expandedExtraWeights by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -109,7 +100,7 @@ fun DumbbellsForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
-                        text = if(dumbbells == null) "Insert Dumbbells" else "Edit Dumbbells"
+                        text = if (dumbbells == null) "Insert Dumbbell Pair" else "Edit Dumbbell Pair"
                     )
                 },
                 navigationIcon = {
@@ -138,12 +129,12 @@ fun DumbbellsForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             EquipmentFormSection(title = "Details") {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
@@ -166,13 +157,14 @@ fun DumbbellsForm(
             }
 
             CollapsibleSection(
-                title = "Available Dumbbells",
-                summary = "${availableDumbbellsState.value.size} dumbbells",
+                title = "Available Dumbbell Pairs",
+                summary = "${availableDumbbellsState.value.size} pair${if (availableDumbbellsState.value.size == 1) "" else "s"}",
                 expanded = expandedDumbbells,
                 onToggle = { expandedDumbbells = !expandedDumbbells },
+                expandedContentSpacing = Spacing.sm,
                 action = {
                     EquipmentAddButton(
-                        contentDescription = "Add dumbbells",
+                        contentDescription = "Add dumbbell pair",
                         onClick = { showDumbbellDialog.value = true },
                     )
                 },
@@ -185,13 +177,13 @@ fun DumbbellsForm(
                     ) {
                         Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                             onClick = {
                                 availableDumbbellsState.value =
                                     availableDumbbellsState.value - dumbbell
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                            Icon(Icons.Default.Delete, contentDescription = "Remove dumbbell pair")
                         }
                     }
                 }
@@ -202,6 +194,7 @@ fun DumbbellsForm(
                 summary = "${extraWeightsState.value.size} weights",
                 expanded = expandedExtraWeights,
                 onToggle = { expandedExtraWeights = !expandedExtraWeights },
+                expandedContentSpacing = Spacing.sm,
                 action = {
                     EquipmentAddButton(
                         contentDescription = "Add extra weight",
@@ -219,7 +212,7 @@ fun DumbbellsForm(
                             style = MaterialTheme.typography.bodyMedium
                         )
                         IconButton(
-                            modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                             onClick = {
                                 extraWeightsState.value =
                                     extraWeightsState.value - plate
@@ -234,7 +227,7 @@ fun DumbbellsForm(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = Spacing.md, bottom = Spacing.xl),
+                    .padding(bottom = Spacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -268,7 +261,7 @@ fun DumbbellsForm(
     if (showDumbbellDialog.value) {
         StandardDialog(
             onDismissRequest = { showDumbbellDialog.value = false },
-            title = "Add Dumbbell",
+            title = "Add Dumbbell Pair",
             body = {
                 Column {
                     OutlinedTextField(

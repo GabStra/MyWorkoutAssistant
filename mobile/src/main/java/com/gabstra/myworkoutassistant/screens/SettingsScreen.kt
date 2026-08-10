@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +24,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -177,17 +178,9 @@ fun SettingsScreen(
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineColor,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -228,18 +221,15 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.md)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md)
         ) {
             FormSectionTitle("Profile")
             StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
                     OutlinedTextField(
                         value = birthDateYearState.value,
                         onValueChange = { input ->
@@ -251,7 +241,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -265,18 +255,16 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("Heart Rate")
             StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
                     OutlinedTextField(
                         value = measuredMaxHeartRateState.value,
                         onValueChange = { input ->
@@ -288,7 +276,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
                     ContentSubtitle(
                         text = if (fallbackAge != null && fallbackMaxHeartRate != null) {
@@ -296,7 +284,7 @@ fun SettingsScreen(
                         } else {
                             "If left blank, the app uses the default formula:\n211 - 0.64 × age. Enter a valid birth year to preview the fallback result."
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp)
+                        modifier = Modifier.padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -310,7 +298,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     AppPrimaryOutlinedButton(
@@ -357,21 +345,19 @@ fun SettingsScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("Training & Progression")
             StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
                     ContentSubtitle(
                         text = "Global deload defaults apply when an exercise keeps a field on \"use global\". Leave both trigger thresholds blank to disable automatic deload by default.",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -385,7 +371,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -399,7 +385,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -418,7 +404,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -432,7 +418,7 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -446,25 +432,23 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("External Sensors")
             StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
                     OutlinedTextField(
                         value = polarDeviceIdState.value,
                         onValueChange = { polarDeviceIdState.value = it },
                         label = { Text("Polar Device ID") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -473,7 +457,7 @@ fun SettingsScreen(
                         label = { Text("Polar Display Name (optional)") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -482,7 +466,7 @@ fun SettingsScreen(
                         label = { Text("WHOOP Device ID (optional)") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
 
                     OutlinedTextField(
@@ -491,16 +475,14 @@ fun SettingsScreen(
                         label = { Text("WHOOP Display Name (optional)") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                     )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("AI")
             StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
@@ -528,14 +510,12 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(Spacing.sm))
                 FormSectionTitle("Workout Insights")
                 StyledCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Column(modifier = Modifier.padding(Spacing.md)) {
                         ContentSubtitle(
                             text = "Choose whether workout insights run with the on-device LiteRT-LM model or your hosted OpenAI-compatible API.",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = Spacing.xs)
                         )
                         WorkoutInsightsMode.entries.forEach { mode ->
                             Row(
@@ -579,12 +559,12 @@ fun SettingsScreen(
                                 placeholder = { Text("No local model selected") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
 
                             ContentSubtitle(
                                 text = "Use GPU for faster on-device insights when available, or CPU for broader device compatibility.",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                modifier = Modifier.padding(vertical = Spacing.xs)
                             )
 
                             LiteRtLmBackendPreference.entries.forEach { preference ->
@@ -623,7 +603,7 @@ fun SettingsScreen(
                                 enabled = !isImportingLiteRtModel,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
 
                             AppSecondaryButton(
@@ -632,7 +612,7 @@ fun SettingsScreen(
                                 enabled = liteRtModelPath != null && !isImportingLiteRtModel,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
                         } else {
                             OutlinedTextField(
@@ -642,7 +622,7 @@ fun SettingsScreen(
                                 placeholder = { Text("https://your-host.example.com/v1") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
 
                             OutlinedTextField(
@@ -652,7 +632,7 @@ fun SettingsScreen(
                                 placeholder = { Text("gpt-4.1-mini or your hosted model id") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
 
                             OutlinedTextField(
@@ -661,7 +641,7 @@ fun SettingsScreen(
                                 label = { Text("Remote API key") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                             )
                         }
 
@@ -674,11 +654,11 @@ fun SettingsScreen(
                             maxLines = 6,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(8.dp)
+                            .padding(vertical = Spacing.xs)
                         )
                         ContentSubtitle(
                             text = "These instructions are added to workout and exercise insight requests when they do not conflict with the app's evidence and safety rules.",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = Spacing.xs)
                         )
                     }
                 }
@@ -687,8 +667,8 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(vertical = Spacing.md),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 AppSecondaryButton(
                     text = "Cancel",

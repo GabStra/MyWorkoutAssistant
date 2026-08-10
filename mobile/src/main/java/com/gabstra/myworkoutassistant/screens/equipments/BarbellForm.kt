@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -41,8 +43,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -81,19 +81,10 @@ fun BarbellForm(
     var expandedPlates by rememberSaveable { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -135,12 +126,12 @@ fun BarbellForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             EquipmentFormSection(title = "Details") {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
@@ -181,6 +172,7 @@ fun BarbellForm(
                 summary = platesSummary,
                 expanded = expandedPlates,
                 onToggle = { expandedPlates = !expandedPlates },
+                expandedContentSpacing = Spacing.sm,
                 action = {
                     EquipmentAddButton(
                         contentDescription = "Add plate",
@@ -203,7 +195,7 @@ fun BarbellForm(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             IconButton(
-                                modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                                 onClick = {
                                     availablePlatesState.value = availablePlatesState.value - plate
                                 }

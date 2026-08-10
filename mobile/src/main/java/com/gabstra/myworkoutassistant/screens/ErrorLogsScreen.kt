@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -47,17 +49,9 @@ fun ErrorLogsScreen(
     val errorLogs by errorLogDao.getAllErrorLogs().collectAsState(initial = emptyList())
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,

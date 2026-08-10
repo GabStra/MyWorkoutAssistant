@@ -100,6 +100,7 @@ fun CollapsibleSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    expandedContentSpacing: Dp = Spacing.md,
     action: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
@@ -125,7 +126,7 @@ fun CollapsibleSection(
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Start
                     )
-                    if (!expanded && summary.isNotBlank()) {
+                    if (summary.isNotBlank()) {
                         Spacer(Modifier.height(Spacing.xs))
                         Text(
                             text = summary,
@@ -145,7 +146,7 @@ fun CollapsibleSection(
                 }
             }
             if (expanded) {
-                Spacer(Modifier.height(Spacing.md))
+                Spacer(Modifier.height(expandedContentSpacing))
                 content()
             }
         }
