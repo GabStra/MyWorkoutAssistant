@@ -140,7 +140,7 @@ fun HrStatusBadge(
                                 BorderStroke(1.dp, Red),
                                 shape = RoundedCornerShape(12.dp)
                             )
-                            .padding(horizontal = 7.5.dp, vertical = 2.5.dp)
+                            .padding(horizontal = 7.5.dp, vertical = 5.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically
@@ -352,11 +352,11 @@ private fun HeartRateDisplay(
                     )
                 }
             }
-            Box(
-                modifier = Modifier.width(27.5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                if (bpm != 0 && currentZone != 0) {
+            if (bpm != 0 && currentZone != 0) {
+                Box(
+                    modifier = Modifier.width(27.5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
