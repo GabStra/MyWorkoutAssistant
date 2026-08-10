@@ -1,0 +1,5160 @@
+{
+  "format": "myworkoutassistant.exercise-library",
+  "schemaVersion": 2,
+  "exerciseDefinitions": [
+    {
+      "name": "Ab Wheel Rollout (Kneeling)",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 50.0,
+      "requiredAccessoryEquipmentIds": [
+        "0150cff2-cce4-4c45-8d8a-631f915b80fe"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "3b7b847a-5213-51bc-83a9-f6a7453df02b"
+    },
+    {
+      "name": "Ab Wheel Rollout (Standing)",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 85.0,
+      "requiredAccessoryEquipmentIds": [
+        "0150cff2-cce4-4c45-8d8a-631f915b80fe"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "a135865d-3ca7-51ed-978a-07415dcfcf8e"
+    },
+    {
+      "name": "Barbell Behind-the-Back Shrug",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "d1059fed-2faf-588e-ba69-5da3bd3750d6"
+    },
+    {
+      "name": "Barbell Bent-Over Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f8b61e5c-8953-58a5-af21-3bc0f870b7fe"
+    },
+    {
+      "name": "Barbell Chest-Supported Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f280d6b6-37ed-5741-bd12-ed34bb6ecd2b"
+    },
+    {
+      "name": "Barbell Clean",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "9336825e-155a-53f4-ab1a-2d19ee404581"
+    },
+    {
+      "name": "Barbell Clean and Jerk",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS",
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "77a07d07-86aa-5e74-b30b-5386f3e85545"
+    },
+    {
+      "name": "Barbell Clean and Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "adebcfd2-c3cb-50ee-83f8-571fc02c51f5"
+    },
+    {
+      "name": "Barbell Clean Pull",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_QUADRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "a693bfdd-567d-542b-85f3-e8dba97a1663"
+    },
+    {
+      "name": "Barbell Cuban Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_DELTOIDS",
+        "FRONT_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f11a1bf7-02d2-5aa2-bd99-2b61cc70e829"
+    },
+    {
+      "name": "Barbell Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "9e83c2d4-b973-512f-b762-ccbeb91da395"
+    },
+    {
+      "name": "Barbell Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "f2a0c9b4-e978-5c12-b165-52a6473d4e59"
+    },
+    {
+      "name": "Barbell Drag Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "36467e1b-eaca-5254-bb88-9371c8f0f668"
+    },
+    {
+      "name": "Barbell Floor Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b3e7dd7e-492c-5b9b-b101-f103a2b4d1e3"
+    },
+    {
+      "name": "Barbell Front Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": null,
+      "id": "f1482d74-5c9b-529e-a696-30e0d6b4a327"
+    },
+    {
+      "name": "Barbell Front Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "0f78a2b8-73e7-59ed-a7ab-767ddb33b2c8"
+    },
+    {
+      "name": "Barbell Front Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "33c196ed-c32c-5d16-bfff-2a6d518c7e8f"
+    },
+    {
+      "name": "Barbell Glute Bridge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "e250ca5c-e99c-5cc6-a85a-c7f8c8a5d182"
+    },
+    {
+      "name": "Barbell Hack Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7d3e4468-9394-5241-88db-9eb6ac06bd3f"
+    },
+    {
+      "name": "Barbell Hang Clean",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_QUADRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "833eea46-de92-5b72-935a-5449ba7cab09"
+    },
+    {
+      "name": "Barbell Hang Power Clean",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "11d48fea-c16f-5c4f-894a-6fb720d27245"
+    },
+    {
+      "name": "Barbell Hang Power Snatch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_DELTOIDS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "1ae9387b-38c1-5bf4-98f5-f6a3e6fec5f9"
+    },
+    {
+      "name": "Barbell Hang Snatch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_DELTOIDS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "f5282098-b1f1-5f00-a794-ab08c5992197"
+    },
+    {
+      "name": "Barbell High Pull",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_DELTOIDS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "6c2e9453-204b-5eb7-8942-cbda1335c741"
+    },
+    {
+      "name": "Barbell Hip Thrust",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1f36157a-3709-5059-aa18-98d6a527a287"
+    },
+    {
+      "name": "Barbell Incline Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "9f085e8f-8717-57f8-a308-700071f438cd"
+    },
+    {
+      "name": "Barbell Jefferson Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "192a75b1-0de1-5502-96ea-5670f91d8a95"
+    },
+    {
+      "name": "Barbell Overhead Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "f0cb14bc-e623-5d8f-90b3-ae08041a5ee8"
+    },
+    {
+      "name": "Barbell Overhead Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "c801c25a-c1b8-5a56-8680-b647957a21a1"
+    },
+    {
+      "name": "Barbell Overhead Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "7c3f28df-51f7-5ef0-87ec-bc1434d31a90"
+    },
+    {
+      "name": "Barbell Overhead Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "31a87578-f1e7-5e01-b112-947c522d4aed"
+    },
+    {
+      "name": "Barbell Pendlay Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "fb36d19a-8fe9-58c7-903e-113b2ee72ebf"
+    },
+    {
+      "name": "Barbell Power Clean",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7fd0edcf-d96d-5824-a2bb-8e3a14020e26"
+    },
+    {
+      "name": "Barbell Power Snatch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "1634cc04-a76a-581e-9094-41f1d328b7fb"
+    },
+    {
+      "name": "Barbell Push Jerk",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "71f69e9b-20a2-5a59-bde6-9cf00a2bd4bf"
+    },
+    {
+      "name": "Barbell Push Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "fa786f4f-9a67-5386-856b-217a4691463f"
+    },
+    {
+      "name": "Barbell Reverse Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "07980aa7-967c-586b-80a8-a2972a32c668"
+    },
+    {
+      "name": "Barbell Reverse Wrist Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "3a36da62-c731-5604-935b-cd1487e35f89"
+    },
+    {
+      "name": "Barbell Rollout",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "509de52a-098b-5cc8-87d4-643dd505db33"
+    },
+    {
+      "name": "Barbell Romanian Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "42bb1717-208d-5ebf-8f81-16582e3f14d3"
+    },
+    {
+      "name": "Barbell Seal Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "fe78ae44-3c9a-5860-9ffc-45530acc1da9"
+    },
+    {
+      "name": "Barbell Shrug",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "e8982db6-3067-5982-9850-e02450035849"
+    },
+    {
+      "name": "Barbell Single-Leg Romanian Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "5abbb0d9-c2a6-53ad-8caf-d64e2c7ab882"
+    },
+    {
+      "name": "Barbell Snatch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "167521fc-a32d-5574-990a-20b8f3296288"
+    },
+    {
+      "name": "Barbell Snatch Pull",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "3e839dbf-c006-50de-83b4-a07b891ace69"
+    },
+    {
+      "name": "Barbell Snatch-Grip Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "627fa6f8-f8ed-54f4-b8c0-5ddc998795e1"
+    },
+    {
+      "name": "Barbell Split Jerk",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "fa9db234-95cf-5065-ab45-e2542ecbe118"
+    },
+    {
+      "name": "Barbell Standing Triceps Extension",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "c3b3113a-dd4f-5c3f-98e2-27e5747584d3"
+    },
+    {
+      "name": "Barbell Stiff-Legged Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "6f25dddb-09eb-5306-8364-d84e676672a0"
+    },
+    {
+      "name": "Barbell Sumo Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_QUADRICEPS",
+        "BACK_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "ba71c73e-4c09-5d72-9e70-c20a12cd69ab"
+    },
+    {
+      "name": "Barbell Thruster",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7fa50751-9a9d-52c9-9e73-4ce0649c0a8b"
+    },
+    {
+      "name": "Barbell Upright Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "97e35b65-3b91-57d2-b6ea-affbdafff1dd"
+    },
+    {
+      "name": "Barbell Windmill",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "7682bbf1-cbf1-5b35-a368-711fa226ae9d"
+    },
+    {
+      "name": "Barbell Wrist Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "83913148-95d6-50ae-b8e4-4a95ec10a834"
+    },
+    {
+      "name": "Barbell Yates Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "742f6a68-d782-565d-8d9d-d3397910c02b"
+    },
+    {
+      "name": "Barbell Zercher Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "ea936389-e55e-5bc5-bedb-e27bc6c617d5"
+    },
+    {
+      "name": "Barbell Zercher Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "799b85aa-deac-5e3f-b1b6-ec48f6608fc3"
+    },
+    {
+      "name": "Bench Dip",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 65.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_TRICEPS",
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "e825b5fd-5d58-55d4-a99b-b6ec2030db50"
+    },
+    {
+      "name": "Bench Hip Thrust",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 60.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "e1939f8e-7f02-5235-b619-ecb0f23b64d8"
+    },
+    {
+      "name": "Bench L-Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": null,
+      "id": "16e77ce1-3c8b-5eb1-aff6-0bcf94ca6b04"
+    },
+    {
+      "name": "Bench Pike Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 60.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "c156c5ac-f503-5324-af8d-4b915b0c2c90"
+    },
+    {
+      "name": "Bench Plank",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": null,
+      "id": "bd5074fd-8875-5ebf-8bc6-8f0c18f7ed79"
+    },
+    {
+      "name": "Bulgarian Split Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 75.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "7cdd219c-00ed-5d13-bb92-3d97fe6d3848"
+    },
+    {
+      "name": "Cable Biceps Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "e6abe71d-3e45-5a6b-a776-c7b7405ec875"
+    },
+    {
+      "name": "Cable Crunch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "fe87940d-089b-522a-a1a7-f79adea03b9c"
+    },
+    {
+      "name": "Cable External Rotation",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "37bd137c-465a-528b-a7bc-105e5f1e1357"
+    },
+    {
+      "name": "Cable Face Pull",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1bc389e1-8559-56a5-9fc5-e5841f9362bd"
+    },
+    {
+      "name": "Cable Front Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "7ec90439-2482-5250-aa5d-f13f6c7d465d"
+    },
+    {
+      "name": "Cable Glute Bridge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "0b828395-f5eb-532f-8836-60c267999a42"
+    },
+    {
+      "name": "Cable Hammer Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "1792ca30-787c-52f0-834f-34c3a150f347"
+    },
+    {
+      "name": "Cable Internal Rotation",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "d672c27b-4f02-5eac-80f1-5aa7a51b243f"
+    },
+    {
+      "name": "Cable Lat Pulldown",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "8b82d4fe-f9e1-5941-b8da-860551a3e7e6"
+    },
+    {
+      "name": "Cable Lateral Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "27fd012f-6e53-5b36-b539-16d4a6fd47cc"
+    },
+    {
+      "name": "Cable One-Arm Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "39b7f912-9e4c-5d09-8006-0c083c9ac1e8"
+    },
+    {
+      "name": "Cable Pallof Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_CHEST",
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f84574dc-7f94-5689-a78f-8325d33f2e90"
+    },
+    {
+      "name": "Cable Pull-Through",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "571bb8e5-b6d3-55db-8c04-a4114f5d56c8"
+    },
+    {
+      "name": "Cable Pullover",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_CHEST"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "56d491a6-0e74-54c4-8f75-5906a4e9c490"
+    },
+    {
+      "name": "Cable Reverse Woodchop",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "bec829e6-bba6-5ed6-9450-85826b5f308d"
+    },
+    {
+      "name": "Cable Romanian Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "ac6ebe2b-3b71-587d-86db-0ef316d00ea5"
+    },
+    {
+      "name": "Cable Seated Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "0b12d205-670c-5c7d-a061-ec1481308d19"
+    },
+    {
+      "name": "Cable Shoulder Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "49436814-0cce-578c-932d-cdde71e3fa3c"
+    },
+    {
+      "name": "Cable Shrug",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "dbcc2b54-e810-5480-8534-a1755b4b9b62"
+    },
+    {
+      "name": "Cable Side Bend",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_LOWER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "6763fcbb-ecb2-5ad5-939f-3578b170eea4"
+    },
+    {
+      "name": "Cable Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "c5aaa327-ec64-5613-8247-7c7ed1efcca3"
+    },
+    {
+      "name": "Cable Straight-Arm Pulldown",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "f43f5955-d0e4-5a1c-9d4b-c810660a7257"
+    },
+    {
+      "name": "Cable Triceps Kickback",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "3e423335-21fc-5a3c-a60d-674b0b9da8db"
+    },
+    {
+      "name": "Cable Triceps Overhead Extension",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "785d3678-da6f-59eb-80b0-b2b9f883cc98"
+    },
+    {
+      "name": "Cable Triceps Pushdown",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "e0263e65-7f7e-5cea-a387-b102de9517f7"
+    },
+    {
+      "name": "Cable Upright Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "56371db9-050a-56c3-ab07-1537fabeea65"
+    },
+    {
+      "name": "Cable Woodchop",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "cc1ca1f3-f1c7-5de3-a718-788d6081fac4"
+    },
+    {
+      "name": "Chest-Supported Single-Arm Dumbbell Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "84980822-d78a-526b-9c05-049e1c45f499"
+    },
+    {
+      "name": "Chin-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "2bb635c6-56e2-56a7-9cee-b02590658b93"
+    },
+    {
+      "name": "Commando Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "a0d2da0f-f706-5a49-8b44-383baa8f24e0"
+    },
+    {
+      "name": "Dead Hang",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": null,
+      "id": "7864b236-2517-599c-a953-edd49a1eeed1"
+    },
+    {
+      "name": "Decline Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 70.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "97506e97-5328-5ee8-978e-7411cf240c70"
+    },
+    {
+      "name": "Dumbbell Arnold Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f567d13e-1750-5e9d-af84-54a5431d82cd"
+    },
+    {
+      "name": "Dumbbell Bench Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4195f91d-200d-513a-936e-f17b46223680"
+    },
+    {
+      "name": "Dumbbell Bent-Over Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "07545604-d47d-5387-a4eb-df11b4fee3c3"
+    },
+    {
+      "name": "Dumbbell Bicep Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "ef1a6930-07e3-5ba3-8866-a4ce334a2cba"
+    },
+    {
+      "name": "Dumbbell Bulgarian Split Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "090742b6-2e5e-551b-bad5-b18ee5300eaa"
+    },
+    {
+      "name": "Dumbbell Chest Fly",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "dc62912a-e9d2-505a-93c2-3477f29e076f"
+    },
+    {
+      "name": "Dumbbell Clean",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "32c6be72-bcec-56a6-b9c5-57e7b5a0629b"
+    },
+    {
+      "name": "Dumbbell Clean and Jerk",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "801603e3-cf9c-5b4d-935f-2b32de00ad38"
+    },
+    {
+      "name": "Dumbbell Clean and Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "569d9206-9aa2-57b0-8d35-232409758740"
+    },
+    {
+      "name": "Dumbbell Cuban Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "a333230d-f841-5c00-a341-fea453972a68"
+    },
+    {
+      "name": "Dumbbell Curtsy Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "d3ed87f1-efd9-5fac-a487-f3c090f361a8"
+    },
+    {
+      "name": "Dumbbell Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "169d18bd-4634-5d28-8789-864679a00260"
+    },
+    {
+      "name": "Dumbbell External Rotation",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "cfe377b1-db1e-5235-a8e6-805a19f7b638"
+    },
+    {
+      "name": "Dumbbell Farmer's Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": null,
+      "id": "60977b9e-24f3-5273-8793-e06d7c52ec05"
+    },
+    {
+      "name": "Dumbbell Floor Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "e673d207-c138-552e-8015-09296dfc046c"
+    },
+    {
+      "name": "Dumbbell Forward Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "68978a95-506b-5fb3-829a-cc84e8ab6373"
+    },
+    {
+      "name": "Dumbbell Front Rack Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": null,
+      "id": "b9b1eac7-8567-5bd6-bd69-72d64b4354fb"
+    },
+    {
+      "name": "Dumbbell Front Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "d3665daf-6dc0-5d9a-a570-845642a0d84b"
+    },
+    {
+      "name": "Dumbbell Front Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "cd15a335-d949-59f2-b425-9af7f96a53eb"
+    },
+    {
+      "name": "Dumbbell Glute Bridge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "721ea1cf-9d7c-55e2-a796-c1b66fc92cc7"
+    },
+    {
+      "name": "Dumbbell Good Morning",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "348c0fae-bed8-57e5-a221-278051f37b32"
+    },
+    {
+      "name": "Dumbbell Hammer Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "09ea774f-7c2c-52e8-851a-cb115e7f3f16"
+    },
+    {
+      "name": "Dumbbell Hip Thrust",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "fce6d5b3-5c17-5d9d-b488-f61ea22e47fe"
+    },
+    {
+      "name": "Dumbbell Lateral Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "8ebec0e6-12f9-55ea-84b7-ac0dc93a4768"
+    },
+    {
+      "name": "Dumbbell Lateral Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "45b43430-7884-5a74-bdf4-37bdaeca1d96"
+    },
+    {
+      "name": "Dumbbell Man Maker",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS",
+        "FRONT_TRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "cf58df58-1289-5862-91f8-504588ff7677"
+    },
+    {
+      "name": "Dumbbell Overhead Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_LOWER_BACK",
+        "BACK_GLUTEAL",
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": null,
+      "id": "840cfa4d-2210-5644-9ac2-18bf9231da09"
+    },
+    {
+      "name": "Dumbbell Overhead Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "7d409be3-eccb-5fe3-8066-e69ed6d4c8b0"
+    },
+    {
+      "name": "Dumbbell Overhead Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "283ac7db-56da-5309-b45d-baf9df783386"
+    },
+    {
+      "name": "Dumbbell Overhead Triceps Extension",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_TRICEPS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "81800182-37ce-590c-9482-016680e67cfd"
+    },
+    {
+      "name": "Dumbbell Pullover (Dumbbell Pair)",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_ADDUCTORS",
+        "FRONT_CHEST"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "f81b71a3-7a5e-5286-8982-33014284a011"
+    },
+    {
+      "name": "Dumbbell Pullover (Single Dumbbell)",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_ADDUCTORS",
+        "FRONT_CHEST"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "8c1e333e-791e-5526-bc65-e2a7e033a9a6"
+    },
+    {
+      "name": "Dumbbell Push Jerk",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS",
+        "FRONT_CALVES",
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "3dd7138f-9be4-55f3-8edb-e0128f3007f7"
+    },
+    {
+      "name": "Dumbbell Push Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "80b37bb7-39ff-5b06-b21e-1fa8dd13f26a"
+    },
+    {
+      "name": "Dumbbell Rear Delt Fly",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "9ef26522-2ef8-5d84-9d4f-a4f7e53bfa43"
+    },
+    {
+      "name": "Dumbbell Renegade Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_ADDUCTORS",
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "42b91e21-3038-5d89-8660-01c4505a6c8e"
+    },
+    {
+      "name": "Dumbbell Reverse Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_FOREARM",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "74ab3b55-4f0f-562f-bc81-0edfc566ff77"
+    },
+    {
+      "name": "Dumbbell Reverse Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "5b9b1b44-283c-5e92-bbf2-5f6a1ee6a722"
+    },
+    {
+      "name": "Dumbbell Reverse Wrist Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "8f881f1f-a123-5dda-9672-6c4df6d20e01"
+    },
+    {
+      "name": "Dumbbell Romanian Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "08db81fb-090c-5df5-8ddb-2911073a69f8"
+    },
+    {
+      "name": "Dumbbell Russian Twist (Dumbbell Pair)",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b4d05a6d-027c-535b-817f-b4bba4347bab"
+    },
+    {
+      "name": "Dumbbell Russian Twist (Single Dumbbell)",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "bef78076-ae83-598c-956e-580057a915d7"
+    },
+    {
+      "name": "Dumbbell Seal Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "61c858c2-5116-571e-8555-07f4dad670b3"
+    },
+    {
+      "name": "Dumbbell Seated Calf Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "448e11c6-5e72-599f-859f-8351ff42f8a2"
+    },
+    {
+      "name": "Dumbbell Seated Overhead Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "c75b93f6-d025-566a-8d5b-eea1f5bca3e9"
+    },
+    {
+      "name": "Dumbbell Shrug",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "bb95addc-5b79-5009-a124-8ef6612ecb2d"
+    },
+    {
+      "name": "Dumbbell Side Bend",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "363d96c8-1461-55c1-b196-ab4a6fdcacdc"
+    },
+    {
+      "name": "Dumbbell Single-Leg Romanian Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "BACK_LOWER_BACK"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4d4ae40b-5d28-562c-923c-75aada7635b8"
+    },
+    {
+      "name": "Dumbbell Skull Crusher",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "489cbcf4-a5a7-58dc-9c37-2091b770ec73"
+    },
+    {
+      "name": "Dumbbell Split Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_CALVES",
+        "FRONT_ABS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "0a17e876-02b2-57bd-8610-add4289c874e"
+    },
+    {
+      "name": "Dumbbell Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "3dcd1c91-9f88-5edd-88bc-dd47f993fdd3"
+    },
+    {
+      "name": "Dumbbell Standing Calf Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "5c2d3b6b-1030-5c08-8d6c-144c16e18336"
+    },
+    {
+      "name": "Dumbbell Step-Up",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ABS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4d9fbfd0-d755-5fe6-b623-49b38940e486"
+    },
+    {
+      "name": "Dumbbell Sumo Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ADDUCTORS",
+        "FRONT_ABS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "4a91e02e-fc77-57aa-ac5e-a355c6c04f13"
+    },
+    {
+      "name": "Dumbbell Sumo Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ABS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "f5ce41e4-6f79-5e98-a4af-3e114e3c2d3f"
+    },
+    {
+      "name": "Dumbbell T Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "eaa74b1d-cee6-59ee-86fc-dd07dd4f5f1e"
+    },
+    {
+      "name": "Dumbbell Tate Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "8780278e-124b-5f5c-9ddc-99e2c4a12c14"
+    },
+    {
+      "name": "Dumbbell Thruster",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "d6f3ffc3-0ba2-5ee1-8ad5-d42435303956"
+    },
+    {
+      "name": "Dumbbell Triceps Kickback",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "9790d44a-fc2f-5cb4-b7fe-5c691a82c39c"
+    },
+    {
+      "name": "Dumbbell Turkish Get-Up",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "69d33472-b99c-5525-92db-22aea6363d1e"
+    },
+    {
+      "name": "Dumbbell Upright Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "38816cba-2bb9-51f7-bdef-946c4fbe83d4"
+    },
+    {
+      "name": "Dumbbell Walking Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "0f0d657c-9056-5e83-aa24-6e5cfb73bad3"
+    },
+    {
+      "name": "Dumbbell Windmill",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "acc0a4e3-e21d-5c1a-8a15-6f39f4c5bc32"
+    },
+    {
+      "name": "Dumbbell Wrist Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "6d2fe21e-1620-5714-88b7-efde63d853ba"
+    },
+    {
+      "name": "Dumbbell Y Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "4396a140-9824-5560-a887-815ad6b3bf5d"
+    },
+    {
+      "name": "Dumbbell Z Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "52c2cf46-8a81-5f52-991c-de572a7b28c7"
+    },
+    {
+      "name": "Dumbbell Zottman Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "e6e66743-8085-5909-a9f1-ad15040f1f37"
+    },
+    {
+      "name": "Flexed Arm Hang",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": null,
+      "id": "ebcc905f-4547-574b-b7b3-ca5f761646fc"
+    },
+    {
+      "name": "Goblet Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "90270ea3-8bb0-57a6-9f1d-d9341ede676f"
+    },
+    {
+      "name": "Hanging Knee Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 40.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "aa746894-3060-5c27-b660-717576321642"
+    },
+    {
+      "name": "Hanging L-Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": null,
+      "id": "0583eae0-9e28-53fa-9ef2-3cf9f8026df6"
+    },
+    {
+      "name": "Hanging Leg Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 40.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "71f94718-e147-5362-b5b7-91f751e91d19"
+    },
+    {
+      "name": "Incline Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 50.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1dee71fd-b9f3-5bb0-ba75-da0ff8c41b4a"
+    },
+    {
+      "name": "Negative Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "ce6108af-4ae3-5a81-9cd0-8721bf93a06d"
+    },
+    {
+      "name": "Nordic Curl",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 80.0,
+      "requiredAccessoryEquipmentIds": [
+        "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+      ],
+      "muscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "58ed7a40-780e-55d7-9de2-32902b63a457"
+    },
+    {
+      "name": "Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4add0875-641f-5c8f-8051-767697661c80"
+    },
+    {
+      "name": "Ring Dip",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 90.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_TRICEPS",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "709721b9-35f0-5484-90e6-df8c0c4c0596"
+    },
+    {
+      "name": "Ring Fallout",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 50.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "85756709-e80d-579b-b6d1-c9a035b75569"
+    },
+    {
+      "name": "Ring Handstand Hold",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_UPPER_BACK",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": null,
+      "id": "096da0a7-6588-581e-bca2-37c25d3ce8d1"
+    },
+    {
+      "name": "Ring Handstand Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "eb2cd278-52c7-5564-b191-6e67504c3d9d"
+    },
+    {
+      "name": "Ring L-Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": null,
+      "id": "e679ada2-21d7-5ed6-9874-f42ffd7a4148"
+    },
+    {
+      "name": "Ring Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "550da3d1-b7ea-56c9-ad2b-587d5228b69b"
+    },
+    {
+      "name": "Ring Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 60.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "BACK_TRICEPS",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b0d25822-a42a-5e90-800f-9ff509530fb2"
+    },
+    {
+      "name": "Ring Row",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 65.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "221ab192-d37e-5ac9-9d67-75d612f4f6fd"
+    },
+    {
+      "name": "Ring Skin the Cat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 80.0,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_CHEST",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_OBLIQUES",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "cb27948a-d2bc-500c-b729-68be007788f6"
+    },
+    {
+      "name": "Ring Support Hold",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_CHEST",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "exerciseCategory": null,
+      "id": "4e16772d-d2bb-56eb-bba6-f52f8581685b"
+    },
+    {
+      "name": "Scapular Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "50f3ef1b-efdc-5133-b01f-8b6cd995f803"
+    },
+    {
+      "name": "Single-Arm Dumbbell Arnold Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "f2146a79-01b8-53a8-81e5-178983f0ef6a"
+    },
+    {
+      "name": "Single-Arm Dumbbell Bench Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4d91dc74-9ea0-512f-97b4-e857b61d5e3c"
+    },
+    {
+      "name": "Single-Arm Dumbbell Bicep Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "42707c8e-1be6-5a48-8547-9dcef4af540c"
+    },
+    {
+      "name": "Single-Arm Dumbbell Bulgarian Split Squat",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "9bdf106c-f4fa-5c31-b95b-f26413327f95"
+    },
+    {
+      "name": "Single-Arm Dumbbell Calf Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "dd9bb466-2865-5062-ad27-3c92500d6a71"
+    },
+    {
+      "name": "Single-Arm Dumbbell Concentration Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "46bab86a-9b79-5592-93c7-6079404d289c"
+    },
+    {
+      "name": "Single-Arm Dumbbell Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "c4de6aee-e8cf-5c69-bbfa-97390ac7a266"
+    },
+    {
+      "name": "Single-Arm Dumbbell Floor Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "9c4bc8d2-5a5f-533d-880b-491d991c1b46"
+    },
+    {
+      "name": "Single-Arm Dumbbell Fly",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "7bf193bc-f87b-55be-b5e2-a667c923b673"
+    },
+    {
+      "name": "Single-Arm Dumbbell Front Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "5356e1f3-76de-55b1-a794-9d70f0d57df3"
+    },
+    {
+      "name": "Single-Arm Dumbbell Incline Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "402ecb5c-f5d0-5ccb-9083-c3a014d92916"
+    },
+    {
+      "name": "Single-Arm Dumbbell Incline Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "18611f40-68ff-55d1-8e22-c16d0b12ec9b"
+    },
+    {
+      "name": "Single-Arm Dumbbell Lateral Raise",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_TRAPEZIUS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "7aaf4594-c02e-55a0-afbc-93324816d43d"
+    },
+    {
+      "name": "Single-Arm Dumbbell Lunge",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "99f7c78b-2c2d-53b2-aac7-318865cdfcca"
+    },
+    {
+      "name": "Single-Arm Dumbbell Lying Triceps Extension",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "5ffddbba-c256-54df-8e86-59b6f6a47034"
+    },
+    {
+      "name": "Single-Arm Dumbbell Overhead Hold",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": null,
+      "id": "58b7cb46-44eb-5f81-a1d8-cdb0733a6866"
+    },
+    {
+      "name": "Single-Arm Dumbbell Overhead Triceps Extension",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "beba2b62-0006-5969-a777-f69ed38382ab"
+    },
+    {
+      "name": "Single-Arm Dumbbell Rear Delt Fly",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "977b0aac-3ad7-5b38-840e-f93c8ed5f729"
+    },
+    {
+      "name": "Single-Arm Dumbbell Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "0cb6ae39-a391-52b8-b4c4-f86d978e5fed"
+    },
+    {
+      "name": "Single-Arm Dumbbell Shoulder Press",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "ecc510ac-404a-5cf3-9fc6-251c1789f726"
+    },
+    {
+      "name": "Single-Arm Dumbbell Shrug",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "b42e44e0-0757-54f9-85ee-5be8851ea5b5"
+    },
+    {
+      "name": "Single-Arm Dumbbell Single-Leg Deadlift",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "9102487d-acbb-5546-8ca0-2612cff45835"
+    },
+    {
+      "name": "Single-Arm Dumbbell Snatch",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_QUADRICEPS",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_TRAPEZIUS",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "0f22c0c9-39c9-55ad-b7cb-df52e62fa802"
+    },
+    {
+      "name": "Single-Arm Dumbbell Step-Up",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "42380a9b-c7f1-5362-9303-a1b89dd9f644"
+    },
+    {
+      "name": "Single-Arm Dumbbell Triceps Kickback",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "856a1cae-748f-5980-8454-48c9437a3c45"
+    },
+    {
+      "name": "Single-Arm Dumbbell Upright Row",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "4c80dd7c-0ee4-548d-91ed-ff68261de1d4"
+    },
+    {
+      "name": "Single-Arm Dumbbell Wrist Curl",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_FOREARM"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "edcbffc1-1604-5ace-b98b-81da0b0b8aae"
+    },
+    {
+      "name": "Stationary Cycling",
+      "exerciseType": "COUNTUP",
+      "equipmentId": null,
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "1bbc8e63-a0d0-4d98-809a-928a337644e1"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES",
+        "FRONT_TIBIALIS"
+      ],
+      "exerciseCategory": null,
+      "id": "d1585048-2def-5a88-8b06-0bd2e3fc0958"
+    },
+    {
+      "name": "Step-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 85.0,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "524e1516-2300-5224-beee-9f1e2aa77afd"
+    },
+    {
+      "name": "Suitcase Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "exerciseCategory": null,
+      "id": "e3454ca9-dd5f-550a-bc3f-0b2834597239"
+    },
+    {
+      "name": "Toes to Bar",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 60.0,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "558605d0-da3a-5c84-b2ee-18435973a29c"
+    },
+    {
+      "name": "Waiter Carry",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRAPEZIUS",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_LOWER_BACK",
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": null,
+      "id": "3367c7b6-fb40-5dcf-b89e-2bda77b55695"
+    },
+    {
+      "name": "Weighted Ab Wheel Rollout",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 60,
+      "requiredAccessoryEquipmentIds": [
+        "0150cff2-cce4-4c45-8d8a-631f915b80fe"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_UPPER_BACK",
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "63a51d8d-23ac-5471-9d23-ee17ca2893c0"
+    },
+    {
+      "name": "Weighted Bear Crawl",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "BACK_TRICEPS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": null,
+      "id": "fb263b40-50f6-5726-ae33-5b72d50a40f0"
+    },
+    {
+      "name": "Weighted Bench Dip",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 65,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b3162c96-ab63-515c-b7d3-56e1ec2acbb7"
+    },
+    {
+      "name": "Weighted Bicycle Crunch",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 25,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "dfc1648a-a043-5ac9-8978-abda3dffac67"
+    },
+    {
+      "name": "Weighted Bird Dog",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 15,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "31d0ce98-f3e7-561c-bb53-8cb8ea6d50d2"
+    },
+    {
+      "name": "Weighted Broad Jump",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7a944267-914d-5e76-98fc-5e238abe8235"
+    },
+    {
+      "name": "Weighted Bulgarian Split Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 85,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "b2dfadeb-e675-581d-9a02-f3086fc1fd61"
+    },
+    {
+      "name": "Weighted Burpee",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 85,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_CHEST"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS",
+        "FRONT_ABS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "c743bf3f-5bae-55d7-b843-9267ce878c7a"
+    },
+    {
+      "name": "Weighted Chin-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_BICEPS",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS",
+        "FRONT_ABS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "6b296618-8aac-5604-9ae0-e29d4a177362"
+    },
+    {
+      "name": "Weighted Cossack Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 85,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_ADDUCTORS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "9c7e74ca-f973-57b4-b850-7ec0a642bfd8"
+    },
+    {
+      "name": "Weighted Crunch",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 30,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "eb8e5967-7591-567a-b3a6-b185cf4594eb"
+    },
+    {
+      "name": "Weighted Curtsy Lunge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "FRONT_ADDUCTORS",
+        "FRONT_CALVES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "16aa9f98-4eae-5c7e-a23e-5d8febaf0e49"
+    },
+    {
+      "name": "Weighted Dead Bug",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 20,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS",
+        "FRONT_DELTOIDS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "7c8ddecf-420c-5b3a-94df-d03370935881"
+    },
+    {
+      "name": "Weighted Dead Hang",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "FRONT_ABS"
+      ],
+      "exerciseCategory": null,
+      "id": "09f78175-f13d-5db9-95be-67938d6a4501"
+    },
+    {
+      "name": "Weighted Decline Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 75,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1d1385a0-1243-5def-85db-cc66d39ac1e1"
+    },
+    {
+      "name": "Weighted Donkey Kick",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 20,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "65fba987-27e6-5c99-a15a-9e67f5324698"
+    },
+    {
+      "name": "Weighted Fire Hydrant",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 20,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "5d5f7a57-9822-59a9-ba2b-bf0ba598fef9"
+    },
+    {
+      "name": "Weighted Flutter Kick",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 20,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "550e90ef-7fd2-587f-a4f2-2fe49be6ebce"
+    },
+    {
+      "name": "Weighted Glute Bridge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 70,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "eba29e99-5c05-5fe0-bb01-b079c333f6ac"
+    },
+    {
+      "name": "Weighted Good Morning",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 60,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "c1d8ca39-3187-517c-9eb4-5d583706682a"
+    },
+    {
+      "name": "Weighted Handstand Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "5877d371-f213-5a8b-ac9a-46fce5016b7b"
+    },
+    {
+      "name": "Weighted Hanging Knee Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 25,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "44f2b60f-7abd-5cec-95ca-6789162456f0"
+    },
+    {
+      "name": "Weighted Hanging Leg Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 30,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "942e31be-653d-51a7-b876-3ad6ff156091"
+    },
+    {
+      "name": "Weighted Hanging Windshield Wiper",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 35,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "006b99f6-88f2-5fda-825b-d6d8c8259508"
+    },
+    {
+      "name": "Weighted High Knees",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "f29da984-acc0-5359-a1b5-92364ee1dc5c"
+    },
+    {
+      "name": "Weighted Hip Thrust",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 80,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "a23cdf96-328a-5f20-b34d-362e1cb54290"
+    },
+    {
+      "name": "Weighted Hollow Body Hold",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS",
+        "FRONT_ADDUCTORS"
+      ],
+      "exerciseCategory": null,
+      "id": "ea4f63c7-830f-5771-8f88-280c8f5f576e"
+    },
+    {
+      "name": "Weighted Incline Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 45,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "e1aaf736-d868-57c8-9333-dc59cdb6ef73"
+    },
+    {
+      "name": "Weighted Jump Lunge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "b5333603-448b-5ec6-aa06-c5c26bdda07f"
+    },
+    {
+      "name": "Weighted Jump Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "b7be219f-c78f-5137-b944-cfd602a55647"
+    },
+    {
+      "name": "Weighted Jumping Jack",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_DELTOIDS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "33235892-048c-54bd-8dc2-6601f4566cd3"
+    },
+    {
+      "name": "Weighted L-Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS"
+      ],
+      "exerciseCategory": null,
+      "id": "b8b6cf4f-23a7-5ace-9278-72c6a9983c0b"
+    },
+    {
+      "name": "Weighted Lateral Lunge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ADDUCTORS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "9c61fe50-9e59-534d-b47b-eb7c2e2a25ea"
+    },
+    {
+      "name": "Weighted Lateral Step-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 85,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "495650ca-dcb5-5ab0-ac1f-926ff3e0c83d"
+    },
+    {
+      "name": "Weighted Lunge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "3c9beba2-11dd-5c7e-ae67-7a0e82a06727"
+    },
+    {
+      "name": "Weighted Lying Leg Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 20,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "07da4b8c-ebe4-5ffc-b500-c68f7236bb2f"
+    },
+    {
+      "name": "Weighted Mountain Climber",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": null,
+      "id": "ea0b5bb0-1ee2-5851-8a22-19c222c3caef"
+    },
+    {
+      "name": "Weighted Nordic Curl",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 70,
+      "requiredAccessoryEquipmentIds": [
+        "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+      ],
+      "muscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_LOWER_BACK"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "82271966-8017-5f4c-adad-47e792f652bc"
+    },
+    {
+      "name": "Weighted Nordic Hold",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "ef01a523-f4f3-4aa9-8e85-68fc08b73a49"
+      ],
+      "muscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_GLUTEAL",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": null,
+      "id": "096171c7-9b61-50a2-91f6-7c4aafb09593"
+    },
+    {
+      "name": "Weighted Pike Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 65,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_CHEST"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "69ea1576-ad98-54cc-a00b-9e8018e07e38"
+    },
+    {
+      "name": "Weighted Plank",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL"
+      ],
+      "exerciseCategory": null,
+      "id": "0417ad8f-2f52-5774-ab4a-10d9f0faa4cc"
+    },
+    {
+      "name": "Weighted Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7f2f6aaf-d8a4-5a73-b8b8-68a19c8fec83"
+    },
+    {
+      "name": "Weighted Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 64,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "dd7a4ff2-2ba4-5cad-9162-b3a8ef2fb5be"
+    },
+    {
+      "name": "Weighted Reverse Crunch",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 30,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "d9581264-6c33-555b-87fc-0bcc35e16d77"
+    },
+    {
+      "name": "Weighted Reverse Lunge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "a0323fb0-c593-5fba-9625-86eb7a1ec5a3"
+    },
+    {
+      "name": "Weighted Reverse Plank",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_LOWER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": null,
+      "id": "f05334d3-64fb-5faf-9814-49c3d11c8a51"
+    },
+    {
+      "name": "Weighted Ring Dip",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "3ace08da-e1a3-57ae-be88-b911a52b37d7"
+    },
+    {
+      "name": "Weighted Ring L-Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": null,
+      "id": "485a4ee5-6f31-5dbb-86b3-779fe9fcf15a"
+    },
+    {
+      "name": "Weighted Ring Pull-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "4e482b45-dc7d-58a6-948e-5de6dc24f70b"
+    },
+    {
+      "name": "Weighted Ring Push-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 64,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "da5f0e10-5be1-5e49-a23e-f13f4b0c06ba"
+    },
+    {
+      "name": "Weighted Ring Row",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 80,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "BACK_UPPER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_DELTOIDS",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "ee6916c4-49cd-54f6-ac96-44f01da77420"
+    },
+    {
+      "name": "Weighted Ring Support",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [
+        "860fedac-30a1-40fa-bfff-269484fa246b",
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_CHEST",
+        "FRONT_DELTOIDS",
+        "BACK_TRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS"
+      ],
+      "exerciseCategory": null,
+      "id": "359e94b8-cd8d-57ec-82b6-5b2050685be6"
+    },
+    {
+      "name": "Weighted Russian Twist",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 25,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES",
+        "FRONT_ABS"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "255da339-e047-5583-8f28-ee99219e00ba"
+    },
+    {
+      "name": "Weighted Side Plank",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "BACK_LOWER_BACK"
+      ],
+      "exerciseCategory": null,
+      "id": "2b146189-6eb4-53a0-849b-750382ff6a0b"
+    },
+    {
+      "name": "Weighted Single-Leg Calf Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "643f313f-bc80-509c-a2ec-d5e63f894d57"
+    },
+    {
+      "name": "Weighted Single-Leg Glute Bridge",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 75,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "45724b4e-1b63-5956-bd42-4ecef7a59173"
+    },
+    {
+      "name": "Weighted Single-Leg Hip Thrust",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 75,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b0aa4dff-2110-55c8-b869-95ef0d553316"
+    },
+    {
+      "name": "Weighted Single-Leg Jump",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "6db3e016-c1e7-5230-b6d8-d437b0379680"
+    },
+    {
+      "name": "Weighted Single-Leg Romanian Deadlift",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 75,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "3c621fb2-a86d-5f91-b455-125ce2ed518f"
+    },
+    {
+      "name": "Weighted Single-Leg Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "a8e81d4b-a8cd-5060-b9be-29df4216afe1"
+    },
+    {
+      "name": "Weighted Sit-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 50,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_OBLIQUES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "ba98fe83-68cb-5dd1-a50d-ae8f833829bc"
+    },
+    {
+      "name": "Weighted Skater Jump",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ADDUCTORS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": null,
+      "id": "fe0f8686-6b93-5450-8d9f-04040ffe54f7"
+    },
+    {
+      "name": "Weighted Split Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1ab9c9c4-beef-5eb7-81a5-2379567f3f3c"
+    },
+    {
+      "name": "Weighted Squat",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_ADDUCTORS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "b8b3c461-2b7d-5c46-a5e0-073e1abe1d82"
+    },
+    {
+      "name": "Weighted Standing Calf Raise",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_CALVES"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": "ISOLATION",
+      "id": "05799478-1d2a-5677-86f2-39c230522bca"
+    },
+    {
+      "name": "Weighted Step-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 90,
+      "requiredAccessoryEquipmentIds": [
+        "e3f0e0ee-3433-4435-bed9-c926e23a8468"
+      ],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "ab719157-02c9-508d-86ab-54d95b9338f5"
+    },
+    {
+      "name": "Weighted Superman",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 50,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "BACK_LOWER_BACK",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_TRAPEZIUS",
+        "BACK_DELTOIDS",
+        "BACK_UPPER_BACK"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "1a2f61fe-dc3f-5083-bdbb-3e12edca5480"
+    },
+    {
+      "name": "Weighted Toes-to-Bar",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 40,
+      "requiredAccessoryEquipmentIds": [
+        "49405aae-8e6d-4364-8bd5-cb551fb97631"
+      ],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "ISOLATION",
+      "id": "6cbd4a72-c7f5-551a-94b0-7665b4ce1346"
+    },
+    {
+      "name": "Weighted Tuck Jump",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "FRONT_CALVES"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_ABS",
+        "BACK_HAMSTRING"
+      ],
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "id": "7a59a918-7673-57b6-98cc-0649c3c0cbab"
+    },
+    {
+      "name": "Weighted V-Up",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": 35,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_ABS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "FRONT_OBLIQUES"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "8608a12a-37a3-500b-a714-988de6e76210"
+    },
+    {
+      "name": "Weighted Wall Sit",
+      "exerciseType": "COUNTDOWN",
+      "equipmentId": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [],
+      "exerciseCategory": null,
+      "id": "bb47279a-cd05-5e17-9a07-fc157e6e797c"
+    }
+  ],
+  "exerciseMovements": [],
+  "equipments": [
+    {
+      "id": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "type": "BARBELL",
+      "name": "Barbell",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        }
+      ],
+      "barWeight": 9.0,
+      "sleeveLength": 270,
+      "capabilities": [
+        "SUPPORTS_PLATES",
+        "LOADABLE_BAR"
+      ]
+    },
+    {
+      "id": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "type": "DUMBBELLS",
+      "name": "Dumbbells",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "type": "WEIGHTVEST",
+      "name": "Weight Vest",
+      "availableWeights": [
+        {
+          "weight": 1.0
+        },
+        {
+          "weight": 2.0
+        },
+        {
+          "weight": 3.0
+        },
+        {
+          "weight": 4.0
+        },
+        {
+          "weight": 5.0
+        },
+        {
+          "weight": 6.0
+        },
+        {
+          "weight": 7.0
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.0
+        },
+        {
+          "weight": 12.0
+        },
+        {
+          "weight": 13.0
+        },
+        {
+          "weight": 14.0
+        },
+        {
+          "weight": 15.0
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 17.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 19.0
+        },
+        {
+          "weight": 20.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "type": "PLATELOADEDCABLE",
+      "name": "Cable",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        }
+      ],
+      "sleeveLength": 170,
+      "capabilities": [
+        "SUPPORTS_PLATES",
+        "LOADABLE_BAR",
+        "ADJUSTABLE_PULLEY",
+        "HIGH_PULLEY",
+        "LOW_PULLEY",
+        "ROPE_ATTACHMENT",
+        "SINGLE_HANDLE_ATTACHMENT"
+      ]
+    },
+    {
+      "id": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "type": "DUMBBELL",
+      "name": "Dumbbell",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    }
+  ],
+  "accessoryEquipments": [
+    {
+      "id": "1bbc8e63-a0d0-4d98-809a-928a337644e1",
+      "type": "ACCESSORY",
+      "name": "Spin Bike",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "ef01a523-f4f3-4aa9-8e85-68fc08b73a49",
+      "type": "ACCESSORY",
+      "name": "Nordic Curl Setup",
+      "capabilities": [
+        "NORDIC_CURL_SUPPORT"
+      ]
+    },
+    {
+      "id": "0150cff2-cce4-4c45-8d8a-631f915b80fe",
+      "type": "ACCESSORY",
+      "name": "Ab Wheel",
+      "capabilities": [
+        "CORE_ROLLER"
+      ]
+    },
+    {
+      "id": "49405aae-8e6d-4364-8bd5-cb551fb97631",
+      "type": "ACCESSORY",
+      "name": "Pull-Up Bar",
+      "capabilities": [
+        "PULL_UP_BAR"
+      ]
+    },
+    {
+      "id": "860fedac-30a1-40fa-bfff-269484fa246b",
+      "type": "ACCESSORY",
+      "name": "Rings",
+      "capabilities": [
+        "GYMNASTIC_RINGS"
+      ]
+    },
+    {
+      "id": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+      "type": "ACCESSORY",
+      "name": "Bench",
+      "capabilities": [
+        "BENCH",
+        "ADJUSTABLE_BENCH",
+        "FLAT_BENCH",
+        "INCLINE_BENCH"
+      ]
+    }
+  ]
+}
