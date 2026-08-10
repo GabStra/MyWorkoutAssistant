@@ -471,6 +471,7 @@ def _collect_contract_issues_plan_index(
     if len(workout_ids) != len(set(workout_ids)):
         issues.append(ContractIssue("duplicate_workout_ids", "PlanIndex has duplicate workout IDs."))
 
+    prescription_reference_locations: Dict[str, List[str]] = {}
     for wo in workouts:
         if not isinstance(wo, dict):
             issues.append(ContractIssue("invalid_workout_entry", "PlanIndex contains a non-object workout entry."))
@@ -496,6 +497,7 @@ def _collect_contract_issues_plan_index(
         superset_groups = wo.get("supersetGroups")
 
         for ex_id in exercise_ids_in_workout:
+            prescription_reference_locations.setdefault(ex_id, []).append(str(wo_name))
             if not _is_canonical_plan_placeholder(ex_id, "exercise"):
                 issues.append(
                     ContractIssue("invalid_workout_exercise_placeholder", f"Workout '{wo_name}' references non-canonical exercise id '{ex_id}'.")
@@ -551,6 +553,17 @@ def _collect_contract_issues_plan_index(
                         f"Workout '{wo_name}' superset group {group} must appear as a contiguous subsequence of exerciseIds.",
                     )
                 )
+
+    for exercise_id, workout_names in prescription_reference_locations.items():
+        if len(workout_names) > 1:
+            issues.append(
+                ContractIssue(
+                    "reused_exercise_prescription",
+                    f"Exercise prescription '{exercise_id}' is referenced {len(workout_names)} times "
+                    f"across workout occurrences {workout_names}. Emit a distinct EXERCISE_X entry "
+                    "for every occurrence, including periodized phases and repeats.",
+                )
+            )
 
     return issues
 

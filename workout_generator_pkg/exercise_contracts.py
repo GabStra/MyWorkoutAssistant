@@ -21,6 +21,7 @@ def _build_type_specific_exercise_schema(
         "enabled": {"type": "boolean"},
         "name": {"type": "string"},
         "notes": {"type": "string", "maxLength": 500},
+        "placementNotes": {"type": "string", "maxLength": 500},
         "sets": {
             "type": "array",
             "minItems": 1,
@@ -161,6 +162,7 @@ def _exercise_example_base(
         "enabled": True,
         "name": name,
         "notes": "",
+        "placementNotes": "",
         "sets": sets,
         "exerciseType": exercise_type,
         "equipmentId": equipment_id,

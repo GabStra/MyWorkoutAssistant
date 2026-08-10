@@ -1287,6 +1287,23 @@ def ensure_unique_ids(workout_store):
                     component["id"] = str(uuid.uuid4())
                 seen_ids.add(component["id"])
 
+            if component.get("type") == "Superset":
+                rewritten_rest_keys = {}
+                rest_map = component.get("restSecondsByExercise") or {}
+                for exercise in component.get("exercises", []):
+                    if not isinstance(exercise, dict):
+                        continue
+                    old_id = exercise.get("id")
+                    new_id = old_id
+                    if not new_id or new_id in seen_ids:
+                        new_id = str(uuid.uuid4())
+                        exercise["id"] = new_id
+                    seen_ids.add(new_id)
+                    if old_id in rest_map:
+                        rewritten_rest_keys[new_id] = rest_map[old_id]
+                if rewritten_rest_keys:
+                    component["restSecondsByExercise"] = rewritten_rest_keys
+
     # Third pass: Check set IDs within exercises (including exercises within supersets)
     for workout in workout_store.get("workouts", []):
         if not isinstance(workout, dict):
@@ -1319,6 +1336,165 @@ def _dedupe_sets_in_exercise(exercise, seen_ids):
         if not set_id or set_id in seen_ids:
             set_item["id"] = str(uuid.uuid4())
         seen_ids.add(set_item["id"])
+
+
+DEFINITION_OWNED_FIELDS = (
+    "name",
+    "exerciseType",
+    "equipmentId",
+    "bodyWeightPercentage",
+    "muscleGroups",
+    "secondaryMuscleGroups",
+    "requiredAccessoryEquipmentIds",
+    "exerciseCategory",
+    "movementRef",
+)
+
+
+def build_exercise_definition_id(definition):
+    """Return the deterministic schema-v2 ID for definition-owned content."""
+    content = {
+        key: copy.deepcopy(value)
+        for key, value in definition.items()
+        if key != "id"
+    }
+    stable_content = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"mwa-exercise-definition-v2:{stable_content}")
+    )
+
+
+def apply_exercise_library_schema_v2(
+    workout_package,
+    supplied_definitions=None,
+    supplied_exercise_movements=None,
+):
+    """Materialize schema-v2 definitions and link every independent prescription.
+
+    Exercise components remain fully materialized for legacy app readers. Definition identity is
+    movement/name + exercise type + equipment; programming fields and component IDs remain local
+    to each occurrence, which permits periodized prescriptions of one shared movement.
+    """
+    if not isinstance(workout_package, dict):
+        raise ValueError("Workout package must be an object")
+
+    supplied_by_id = {}
+    for raw_definition in supplied_definitions or []:
+        if not isinstance(raw_definition, dict) or not raw_definition.get("id"):
+            raise ValueError("Every supplied exercise definition must have an id")
+        definition = copy.deepcopy(raw_definition)
+        definition.pop("instructions", None)
+        definition.pop("instructionEquipmentIds", None)
+        existing = supplied_by_id.get(definition["id"])
+        if existing is not None and existing != definition:
+            raise ValueError(
+                f"Conflicting content for exercise definition id {definition['id']}"
+            )
+        supplied_by_id[definition["id"]] = definition
+
+    def identity_key(value):
+        movement_ref = value.get("movementRef")
+        movement_identity = (
+            json.dumps(movement_ref, sort_keys=True, separators=(",", ":"))
+            if movement_ref is not None
+            else str(value.get("name") or "").strip().casefold()
+        )
+        return (
+            movement_identity,
+            value.get("exerciseType"),
+            value.get("equipmentId"),
+        )
+
+    supplied_by_identity = {}
+    for definition in supplied_by_id.values():
+        key = identity_key(definition)
+        existing = supplied_by_identity.get(key)
+        if existing is not None and existing != definition:
+            raise ValueError(
+                "Exercise library contains multiple definitions for the same movement, type, "
+                "and equipment"
+            )
+        supplied_by_identity[key] = definition
+
+    canonical_by_identity = {}
+
+    def generated_definition(exercise):
+        definition = {
+            "name": exercise.get("name", ""),
+        }
+        for field in DEFINITION_OWNED_FIELDS:
+            if field != "name" and field in exercise:
+                definition[field] = copy.deepcopy(exercise[field])
+        definition["id"] = build_exercise_definition_id(definition)
+        return definition
+
+    def link_prescription(exercise):
+        if not isinstance(exercise, dict) or exercise.get("type") != "Exercise":
+            return
+        key = identity_key(exercise)
+        definition = canonical_by_identity.get(key)
+        if definition is None:
+            definition = copy.deepcopy(supplied_by_identity.get(key) or generated_definition(exercise))
+            canonical_by_identity[key] = definition
+
+        exercise["exerciseDefinitionId"] = definition["id"]
+        exercise["placementNotes"] = exercise.get("placementNotes") or exercise.get("notes") or ""
+        for field in DEFINITION_OWNED_FIELDS:
+            if field in definition:
+                exercise[field] = copy.deepcopy(definition[field])
+            else:
+                exercise.pop(field, None)
+
+    for workout in workout_package.get("workouts", []) or []:
+        for component in workout.get("workoutComponents", []) or []:
+            if not isinstance(component, dict):
+                continue
+            if component.get("type") == "Exercise":
+                link_prescription(component)
+            elif component.get("type") == "Superset":
+                for exercise in component.get("exercises", []) or []:
+                    link_prescription(exercise)
+
+    definitions = list(canonical_by_identity.values())
+    referenced_ids = {
+        exercise.get("exerciseDefinitionId")
+        for exercise in _iter_exercise_components(workout_package)
+    }
+    if None in referenced_ids or referenced_ids != {definition["id"] for definition in definitions}:
+        raise ValueError("Generated exercise definition references are incomplete")
+
+    workout_package["schemaVersion"] = 2
+    workout_package["exerciseDefinitions"] = definitions
+    referenced_movement_refs = {
+        json.dumps(definition.get("movementRef"), sort_keys=True, separators=(",", ":"))
+        for definition in definitions
+        if definition.get("movementRef") is not None
+    }
+    movement_backups = supplied_exercise_movements
+    if movement_backups is None:
+        movement_backups = workout_package.get("exerciseMovements", [])
+    workout_package["exerciseMovements"] = [
+        copy.deepcopy(backup)
+        for backup in movement_backups or []
+        if isinstance(backup, dict)
+        and json.dumps(backup.get("movementRef"), sort_keys=True, separators=(",", ":"))
+        in referenced_movement_refs
+    ]
+    return workout_package
+
+
+def _iter_exercise_components(workout_package):
+    for workout in workout_package.get("workouts", []) or []:
+        for component in workout.get("workoutComponents", []) or []:
+            if not isinstance(component, dict):
+                continue
+            if component.get("type") == "Exercise":
+                yield component
+            elif component.get("type") == "Superset":
+                yield from (
+                    exercise for exercise in component.get("exercises", []) or []
+                    if isinstance(exercise, dict)
+                )
 
 
 def convert_placeholders_to_uuids(placeholder_workout_store, id_manager, validate_final=True, logger=None):

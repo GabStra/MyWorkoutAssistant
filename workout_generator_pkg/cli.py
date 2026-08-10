@@ -1962,6 +1962,30 @@ def generate_index(
             f"When creating new equipment or accessories, use new placeholder IDs (EQUIPMENT_X, ACCESSORY_X) that don't conflict with the IDs shown above.\n"
             f"Ensure all equipmentId and requiredAccessoryEquipmentIds values match equipment/accessories from either the provided list OR newly created entries.\n\n"
         )
+        exercise_library = provided_equipment.get("exerciseDefinitions") or []
+        if exercise_library:
+            compact_library = [
+                {
+                    key: definition.get(key)
+                    for key in (
+                        "id", "name", "exerciseType", "equipmentId",
+                        "bodyWeightPercentage", "muscleGroups", "secondaryMuscleGroups",
+                        "requiredAccessoryEquipmentIds", "exerciseCategory", "movementRef",
+                    )
+                    if definition.get(key) is not None
+                }
+                for definition in exercise_library
+            ]
+            user_content += (
+                "Exercise library (definition-owned fields are immutable):\n"
+                f"{json.dumps(compact_library, separators=(',', ':'))}\n"
+                "For every planned exercise occurrence, reuse the exact name, exerciseType, "
+                "equipmentId, movementRef, and other definition-owned fields from a matching "
+                "library entry. A match is the same movement/name, exerciseType, and equipmentId. "
+                "Periodized phases may and should use separate EXERCISE_X entries for independent "
+                "sets, reps, loads, rests, and progression while retaining those same identity fields. "
+                "Create a new movement identity only when no library entry matches.\n\n"
+            )
     
     user_content += (
         "If workout/day names appear in both Context summary and Additional request with different formatting, "
@@ -2490,6 +2514,7 @@ from workout_generator_pkg.domain_ops import (
     fix_timed_sets as _mod_fix_timed_sets,
     create_placeholder_schema as _mod_create_placeholder_schema,
     ensure_unique_ids as _mod_ensure_unique_ids,
+    apply_exercise_library_schema_v2 as _mod_apply_exercise_library_schema_v2,
     _dedupe_sets_in_exercise as _mod__dedupe_sets_in_exercise,
     convert_placeholders_to_uuids as _mod_convert_placeholders_to_uuids,
     remove_none_from_workout_components as _mod_remove_none_from_workout_components,
@@ -2587,6 +2612,7 @@ has_equipment_in_messages = _mod_has_equipment_in_messages
 fix_timed_sets = _mod_fix_timed_sets
 create_placeholder_schema = _mod_create_placeholder_schema
 ensure_unique_ids = _mod_ensure_unique_ids
+apply_exercise_library_schema_v2 = _mod_apply_exercise_library_schema_v2
 _dedupe_sets_in_exercise = _mod__dedupe_sets_in_exercise
 convert_placeholders_to_uuids = _mod_convert_placeholders_to_uuids
 remove_none_from_workout_components = _mod_remove_none_from_workout_components

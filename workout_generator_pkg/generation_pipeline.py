@@ -7,6 +7,7 @@ import re
 import time
 import traceback
 import uuid
+import copy
 from datetime import datetime
 
 from .deps import resolve_pipeline_deps
@@ -35,6 +36,22 @@ PARTIAL_BODYWEIGHT_NAME_HINTS = (
     "inverted row",
     "body row",
 )
+
+
+def _extract_exercise_library_from_messages(messages):
+    marker = "EXERCISE LIBRARY (schema v2):\n"
+    for message in reversed(messages or []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or marker not in content:
+            continue
+        encoded = content.split(marker, 1)[1].split("\n", 1)[0].strip()
+        try:
+            definitions = json.loads(encoded)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(definitions, list):
+            return definitions
+    return []
 
 def _normalize_custom_prompt_equipment_ids(custom_prompt, uuid_to_placeholder):
     """Rewrite raw equipment UUID references in custom prompts to planner-safe placeholders."""
@@ -215,6 +232,7 @@ def execute_workout_generation(
     validate_and_repair_placeholder_json = deps.validate_and_repair_placeholder_json
     save_validation_error = deps.save_validation_error
     convert_placeholders_to_uuids = deps.convert_placeholders_to_uuids
+    apply_exercise_library_schema_v2 = deps.apply_exercise_library_schema_v2
     ensure_requiresLoadCalibration = deps.ensure_requiresLoadCalibration
     save_workout_to_file = deps.save_workout_to_file
     display_workout_summary = deps.display_workout_summary
@@ -297,6 +315,21 @@ def execute_workout_generation(
     # Initialize placeholder ID manager
     id_manager = PlaceholderIdManager()
     
+    supplied_exercise_definitions = copy.deepcopy(
+        (provided_equipment or {}).get("exerciseDefinitions", [])
+        or _extract_exercise_library_from_messages(messages)
+    )
+    supplied_exercise_movements = copy.deepcopy(
+        (provided_equipment or {}).get("exerciseMovements", [])
+    )
+    if supplied_exercise_definitions and not provided_equipment:
+        provided_equipment = {
+            "equipments": [],
+            "accessoryEquipments": [],
+            "exerciseDefinitions": supplied_exercise_definitions,
+            "exerciseMovements": supplied_exercise_movements,
+        }
+
     # Handle provided equipment if available
     if provided_equipment:
         # Convert UUIDs to placeholders and preserve original UUID mappings
@@ -313,11 +346,23 @@ def execute_workout_generation(
             converted_accessories.append(converted_acc)
             # Also extract any placeholders that might already be in the structure
             id_manager.extract_placeholders_from_json(converted_acc)
+
+        planner_exercise_definitions = copy.deepcopy(supplied_exercise_definitions)
+        for definition in planner_exercise_definitions:
+            equipment_id = definition.get("equipmentId")
+            if equipment_id in id_manager.uuid_to_placeholder:
+                definition["equipmentId"] = id_manager.uuid_to_placeholder[equipment_id]
+            definition["requiredAccessoryEquipmentIds"] = [
+                id_manager.uuid_to_placeholder.get(accessory_id, accessory_id)
+                for accessory_id in definition.get("requiredAccessoryEquipmentIds") or []
+            ]
         
         # Update provided_equipment with converted versions (now using placeholders)
         provided_equipment = {
             "equipments": converted_equipments,
-            "accessoryEquipments": converted_accessories
+            "accessoryEquipments": converted_accessories,
+            "exerciseDefinitions": planner_exercise_definitions,
+            "exerciseMovements": supplied_exercise_movements,
         }
         
         _gen_print(f"Using provided equipment: {len(provided_equipment.get('equipments', []))} equipment(s), "
@@ -1146,6 +1191,9 @@ def execute_workout_generation(
             except ContractValidationError as e:
                 _log_step_error("Step 7", e, prefix="Contract validation failed")
                 return {"success": False, "filepath": None, "error": str(e)}
+            data = apply_exercise_library_schema_v2(
+                data, supplied_exercise_definitions, supplied_exercise_movements
+            )
             step_time = time.time() - step_start_time
             timing_data["step_times"][7] = step_time
             timing_data["total_time_seconds"] += step_time
@@ -1157,11 +1205,15 @@ def execute_workout_generation(
             data = progress_data["step_data"].get("step_7_final_workout_store")
             if not data:
                 return {"success": False, "filepath": None, "error": "Missing final_workout_store in saved progress"}
-            try:
-                validate_uuid_conversion_parity(validated_placeholder_store, data)
-            except ContractValidationError as e:
-                _log_step_error("Step 7", e, prefix="Contract validation failed")
-                return {"success": False, "filepath": None, "error": str(e)}
+            if data.get("schemaVersion") != 2:
+                try:
+                    validate_uuid_conversion_parity(validated_placeholder_store, data)
+                except ContractValidationError as e:
+                    _log_step_error("Step 7", e, prefix="Contract validation failed")
+                    return {"success": False, "filepath": None, "error": str(e)}
+            data = apply_exercise_library_schema_v2(
+                data, supplied_exercise_definitions, supplied_exercise_movements
+            )
             _gen_print("Step 7: Using saved final workout plan package")
         
         # Update final total time (including save times)

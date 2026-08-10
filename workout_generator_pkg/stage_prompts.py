@@ -153,6 +153,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Warm Up",
             "notes": "",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_WARMUP",
@@ -182,6 +183,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Back Squat",
             "notes": "",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_0",
@@ -219,6 +221,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Ring Rows",
             "notes": "Pause briefly at the top and control the lowering phase",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_2",
@@ -302,7 +305,8 @@ EXERCISE_SYSTEM_PROMPT = (
     "Timed exercise rule:\n"
     "- For COUNTDOWN exercises, emit exactly one TimedDurationSet, no RestSet, and showCountDownTimer=true.\n\n"
     "Other required behavior:\n"
-    "- Use notes as concise string (max 500 chars).\n"
+    "- Use notes only for workout-occurrence placement notes; do not generate shared movement instructions.\n"
+    "- Use placementNotes for workout- or phase-specific execution/progression guidance (max 500 chars); emit an empty string when none is needed.\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"
     "- Set generateWarmUpSets explicitly to true or false for every exercise.\n"
     "- Set generateWarmUpSets=true for exercises that should normally ramp into work sets, especially heavy or technically demanding compound lifts with meaningful external load.\n"
@@ -473,6 +477,12 @@ PLAN_INDEX_EXAMPLE = {
 
 PLAN_INDEX_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
+    "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
+    "For periodized or versioned programming, emit a separate EXERCISE_X prescription for each "
+    "independently programmed occurrence, even when multiple occurrences share the same movement.\n"
+    "Shared movement identity fields (name, exerciseType, equipmentId, body-weight semantics, muscles, "
+    "accessories, category, and movement reference) must remain identical across those occurrences; "
+    "sets, reps, loads, rests, progression, and execution settings may differ.\n"
     "Generate a PlanIndex (not full workout JSON) using placeholder IDs only.\n"
     "IDs: EQUIPMENT_X, ACCESSORY_X, EXERCISE_X, WORKOUT_X.\n\n"
     "Placeholder ID rules:\n"

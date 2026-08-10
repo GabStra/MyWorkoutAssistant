@@ -90,6 +90,7 @@ def _build_initial_messages(
     base_system_prompt: str,
     provided_equipment: Optional[Dict[str, Any]],
     format_equipment_for_conversation,
+    exercise_definitions: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     messages = [_message("system", content=base_system_prompt)]
     if provided_equipment:
@@ -99,7 +100,69 @@ def _build_initial_messages(
                 content=format_equipment_for_conversation(provided_equipment),
             )
         )
+    if exercise_definitions:
+        compact_definitions = [
+            {
+                key: definition.get(key)
+                for key in (
+                    "id", "name", "exerciseType", "equipmentId",
+                    "bodyWeightPercentage", "muscleGroups", "secondaryMuscleGroups",
+                    "requiredAccessoryEquipmentIds", "exerciseCategory", "movementRef",
+                )
+                if definition.get(key) is not None
+            }
+            for definition in exercise_definitions
+        ]
+        messages.append(_message(
+            "system",
+            content=(
+                "EXERCISE LIBRARY (schema v2):\n"
+                + json.dumps(compact_definitions, ensure_ascii=False, separators=(",", ":"))
+                + "\nTreat these fields as definition-owned and immutable. Reuse a definition "
+                  "when movement/name, exerciseType, and equipmentId match. Otherwise create a "
+                  "new definition. Workout occurrences are prescriptions: each must have a unique "
+                  "id, exerciseDefinitionId, placement notes, settings, and unique set IDs."
+            ),
+        ))
     return messages
+
+
+def _load_exercise_library_payload(filepath: str) -> Dict[str, Any]:
+    with open(filepath, "r", encoding="utf-8") as source:
+        root = json.load(source)
+    payload = root
+    if isinstance(root, dict) and isinstance(root.get("WorkoutStore"), dict):
+        payload = root["WorkoutStore"]
+    definitions = payload.get("exerciseDefinitions") if isinstance(payload, dict) else None
+    if not isinstance(definitions, list):
+        raise ValueError("expected a schema-v2 store or object containing exerciseDefinitions")
+    if any(not isinstance(item, dict) or not item.get("id") for item in definitions):
+        raise ValueError("every exercise definition must be an object with an id")
+    movements = []
+    if isinstance(root, dict):
+        movements = root.get("exerciseMovements") or root.get("ExerciseMovements") or []
+    return {
+        "exerciseDefinitions": definitions,
+        "equipments": payload.get("equipments", []) if isinstance(payload, dict) else [],
+        "accessoryEquipments": payload.get("accessoryEquipments", []) if isinstance(payload, dict) else [],
+        "exerciseMovements": movements,
+    }
+
+
+def _load_exercise_definitions(filepath: str) -> List[Dict[str, Any]]:
+    return _load_exercise_library_payload(filepath)["exerciseDefinitions"]
+
+
+def _merge_library_items(existing: List[Dict[str, Any]], imported: List[Dict[str, Any]], label: str):
+    merged = {item.get("id"): item for item in existing if isinstance(item, dict)}
+    for item in imported:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if not item_id:
+            raise ValueError(f"every {label} item must have an id")
+        if item_id in merged and merged[item_id] != item:
+            raise ValueError(f"conflicting {label} content for id {item_id}")
+        merged[item_id] = item
+    return list(merged.values())
 
 
 def _conversation_log_path(script_dir: str, conversation_id: str) -> str:
@@ -336,6 +399,11 @@ def main(deps=None):
         type=str,
         help="Path to JSON file containing available equipment (with 'equipments' and optionally 'accessoryEquipments' arrays)",
     )
+    parser.add_argument(
+        "--exercise-library-file",
+        type=str,
+        help="Path to a schema-v2 WorkoutStore or JSON object containing exerciseDefinitions",
+    )
     reasoner_group = parser.add_mutually_exclusive_group()
     reasoner_group.add_argument(
         "--use-reasoner",
@@ -390,6 +458,27 @@ def main(deps=None):
             print(f"Error loading equipment file: {e}", file=sys.stderr)
             sys.exit(1)
 
+    exercise_definitions = None
+    if args.exercise_library_file:
+        try:
+            library_payload = _load_exercise_library_payload(args.exercise_library_file)
+            exercise_definitions = library_payload["exerciseDefinitions"]
+            print(f"Loaded {len(exercise_definitions)} exercise definition(s) from: {args.exercise_library_file}")
+        except Exception as e:
+            print(f"Error loading exercise library file: {e}", file=sys.stderr)
+            sys.exit(1)
+        provided_equipment = dict(provided_equipment or {})
+        provided_equipment["equipments"] = _merge_library_items(
+            provided_equipment.get("equipments", []), library_payload["equipments"], "equipment"
+        )
+        provided_equipment["accessoryEquipments"] = _merge_library_items(
+            provided_equipment.get("accessoryEquipments", []),
+            library_payload["accessoryEquipments"],
+            "accessory equipment",
+        )
+        provided_equipment["exerciseDefinitions"] = exercise_definitions
+        provided_equipment["exerciseMovements"] = library_payload["exerciseMovements"]
+
     api_key = _resolve_api_key()
     timeout = httpx.Timeout(1200.0, connect=60.0)
     http_client = httpx.Client(timeout=timeout)
@@ -401,6 +490,7 @@ def main(deps=None):
         BASE_SYSTEM_PROMPT,
         provided_equipment,
         format_equipment_for_conversation,
+        exercise_definitions,
     )
     metadata = {}
 
@@ -575,6 +665,7 @@ def main(deps=None):
                 BASE_SYSTEM_PROMPT,
                 provided_equipment,
                 format_equipment_for_conversation,
+                exercise_definitions,
             )
             next_conversation_id = str(uuid.uuid4())
             switch_conversation(

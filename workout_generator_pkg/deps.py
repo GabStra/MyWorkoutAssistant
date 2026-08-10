@@ -29,6 +29,7 @@ class PipelineDeps:
     validate_and_repair_placeholder_json: Any
     save_validation_error: Any
     convert_placeholders_to_uuids: Any
+    apply_exercise_library_schema_v2: Any
     ensure_requiresLoadCalibration: Any
     save_workout_to_file: Any
     display_workout_summary: Any
@@ -94,6 +95,7 @@ def resolve_pipeline_deps() -> PipelineDeps:
         validate_and_repair_placeholder_json=_c.validate_and_repair_placeholder_json,
         save_validation_error=_c.save_validation_error,
         convert_placeholders_to_uuids=_c.convert_placeholders_to_uuids,
+        apply_exercise_library_schema_v2=_c.apply_exercise_library_schema_v2,
         ensure_requiresLoadCalibration=_c.ensure_requiresLoadCalibration,
         save_workout_to_file=_c.save_workout_to_file,
         display_workout_summary=_c.display_workout_summary,
