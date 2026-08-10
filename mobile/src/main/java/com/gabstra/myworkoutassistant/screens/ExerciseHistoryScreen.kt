@@ -53,8 +53,10 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
 import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
+import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
+import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
@@ -456,74 +458,27 @@ fun ExerciseHistoryScreen(
         val canGoForward = selectableWorkoutHistories.size > 1 &&
             selectedWorkoutHistory != selectableWorkoutHistories.last()
         
-        val navIconColors = IconButtonDefaults.iconButtonColors(
-            contentColor = MaterialTheme.colorScheme.onBackground,
-            disabledContentColor = DisabledContentGray
-        )
-        
-        PrimarySurface(
-            modifier = Modifier.fillMaxWidth()
+        HistoryNavigationCard(
+            canGoBack = canGoBack,
+            onGoBack = {
+                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                if (index > 0) selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+            },
+            canGoForward = canGoForward,
+            onGoForward = {
+                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                if (index < selectableWorkoutHistories.lastIndex) {
+                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                }
+            },
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        modifier = Modifier.size(25.dp),
-                        onClick = {
-                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                            if (index > 0) {
-                                selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                            }
-                        },
-                        enabled = canGoBack,
-                        colors = navIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Previous"
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    modifier = Modifier
-                        .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
-                        selectedWorkoutHistory!!.time.format(timeFormatter),
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        modifier = Modifier.size(25.dp),
-                        onClick = {
-                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                            if (index < selectableWorkoutHistories.size - 1) {
-                                selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                            }
-                        },
-                        enabled = canGoForward,
-                        colors = navIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Next"
-                        )
-                    }
-                }
-            }
+            Text(
+                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
+                    selectedWorkoutHistory!!.time.format(timeFormatter),
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
     }
 
@@ -537,13 +492,18 @@ fun ExerciseHistoryScreen(
             selectedHistoryMode.coerceIn(0, 1) == 1 &&
                     setHistoriesByWorkoutHistoryId.isNotEmpty() &&
                     selectedWorkoutHistory == null
+        val showHistoryLoading = rememberMinimumLoadingVisibility(
+            isLoading = isLoading || isSetHistorySelectionPending,
+            showDelayMs = 150L,
+            minVisibleMs = 300L,
+        )
 
         Column(
             modifier = Modifier
                 .zIndex(1f)
                 .fillMaxWidth(),
         ) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(Spacing.md))
             RangeDropdown(selectedRange, onHistoryRangeSelected)
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -559,7 +519,7 @@ fun ExerciseHistoryScreen(
         }
 
         when {
-            isLoading || isSetHistorySelectionPending -> {
+            showHistoryLoading -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -580,9 +540,9 @@ fun ExerciseHistoryScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    PrimarySurface(modifier = Modifier.padding(15.dp)) {
+                    PrimarySurface(modifier = Modifier.padding(Spacing.md)) {
                         Text(
-                            modifier = Modifier.padding(15.dp),
+                            modifier = Modifier.padding(Spacing.md),
                             text = "No history found",
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurface,

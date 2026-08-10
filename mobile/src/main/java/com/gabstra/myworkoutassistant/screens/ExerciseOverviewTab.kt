@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -17,8 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +31,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.AppListFilterToggle
 import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -75,8 +73,7 @@ fun ExerciseOverviewTab(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(top = 10.dp)
-            .padding(bottom = 10.dp)
+            .padding(vertical = Spacing.md)
             .verticalScroll(scrollState)
             .padding(horizontal = Spacing.md)
     ) {
@@ -89,7 +86,7 @@ fun ExerciseOverviewTab(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(5.dp),
+                    .padding(vertical = Spacing.xs),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -106,31 +103,11 @@ fun ExerciseOverviewTab(
             val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(vertical = 15.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(15.dp)
-                ) {
-                    Checkbox(
-                        modifier = Modifier.size(10.dp),
-                        checked = showRest,
-                        onCheckedChange = onShowRestChange,
-                        colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                    Text(
-                        text = "Show Rests",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
+            AppListFilterToggle(
+                label = "Show rests",
+                checked = showRest,
+                onCheckedChange = onShowRestChange,
+            )
             EquipmentAccessoryMetadata(
                 modifier = Modifier.padding(bottom = Spacing.md),
                 equipmentName = selectedEquipment?.name,
