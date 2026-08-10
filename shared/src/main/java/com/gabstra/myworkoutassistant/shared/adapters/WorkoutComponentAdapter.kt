@@ -44,6 +44,10 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("enabled", src.enabled)
                 jsonObject.addProperty("name", src.name)
                 jsonObject.addProperty("notes", src.notes)
+                src.exerciseDefinitionId?.let {
+                    jsonObject.addProperty("exerciseDefinitionId", it.toString())
+                }
+                src.placementNotes?.let { jsonObject.addProperty("placementNotes", it) }
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
 
@@ -334,6 +338,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 } else {
                     null
                 }
+                val exerciseDefinitionId = jsonObject.get("exerciseDefinitionId")?.let {
+                    if (it.isJsonNull) null else UUID.fromString(it.asString)
+                }
+                val placementNotes = jsonObject.get("placementNotes")?.let {
+                    if (it.isJsonNull) null else it.asString
+                }
 
                 Exercise(
                     id,
@@ -366,7 +376,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     deloadWeightFactor,
                     deloadRepsDrop,
                     deloadCutSetsTo,
-                    movementRef
+                    movementRef,
+                    exerciseDefinitionId,
+                    placementNotes,
                 )
             }
 

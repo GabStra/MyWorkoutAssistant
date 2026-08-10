@@ -6,6 +6,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.DeloadConfig
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.migrateExerciseLibrary
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -33,6 +35,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val workoutPlansType = object : TypeToken<List<WorkoutPlan>>() {}.type
         val weeklyProgressOverridesType = object : TypeToken<List<WeeklyProgressOverride>>() {}.type
         val externalHeartRateConfigsType = object : TypeToken<List<ExternalHeartRateConfig>>() {}.type
+        val exerciseDefinitionsType = object : TypeToken<List<ExerciseDefinition>>() {}.type
         
         // Safely get list fields, defaulting to empty lists if null or missing
         val workouts = jsonObject.get("workouts")?.let {
@@ -63,6 +66,13 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             if (it.isJsonNull) emptyList<ExternalHeartRateConfig>()
             else context.deserialize(it, externalHeartRateConfigsType)
         } ?: emptyList()
+        val exerciseDefinitions = jsonObject.get("exerciseDefinitions")?.let {
+            if (it.isJsonNull) emptyList<ExerciseDefinition>()
+            else context.deserialize(it, exerciseDefinitionsType)
+        } ?: emptyList()
+        val schemaVersion = jsonObject.get("schemaVersion")?.let {
+            if (it.isJsonNull) 1 else it.asInt
+        } ?: 1
         val legacyPolarDeviceId = jsonObject.get("polarDeviceId")?.let {
             if (it.isJsonNull) null else it.asString
         }
@@ -110,6 +120,8 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         }
         
         return WorkoutStore(
+            schemaVersion = schemaVersion,
+            exerciseDefinitions = exerciseDefinitions,
             workouts = workouts,
             equipments = equipments,
             accessoryEquipments = accessoryEquipments,
@@ -122,6 +134,6 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             deloadConfig = deloadConfig,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate
-        )
+        ).migrateExerciseLibrary()
     }
 }

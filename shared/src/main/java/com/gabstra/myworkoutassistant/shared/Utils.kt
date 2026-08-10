@@ -8,6 +8,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.AppBackupAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.ExerciseLibraryPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -139,6 +140,15 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
     return gson.toJson(workoutPlanPackage)
 }
 
+fun fromJSONToExerciseLibraryPackage(json: String): ExerciseLibraryPackage {
+    val gson = GsonBuilder()
+        .registerTypeAdapter(ExerciseLibraryPackage::class.java, ExerciseLibraryPackageAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
+        .create()
+    return gson.fromJson(json, ExerciseLibraryPackage::class.java)
+}
+
 fun fromJSONToWorkoutPlanPackage(json: String): WorkoutPlanPackage {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutPlanPackage::class.java, WorkoutPlanPackageAdapter())
@@ -232,6 +242,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 enum class BackupFileType {
     APP_BACKUP,
     INCREMENTAL_APP_BACKUP,
+    EXERCISE_LIBRARY_PACKAGE,
     WORKOUT_PLAN_PACKAGE,
     WORKOUT_STORE,
     UNKNOWN
@@ -258,6 +269,9 @@ fun detectBackupFileType(json: String): BackupFileType {
         val format = jsonObject.get("format")?.takeIf { it.isJsonPrimitive }?.asString
         if (format == APP_BACKUP_ARCHIVE_FORMAT) {
             return BackupFileType.INCREMENTAL_APP_BACKUP
+        }
+        if (format == EXERCISE_LIBRARY_PACKAGE_FORMAT) {
+            return BackupFileType.EXERCISE_LIBRARY_PACKAGE
         }
 
         // Check for AppBackup structure (has "WorkoutStore" field)

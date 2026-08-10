@@ -42,6 +42,10 @@ data class Exercise (
     val deloadRepsDrop: Int? = null,
     val deloadCutSetsTo: Int? = null,
     val movementRef: ExerciseMovementRef? = null,
+    /** Canonical schema-v2 definition link. Legacy identity fields above stay materialized. */
+    val exerciseDefinitionId: UUID? = null,
+    /** Notes specific to this workout occurrence. */
+    val placementNotes: String? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds

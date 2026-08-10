@@ -3,10 +3,79 @@ package com.gabstra.myworkoutassistant.shared
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
 import java.util.UUID
 
 class WorkoutStoreAdapterTest {
+
+    @Test
+    fun legacyExercises_migrateDeterministicallyAndIdempotently() {
+        val prescriptionId = UUID.randomUUID()
+        val supersetPrescriptionId = UUID.randomUUID()
+        val equipmentId = UUID.randomUUID()
+        val workout = Workout(
+            id = UUID.randomUUID(), name = "A", description = "",
+            workoutComponents = listOf(
+                legacyExercise(prescriptionId, equipmentId),
+                Superset(
+                    id = UUID.randomUUID(), enabled = true,
+                    exercises = listOf(legacyExercise(supersetPrescriptionId, equipmentId)),
+                    restSecondsByExercise = mapOf(supersetPrescriptionId to 60),
+                ),
+            ),
+            order = 0, creationDate = LocalDate.of(2025, 1, 1),
+            globalId = UUID.randomUUID(), type = 0,
+        )
+        val legacy = WorkoutStore(
+            schemaVersion = 1, workouts = listOf(workout), birthDateYear = 1990,
+            weightKg = 80.0, progressionPercentageAmount = 0.05,
+        )
+
+        val first = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(legacy))
+        val second = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(first))
+
+        assertEquals(WorkoutStore.CURRENT_SCHEMA_VERSION, first.schemaVersion)
+        assertEquals(1, first.exerciseDefinitions.size)
+        assertTrue(first.exerciseDefinitions.all { it.exerciseFamilyId != null })
+        assertEquals(first, second)
+        assertEquals(listOf(prescriptionId, supersetPrescriptionId), first.allExercisePrescriptions().map { it.id })
+        assertTrue(first.allExercisePrescriptions().all {
+            it.exerciseDefinitionId == first.exerciseDefinitions.single().id &&
+                it.placementNotes == "Shared instructions"
+        })
+    }
+
+    @Test
+    fun legacyExercises_keepEquipmentAndTypeVariationsSeparate() {
+        val equipmentA = UUID.randomUUID()
+        val workout = Workout(
+            id = UUID.randomUUID(), name = "A", description = "",
+            workoutComponents = listOf(
+                legacyExercise(UUID.randomUUID(), equipmentA),
+                legacyExercise(UUID.randomUUID(), UUID.randomUUID()),
+                legacyExercise(UUID.randomUUID(), equipmentA).copy(exerciseType = ExerciseType.BODY_WEIGHT),
+            ),
+            order = 0, creationDate = LocalDate.of(2025, 1, 1),
+            globalId = UUID.randomUUID(), type = 0,
+        )
+        val migrated = WorkoutStore(
+            schemaVersion = 1, workouts = listOf(workout), birthDateYear = 1990,
+            weightKg = 80.0, progressionPercentageAmount = 0.05,
+        ).migrateExerciseLibrary()
+
+        assertEquals(3, migrated.exerciseDefinitions.size)
+        assertEquals(3, migrated.allExercisePrescriptions().mapNotNull { it.exerciseDefinitionId }.distinct().size)
+        assertEquals(1, migrated.exerciseDefinitions.map { it.exerciseFamilyId }.distinct().size)
+    }
+
+    private fun legacyExercise(id: UUID, equipmentId: UUID) = Exercise(
+        id = id, enabled = true, name = "Bench press", notes = "Shared instructions",
+        sets = emptyList(), exerciseType = ExerciseType.WEIGHT, minReps = 5, maxReps = 8,
+        lowerBoundMaxHRPercent = null, upperBoundMaxHRPercent = null,
+        equipmentId = equipmentId, bodyWeightPercentage = null,
+    )
 
     @Test
     fun missingWeeklyProgressOverrides_defaultsToEmptyList() {
@@ -162,5 +231,37 @@ class WorkoutStoreAdapterTest {
         """.trimIndent()
 
         assertEquals(BackupFileType.INCREMENTAL_APP_BACKUP, detectBackupFileType(json))
+    }
+
+    @Test
+    fun exerciseLibraryPackage_isDetectedAndParsedWithoutPrescriptions() {
+        val definitionId = UUID.randomUUID()
+        val json = """
+            {
+              "format": "$EXERCISE_LIBRARY_PACKAGE_FORMAT",
+              "schemaVersion": 2,
+              "exerciseDefinitions": [{
+                "id": "$definitionId",
+                "name": "Push-Up",
+                "instructions": "Keep the trunk braced.",
+                "exerciseType": "BODY_WEIGHT",
+                "equipmentId": null,
+                "bodyWeightPercentage": 100.0,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": ["FRONT_TRICEPS"],
+                "requiredAccessoryEquipmentIds": [],
+                "exerciseCategory": "MODERATE_COMPOUND"
+              }],
+              "exerciseMovements": [],
+              "equipments": [],
+              "accessoryEquipments": []
+            }
+        """.trimIndent()
+
+        assertEquals(BackupFileType.EXERCISE_LIBRARY_PACKAGE, detectBackupFileType(json))
+        val parsed = fromJSONToExerciseLibraryPackage(json)
+        assertEquals(EXERCISE_LIBRARY_PACKAGE_FORMAT, parsed.format)
+        assertEquals(definitionId, parsed.exerciseDefinitions.single().id)
+        assertEquals("Push-Up", parsed.exerciseDefinitions.single().name)
     }
 }
