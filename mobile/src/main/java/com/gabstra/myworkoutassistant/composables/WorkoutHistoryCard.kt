@@ -19,10 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -43,10 +42,10 @@ fun WorkoutHistoryCard(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
         IconButton(
-            modifier = Modifier.clip(CircleShape).size(35.dp),
+            modifier = Modifier.clip(CircleShape).size(40.dp),
             onClick = {
                 appViewModel.setScreenData(
                     ScreenData.WorkoutHistory(
@@ -59,6 +58,7 @@ fun WorkoutHistoryCard(
             Icon(
                 imageVector = Icons.Filled.Info,
                 contentDescription = "View details",
+                modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onBackground
             )
         }
@@ -67,44 +67,37 @@ fun WorkoutHistoryCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = workout.name,
+                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    modifier = Modifier.weight(1f),
-                    text = workout.name,
-                    color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                if (workoutHistory.isDone) {
-                    Text(
-                        text = buildString {
+                    text = if (workoutHistory.isDone) {
+                        buildString {
                             append(workoutHistory.startTime.toLocalTime().format(timeFormatter))
-                            append("-")
+                            append("–")
                             append(
                                 workoutHistory.startTime
                                     .plusSeconds(workoutHistory.duration.toLong())
                                     .toLocalTime()
                                     .format(timeFormatter)
                             )
-                        },
-                        textAlign = TextAlign.End,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+                        }
+                    } else {
+                        "Started ${workoutHistory.startTime.toLocalTime().format(timeFormatter)}"
+                    },
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 workoutSessionDisplayLabel(sessionStatus)?.let { label ->
                     SessionInfoPill(
                         text = label,

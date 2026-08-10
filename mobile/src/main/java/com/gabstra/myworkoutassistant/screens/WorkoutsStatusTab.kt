@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,9 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
-import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.ExternalWorkoutSessionCard
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
@@ -44,7 +45,6 @@ import com.gabstra.myworkoutassistant.composables.WorkoutHistoryCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -206,11 +206,10 @@ fun WorkoutsStatusTab(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 10.dp)
-            .padding(bottom = 10.dp)
+            .padding(vertical = Spacing.sm)
             .verticalScroll(scrollState)
             .padding(horizontal = Spacing.md),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
         val overrideStartLabel = remember(weeklyProgressSnapshot.effectiveOverrideWeekStart, currentLocale) {
             weeklyProgressSnapshot.effectiveOverrideWeekStart?.format(
@@ -221,7 +220,7 @@ fun WorkoutsStatusTab(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(10.dp),
+                    .padding(Spacing.md),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(
@@ -248,7 +247,7 @@ fun WorkoutsStatusTab(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(10.dp),
+                        .padding(Spacing.md),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(
@@ -263,8 +262,8 @@ fun WorkoutsStatusTab(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -272,21 +271,32 @@ fun WorkoutsStatusTab(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    modifier = Modifier.weight(1f),
-                                    text = "Weekly progress\n($selectedWeekLabel)",
+                                    text = "Weekly progress ($selectedWeekLabel)",
                                     style = MaterialTheme.typography.titleMedium,
                                     textAlign = TextAlign.Start,
-                                    color = MaterialTheme.colorScheme.onBackground
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    maxLines = 1,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .basicMarquee(iterations = Int.MAX_VALUE),
                                 )
-                                AppPrimaryOutlinedButton(
-                                    text = "Edit",
-                                    onClick = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clickable {
                                         pendingIncludedWorkoutGlobalIds =
                                             weeklyProgressSnapshot.includedWorkoutGlobalIds
                                         showWeeklyProgressDialog = true
                                     },
-                                    minHeight = 36.dp,
-                                )
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit weekly progress",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                             ExpandableContainer(
                                 isOpen = false,
@@ -296,7 +306,7 @@ fun WorkoutsStatusTab(
                                     Row(
                                         modifier = modifier
                                             .fillMaxWidth()
-                                            .padding(10.dp),
+                                            .padding(Spacing.sm),
                                         horizontalArrangement = Arrangement.Center,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -323,7 +333,7 @@ fun WorkoutsStatusTab(
                                         Text(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(10.dp),
+                                                .padding(Spacing.md),
                                             text = "No workouts are selected for weekly progress.",
                                             color = MaterialTheme.colorScheme.onBackground,
                                             style = MaterialTheme.typography.bodyMedium,
@@ -333,8 +343,8 @@ fun WorkoutsStatusTab(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                .padding(Spacing.md),
+                                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                                         ) {
                                             weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.entries
                                                 .forEach { (workout, pair) ->
@@ -366,8 +376,8 @@ fun WorkoutsStatusTab(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                     ) {
                         val currentWeekStartMonth = selectedWeekStart
                             .format(DateTimeFormatter.ofPattern("MMM", currentLocale))
@@ -393,7 +403,7 @@ fun WorkoutsStatusTab(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    modifier = Modifier.padding(15.dp),
+                                    modifier = Modifier.padding(vertical = Spacing.sm),
                                     text = "No workouts recorded this week.",
                                     textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -401,9 +411,11 @@ fun WorkoutsStatusTab(
                             }
                         } else {
                             val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", currentLocale)
-                            selectedWeekSessionsByDate.entries
-                                .sortedBy { it.key }
-                                .forEach { (date, daySessions) ->
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                                selectedWeekSessionsByDate.entries
+                                    .sortedBy { it.key }
+                                    .forEach { (date, daySessions) ->
+                                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                                     Text(
                                         modifier = Modifier.fillMaxWidth(),
                                         text = date.format(dayFormatter),
@@ -418,6 +430,8 @@ fun WorkoutsStatusTab(
                                         sessionStatusesByHistoryId = workoutHistorySessionStatuses,
                                     )
                                 }
+                                }
+                            }
                         }
                     }
                 }
@@ -433,99 +447,29 @@ private fun WorkoutHistoriesByWorkoutGroup(
     timeFormatter: DateTimeFormatter,
     sessionStatusesByHistoryId: Map<UUID, WorkoutSessionStatus?>?,
 ) {
-    buildWorkoutStatusRenderBlocks(daySessions).forEach { block ->
-        when (block) {
-            is AppWorkoutStatusSessionGroup -> {
-                val firstSession = block.sessions.first().weeklyStatusWorkoutHistory
-                if (block.sessions.size > 1) {
-                    ExpandableContainer(
-                        title = { modifier ->
-                            Row(
-                                modifier = modifier,
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .size(30.dp)
-                                        .background(MaterialTheme.colorScheme.primary),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = block.sessions.size.toString(),
-                                        color = MaterialTheme.colorScheme.background,
-                                        textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                }
-                                Text(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(start = 5.dp),
-                                    text = firstSession.workout.name,
-                                    color = if (firstSession.workout.enabled) {
-                                        MaterialTheme.colorScheme.onBackground
-                                    } else {
-                                        DisabledContentGray
-                                    },
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                        },
-                        content = {
-                            DashedCard {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    block.sessions.forEach { appSession ->
-                                        val dayWorkout = appSession.weeklyStatusWorkoutHistory
-                                        WorkoutHistoryCard(
-                                            workoutHistory = dayWorkout.workoutHistory,
-                                            workout = dayWorkout.workout,
-                                            appViewModel = appViewModel,
-                                            timeFormatter = timeFormatter,
-                                            sessionStatus = sessionStatusesByHistoryId?.get(
-                                                dayWorkout.workoutHistory.id,
-                                            ),
-                                            statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
-                                                "Not counted"
-                                            } else {
-                                                null
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                    )
-                } else {
-                    WorkoutHistoryCard(
-                        workoutHistory = firstSession.workoutHistory,
-                        workout = firstSession.workout,
-                        appViewModel = appViewModel,
-                        timeFormatter = timeFormatter,
-                        sessionStatus = sessionStatusesByHistoryId?.get(firstSession.workoutHistory.id),
-                        statusBadgeText = if (firstSession.isExcludedFromWeeklyProgress) {
-                            "Not counted"
-                        } else {
-                            null
-                        },
-                    )
-                }
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        sortWorkoutStatusSessions(daySessions).forEach { session ->
+        when (session) {
+            is AppWorkoutStatusSessionEntry -> {
+                val dayWorkout = session.weeklyStatusWorkoutHistory
+                WorkoutHistoryCard(
+                    workoutHistory = dayWorkout.workoutHistory,
+                    workout = dayWorkout.workout,
+                    appViewModel = appViewModel,
+                    timeFormatter = timeFormatter,
+                    sessionStatus = sessionStatusesByHistoryId?.get(dayWorkout.workoutHistory.id),
+                    statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) "Not counted" else null,
+                )
             }
 
-            is ExternalWorkoutStatusSessionBlock -> {
+            is ExternalWorkoutStatusSessionEntry -> {
                 ExternalWorkoutSessionCard(
-                    session = block.session.session,
+                    session = session.session,
                     appViewModel = appViewModel,
                     timeFormatter = timeFormatter,
                 )
             }
         }
+    }
     }
 }

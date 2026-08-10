@@ -17,10 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionEntity
 import java.time.format.DateTimeFormatter
@@ -33,12 +32,12 @@ fun ExternalWorkoutSessionCard(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         IconButton(
             modifier = Modifier
                 .clip(CircleShape)
-                .size(35.dp),
+                .size(40.dp),
             onClick = {
                 appViewModel.setScreenData(ScreenData.ExternalWorkoutSession(session.id))
             },
@@ -46,6 +45,7 @@ fun ExternalWorkoutSessionCard(
             Icon(
                 imageVector = Icons.Filled.Info,
                 contentDescription = "View details",
+                modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onBackground,
             )
         }
@@ -54,37 +54,27 @@ fun ExternalWorkoutSessionCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            Text(
+                modifier = Modifier.fillMaxWidth(),
+                text = session.title ?: session.exerciseTypeLabel,
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = session.title ?: session.exerciseTypeLabel,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
                 Text(
                     text = buildString {
                         append(session.startTime.toLocalTime().format(timeFormatter))
-                        append("-")
+                        append("–")
                         append(session.endTime.toLocalTime().format(timeFormatter))
                     },
-                    textAlign = TextAlign.End,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
                 SessionInfoPill(
                     text = "Health Connect",
                     backgroundColor = MaterialTheme.colorScheme.tertiaryContainer,

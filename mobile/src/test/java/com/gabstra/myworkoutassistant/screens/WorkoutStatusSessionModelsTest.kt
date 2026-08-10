@@ -14,7 +14,7 @@ import java.util.UUID
 
 class WorkoutStatusSessionModelsTest {
     @Test
-    fun buildWorkoutStatusRenderBlocks_keepsChronologicalOrderingWithExternalSessions() {
+    fun sortWorkoutStatusSessions_keepsChronologicalOrderingWithExternalSessions() {
         val workout = testWorkout()
         val date = LocalDate.of(2026, 5, 20)
 
@@ -42,20 +42,20 @@ class WorkoutStatusSessionModelsTest {
             ),
         )
 
-        val blocks = buildWorkoutStatusRenderBlocks(sessions)
+        val sorted = sortWorkoutStatusSessions(sessions)
 
-        assertEquals(3, blocks.size)
-        assertEquals("12:00", (blocks[0] as AppWorkoutStatusSessionGroup).sessions.single().startedAt.toLocalTime().toString().substring(0, 5))
-        assertEquals("external-1", (blocks[1] as ExternalWorkoutStatusSessionBlock).session.session.id)
-        assertEquals("10:00", (blocks[2] as AppWorkoutStatusSessionGroup).sessions.single().startedAt.toLocalTime().toString().substring(0, 5))
+        assertEquals(3, sorted.size)
+        assertEquals("10:00", sorted[0].startedAt.toLocalTime().toString().substring(0, 5))
+        assertEquals("external-1", (sorted[1] as ExternalWorkoutStatusSessionEntry).session.id)
+        assertEquals("12:00", sorted[2].startedAt.toLocalTime().toString().substring(0, 5))
     }
 
     @Test
-    fun buildWorkoutStatusRenderBlocks_groupsAdjacentAppSessionsForSameWorkout() {
+    fun sortWorkoutStatusSessions_keepsRepeatedWorkoutsAsIndividualSessions() {
         val workout = testWorkout()
         val date = LocalDate.of(2026, 5, 20)
 
-        val blocks = buildWorkoutStatusRenderBlocks(
+        val sorted = sortWorkoutStatusSessions(
             listOf(
                 AppWorkoutStatusSessionEntry(
                     WeeklyStatusWorkoutHistory(
@@ -74,8 +74,9 @@ class WorkoutStatusSessionModelsTest {
             )
         )
 
-        assertEquals(1, blocks.size)
-        assertEquals(2, (blocks.single() as AppWorkoutStatusSessionGroup).sessions.size)
+        assertEquals(2, sorted.size)
+        assertEquals(LocalTime.of(11, 0), sorted[0].startedAt.toLocalTime())
+        assertEquals(LocalTime.of(12, 0), sorted[1].startedAt.toLocalTime())
     }
 
     @Test

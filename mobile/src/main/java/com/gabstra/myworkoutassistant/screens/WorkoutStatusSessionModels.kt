@@ -42,50 +42,9 @@ data class ExternalWorkoutStatusSessionEntry(
     }
 }
 
-sealed interface WorkoutStatusSessionRenderBlock
-
-data class AppWorkoutStatusSessionGroup(
-    val sessions: List<AppWorkoutStatusSessionEntry>,
-) : WorkoutStatusSessionRenderBlock
-
-data class ExternalWorkoutStatusSessionBlock(
-    val session: ExternalWorkoutStatusSessionEntry,
-) : WorkoutStatusSessionRenderBlock
-
-fun buildWorkoutStatusRenderBlocks(
+fun sortWorkoutStatusSessions(
     sessions: List<WorkoutStatusSessionEntry>,
-): List<WorkoutStatusSessionRenderBlock> {
-    if (sessions.isEmpty()) {
-        return emptyList()
-    }
-
-    val sortedSessions = sessions.sortedByDescending { it.startedAt }
-    val blocks = mutableListOf<WorkoutStatusSessionRenderBlock>()
-
-    sortedSessions.forEach { session ->
-        when (session) {
-            is AppWorkoutStatusSessionEntry -> {
-                val lastGroup = blocks.lastOrNull() as? AppWorkoutStatusSessionGroup
-                if (
-                    lastGroup != null &&
-                    lastGroup.sessions.first().workoutId == session.workoutId
-                ) {
-                    blocks[blocks.lastIndex] = lastGroup.copy(
-                        sessions = lastGroup.sessions + session,
-                    )
-                } else {
-                    blocks += AppWorkoutStatusSessionGroup(listOf(session))
-                }
-            }
-
-            is ExternalWorkoutStatusSessionEntry -> {
-                blocks += ExternalWorkoutStatusSessionBlock(session)
-            }
-        }
-    }
-
-    return blocks
-}
+): List<WorkoutStatusSessionEntry> = sessions.sortedBy { it.startedAt }
 
 fun deduplicateWorkoutStatusSessions(
     sessions: List<WorkoutStatusSessionEntry>,

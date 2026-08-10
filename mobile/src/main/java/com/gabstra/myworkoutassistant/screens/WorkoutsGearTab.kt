@@ -14,19 +14,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -57,7 +56,7 @@ fun WorkoutsGearTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(vertical = 10.dp)
+            .padding(vertical = Spacing.md)
             .verticalScroll(scrollState)
             .padding(horizontal = Spacing.md)
     ) {
@@ -68,7 +67,7 @@ fun WorkoutsGearTab(
         Spacer(Modifier.height(Spacing.md))
         if (equipments.isEmpty()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(5.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -123,10 +122,10 @@ fun WorkoutsGearTab(
                         Text(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(15.dp)
+                                .padding(Spacing.md)
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             text = it.name,
-                            color = Color.White.copy(alpha = .87f),
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
@@ -170,7 +169,7 @@ fun WorkoutsGearTab(
 
         if (accessories.isEmpty()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(5.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -216,10 +215,10 @@ fun WorkoutsGearTab(
                         Text(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(15.dp)
+                                .padding(Spacing.md)
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             text = it.name,
-                            color = Color.White.copy(alpha = .87f),
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
@@ -233,19 +232,13 @@ fun WorkoutsGearTab(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
+                AppAddButton(
                     onClick = {
                         appViewModel.setScreenData(
                             ScreenData.NewEquipment(EquipmentType.ACCESSORY)
                         )
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Add",
-                        tint = MaterialTheme.colorScheme.background,
-                    )
-                }
+                )
             }
         }
     }
