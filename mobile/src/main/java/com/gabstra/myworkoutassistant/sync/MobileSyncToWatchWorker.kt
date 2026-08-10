@@ -36,6 +36,7 @@ class MobileSyncToWatchWorker(
 
     override suspend fun doWork(): Result {
         val isManualSync = inputData.getBoolean(INPUT_IS_MANUAL_SYNC, false)
+        var transactionId: String? = null
         return runCatching {
             val context = applicationContext
             val dataClient = Wearable.getDataClient(context)
@@ -161,12 +162,18 @@ class MobileSyncToWatchWorker(
                     appBackup = appBackup,
                     context = context,
                     onProgress = { phase, acknowledgedProgress ->
-                        PhoneToWatchSyncCoordinator.updateManualSyncState(
-                            phase,
-                            acknowledgedProgress
-                        )
+                        transactionId?.let { activeTransactionId ->
+                            PhoneToWatchSyncCoordinator.updateManualSyncState(
+                                transactionId = activeTransactionId,
+                                phase = phase,
+                                progress = acknowledgedProgress,
+                            )
+                        }
                     },
-                    onTransactionStarted = PhoneToWatchSyncCoordinator::onTransactionStarted
+                    onTransactionStarted = { startedTransactionId ->
+                        transactionId = startedTransactionId
+                        PhoneToWatchSyncCoordinator.onTransactionStarted(startedTransactionId)
+                    },
                 )
             }
             Log.d(
@@ -181,20 +188,16 @@ class MobileSyncToWatchWorker(
             Result.success()
         }.getOrElse { exception ->
             if (exception is CancellationException) {
+                PhoneToWatchSyncCoordinator.onWorkerSyncStopped()
                 throw exception
             }
             if (exception is WorkoutStoreValidationException) {
                 Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
-                if (isManualSync) {
-                    PhoneToWatchSyncCoordinator.onManualSyncFailed()
-                }
+                PhoneToWatchSyncCoordinator.onWorkerSyncStopped()
                 return Result.failure()
             }
             Log.e(TAG, "SYNC_TRACE event=worker_retry side=mobile channel=full_backup", exception)
             Log.e(TAG, "Mobile sync worker failed", exception)
-            if (isManualSync) {
-                PhoneToWatchSyncCoordinator.onManualSyncFailed()
-            }
             val shouldRetry = PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
             if (shouldRetry) {
                 Result.retry()

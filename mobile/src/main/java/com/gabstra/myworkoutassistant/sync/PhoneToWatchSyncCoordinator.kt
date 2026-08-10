@@ -139,7 +139,6 @@ object PhoneToWatchSyncCoordinator {
                 .collect { infos ->
                     val running = infos.any { it.state == WorkInfo.State.RUNNING }
                     isWorkerRunning.set(running)
-                    _isSyncingToWatch.value = running
                 }
         }
         scope.launch {
@@ -345,6 +344,7 @@ object PhoneToWatchSyncCoordinator {
         sentWorkoutStoreFingerprint: String,
         wasManualSync: Boolean
     ) {
+        _isSyncingToWatch.value = false
         scope.launch {
             delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
             mutex.withLock {
@@ -387,15 +387,39 @@ object PhoneToWatchSyncCoordinator {
         return true
     }
 
-    internal fun updateManualSyncState(phase: SyncPhase, progress: Float) {
+    internal fun updateManualSyncState(
+        transactionId: String,
+        phase: SyncPhase,
+        progress: Float,
+    ) {
+        if (activeTransactionId.get() != transactionId) {
+            Log.d(TAG, "Ignoring stale sync progress for transaction=$transactionId phase=$phase")
+            return
+        }
+        val currentPhase = activeWorkerSyncState.get()?.phase
+        if (currentPhase != null && phase.ordinal < currentPhase.ordinal) {
+            Log.d(
+                TAG,
+                "Ignoring out-of-order sync phase for transaction=$transactionId " +
+                    "current=$currentPhase received=$phase",
+            )
+            return
+        }
         val state = ManualSyncUiState(phase, progress.coerceIn(0f, 1f))
         activeWorkerSyncState.set(state)
+        _isSyncingToWatch.value = when (phase) {
+            SyncPhase.TRANSFERRING -> true
+
+            SyncPhase.CONNECTING,
+            SyncPhase.PROCESSING,
+            SyncPhase.COMPLETED -> false
+        }
         if (_manualSyncUiState.value != null) {
             setManualSyncState(state)
         }
     }
 
-    internal fun onManualSyncFailed() {
+    internal fun onWorkerSyncStopped() {
         clearManualSyncState()
     }
 
@@ -411,6 +435,7 @@ object PhoneToWatchSyncCoordinator {
     private fun clearManualSyncState() {
         activeTransactionId.set(null)
         activeWorkerSyncState.set(null)
+        _isSyncingToWatch.value = false
         _manualSyncProgress.value = null
         _manualSyncUiState.value = null
     }

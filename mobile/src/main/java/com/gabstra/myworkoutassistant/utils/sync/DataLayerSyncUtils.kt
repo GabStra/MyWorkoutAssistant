@@ -667,12 +667,8 @@ suspend fun sendAppBackup(
     onTransactionStarted: (String) -> Unit = {}
 ) {
     val transactionId = UUID.randomUUID().toString()
-    onTransactionStarted(transactionId)
-    SyncHandshakeManager.registerProgressListener(transactionId, onProgress)
     Log.d("DataLayerSync", "Starting app backup, transactionId=$transactionId")
     try {
-        cleanupAbandonedAppBackupPayloadDataItems(dataClient)
-
         // Check if watch is connected before attempting sync
         // This prevents sync attempts when watch is not available (e.g., during app uninstall)
         if (context != null) {
@@ -682,6 +678,10 @@ suspend fun sendAppBackup(
                 throw SyncError.ConnectionError(transactionId)
             }
         }
+
+        onTransactionStarted(transactionId)
+        SyncHandshakeManager.registerProgressListener(transactionId, onProgress)
+        cleanupAbandonedAppBackupPayloadDataItems(dataClient)
         
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
@@ -728,12 +728,17 @@ suspend fun sendAppBackup(
             Tasks.await(dataClient.putDataItem(request))
 
         }
+        // All payload bytes have left the phone. Stop the transfer indicator locally instead of
+        // depending on a best-effort Wear phase message during the longer processing wait.
+        onProgress(SyncPhase.PROCESSING, 1f)
 
-        // Calculate dynamic timeout based on chunk count
-        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
-        Log.d("DataLayerSync", "Using dynamic completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $transactionId")
+        // Wear can spend several minutes applying a full backup after every chunk has arrived.
+        // Keep one bounded completion wait instead of interpreting short processing waits as
+        // separate failures and eventually causing WorkManager to resend the entire backup.
+        val completionTimeout = DataLayerListenerService.MAX_COMPLETION_TIMEOUT_MS
+        Log.d("DataLayerSync", "Using full-backup completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $transactionId")
 
-        // Wait for either completion, error, or timeout - with retry logic
+        // Wait for completion or an error. Retry only explicitly reported missing chunks.
         var retryAttempt = 0
         val maxRetries = 5 // Increased from 3 to 5 for better recovery
         var currentCompletionWaiter = completionWaiter
@@ -762,21 +767,9 @@ suspend fun sendAppBackup(
             
             when {
                 result == null -> {
-                    // Timeout occurred
-                    Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId (attempt $retryAttempt)")
-                    if (retryAttempt < maxRetries) {
-                        // Exponential backoff with jitter for timeout retries
-                        val baseDelay = 500L * (1 shl retryAttempt)
-                        val jitter = (0..200).random().toLong()
-                        delay(baseDelay + jitter)
-                        retryAttempt++
-                        // Re-register waiters for retry
-                        currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
-                        currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
-                        continue
-                    }
+                    Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId")
                     SyncHandshakeManager.cleanup(transactionId)
-                    throw Exception("Sync timed out after $maxRetries retry attempts (transaction: $transactionId) - data may not have been received")
+                    throw SyncError.TimeoutError(transactionId, completionTimeout)
                 }
                 result.first -> {
                     // Completion received

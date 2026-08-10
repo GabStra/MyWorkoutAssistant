@@ -1,6 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,18 +15,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.CircularProgressIndicator
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.data.AppViewModel
 
 @Composable
@@ -31,6 +37,15 @@ fun SyncStatusBadge(
     modifier: Modifier = Modifier
 ) {
     val syncStatus by viewModel.syncStatus.collectAsState()
+    val infiniteTransition = rememberInfiniteTransition(label = "sync icon rotation")
+    val rotationDegrees by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing)
+        ),
+        label = "sync icon rotation degrees"
+    )
 
     AnimatedVisibility(
         visible = syncStatus == AppViewModel.SyncStatus.Syncing,
@@ -53,15 +68,14 @@ fun SyncStatusBadge(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(
+            Icon(
+                imageVector = Icons.Default.Sync,
+                contentDescription = null,
                 modifier = Modifier
                     .size(18.dp)
+                    .rotate(rotationDegrees)
                     .semantics { contentDescription = "Syncing" },
-                strokeWidth = 2.dp,
-                colors = ProgressIndicatorDefaults.colors(
-                    indicatorColor = MaterialTheme.colorScheme.primary,
-                    trackColor = Color.Transparent
-                )
+                tint = MaterialTheme.colorScheme.primary
             )
         }
     }
