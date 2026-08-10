@@ -248,6 +248,7 @@ fun RestScreen(
     state: WorkoutState.Rest,
     hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
+    onLeaveWorkout: () -> Unit = {},
 ) {
     val set = state.set as RestSet
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
@@ -353,13 +354,16 @@ fun RestScreen(
                         PageButtons(
                             setStateForButtons,
                             viewModel,
-                            hapticsViewModel
+                            hapticsViewModel,
+                            onLeaveWorkout = onLeaveWorkout
                         )
                     }
                 }
 
                 PageType.NOTES -> {}
                 PageType.MUSCLES -> {}
+                PageType.INFO -> {}
+                PageType.MOVEMENT -> {}
             }
         }
 

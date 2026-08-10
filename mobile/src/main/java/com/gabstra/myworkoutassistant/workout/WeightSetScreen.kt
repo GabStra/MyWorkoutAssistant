@@ -54,6 +54,7 @@ fun WeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as WeightSetData
+    val comparisonSetData = (state.historicalSetData as? WeightSetData) ?: previousSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -243,7 +244,7 @@ fun WeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isRepsInEditMode) {
                             val newSetData = currentSetData.copy(
-                                actualReps = previousSetData.actualReps,
+                                actualReps = comparisonSetData.actualReps,
                             )
 
                             currentSetData = currentSetData.copy(
@@ -258,8 +259,8 @@ fun WeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < previousSetData.actualReps -> MaterialTheme.colorScheme.error
+                currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
+                currentSetData.actualReps < comparisonSetData.actualReps -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.secondary
             }
 
@@ -294,11 +295,11 @@ fun WeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
                             val newSetData = currentSetData.copy(
-                                actualWeight = previousSetData.actualWeight,
+                                actualWeight = comparisonSetData.actualWeight,
                             )
 
                             currentSetData = currentSetData.copy(
-                                actualWeight = previousSetData.actualWeight,
+                                actualWeight = comparisonSetData.actualWeight,
                                 volume = newSetData.calculateVolume()
                             )
 
@@ -309,8 +310,8 @@ fun WeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.actualWeight == previousSetData.actualWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualWeight < previousSetData.actualWeight -> MaterialTheme.colorScheme.error
+                currentSetData.actualWeight == comparisonSetData.actualWeight -> MaterialTheme.colorScheme.onBackground
+                currentSetData.actualWeight < comparisonSetData.actualWeight -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.secondary
             }
 

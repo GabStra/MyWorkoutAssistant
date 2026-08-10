@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.workout
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,10 +16,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,13 +28,10 @@ import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import java.time.Duration
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -49,41 +46,10 @@ fun WorkoutCompleteScreen(
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
-    val duration = remember {
-        Duration.between(state.startWorkoutTime, state.endWorkoutTime)
-    }
-
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    val countDownTimer = remember { mutableIntStateOf(15) }
-
     val headerStyle = MaterialTheme.typography.titleSmall
-
-    val scope = rememberCoroutineScope()
-    var closeJob by remember { mutableStateOf<Job?>(null) }
-
-    fun startCloseJob() {
-        closeJob?.cancel()
-        closeJob = scope.launch {
-            var remaining = countDownTimer.intValue
-
-            // schedule first tick on the next second boundary
-            var nextExecutionTime = System.currentTimeMillis() + 1000
-            nextExecutionTime = (nextExecutionTime / 1000) * 1000
-
-            while (remaining > 0 && isActive) {
-                val waitTime = maxOf(0, nextExecutionTime - System.currentTimeMillis())
-                delay(waitTime)
-
-                remaining--
-                countDownTimer.intValue = remaining
-
-                nextExecutionTime += 1000
-            }
-
-            appViewModel.initScreenData(ScreenData.Workouts(0))
-        }
-    }
+    var completionSaved by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
         delay(500)
@@ -94,10 +60,13 @@ fun WorkoutCompleteScreen(
         viewModel.setDimming(false)
         hapticsViewModel.doShortImpulse()
 
-        viewModel.pushAndStoreWorkoutData(true,context){
+        viewModel.pushAndStoreWorkoutData(
+            isDone = true,
+            context = context,
+            endReason = viewModel.resolveCompletionEndReasonForPersistence()
+        ) {
             if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-
-            startCloseJob()
+            completionSaved = true
         }
     }
 
@@ -106,6 +75,7 @@ fun WorkoutCompleteScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(30.dp)
     ) {
         Column(
@@ -126,9 +96,31 @@ fun WorkoutCompleteScreen(
 
         Text(
             modifier = Modifier.padding(top = 5.dp),
-            text = "Closing in: ${countDownTimer.intValue}",
+            text = if (completionSaved) "Workout saved" else "Saving workout…",
             style = headerStyle,
             textAlign = TextAlign.Center,
+        )
+
+        if (completionSaved) {
+            WorkoutProgressionSummary(
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp)
+            )
+        }
+
+        AppPrimaryButton(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp),
+            text = "Done",
+            enabled = completionSaved,
+            textAlign = TextAlign.Center,
+            onClick = {
+                hapticsViewModel.doGentleVibration()
+                appViewModel.initScreenData(ScreenData.Workouts(0))
+            }
         )
     }
 
@@ -137,25 +129,21 @@ fun WorkoutCompleteScreen(
         title =  "Workout completed",
         message = "Return to the main menu?",
         handleYesClick = {
-            closeJob?.cancel()
             hapticsViewModel.doGentleVibration()
-            appViewModel.goBack()
+            appViewModel.initScreenData(ScreenData.Workouts(0))
             viewModel.closeCustomDialog()
         },
         handleNoClick = {
             viewModel.closeCustomDialog()
             hapticsViewModel.doGentleVibration()
-            startCloseJob()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             viewModel.closeCustomDialog()
-            startCloseJob()
         },
         holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->
             if (isVisible) {
-                closeJob?.cancel()
                 viewModel.setDimming(false)
             } else {
                 viewModel.reEvaluateDimmingForCurrentState()

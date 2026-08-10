@@ -80,7 +80,8 @@ fun TimedDurationSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    var showStartButton by remember(set.id) { mutableStateOf(!set.autoStart) }
+    var showStartButton by remember(set.id) { mutableStateOf(!set.autoStart && !state.hasBeenExecuted) }
+    var showRepeatButton by remember(set.id) { mutableStateOf(state.hasBeenExecuted) }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
 
@@ -90,9 +91,32 @@ fun TimedDurationSetScreen(
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? TimedDurationSetData)?.startTimer
     }
+    val comparisonSetStartTimer = remember(state.historicalSetData, previousSetStartTimer) {
+        (state.historicalSetData as? TimedDurationSetData)?.startTimer ?: previousSetStartTimer
+    }
     var currentSet by remember(set.id) {
         val setData = state.currentSetData as? TimedDurationSetData
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
+    }
+    var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
+
+    fun markSetExecuted() {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return
+        state.currentSetData = setData.copy(hasBeenExecuted = true)
+        state.hasBeenExecuted = true
+    }
+
+    fun prepareSetRepeat() {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return
+        val resetData = setData.copy(
+            endTimer = setData.startTimer,
+            hasBeenExecuted = false
+        )
+        state.currentSetData = resetData
+        state.hasBeenExecuted = false
+        state.startTime = null
+        currentSet = resetData
+        currentMillis = resetData.startTimer
     }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
@@ -121,7 +145,6 @@ fun TimedDurationSetScreen(
     }
 
     // Local display value for edit mode only; running timer reads from state in TimedDurationRunningDisplay
-    var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
     var showStopDialog by remember { mutableStateOf(false) }
 
     suspend fun showCountDownIfEnabled(){
@@ -170,6 +193,7 @@ fun TimedDurationSetScreen(
             state = state,
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
+                    markSetExecuted()
                     hapticsViewModel.doHardVibrationTwice()
                     onTimerEnd()
                 },
@@ -186,6 +210,11 @@ fun TimedDurationSetScreen(
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
+        if (state.hasBeenExecuted && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+            showStartButton = false
+            showRepeatButton = true
+            return@LaunchedEffect
+        }
         // Check if timer has already started (e.g., resuming workout)
         if (state.startTime != null) {
             // Timer has started - ensure it's registered with service
@@ -216,7 +245,7 @@ fun TimedDurationSetScreen(
     ) {
         val setData = state.currentSetData as? TimedDurationSetData
         val displayMillis = setData?.endTimer ?: initialMillis
-        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
+        val previousTimer = comparisonSetStartTimer ?: (setData?.startTimer ?: initialMillis)
         val isDifferent = displayMillis != previousTimer
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -244,7 +273,7 @@ fun TimedDurationSetScreen(
     }
 
     val textComposable = @Composable {
-        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
+        val previousTimer = comparisonSetStartTimer ?: currentSet.startTimer
         val isDifferent = currentSet.startTimer != previousTimer
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -306,11 +335,14 @@ fun TimedDurationSetScreen(
                         )
                     }
                 }
-                if (showStartButton) {
+                if (showStartButton || showRepeatButton) {
                     IconButton(
                         modifier = Modifier.size(70.dp),
                         onClick = {
                             scope.launch {
+                                if (showRepeatButton) {
+                                    prepareSetRepeat()
+                                }
                                 showCountDownIfEnabled()
 
                                 if(state.startTime == null){
@@ -321,6 +353,7 @@ fun TimedDurationSetScreen(
                                 startTimer()
 
                                 showStartButton = false
+                                showRepeatButton = false
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
@@ -328,7 +361,7 @@ fun TimedDurationSetScreen(
                         Icon(
                             modifier = Modifier.size(35.dp),
                             imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Start",
+                            contentDescription = if (showRepeatButton) "Repeat set" else "Start",
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -400,6 +433,7 @@ fun TimedDurationSetScreen(
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
                 onTimerDisabled()
+                markSetExecuted()
                 onTimerEnd()
                 showStopDialog = false
             },

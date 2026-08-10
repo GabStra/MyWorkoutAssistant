@@ -51,6 +51,7 @@ fun BodyWeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as BodyWeightSetData
+    val comparisonSetData = (state.historicalSetData as? BodyWeightSetData) ?: previousSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -230,7 +231,7 @@ fun BodyWeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isRepsInEditMode) {
                             val newSetData = currentSetData.copy(
-                                actualReps = previousSetData.actualReps,
+                                actualReps = comparisonSetData.actualReps,
                             )
 
                             currentSetData = currentSetData.copy(
@@ -245,8 +246,8 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor  = when {
-                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < previousSetData.actualReps  -> MaterialTheme.colorScheme.error
+                currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
+                currentSetData.actualReps < comparisonSetData.actualReps  -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.secondary
             }
 
@@ -280,11 +281,11 @@ fun BodyWeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
                             val newSetData = currentSetData.copy(
-                                additionalWeight = previousSetData.additionalWeight,
+                                additionalWeight = comparisonSetData.additionalWeight,
                             )
 
                             currentSetData = currentSetData.copy(
-                                additionalWeight = previousSetData.additionalWeight,
+                                additionalWeight = comparisonSetData.additionalWeight,
                                 volume = newSetData.calculateVolume()
                             )
 
@@ -295,8 +296,8 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.additionalWeight == previousSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.additionalWeight < previousSetData.additionalWeight  -> MaterialTheme.colorScheme.error
+                currentSetData.additionalWeight == comparisonSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
+                currentSetData.additionalWeight < comparisonSetData.additionalWeight  -> MaterialTheme.colorScheme.error
                 else -> MaterialTheme.colorScheme.secondary
             }
 

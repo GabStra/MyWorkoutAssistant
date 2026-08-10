@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -32,7 +29,10 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
+import com.gabstra.myworkoutassistant.composables.ProgressionInfo
+import com.gabstra.myworkoutassistant.composables.ProgressionSectionContent
 import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerHeaderReservedHeight
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -44,13 +44,9 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import kotlinx.coroutines.Job
+import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.time.Duration
-import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -67,34 +63,20 @@ fun WorkoutCompleteScreen(
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
-    val countDownTimer = remember { mutableIntStateOf(30) }
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
     var completionSyncInitiated by remember { mutableStateOf(false) }
 
     val scope = rememberWearCoroutineScope()
-    var closeJob by remember { mutableStateOf<Job?>(null) }
 
-    fun startCloseJob() {
-        closeJob?.cancel()
-        closeJob = scope.launch {
-            var remaining = countDownTimer.intValue
-
-            while (remaining > 0 && isActive) {
-                val now = LocalDateTime.now()
-                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-                delay(Duration.between(now, nextSecond).toMillis())
-
-                remaining--
-                countDownTimer.intValue = remaining
-            }
-
-            if (isActive) {
-                viewModel.clearCompletionPushCompleted()
-                Toast.makeText(context, "Workout saved.", Toast.LENGTH_SHORT).show()
-                (context as? Activity)?.finishAndRemoveTask()
-            }
+    fun returnToWorkoutSelection() {
+        hapticsViewModel.doGentleVibration()
+        viewModel.clearCompletionPushCompleted()
+        scope.launch { viewModel.flushWorkoutSync() }
+        navController.navigate(Screen.WorkoutSelection.route) {
+            popUpTo(0) { inclusive = true }
         }
+        viewModel.closeCustomDialog()
     }
 
     // Run critical completion persistence immediately so next app launch does not show recovery.
@@ -138,20 +120,11 @@ fun WorkoutCompleteScreen(
         hapticsViewModel.doShortImpulseWithBeep()
     }
 
-    // Start countdown when progression data is ready; sync runs independently in background.
-    LaunchedEffect(progressionDataCalculated, progressionIsEmpty) {
-        if (progressionDataCalculated && progressionIsEmpty != null) {
-            // Set timer duration: 5 seconds if empty/null, 30 seconds if has data
-            val timerDuration = if (progressionIsEmpty == true) 5 else 30
-            countDownTimer.intValue = timerDuration
-            startCloseJob()
-        }
-    }
-
     WorkoutCompleteScreenContent(
         workoutName = workout.name,
-        countDownSeconds = countDownTimer.intValue,
-        showCountdown = progressionDataCalculated,
+        progressionDataCalculated = progressionDataCalculated,
+        progressionIsEmpty = progressionIsEmpty == true,
+        onDoneClick = ::returnToWorkoutSelection,
         progressionContent = {
             ProgressionSection(
                 modifier = Modifier.weight(1f),
@@ -171,34 +144,17 @@ fun WorkoutCompleteScreen(
         show = showNextDialog,
         title =  "Workout complete",
         message = "Return to the main menu?",
-        handleYesClick = {
-            closeJob?.cancel()
-            hapticsViewModel.doGentleVibration()
-            viewModel.clearCompletionPushCompleted()
-            // Flush any pending sync before navigating away
-            scope.launch {
-                viewModel.flushWorkoutSync()
-            }
-            navController.navigate(Screen.WorkoutSelection.route){
-                popUpTo(0) {
-                    inclusive = true
-                }
-            }
-            viewModel.closeCustomDialog()
-        },
+        handleYesClick = ::returnToWorkoutSelection,
         handleNoClick = {
             viewModel.closeCustomDialog()
             hapticsViewModel.doGentleVibration()
-            startCloseJob()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             viewModel.closeCustomDialog()
-            startCloseJob()
         },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
-                closeJob?.cancel()
                 viewModel.setDimming(false)
             } else {
                 viewModel.reEvaluateDimmingForCurrentState()
@@ -210,8 +166,9 @@ fun WorkoutCompleteScreen(
 @Composable
 private fun WorkoutCompleteScreenContent(
     workoutName: String,
-    countDownSeconds: Int,
-    showCountdown: Boolean = true,
+    progressionDataCalculated: Boolean,
+    progressionIsEmpty: Boolean,
+    onDoneClick: () -> Unit,
     progressionContent: @Composable ColumnScope.() -> Unit
 ) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -224,7 +181,7 @@ private fun WorkoutCompleteScreenContent(
             .padding(horizontal = 5.dp)
             .padding(
                 top = WorkoutPagerHeaderReservedHeight + 2.5.dp,
-                bottom = 25.dp
+                bottom = if (progressionIsEmpty) 12.5.dp else 20.dp,
             )
     ) {
         Column(
@@ -249,35 +206,62 @@ private fun WorkoutCompleteScreenContent(
         }
 
         progressionContent()
-        if(showCountdown){
-            Text(
-                modifier = Modifier.padding(top = 5.dp),
-                text = "CLOSING IN: $countDownSeconds",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
+
+        if (progressionDataCalculated) {
+            WearPrimaryButton(
+                modifier = if (progressionIsEmpty) Modifier else Modifier.padding(top = 5.dp),
+                text = "Done",
+                onClick = onDoneClick,
             )
         }
     }
 }
 
-@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
+@Preview(
+    name = "Completed - no progression",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true,
+)
 @Composable
-private fun WorkoutCompleteScreenPreview() {
+private fun EmptyWorkoutCompleteScreenPreview() {
     MaterialTheme(
         colorScheme = darkScheme,
         typography = baseline,
     ) {
         WorkoutCompleteScreenContent(
             workoutName = "Push Day",
-            countDownSeconds = 30,
+            progressionDataCalculated = true,
+            progressionIsEmpty = true,
+            onDoneClick = {},
+            progressionContent = {},
+        )
+    }
+}
+
+@Preview(
+    name = "Completed - with progression",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true,
+)
+@Composable
+private fun PopulatedWorkoutCompleteScreenPreview() {
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+    ) {
+        WorkoutCompleteScreenContent(
+            workoutName = "Push Day",
+            progressionDataCalculated = true,
+            progressionIsEmpty = false,
+            onDoneClick = {},
             progressionContent = {
-                Text(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    text = "PROGRESS SUMMARY",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodySmall
+                ProgressionSectionContent(
+                    modifier = Modifier.weight(1f),
+                    progressionData = listOf(
+                        ProgressionInfo("Bench Press", Ternary.ABOVE),
+                        ProgressionInfo("Shoulder Press", Ternary.EQUAL),
+                        ProgressionInfo("Triceps Extension", Ternary.BELOW),
+                    ),
                 )
             }
         )

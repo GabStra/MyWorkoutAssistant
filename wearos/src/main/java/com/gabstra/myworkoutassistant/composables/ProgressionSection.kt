@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -168,7 +169,7 @@ private fun progressionLifecycleComparisonConfig(
 private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {
     val (icon, tint) = when (status) {
         Ternary.ABOVE -> Icons.AutoMirrored.Filled.TrendingUp to Green
-        Ternary.EQUAL -> Icons.Filled.DragHandle to MaterialTheme.colorScheme.onBackground
+        Ternary.EQUAL -> Icons.Filled.DragHandle to Yellow
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
@@ -294,6 +295,19 @@ fun ProgressionSection(
         onProgressionDataCalculated?.invoke(progressionData.isNullOrEmpty())
     }
 
+    ProgressionSectionContent(
+        modifier = modifier,
+        progressionData = progressionData,
+        showLoading = progressionData == null && waitForCompletionPush,
+    )
+}
+
+@Composable
+internal fun ProgressionSectionContent(
+    modifier: Modifier = Modifier,
+    progressionData: List<ProgressionInfo>?,
+    showLoading: Boolean = false,
+) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     val scrollState = rememberScrollState()
@@ -305,7 +319,7 @@ fun ProgressionSection(
         )
     }
 
-    if (progressionData == null && waitForCompletionPush) {
+    if (showLoading) {
         Box(
             modifier = modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -346,8 +360,8 @@ fun ProgressionSection(
                         .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState),
                 ) {
-                    progressionData?.forEachIndexed { index, info ->
-                       ProgressionRow(info = info)
+                    progressionData.forEach { info ->
+                        ProgressionRow(info = info)
                     }
                 }
             }

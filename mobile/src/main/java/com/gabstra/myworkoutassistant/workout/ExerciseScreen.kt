@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,7 +17,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -34,6 +39,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.StandardDialog
+import com.gabstra.myworkoutassistant.screens.ExerciseMovementPreviewPage
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -50,7 +57,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, BUTTONS
+    BUTTONS, INFO, PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, MOVEMENT
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -60,17 +67,28 @@ fun ExerciseScreen(
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
+    onLeaveWorkout: () -> Unit = {},
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
 
-    val exercise = remember(state.exerciseId) {
-        viewModel.exercisesById[state.exerciseId]!!
+    val exercise = viewModel.exercisesById[state.exerciseId]!!
+    val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val canChangeEquipment = remember(exercise, state.isCalibrationSet) {
+        !state.isCalibrationSet &&
+            (exercise.exerciseType == ExerciseType.WEIGHT ||
+                exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
-
-    val equipment = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val equipmentOptions = remember(exercise.exerciseType, exercise.equipmentId, viewModel.workoutStore.equipments) {
+        val availableEquipment = viewModel.workoutStore.equipments.sortedBy { it.name.lowercase() }
+        if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            listOf(null) + availableEquipment
+        } else {
+            availableEquipment
+        }
     }
+    var showEquipmentPicker by remember(state.set.id) { mutableStateOf(false) }
+    var pendingEquipmentId by remember(state.set.id) { mutableStateOf(exercise.equipmentId) }
 
     val accessoryEquipments = remember(exercise) {
         (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
@@ -85,17 +103,18 @@ fun ExerciseScreen(
                 && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
 
-    val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
+    val showMovementPage = remember(exercise.movementRef) { exercise.movementRef != null }
     val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
 
-    val pageTypes = remember(showPlatesPage, showNotesPage, hasMuscleInfo) {
+    val pageTypes = remember(showPlatesPage, hasMuscleInfo, showMovementPage) {
         mutableListOf<PageType>().apply {
+            add(PageType.BUTTONS)
+            add(PageType.INFO)
             if (showPlatesPage) add(PageType.PLATES)
             add(PageType.EXERCISE_DETAIL)
             if (hasMuscleInfo) add(PageType.MUSCLES)
             add(PageType.EXERCISES)
-            // if (showNotesPage) add(PageType.NOTES)
-            add(PageType.BUTTONS)
+            if (showMovementPage) add(PageType.MOVEMENT)
         }
     }
 
@@ -234,6 +253,27 @@ fun ExerciseScreen(
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
             when (pageType) {
+                PageType.INFO -> ExerciseSessionInfoPage(
+                    exerciseName = animatedExercise.name,
+                    equipmentName = equipment?.name,
+                    accessoryNames = accessoryEquipments.map { it.name },
+                    notes = animatedExercise.notes,
+                    targetRepRange = if (
+                        animatedExercise.minReps > 0 &&
+                        animatedExercise.maxReps >= animatedExercise.minReps
+                    ) {
+                        if (animatedExercise.minReps == animatedExercise.maxReps) {
+                            animatedExercise.minReps.toString()
+                        } else {
+                            "${animatedExercise.minReps}-${animatedExercise.maxReps}"
+                        }
+                    } else null,
+                    progressionLabel = state.progressionState?.name
+                        ?.lowercase()
+                        ?.replaceFirstChar { it.uppercase() },
+                    plateauReason = viewModel.plateauReasonByExerciseId[state.exerciseId]
+                )
+
                 PageType.PLATES -> PagePlates(state, equipment)
                 PageType.EXERCISE_DETAIL -> ExerciseDetail(
                     modifier = Modifier.fillMaxSize(),
@@ -363,9 +403,75 @@ fun ExerciseScreen(
                                 selectedExerciseId = it
                             })
 
-                PageType.NOTES -> {} // PageNotes(exercise.notes)
-                PageType.BUTTONS -> PageButtons(state, viewModel, hapticsViewModel)
+                PageType.NOTES -> ExerciseSessionInfoPage(
+                    exerciseName = "Notes",
+                    equipmentName = null,
+                    accessoryNames = emptyList(),
+                    notes = animatedExercise.notes,
+                    targetRepRange = null,
+                    progressionLabel = null,
+                    plateauReason = null
+                )
+                PageType.MOVEMENT -> ExerciseMovementPreviewPage(
+                    exercise = animatedExercise,
+                    modifier = Modifier.fillMaxSize()
+                )
+                PageType.BUTTONS -> PageButtons(
+                    updatedState = state,
+                    viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    canChangeEquipment = canChangeEquipment,
+                    onChangeEquipmentClick = {
+                        pendingEquipmentId = exercise.equipmentId
+                        showEquipmentPicker = true
+                    },
+                    onLeaveWorkout = onLeaveWorkout
+                )
             }
+        }
+
+        if (showEquipmentPicker) {
+            StandardDialog(
+                onDismissRequest = { showEquipmentPicker = false },
+                title = "Change equipment",
+                body = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        equipmentOptions.forEach { equipmentOption ->
+                            val equipmentId = equipmentOption?.id
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { pendingEquipmentId = equipmentId }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = pendingEquipmentId == equipmentId,
+                                    onClick = { pendingEquipmentId = equipmentId }
+                                )
+                                Text(
+                                    text = equipmentOption?.name ?: "None",
+                                    modifier = Modifier.padding(start = 8.dp),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmText = "Change",
+                onConfirm = {
+                    showEquipmentPicker = false
+                    scope.launch {
+                        viewModel.updateExerciseEquipmentForCurrentWorkout(
+                            exerciseId = exercise.id,
+                            equipmentId = pendingEquipmentId
+                        )
+                    }
+                },
+                dismissText = "Cancel",
+                onDismissButton = { showEquipmentPicker = false },
+                confirmEnabled = pendingEquipmentId != exercise.equipmentId
+            )
         }
 
         CustomDialogYesOnLongPress(
@@ -453,5 +559,54 @@ fun ExerciseScreen(
         onDispose {
             goBackJob?.cancel()
         }
+    }
+}
+
+@Composable
+private fun ExerciseSessionInfoPage(
+    exerciseName: String,
+    equipmentName: String?,
+    accessoryNames: List<String>,
+    notes: String,
+    targetRepRange: String?,
+    progressionLabel: String?,
+    plateauReason: String?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        ExerciseInfoSection("Exercise", listOf(exerciseName))
+        targetRepRange?.let { ExerciseInfoSection("Target reps", listOf(it)) }
+        progressionLabel?.let { ExerciseInfoSection("Progression", listOf(it)) }
+        plateauReason?.let { ExerciseInfoSection("Plateau", listOf(it)) }
+        equipmentName?.let { ExerciseInfoSection("Equipment", listOf(it)) }
+        if (accessoryNames.isNotEmpty()) ExerciseInfoSection("Accessories", accessoryNames)
+        if (notes.isNotBlank()) ExerciseInfoSection("Notes", listOf(notes))
+    }
+}
+
+@Composable
+private fun ExerciseInfoSection(title: String, lines: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        lines.forEach { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(top = 8.dp),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
     }
 }

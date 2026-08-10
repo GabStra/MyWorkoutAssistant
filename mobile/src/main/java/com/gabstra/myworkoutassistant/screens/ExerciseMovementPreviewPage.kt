@@ -76,27 +76,12 @@ fun ExerciseMovementAction(
     }
 
     if (showPreview) {
-        val context = LocalContext.current
-        val movementJson by produceState<String?>(initialValue = null, movementRef) {
-            var retryDelayMillis = InitialMovementRetryDelayMillis
-            while (true) {
-                val loadedJson = withContext(Dispatchers.IO) {
-                    ExerciseMovementStorage.readMovementJson(context, movementRef)
-                }
-                if (loadedJson != null) {
-                    value = loadedJson
-                    return@produceState
-                }
-                delay(retryDelayMillis)
-                retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MaximumMovementRetryDelayMillis)
-            }
-        }
         StandardDialog(
             onDismissRequest = { showPreview = false },
             title = title,
             body = {
                 ExerciseMovementPreviewPage(
-                    movementJson = movementJson,
+                    exercise = exercise,
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f),
@@ -108,6 +93,35 @@ fun ExerciseMovementAction(
             showDismiss = true,
         )
     }
+}
+
+@Composable
+fun ExerciseMovementPreviewPage(
+    exercise: Exercise,
+    modifier: Modifier = Modifier,
+) {
+    val movementRef = exercise.movementRef
+    if (movementRef == null) {
+        MovementStatusMessage(text = "No movement available", modifier = modifier)
+        return
+    }
+
+    val context = LocalContext.current
+    val movementJson by produceState<String?>(initialValue = null, movementRef) {
+        var retryDelayMillis = InitialMovementRetryDelayMillis
+        while (true) {
+            val loadedJson = withContext(Dispatchers.IO) {
+                ExerciseMovementStorage.readMovementJson(context, movementRef)
+            }
+            if (loadedJson != null) {
+                value = loadedJson
+                return@produceState
+            }
+            delay(retryDelayMillis)
+            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(MaximumMovementRetryDelayMillis)
+        }
+    }
+    ExerciseMovementPreviewPage(movementJson = movementJson, modifier = modifier)
 }
 
 @Composable
