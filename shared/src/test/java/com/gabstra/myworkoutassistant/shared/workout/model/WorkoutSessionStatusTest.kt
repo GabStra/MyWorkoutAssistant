@@ -143,11 +143,12 @@ class WorkoutSessionStatusTest {
     }
 
     @Test
-    fun `missing active record throws`() {
+    fun `missing active record is interrupted`() {
         val history = workoutHistory(isDone = false)
 
-        assertThrows(IllegalStateException::class.java) {
-            resolveWorkoutSessionStatus(history, null, now = now)
-        }
+        assertEquals(
+            WorkoutSessionStatus.INTERRUPTED,
+            resolveWorkoutSessionStatus(history, null, now = now),
+        )
     }
 }

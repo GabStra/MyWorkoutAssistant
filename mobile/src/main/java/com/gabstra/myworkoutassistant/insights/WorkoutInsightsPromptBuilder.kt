@@ -2476,6 +2476,7 @@ private fun buildWorkoutSessionStatusLine(
     WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Session status: Still in progress on wear device"
     WorkoutSessionStatus.STOPPED_ON_WEAR -> "Session status: Stopped on wear device before completion"
     WorkoutSessionStatus.STALE_ON_WEAR -> "Session status: Wear session became stale before completion"
+    WorkoutSessionStatus.INTERRUPTED -> "Session status: Interrupted before completion"
 }
 
 private fun describeWorkoutSessionStatusForPrompt(
@@ -2491,6 +2492,7 @@ private fun describeWorkoutSessionStatusForPrompt(
     WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "still in progress on wear device"
     WorkoutSessionStatus.STOPPED_ON_WEAR -> "stopped on wear device before completion"
     WorkoutSessionStatus.STALE_ON_WEAR -> "became stale on wear before completion"
+    WorkoutSessionStatus.INTERRUPTED -> "was interrupted before completion"
 }
 
 private fun buildWorkoutInsightLabel(

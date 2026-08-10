@@ -721,7 +721,7 @@ class WorkoutViewModelSessionTest {
     private suspend fun createWorkoutHistory(
         workoutId: UUID,
         globalId: UUID,
-        date: LocalDate = LocalDate.now(),
+        date: LocalDate = LocalDate.now().minusDays(1),
         isDone: Boolean = true
     ): WorkoutHistory {
         val workoutHistory = WorkoutHistory(
