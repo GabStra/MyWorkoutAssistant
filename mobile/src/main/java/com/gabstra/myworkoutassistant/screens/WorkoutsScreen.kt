@@ -1,12 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
@@ -45,6 +43,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeartRateRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
@@ -73,6 +74,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
+import com.gabstra.myworkoutassistant.shared.fromJSONToExerciseLibraryPackage
+import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -87,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import android.util.Log
+import android.widget.Toast
 import java.util.UUID
 
 private const val TAG = "WorkoutHistDebug"
@@ -139,6 +143,7 @@ fun WorkoutsScreen(
     var hasInitializedSelectedDate by remember { mutableStateOf(false) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+    val workoutStore by appViewModel.workoutStoreFlow.collectAsState()
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
@@ -383,7 +388,7 @@ fun WorkoutsScreen(
         }
     }
 
-    val tabTitles = listOf("Status", "Workouts", "Gear", "Alarms")
+    val tabTitles = listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
 
     var selectedDate by remember {
         mutableStateOf<CalendarDay>(
@@ -424,13 +429,32 @@ fun WorkoutsScreen(
         if (!appViewModel.checkedHealthPermission || !appViewModel.hasHealthPermissions) {
             return@LaunchedEffect
         }
-        withContext(Dispatchers.IO) {
-            ExternalHealthConnectSessionSyncService(
-                context = context,
-                healthConnectClient = healthConnectClient,
-                externalDatabase = externalSessionDatabase,
-                appDatabase = AppDatabase.getDatabase(context),
-            ).refreshRecentSessions()
+        val requiredReadPermissions = setOf(
+            HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+            HealthPermission.getReadPermission(HeartRateRecord::class),
+        )
+        val grantedPermissions = runCatching {
+            healthConnectClient.permissionController.getGrantedPermissions()
+        }.getOrElse {
+            appViewModel.setHealthPermissions(false)
+            return@LaunchedEffect
+        }
+        if (!grantedPermissions.containsAll(requiredReadPermissions)) {
+            appViewModel.setHealthPermissions(false)
+            return@LaunchedEffect
+        }
+        try {
+            withContext(Dispatchers.IO) {
+                ExternalHealthConnectSessionSyncService(
+                    context = context,
+                    healthConnectClient = healthConnectClient,
+                    externalDatabase = externalSessionDatabase,
+                    appDatabase = AppDatabase.getDatabase(context),
+                ).refreshRecentSessions()
+            }
+        } catch (error: SecurityException) {
+            appViewModel.setHealthPermissions(false)
+            Log.w(TAG, "Health Connect permissions changed during session refresh", error)
         }
     }
 
@@ -577,6 +601,7 @@ fun WorkoutsScreen(
                     drawerContainerColor = DarkGray
                 ) {
                     WorkoutsMenu(
+                        isDrawerOpen = drawerState.isOpen,
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
@@ -600,7 +625,8 @@ fun WorkoutsScreen(
                 }
             }
         ) {
-            Scaffold(
+            BreadcrumbScaffold(
+                showTopBarDivider = false,
                 topBar = {
                     TopAppBar(
                         colors = TopAppBarDefaults.topAppBarColors(
@@ -665,7 +691,7 @@ fun WorkoutsScreen(
                             isSelectionModeActive = isWorkoutSelectionModeActive
                         )
 
-                        2 -> {
+                        4 -> {
                             EquipmentsBottomBar(
                                 selectedEquipments = selectedEquipments,
                                 equipments = equipments,
@@ -705,6 +731,7 @@ fun WorkoutsScreen(
                         contentColor = MaterialTheme.colorScheme.onBackground,
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                        compactNavigation = true,
                         modifier = Modifier
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background),
@@ -715,18 +742,7 @@ fun WorkoutsScreen(
                                 .background(MaterialTheme.colorScheme.background),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            AnimatedContent(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                                targetState = pageIndex,
-                                transitionSpec = {
-                                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
-                                        animationSpec = tween(
-                                            500
-                                        )
-                                    )
-                                }, label = ""
-                            ) { updatedSelectedTab ->
-                                when (updatedSelectedTab) {
+                            when (pageIndex) {
                                     0 -> {
                                         WorkoutsStatusTab(
                                             isLoading = isLoading,
@@ -803,7 +819,7 @@ fun WorkoutsScreen(
                                         }
                                     }
 
-                                    2 -> {
+                                    4 -> {
                                         WorkoutsGearTab(
                                             equipments = equipments,
                                             accessories = accessories,
@@ -846,9 +862,66 @@ fun WorkoutsScreen(
                                             )
                                         }
                                     }
-                                }
-                            }
 
+                                    2 -> {
+                                        ExerciseLibraryScreen(
+                                            definitions = workoutStore.exerciseDefinitions,
+                                            workouts = workouts,
+                                            plans = allPlans,
+                                            equipmentNamesById = equipments.associate { it.id to it.name },
+                                            accessoryNamesById = accessories.associate { it.id to it.name },
+                                            onAdd = {
+                                                appViewModel.setScreenData(ScreenData.NewExerciseDefinition())
+                                            },
+                                            onImport = { content ->
+                                                scope.launch {
+                                                    runCatching {
+                                                        val importedLibrary = fromJSONToExerciseLibraryPackage(content)
+                                                        withContext(Dispatchers.IO) {
+                                                            restoreExerciseMovementBackups(
+                                                                context,
+                                                                importedLibrary.exerciseMovements,
+                                                            )
+                                                        }
+                                                        val addedDefinitions = appViewModel
+                                                            .importExerciseLibrary(importedLibrary)
+                                                        appViewModel.scheduleWorkoutSave(context)
+                                                        addedDefinitions
+                                                    }.onSuccess { addedDefinitions ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Imported $addedDefinitions exercise definition(s).",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    }.onFailure { error ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            error.message ?: "Couldn't import that exercise library.",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    }
+                                                }
+                                            },
+                                            onEdit = { definition ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditExerciseDefinition(definition.id)
+                                                )
+                                            },
+                                            onDelete = { definition ->
+                                                appViewModel.deleteExerciseDefinition(definition.id)
+                                                appViewModel.scheduleWorkoutSave(context)
+                                            },
+                                            onOpenPlan = { planId ->
+                                                appViewModel.openWorkoutPlanFromBreadcrumb(planId)
+                                            },
+                                            onOpenWorkout = { workoutId ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(workoutId)
+                                                )
+                                            },
+                                        )
+                                    }
+                            }
                         }
                     }
                 }

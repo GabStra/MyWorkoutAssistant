@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
+import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MinMaxStepperRow
@@ -169,7 +170,12 @@ fun ExerciseForm(
     val scope = rememberCoroutineScope()
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
-    val notesState = rememberSaveable { mutableStateOf(exercise?.notes ?: "") }
+    val notesState = rememberSaveable {
+        mutableStateOf(
+            if (exercise?.exerciseDefinitionId != null) exercise.placementNotes.orEmpty()
+            else exercise?.notes.orEmpty()
+        )
+    }
 
     val hms = rememberSaveable {
         mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0))
@@ -490,8 +496,12 @@ fun ExerciseForm(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
                         label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = exercise?.exerciseDefinitionId == null,
                     )
+                    if (exercise?.exerciseDefinitionId != null) {
+                        ContentSubtitle("Rename this exercise from the Exercise Library.")
+                    }
                     if (exercise == null) {
                         StandardFilterDropdown(
                             label = "Exercise type",
@@ -758,40 +768,28 @@ fun ExerciseForm(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
-                            Button(
+                            if (!isSelectingSecondary) AppPrimaryButton(
+                                text = "Primary muscles",
                                 onClick = { isSelectingSecondary = false },
                                 modifier = Modifier.weight(1f),
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (!isSelectingSecondary)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Primary muscles",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Button(
+                                textAlign = TextAlign.Center,
+                            ) else AppSecondaryButton(
+                                text = "Primary muscles",
+                                onClick = { isSelectingSecondary = false },
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                            )
+                            if (isSelectingSecondary) AppPrimaryButton(
+                                text = "Secondary muscles",
                                 onClick = { isSelectingSecondary = true },
                                 modifier = Modifier.weight(1f),
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelectingSecondary)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Secondary muscles",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
+                                textAlign = TextAlign.Center,
+                            ) else AppSecondaryButton(
+                                text = "Secondary muscles",
+                                onClick = { isSelectingSecondary = true },
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                            )
                         }
                         Text(
                             text = "Primary muscles are the main muscles worked. Secondary muscles are assisting muscles.",
@@ -1349,7 +1347,11 @@ fun ExerciseForm(
                             id = exercise?.id ?: UUID.randomUUID(),
                             enabled = exercise?.enabled ?: true,
                             name = nameState.value.trim(),
-                            notes = notesState.value.trim(),
+                            notes = if (exercise?.exerciseDefinitionId != null) {
+                                exercise.notes
+                            } else {
+                                notesState.value.trim()
+                            },
                             sets = normalizedSets,
                             exerciseType = selectedExerciseType.value,
                             minReps = minReps.floatValue.toInt(),
@@ -1380,7 +1382,13 @@ fun ExerciseForm(
                             deloadWeightFactor = deloadWeightFactor,
                             deloadRepsDrop = deloadRepsDrop,
                             deloadCutSetsTo = deloadCutSetsTo,
-                            movementRef = movementRefState.value
+                            movementRef = movementRefState.value,
+                            exerciseDefinitionId = exercise?.exerciseDefinitionId,
+                            placementNotes = if (exercise?.exerciseDefinitionId != null) {
+                                notesState.value.trim()
+                            } else {
+                                exercise?.placementNotes
+                            },
                         )
                         val selectedMovementRef = movementRefState.value
                         val selectedMovementJson = movementJson
@@ -1405,7 +1413,7 @@ fun ExerciseForm(
     }
 }
 
-private fun validateWearSkeletonJson(json: String) {
+internal fun validateWearSkeletonJson(json: String) {
     val root = JsonParser.parseString(json).asJsonObject
     require(root.has("bounds") && root["bounds"].isJsonObject) {
         "Movement JSON is missing bounds."
@@ -1418,7 +1426,7 @@ private fun validateWearSkeletonJson(json: String) {
     }
 }
 
-private fun android.content.Context.resolveMovementId(uri: Uri, json: String): String {
+internal fun android.content.Context.resolveMovementId(uri: Uri, json: String): String {
     val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { cursor ->
             if (cursor.moveToFirst()) {

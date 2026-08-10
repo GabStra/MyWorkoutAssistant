@@ -7,6 +7,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,11 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.ExerciseLibraryPackage
+import com.gabstra.myworkoutassistant.shared.deleteExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
+import com.gabstra.myworkoutassistant.shared.updateExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -100,8 +106,10 @@ sealed class ScreenData() {
         val workoutHistoryId: UUID,
     ) : ScreenData()
 
-    class NewExercise(val workoutId: UUID) : ScreenData()
+    class NewExercise(val workoutId: UUID, val exerciseDefinitionId: UUID? = null, val skipLibrary: Boolean = false) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+    class NewExerciseDefinition : ScreenData()
+    class EditExerciseDefinition(val exerciseDefinitionId: UUID) : ScreenData()
 
     class NewSuperset(val workoutId: UUID) : ScreenData()
     class EditSuperset(val workoutId: UUID, val selectedSupersetId: UUID) : ScreenData()
@@ -139,8 +147,10 @@ sealed class ScreenData() {
             is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"
             is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
-            is NewExercise -> "NewExercise_${workoutId}"
+            is NewExercise -> "NewExercise_${workoutId}_${exerciseDefinitionId}_${skipLibrary}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewExerciseDefinition -> "NewExerciseDefinition"
+            is EditExerciseDefinition -> "EditExerciseDefinition_${exerciseDefinitionId}"
             is NewSuperset -> "NewSuperset_${workoutId}"
             is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
             is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
@@ -177,6 +187,8 @@ sealed class ScreenData() {
             is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewExerciseDefinition -> "NewExerciseDefinition"
+            is EditExerciseDefinition -> "EditExerciseDefinition_${exerciseDefinitionId}"
             is NewSuperset -> "NewSuperset_${workoutId}"
             is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
             is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
@@ -219,7 +231,7 @@ class AppViewModel(
         private const val TAG = "AppViewModel"
         private const val DEBUG_TAG = "WorkoutHistDebug"
     }
-    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
+    private val screenDataStack = mutableStateListOf<ScreenData>(ScreenData.Workouts(0))
 
     override fun onCleared() {
         // #region agent log
@@ -392,6 +404,11 @@ class AppViewModel(
 
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
+        if (currentScreenData is ScreenData.Workouts && screenDataStack.isNotEmpty()) {
+            val updatedRoot = ScreenData.Workouts(tabIndex)
+            screenDataStack[screenDataStack.lastIndex] = updatedRoot
+            currentScreenData = updatedRoot
+        }
     }
 
     fun initScreenData(screenData: ScreenData) {
@@ -430,6 +447,112 @@ class AppViewModel(
             return false
         }
         return false
+    }
+
+    fun navigationStack(): List<ScreenData> = screenDataStack.toList()
+
+    fun popToScreen(screen: ScreenData) {
+        val targetIndex = screenDataStack.indexOfLast {
+            it.screenIdentityKey() == screen.screenIdentityKey()
+        }
+        if (targetIndex < 0) return
+        while (screenDataStack.lastIndex > targetIndex) {
+            screenDataStack.removeAt(screenDataStack.lastIndex)
+        }
+        currentScreenData = screenDataStack.last()
+    }
+
+    fun openWorkoutPlanFromBreadcrumb(planId: UUID) {
+        setSelectedWorkoutPlanId(planId)
+        screenDataStack.clear()
+        val root = ScreenData.Workouts(1)
+        screenDataStack.add(root)
+        currentScreenData = root
+        selectedHomeTab = 1
+    }
+
+    fun addExerciseDefinition(definition: ExerciseDefinition) {
+        require(workoutStore.exerciseDefinitions.none { it.id == definition.id }) {
+            "Exercise definition ${definition.id} already exists"
+        }
+        val normalizedDefinition = definition.copy(
+            exerciseFamilyId = definition.effectiveFamilyId(),
+        )
+        updateWorkoutStore(workoutStore.copy(
+            exerciseDefinitions = workoutStore.exerciseDefinitions + normalizedDefinition,
+        ))
+    }
+
+    fun updateExerciseDefinition(definition: ExerciseDefinition) {
+        updateWorkoutStore(workoutStore.updateExerciseDefinition(definition))
+    }
+
+    fun deleteExerciseDefinition(definitionId: UUID) {
+        updateWorkoutStore(workoutStore.deleteExerciseDefinition(definitionId))
+    }
+
+    fun importExerciseLibrary(exerciseLibrary: ExerciseLibraryPackage): Int {
+        require(exerciseLibrary.exerciseDefinitions.isNotEmpty()) {
+            "The exercise library does not contain any definitions."
+        }
+
+        fun <T> mergeExactById(
+            existing: List<T>,
+            imported: List<T>,
+            idOf: (T) -> UUID,
+            itemLabel: String,
+        ): List<T> {
+            val existingById = existing.associateBy(idOf)
+            imported.forEach { importedItem ->
+                val id = idOf(importedItem)
+                val existingItem = existingById[id]
+                require(existingItem == null || existingItem == importedItem) {
+                    "$itemLabel $id conflicts with an existing item."
+                }
+            }
+            return (existing + imported).distinctBy(idOf)
+        }
+
+        val mergedEquipment = mergeExactById(
+            workoutStore.equipments, exerciseLibrary.equipments, { it.id }, "Equipment"
+        )
+        val mergedAccessories = mergeExactById(
+            workoutStore.accessoryEquipments,
+            exerciseLibrary.accessoryEquipments,
+            { it.id },
+            "Accessory equipment",
+        )
+        val importedDefinitions = exerciseLibrary.exerciseDefinitions.map { definition ->
+            definition.copy(exerciseFamilyId = definition.effectiveFamilyId())
+        }
+        val mergedDefinitions = mergeExactById(
+            workoutStore.exerciseDefinitions,
+            importedDefinitions,
+            { it.id },
+            "Exercise definition",
+        )
+        val equipmentIds = mergedEquipment.mapTo(mutableSetOf()) { it.id }
+        val accessoryIds = mergedAccessories.mapTo(mutableSetOf()) { it.id }
+        importedDefinitions.forEach { definition ->
+            require(definition.equipmentId == null || definition.equipmentId in equipmentIds) {
+                "${definition.name} references missing equipment ${definition.equipmentId}."
+            }
+            val missingAccessories = definition.requiredAccessoryEquipmentIds.orEmpty()
+                .filterNot { it in accessoryIds }
+            require(missingAccessories.isEmpty()) {
+                "${definition.name} references missing accessory equipment $missingAccessories."
+            }
+        }
+
+        val addedCount = mergedDefinitions.size - workoutStore.exerciseDefinitions.size
+        updateWorkoutStore(
+            workoutStore.copy(
+                exerciseDefinitions = mergedDefinitions,
+                equipments = mergedEquipment,
+                accessoryEquipments = mergedAccessories,
+            )
+        )
+        return addedCount
     }
     val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = combine(
         selectedWorkoutPlanIdFlow,
