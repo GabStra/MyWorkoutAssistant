@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -29,6 +30,7 @@ fun SetHistoriesRenderer(
     appViewModel: AppViewModel,
     workout: Workout,
     showMetadata: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(5.dp),
 ) {
     if (setHistories.isEmpty() && restHistories.isEmpty()) {
         return
@@ -50,7 +52,7 @@ fun SetHistoriesRenderer(
     }
 
     Column(
-        modifier = modifier.padding(5.dp),
+        modifier = modifier.padding(contentPadding),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val equipmentName = when {

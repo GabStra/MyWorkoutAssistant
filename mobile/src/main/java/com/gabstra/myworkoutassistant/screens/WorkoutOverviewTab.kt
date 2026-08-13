@@ -31,10 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
@@ -68,8 +65,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -99,7 +94,7 @@ fun WorkoutOverviewTab(
     onRequestDeleteIncompleteWorkout: () -> Unit,
     onRequestClearAllIncompleteSessions: () -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
-    workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
+    workoutSchedules: List<WorkoutSchedule>,
     modifier: Modifier = Modifier,
     workoutHistoryIdForExerciseNavigation: UUID? = null,
 ) {
@@ -121,16 +116,6 @@ fun WorkoutOverviewTab(
     val resumeTimeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy HH:mm", currentLocale)
     }
-    var workoutSchedules by remember {
-        mutableStateOf<List<WorkoutSchedule>>(emptyList())
-    }
-
-    LaunchedEffect(workout.globalId) {
-        withContext(Dispatchers.IO) {
-            workoutSchedules = workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()

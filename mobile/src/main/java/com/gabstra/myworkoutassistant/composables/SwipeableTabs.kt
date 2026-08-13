@@ -228,7 +228,7 @@ fun SwipeableTabs(
                 state = pagerState,
                 modifier = pagerModifier,
                 userScrollEnabled = false,
-                beyondViewportPageCount = tabTitles.lastIndex,
+                beyondViewportPageCount = 0,
             ) { pageIndex ->
                 pageContent(pageIndex)
             }

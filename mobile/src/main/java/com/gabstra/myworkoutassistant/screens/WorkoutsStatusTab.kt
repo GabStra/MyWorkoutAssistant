@@ -216,33 +216,19 @@ fun WorkoutsStatusTab(
                 DateTimeFormatter.ofPattern("d MMM yyyy", currentLocale)
             )
         }
-        if (activityDates.isEmpty() && isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(Spacing.md),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(32.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray,
-                )
-            }
-        } else {
-            StyledCard {
-                WorkoutsCalendar(
-                    selectedDate = selectedDate,
-                    selectedWeekStart = selectedWeekStart,
-                    selectedWeekEnd = selectedWeekEnd,
-                    completedWeekStarts = completedWeekStarts,
-                    onDayClicked = { calendarState, day ->
-                        onDayClicked(calendarState, day)
-                    },
-                    activityKindForDay = { day -> activityKindForDay(day) },
-                    activityDates = activityDates,
-                )
-            }
+        StyledCard {
+            WorkoutsCalendar(
+                selectedDate = selectedDate,
+                selectedWeekStart = selectedWeekStart,
+                selectedWeekEnd = selectedWeekEnd,
+                completedWeekStarts = completedWeekStarts,
+                onDayClicked = { calendarState, day ->
+                    onDayClicked(calendarState, day)
+                },
+                activityKindForDay = { day -> activityKindForDay(day) },
+                activityDates = activityDates,
+            )
+        }
             if (isLoading) {
                 Box(
                     modifier = Modifier
@@ -435,7 +421,6 @@ fun WorkoutsStatusTab(
                         }
                     }
                 }
-            }
         }
     }
 }

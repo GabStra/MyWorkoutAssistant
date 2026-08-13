@@ -13,6 +13,7 @@ import com.gabstra.myworkoutassistant.composables.BreadcrumbTrail
 import com.gabstra.myworkoutassistant.composables.BreadcrumbTrailItem
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.allExercisePrescriptions
+import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import java.util.UUID
 
 private data class BreadcrumbItem(
@@ -37,7 +38,8 @@ fun NavigationBreadcrumbs(
     }
     if (stack.size <= 1) return
     val store = appViewModel.workoutStore
-    val items = remember(stack, store) { buildBreadcrumbItems(stack, store) }
+    val items = remember(stack, store) { buildBreadcrumbItems(stack, store).dropLast(1) }
+    if (items.isEmpty()) return
     val scrollState = rememberScrollState()
 
     LaunchedEffect(items, scrollState.maxValue) {
@@ -50,12 +52,10 @@ fun NavigationBreadcrumbs(
         items = items.map { item ->
             BreadcrumbTrailItem(
                 label = item.label,
-                onClick = if (item == items.last()) null else {
-                    {
-                        when {
-                            item.planId != null -> appViewModel.openWorkoutPlanFromBreadcrumb(item.planId)
-                            item.screen != null -> appViewModel.popToScreen(item.screen)
-                        }
+                onClick = {
+                    when {
+                        item.planId != null -> appViewModel.openWorkoutPlanFromBreadcrumb(item.planId)
+                        item.screen != null -> appViewModel.popToScreen(item.screen)
                     }
                 },
             )
@@ -75,23 +75,27 @@ private fun buildBreadcrumbItems(
     val exercises = store.allExercisePrescriptions().associateBy { it.id }
     val result = mutableListOf<BreadcrumbItem>()
     var insertedPlanId: UUID? = null
-    stack.distinctBy { it.screenIdentityKey() }.forEach { screen ->
+    stack.forEach { screen ->
         val workoutId = screen.workoutIdOrNull()
-        if (workoutId != null) {
-            val workout = store.workouts.firstOrNull { it.id == workoutId }
-            val plan = workout?.workoutPlanId?.let { planId ->
+        val plan = if (screen is ScreenData.NewWorkout) {
+            screen.workoutPlanId?.let { planId ->
                 store.workoutPlans.firstOrNull { it.id == planId }
             }
-            if (plan != null && insertedPlanId != plan.id) {
-                result += BreadcrumbItem(plan.name, planId = plan.id)
-                insertedPlanId = plan.id
+        } else if (workoutId != null) {
+            val workout = store.workouts.firstOrNull { it.id == workoutId }
+            workout?.workoutPlanId?.let { planId ->
+                store.workoutPlans.firstOrNull { it.id == planId }
             }
+        } else {
+            null
+        }
+        if (plan != null && insertedPlanId != plan.id) {
+            result += BreadcrumbItem(plan.name, planId = plan.id)
+            insertedPlanId = plan.id
         }
         result += BreadcrumbItem(screen.breadcrumbLabel(store, exercises), screen = screen)
     }
-    return result.filterIndexed { index, item ->
-        index == 0 || item.label != result[index - 1].label
-    }
+    return result
 }
 
 private fun ScreenData.workoutIdOrNull(): UUID? = when (this) {
@@ -122,7 +126,7 @@ private fun ScreenData.breadcrumbLabel(
     store: WorkoutStore,
     exercises: Map<UUID, com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>,
 ): String = when (this) {
-    is ScreenData.Workouts -> listOf("Status", "Workouts", "Gear", "Alarms", "Library")
+    is ScreenData.Workouts -> listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
         .getOrElse(selectedTabIndex) { "Home" }
     is ScreenData.Settings -> "Settings"
     is ScreenData.ErrorLogs -> "Error logs"
@@ -150,6 +154,6 @@ private fun ScreenData.breadcrumbLabel(
     is ScreenData.InsertRestAfter -> "Insert rest"
     is ScreenData.NewSet -> "New set"
     is ScreenData.EditSet -> "Edit set"
-    is ScreenData.NewEquipment -> "New equipment"
-    is ScreenData.EditEquipment -> "Edit equipment"
+    is ScreenData.NewEquipment -> "New ${equipmentType.toDisplayText().lowercase()}"
+    is ScreenData.EditEquipment -> "Edit ${equipmentType.toDisplayText().lowercase()}"
 }

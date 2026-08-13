@@ -31,6 +31,7 @@ fun ExpandableContainer(
     isOpen: Boolean = false,
     title: @Composable (modifier: Modifier) -> Unit,
     subContent : @Composable () -> Unit = {},
+    collapsedContent: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
     onOpen: () -> Unit = {},
     onClose: () -> Unit = {},
@@ -66,11 +67,18 @@ fun ExpandableContainer(
                             onClose()
                         }
                     }) {
-                    Icon(imageVector = if(openStatus) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowDropUp, contentDescription = "Back", tint = MaterialTheme.colorScheme.onBackground)
+                    Icon(
+                        imageVector = if (openStatus) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
+                        contentDescription = if (openStatus) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                    )
                 }
             }
         }
         subContent()
+        if (!openStatus) {
+            collapsedContent()
+        }
         if(openStatus){
             Box{
                 content()

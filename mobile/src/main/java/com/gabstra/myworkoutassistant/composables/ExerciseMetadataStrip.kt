@@ -188,6 +188,8 @@ fun EquipmentAccessoryMetadata(
     equipmentName: String?,
     accessoryNames: List<String>,
     modifier: Modifier = Modifier,
+    horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    textAlign: TextAlign = TextAlign.Center,
 ) {
     val equipment = equipmentName?.takeIf { it.isNotBlank() }
     val accessories = accessoryNames.filter { it.isNotBlank() }
@@ -196,7 +198,7 @@ fun EquipmentAccessoryMetadata(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = horizontalAlignment,
         verticalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
         if (equipment != null) {
@@ -210,7 +212,7 @@ fun EquipmentAccessoryMetadata(
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
+                textAlign = textAlign,
             )
         }
         if (accessories.isNotEmpty()) {
@@ -224,7 +226,7 @@ fun EquipmentAccessoryMetadata(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
+                textAlign = textAlign,
             )
         }
     }

@@ -2,11 +2,16 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
@@ -28,13 +33,19 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
 
+fun buildSupersetDisplayTitle(exercises: List<Exercise>): String = exercises
+    .mapIndexed { index, exercise -> "${exercise.name} (${toSupersetLetter(index)})" }
+    .joinToString(" ↔ ")
+
 @Composable
 fun SupersetSetHistoriesRenderer(
     modifier: Modifier = Modifier,
     setHistories: List<SetHistory>,
     restHistories: List<RestHistory> = emptyList(),
     workout: Workout,
-    getEquipmentById: (UUID) -> WeightLoadedEquipment? = { null }
+    getEquipmentById: (UUID) -> WeightLoadedEquipment? = { null },
+    contentPadding: PaddingValues = PaddingValues(5.dp),
+    focusedExerciseId: UUID? = null,
 ) {
     if (setHistories.isEmpty() && restHistories.isEmpty()) return
 
@@ -81,16 +92,61 @@ fun SupersetSetHistoriesRenderer(
     }
 
     Column(
-        modifier = modifier.padding(5.dp),
+        modifier = modifier.padding(contentPadding),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
             superset.exercises.forEachIndexed { index, exercise ->
-                Text(
-                    text = "${toSupersetLetter(index)} · ${exercise.name}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                val historicalEquipment = setHistories
+                    .firstOrNull { it.exerciseId == exercise.id }
+                val equipmentName = historicalEquipment?.equipmentNameSnapshot
+                    ?.takeIf { it.isNotBlank() }
+                    ?: historicalEquipment?.equipmentIdSnapshot
+                        ?.let(getEquipmentById)
+                        ?.name
+                    ?: exercise.equipmentId?.let(getEquipmentById)?.name
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${toSupersetLetter(index)}:",
+                        modifier = Modifier.padding(end = 10.dp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = if (exercise.id == focusedExerciseId) {
+                                "${exercise.name} · Selected exercise"
+                            } else {
+                                exercise.name
+                            },
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (exercise.id == focusedExerciseId) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            ),
+                            color = if (exercise.id == focusedExerciseId) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        equipmentName?.let { name ->
+                            EquipmentAccessoryMetadata(
+                                equipmentName = name,
+                                accessoryNames = emptyList(),
+                                horizontalAlignment = Alignment.Start,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                            )
+                        }
+                    }
+                }
             }
         }
         SetTable(rows = rows, enabled = superset.enabled)

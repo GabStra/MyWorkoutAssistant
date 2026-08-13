@@ -144,9 +144,8 @@ fun WeightVestForm(
                 expanded = expandedWeights,
                 onToggle = { expandedWeights = !expandedWeights },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add weight",
                         onClick = { showAvailableWeightsDialog.value = true },
                     )
                 },

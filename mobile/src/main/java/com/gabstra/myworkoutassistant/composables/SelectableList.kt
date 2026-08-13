@@ -11,6 +11,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
@@ -27,13 +28,15 @@ fun <T, K> SelectableList(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
         for (item in items) {
-            SelectableListRow(
-                item = item,
-                selectionMode = selectionMode,
-                isSelected = selectedIds.contains(keySelector(item)),
-                onItemSelectionToggle = onItemSelectionToggle,
-                itemContent = itemContent
-            )
+            key(keySelector(item)) {
+                SelectableListRow(
+                    item = item,
+                    selectionMode = selectionMode,
+                    isSelected = selectedIds.contains(keySelector(item)),
+                    onItemSelectionToggle = onItemSelectionToggle,
+                    itemContent = itemContent
+                )
+            }
         }
     }
 }

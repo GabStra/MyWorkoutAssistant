@@ -21,7 +21,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,21 +56,40 @@ fun <T> StandardFilterDropdown(
     selectedText: String,
     items: List<StandardFilterDropdownItem<T>>,
     onItemSelected: (T) -> Unit,
+    selectedValue: T?,
     modifier: Modifier = Modifier,
     isItemSelected: (T) -> Boolean = { false },
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    marqueeSelectedText: Boolean = true,
+    marqueeItems: Boolean = true,
+    itemMaxLines: Int = 1,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var pendingSelection by remember { mutableStateOf<StandardFilterDropdownItem<T>?>(null) }
     var anchorSize by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
     val fieldTextStyle = MaterialTheme.typography.bodyLarge
     val popupWidth = with(density) { anchorSize.width.toDp() }
-    val accessibilityLabel = "$label $selectedText"
+    val displayedText = pendingSelection?.label ?: selectedText
+    val accessibilityLabel = "$label $displayedText"
     val popupPositionProvider = remember(density) {
         FilterMenuPositionProvider(
             verticalMarginPx = with(density) { 4.dp.roundToPx() }
         )
+    }
+
+    LaunchedEffect(items) {
+        scrollState.scrollTo(0)
+        if (pendingSelection?.value !in items.map { it.value }) {
+            pendingSelection = null
+        }
+    }
+
+    LaunchedEffect(selectedValue) {
+        if (pendingSelection?.value == selectedValue) {
+            pendingSelection = null
+        }
     }
 
     Box(modifier = modifier) {
@@ -80,7 +101,7 @@ fun <T> StandardFilterDropdown(
                 }
         ) {
             OutlinedTextField(
-                value = selectedText,
+                value = displayedText,
                 onValueChange = { },
                 readOnly = true,
                 enabled = enabled,
@@ -102,13 +123,20 @@ fun <T> StandardFilterDropdown(
             )
 
             Text(
-                text = selectedText,
+                text = displayedText,
                 style = fieldTextStyle,
                 maxLines = 1,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 16.dp, top = 6.dp, end = 48.dp)
-                    .basicMarquee(iterations = Int.MAX_VALUE)
+                    .then(
+                        if (marqueeSelectedText) {
+                            Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                        } else {
+                            Modifier
+                        }
+                    ),
+                overflow = TextOverflow.Ellipsis,
             )
 
             Box(
@@ -134,46 +162,56 @@ fun <T> StandardFilterDropdown(
                                 .verticalScroll(scrollState)
                         ) {
                             items.forEachIndexed { index, item ->
-                                val selected = isItemSelected(item.value)
-                                val itemColor = if (selected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
+                                key(item.value) {
+                                    val selected = pendingSelection?.value?.let { it == item.value }
+                                        ?: isItemSelected(item.value)
+                                    val itemColor = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
 
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            onItemSelected(item.value)
-                                            expanded = false
-                                        }
-                                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        maxLines = 1,
+                                    Row(
                                         modifier = Modifier
-                                            .weight(1f)
-                                            .basicMarquee(iterations = Int.MAX_VALUE),
-                                        text = item.label,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = itemColor,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (selected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = itemColor
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                pendingSelection = item
+                                                onItemSelected(item.value)
+                                                expanded = false
+                                            }
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            maxLines = itemMaxLines,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .then(
+                                                    if (marqueeItems) {
+                                                        Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                                                    } else {
+                                                        Modifier
+                                                    }
+                                                ),
+                                            text = item.label,
+                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = itemColor,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (selected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = itemColor
+                                            )
+                                        }
+                                    }
+
+                                    if (index < items.lastIndex) {
+                                        HorizontalDivider(
+                                            color = appMenuBorderColor()
                                         )
                                     }
-                                }
-
-                                if (index < items.lastIndex) {
-                                    HorizontalDivider(
-                                        color = appMenuBorderColor()
-                                    )
                                 }
                             }
                         }

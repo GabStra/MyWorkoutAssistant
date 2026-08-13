@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,11 +113,9 @@ fun ExternalWorkoutSessionDetailScreen(
                 ),
                 title = {
                     Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(),
+                        modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
-                        text = session?.let { it.title ?: it.exerciseTypeLabel } ?: "External session",
+                        text = "External session",
                         maxLines = 2,
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,

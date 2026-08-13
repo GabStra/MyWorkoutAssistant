@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,11 +31,12 @@ fun TargetHrProgressSection(
     highHrBpm: Int,
     modifier: Modifier = Modifier,
     progressBarColor: Color = Color.hsl(113f, 0.79f, 0.34f),
+    contentPadding: PaddingValues = PaddingValues(10.dp),
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(10.dp),
+            .padding(contentPadding),
     ) {
         val rawProgress = targetCounter.toFloat() / targetTotal
         val progress = if (rawProgress.isNaN()) 0f else rawProgress

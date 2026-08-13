@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -28,6 +29,7 @@ fun HistoryNavigationCard(
     canGoForward: Boolean,
     onGoForward: () -> Unit,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(horizontal = Spacing.sm),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val iconColors = IconButtonDefaults.iconButtonColors(
@@ -36,7 +38,7 @@ fun HistoryNavigationCard(
     )
     PrimarySurface(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.sm),
+            modifier = Modifier.fillMaxWidth().padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {

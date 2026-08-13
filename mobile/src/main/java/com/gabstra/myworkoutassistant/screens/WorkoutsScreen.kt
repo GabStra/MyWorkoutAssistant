@@ -247,6 +247,12 @@ fun WorkoutsScreen(
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
 
+    fun selectWorkoutPlan(planId: UUID) {
+        selectedWorkouts = emptyList()
+        isWorkoutSelectionModeActive = false
+        appViewModel.setSelectedWorkoutPlanId(planId)
+    }
+
     LaunchedEffect(visibleActiveWorkouts.map { it.id }) {
         val visibleIds = visibleActiveWorkouts.mapTo(mutableSetOf()) { it.id }
         val visibleSelection = selectedWorkouts.filter { it.id in visibleIds }
@@ -782,9 +788,7 @@ fun WorkoutsScreen(
                                             WorkoutPlanFilterPicker(
                                                 allPlans = allPlans,
                                                 selectedPlanFilter = selectedPlanFilter,
-                                                onPlanSelected = { planId ->
-                                                    appViewModel.setSelectedWorkoutPlanId(planId)
-                                                }
+                                                onPlanSelected = ::selectWorkoutPlan,
                                             )
                                             WorkoutsListTab(
                                                 workouts = visibleActiveWorkouts,
@@ -848,9 +852,7 @@ fun WorkoutsScreen(
                                             WorkoutPlanFilterPicker(
                                                 allPlans = allPlans,
                                                 selectedPlanFilter = selectedPlanFilter,
-                                                onPlanSelected = { planId ->
-                                                    appViewModel.setSelectedWorkoutPlanId(planId)
-                                                }
+                                                onPlanSelected = ::selectWorkoutPlan,
                                             )
                                             WorkoutsAlarmsTab(
                                                 workouts = filteredWorkouts,
@@ -1063,8 +1065,7 @@ private fun WorkoutPlanFilterPicker(
         planItems
             .firstOrNull { it.value == selectedPlanFilter }
             ?.label
-            ?: planItems.firstOrNull()?.label
-            ?: "Workout Plan"
+            ?: "Select workout plan"
     }
 
     StandardFilterDropdown(
@@ -1072,9 +1073,13 @@ private fun WorkoutPlanFilterPicker(
         selectedText = selectedPlanLabel,
         items = planItems,
         onItemSelected = onPlanSelected,
+        selectedValue = selectedPlanFilter,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 15.dp, vertical = 8.dp),
-        isItemSelected = { it == selectedPlanFilter }
+        isItemSelected = { it == selectedPlanFilter },
+        marqueeSelectedText = false,
+        marqueeItems = false,
+        itemMaxLines = 3,
     )
 }

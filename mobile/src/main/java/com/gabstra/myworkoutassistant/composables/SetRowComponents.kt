@@ -48,7 +48,7 @@ data class SetTableHeaderUiModel(
 )
 
 private val DefaultSetTableHeader = SetTableHeaderUiModel(
-    primaryLabel = "VALUE",
+    primaryLabel = "RESULT",
     secondaryLabel = "DETAIL",
 )
 
@@ -66,11 +66,11 @@ fun inferSetTableHeader(rows: List<SetTableRowUiModel>): SetTableHeaderUiModel {
 
     return when {
         hasSecondary && !hasPrimaryOnly -> SetTableHeaderUiModel(
-            primaryLabel = "WEIGHT (KG)",
+            primaryLabel = "LOAD",
             secondaryLabel = "REPS"
         )
         !hasSecondary -> SetTableHeaderUiModel(
-            primaryLabel = "TIME (HH:MM:SS)",
+            primaryLabel = "DURATION",
             secondaryLabel = null
         )
         else -> DefaultSetTableHeader

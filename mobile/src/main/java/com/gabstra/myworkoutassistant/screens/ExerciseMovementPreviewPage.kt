@@ -139,7 +139,7 @@ fun ExerciseMovementPreviewPage(
             backgroundColor = backgroundColor,
             primaryFill = primaryFill,
             animated = true,
-            orbitView = true,
+            orbitView = false,
             loopRestartFadeMillis = MovementLoopRestartFadeMillis,
             dragRotationEnabled = true,
         )

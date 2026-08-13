@@ -45,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -365,10 +366,7 @@ fun HistoryChatScreen(
                 ),
                 title = {
                     Text(
-                        text = when (val p = prepareUi) {
-                            is HistoryChatPrepareUi.Ready -> p.title
-                            else -> "History chat"
-                        },
+                        text = "History chat",
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },
@@ -411,6 +409,14 @@ fun HistoryChatScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    Text(
+                        text = p.title,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
+                    )
                     LazyColumn(
                         modifier = Modifier
                             .weight(1f)

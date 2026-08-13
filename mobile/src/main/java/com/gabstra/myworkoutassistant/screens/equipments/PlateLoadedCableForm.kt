@@ -161,9 +161,8 @@ fun PlateLoadedCableForm(
                 expanded = expandedPlates,
                 onToggle = { expandedPlates = !expandedPlates },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add plate",
                         onClick = { showAvailablePlateDialog.value = true },
                     )
                 },

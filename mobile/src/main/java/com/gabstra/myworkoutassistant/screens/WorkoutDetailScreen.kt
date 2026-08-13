@@ -5,7 +5,7 @@ import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
-import android.os.SystemClock
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material3.BottomAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,7 +63,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -111,26 +111,35 @@ import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.FilterRange
+import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
-import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+
+private fun FilterRange.displayLabel(): String = when (this) {
+    FilterRange.LAST_WEEK -> "last week"
+    FilterRange.LAST_7_DAYS -> "the last 7 days"
+    FilterRange.LAST_30_DAYS -> "the last 30 days"
+    FilterRange.THIS_MONTH -> "this month"
+    FilterRange.LAST_3_MONTHS -> "the last 3 months"
+    FilterRange.ALL -> "the full history"
+}
 
 @Composable
 fun Menu(
@@ -139,6 +148,8 @@ fun Menu(
     deleteSelectedSessionEnabled: Boolean,
     onExportSessionAsMarkdown: () -> Unit,
     exportSessionAsMarkdownEnabled: Boolean,
+    onDeleteSelectedInterval: () -> Unit,
+    deleteSelectedIntervalEnabled: Boolean,
     onClearAllHistories: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -182,6 +193,14 @@ fun Menu(
                     expanded = false
                 },
                 enabled = exportSessionAsMarkdownEnabled
+            )
+            AppDropdownMenuItem(
+                text = { Text(text = "Delete histories in selected interval", fontWeight = FontWeight.Normal) },
+                onClick = {
+                    onDeleteSelectedInterval()
+                    expanded = false
+                },
+                enabled = deleteSelectedIntervalEnabled,
             )
             AppDropdownMenuItem(
                 text = { Text(text = "Clear all histories", fontWeight = FontWeight.Normal) },
@@ -250,29 +269,15 @@ fun WorkoutComponentRenderer(
 }
 
 private const val TAG = "WorkoutDetailScreen"
-private const val MIN_WORKOUT_RECORD_LOADING_MS = 500L
-
-/**
- * Matches [WorkoutHistoryScreen] history loading: selectable histories
- * (have sets or a workout record) for this workout across all versions.
- */
+/** Returns whether this workout has any stored session across all of its versions. */
 private suspend fun hasSelectableWorkoutHistoriesRemaining(
     workout: Workout,
     allWorkouts: List<Workout>,
     workoutHistoryDao: WorkoutHistoryDao,
-    workoutRecordDao: WorkoutRecordDao,
-    setHistoryDao: SetHistoryDao,
 ): Boolean {
-    val recordsByHistoryId = workoutRecordDao.getAll()
-        .associateBy { it.workoutHistoryId }
-    val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
-        .mapNotNull { it.workoutHistoryId }
-        .toSet()
     val workoutVersions = allWorkouts.filter { it.globalId == workout.globalId }
     val workoutHistories = workoutVersions.flatMap { workoutVersion ->
         workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
-    }.filter { history ->
-        workoutHistoryIdsWithSets.contains(history.id) || recordsByHistoryId.containsKey(history.id)
     }
     return workoutHistories.isNotEmpty()
 }
@@ -307,15 +312,14 @@ fun WorkoutDetailScreen(
     val hasWorkoutRecordFlow by workoutViewModel.hasWorkoutRecord.collectAsState()
     val workoutResumeInfoFlow by workoutViewModel.workoutResumeInfo.collectAsState()
 
-    // Stabilize hasWorkoutRecord to prevent blink - only update when check completes
-    // Use remember with workout.id as key to reset when workout changes
-    var hasWorkoutRecord by remember(workout.id) { mutableStateOf(false) }
-    var workoutResumeInfo by remember(workout.id) { mutableStateOf<WorkoutResumeInfo?>(null) }
+    val hasWorkoutRecord = hasWorkoutRecordFlow && currentSelectedWorkoutId == workout.id
+    val workoutResumeInfo = workoutResumeInfoFlow.takeIf { hasWorkoutRecord }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
     var showClearAllIncompleteSessionsDialog by remember { mutableStateOf(false) }
     var showClearAllHistoriesDialog by remember { mutableStateOf(false) }
+    var showDeleteSelectedIntervalDialog by remember { mutableStateOf(false) }
     var showDeleteSelectedSessionDialog by remember { mutableStateOf(false) }
     var showInsightsDialog by remember { mutableStateOf(false) }
     var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
@@ -334,6 +338,9 @@ fun WorkoutDetailScreen(
         mutableStateOf(initialSelectedTabIndex in 1..2)
     }
     var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
+    var selectedIntervalWorkoutHistoryIds by remember(workout.id) {
+        mutableStateOf<Set<UUID>>(emptySet())
+    }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
     val startWorkoutDirectly = {
@@ -341,7 +348,7 @@ fun WorkoutDetailScreen(
         workoutViewModel.startWorkout()
         val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
         prefs.edit { putBoolean("isWorkoutInProgress", true) }
-        appViewModel.setScreenData(ScreenData.Workout(workout.id))
+        appViewModel.updateScreenData(ScreenData.Workout(workout.id))
     }
 
     // Helper function to resume workout directly
@@ -349,27 +356,13 @@ fun WorkoutDetailScreen(
         workoutViewModel.resumeWorkoutFromRecord()
         val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
         prefs.edit { putBoolean("isWorkoutInProgress", true) }
-        appViewModel.setScreenData(ScreenData.Workout(workout.id))
+        appViewModel.updateScreenData(ScreenData.Workout(workout.id))
     }
 
     LaunchedEffect(workout.id) {
         // Only set if different to avoid unnecessary state updates and recompositions
         if (currentSelectedWorkoutId != workout.id) {
             workoutViewModel.setSelectedWorkoutId(workout.id)
-        }
-    }
-
-    // Update hasWorkoutRecord only when check completes and workout ID matches.
-    // This prevents UI from updating during the async check, eliminating stale state.
-    LaunchedEffect(
-        hasWorkoutRecordFlow,
-        isCheckingWorkoutRecord,
-        workout.id,
-        currentSelectedWorkoutId
-    ) {
-        if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id) {
-            hasWorkoutRecord = hasWorkoutRecordFlow
-            workoutResumeInfo = if (hasWorkoutRecordFlow) workoutResumeInfoFlow else null
         }
     }
 
@@ -397,29 +390,21 @@ fun WorkoutDetailScreen(
         }
     }
 
-    var workoutRecordLoadingStartedAtMs by remember(workout.id) {
-        mutableLongStateOf(SystemClock.elapsedRealtime())
-    }
-    var isWorkoutRecordUiLoading by remember(workout.id) { mutableStateOf(true) }
+    var workoutSchedules by remember(workout.id) { mutableStateOf<List<WorkoutSchedule>?>(null) }
 
-    LaunchedEffect(workout.id, currentSelectedWorkoutId, isCheckingWorkoutRecord) {
-        val isUnderlyingCheckActive = currentSelectedWorkoutId != workout.id || isCheckingWorkoutRecord
-        if (isUnderlyingCheckActive) {
-            if (!isWorkoutRecordUiLoading) {
-                workoutRecordLoadingStartedAtMs = SystemClock.elapsedRealtime()
-            }
-            isWorkoutRecordUiLoading = true
-        } else {
-            val elapsed = SystemClock.elapsedRealtime() - workoutRecordLoadingStartedAtMs
-            val remaining = MIN_WORKOUT_RECORD_LOADING_MS - elapsed
-            if (remaining > 0) {
-                delay(remaining)
-            }
-            if (currentSelectedWorkoutId == workout.id && !isCheckingWorkoutRecord) {
-                isWorkoutRecordUiLoading = false
-            }
+    LaunchedEffect(workout.id, workout.globalId) {
+        workoutSchedules = null
+        workoutSchedules = withContext(Dispatchers.IO) {
+            runCatching { workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId) }
+                .onFailure { error ->
+                    Log.e("WorkoutDetailScreen", "Unable to load workout schedules", error)
+                }
+                .getOrDefault(emptyList())
         }
     }
+
+    val isOverviewReady =
+        currentSelectedWorkoutId == workout.id && !isCheckingWorkoutRecord && workoutSchedules != null
 
 
     var selectedComponentIds by remember { mutableStateOf(setOf<UUID>()) }
@@ -435,6 +420,19 @@ fun WorkoutDetailScreen(
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     val allWorkouts by appViewModel.workoutsFlow.collectAsState()
     val allWorkoutPlans by appViewModel.workoutPlansFlow.collectAsState()
+
+    LaunchedEffect(workout.id, allWorkouts, historyFilterRange, selectedTopTab) {
+        if (selectedTopTab !in 1..2) return@LaunchedEffect
+        selectedIntervalWorkoutHistoryIds = withContext(Dispatchers.IO) {
+            allWorkouts
+                .filter { candidate -> candidate.globalId == workout.globalId }
+                .flatMap { workoutVersion ->
+                    workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+                }
+                .filterBy(historyFilterRange)
+                .mapTo(linkedSetOf()) { history -> history.id }
+        }
+    }
 
 
     val scope = rememberCoroutineScope()
@@ -1150,12 +1148,11 @@ fun WorkoutDetailScreen(
                     ),
                     title = {
                         Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(),
+                            modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
                             text = workout.name,
                             maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -1208,7 +1205,8 @@ fun WorkoutDetailScreen(
                             onDeleteSelectedSession = {
                                 showDeleteSelectedSessionDialog = true
                             },
-                            deleteSelectedSessionEnabled = displayedWorkoutHistoryId != null &&
+                            deleteSelectedSessionEnabled = !historyActionsLoading &&
+                                displayedWorkoutHistoryId != null &&
                                 selectedTopTab in 1..2,
                             onExportSessionAsMarkdown = {
                                 displayedWorkoutHistoryId?.let { historyId ->
@@ -1227,7 +1225,13 @@ fun WorkoutDetailScreen(
                                     }
                                 }
                             },
-                            exportSessionAsMarkdownEnabled = displayedWorkoutHistoryId != null &&
+                            exportSessionAsMarkdownEnabled = !historyActionsLoading &&
+                                displayedWorkoutHistoryId != null &&
+                                selectedTopTab in 1..2,
+                            onDeleteSelectedInterval = {
+                                showDeleteSelectedIntervalDialog = true
+                            },
+                            deleteSelectedIntervalEnabled = selectedIntervalWorkoutHistoryIds.isNotEmpty() &&
                                 selectedTopTab in 1..2,
                             onClearAllHistories = {
                                 showClearAllHistoriesDialog = true
@@ -1253,7 +1257,7 @@ fun WorkoutDetailScreen(
                 verticalArrangement = Arrangement.Top,
             ) {
                 SwipeableTabs(
-                    tabTitles = listOf("Overview", "Charts", "Set history"),
+                    tabTitles = listOf("Overview", "Charts", "Histories"),
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
@@ -1273,11 +1277,11 @@ fun WorkoutDetailScreen(
                     compactNavigation = true,
                 ) { pageIndex ->
                     when (pageIndex) {
-                        0 -> WorkoutOverviewTab(
+                        0 -> if (isOverviewReady) WorkoutOverviewTab(
                             appViewModel = appViewModel,
                             workout = workout,
                             hasWorkoutRecord = hasWorkoutRecord,
-                            isCheckingWorkoutRecord = isWorkoutRecordUiLoading,
+                            isCheckingWorkoutRecord = false,
                             workoutResumeInfo = workoutResumeInfo,
                             currentSelectedWorkoutId = currentSelectedWorkoutId,
                             showRest = showRest,
@@ -1311,9 +1315,14 @@ fun WorkoutDetailScreen(
                                 val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
-                            workoutScheduleDao = workoutScheduleDao,
+                            workoutSchedules = workoutSchedules.orEmpty(),
                             workoutHistoryIdForExerciseNavigation = displayedWorkoutHistoryId,
-                        )
+                        ) else Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
                         1, 2 -> WorkoutHistoryScreen(
                             appViewModel = appViewModel,
                             healthConnectClient = healthConnectClient,
@@ -1327,10 +1336,13 @@ fun WorkoutDetailScreen(
                             historyFilterRange = historyFilterRange,
                             onHistoryFilterRangeChange = { historyFilterRange = it },
                             onGoBack = onGoBack,
+                            isActive = pageIndex == selectedTopTab,
                             onSelectedWorkoutHistoryIdChanged = { id ->
-                                if (pageIndex == selectedTopTab) {
+                                if (id != null) {
                                     displayedWorkoutHistoryId = id
                                     historyActionsLoading = false
+                                } else {
+                                    historyActionsLoading = true
                                 }
                             },
                         )
@@ -1437,6 +1449,88 @@ fun WorkoutDetailScreen(
                 }
             )
             ConfirmationDialog(
+                show = showDeleteSelectedIntervalDialog,
+                title = "Delete selected interval",
+                message = "Delete all saved sessions in ${historyFilterRange.displayLabel()}? This can't be undone.",
+                confirmText = "Delete",
+                isDestructive = true,
+                onConfirm = {
+                    scope.launch {
+                        try {
+                            val (deletedCount, hasRemaining) = withContext(Dispatchers.IO) {
+                                val histories = allWorkouts
+                                    .filter { candidate -> candidate.globalId == workout.globalId }
+                                    .flatMap { workoutVersion ->
+                                        workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+                                    }
+                                    .filterBy(historyFilterRange)
+
+                                try {
+                                    deleteWorkoutHistoriesFromHealthConnect(histories, healthConnectClient)
+                                } catch (_: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(
+                                            context,
+                                            "Couldn't remove some sessions from Health Connect.",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+
+                                histories.forEach { history ->
+                                    setHistoryDao.deleteByWorkoutHistoryId(history.id)
+                                    restHistoryDao.deleteByWorkoutHistoryId(history.id)
+                                    exerciseSessionProgressionDao.deleteByWorkoutHistoryId(history.id)
+                                    workoutRecordDao.deleteByWorkoutHistoryId(history.id)
+                                    workoutHistoryDao.deleteById(history.id)
+                                }
+
+                                histories.size to hasSelectableWorkoutHistoriesRemaining(
+                                    workout = workout,
+                                    allWorkouts = allWorkouts,
+                                    workoutHistoryDao = workoutHistoryDao,
+                                )
+                            }
+
+                            withContext(Dispatchers.Main) {
+                                if (!hasRemaining) selectedTopTab = 0
+                                appViewModel.updateScreenData(
+                                    ScreenData.WorkoutDetail(
+                                        workoutId = workout.id,
+                                        selectedTabIndex = selectedTopTab,
+                                        workoutHistoryId = null,
+                                    )
+                                )
+                                appViewModel.triggerUpdate()
+                                workoutViewModel.setSelectedWorkoutId(workout.id)
+                                displayedWorkoutHistoryId = null
+                                selectedIntervalWorkoutHistoryIds = emptySet()
+                                Toast.makeText(
+                                    context,
+                                    if (deletedCount == 0) {
+                                        "No histories found in the selected interval."
+                                    } else {
+                                        "$deletedCount ${if (deletedCount == 1) "history" else "histories"} deleted."
+                                    },
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                showDeleteSelectedIntervalDialog = false
+                            }
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Couldn't delete histories in the selected interval.",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                showDeleteSelectedIntervalDialog = false
+                            }
+                        }
+                    }
+                },
+                onDismiss = { showDeleteSelectedIntervalDialog = false },
+            )
+            ConfirmationDialog(
                 show = showClearAllHistoriesDialog,
                 title = "Clear all histories",
                 message = "Delete all saved sessions for this workout? This can't be undone.",
@@ -1446,8 +1540,12 @@ fun WorkoutDetailScreen(
                     scope.launch {
                         try {
                             val hasRemaining = withContext(Dispatchers.IO) {
-                                val histories =
-                                    workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                val workoutVersions = allWorkouts.filter { candidate ->
+                                    candidate.globalId == workout.globalId
+                                }
+                                val histories = workoutVersions.flatMap { workoutVersion ->
+                                    workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
+                                }
                                 try {
                                     deleteWorkoutHistoriesFromHealthConnect(
                                         histories,
@@ -1468,14 +1566,14 @@ fun WorkoutDetailScreen(
                                     exerciseSessionProgressionDao.deleteByWorkoutHistoryId(h.id)
                                     workoutRecordDao.deleteByWorkoutHistoryId(h.id)
                                 }
-                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                workoutRecordDao.deleteByWorkoutId(workout.id)
+                                workoutVersions.forEach { workoutVersion ->
+                                    workoutHistoryDao.deleteAllByWorkoutId(workoutVersion.id)
+                                    workoutRecordDao.deleteByWorkoutId(workoutVersion.id)
+                                }
                                 hasSelectableWorkoutHistoriesRemaining(
                                     workout = workout,
                                     allWorkouts = allWorkouts,
                                     workoutHistoryDao = workoutHistoryDao,
-                                    workoutRecordDao = workoutRecordDao,
-                                    setHistoryDao = setHistoryDao,
                                 )
                             }
                             withContext(Dispatchers.Main) {
@@ -1556,8 +1654,6 @@ fun WorkoutDetailScreen(
                                     workout = workout,
                                     allWorkouts = allWorkouts,
                                     workoutHistoryDao = workoutHistoryDao,
-                                    workoutRecordDao = workoutRecordDao,
-                                    setHistoryDao = setHistoryDao,
                                 )
                             }
                             withContext(Dispatchers.Main) {

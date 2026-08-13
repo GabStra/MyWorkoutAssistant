@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,6 +47,7 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
@@ -63,6 +65,7 @@ import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.buildSupersetDisplayTitle
 import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -471,6 +474,10 @@ fun ExerciseHistoryScreen(
                     selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
                 }
             },
+            contentPadding = PaddingValues(
+                horizontal = Spacing.xs,
+                vertical = Spacing.sm,
+            ),
         ) {
             Text(
                 text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
@@ -498,23 +505,25 @@ fun ExerciseHistoryScreen(
             minVisibleMs = 300L,
         )
 
-        Column(
-            modifier = Modifier
-                .zIndex(1f)
-                .fillMaxWidth(),
-        ) {
-            Spacer(modifier = Modifier.height(Spacing.md))
-            RangeDropdown(selectedRange, onHistoryRangeSelected)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (hasLoadedWorkoutHistories &&
-                selectedWorkoutHistory != null &&
-                setHistoriesByWorkoutHistoryId.isNotEmpty()
+        if (!showHistoryLoading) {
+            Column(
+                modifier = Modifier
+                    .zIndex(1f)
+                    .fillMaxWidth(),
             ) {
-                Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                    workoutSelector()
-                }
+                Spacer(modifier = Modifier.height(Spacing.md))
+                RangeDropdown(selectedRange, onHistoryRangeSelected)
                 Spacer(modifier = Modifier.height(12.dp))
+
+                if (hasLoadedWorkoutHistories &&
+                    selectedWorkoutHistory != null &&
+                    setHistoriesByWorkoutHistoryId.isNotEmpty()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
+                        workoutSelector()
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
         }
 
@@ -673,36 +682,79 @@ fun ExerciseHistoryScreen(
                         HistorySetsTabColumn(
                             state = lazyListState,
                         ) {
-                            if (hasTarget) {
-                                item {
-                                    PrimarySurface {
-                                        val lowHr = getHeartRateFromPercentage(
-                                            exercise.lowerBoundMaxHRPercent!!,
-                                            userAge,
-                                            measuredMaxHeartRate,
-                                            restingHeartRate
-                                        )
-                                        val highHr = getHeartRateFromPercentage(
-                                            exercise.upperBoundMaxHRPercent!!,
-                                            userAge,
-                                            measuredMaxHeartRate,
-                                            restingHeartRate
-                                        )
-                                        TargetHrProgressSection(
-                                            targetCounter = targetCounter,
-                                            targetTotal = targetTotal,
-                                            lowHrBpm = lowHr,
-                                            highHrBpm = highHr,
-                                        )
-                                    }
-                                }
-                            }
                             item {
+                                val repRange = if (
+                                    exercise.minReps > 0 &&
+                                    exercise.maxReps >= exercise.minReps
+                                ) {
+                                    "${exercise.minReps}-${exercise.maxReps}"
+                                } else {
+                                    null
+                                }
                                 PrimarySurface {
                                     Column(
-                                        modifier = Modifier.padding(vertical = Spacing.md),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.md),
                                     ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = if (setHistories.isSupersetSession) {
+                                                    val superset = workout.workoutComponents
+                                                        .filterIsInstance<Superset>()
+                                                        .firstOrNull { candidate ->
+                                                            candidate.exercises.any { it.id == exercise.id }
+                                                        }
+                                                    superset?.let { buildSupersetDisplayTitle(it.exercises) }
+                                                        ?: exercise.name
+                                                } else {
+                                                    "Session performance"
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 2,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
+
+                                        if (hasTarget || repRange != null) {
+                                            ExerciseHistorySection(title = "Targets") {
+                                                repRange?.let { range ->
+                                                    Text(
+                                                        text = "Target reps: $range",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                    )
+                                                }
+                                                if (hasTarget) {
+                                            val lowHr = getHeartRateFromPercentage(
+                                                exercise.lowerBoundMaxHRPercent!!,
+                                                userAge,
+                                                measuredMaxHeartRate,
+                                                restingHeartRate,
+                                            )
+                                            val highHr = getHeartRateFromPercentage(
+                                                exercise.upperBoundMaxHRPercent!!,
+                                                userAge,
+                                                measuredMaxHeartRate,
+                                                restingHeartRate,
+                                            )
+                                            TargetHrProgressSection(
+                                                targetCounter = targetCounter,
+                                                targetTotal = targetTotal,
+                                                lowHrBpm = lowHr,
+                                                highHrBpm = highHr,
+                                                contentPadding = PaddingValues(0.dp),
+                                            )
+                                                }
+                                            }
+                                        }
                                         val historicalEquipmentName = setHistories.selectedExerciseSetHistories
                                             .firstOrNull()
                                             ?.equipmentNameSnapshot
@@ -716,25 +768,43 @@ fun ExerciseHistoryScreen(
                                         }
                                         val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
                                             .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
-                                        EquipmentAccessoryMetadata(
-                                            equipmentName = equipmentName,
-                                            accessoryNames = accessoryNames,
-                                        )
-                                        if (setHistories.isSupersetSession) {
-                                            SupersetSetHistoriesRenderer(
-                                                setHistories = setHistories.renderSetHistories,
-                                                restHistories = setHistories.renderRestHistories,
-                                                workout = workout,
-                                                getEquipmentById = { appViewModel.getEquipmentById(it) }
-                                            )
-                                        } else {
-                                            SetHistoriesRenderer(
-                                                setHistories = setHistories.renderSetHistories,
-                                                restHistories = setHistories.renderRestHistories,
-                                                appViewModel = appViewModel,
-                                                workout = workout,
-                                                showMetadata = false,
-                                            )
+                                        if (equipmentName != null || accessoryNames.isNotEmpty()) {
+                                            ExerciseHistorySection(title = "Setup used") {
+                                                EquipmentAccessoryMetadata(
+                                                    equipmentName = equipmentName,
+                                                    accessoryNames = accessoryNames,
+                                                    horizontalAlignment = Alignment.Start,
+                                                    textAlign = TextAlign.Start,
+                                                )
+                                            }
+                                        }
+
+                                        ExerciseHistorySection(
+                                            title = if (setHistories.isSupersetSession) {
+                                                "Completed superset"
+                                            } else {
+                                                "Completed sets"
+                                            },
+                                        ) {
+                                            if (setHistories.isSupersetSession) {
+                                                SupersetSetHistoriesRenderer(
+                                                    setHistories = setHistories.renderSetHistories,
+                                                    restHistories = setHistories.renderRestHistories,
+                                                    workout = workout,
+                                                    getEquipmentById = { appViewModel.getEquipmentById(it) },
+                                                    contentPadding = PaddingValues(0.dp),
+                                                    focusedExerciseId = exercise.id,
+                                                )
+                                            } else {
+                                                SetHistoriesRenderer(
+                                                    setHistories = setHistories.renderSetHistories,
+                                                    restHistories = setHistories.renderRestHistories,
+                                                    appViewModel = appViewModel,
+                                                    workout = workout,
+                                                    showMetadata = false,
+                                                    contentPadding = PaddingValues(0.dp),
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -744,5 +814,24 @@ fun ExerciseHistoryScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ExerciseHistorySection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+    ) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
     }
 }

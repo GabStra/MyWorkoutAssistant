@@ -33,6 +33,7 @@ fun RangeDropdown(
         selectedText = selectedLabel,
         items = items,
         onItemSelected = onSelectedRangeChange,
+        selectedValue = selectedRange,
         modifier = Modifier
             .fillMaxWidth().padding(horizontal = Spacing.md),
         isItemSelected = { it == selectedRange }

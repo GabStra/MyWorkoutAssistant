@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,6 +58,7 @@ import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ContentTitle
+import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseHistoryRenderer
 import com.gabstra.myworkoutassistant.composables.HeartRateSessionCard
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
@@ -69,6 +71,7 @@ import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.buildSupersetDisplayTitle
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.composables.historyExerciseNameTextStyle
@@ -207,7 +210,9 @@ fun WorkoutHistoryScreen(
     historyFilterRange: FilterRange? = null,
     onHistoryFilterRangeChange: ((FilterRange) -> Unit)? = null,
     onGoBack: () -> Unit,
+    isActive: Boolean = true,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
+    onVisibleWorkoutHistoryIdsChanged: (Set<UUID>) -> Unit = {},
 ) {
 
     val context = LocalContext.current
@@ -239,6 +244,12 @@ fun WorkoutHistoryScreen(
 
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
+    }
+
+    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories, isActive) {
+        if (hasLoadedWorkoutHistories && isActive) {
+            onVisibleWorkoutHistoryIdsChanged(historiesToShow.mapTo(linkedSetOf()) { it.id })
+        }
     }
 
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
@@ -381,15 +392,9 @@ fun WorkoutHistoryScreen(
         withContext(Dispatchers.IO) {
             val recordsByHistoryId = workoutRecordDao.getAll()
                 .associateBy { workoutRecord -> workoutRecord.workoutHistoryId }
-            val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
-                .mapNotNull { it.workoutHistoryId }
-                .toSet()
-
             workoutRecordsByHistoryId = recordsByHistoryId
             workoutHistories = workoutVersions.flatMap { workoutVersion ->
                 workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
-            }.filter { history ->
-                workoutHistoryIdsWithSets.contains(history.id) || recordsByHistoryId.containsKey(history.id)
             }
                 .sortedWith(
                     compareBy<WorkoutHistory>(
@@ -449,7 +454,8 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    LaunchedEffect(selectedWorkoutHistory) {
+    LaunchedEffect(selectedWorkoutHistory, isActive) {
+        if (!isActive) return@LaunchedEffect
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
         val workoutHistory = selectedWorkoutHistory ?: run {
             loadedSelectedWorkoutHistoryId = null
@@ -643,6 +649,10 @@ fun WorkoutHistoryScreen(
                     selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
                 }
             },
+            contentPadding = PaddingValues(
+                horizontal = Spacing.xs,
+                vertical = Spacing.sm,
+            ),
         ) {
                     Text(
                         text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
@@ -887,24 +897,58 @@ fun WorkoutHistoryScreen(
                             )
                         } else {
                             PrimarySurface {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = "Superset: ${superset.exercises.joinToString(" ↔ ") { it.name }}",
-                                        style = historyExerciseNameTextStyle(),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    SupersetSetHistoriesRenderer(
-                                        setHistories = setHistories,
-                                        restHistories = restsForSuperset,
-                                        workout = selectedWorkout,
-                                        getEquipmentById = { appViewModel.getEquipmentById(it) }
-                                    )
-                                }
+                                val completedSetCount = setHistories.count { it.setData !is RestSetData }
+                                ExpandableContainer(
+                                    isOpen = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    title = { modifier ->
+                                        Row(
+                                            modifier = modifier.padding(start = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = buildSupersetDisplayTitle(superset.exercises),
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 2,
+                                                style = historyExerciseNameTextStyle(),
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
+                                    },
+                                    collapsedContent = {
+                                        Text(
+                                            text = "${superset.exercises.size} exercises · $completedSetCount completed sets",
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 10.dp, end = 48.dp, bottom = 10.dp),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    },
+                                    content = {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                                        ) {
+                                            Text(
+                                                text = "COMPLETED SUPERSET",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            SupersetSetHistoriesRenderer(
+                                                setHistories = setHistories,
+                                                restHistories = restsForSuperset,
+                                                workout = selectedWorkout,
+                                                getEquipmentById = { appViewModel.getEquipmentById(it) },
+                                                contentPadding = PaddingValues(0.dp),
+                                            )
+                                        }
+                                    },
+                                )
                             }
                         }
                     }
@@ -929,8 +973,31 @@ fun WorkoutHistoryScreen(
                         )
 
                         PrimarySurface {
-                            if (hasTarget) {
-                                Column {
+                            val completedSetCount = setHistoriesForRenderer.count {
+                                it.setData !is RestSetData
+                            }
+                            val historicalEquipmentName = setHistoriesForRenderer.firstOrNull()
+                                ?.equipmentNameSnapshot
+                                ?.takeIf { it.isNotBlank() }
+                                ?: setHistoriesForRenderer.firstOrNull()
+                                    ?.equipmentIdSnapshot
+                                    ?.let { appViewModel.getEquipmentById(it)?.name }
+                                ?: exercise.equipmentId?.let { appViewModel.getEquipmentById(it)?.name }
+                            val collapsedSummary = buildList {
+                                add("$completedSetCount completed sets")
+                                if (exercise.minReps > 0 && exercise.maxReps >= exercise.minReps) {
+                                    add("Target ${exercise.minReps}-${exercise.maxReps} reps")
+                                }
+                                historicalEquipmentName?.let { add(it) }
+                            }.joinToString(" · ")
+                            ExerciseHistoryRenderer(
+                                exercise = exerciseWithHistorySets,
+                                showRest = true,
+                                appViewModel = appViewModel,
+                                setHistories = setHistoriesForRenderer,
+                                intraExerciseRestHistories = restsForExercise,
+                                contentBeforeMetadata = if (hasTarget) {
+                                    {
                                     val lowHr = getHeartRateFromPercentage(
                                         exercise.lowerBoundMaxHRPercent!!,
                                         userAge,
@@ -948,58 +1015,15 @@ fun WorkoutHistoryScreen(
                                         targetTotal = targetProgress.total,
                                         lowHrBpm = lowHr,
                                         highHrBpm = highHr,
+                                        contentPadding = PaddingValues(0.dp),
                                     )
-                                    ExerciseHistoryRenderer(
-                                        exercise = exerciseWithHistorySets,
-                                        showRest = true,
-                                        appViewModel = appViewModel,
-                                        setHistories = setHistoriesForRenderer,
-                                        intraExerciseRestHistories = restsForExercise,
-                                        customTitle = { m ->
-                                            Row(
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                modifier = m,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                if (exerciseById.containsKey(key)) {
-                                                    IconButton(
-                                                        onClick = {
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.ExerciseHistory(
-                                                                    selectedWorkoutHistory?.workoutId
-                                                                        ?: workout.id,
-                                                                    exercise.id,
-                                                                    1,
-                                                                    workoutHistoryId = selectedWorkoutHistory?.id,
-                                                                )
-                                                            )
-                                                        }) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Info,
-                                                            contentDescription = "View details",
-                                                            tint = MaterialTheme.colorScheme.onBackground
-                                                        )
-                                                    }
-                                                }
-                                                ScrollableTextColumn(
-                                                    text = exercise.name,
-                                                    modifier = Modifier.weight(1f),
-                                                    maxLines = 2,
-                                                    style = historyExerciseNameTextStyle(),
-                                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                                                )
-                                            }
-                                        }
-                                    )
-                                }
-                            } else {
-                                ExerciseHistoryRenderer(
-                                    exercise = exerciseWithHistorySets,
-                                    showRest = true,
-                                    appViewModel = appViewModel,
-                                    setHistories = setHistoriesForRenderer,
-                                    intraExerciseRestHistories = restsForExercise,
-                                    customTitle = { m ->
+                                    }
+                                } else {
+                                    null
+                                },
+                                showHistorySections = true,
+                                collapsedSummary = collapsedSummary,
+                                customTitle = { m ->
                                         Row(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             modifier = m,
@@ -1033,9 +1057,8 @@ fun WorkoutHistoryScreen(
                                                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                             )
                                         }
-                                    }
-                                )
-                            }
+                                    },
+                            )
                         }
                     }
                     is WorkoutHistoryLayoutItem.RestSection -> {
@@ -1057,30 +1080,35 @@ fun WorkoutHistoryScreen(
         showDelayMs = 150L,
         minVisibleMs = 300L,
     )
+    val isInitialHistorySelectionPending =
+        hasLoadedWorkoutHistories && historiesToShow.isNotEmpty() && selectedWorkoutHistory == null
+    val isHistoryHeaderReady = hasLoadedWorkoutHistories && !isInitialHistorySelectionPending
 
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Top,
     ) {
-        Column(
-            modifier = Modifier
-                .zIndex(1f)
-                .fillMaxWidth(),
-        ) {
-            Spacer(modifier = Modifier.height(Spacing.md))
-            RangeDropdown(selectedRange, onHistoryRangeSelected)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (hasLoadedWorkoutHistories && selectedWorkoutHistory != null) {
-                Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                    workoutSelector()
-                }
+        if (isHistoryHeaderReady) {
+            Column(
+                modifier = Modifier
+                    .zIndex(1f)
+                    .fillMaxWidth(),
+            ) {
+                Spacer(modifier = Modifier.height(Spacing.md))
+                RangeDropdown(selectedRange, onHistoryRangeSelected)
                 Spacer(modifier = Modifier.height(12.dp))
+
+                if (selectedWorkoutHistory != null) {
+                    Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
+                        workoutSelector()
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
         }
 
         when {
-            !hasLoadedWorkoutHistories -> {
+            !isHistoryHeaderReady -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

@@ -452,9 +452,10 @@ class AppViewModel(
     fun navigationStack(): List<ScreenData> = screenDataStack.toList()
 
     fun popToScreen(screen: ScreenData) {
-        val targetIndex = screenDataStack.indexOfLast {
-            it.screenIdentityKey() == screen.screenIdentityKey()
-        }
+        // Breadcrumb items retain the exact ScreenData instance from the navigation stack.
+        // Rendering identities are intentionally shared by related pages (for example,
+        // workout detail and workout history), so they cannot identify a breadcrumb target.
+        val targetIndex = screenDataStack.indexOfLast { it === screen }
         if (targetIndex < 0) return
         while (screenDataStack.lastIndex > targetIndex) {
             screenDataStack.removeAt(screenDataStack.lastIndex)

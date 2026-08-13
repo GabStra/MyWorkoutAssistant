@@ -9,7 +9,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -358,12 +357,11 @@ fun ExerciseDetailScreen(
                     ),
                     title = {
                         Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(),
+                            modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
                             text = exercise.name,
                             maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground
                         )

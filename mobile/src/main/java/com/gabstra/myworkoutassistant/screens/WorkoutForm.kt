@@ -220,6 +220,7 @@ fun WorkoutForm(
                             selectedText = typeLabel,
                             items = workoutTypeItems,
                             onItemSelected = { selectedWorkoutType.intValue = it },
+                            selectedValue = selectedWorkoutType.intValue,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedWorkoutType.intValue }
                         )
@@ -245,6 +246,7 @@ fun WorkoutForm(
                             selectedText = heartRateSourceLabel,
                             items = heartRateSourceItems,
                             onItemSelected = { heartRateSourceState.value = it },
+                            selectedValue = heartRateSourceState.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == heartRateSourceState.value }
                         )

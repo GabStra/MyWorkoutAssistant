@@ -163,9 +163,8 @@ fun DumbbellForm(
                 expanded = expandedDumbbells,
                 onToggle = { expandedDumbbells = !expandedDumbbells },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add dumbbell",
                         onClick = { showDumbbellDialog.value = true },
                     )
                 },
@@ -198,9 +197,8 @@ fun DumbbellForm(
                 expanded = expandedExtraWeights,
                 onToggle = { expandedExtraWeights = !expandedExtraWeights },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add extra weight",
                         onClick = { showExtraWeightDialog.value = true },
                     )
                 },

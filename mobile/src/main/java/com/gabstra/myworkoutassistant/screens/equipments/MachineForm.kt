@@ -168,9 +168,8 @@ fun MachineForm(
                 expanded = expandedAvailableWeights,
                 onToggle = { expandedAvailableWeights = !expandedAvailableWeights },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add weight",
                         onClick = { showAvailableWeightsDialog.value = true },
                     )
                 },
@@ -202,9 +201,8 @@ fun MachineForm(
                 expanded = expandedExtraWeights,
                 onToggle = { expandedExtraWeights = !expandedExtraWeights },
                 expandedContentSpacing = Spacing.sm,
-                action = {
+                footerAction = {
                     EquipmentAddButton(
-                        contentDescription = "Add extra weight",
                         onClick = { showExtraWeightDialog.value = true },
                     )
                 },

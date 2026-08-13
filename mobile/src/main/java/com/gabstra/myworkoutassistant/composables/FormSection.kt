@@ -101,7 +101,7 @@ fun CollapsibleSection(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     expandedContentSpacing: Dp = Spacing.md,
-    action: (@Composable () -> Unit)? = null,
+    footerAction: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -135,19 +135,24 @@ fun CollapsibleSection(
                         )
                     }
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    action?.invoke()
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (expanded) "Collapse" else "Expand"
-                    )
-                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
             }
             if (expanded) {
                 Spacer(Modifier.height(expandedContentSpacing))
                 content()
+                footerAction?.let { action ->
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        action()
+                    }
+                }
             }
         }
     }

@@ -32,7 +32,7 @@ fun BreadcrumbTrail(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         items.forEachIndexed { index, item ->
-            val isCurrent = index == items.lastIndex
+            val isCurrent = item.onClick == null
             Text(
                 text = item.label,
                 style = MaterialTheme.typography.labelLarge,

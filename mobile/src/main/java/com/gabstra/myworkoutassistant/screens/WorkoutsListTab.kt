@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -56,7 +57,7 @@ fun WorkoutsListTab(
     emptyMessage: String,
     onHideDisabledWorkoutsChange: (Boolean) -> Unit
 ) {
-    val scrollState = rememberScrollState()
+    val scrollState = key(selectedPlanId) { rememberScrollState() }
 
     Column(
         modifier = Modifier
