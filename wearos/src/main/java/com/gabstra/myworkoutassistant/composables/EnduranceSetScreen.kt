@@ -73,6 +73,7 @@ fun EnduranceSetScreen (
 ) {
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
+    val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
     val topOverlayController = LocalTopOverlayController.current
 
@@ -132,6 +133,21 @@ fun EnduranceSetScreen (
     var currentSet by remember(set.id) {
         val setData = state.currentSetData as? EnduranceSetData
         mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
+    }
+    val initialActualWeight = remember(set.id) { currentSet.actualWeight }
+    val availableWeights = remember(equipment) { viewModel.getWeightByEquipment(equipment).sorted() }
+    var isWeightInEditMode by remember(set.id) { mutableStateOf(false) }
+
+    fun changeWeight(offset: Int) {
+        val currentWeight = currentSet.actualWeight ?: return
+        if (availableWeights.isEmpty()) return
+        val currentIndex = availableWeights.indices.minByOrNull {
+            kotlin.math.abs(availableWeights[it] - currentWeight)
+        } ?: return
+        val nextIndex = (currentIndex + offset).coerceIn(availableWeights.indices)
+        currentSet = currentSet.copy(actualWeight = availableWeights[nextIndex])
+        state.currentSetData = currentSet
+        hapticsViewModel.doGentleVibration()
     }
     val initialStartTimer = (state.previousSetData as? EnduranceSetData)?.startTimer
         ?: currentSet.startTimer
@@ -578,7 +594,35 @@ fun EnduranceSetScreen (
                 contentDescription = SetValueSemantics.EnduranceSetTypeDescription
             }
         ) {
-            if (isTimerInEditMode) {
+            if (isWeightInEditMode) {
+                val currentWeight = currentSet.actualWeight
+                val currentIndex = currentWeight?.let { weight ->
+                    availableWeights.indices.minByOrNull { kotlin.math.abs(availableWeights[it] - weight) }
+                }
+                ControlButtonsVertical(
+                    modifier = Modifier.fillMaxSize(),
+                    onMinusTap = { changeWeight(-1) },
+                    onMinusLongPress = { changeWeight(-1) },
+                    onPlusTap = { changeWeight(1) },
+                    onPlusLongPress = { changeWeight(1) },
+                    isMinusEnabled = currentIndex?.let { it > 0 } == true,
+                    isPlusEnabled = currentIndex?.let { it < availableWeights.lastIndex } == true,
+                    isResetEnabled = currentSet.actualWeight != initialActualWeight,
+                    onCloseClick = { isWeightInEditMode = false },
+                    onResetClick = {
+                        currentSet = currentSet.copy(actualWeight = initialActualWeight)
+                        state.currentSetData = currentSet
+                    },
+                    content = {
+                        SetValueSection(label = "LOAD", headerStyle = headerStyle) {
+                            Text(
+                                text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
+                                style = itemStyle,
+                            )
+                        }
+                    },
+                )
+            } else if (isTimerInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
                         .fillMaxSize()
@@ -618,6 +662,21 @@ fun EnduranceSetScreen (
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         exerciseTitleComposable()
+                        currentSet.actualWeight?.let { weight ->
+                            Text(
+                                text = "Load ${equipment?.formatWeight(weight) ?: "$weight kg"}",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        if (!set.autoStart && state.startTime == null && !state.hasBeenExecuted && availableWeights.isNotEmpty()) {
+                                            isWeightInEditMode = true
+                                            hapticsViewModel.doGentleVibration()
+                                        }
+                                    },
+                                ),
+                            )
+                        }
                         if (extraInfo != null) {
                             //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)

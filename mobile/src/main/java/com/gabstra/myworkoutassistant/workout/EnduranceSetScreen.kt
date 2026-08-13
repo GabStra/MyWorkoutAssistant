@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.TimedSetExecutionLoadLabel
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -76,6 +77,7 @@ fun EnduranceSetScreen (
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
+    val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
@@ -413,6 +415,15 @@ fun EnduranceSetScreen (
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     exerciseTitleComposable()
+                    TimedSetExecutionLoadLabel(
+                        equipment = equipment,
+                        selectedWeight = currentSet.actualWeight,
+                        editable = !set.autoStart && state.startTime == null && !state.hasBeenExecuted,
+                        onWeightSelected = { selectedWeight ->
+                            currentSet = currentSet.copy(actualWeight = selectedWeight)
+                            state.currentSetData = currentSet
+                        },
+                    )
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)

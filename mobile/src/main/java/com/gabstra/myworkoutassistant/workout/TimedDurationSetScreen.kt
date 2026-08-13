@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.TimedSetExecutionLoadLabel
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -72,6 +73,7 @@ fun TimedDurationSetScreen(
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
+    val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
 
     var showStartButton by remember(set.id) {
         mutableStateOf(!set.autoStart && state.startTime == null && !state.hasBeenExecuted)
@@ -427,6 +429,15 @@ fun TimedDurationSetScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     exerciseTitleComposable()
+                    TimedSetExecutionLoadLabel(
+                        equipment = equipment,
+                        selectedWeight = currentSet.actualWeight,
+                        editable = !set.autoStart && state.startTime == null && !state.hasBeenExecuted,
+                        onWeightSelected = { selectedWeight ->
+                            currentSet = currentSet.copy(actualWeight = selectedWeight)
+                            state.currentSetData = currentSet
+                        },
+                    )
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)

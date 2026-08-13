@@ -187,6 +187,7 @@ fun SetForm(
                             onSetUpsert = onSetUpsert,
                             onCancel = onCancel,
                             enduranceSet = set as EnduranceSet?,
+                            equipment = equipment,
                         )
                     }
 
@@ -195,6 +196,7 @@ fun SetForm(
                             onSetUpsert = onSetUpsert,
                             onCancel = onCancel,
                             timedDurationSet = set as TimedDurationSet?,
+                            equipment = equipment,
                         )
                     }
                 }
