@@ -1,23 +1,31 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.workout.ScalableText
 import java.util.UUID
 
 sealed interface SetTableRowUiModel {
@@ -25,6 +33,8 @@ sealed interface SetTableRowUiModel {
         val identifier: String,
         val primaryValue: String,
         val secondaryValue: String? = null,
+        val primaryLabel: String? = null,
+        val secondaryLabel: String? = null,
         val monospacePrimary: Boolean = false,
         val onClick: (() -> Unit)? = null,
     ) : SetTableRowUiModel
@@ -47,6 +57,12 @@ data class SetTableHeaderUiModel(
     val secondaryLabel: String? = null,
 )
 
+enum class SetTablePresentation {
+    COMPACT,
+    REVIEW,
+    WORKOUT,
+}
+
 private val DefaultSetTableHeader = SetTableHeaderUiModel(
     primaryLabel = "RESULT",
     secondaryLabel = "DETAIL",
@@ -63,6 +79,15 @@ fun inferSetTableHeader(rows: List<SetTableRowUiModel>): SetTableHeaderUiModel {
 
     val hasSecondary = dataRows.any { !it.secondaryValue.isNullOrBlank() }
     val hasPrimaryOnly = dataRows.any { it.secondaryValue.isNullOrBlank() }
+    val explicitPrimaryLabel = dataRows.mapNotNull { it.primaryLabel }.distinct().singleOrNull()
+    val explicitSecondaryLabel = dataRows.mapNotNull { it.secondaryLabel }.distinct().singleOrNull()
+
+    if (explicitPrimaryLabel != null) {
+        return SetTableHeaderUiModel(
+            primaryLabel = explicitPrimaryLabel,
+            secondaryLabel = explicitSecondaryLabel,
+        )
+    }
 
     return when {
         hasSecondary && !hasPrimaryOnly -> SetTableHeaderUiModel(
@@ -83,6 +108,7 @@ fun SetTable(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     header: SetTableHeaderUiModel = inferSetTableHeader(rows),
+    presentation: SetTablePresentation = SetTablePresentation.COMPACT,
 ) {
     if (rows.isEmpty()) return
 
@@ -96,18 +122,23 @@ fun SetTable(
     } else {
         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     }
-    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
+    val tableShape = RoundedCornerShape(14.dp)
 
     @Composable
-    fun TableContent() {
-        Column(modifier = Modifier.fillMaxWidth()) {
+    fun CompactTableContent() {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(tableShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f))
+                .padding(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             SetTableHeaderRow(
                 header = header,
                 headerColor = headerColor,
             )
-            HorizontalDivider(color = dividerColor)
-
-            rows.forEachIndexed { index, row ->
+            rows.forEach { row ->
                 when (row) {
                     is SetTableRowUiModel.Data -> SetTableDataRow(
                         row = row,
@@ -120,15 +151,209 @@ fun SetTable(
                     )
                 }
 
-                if (index < rows.lastIndex) {
-                    HorizontalDivider(color = dividerColor)
-                }
             }
         }
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        TableContent()
+        when (presentation) {
+            SetTablePresentation.COMPACT -> CompactTableContent()
+            SetTablePresentation.REVIEW -> ReviewSetTableContent(
+                rows = rows,
+                header = header,
+                headerColor = headerColor,
+                contentColor = contentColor,
+            )
+            SetTablePresentation.WORKOUT -> WorkoutSetTableContent(
+                rows = rows,
+                header = header,
+                headerColor = headerColor,
+                contentColor = contentColor,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReviewSetTableContent(
+    rows: List<SetTableRowUiModel>,
+    header: SetTableHeaderUiModel,
+    headerColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SetTableHeaderRow(header = header, headerColor = headerColor)
+        rows.forEach { row ->
+            ReviewSetRow(row = row, contentColor = contentColor)
+        }
+    }
+}
+
+@Composable
+private fun ReviewSetRow(
+    row: SetTableRowUiModel,
+    contentColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val baseModifier = modifier
+        .fillMaxWidth()
+        .heightIn(min = 44.dp)
+        .clip(shape)
+        .background(MaterialTheme.colorScheme.surfaceVariant)
+
+    when (row) {
+        is SetTableRowUiModel.Data -> SetTableDataRow(
+            row = row,
+            textColor = contentColor,
+            modifier = baseModifier,
+        )
+
+        is SetTableRowUiModel.Rest -> Text(
+            text = row.text,
+            modifier = baseModifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun WorkoutSetTableContent(
+    rows: List<SetTableRowUiModel>,
+    header: SetTableHeaderUiModel,
+    headerColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        WorkoutSetTableHeaderRow(header = header, headerColor = headerColor)
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val rowModifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(MaterialTheme.colorScheme.background)
+                    .border(
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        MaterialTheme.shapes.extraLarge,
+                    )
+
+                when (row) {
+                    is SetTableRowUiModel.Data -> WorkoutSetDataRow(
+                        row = row,
+                        modifier = rowModifier,
+                        textColor = contentColor,
+                    )
+
+                    is SetTableRowUiModel.Rest -> ScalableText(
+                        text = row.text,
+                        modifier = rowModifier
+                            .fillMaxSize()
+                            .padding(1.dp),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = contentColor,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutSetTableHeaderRow(
+    header: SetTableHeaderUiModel,
+    headerColor: androidx.compose.ui.graphics.Color,
+) {
+    val hasSecondaryColumn = header.secondaryLabel != null
+    val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
+    val headerStyle = MaterialTheme.typography.titleSmall.copy(lineHeight = 18.sp)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "SET",
+            modifier = Modifier.weight(SetColumnWeight),
+            style = headerStyle,
+            color = headerColor,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = if (hasSecondaryColumn) "WEIGHT (KG)" else "TIME (HH:MM:SS)",
+            modifier = Modifier.weight(primaryColumnWeight),
+            style = headerStyle,
+            color = headerColor,
+            textAlign = TextAlign.Center,
+        )
+        if (hasSecondaryColumn) {
+            Text(
+                text = "REPS",
+                modifier = Modifier.weight(RepsColumnWeight),
+                style = headerStyle,
+                color = headerColor,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkoutSetDataRow(
+    row: SetTableRowUiModel.Data,
+    modifier: Modifier,
+    textColor: androidx.compose.ui.graphics.Color,
+) {
+    val hasSecondaryColumn = !row.secondaryValue.isNullOrBlank()
+    val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
+    val baseStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+    val primaryStyle = if (row.monospacePrimary) {
+        baseStyle.copy(fontFamily = FontFamily.Monospace)
+    } else {
+        baseStyle
+    }
+    val clickableModifier = row.onClick?.let { modifier.clickable(onClick = it) } ?: modifier
+
+    Row(
+        modifier = clickableModifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ScalableText(
+            text = row.identifier,
+            modifier = Modifier.weight(SetColumnWeight),
+            style = baseStyle,
+            color = textColor,
+            textAlign = TextAlign.Center,
+        )
+        ScalableText(
+            text = row.primaryValue,
+            modifier = Modifier.weight(primaryColumnWeight),
+            style = primaryStyle,
+            color = textColor,
+            textAlign = TextAlign.Center,
+        )
+        if (hasSecondaryColumn) {
+            ScalableText(
+                text = row.secondaryValue.orEmpty(),
+                modifier = Modifier.weight(RepsColumnWeight),
+                style = baseStyle,
+                color = textColor,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -144,7 +369,7 @@ fun SetTableHeaderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
             text = header.setLabel,
@@ -177,19 +402,20 @@ fun SetTableHeaderRow(
 private fun SetTableDataRow(
     row: SetTableRowUiModel.Data,
     textColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
 ) {
     val hasSecondaryColumn = !row.secondaryValue.isNullOrBlank()
     val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
 
     val rowModifier = if (row.onClick != null) {
-        Modifier
+        modifier
             .fillMaxWidth()
             .clickable(onClick = row.onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 11.dp)
     } else {
-        Modifier
+        modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 11.dp)
     }
 
     val primaryStyle = MaterialTheme.typography.bodyLarge.let { base ->
@@ -235,9 +461,9 @@ private fun SetTableRestRow(
         text = row.text,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        style = MaterialTheme.typography.bodyLarge,
-        color = textColor,
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
     )
 }
@@ -252,22 +478,20 @@ private fun SetPreviewRowsContent(
     } else {
         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     }
-    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        rows.forEachIndexed { index, row ->
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        rows.forEach { row ->
             when (row) {
                 is SetTableRowUiModel.Data -> {
                     val rowForDisplay = if (row.onClick != null) row.copy(onClick = null) else row
-                    SetTableDataRow(row = rowForDisplay, textColor = contentColor)
+                    ReviewSetRow(row = rowForDisplay, contentColor = contentColor)
                 }
 
-                is SetTableRowUiModel.Rest -> SetTableRestRow(row = row, textColor = contentColor)
+                is SetTableRowUiModel.Rest -> ReviewSetRow(row = row, contentColor = contentColor)
             }
 
-            if (index < rows.lastIndex) {
-                HorizontalDivider(color = dividerColor)
-            }
         }
     }
 }
@@ -287,10 +511,7 @@ fun SetPreviewItemCard(
             SetPreviewRowsContent(rows = item.rows, enabled = enabled)
         }
     } else {
-        StyledCard(
-            modifier = surfaceModifier,
-            enabled = enabled,
-        ) {
+        Column(modifier = surfaceModifier) {
             SetPreviewRowsContent(rows = item.rows, enabled = enabled)
         }
     }

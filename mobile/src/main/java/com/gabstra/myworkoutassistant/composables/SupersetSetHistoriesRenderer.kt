@@ -34,8 +34,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
 
 fun buildSupersetDisplayTitle(exercises: List<Exercise>): String = exercises
-    .mapIndexed { index, exercise -> "${exercise.name} (${toSupersetLetter(index)})" }
-    .joinToString(" ↔ ")
+    .joinToString(" + ") { it.name }
 
 @Composable
 fun SupersetSetHistoriesRenderer(
@@ -47,20 +46,26 @@ fun SupersetSetHistoriesRenderer(
     contentPadding: PaddingValues = PaddingValues(5.dp),
     focusedExerciseId: UUID? = null,
 ) {
-    if (setHistories.isEmpty() && restHistories.isEmpty()) return
+    val completedSetHistories = completedSetHistories(setHistories)
+    if (completedSetHistories.isEmpty() && restHistories.isEmpty()) return
 
-    val superset = resolveHistoricalSuperset(workout, setHistories) ?: return
+    val superset = resolveHistoricalSuperset(workout, completedSetHistories) ?: return
     val exerciseById = superset.exercises.associateBy(Exercise::id)
+    val completedExerciseIds = completedSetHistories
+        .filter { it.setData !is RestSetData }
+        .mapNotNull(SetHistory::exerciseId)
+        .toSet()
+    val displayedExercises = superset.exercises.filter { it.id in completedExerciseIds }
     val prefixByExerciseId = superset.exercises
         .mapIndexed { index, exercise -> exercise.id to toSupersetLetter(index) }
         .toMap()
-    val identifierResolverByExerciseId = setHistories
+    val identifierResolverByExerciseId = completedSetHistories
         .filter { it.exerciseId != null && it.setData !is RestSetData }
         .groupBy { requireNotNull(it.exerciseId) }
         .mapValues { (_, histories) -> HistoricalSetDisplayIdentifierResolver(histories) }
 
     val rows = buildList {
-        mergeSessionTimeline(setHistories, restHistories).forEach { item ->
+        mergeSessionTimeline(completedSetHistories, restHistories).forEach { item ->
             when (item) {
                 is SessionTimelineItem.RestStep -> {
                     add(SetTableRowUiModel.Rest(formatRestHistoryDisplayLine(item.history)))
@@ -93,37 +98,30 @@ fun SupersetSetHistoriesRenderer(
 
     Column(
         modifier = modifier.padding(contentPadding),
-        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            superset.exercises.forEachIndexed { index, exercise ->
-                val historicalEquipment = setHistories
-                    .firstOrNull { it.exerciseId == exercise.id }
-                val equipmentName = historicalEquipment?.equipmentNameSnapshot
-                    ?.takeIf { it.isNotBlank() }
-                    ?: historicalEquipment?.equipmentIdSnapshot
-                        ?.let(getEquipmentById)
-                        ?.name
-                    ?: exercise.equipmentId?.let(getEquipmentById)?.name
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            displayedExercises.forEach { exercise ->
+                val index = superset.exercises.indexOf(exercise)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "${toSupersetLetter(index)}:",
-                        modifier = Modifier.padding(end = 10.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 12.dp),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (exercise.id == focusedExerciseId) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                     Column(
                         modifier = Modifier.weight(1f),
                     ) {
                         Text(
-                            text = if (exercise.id == focusedExerciseId) {
-                                "${exercise.name} · Selected exercise"
-                            } else {
-                                exercise.name
-                            },
+                            text = exercise.name,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = if (exercise.id == focusedExerciseId) {
                                     FontWeight.SemiBold
@@ -137,19 +135,22 @@ fun SupersetSetHistoriesRenderer(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
-                        equipmentName?.let { name ->
-                            EquipmentAccessoryMetadata(
-                                equipmentName = name,
-                                accessoryNames = emptyList(),
-                                horizontalAlignment = Alignment.Start,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                        if (exercise.id == focusedExerciseId) {
+                            Text(
+                                text = "Selected exercise",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
                 }
             }
         }
-        SetTable(rows = rows, enabled = superset.enabled)
+        SetTable(
+            rows = rows,
+            enabled = superset.enabled,
+            presentation = SetTablePresentation.REVIEW,
+        )
     }
 }
 
@@ -202,21 +203,33 @@ private fun createHistoricalSupersetDataRow(
 
         is TimedDurationSetData -> SetTableRowUiModel.Data(
             identifier = identifier,
-            primaryValue = if (setData.endTimer == 0) {
+            primaryValue = setData.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: if (setData.endTimer == 0) {
                 formatSecondsToMinutesSeconds(setData.startTimer / 1000)
             } else {
                 "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
             },
+            secondaryValue = setData.actualWeight?.let {
+                if (setData.endTimer == 0) formatSecondsToMinutesSeconds(setData.startTimer / 1000)
+                else "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
+            },
+            primaryLabel = if (setData.actualWeight != null) "LOAD" else "DURATION",
+            secondaryLabel = if (setData.actualWeight != null) "DURATION" else null,
             monospacePrimary = true,
         )
 
         is EnduranceSetData -> SetTableRowUiModel.Data(
             identifier = identifier,
-            primaryValue = if (setData.endTimer == 0) {
+            primaryValue = setData.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: if (setData.endTimer == 0) {
                 formatSecondsToMinutesSeconds(setData.startTimer / 1000)
             } else {
                 "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
             },
+            secondaryValue = setData.actualWeight?.let {
+                if (setData.endTimer == 0) formatSecondsToMinutesSeconds(setData.startTimer / 1000)
+                else "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
+            },
+            primaryLabel = if (setData.actualWeight != null) "LOAD" else "DURATION",
+            secondaryLabel = if (setData.actualWeight != null) "DURATION" else null,
             monospacePrimary = true,
         )
 

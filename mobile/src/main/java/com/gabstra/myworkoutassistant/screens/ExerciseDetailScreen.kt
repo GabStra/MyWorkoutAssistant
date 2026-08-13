@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -172,7 +173,7 @@ fun ExerciseDetailScreen(
     var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
-    val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
+    val tabTitles = remember { listOf("Overview", "Charts", "Histories") }
     val historyTabStartIndex = 1
     val historyTabRange = historyTabStartIndex..(historyTabStartIndex + 1)
     var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
@@ -186,6 +187,9 @@ fun ExerciseDetailScreen(
     }
     var historyFilterRange by remember(workout.id, exercise.id) {
         mutableStateOf(FilterRange.ALL)
+    }
+    var isHistoryFiltersExpanded by rememberSaveable(workout.id, exercise.id) {
+        mutableStateOf(true)
     }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
@@ -734,6 +738,7 @@ fun ExerciseDetailScreen(
                     },
                     tabEnabled = { true },
                     unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                    beyondViewportPageCount = 1,
                     modifier = Modifier.fillMaxSize(),
                     pagerModifier = Modifier.fillMaxSize(),
                 ) { pageIndex ->
@@ -777,6 +782,8 @@ fun ExerciseDetailScreen(
                             selectedHistoryMode = pageIndex - historyTabStartIndex,
                             historyFilterRange = historyFilterRange,
                             onHistoryFilterRangeChange = { historyFilterRange = it },
+                            isHistoryFiltersExpanded = isHistoryFiltersExpanded,
+                            onHistoryFiltersExpandedChange = { isHistoryFiltersExpanded = it },
                             onGoBack = onGoBack,
                             onSelectedWorkoutHistoryIdChanged = { id ->
                                 if (pageIndex == selectedTopTab) {

@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseHistoryRenderer
 import com.gabstra.myworkoutassistant.composables.HeartRateSessionCard
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
 import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
+import com.gabstra.myworkoutassistant.composables.HistoryFiltersBlock
 import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
@@ -75,6 +76,7 @@ import com.gabstra.myworkoutassistant.composables.buildSupersetDisplayTitle
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.composables.historyExerciseNameTextStyle
+import com.gabstra.myworkoutassistant.composables.historyDisplayLabel
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.heart_rate.HeartRateSessionAnalysis
@@ -126,6 +128,13 @@ import java.util.Calendar
 import java.util.UUID
 
 private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
+
+private data class LoadedWorkoutHistoryContent(
+    val heartRateAnalysis: HeartRateSessionAnalysis?,
+    val setHistoriesByExerciseId: Map<UUID, List<SetHistory>>,
+    val restHistories: List<RestHistory>,
+    val kiloCaloriesBurned: Double,
+)
 
 private data class TargetHeartRateProgress(
     val counter: Int,
@@ -209,6 +218,8 @@ fun WorkoutHistoryScreen(
     selectedHistoryMode: Int = 0,
     historyFilterRange: FilterRange? = null,
     onHistoryFilterRangeChange: ((FilterRange) -> Unit)? = null,
+    isHistoryFiltersExpanded: Boolean,
+    onHistoryFiltersExpandedChange: (Boolean) -> Unit,
     onGoBack: () -> Unit,
     isActive: Boolean = true,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
@@ -464,10 +475,8 @@ fun WorkoutHistoryScreen(
         }
         val selectedWorkoutHistoryId = workoutHistory.id
 
-        heartRateAnalysis = null
-
-        withContext(Dispatchers.IO) {
-            heartRateAnalysis = analyzeHeartRateSession(
+        val loadedContent = withContext(Dispatchers.IO) {
+            val loadedHeartRateAnalysis = analyzeHeartRateSession(
                 heartRateSeries = workoutHistory.heartBeatRecords,
                 durationSeconds = workoutHistory.duration,
                 userAge = userAge,
@@ -477,7 +486,7 @@ fun WorkoutHistoryScreen(
 
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
-            sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
+            val loadedRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
             val sectionMap = linkedMapOf<UUID, List<SetHistory>>()
             val consumedHistoryIds = mutableSetOf<UUID>()
 
@@ -502,8 +511,6 @@ fun WorkoutHistoryScreen(
                 .filter { it.exerciseId != null && it.id !in consumedHistoryIds }
                 .groupBy { it.exerciseId!! }
             sectionMap.putAll(remainingByExerciseId)
-            setHistoriesByExerciseId = sectionMap
-
             val avgHeartRate =
                 workoutHistory.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0
 
@@ -518,7 +525,7 @@ fun WorkoutHistoryScreen(
                 }
                 ?: appViewModel.workoutStore.weightKg
             val durationMinutes = workoutHistory.duration.toDouble() / 60
-            kiloCaloriesBurned = calculateKiloCaloriesBurned(
+            val loadedKiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
                 weightKg = weightForKcal,
                 averageHeartRate = avgHeartRate,
@@ -526,8 +533,19 @@ fun WorkoutHistoryScreen(
                 isMale = true
             )
 
-            loadedSelectedWorkoutHistoryId = selectedWorkoutHistoryId
+            LoadedWorkoutHistoryContent(
+                heartRateAnalysis = loadedHeartRateAnalysis,
+                setHistoriesByExerciseId = sectionMap,
+                restHistories = loadedRestHistories,
+                kiloCaloriesBurned = loadedKiloCaloriesBurned,
+            )
         }
+
+        heartRateAnalysis = loadedContent.heartRateAnalysis
+        setHistoriesByExerciseId = loadedContent.setHistoriesByExerciseId
+        sessionRestHistories = loadedContent.restHistories
+        kiloCaloriesBurned = loadedContent.kiloCaloriesBurned
+        loadedSelectedWorkoutHistoryId = selectedWorkoutHistoryId
     }
 
     LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories) {
@@ -897,17 +915,23 @@ fun WorkoutHistoryScreen(
                             )
                         } else {
                             PrimarySurface {
-                                val completedSetCount = setHistories.count { it.setData !is RestSetData }
+                                val completedSetHistories = setHistories.filterNot(SetHistory::skipped)
+                                val completedExerciseIds = completedSetHistories
+                                    .filter { it.setData !is RestSetData }
+                                    .mapNotNull(SetHistory::exerciseId)
+                                    .toSet()
+                                val completedExercises = superset.exercises.filter { it.id in completedExerciseIds }
+                                val completedSetCount = completedSetHistories.count { it.setData !is RestSetData }
                                 ExpandableContainer(
                                     isOpen = true,
                                     modifier = Modifier.fillMaxWidth(),
                                     title = { modifier ->
                                         Row(
-                                            modifier = modifier.padding(start = 10.dp),
+                                            modifier = modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Text(
-                                                text = buildSupersetDisplayTitle(superset.exercises),
+                                                text = buildSupersetDisplayTitle(completedExercises),
                                                 modifier = Modifier.weight(1f),
                                                 maxLines = 2,
                                                 style = historyExerciseNameTextStyle(),
@@ -918,10 +942,10 @@ fun WorkoutHistoryScreen(
                                     },
                                     collapsedContent = {
                                         Text(
-                                            text = "${superset.exercises.size} exercises · $completedSetCount completed sets",
+                                            text = "${completedExercises.size} exercises · $completedSetCount completed sets",
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(start = 10.dp, end = 48.dp, bottom = 10.dp),
+                                                .padding(start = 16.dp, end = 48.dp, bottom = 14.dp),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -930,15 +954,9 @@ fun WorkoutHistoryScreen(
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                                                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(Spacing.lg),
                                         ) {
-                                            Text(
-                                                text = "COMPLETED SUPERSET",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
                                             SupersetSetHistoriesRenderer(
                                                 setHistories = setHistories,
                                                 restHistories = restsForSuperset,
@@ -976,20 +994,7 @@ fun WorkoutHistoryScreen(
                             val completedSetCount = setHistoriesForRenderer.count {
                                 it.setData !is RestSetData
                             }
-                            val historicalEquipmentName = setHistoriesForRenderer.firstOrNull()
-                                ?.equipmentNameSnapshot
-                                ?.takeIf { it.isNotBlank() }
-                                ?: setHistoriesForRenderer.firstOrNull()
-                                    ?.equipmentIdSnapshot
-                                    ?.let { appViewModel.getEquipmentById(it)?.name }
-                                ?: exercise.equipmentId?.let { appViewModel.getEquipmentById(it)?.name }
-                            val collapsedSummary = buildList {
-                                add("$completedSetCount completed sets")
-                                if (exercise.minReps > 0 && exercise.maxReps >= exercise.minReps) {
-                                    add("Target ${exercise.minReps}-${exercise.maxReps} reps")
-                                }
-                                historicalEquipmentName?.let { add(it) }
-                            }.joinToString(" · ")
+                            val collapsedSummary = "$completedSetCount completed sets"
                             ExerciseHistoryRenderer(
                                 exercise = exerciseWithHistorySets,
                                 showRest = true,
@@ -1026,7 +1031,7 @@ fun WorkoutHistoryScreen(
                                 customTitle = { m ->
                                         Row(
                                             horizontalArrangement = Arrangement.SpaceBetween,
-                                            modifier = m,
+                                            modifier = m.padding(start = 4.dp, end = 16.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             if (exerciseById.containsKey(key)) {
@@ -1071,12 +1076,13 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    val isSelectedWorkoutHistoryLoading =
+    val isInitialSelectedWorkoutHistoryLoading =
         hasLoadedWorkoutHistories &&
                 selectedWorkoutHistory != null &&
+                loadedSelectedWorkoutHistoryId == null &&
                 loadedSelectedWorkoutHistoryId != selectedWorkoutHistory?.id
     val showSelectedWorkoutHistoryLoading = rememberMinimumLoadingVisibility(
-        isLoading = isSelectedWorkoutHistoryLoading,
+        isLoading = isInitialSelectedWorkoutHistoryLoading,
         showDelayMs = 150L,
         minVisibleMs = 300L,
     )
@@ -1095,12 +1101,19 @@ fun WorkoutHistoryScreen(
                     .fillMaxWidth(),
             ) {
                 Spacer(modifier = Modifier.height(Spacing.md))
-                RangeDropdown(selectedRange, onHistoryRangeSelected)
-                Spacer(modifier = Modifier.height(12.dp))
-
                 if (selectedWorkoutHistory != null) {
                     Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                        workoutSelector()
+                        val sessionLabel = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
+                            selectedWorkoutHistory!!.time.format(timeFormatter)
+                        HistoryFiltersBlock(
+                            isExpanded = isHistoryFiltersExpanded,
+                            onExpandedChange = onHistoryFiltersExpandedChange,
+                            collapsedSummary = selectedRange.historyDisplayLabel() + " · " + sessionLabel,
+                        ) {
+                            RangeDropdown(selectedRange, onHistoryRangeSelected)
+                            Spacer(modifier = Modifier.height(Spacing.xs))
+                            workoutSelector()
+                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                 }

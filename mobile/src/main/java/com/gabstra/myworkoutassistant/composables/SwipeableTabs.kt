@@ -55,6 +55,7 @@ fun SwipeableTabs(
     tabTextStyle: TextStyle = MaterialTheme.typography.bodySmall,
     tabEnabled: (Int) -> Boolean = { true },
     compactNavigation: Boolean = false,
+    beyondViewportPageCount: Int = 0,
     renderPager: Boolean = true,
     containerColor: Color = MaterialTheme.colorScheme.background,
     contentColor: Color = MaterialTheme.colorScheme.onBackground,
@@ -228,7 +229,7 @@ fun SwipeableTabs(
                 state = pagerState,
                 modifier = pagerModifier,
                 userScrollEnabled = false,
-                beyondViewportPageCount = 0,
+                beyondViewportPageCount = beyondViewportPageCount,
             ) { pageIndex ->
                 pageContent(pageIndex)
             }

@@ -338,6 +338,7 @@ fun WorkoutDetailScreen(
         mutableStateOf(initialSelectedTabIndex in 1..2)
     }
     var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
+    var isHistoryFiltersExpanded by rememberSaveable(workout.id) { mutableStateOf(true) }
     var selectedIntervalWorkoutHistoryIds by remember(workout.id) {
         mutableStateOf<Set<UUID>>(emptySet())
     }
@@ -1335,6 +1336,8 @@ fun WorkoutDetailScreen(
                             selectedHistoryMode = pageIndex - 1,
                             historyFilterRange = historyFilterRange,
                             onHistoryFilterRangeChange = { historyFilterRange = it },
+                            isHistoryFiltersExpanded = isHistoryFiltersExpanded,
+                            onHistoryFiltersExpandedChange = { isHistoryFiltersExpanded = it },
                             onGoBack = onGoBack,
                             isActive = pageIndex == selectedTopTab,
                             onSelectedWorkoutHistoryIdChanged = { id ->

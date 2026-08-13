@@ -10,21 +10,17 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildSetDisplayIdentifier
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSubCategory
-
-private const val CalibrationSetIdentifier = "Cal"
-private const val WarmupSetIdentifierPrefix = "W"
 
 internal fun buildSetRowIdentifier(
     baseIdentifier: Int,
     setSubCategory: SetSubCategory?,
-): String {
-    return when (setSubCategory) {
-        SetSubCategory.WarmupSet -> "$WarmupSetIdentifierPrefix$baseIdentifier"
-        SetSubCategory.CalibrationSet -> CalibrationSetIdentifier
-        else -> baseIdentifier.toString()
-    }
-}
+): String = buildSetDisplayIdentifier(
+    current = baseIdentifier,
+    supersetPrefix = null,
+    counterKind = displayCounterKindForSubCategory(setSubCategory),
+)
 
 internal class SetRowIdentifierCounter {
     private var workSetCount = 0
@@ -35,15 +31,15 @@ internal class SetRowIdentifierCounter {
         return when (displayCounterKindForSubCategory(setSubCategory)) {
             SetDisplayCounterKind.Warmup -> {
                 warmupSetCount += 1
-                buildSetRowIdentifier(warmupSetCount, setSubCategory)
+                buildSetDisplayIdentifier(warmupSetCount, null, SetDisplayCounterKind.Warmup)
             }
             SetDisplayCounterKind.Calibration -> {
                 calibrationSetCount += 1
-                buildSetRowIdentifier(calibrationSetCount, setSubCategory)
+                buildSetDisplayIdentifier(calibrationSetCount, null, SetDisplayCounterKind.Calibration)
             }
             SetDisplayCounterKind.Work -> {
                 workSetCount += 1
-                buildSetRowIdentifier(workSetCount, setSubCategory)
+                buildSetDisplayIdentifier(workSetCount, null, SetDisplayCounterKind.Work)
             }
         }
     }

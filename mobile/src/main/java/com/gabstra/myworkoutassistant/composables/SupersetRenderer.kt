@@ -62,7 +62,7 @@ fun SupersetRenderer(
                 Text(
                     modifier = m
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     text = "Superset",
                     style = MaterialTheme.typography.bodyLarge,
                     color = textColor,
@@ -72,9 +72,9 @@ fun SupersetRenderer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                        .padding(bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     superset.exercises.forEachIndexed { index, exercise ->
                         val identifier = ('A'.code + index).toChar().toString()
@@ -103,9 +103,48 @@ fun SupersetRenderer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        superset.exercises.forEachIndexed { index, exercise ->
+                            val identifier = ('A'.code + index).toChar().toString()
+                            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+                            val accessoryNames = exercise.requiredAccessoryEquipmentIds
+                                .orEmpty()
+                                .mapNotNull { appViewModel.getAccessoryEquipmentById(it)?.name }
+                            val linkedDefinitionName = exercise.exerciseDefinitionId
+                                ?.let { definitionId ->
+                                    appViewModel.workoutStore.exerciseDefinitions
+                                        .firstOrNull { it.id == definitionId }
+                                        ?.name
+                                }
+
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "$identifier · ${exercise.name}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = textColor,
+                                )
+                                ExerciseVariationInfo(
+                                    exerciseType = exercise.exerciseType,
+                                    targetRepRange = formatTargetRepRange(exercise.minReps, exercise.maxReps),
+                                    equipmentName = equipment?.name,
+                                    accessoryNames = accessoryNames,
+                                    definitionName = linkedDefinitionName,
+                                    displayName = exercise.name,
+                                )
+                            }
+                        }
+                    }
+
                     val rows = mutableListOf<SetTableRowUiModel>()
                     executionSteps.forEach { step ->
                         if (step.restSeconds != null) {
@@ -147,20 +186,26 @@ fun SupersetRenderer(
                                 }
 
                                 is TimedDurationSet -> {
+                                    val targetWeightText = step.set.targetWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                                     rows += SetTableRowUiModel.Data(
                                         identifier = step.identifier,
-                                        primaryValue = formatTime(step.set.timeInMillis / 1000),
-                                        secondaryValue = null,
+                                        primaryValue = targetWeightText ?: formatTime(step.set.timeInMillis / 1000),
+                                        secondaryValue = targetWeightText?.let { formatTime(step.set.timeInMillis / 1000) },
+                                        primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
+                                        secondaryLabel = if (targetWeightText != null) "DURATION" else null,
                                         monospacePrimary = true,
                                         onClick = onClick,
                                     )
                                 }
 
                                 is EnduranceSet -> {
+                                    val targetWeightText = step.set.targetWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                                     rows += SetTableRowUiModel.Data(
                                         identifier = step.identifier,
-                                        primaryValue = formatTime(step.set.timeInMillis / 1000),
-                                        secondaryValue = null,
+                                        primaryValue = targetWeightText ?: formatTime(step.set.timeInMillis / 1000),
+                                        secondaryValue = targetWeightText?.let { formatTime(step.set.timeInMillis / 1000) },
+                                        primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
+                                        secondaryLabel = if (targetWeightText != null) "DURATION" else null,
                                         monospacePrimary = true,
                                         onClick = onClick,
                                     )
@@ -181,6 +226,7 @@ fun SupersetRenderer(
                     SetTable(
                         rows = rows,
                         enabled = superset.enabled,
+                        presentation = SetTablePresentation.REVIEW,
                     )
                 }
             }

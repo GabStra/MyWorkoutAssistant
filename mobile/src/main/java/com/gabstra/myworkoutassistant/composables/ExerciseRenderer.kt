@@ -40,6 +40,11 @@ import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimelin
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
+fun formatTargetRepRange(minReps: Int, maxReps: Int): String? {
+    if (minReps <= 0 || maxReps < minReps) return null
+    return if (minReps == maxReps) minReps.toString() else "$minReps-$maxReps"
+}
+
 @Composable
 fun historyExerciseNameTextStyle(): TextStyle =
     MaterialTheme.typography.titleMedium
@@ -121,26 +126,32 @@ fun buildExerciseTemplatePreviewItems(
             }
 
             is TimedDurationSet -> {
+                val targetWeightText = set.targetWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                 previewItems += SetPreviewItemUiModel(
                     setId = set.id,
                     rows = listOf(
                         SetTableRowUiModel.Data(
                             identifier = identifierCounter.nextIdentifier(null),
-                            primaryValue = formatTime(set.timeInMillis / 1000),
-                            secondaryValue = null,
+                            primaryValue = targetWeightText ?: formatTime(set.timeInMillis / 1000),
+                            secondaryValue = targetWeightText?.let { formatTime(set.timeInMillis / 1000) },
+                            primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
+                            secondaryLabel = if (targetWeightText != null) "DURATION" else null,
                         )
                     ),
                 )
             }
 
             is EnduranceSet -> {
+                val targetWeightText = set.targetWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                 previewItems += SetPreviewItemUiModel(
                     setId = set.id,
                     rows = listOf(
                         SetTableRowUiModel.Data(
                             identifier = identifierCounter.nextIdentifier(null),
-                            primaryValue = formatTime(set.timeInMillis / 1000),
-                            secondaryValue = null,
+                            primaryValue = targetWeightText ?: formatTime(set.timeInMillis / 1000),
+                            secondaryValue = targetWeightText?.let { formatTime(set.timeInMillis / 1000) },
+                            primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
+                            secondaryLabel = if (targetWeightText != null) "DURATION" else null,
                         )
                     ),
                 )
@@ -187,7 +198,10 @@ internal fun buildExerciseHistoryRows(
     showRest: Boolean,
 ): List<SetTableRowUiModel> {
     val rows = mutableListOf<SetTableRowUiModel>()
-    val mergedTimeline = mergeSessionTimeline(setHistories, intraExerciseRestHistories)
+    val mergedTimeline = mergeSessionTimeline(
+        completedSetHistories(setHistories),
+        intraExerciseRestHistories,
+    )
     val identifierResolver = HistoricalSetDisplayIdentifierResolver(
         setHistories = mergedTimeline.mapNotNull { item ->
             val setStep = item as? SessionTimelineItem.SetStep ?: return@mapNotNull null
@@ -233,15 +247,8 @@ internal fun buildExerciseHistoryRows(
                     is WeightSetData -> {
                         val weightSet = set as WeightSet
                         val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(weightSet)
-                        val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                            exercise = exercise,
-                            set = weightSet
-                        )
-                        val weightText = if (isCalibrationManagedWorkSet) {
-                            CalibrationUiLabels.Tbd
-                        } else {
-                            equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg"
-                        }
+                        val weightText = equipment?.formatWeight(setData.actualWeight)
+                            ?: "${setData.actualWeight} kg"
                         val secondaryReps = if (isCalibrationSet && setData.calibrationRIR != null) {
                             "${setData.actualReps} (RIR ${setData.calibrationRIR})"
                         } else {
@@ -263,18 +270,10 @@ internal fun buildExerciseHistoryRows(
                     is BodyWeightSetData -> {
                         val bodyWeightSet = set as BodyWeightSet
                         val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(bodyWeightSet)
-                        val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                            exercise = exercise,
-                            set = bodyWeightSet
+                        val weightText = formatHistoricalBodyWeightSetValue(
+                            setData = setData,
+                            equipment = equipment
                         )
-                        val weightText = if (isCalibrationManagedWorkSet) {
-                            CalibrationUiLabels.Tbd
-                        } else {
-                            formatHistoricalBodyWeightSetValue(
-                                setData = setData,
-                                equipment = equipment
-                            )
-                        }
                         val secondaryReps = if (isCalibrationSet && setData.calibrationRIR != null) {
                             "${setData.actualReps} (RIR ${setData.calibrationRIR})"
                         } else {
@@ -294,6 +293,7 @@ internal fun buildExerciseHistoryRows(
                     }
 
                     is com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData -> {
+                        val actualWeightText = setData.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                         appendHistoricalDataRows(
                             rows = rows,
                             exercise = exercise,
@@ -301,13 +301,19 @@ internal fun buildExerciseHistoryRows(
                             followingRestText = followingRestText,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
-                                primaryValue = formatTime(setData.startTimer / 1000),
-                                secondaryValue = null,
+                                primaryValue = actualWeightText ?: formatHistoricalTimedSetValue(
+                                    startTimer = setData.startTimer,
+                                    endTimer = setData.endTimer,
+                                ),
+                                secondaryValue = actualWeightText?.let { formatHistoricalTimedSetValue(setData.startTimer, setData.endTimer) },
+                                primaryLabel = if (actualWeightText != null) "LOAD" else "DURATION",
+                                secondaryLabel = if (actualWeightText != null) "DURATION" else null,
                             ),
                         )
                     }
 
                     is com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData -> {
+                        val actualWeightText = setData.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" }
                         appendHistoricalDataRows(
                             rows = rows,
                             exercise = exercise,
@@ -315,8 +321,13 @@ internal fun buildExerciseHistoryRows(
                             followingRestText = followingRestText,
                             row = SetTableRowUiModel.Data(
                                 identifier = identifier,
-                                primaryValue = formatTime(setData.startTimer / 1000),
-                                secondaryValue = null,
+                                primaryValue = actualWeightText ?: formatHistoricalTimedSetValue(
+                                    startTimer = setData.startTimer,
+                                    endTimer = setData.endTimer,
+                                ),
+                                secondaryValue = actualWeightText?.let { formatHistoricalTimedSetValue(setData.startTimer, setData.endTimer) },
+                                primaryLabel = if (actualWeightText != null) "LOAD" else "DURATION",
+                                secondaryLabel = if (actualWeightText != null) "DURATION" else null,
                             ),
                         )
                     }
@@ -326,6 +337,14 @@ internal fun buildExerciseHistoryRows(
         }
     }
     return rows
+}
+
+private fun formatHistoricalTimedSetValue(startTimer: Int, endTimer: Int): String {
+    return if (endTimer == 0) {
+        formatTime(startTimer / 1000)
+    } else {
+        "${formatTime(startTimer / 1000)} - ${formatTime(endTimer / 1000)}"
+    }
 }
 
 internal fun appendHistoricalDataRows(
@@ -378,7 +397,7 @@ private fun ExerciseTitleOnlyRow(
     titleModifier: Modifier,
 ) {
     Row(
-        modifier = modifier.then(titleModifier).padding(15.dp),
+        modifier = modifier.then(titleModifier).padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -409,6 +428,7 @@ private fun ExerciseExpandableSetTableBody(
     showHistorySections: Boolean = false,
     equipmentNameOverride: String? = null,
     collapsedSummary: String? = null,
+    setTablePresentation: SetTablePresentation = SetTablePresentation.COMPACT,
 ) {
     ExpandableContainer(
         isOpen = initiallyExpanded,
@@ -422,7 +442,7 @@ private fun ExerciseExpandableSetTableBody(
                     text = summary,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 10.dp, end = 48.dp, bottom = 10.dp),
+                        .padding(start = 16.dp, end = 48.dp, bottom = 14.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -430,59 +450,52 @@ private fun ExerciseExpandableSetTableBody(
         },
         content = {
             Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 6.dp,
+                    bottom = 16.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 val accessoryEquipments = (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
                     appViewModel.getAccessoryEquipmentById(id)
                 }
-                val metadataTextColor = if (exercise.enabled) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    DisabledContentGray
-                }
-                val repRange = if (exercise.minReps > 0 && exercise.maxReps >= exercise.minReps) {
-                    "${exercise.minReps}-${exercise.maxReps}"
-                } else {
-                    null
-                }
+                val repRange = formatTargetRepRange(exercise.minReps, exercise.maxReps)
 
                 if (showHistorySections) {
-                    if (repRange != null || contentBeforeMetadata != null) {
+                    contentBeforeMetadata?.let { targetContent ->
                         ExerciseRendererHistorySection("Targets") {
-                            repRange?.let { range ->
-                                Text(
-                                    text = "Target reps: $range",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = metadataTextColor,
-                                )
-                            }
-                            contentBeforeMetadata?.invoke()
+                            targetContent()
                         }
                     }
-                    if (equipmentNameOverride != null || equipment != null || accessoryEquipments.isNotEmpty()) {
-                        ExerciseRendererHistorySection("Setup used") {
-                            EquipmentAccessoryMetadata(
-                                equipmentName = equipmentNameOverride ?: equipment?.name,
-                                accessoryNames = accessoryEquipments.map { it.name },
-                                horizontalAlignment = Alignment.Start,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
-                            )
-                        }
-                    }
-                    ExerciseRendererHistorySection("Completed sets") {
-                        SetTable(rows = rows, enabled = exercise.enabled)
-                    }
+                    SetTable(
+                        rows = rows,
+                        enabled = exercise.enabled,
+                        presentation = setTablePresentation,
+                    )
                 } else {
                     contentBeforeMetadata?.invoke()
-                    ExerciseMetadataStrip(
+                    val linkedDefinitionName = exercise.exerciseDefinitionId
+                        ?.let { definitionId ->
+                            appViewModel.workoutStore.exerciseDefinitions
+                                .firstOrNull { it.id == definitionId }
+                                ?.name
+                        }
+                    ExerciseVariationInfo(
+                        exerciseType = exercise.exerciseType,
+                        targetRepRange = repRange,
                         equipmentName = equipmentNameOverride ?: equipment?.name,
-                        repRange = repRange,
-                        accessoryNameList = accessoryEquipments.map { it.name },
-                        textColor = metadataTextColor,
+                        accessoryNames = accessoryEquipments.map { it.name },
+                        definitionName = linkedDefinitionName,
+                        displayName = exercise.name,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    SetTable(rows = rows, enabled = exercise.enabled)
+                    SetTable(
+                        rows = rows,
+                        enabled = exercise.enabled,
+                        presentation = setTablePresentation,
+                    )
                 }
             }
         }
@@ -526,7 +539,7 @@ fun ExerciseTemplateRenderer(
         title = { m ->
             Text(
                 modifier = m
-                    .padding(horizontal = 10.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = exercise.name,
                 maxLines = 2,
@@ -535,6 +548,7 @@ fun ExerciseTemplateRenderer(
             )
         },
         rows = rows,
+        setTablePresentation = SetTablePresentation.REVIEW,
     )
 }
 
@@ -608,21 +622,23 @@ fun ExerciseHistoryRenderer(
         showHistorySections = showHistorySections,
         equipmentNameOverride = historicalEquipmentName,
         collapsedSummary = collapsedSummary,
+        setTablePresentation = SetTablePresentation.REVIEW,
     )
 }
 
 @Composable
 private fun ExerciseRendererHistorySection(
     title: String,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = title.uppercase(),
-            style = MaterialTheme.typography.labelLarge,
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

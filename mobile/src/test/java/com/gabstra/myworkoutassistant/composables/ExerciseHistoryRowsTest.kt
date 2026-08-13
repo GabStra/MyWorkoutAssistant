@@ -18,6 +18,75 @@ import java.util.UUID
 
 class ExerciseHistoryRowsTest {
     @Test
+    fun `buildExerciseHistoryRows excludes skipped sets`() {
+        val exerciseId = UUID.randomUUID()
+        val workoutHistoryId = UUID.randomUUID()
+        val start = LocalDateTime.of(2026, 7, 27, 19, 16, 58)
+        val exercise = Exercise(
+            id = exerciseId,
+            enabled = true,
+            name = "Shrug",
+            notes = "",
+            sets = emptyList(),
+            exerciseType = ExerciseType.WEIGHT,
+            minReps = 0,
+            maxReps = 0,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = null,
+            bodyWeightPercentage = null,
+        )
+        val completed = buildWeightSetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setId = UUID.randomUUID(),
+            start = start.minusMinutes(1),
+            executionSequence = 0u,
+        )
+        val skipped = buildWeightSetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setId = UUID.randomUUID(),
+            start = start,
+            executionSequence = 1u,
+        ).copy(skipped = true)
+
+        val rows = buildExerciseHistoryRows(
+            exercise = exercise,
+            equipment = null,
+            setHistories = listOf(completed, skipped),
+            intraExerciseRestHistories = emptyList(),
+            showRest = true,
+        )
+
+        assertEquals(listOf("1"), rows.filterIsInstance<SetTableRowUiModel.Data>().map { it.identifier })
+    }
+
+    @Test
+    fun `completedSetHistories excludes skipped superset sets`() {
+        val exerciseId = UUID.randomUUID()
+        val workoutHistoryId = UUID.randomUUID()
+        val completed = buildWeightSetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setId = UUID.randomUUID(),
+            start = LocalDateTime.of(2026, 7, 27, 19, 15),
+            executionSequence = 0u,
+        )
+        val skipped = completed.copy(
+            id = UUID.randomUUID(),
+            setId = UUID.randomUUID(),
+            skipped = true,
+            executionSequence = 1u,
+        )
+
+        assertEquals(listOf(completed), completedSetHistories(listOf(completed, skipped)))
+    }
+
+    @Test
     fun `buildExerciseHistoryRows preserves rest rows and unilateral side identifiers`() {
         val exerciseId = UUID.randomUUID()
         val setId = UUID.randomUUID()
