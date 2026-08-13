@@ -85,6 +85,7 @@ import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
@@ -168,6 +169,9 @@ fun ExerciseForm(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val linkedDefinition = exercise?.exerciseDefinitionId?.let { definitionId ->
+        viewModel.workoutStore.exerciseDefinitions.firstOrNull { it.id == definitionId }
+    }
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
     val notesState = rememberSaveable {
@@ -292,9 +296,12 @@ fun ExerciseForm(
             exercise?.equipmentId ?: (if (exercise?.exerciseType == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null)
         )
     }
-    val equipmentItems: List<StandardFilterDropdownItem<UUID?>> = remember(equipments) {
+    val equipmentItems: List<StandardFilterDropdownItem<UUID?>> = remember(
+        equipments,
+        selectedExerciseType.value,
+    ) {
         listOf(StandardFilterDropdownItem<UUID?>(value = null, label = "None")) +
-            equipments.map { equipment ->
+            equipments.filter { it.isCompatibleWith(selectedExerciseType.value) }.map { equipment ->
                 StandardFilterDropdownItem(value = equipment.id, label = equipment.name)
             }
     }
@@ -370,8 +377,10 @@ fun ExerciseForm(
     LaunchedEffect(equipments, exercise?.id) {
         val currentEquipmentId = selectedEquipmentId.value
         if (currentEquipmentId != null) {
-            val equipmentExists = equipments.any { it.id == currentEquipmentId }
-            if (!equipmentExists) {
+            val equipmentIsCompatible = equipments.any {
+                it.id == currentEquipmentId && it.isCompatibleWith(selectedExerciseType.value)
+            }
+            if (!equipmentIsCompatible) {
                 // Equipment was deleted, reset to appropriate default
                 selectedEquipmentId.value = if (selectedExerciseType.value == ExerciseType.WEIGHT) {
                     viewModel.GENERIC_ID
@@ -497,10 +506,9 @@ fun ExerciseForm(
                         onValueChange = { nameState.value = it },
                         label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = exercise?.exerciseDefinitionId == null,
                     )
                     if (exercise?.exerciseDefinitionId != null) {
-                        ContentSubtitle("Rename this exercise from the Exercise Library.")
+                        ContentSubtitle("Workout-specific name. Use the library name to follow future library renames.")
                     }
                     if (exercise == null) {
                         StandardFilterDropdown(
@@ -512,6 +520,7 @@ fun ExerciseForm(
                                 selectedEquipmentId.value =
                                     if (type == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null
                             },
+                            selectedValue = selectedExerciseType.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedExerciseType.value }
                         )
@@ -586,7 +595,7 @@ fun ExerciseForm(
                             backgroundColor = MaterialTheme.colorScheme.background,
                             primaryFill = MaterialTheme.colorScheme.primary,
                             animated = true,
-                            orbitView = true,
+                            orbitView = false,
                             dragRotationEnabled = true,
                         )
                     } else {
@@ -621,7 +630,13 @@ fun ExerciseForm(
                 }
 
                 // ----- Equipment -----
-                if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                if (selectedExerciseType.value in setOf(
+                        ExerciseType.WEIGHT,
+                        ExerciseType.BODY_WEIGHT,
+                        ExerciseType.COUNTUP,
+                        ExerciseType.COUNTDOWN,
+                    )
+                ) {
                     val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
                         equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
                     }
@@ -642,6 +657,7 @@ fun ExerciseForm(
                                 selectedText = selectedEquipmentName,
                                 items = equipmentItems,
                                 onItemSelected = { selectedEquipmentId.value = it },
+                                selectedValue = selectedEquipmentId.value,
                                 modifier = Modifier.fillMaxWidth(),
                                 isItemSelected = { it == selectedEquipmentId.value }
                             )
@@ -882,6 +898,7 @@ fun ExerciseForm(
                             selectedText = selectedExerciseCategoryLabel,
                             items = exerciseCategoryOptions,
                             onItemSelected = { selectedExerciseCategory.value = it },
+                            selectedValue = selectedExerciseCategory.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedExerciseCategory.value }
                         )
@@ -900,6 +917,7 @@ fun ExerciseForm(
                                     requiresLoadCalibration.value = false
                                 }
                             },
+                            selectedValue = progressionMode.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == progressionMode.value }
                         )
@@ -1028,6 +1046,7 @@ fun ExerciseForm(
                                     }
                                 }
                             },
+                            selectedValue = selectedHeartRateZoneIndex,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedHeartRateZoneIndex }
                         )
@@ -1358,7 +1377,11 @@ fun ExerciseForm(
                             maxReps = maxReps.floatValue.toInt(),
                             lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value?.round(2),
                             upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value?.round(2),
-                            equipmentId = selectedEquipmentId.value,
+                            equipmentId = selectedEquipmentId.value?.takeIf { selectedId ->
+                                equipments.any {
+                                    it.id == selectedId && it.isCompatibleWith(selectedExerciseType.value)
+                                }
+                            },
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
                             progressionMode = progressionMode.value,
@@ -1384,6 +1407,9 @@ fun ExerciseForm(
                             deloadCutSetsTo = deloadCutSetsTo,
                             movementRef = movementRefState.value,
                             exerciseDefinitionId = exercise?.exerciseDefinitionId,
+                            nameOverride = linkedDefinition?.let { definition ->
+                                nameState.value.trim().takeIf { it != definition.name }
+                            },
                             placementNotes = if (exercise?.exerciseDefinitionId != null) {
                                 notesState.value.trim()
                             } else {

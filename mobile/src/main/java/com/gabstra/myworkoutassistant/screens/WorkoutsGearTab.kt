@@ -72,7 +72,9 @@ fun WorkoutsGearTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 GenericButtonWithMenu(
-                    menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
+                    menuItems = EquipmentType.entries.filter {
+                        it != EquipmentType.GENERIC && it != EquipmentType.ACCESSORY
+                    }.map { equipmentType ->
                         MenuItem("Add ${equipmentType.toDisplayText()}") {
                             appViewModel.setScreenData(
                                 ScreenData.NewEquipment(equipmentType)
@@ -140,7 +142,9 @@ fun WorkoutsGearTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 GenericButtonWithMenu(
-                    menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
+                    menuItems = EquipmentType.entries.filter {
+                        it != EquipmentType.GENERIC && it != EquipmentType.ACCESSORY
+                    }.map { equipmentType ->
                         MenuItem("Add ${equipmentType.toDisplayText()}") {
                             appViewModel.setScreenData(
                                 ScreenData.NewEquipment(equipmentType)

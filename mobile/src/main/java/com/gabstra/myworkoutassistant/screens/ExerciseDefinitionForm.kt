@@ -70,6 +70,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
@@ -124,9 +125,10 @@ fun ExerciseDefinitionForm(
             StandardFilterDropdownItem(it, it.name.replace('_', ' ').lowercase())
         }
     }
-    val equipmentItems = remember(equipments) {
+    val equipmentItems = remember(equipments, exerciseType) {
         listOf(StandardFilterDropdownItem<UUID?>(null, "None")) +
-            equipments.map { StandardFilterDropdownItem<UUID?>(it.id, it.name) }
+            equipments.filter { it.isCompatibleWith(exerciseType) }
+                .map { StandardFilterDropdownItem<UUID?>(it.id, it.name) }
     }
     val categoryItems: List<StandardFilterDropdownItem<ExerciseCategory?>> = remember {
         listOf(
@@ -232,6 +234,7 @@ fun ExerciseDefinitionForm(
                                 selectedAccessoryIds = emptyList()
                             }
                         },
+                        selectedValue = exerciseType,
                         isItemSelected = { it == exerciseType },
                         enabled = !isReferenced,
                         modifier = Modifier.fillMaxWidth(),
@@ -241,6 +244,7 @@ fun ExerciseDefinitionForm(
                         selectedText = categoryItems.first { it.value == exerciseCategory }.label,
                         items = categoryItems,
                         onItemSelected = { exerciseCategory = it },
+                        selectedValue = exerciseCategory,
                         isItemSelected = { it == exerciseCategory },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -265,7 +269,13 @@ fun ExerciseDefinitionForm(
                 }
             }
 
-            if (exerciseType == ExerciseType.WEIGHT || exerciseType == ExerciseType.BODY_WEIGHT) {
+            if (exerciseType in setOf(
+                    ExerciseType.WEIGHT,
+                    ExerciseType.BODY_WEIGHT,
+                    ExerciseType.COUNTUP,
+                    ExerciseType.COUNTDOWN,
+                )
+            ) {
                 Spacer(Modifier.height(Spacing.md))
                 val selectedEquipmentName = equipmentItems
                     .firstOrNull { it.value == equipmentId }?.label ?: "None"
@@ -281,6 +291,7 @@ fun ExerciseDefinitionForm(
                             selectedText = selectedEquipmentName,
                             items = equipmentItems,
                             onItemSelected = { equipmentId = it },
+                            selectedValue = equipmentId,
                             isItemSelected = { it == equipmentId },
                             enabled = !isReferenced,
                             modifier = Modifier.fillMaxWidth(),
@@ -410,7 +421,7 @@ fun ExerciseDefinitionForm(
                             backgroundColor = MaterialTheme.colorScheme.background,
                             primaryFill = MaterialTheme.colorScheme.primary,
                             animated = true,
-                            orbitView = true,
+                            orbitView = false,
                             dragRotationEnabled = true,
                         )
                     }
@@ -440,7 +451,11 @@ fun ExerciseDefinitionForm(
                             )).copy(
                                 name = name.trim(),
                                 exerciseType = exerciseType,
-                                equipmentId = equipmentId,
+                                equipmentId = equipmentId?.takeIf { selectedId ->
+                                    equipments.any {
+                                        it.id == selectedId && it.isCompatibleWith(exerciseType)
+                                    }
+                                },
                                 bodyWeightPercentage = bodyWeightPercentage.toDoubleOrNull(),
                                 muscleGroups = selectedMuscles,
                                 secondaryMuscleGroups = selectedSecondaryMuscles,

@@ -405,6 +405,10 @@ private fun ExerciseExpandableSetTableBody(
     appViewModel: AppViewModel,
     title: @Composable (Modifier) -> Unit,
     rows: List<SetTableRowUiModel>,
+    contentBeforeMetadata: (@Composable () -> Unit)? = null,
+    showHistorySections: Boolean = false,
+    equipmentNameOverride: String? = null,
+    collapsedSummary: String? = null,
 ) {
     ExpandableContainer(
         isOpen = initiallyExpanded,
@@ -412,10 +416,22 @@ private fun ExerciseExpandableSetTableBody(
         isExpandable = true,
         titleModifier = titleModifier,
         title = title,
+        collapsedContent = {
+            collapsedSummary?.let { summary ->
+                Text(
+                    text = summary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 10.dp, end = 48.dp, bottom = 10.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
         content = {
             Column(
-                modifier = Modifier.padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 val accessoryEquipments = (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
                     appViewModel.getAccessoryEquipmentById(id)
@@ -431,18 +447,43 @@ private fun ExerciseExpandableSetTableBody(
                     null
                 }
 
-                ExerciseMetadataStrip(
-                    equipmentName = equipment?.name,
-                    repRange = repRange,
-                    accessoryNameList = accessoryEquipments.map { it.name },
-                    textColor = metadataTextColor,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                SetTable(
-                    rows = rows,
-                    enabled = exercise.enabled,
-                )
+                if (showHistorySections) {
+                    if (repRange != null || contentBeforeMetadata != null) {
+                        ExerciseRendererHistorySection("Targets") {
+                            repRange?.let { range ->
+                                Text(
+                                    text = "Target reps: $range",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = metadataTextColor,
+                                )
+                            }
+                            contentBeforeMetadata?.invoke()
+                        }
+                    }
+                    if (equipmentNameOverride != null || equipment != null || accessoryEquipments.isNotEmpty()) {
+                        ExerciseRendererHistorySection("Setup used") {
+                            EquipmentAccessoryMetadata(
+                                equipmentName = equipmentNameOverride ?: equipment?.name,
+                                accessoryNames = accessoryEquipments.map { it.name },
+                                horizontalAlignment = Alignment.Start,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                            )
+                        }
+                    }
+                    ExerciseRendererHistorySection("Completed sets") {
+                        SetTable(rows = rows, enabled = exercise.enabled)
+                    }
+                } else {
+                    contentBeforeMetadata?.invoke()
+                    ExerciseMetadataStrip(
+                        equipmentName = equipmentNameOverride ?: equipment?.name,
+                        repRange = repRange,
+                        accessoryNameList = accessoryEquipments.map { it.name },
+                        textColor = metadataTextColor,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SetTable(rows = rows, enabled = exercise.enabled)
+                }
             }
         }
     )
@@ -507,8 +548,15 @@ fun ExerciseHistoryRenderer(
     setHistories: List<SetHistory>,
     intraExerciseRestHistories: List<RestHistory> = emptyList(),
     customTitle: (@Composable (Modifier) -> Unit)? = null,
+    contentBeforeMetadata: (@Composable () -> Unit)? = null,
+    showHistorySections: Boolean = false,
+    collapsedSummary: String? = null,
 ) {
-    val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+    val firstHistory = setHistories.firstOrNull()
+    val equipment = firstHistory?.equipmentIdSnapshot
+        ?.let { appViewModel.getEquipmentById(it) }
+        ?: exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+    val historicalEquipmentName = firstHistory?.equipmentNameSnapshot?.takeIf { it.isNotBlank() }
     val rows = remember(
         exercise.id,
         showRest,
@@ -556,5 +604,28 @@ fun ExerciseHistoryRenderer(
             }
         },
         rows = rows,
+        contentBeforeMetadata = contentBeforeMetadata,
+        showHistorySections = showHistorySections,
+        equipmentNameOverride = historicalEquipmentName,
+        collapsedSummary = collapsedSummary,
     )
+}
+
+@Composable
+private fun ExerciseRendererHistorySection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
+    }
 }

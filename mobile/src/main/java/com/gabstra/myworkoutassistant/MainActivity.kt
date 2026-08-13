@@ -97,6 +97,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.screens.equipments.AccessoryForm
 import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
+import com.gabstra.myworkoutassistant.screens.equipments.CardioMachineForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
@@ -115,6 +116,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -3143,6 +3145,11 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.goBack()
                             }, onCancel = { appViewModel.goBack() })
 
+                            EquipmentType.CARDIO_MACHINE -> CardioMachineForm(onUpsert = { new ->
+                                appViewModel.updateEquipments(equipments + new)
+                                appViewModel.goBack()
+                            }, onCancel = { appViewModel.goBack() })
+
                             EquipmentType.ACCESSORY -> {
                                 val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
                                 AccessoryForm(onUpsert = { new ->
@@ -3245,6 +3252,27 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.updateEquipments(updatedEquipments)
                                     appViewModel.goBack()
                                 }, onCancel = { appViewModel.goBack() }, machine = selectedMachine)
+                            }
+
+                            EquipmentType.CARDIO_MACHINE -> {
+                                val selectedCardioMachine =
+                                    equipments.find { it.id == screenData.equipmentId } as CardioMachine
+                                CardioMachineForm(
+                                    onUpsert = { updatedCardioMachine ->
+                                        appViewModel.updateEquipments(
+                                            equipments.map { equipment ->
+                                                if (equipment.id == selectedCardioMachine.id) {
+                                                    updatedCardioMachine
+                                                } else {
+                                                    equipment
+                                                }
+                                            }
+                                        )
+                                        appViewModel.goBack()
+                                    },
+                                    onCancel = { appViewModel.goBack() },
+                                    cardioMachine = selectedCardioMachine,
+                                )
                             }
 
                             EquipmentType.ACCESSORY -> {

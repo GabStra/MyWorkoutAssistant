@@ -72,6 +72,7 @@ private data class ExerciseDefinitionUsage(
     val planId: UUID?,
     val planName: String?,
     val placementCount: Int,
+    val placementNameOverrides: List<String>,
 )
 
 private data class ExerciseDefinitionDetail(
@@ -158,21 +159,28 @@ private fun buildExerciseDefinitionUsages(
 ): Map<UUID, List<ExerciseDefinitionUsage>> {
     val planNamesById = plans.associate { it.id to it.name }
     return workouts.flatMap { workout ->
-        val definitionIds = workout.workoutComponents.flatMap { component ->
+        val prescriptions = workout.workoutComponents.flatMap { component ->
             when (component) {
-                is Exercise -> listOfNotNull(component.exerciseDefinitionId)
-                is Superset -> component.exercises.mapNotNull { it.exerciseDefinitionId }
+                is Exercise -> listOf(component)
+                is Superset -> component.exercises
                 else -> emptyList()
             }
         }
-        definitionIds.groupingBy { it }.eachCount().map { (definitionId, count) ->
-            definitionId to ExerciseDefinitionUsage(
-                workout = workout,
-                planId = workout.workoutPlanId,
-                planName = workout.workoutPlanId?.let(planNamesById::get),
-                placementCount = count,
-            )
-        }
+        prescriptions
+            .filter { it.exerciseDefinitionId != null }
+            .groupBy { requireNotNull(it.exerciseDefinitionId) }
+            .map { (definitionId, definitionPrescriptions) ->
+                definitionId to ExerciseDefinitionUsage(
+                    workout = workout,
+                    planId = workout.workoutPlanId,
+                    planName = workout.workoutPlanId?.let(planNamesById::get),
+                    placementCount = definitionPrescriptions.size,
+                    placementNameOverrides = definitionPrescriptions
+                        .mapNotNull { it.nameOverride?.trim()?.takeIf(String::isNotEmpty) }
+                        .distinct()
+                        .sortedBy(String::lowercase),
+                )
+            }
     }.groupBy(keySelector = { it.first }, valueTransform = { it.second })
 }
 
@@ -619,33 +627,51 @@ private fun UsageSection(
                 planUsages
                     .sortedBy { it.workout.name.lowercase() }
                     .forEach { usage ->
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenWorkout(usage.workout.id) }
-                                .padding(start = Spacing.sm, top = Spacing.xs, bottom = Spacing.xs),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                .padding(start = Spacing.sm, top = Spacing.sm, bottom = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            Text(
-                                text = usage.workout.name,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            if (usage.placementCount > 1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            ) {
                                 Text(
-                                    text = "${usage.placementCount} uses",
+                                    text = usage.workout.name,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                if (usage.placementCount > 1) {
+                                    Text(
+                                        text = "${usage.placementCount} uses",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (usage.placementNameOverrides.isNotEmpty()) {
+                                Text(
+                                    text = usage.placementNameOverrides.joinToString(
+                                        prefix = if (usage.placementNameOverrides.size == 1) {
+                                            "Workout name: "
+                                        } else {
+                                            "Workout names: "
+                                        },
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                 }
             }
