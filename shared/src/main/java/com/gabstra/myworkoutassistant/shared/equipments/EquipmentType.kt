@@ -37,6 +37,9 @@ fun WeightLoadedEquipment.isCompatibleWith(exerciseType: ExerciseType): Boolean 
             exerciseType == ExerciseType.COUNTUP || exerciseType == ExerciseType.COUNTDOWN
         EquipmentType.ACCESSORY -> false
         else ->
-            exerciseType == ExerciseType.WEIGHT || exerciseType == ExerciseType.BODY_WEIGHT
+            exerciseType == ExerciseType.WEIGHT ||
+                exerciseType == ExerciseType.BODY_WEIGHT ||
+                exerciseType == ExerciseType.COUNTUP ||
+                exerciseType == ExerciseType.COUNTDOWN
     }
 }

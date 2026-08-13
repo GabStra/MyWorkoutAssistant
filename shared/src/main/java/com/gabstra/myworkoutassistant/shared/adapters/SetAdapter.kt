@@ -46,11 +46,13 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
                 jsonObject.addProperty("autoStart", src.autoStart)
                 jsonObject.addProperty("autoStop", src.autoStop)
+                src.targetWeight?.let { jsonObject.addProperty("targetWeight", it) }
             }
             is EnduranceSet ->{
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
                 jsonObject.addProperty("autoStart", src.autoStart)
                 jsonObject.addProperty("autoStop", src.autoStop)
+                src.targetWeight?.let { jsonObject.addProperty("targetWeight", it) }
             }
             is RestSet ->{
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
@@ -128,7 +130,8 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     true
                 }
-                TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet)
+                val targetWeight = if (jsonObject.has("targetWeight")) jsonObject.get("targetWeight").asDouble else null
+                TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
@@ -139,7 +142,8 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 } else {
                     true
                 }
-                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet)
+                val targetWeight = if (jsonObject.has("targetWeight")) jsonObject.get("targetWeight").asDouble else null
+                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight)
             }
             "RestSet" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt

@@ -583,16 +583,16 @@ private fun <T> applyListDelta(
 fun initializeSetData(set: Set): SetData = when (set) {
     is WeightSet -> WeightSetData(set.reps, set.weight,0.0,set.subCategory)
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.subCategory)
-    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop)
-    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop)
+    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
+    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.subCategory)
 }
 
 fun getNewSet(set: Set): Set = when (set) {
     is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight,set.subCategory, set.shouldReapplyHistoryToSet)
     is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.subCategory, set.shouldReapplyHistoryToSet)
-    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
-    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
+    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
+    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory, set.shouldReapplyHistoryToSet)
 }
 
@@ -660,7 +660,8 @@ fun getNewSetFromSetHistory(
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
                 autoStop = setData.autoStop,
-                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
+                targetWeight = setData.actualWeight
             )
         }
 
@@ -670,7 +671,8 @@ fun getNewSetFromSetHistory(
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
                 autoStop = setData.autoStop,
-                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
+                targetWeight = setData.actualWeight
             )
         }
 

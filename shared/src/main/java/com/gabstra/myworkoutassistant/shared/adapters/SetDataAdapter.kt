@@ -49,6 +49,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("autoStart",src.autoStart)
                 jsonObject.addProperty("autoStop",src.autoStop)
                 jsonObject.addProperty("hasBeenExecuted", src.hasBeenExecuted)
+                src.actualWeight?.let { jsonObject.addProperty("actualWeight", it) }
             }
             is EnduranceSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -56,6 +57,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("autoStart",src.autoStart)
                 jsonObject.addProperty("autoStop",src.autoStop)
                 jsonObject.addProperty("hasBeenExecuted", src.hasBeenExecuted)
+                src.actualWeight?.let { jsonObject.addProperty("actualWeight", it) }
             }
             is RestSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -122,7 +124,8 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 val autoStart = if(jsonObject.has("autoStart")) jsonObject.get("autoStart").asBoolean else false
                 val autoStop = if(jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
                 val hasBeenExecuted = if(jsonObject.has("hasBeenExecuted")) jsonObject.get("hasBeenExecuted").asBoolean else false
-                TimedDurationSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted)
+                val actualWeight = if (jsonObject.has("actualWeight")) jsonObject.get("actualWeight").asDouble else null
+                TimedDurationSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted,actualWeight)
             }
             "EnduranceSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
@@ -130,7 +133,8 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 val autoStart = if(jsonObject.has("autoStart")) jsonObject.get("autoStart").asBoolean else false
                 val autoStop = if(jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
                 val hasBeenExecuted = if(jsonObject.has("hasBeenExecuted")) jsonObject.get("hasBeenExecuted").asBoolean else false
-                EnduranceSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted)
+                val actualWeight = if (jsonObject.has("actualWeight")) jsonObject.get("actualWeight").asDouble else null
+                EnduranceSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted,actualWeight)
             }
             "RestSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt
