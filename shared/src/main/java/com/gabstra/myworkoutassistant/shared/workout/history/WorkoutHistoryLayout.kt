@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.workout.history
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -43,13 +44,17 @@ fun buildWorkoutHistoryLayout(
     for (component in workout.workoutComponents) {
         when (component) {
             is Exercise -> {
-                val hasSetHistory = setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()
+                val hasSetHistory = setHistoriesByExerciseId[component.id]
+                    .orEmpty()
+                    .any { !it.skipped && it.setData !is RestSetData }
                 if (hasSetHistory || component.id == activeExerciseId) {
                     items.add(WorkoutHistoryLayoutItem.ExerciseSection(component.id))
                 }
             }
             is Superset -> {
-                val hasSetHistory = setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()
+                val hasSetHistory = setHistoriesByExerciseId[component.id]
+                    .orEmpty()
+                    .any { !it.skipped && it.setData !is RestSetData }
                 val containsActiveExercise = component.exercises.any { it.id == activeExerciseId }
                 if (hasSetHistory || containsActiveExercise) {
                     items.add(WorkoutHistoryLayoutItem.SupersetSection(component.id))

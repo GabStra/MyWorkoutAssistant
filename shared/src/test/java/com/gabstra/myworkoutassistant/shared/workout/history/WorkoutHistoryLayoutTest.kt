@@ -102,6 +102,43 @@ class WorkoutHistoryLayoutTest {
     }
 
     @Test
+    fun buildWorkoutHistoryLayout_omitsExerciseWithOnlySkippedSets() {
+        val skippedExerciseId = UUID.fromString("25000000-0000-0000-0000-000000000001")
+        val completedExerciseId = UUID.fromString("25000000-0000-0000-0000-000000000002")
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "w",
+            description = "",
+            workoutComponents = listOf(
+                minimalExercise(skippedExerciseId, "Skipped"),
+                minimalExercise(completedExerciseId, "Completed"),
+            ),
+            order = 0,
+            creationDate = LocalDate.of(2026, 3, 22),
+            globalId = UUID.randomUUID(),
+            type = 0,
+        )
+
+        val layout = buildWorkoutHistoryLayout(
+            workout = workout,
+            setHistoriesByExerciseId = mapOf(
+                skippedExerciseId to listOf(
+                    sampleSetHistory(skippedExerciseId, id = 1, seq = 1u).copy(skipped = true),
+                ),
+                completedExerciseId to listOf(
+                    sampleSetHistory(completedExerciseId, id = 2, seq = 2u),
+                ),
+            ),
+            sessionRestHistories = emptyList(),
+        )
+
+        assertEquals(
+            listOf(WorkoutHistoryLayoutItem.ExerciseSection(completedExerciseId)),
+            layout,
+        )
+    }
+
+    @Test
     fun buildWorkoutHistoryLayout_includesSupersetWhenActiveExerciseHasNoSetHistory() {
         val leadExerciseId = UUID.fromString("30000000-0000-0000-0000-000000000001")
         val supersetId = UUID.fromString("30000000-0000-0000-0000-000000000002")
