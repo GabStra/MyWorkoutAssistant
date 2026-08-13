@@ -125,7 +125,7 @@ fun CalibrationRirPage(
         if (showPicker) {
             while (showPicker) {
                 delay(1000) // Check every second
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     showPicker = false
                 }
             }
@@ -185,7 +185,13 @@ fun CalibrationRirPage(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
-                onCloseClick = { onClosePicker() }
+                isResetEnabled = rirValue != initialRIR,
+                onCloseClick = { onClosePicker() },
+                onResetClick = {
+                    rirValue = initialRIR
+                    updateInteractionTime()
+                    hapticsViewModel.doGentleVibration()
+                },
             ) {
                 SetValueSection(label = "RIR", headerStyle = headerStyle) {
                     ScalableText(
@@ -354,7 +360,7 @@ fun CalibrationRirPage(
         if (showPicker) {
             while (showPicker) {
                 delay(1000)
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     showPicker = false
                 }
             }
@@ -402,7 +408,13 @@ fun CalibrationRirPage(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
-                onCloseClick = { onClosePicker() }
+                isResetEnabled = rirValue != initialRIR,
+                onCloseClick = { onClosePicker() },
+                onResetClick = {
+                    rirValue = initialRIR
+                    updateInteractionTime()
+                    hapticsViewModel.doGentleVibration()
+                },
             ) {
                 SetValueSection(label = "RIR (AR)", headerStyle = headerStyle) {
                     ScalableText(

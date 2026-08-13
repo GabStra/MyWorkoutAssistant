@@ -133,6 +133,8 @@ fun EnduranceSetScreen (
         val setData = state.currentSetData as? EnduranceSetData
         mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
     }
+    val initialStartTimer = (state.previousSetData as? EnduranceSetData)?.startTimer
+        ?: currentSet.startTimer
     var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(0) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
@@ -209,7 +211,7 @@ fun EnduranceSetScreen (
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+            if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                 setTimerEditMode(false)
             }
             delay(1000) // Check every second
@@ -590,8 +592,14 @@ fun EnduranceSetScreen (
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         setTimerEditMode(false)
+                    },
+                    onResetClick = {
+                        currentSet = currentSet.copy(startTimer = initialStartTimer)
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
                     },
                     content = {
                         SetValueSection(label = "TIMER", headerStyle = headerStyle) {

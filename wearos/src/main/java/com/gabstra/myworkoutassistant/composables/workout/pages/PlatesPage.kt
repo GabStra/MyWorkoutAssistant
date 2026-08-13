@@ -14,12 +14,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -35,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -717,7 +720,8 @@ private fun PlatesPageContent(
             ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(1f, fill = false)
+                        .heightIn(max = 96.dp)
                         .fillMaxWidth(),
                 ) {
                     BoxWithConstraints(
@@ -728,7 +732,7 @@ private fun PlatesPageContent(
                 val viewportWidth = maxWidth
                 val density = LocalDensity.current
                 val viewportWidthPx = with(density) { viewportWidth.toPx() }
-                val labelTextSizePx = with(density) { MaterialTheme.typography.labelMedium.fontSize.toPx() }
+                val labelTextSizePx = with(density) { MaterialTheme.typography.bodyMedium.fontSize.toPx() }
                 val labelRightPaddingPx = with(density) { 4.dp.toPx() }
                 val barbellStartPx = remember(viewportWidthPx, density) {
                     computeBarbellStartX(
@@ -877,6 +881,31 @@ private fun PlatesPageContent(
                 }
                     }
 
+                }
+
+                if (steps.isEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, start = 8.dp, end = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            5.dp,
+                            Alignment.CenterHorizontally,
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "Barbell already loaded",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 if (showStepIndicator) {
@@ -1032,9 +1061,9 @@ private fun BarbellVisualization(
         }
     }
 
-    val labelTextSize = MaterialTheme.typography.labelMedium.fontSize
+    val labelTextSize = MaterialTheme.typography.bodyMedium.fontSize
 
-    Canvas(modifier = modifier) {
+    Canvas(modifier = modifier.graphicsLayer()) {
         val canvasWidth = size.width
         val canvasHeight = size.height
         val centerX = canvasWidth / 2f

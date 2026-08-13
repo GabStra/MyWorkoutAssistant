@@ -84,6 +84,7 @@ fun WeightSetScreen(
     val previousSetData = state.previousSetData as WeightSetData
     val historicalSetData = state.historicalSetData as? WeightSetData
     val comparisonSetData = historicalSetData ?: previousSetData
+    val initialSetData = state.previousSetData as WeightSetData
     var currentSetData by remember(state.set.id, state.equipmentId) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
@@ -233,7 +234,7 @@ fun WeightSetScreen(
         if (isInEditMode) {
             onEditModeEnabled()
             while (isInEditMode) {
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     isRepsInEditMode = false
                     isWeightInEditMode = false
                 }
@@ -581,9 +582,18 @@ fun WeightSetScreen(
                     onPlusLongPress = { onPlusClick() },
                     isMinusEnabled = canDecrease,
                     isPlusEnabled = canIncrease,
+                    isResetEnabled = currentSetData != initialSetData,
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false
+                    },
+                    onResetClick = {
+                        currentSetData = initialSetData
+                        if (isWeightInEditMode) {
+                            viewModel.schedulePlateRecalculation(initialSetData.actualWeight)
+                        }
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
                     },
                     content = {
                         Row(

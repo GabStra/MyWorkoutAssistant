@@ -68,8 +68,12 @@ fun PreparingExternalHeartRateScreen(
     val context = LocalContext.current
 
     var currentMillis by remember { mutableIntStateOf(0) }
-    var canSkip by remember { mutableStateOf(false) }
     var hasTriggeredNextState by remember { mutableStateOf(false) }
+    val canSkip = !connectionState.isReady && (
+        currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS ||
+            connectionState is ExternalHeartRateConnectionState.Error ||
+            connectionState is ExternalHeartRateConnectionState.MissingConfiguration
+        )
 
     LaunchedEffect(source, isSessionHydrationInFlight) {
         if (isSessionHydrationInFlight) {
@@ -84,8 +88,7 @@ fun PreparingExternalHeartRateScreen(
             while (true) {
                 delay(1000)
                 currentMillis += 1000
-                if (currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS && !hasTriggeredNextState && !connectionState.isReady) {
-                    canSkip = true
+                if (currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS) {
                     break
                 }
             }

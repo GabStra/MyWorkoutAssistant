@@ -6,8 +6,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import com.gabstra.myworkoutassistant.shared.MaleMusclePathProvider
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.MuscleHeatMapBackground
@@ -58,7 +60,11 @@ fun MuscleHeatMap(
 
     val targetCenterY = 765f // Middle of height
 
-    Canvas(modifier = modifier) {
+    Canvas(
+        modifier = modifier.graphicsLayer {
+            compositingStrategy = CompositingStrategy.Offscreen
+        },
+    ) {
         // 4. Calculate Scale
         // Fit the chosen virtual width into the available screen width
         val scaleX = size.width / virtualWidth

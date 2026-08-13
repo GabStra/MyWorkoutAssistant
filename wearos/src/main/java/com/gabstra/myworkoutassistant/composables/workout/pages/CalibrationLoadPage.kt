@@ -184,7 +184,7 @@ fun CalibrationLoadPage(
         if (showPicker) {
             while (showPicker) {
                 delay(1000) // Check every second
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     showPicker = false
                 }
             }
@@ -221,7 +221,15 @@ fun CalibrationLoadPage(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
-                onCloseClick = { onClosePicker() }
+                isResetEnabled = selectedWeight != initialWeight,
+                onCloseClick = { onClosePicker() },
+                onResetClick = {
+                    selectedWeightIndex = sortedWeights.indices.minByOrNull { index ->
+                        kotlin.math.abs(sortedWeights[index] - initialWeight)
+                    } ?: 0
+                    updateInteractionTime()
+                    hapticsViewModel.doGentleVibration()
+                },
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,

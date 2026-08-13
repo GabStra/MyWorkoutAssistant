@@ -1239,7 +1239,7 @@ private fun buildExercisesPageRowModel(
                     viewModel = viewModel,
                     exerciseId = displayRow.state.exerciseId
                 ),
-                label = "SET LOAD"
+                label = "SELECT LOAD"
             )
         )
 

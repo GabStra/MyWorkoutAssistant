@@ -10,12 +10,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 
+internal const val WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS = 10_000L
 
 @Composable
 fun ControlButtonsVertical(
@@ -49,11 +50,13 @@ fun ControlButtonsVertical(
     onPlusLongPress: () -> Unit,
     isMinusEnabled: Boolean = true,
     isPlusEnabled: Boolean = true,
-    onCloseClick: () -> Unit,
+    isResetEnabled: Boolean = true,
+    onCloseClick: (() -> Unit)? = null,
+    onResetClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ){
-    BackHandler {
-        onCloseClick()
+    BackHandler(enabled = onCloseClick != null) {
+        onCloseClick?.invoke()
     }
 
     Column(
@@ -65,65 +68,66 @@ fun ControlButtonsVertical(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 30.dp),
+                .padding(horizontal = 20.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
         }
 
-        Row(
-            horizontalArrangement = Arrangement.Center,
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 22.5.dp)
+                .padding(bottom = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ControlButton(
-                contentDescription = "Subtract",
-                icon = {
-                    Icon(
-                        modifier = Modifier.size(WearStandardIconButtonIconSize),
-                        imageVector = Icons.Filled.ArrowDownward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                },
-                backgroundColor = Red,
-                enabled = isMinusEnabled,
-                onTap = onMinusTap,
-                onLongPress = onMinusLongPress
-            )
-            Spacer(modifier = Modifier.width(15.dp))
-            ControlButton(
-                contentDescription = "Add",
-                icon = {
-                    Icon(
-                        modifier = Modifier.size(WearStandardIconButtonIconSize),
-                        imageVector = Icons.Filled.ArrowUpward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                },
-                backgroundColor = Green,
-                enabled = isPlusEnabled,
-                onTap = onPlusTap,
-                onLongPress = onPlusLongPress
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+            ) {
+                ControlButton(Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled, onMinusTap, onMinusLongPress)
+                ControlButton(Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled, onPlusTap, onPlusLongPress)
+            }
+            if (onCloseClick != null || onResetClick != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                ) {
+                    onCloseClick?.let { closeClick ->
+                        ControlButton(
+                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
+                            MaterialTheme.colorScheme.surfaceContainerHigh, true,
+                            closeClick, closeClick, 48.dp, 40.dp, 20.dp,
+                        )
+                    }
+                    onResetClick?.let { resetClick ->
+                        ControlButton(
+                            Icons.Filled.RestartAlt, "Reset",
+                            MaterialTheme.colorScheme.surfaceContainerHigh, isResetEnabled,
+                            resetClick, resetClick, 48.dp, 40.dp, 20.dp,
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun ControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
-    icon: @Composable () -> Unit,
     backgroundColor: Color,
     enabled: Boolean,
     onTap: () -> Unit,
-    onLongPress: () -> Unit
+    onLongPress: () -> Unit,
+    hitBoxSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonHitBoxSize,
+    buttonSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonSize,
+    iconSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonIconSize,
 ) {
     Box(
         modifier = Modifier
-            .size(WearStandardIconButtonHitBoxSize)
+            .size(hitBoxSize)
             .alpha(if (enabled) 1f else 0.45f)
             .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
@@ -154,11 +158,16 @@ private fun ControlButton(
     ) {
         Box(
             modifier = Modifier
-                .size(WearStandardIconButtonSize)
+                .size(buttonSize)
                 .background(backgroundColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            icon()
+            Icon(
+                modifier = Modifier.size(iconSize),
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
     }
 }
@@ -183,6 +192,8 @@ private fun ControlButtonsVerticalPreview() {
                 onPlusTap = {},
                 onPlusLongPress = {},
                 onCloseClick = {},
+                onResetClick = {},
+                isResetEnabled = true,
             ) {
                 Text(
                     text = "12",

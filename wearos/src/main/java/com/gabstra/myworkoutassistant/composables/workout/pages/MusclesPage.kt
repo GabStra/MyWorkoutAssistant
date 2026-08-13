@@ -64,7 +64,7 @@ fun MusclesPage(
 
         if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
-                text = "No muscle groups available",
+                text = "No muscle groups",
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

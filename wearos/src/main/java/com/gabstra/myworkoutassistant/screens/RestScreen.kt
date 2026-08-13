@@ -45,6 +45,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
+import com.gabstra.myworkoutassistant.composables.WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
@@ -126,6 +127,8 @@ private fun RestTimerBlock(
     val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
+    var editInitialSeconds by remember(set.id) { mutableIntStateOf(currentSeconds) }
+    var editInitialAmountToWait by remember(set.id) { mutableIntStateOf(amountToWait) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val isPaused by viewModel.isPaused
 
@@ -187,6 +190,8 @@ private fun RestTimerBlock(
             val syncedSeconds = timerUiState?.displaySeconds ?: currentSetData.endTimer
             currentSeconds = syncedSeconds.coerceAtLeast(0)
             amountToWait = currentSetData.startTimer
+            editInitialSeconds = currentSeconds
+            editInitialAmountToWait = amountToWait
             currentSetData = clampRestData(currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds))
             state.currentSetData = currentSetData
             unregisterRestTimer()
@@ -230,7 +235,7 @@ private fun RestTimerBlock(
     }
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+            if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                 setTimerEditMode(false)
             }
             delay(1000)
@@ -287,7 +292,20 @@ private fun RestTimerBlock(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
+                isResetEnabled = currentSeconds != editInitialSeconds || amountToWait != editInitialAmountToWait,
                 onCloseClick = { setTimerEditMode(false) },
+                onResetClick = {
+                    currentSeconds = editInitialSeconds
+                    amountToWait = editInitialAmountToWait
+                    currentSetData = clampRestData(
+                        currentSetData.copy(
+                            startTimer = editInitialAmountToWait,
+                            endTimer = editInitialSeconds,
+                        )
+                    )
+                    updateInteractionTime()
+                    hapticsViewModel.doGentleVibration()
+                },
                 content = {
                     SetValueSection(label = "REST", headerStyle = timerHeaderStyle) {
                         textComposable(seconds = currentSeconds)

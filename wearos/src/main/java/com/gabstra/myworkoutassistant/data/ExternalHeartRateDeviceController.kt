@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
@@ -9,6 +10,8 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 sealed class ExternalHeartRateConnectionState {
     data object Idle : ExternalHeartRateConnectionState()
@@ -64,6 +67,7 @@ abstract class BaseExternalHeartRateViewModel(
     protected var currentConfig: ExternalHeartRateConfig? = null
 
     private var releaseInProgress = false
+    private var connectionAttemptId = 0L
 
     protected val appCeh
         get() = (applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
@@ -91,6 +95,7 @@ abstract class BaseExternalHeartRateViewModel(
         get() = releaseInProgress
 
     final override fun initialize(context: Context, config: ExternalHeartRateConfig?) {
+        connectionAttemptId++
         releaseDeviceConnection()
         applicationContext = context.applicationContext
         currentConfig = config
@@ -127,7 +132,22 @@ abstract class BaseExternalHeartRateViewModel(
             return
         }
 
+        val attemptId = ++connectionAttemptId
         connectToConfiguredDevice(config!!)
+        viewModelScope.launch(appCeh) {
+            delay(CONNECTION_TIMEOUT_MS)
+            if (
+                attemptId == connectionAttemptId &&
+                !isSessionSkipped &&
+                _connectionState.value is ExternalHeartRateConnectionState.Connecting
+            ) {
+                releaseDeviceConnection()
+                _connectionState.value = ExternalHeartRateConnectionState.Error(
+                    source = source,
+                    message = "Couldn't connect to ${source.displayName()}.",
+                )
+            }
+        }
     }
 
     final override fun retryConnection() {
@@ -136,6 +156,7 @@ abstract class BaseExternalHeartRateViewModel(
     }
 
     final override fun skipConnectionForSession() {
+        connectionAttemptId++
         _isSkippedForSession.value = true
         _hrBpm.value = null
         releaseDeviceConnection()
@@ -146,6 +167,7 @@ abstract class BaseExternalHeartRateViewModel(
     }
 
     final override fun disconnectFromDevice() {
+        connectionAttemptId++
         val skipped = isSessionSkipped
         releaseDeviceConnection()
         _hrBpm.value = null
@@ -187,6 +209,11 @@ abstract class BaseExternalHeartRateViewModel(
     protected abstract fun releaseDeviceResources()
 
     override fun onCleared() {
+        connectionAttemptId++
         releaseDeviceConnection()
+    }
+
+    private companion object {
+        const val CONNECTION_TIMEOUT_MS = 15_000L
     }
 }

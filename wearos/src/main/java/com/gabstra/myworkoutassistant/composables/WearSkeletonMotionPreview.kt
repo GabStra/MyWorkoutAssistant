@@ -16,7 +16,7 @@ fun WearSkeletonMotionPreview(
     animated: Boolean = true,
     viewYawDegrees: Float = -28f,
     viewPitchDegrees: Float = 15f,
-    orbitView: Boolean = true,
+    orbitView: Boolean = false,
     loopRestartFadeMillis: Int = WearMovementLoopRestartFadeMillis,
     dragRotationEnabled: Boolean = true,
     dragRotationHorizontalInset: Dp = 0.dp,

@@ -138,6 +138,8 @@ fun TimedDurationSetScreen(
         val setData = state.currentSetData as? TimedDurationSetData
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
     }
+    val initialStartTimer = (state.previousSetData as? TimedDurationSetData)?.startTimer
+        ?: currentSet.startTimer
     var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
 
     val isPaused by viewModel.isPaused
@@ -191,7 +193,10 @@ fun TimedDurationSetScreen(
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (timerEditModeController.shouldAutoClose(timeoutMillis = 5000L)) {
+            if (timerEditModeController.shouldAutoClose(
+                    timeoutMillis = WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS
+                )
+            ) {
                 timerEditModeController.updateEditMode(false)
             }
             delay(1000) // Check every second
@@ -610,8 +615,15 @@ fun TimedDurationSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         timerEditModeController.updateEditMode(false)
+                    },
+                    onResetClick = {
+                        currentSet = currentSet.copy(startTimer = initialStartTimer)
+                        currentMillis = initialStartTimer
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
                     },
                     content = {
                         SetValueSection(label = "TIMER", headerStyle = headerStyle) {

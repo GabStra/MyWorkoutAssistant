@@ -51,7 +51,7 @@ fun ExerciseAnimationPage(
             skeletonJson = rememberInspectionSkeletonJson(),
             modifier = modifier.fillMaxSize(),
             animated = true,
-            orbitView = true,
+            orbitView = false,
             dragRotationHorizontalInset = dragRotationHorizontalInset,
             isRenderingActive = isActive,
         )
@@ -77,7 +77,7 @@ fun ExerciseAnimationPage(
                 skeletonJson = movementJson.orEmpty(),
                 modifier = modifier.fillMaxSize(),
                 animated = true,
-                orbitView = true,
+                orbitView = false,
                 dragRotationHorizontalInset = dragRotationHorizontalInset,
                 isRenderingActive = isActive,
             )
@@ -221,7 +221,7 @@ private fun ExerciseAnimationPageWearPreview() {
             skeletonJson = rememberInspectionSkeletonJson(),
             modifier = Modifier.fillMaxSize(),
             animated = true,
-            orbitView = true,
+            orbitView = false,
         )
     }
 }

@@ -66,6 +66,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -136,6 +137,7 @@ fun ExerciseScreen(
         exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT
     val equipmentPickerOptions = remember(exercise.exerciseType, exercise.equipmentId, viewModel.workoutStore.equipments) {
         val equipmentOptions = viewModel.workoutStore.equipments
+            .filter { it.isCompatibleWith(exercise.exerciseType) }
             .sortedBy { it.name.lowercase() }
             .map { equipmentOption ->
                 ExerciseEquipmentPickerOption(
@@ -178,7 +180,9 @@ fun ExerciseScreen(
     }
     val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
     val showMovementPage = remember(exercise) { exercise.movementRef != null }
-    val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
+    val hasMuscleInfo = remember(exercise.muscleGroups, exercise.secondaryMuscleGroups) {
+        !exercise.muscleGroups.isNullOrEmpty() || !exercise.secondaryMuscleGroups.isNullOrEmpty()
+    }
     val showProgressionComparisonPage = remember(exercise) {
         !exercise.requiresLoadCalibration &&
             viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
@@ -201,7 +205,7 @@ fun ExerciseScreen(
             add(ExerciseHorizontalPage.INFO)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
-            //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
+            if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
             add(ExerciseHorizontalPage.EXERCISES)
@@ -407,7 +411,8 @@ fun ExerciseScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exerciseTitleComposable = exerciseTitleComposable,
-                                targetRepRange = buildTargetRepRange(exercise),
+                                targetRepRange = buildTargetRepRange(exercise, state)
+                                    .takeUnless { state.isWarmupSet },
                                 onEditModeEnabled = { isEditModeEnabled = true },
                                 onEditModeDisabled = { isEditModeEnabled = false }
                             )
@@ -1436,8 +1441,20 @@ private fun buildExerciseInfoSections(
     }
 }
 
-private fun buildTargetRepRange(exercise: Exercise): String? =
-    if (
+private fun buildTargetRepRange(
+    exercise: Exercise,
+    state: WorkoutState.Set,
+): String? {
+    if (state.isWarmupSet) {
+        val warmupReps = when (val set = state.set) {
+            is com.gabstra.myworkoutassistant.shared.sets.WeightSet -> set.reps
+            is com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet -> set.reps
+            else -> null
+        }
+        if (warmupReps != null && warmupReps > 0) return warmupReps.toString()
+    }
+
+    return if (
         (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
         exercise.minReps > 0 &&
         exercise.maxReps >= exercise.minReps
@@ -1450,6 +1467,7 @@ private fun buildTargetRepRange(exercise: Exercise): String? =
     } else {
         null
     }
+}
 
 private fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
