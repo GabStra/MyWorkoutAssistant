@@ -47,7 +47,7 @@ fun BreadcrumbTrail(
                 modifier = item.onClick?.let { onClick -> Modifier.clickable(onClick = onClick) }
                     ?: Modifier,
             )
-            if (!isCurrent) {
+            if (index < items.lastIndex) {
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,

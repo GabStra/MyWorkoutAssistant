@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -42,12 +41,6 @@ fun NavigationBreadcrumbs(
     if (items.isEmpty()) return
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(items, scrollState.maxValue) {
-        if (scrollState.maxValue > 0) {
-            scrollState.scrollTo(scrollState.maxValue)
-        }
-    }
-
     BreadcrumbTrail(
         items = items.map { item ->
             BreadcrumbTrailItem(
@@ -63,8 +56,7 @@ fun NavigationBreadcrumbs(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(scrollState)
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
 
