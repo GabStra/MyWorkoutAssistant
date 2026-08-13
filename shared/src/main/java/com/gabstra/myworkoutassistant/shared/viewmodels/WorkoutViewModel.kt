@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
@@ -288,6 +289,9 @@ open class WorkoutViewModel(
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
 
+    private val _dimmedScreenBrightness = mutableFloatStateOf(0.15f)
+    val dimmedScreenBrightness: State<Float> = _dimmedScreenBrightness
+
     private val _currentScreenDimmingState = mutableStateOf(false)
 
     val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
@@ -350,6 +354,10 @@ open class WorkoutViewModel(
     fun toggleKeepScreenOn() {
         _keepScreenOn.value = !_keepScreenOn.value
         rebuildScreenState()
+    }
+
+    fun setDimmedScreenBrightness(brightness: Float) {
+        _dimmedScreenBrightness.floatValue = brightness.coerceIn(0.05f, 0.50f)
     }
 
     fun setDimming(shouldDim: Boolean) {
@@ -2071,13 +2079,17 @@ open class WorkoutViewModel(
         val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
         val workoutsSnapshot = _workouts.value
         launchSessionHydration(SessionHydrationTrigger.START) {
+            // Publish Preparing before moving hydration to the IO dispatcher. Otherwise the
+            // workout destination can initially compose the previous session state and never
+            // visibly enter its minimum-duration preparation UI.
+            enterPreparingPhase()
+            rebuildScreenState()
+
             withContext(dispatchers.io) {
                 try {
                     clearCompletionPushCompleted()
                     _enableWorkoutNotificationFlow.value = null
                     _currentScreenDimmingState.value = false
-
-                    enterPreparingPhase()
 
                     resetWorkoutRuntimeState()
 
@@ -2176,7 +2188,11 @@ open class WorkoutViewModel(
             return false
         }
         if (currentExercise.exerciseType == ExerciseType.WEIGHT && equipmentId == null) return false
-        if (equipmentId != null && getEquipmentById(equipmentId) == null) return false
+        val requestedEquipment = equipmentId?.let(::getEquipmentById)
+        if (equipmentId != null && requestedEquipment == null) return false
+        if (requestedEquipment != null && !requestedEquipment.isCompatibleWith(currentExercise.exerciseType)) {
+            return false
+        }
         if (currentExercise.equipmentId == equipmentId) return true
 
         val oldMachine = stateMachine ?: return false
@@ -2186,7 +2202,7 @@ open class WorkoutViewModel(
             oldHistory = oldMachine.history
         ) ?: return false
 
-        val selectedEquipment = equipmentId?.let(::getEquipmentById)
+        val selectedEquipment = requestedEquipment
         val selectedEquipmentWeights = getWeightByEquipment(selectedEquipment)
         val preservedSetData = copySetData(currentState.currentSetData).let { setData ->
             when {

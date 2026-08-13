@@ -14,7 +14,13 @@ import java.util.UUID
 data class ResolvedExercise(
     val definition: ExerciseDefinition,
     val prescription: Exercise,
-)
+) {
+    val displayName: String
+        get() = prescription.resolvedName(definition)
+}
+
+fun Exercise.resolvedName(definition: ExerciseDefinition): String =
+    nameOverride?.trim()?.takeIf { it.isNotEmpty() } ?: definition.name
 
 data class ExerciseVariationResolution(
     val workoutStore: WorkoutStore,
@@ -61,7 +67,7 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
         val definition = exercise.exerciseDefinitionId?.let(updatedDefinitionsById::get)
             ?: return exercise
         return exercise.copy(
-            name = definition.name,
+            name = exercise.resolvedName(definition),
             exerciseType = definition.exerciseType, equipmentId = definition.equipmentId,
             bodyWeightPercentage = definition.bodyWeightPercentage,
             muscleGroups = definition.muscleGroups,
@@ -142,9 +148,13 @@ fun WorkoutStore.resolveExerciseVariation(
 
 fun Exercise.materializeDefinition(definition: ExerciseDefinition): Exercise {
     val localNotes = placementNotes ?: notes
+    val normalizedNameOverride = nameOverride?.trim()?.takeIf {
+        it.isNotEmpty() && it != definition.name
+    }
     return copy(
         exerciseDefinitionId = definition.id,
-        name = definition.name,
+        name = normalizedNameOverride ?: definition.name,
+        nameOverride = normalizedNameOverride,
         notes = localNotes,
         placementNotes = localNotes,
         exerciseType = definition.exerciseType,
@@ -191,10 +201,14 @@ fun WorkoutStore.migrateExerciseLibrary(): WorkoutStore {
             candidate.copy(id = deterministicExerciseDefinitionId(candidate.fingerprint()))
         }
         val localNotes = exercise.placementNotes?.takeIf { it.isNotBlank() } ?: exercise.notes
+        val normalizedNameOverride = exercise.nameOverride?.trim()?.takeIf {
+            it.isNotEmpty() && it != definition.name
+        }
         return exercise.copy(
             exerciseDefinitionId = definition.id,
             placementNotes = localNotes,
-            name = definition.name,
+            name = normalizedNameOverride ?: definition.name,
+            nameOverride = normalizedNameOverride,
             notes = localNotes,
             exerciseType = definition.exerciseType,
             equipmentId = definition.equipmentId,

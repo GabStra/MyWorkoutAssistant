@@ -57,7 +57,7 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                 
                 is Dumbbells -> {
                     if (equipment.availableDumbbells.isNotEmpty()) {
-                        markdown.append("- **Available Dumbbells**: ")
+                        markdown.append("- **Available Dumbbell Pairs**: ")
                         val dumbbellsStr = equipment.availableDumbbells
                             .sortedByDescending { it.weight }
                             .joinToString(", ") { "${formatNumber(it.weight)} kg x 2" }
@@ -465,11 +465,12 @@ private fun EquipmentType.toDisplayText(): String {
     return when (this) {
         EquipmentType.GENERIC -> "Generic"
         EquipmentType.BARBELL -> "Barbell"
-        EquipmentType.DUMBBELLS -> "Dumbbells"
+        EquipmentType.DUMBBELLS -> "Dumbbell Pair"
         EquipmentType.DUMBBELL -> "Dumbbell"
         EquipmentType.PLATELOADEDCABLE -> "Plate Loaded Cable"
         EquipmentType.WEIGHTVEST -> "Weight Vest"
         EquipmentType.MACHINE -> "Machine"
+        EquipmentType.CARDIO_MACHINE -> "Cardio Machine"
         EquipmentType.IRONNECK -> "Iron Neck"
         EquipmentType.ACCESSORY -> "Accessory"
     }

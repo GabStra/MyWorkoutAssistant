@@ -48,6 +48,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     jsonObject.addProperty("exerciseDefinitionId", it.toString())
                 }
                 src.placementNotes?.let { jsonObject.addProperty("placementNotes", it) }
+                src.nameOverride?.let { jsonObject.addProperty("nameOverride", it) }
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
 
@@ -344,6 +345,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 val placementNotes = jsonObject.get("placementNotes")?.let {
                     if (it.isJsonNull) null else it.asString
                 }
+                val nameOverride = jsonObject.get("nameOverride")?.let {
+                    if (it.isJsonNull) null else it.asString
+                }
 
                 Exercise(
                     id,
@@ -379,6 +383,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     movementRef,
                     exerciseDefinitionId,
                     placementNotes,
+                    nameOverride,
                 )
             }
 

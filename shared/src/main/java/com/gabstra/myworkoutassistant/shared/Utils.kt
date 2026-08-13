@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
@@ -78,6 +79,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
@@ -123,6 +125,7 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
@@ -184,6 +187,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -214,6 +218,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -477,6 +482,7 @@ private fun appBackupArchiveGsonBuilder(): GsonBuilder {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())

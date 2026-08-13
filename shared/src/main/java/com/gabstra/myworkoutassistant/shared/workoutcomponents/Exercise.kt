@@ -46,6 +46,8 @@ data class Exercise (
     val exerciseDefinitionId: UUID? = null,
     /** Notes specific to this workout occurrence. */
     val placementNotes: String? = null,
+    /** Optional workout-specific display name. Null follows the linked definition name. */
+    val nameOverride: String? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds

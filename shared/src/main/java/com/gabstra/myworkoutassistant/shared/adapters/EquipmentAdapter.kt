@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -67,6 +68,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                     addProperty("maxExtraWeightsPerLoadingPoint", machine.maxExtraWeightsPerLoadingPoint)
                     add("extraWeights", context.serialize(machine.extraWeights))
                 }
+                EquipmentType.CARDIO_MACHINE -> {}
                 EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment serialization not yet implemented")
             }
         }
@@ -145,6 +147,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                     maxExtraWeightsPerLoadingPoint = maxExtraWeightsPerLoadingPoint,
                 )
             }
+            EquipmentType.CARDIO_MACHINE -> CardioMachine(id = id, name = name)
             EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment deserialization not yet implemented")
             EquipmentType.PLATELOADEDCABLE -> {
                 val plateListType = object : TypeToken<List<Plate>>() {}.type

@@ -7,6 +7,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
@@ -118,6 +119,7 @@ fun equipmentToJSON(
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightVest::class.java, EquipmentAdapter())
