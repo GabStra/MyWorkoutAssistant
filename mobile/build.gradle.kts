@@ -172,8 +172,8 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
-    implementation("com.openai:openai-java:4.45.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
+    implementation("com.openai:openai-java:4.50.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
