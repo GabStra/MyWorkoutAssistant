@@ -606,6 +606,27 @@ fun ensureRestSeparatedByExercises(components: List<WorkoutComponent>): List<Wor
 
 @SuppressLint("SuspiciousModifierThen")
 @OptIn(ExperimentalComposeUiApi::class)
+private data class LongPressRepeatSpeedStage(
+    val holdTimeMillis: Long,
+    val intervalMillis: Long,
+)
+
+private val DefaultLongPressRepeatSpeedStages = listOf(
+    LongPressRepeatSpeedStage(holdTimeMillis = 0L, intervalMillis = 150L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 1_500L, intervalMillis = 100L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 3_000L, intervalMillis = 60L),
+)
+
+private fun resolveLongPressRepeatInterval(
+    elapsedHoldMillis: Long,
+    fallbackIntervalMillis: Long,
+): Long = DefaultLongPressRepeatSpeedStages
+    .lastOrNull { elapsedHoldMillis >= it.holdTimeMillis }
+    ?.intervalMillis
+    ?: fallbackIntervalMillis
+
+@SuppressLint("SuspiciousModifierThen")
+@OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.repeatActionOnLongPressOrTap(
     coroutineScope: CoroutineScope,
     thresholdMillis: Long = 5000L,
@@ -619,10 +640,16 @@ fun Modifier.repeatActionOnLongPressOrTap(
             onPress = { _ ->
                 val job = coroutineScope.launch {
                     delay(thresholdMillis)
+                    val repeatStartMillis = System.currentTimeMillis()
                     do {
                         repeatedActionHappening = true
                         onAction()
-                        delay(intervalMillis)
+                        delay(
+                            resolveLongPressRepeatInterval(
+                                elapsedHoldMillis = System.currentTimeMillis() - repeatStartMillis,
+                                fallbackIntervalMillis = intervalMillis,
+                            )
+                        )
                     } while (true)
                 }
                 tryAwaitRelease()
@@ -654,8 +681,14 @@ fun Modifier.repeatActionOnLongPress(
                 val job = coroutineScope.launch {
                     delay(thresholdMillis)
                     onBeforeLongPressRepeat()
+                    val repeatStartMillis = System.currentTimeMillis()
                     do {
-                        delay(intervalMillis)
+                        delay(
+                            resolveLongPressRepeatInterval(
+                                elapsedHoldMillis = System.currentTimeMillis() - repeatStartMillis,
+                                fallbackIntervalMillis = intervalMillis,
+                            )
+                        )
                         onLongPressRepeat()
                     } while (isActive)
                 }

@@ -3,20 +3,22 @@ package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,20 +29,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.AlertSoundPreferences
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import kotlin.math.roundToInt
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun PageButtons(
     updatedState: WorkoutState.Set,
     viewModel: WorkoutViewModel,
@@ -51,6 +57,18 @@ fun PageButtons(
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
     val context = LocalContext.current
+    var alertSoundEnabled by rememberSaveable {
+        mutableStateOf(AlertSoundPreferences.isEnabled(context))
+    }
+    val updateAlertSoundEnabled: (Boolean) -> Unit = { enabled ->
+        alertSoundEnabled = enabled
+        AlertSoundPreferences.setEnabled(context, enabled)
+        if (enabled) {
+            hapticsViewModel.doHardVibrationWithBeep()
+        } else {
+            hapticsViewModel.doGentleVibration()
+        }
+    }
 
     var showGoBackDialog by rememberSaveable { mutableStateOf(false) }
     var showSkipExerciseDialog by rememberSaveable { mutableStateOf(false) }
@@ -67,6 +85,17 @@ fun PageButtons(
         currentWorkoutState.exerciseId == updatedState.exerciseId &&
         currentWorkoutState.set.id == updatedState.set.id
     val keepScreenOn by viewModel.keepScreenOn
+    val dimmedScreenBrightness by viewModel.dimmedScreenBrightness
+    val exerciseKeepsScreenOn = exercise.keepScreenOn
+    val keepScreenOnChecked = exerciseKeepsScreenOn || keepScreenOn
+    val keepScreenOnEnabled = !exerciseKeepsScreenOn
+    val keepScreenOnStatus = when {
+        exerciseKeepsScreenOn -> "On for this exercise"
+        keepScreenOn -> "On for this workout"
+        else -> "Can dim for this exercise"
+    }
+    val showNavigationSection = !isHistoryEmpty
+    val showExerciseSection = isMovementSet
 
     val state = rememberLazyListState()
 
@@ -113,14 +142,15 @@ fun PageButtons(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 35.dp),
+            .padding(horizontal = 12.dp),
         state = state,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item {
-            PageButtonsSectionHeader("Navigation")
+        if (showNavigationSection) {
+            item {
+                PageButtonsSectionHeader("Navigation")
+            }
         }
 
         if (!isHistoryEmpty) {
@@ -141,9 +171,14 @@ fun PageButtons(
             }
         }
 
-        item {
-            Spacer(modifier = Modifier.height(4.dp))
-            PageButtonsSectionHeader("Exercise")
+        if (showNavigationSection && showExerciseSection) {
+            item { Spacer(modifier = Modifier.height(10.dp)) }
+        }
+
+        if (showExerciseSection) {
+            item {
+                PageButtonsSectionHeader("Exercise")
+            }
         }
 
         if (canChangeEquipment) {
@@ -191,43 +226,193 @@ fun PageButtons(
             }
         }
 
+        item { Spacer(modifier = Modifier.height(10.dp)) }
+        item { PageButtonsSectionHeader("Preferences") }
+
         item {
-            Spacer(modifier = Modifier.height(4.dp))
-            PageButtonsSectionHeader("Preferences")
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+                onClick = {
+                    updateAlertSoundEnabled(!alertSoundEnabled)
+                },
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Alert sound", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = if (alertSoundEnabled) {
+                                "Critical alerts vibrate and beep"
+                            } else {
+                                "Critical alerts vibrate only"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                        )
+                    }
+                    Switch(
+                        checked = alertSoundEnabled,
+                        onCheckedChange = updateAlertSoundEnabled,
+                    )
+                }
+            }
         }
 
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.extraLarge,
-                colors = CardDefaults.cardColors()
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f),
+                ),
+                enabled = keepScreenOnEnabled,
+                onClick = {
+                    hapticsViewModel.doGentleVibration()
+                    viewModel.toggleKeepScreenOn()
+                },
             ) {
-                ListItem(
-                    headlineContent = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         Text(
                             text = "Keep screen on",
                             style = MaterialTheme.typography.titleMedium
                         )
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = keepScreenOn,
-                            onCheckedChange = {
-                                hapticsViewModel.doGentleVibration()
-                                viewModel.toggleKeepScreenOn()
-                            }
+                        Text(
+                            text = keepScreenOnStatus,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(20.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                            maxLines = 1,
                         )
-                    },
-                    // Make ListItem use the Card's container color
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
+                    }
+                    Switch(
+                        checked = keepScreenOnChecked,
+                        enabled = keepScreenOnEnabled,
+                        onCheckedChange = {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.toggleKeepScreenOn()
+                        }
+                    )
+                }
             }
         }
 
         item {
-            Spacer(modifier = Modifier.height(4.dp))
-            PageButtonsSectionHeader("Session")
+            val dimSliderTrackColor = lerp(
+                start = MaterialTheme.colorScheme.secondaryContainer,
+                stop = MaterialTheme.colorScheme.background,
+                fraction = 0.45f,
+            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Dim brightness",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    Text(
+                        text = "Brightness used after the screen becomes inactive",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Slider(
+                            value = dimmedScreenBrightness,
+                            onValueChange = { brightness ->
+                                viewModel.setDimmedScreenBrightness(snapDimmedScreenBrightness(brightness))
+                            },
+                            onValueChangeFinished = {
+                                WorkoutDisplayPreferences.setDimmedScreenBrightness(
+                                    context = context,
+                                    brightness = viewModel.dimmedScreenBrightness.value,
+                                )
+                                hapticsViewModel.doGentleVibration()
+                            },
+                            modifier = Modifier.weight(1f),
+                            valueRange = MinimumDimmedScreenBrightness..MaximumDimmedScreenBrightness,
+                            steps = (
+                                (MaximumDimmedScreenBrightness - MinimumDimmedScreenBrightness) /
+                                    DimmedScreenBrightnessStep
+                                ).roundToInt() - 1,
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = dimSliderTrackColor,
+                                activeTickColor = dimSliderTrackColor,
+                                inactiveTickColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.55f),
+                            ),
+                            track = { sliderState ->
+                                SliderDefaults.Track(
+                                    sliderState = sliderState,
+                                    colors = SliderDefaults.colors(
+                                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                                        inactiveTrackColor = dimSliderTrackColor,
+                                        activeTickColor = dimSliderTrackColor,
+                                        inactiveTickColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.55f),
+                                    ),
+                                    thumbTrackGapSize = 0.dp,
+                                )
+                            },
+                        )
+                        Text(
+                            text = formatDimmedScreenBrightnessPercent(dimmedScreenBrightness),
+                            modifier = Modifier.width(48.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.End,
+                        )
+                    }
+                }
+            }
         }
+
+        item { Spacer(modifier = Modifier.height(10.dp)) }
+        item { PageButtonsSectionHeader("Session") }
 
         if (isActiveSetPage) {
             item {
@@ -354,9 +539,9 @@ private fun PageButtonsSectionHeader(text: String) {
     Text(
         text = text.uppercase(),
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onBackground,
         textAlign = TextAlign.Center
     )
 }

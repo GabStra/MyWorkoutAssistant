@@ -48,7 +48,7 @@ fun WorkoutCompleteScreen(
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
 
-    val headerStyle = MaterialTheme.typography.titleSmall
+    val headerStyle = MaterialTheme.typography.titleMedium
     var completionSaved by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit){
@@ -58,7 +58,7 @@ fun WorkoutCompleteScreen(
         prefs.edit { putBoolean("isWorkoutInProgress", false) }
 
         viewModel.setDimming(false)
-        hapticsViewModel.doShortImpulse()
+        hapticsViewModel.doShortImpulseWithBeep()
 
         viewModel.pushAndStoreWorkoutData(
             isDone = true,
@@ -76,12 +76,12 @@ fun WorkoutCompleteScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(30.dp)
+            .padding(horizontal = 16.dp, vertical = 20.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
                 text = "Completed",
@@ -90,7 +90,7 @@ fun WorkoutCompleteScreen(
             )
             ScalableText(
                 text = workout.name,
-                style = MaterialTheme.typography.displayLarge
+                style = MaterialTheme.typography.headlineLarge
             )
         }
 

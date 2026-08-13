@@ -1,10 +1,5 @@
 package com.gabstra.myworkoutassistant.workout
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -15,11 +10,11 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -28,6 +23,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,18 +33,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.screens.ExerciseMovementPreviewPage
-import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
+import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Job
@@ -57,7 +54,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 enum class PageType {
-    BUTTONS, INFO, PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, MOVEMENT
+    BUTTONS, INFO, PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, MOVEMENT, REST_TIMER
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -68,11 +65,12 @@ fun ExerciseScreen(
     state: WorkoutState.Set,
     hearthRateChart: @Composable () -> Unit,
     onLeaveWorkout: () -> Unit = {},
+    onExerciseDetailPageVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
 
-    val exercise = viewModel.exercisesById[state.exerciseId]!!
+    val exercise = viewModel.exercisesById[state.exerciseId] ?: return
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     val canChangeEquipment = remember(exercise, state.isCalibrationSet) {
         !state.isCalibrationSet &&
@@ -80,7 +78,9 @@ fun ExerciseScreen(
                 exercise.exerciseType == ExerciseType.BODY_WEIGHT)
     }
     val equipmentOptions = remember(exercise.exerciseType, exercise.equipmentId, viewModel.workoutStore.equipments) {
-        val availableEquipment = viewModel.workoutStore.equipments.sortedBy { it.name.lowercase() }
+        val availableEquipment = viewModel.workoutStore.equipments
+            .filter { it.isCompatibleWith(exercise.exerciseType) }
+            .sortedBy { it.name.lowercase() }
         if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
             listOf(null) + availableEquipment
         } else {
@@ -104,9 +104,11 @@ fun ExerciseScreen(
     }
 
     val showMovementPage = remember(exercise.movementRef) { exercise.movementRef != null }
-    val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
+    val hasMuscleInfo = remember(exercise.muscleGroups, exercise.secondaryMuscleGroups) {
+        !exercise.muscleGroups.isNullOrEmpty() || !exercise.secondaryMuscleGroups.isNullOrEmpty()
+    }
 
-    val pageTypes = remember(showPlatesPage, hasMuscleInfo, showMovementPage) {
+    val pageTypes = remember(showPlatesPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
             add(PageType.BUTTONS)
             add(PageType.INFO)
@@ -114,7 +116,6 @@ fun ExerciseScreen(
             add(PageType.EXERCISE_DETAIL)
             if (hasMuscleInfo) add(PageType.MUSCLES)
             add(PageType.EXERCISES)
-            if (showMovementPage) add(PageType.MOVEMENT)
         }
     }
 
@@ -126,20 +127,16 @@ fun ExerciseScreen(
         pageTypes.indexOf(PageType.EXERCISE_DETAIL)
     }
 
-    val musclesPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.MUSCLES)
-    }
-
     val platesPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.PLATES)
     }
 
-    val pagerState = rememberPagerState(
-        initialPage = exerciseDetailPageIndex,
-        pageCount = {
-            pageTypes.size
-        }
-    )
+    val pagerState = key(state.set.id, showPlatesPage) {
+        rememberPagerState(
+            initialPage = exerciseDetailPageIndex,
+            pageCount = { pageTypes.size },
+        )
+    }
 
     LaunchedEffect(state.set.id) {
         if (pagerState.currentPage != exerciseDetailPageIndex) {
@@ -169,8 +166,6 @@ fun ExerciseScreen(
 
     var marqueeEnabled by remember { mutableStateOf(false) }
 
-    val captionStyle = MaterialTheme.typography.bodySmall
-
     val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
@@ -189,7 +184,16 @@ fun ExerciseScreen(
     val context = LocalContext.current
 
     LaunchedEffect(pagerState.currentPage) {
+        onExerciseDetailPageVisibilityChanged(
+            pagerState.currentPage == exerciseDetailPageIndex,
+        )
         val isOnPlatesPage = pagerState.currentPage == platesPageIndex
+
+        // Match Wear: edit mode only belongs to the exercise-detail page. If navigation
+        // leaves it through the indicator or a programmatic page change, restore paging.
+        if (pagerState.currentPage != exerciseDetailPageIndex) {
+            allowHorizontalScrolling = true
+        }
 
         if (isOnPlatesPage) {
             viewModel.setDimming(false)
@@ -202,53 +206,70 @@ fun ExerciseScreen(
         }
     }
 
-    AnimatedContent(
-        targetState = state.exerciseId to state.set.id,
-        transitionSpec = {
-            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-        }, label = ""
-    ) { targetState ->
-        val animatedExerciseId = targetState.first
-        val animatedExercise = remember(animatedExerciseId, exercise) {
-            viewModel.exercisesById[animatedExerciseId] ?: exercise
+        val animatedExercise = exercise
+        val targetRepRange = remember(animatedExercise, state.set, state.isWarmupSet) {
+            buildTargetRepRange(animatedExercise, state)
         }
-
+        val activeExerciseContext = buildActiveExerciseContextLabel(
+            setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
+            setCounterKind = displayCounterKindForSetState(state),
+            unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
+            intraSetTotal = state.intraSetTotal,
+        )
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                ScrollableTextColumn(
-                    text = animatedExercise.name,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 25.dp)
-                        .combinedClickable(
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                marqueeEnabled = !marqueeEnabled
-                            },
-                            onLongClick = {
-                                providedOnLongClick.invoke()
-                            }
-                        ),
-                    maxLines = 2,
-                    style = MaterialTheme.typography.titleLarge,
-                    textAlign = TextAlign.Center
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.5.dp),
+                ) {
+                    ScrollableTextColumn(
+                        text = animatedExercise.name,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .combinedClickable(
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    marqueeEnabled = !marqueeEnabled
+                                },
+                                onLongClick = providedOnLongClick,
+                            ),
+                        maxLines = 2,
+                        style = mobileWorkoutPageTitleStyle(),
+                        textAlign = TextAlign.Center,
+                    )
+                    activeExerciseContext?.let { contextLabel ->
+                        Text(
+                            text = contextLabel,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
             }
 
         CustomHorizontalPager(
             modifier = Modifier.fillMaxSize()
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
+                        var gestureInProgress = false
                         while (true) {
                             val event = awaitPointerEvent()
-                            if (event.changes.any { it.pressed }) {
+                            val hasPressedPointer = event.changes.any { it.pressed }
+                            if (hasPressedPointer && !gestureInProgress) {
                                 restartGoBack()
                             }
+                            gestureInProgress = hasPressedPointer
                         }
                     }
                 },
             pagerState = pagerState,
-            userScrollEnabled = (pagerState.currentPage == exerciseDetailPageIndex) && allowHorizontalScrolling,
+            userScrollEnabled = allowHorizontalScrolling,
+            beyondViewportPageCount = 1,
+            pageLabel = { index -> pageTypes[index].mobileLabel() },
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
@@ -258,16 +279,7 @@ fun ExerciseScreen(
                     equipmentName = equipment?.name,
                     accessoryNames = accessoryEquipments.map { it.name },
                     notes = animatedExercise.notes,
-                    targetRepRange = if (
-                        animatedExercise.minReps > 0 &&
-                        animatedExercise.maxReps >= animatedExercise.minReps
-                    ) {
-                        if (animatedExercise.minReps == animatedExercise.maxReps) {
-                            animatedExercise.minReps.toString()
-                        } else {
-                            "${animatedExercise.minReps}-${animatedExercise.maxReps}"
-                        }
-                    } else null,
+                    targetRepRange = targetRepRange,
                     progressionLabel = state.progressionState?.name
                         ?.lowercase()
                         ?.replaceFirstChar { it.uppercase() },
@@ -276,120 +288,32 @@ fun ExerciseScreen(
 
                 PageType.PLATES -> PagePlates(state, equipment)
                 PageType.EXERCISE_DETAIL -> ExerciseDetail(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
                     updatedState = state,
                     viewModel = viewModel,
                     onEditModeDisabled = { allowHorizontalScrolling = true },
                     onEditModeEnabled = { allowHorizontalScrolling = false },
                     onTimerDisabled = { },
                     onTimerEnabled = { },
-                    extraInfo = { _ ->
-                        val isWarmupSet = remember(state.set) {
-                            when(val set = state.set) {
-                                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                                else -> false
-                            }
-                        }
-                        
-                        val isCalibrationSet = remember(state.isCalibrationSet) {
-                            state.isCalibrationSet
-                        }
-                        val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) {
-                            state.isAutoRegulationWorkSet
-                        }
-
-                        val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
-                            if (isSuperset) {
-                                viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                            } else null
-                        }
-                        val supersetIndex = remember(supersetExercises, animatedExercise) {
-                            supersetExercises?.indexOf(animatedExercise)
-                        }
-                        
-                        val sideIndicator = remember(state.intraSetTotal) {
-                            if (state.intraSetTotal != null) {
-                                "① ↔ ②"
-                            } else null
-                        }
-                        
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            // Metadata strip
-                            ExerciseMetadataStrip(
-                                exerciseLabel = if (isSuperset) {
-                                    "Superset: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
-                                } else {
-                                    "Exercise: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
-                                },
-                                supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
-                                    "Exercise: ${supersetIndex + 1}/${supersetExercises!!.size}"
-                                } else null,
-                                setLabel = viewModel.getSetCounterForExercise(
-                                    state.exerciseId,
-                                    state
-                                )?.let { (current, total) ->
-                                    if (total > 1) "Set: $current/$total" else null
-                                },
-                                sideIndicator = sideIndicator,
-                                currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
-                                isUnilateral = state.isUnilateral,
-                                equipmentName = equipment?.name,
-                                accessoryNameList = accessoryEquipments.map { it.name },
-                                textColor = MaterialTheme.colorScheme.onBackground,
-                                onTap = {
-                                    hapticsViewModel.doGentleVibration()
-                                }
+                    extraInfo = if (showMovementPage) {
+                        { _ ->
+                            ExerciseMovementPreviewPage(
+                                exercise = animatedExercise,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp),
                             )
-                            
-                            // Status badges row
-                            if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (isWarmupSet) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                            Text(
-                                                text = "Warm-up",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
-                                    if (isCalibrationSet) {
-                                        Text(
-                                            text = "This exercise is waiting to be calibrated.",
-                                            style = captionStyle,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                    if (isAutoRegulationWorkSet) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.tertiary) {
-                                            Text(
-                                                text = "Auto-regulation",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.onTertiary,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
-                                }
-                            }
                         }
+                    } else {
+                        null
                     },
                     exerciseTitleComposable = exerciseTitleComposable,
+                    targetRepRange = targetRepRange.takeUnless { state.isWarmupSet },
                     hapticsViewModel = hapticsViewModel,
-                    customComponentWrapper = { content ->
-                        content()
-                    }
+                    heartRateChart = hearthRateChart,
+                    customComponentWrapper = { content -> content() }
                 )
 
                 PageType.MUSCLES -> PageMuscles(exercise = animatedExercise)
@@ -412,10 +336,7 @@ fun ExerciseScreen(
                     progressionLabel = null,
                     plateauReason = null
                 )
-                PageType.MOVEMENT -> ExerciseMovementPreviewPage(
-                    exercise = animatedExercise,
-                    modifier = Modifier.fillMaxSize()
-                )
+                PageType.MOVEMENT -> Unit
                 PageType.BUTTONS -> PageButtons(
                     updatedState = state,
                     viewModel = viewModel,
@@ -427,6 +348,7 @@ fun ExerciseScreen(
                     },
                     onLeaveWorkout = onLeaveWorkout
                 )
+                PageType.REST_TIMER -> Unit
             }
         }
 
@@ -489,10 +411,6 @@ fun ExerciseScreen(
             },
             handleYesClick = {
 
-                if (state.intraSetTotal != null) {
-                    state.intraSetCounter++
-                }
-
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
                 when {
@@ -505,7 +423,8 @@ fun ExerciseScreen(
                         viewModel.lightScreenUp()
                     }
                     else -> {
-                        viewModel.pushAndStoreWorkoutData(false, context) {
+                        val isDone = viewModel.isNextStateCompleted()
+                        viewModel.pushAndStoreWorkoutData(isDone, context) {
                             viewModel.goToNextState()
                             viewModel.lightScreenUp()
                         }
@@ -553,13 +472,67 @@ fun ExerciseScreen(
                 .clip(CircleShape),
         ) {
         }*/
-    }
-
     DisposableEffect(Unit) {
         onDispose {
             goBackJob?.cancel()
+            onExerciseDetailPageVisibilityChanged(true)
         }
     }
+}
+
+private fun buildTargetRepRange(
+    exercise: com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise,
+    state: WorkoutState.Set,
+): String? {
+    if (state.isWarmupSet) {
+        val warmupReps = when (val set = state.set) {
+            is com.gabstra.myworkoutassistant.shared.sets.WeightSet -> set.reps
+            is com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet -> set.reps
+            else -> null
+        }
+        if (warmupReps != null && warmupReps > 0) return warmupReps.toString()
+    }
+
+    return if (
+        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+        exercise.minReps > 0 &&
+        exercise.maxReps >= exercise.minReps
+    ) {
+        if (exercise.minReps == exercise.maxReps) exercise.minReps.toString()
+        else "${exercise.minReps}-${exercise.maxReps}"
+    } else null
+}
+
+private fun buildActiveExerciseContextLabel(
+    setCounter: Pair<Int, Int>?,
+    setCounterKind: SetDisplayCounterKind?,
+    unilateralSideIndex: UInt?,
+    intraSetTotal: UInt?,
+): String? = listOfNotNull(
+    setCounter?.let { (current, total) ->
+        val label = when (setCounterKind) {
+            SetDisplayCounterKind.Warmup -> "WARM-UP"
+            SetDisplayCounterKind.Work -> "WORK SET"
+            SetDisplayCounterKind.Calibration -> "CALIBRATION"
+            null -> "SET"
+        }
+        "$label $current/$total"
+    },
+    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
+        ?.removePrefix("-")
+        ?.let { side -> "SIDE $side" },
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
+private fun PageType.mobileLabel(): String = when (this) {
+    PageType.BUTTONS -> "Workout controls"
+    PageType.INFO -> "Exercise info"
+    PageType.PLATES -> "Barbell guide"
+    PageType.EXERCISE_DETAIL -> "Current set"
+    PageType.MUSCLES -> "Muscle groups"
+    PageType.EXERCISES -> "Workout steps"
+    PageType.NOTES -> "Exercise notes"
+    PageType.MOVEMENT -> "Exercise movement"
+    PageType.REST_TIMER -> "Rest timer"
 }
 
 @Composable
@@ -576,8 +549,8 @@ private fun ExerciseSessionInfoPage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
         ExerciseInfoSection("Exercise", listOf(exerciseName))
         targetRepRange?.let { ExerciseInfoSection("Target reps", listOf(it)) }
@@ -591,22 +564,27 @@ private fun ExerciseSessionInfoPage(
 
 @Composable
 private fun ExerciseInfoSection(title: String, lines: List<String>) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(
             text = title.uppercase(),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
-        lines.forEach { line ->
+        lines.forEachIndexed { index, line ->
             Text(
                 text = line,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = if (index == 0) 7.dp else 10.dp),
+                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
             )
         }
-        HorizontalDivider(
-            modifier = Modifier.padding(top = 8.dp),
-            color = MaterialTheme.colorScheme.outlineVariant
-        )
     }
 }

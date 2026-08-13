@@ -1,10 +1,13 @@
 package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,40 +22,42 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.gabstra.myworkoutassistant.repeatActionOnLongPress
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private val MobileConfirmationIndicatorSize = 96.dp
+private val MobileConfirmationButtonSize = 72.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
-    title: String = "Confirm Exit",
-    message: String = "Do you really want to exit?",
+    title: String = "Exit workout",
+    message: String = "Do you want to leave this workout?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
     closeTimerInMillis: Long = 0,
@@ -64,38 +69,68 @@ fun CustomDialogYesOnLongPress(
 
     // Use system default when holdTimeInMillis is 0, otherwise use provided value
     val effectiveHoldTime = if (holdTimeInMillis > 0) holdTimeInMillis else systemLongPressTimeout
+    val holdDurationMillis = effectiveHoldTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     var hasBeenShownOnce by remember { mutableStateOf(false) }
 
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
+    var confirmHoldJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
-    val longPressCoroutineScope = rememberCoroutineScope()
-
-    var currentMillis by remember { mutableLongStateOf(0) }
-
-    var showProgressBar by remember { mutableStateOf(false) }
+    val holdProgress = remember { Animatable(0f) }
+    val latestHandleNoClick by rememberUpdatedState(handleNoClick)
+    val latestHandleYesClick by rememberUpdatedState(handleYesClick)
+    val latestHandleOnAutomaticClose by rememberUpdatedState(handleOnAutomaticClose)
 
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
+    var hasHandledDialogAction by remember { mutableStateOf(false) }
 
-    val progress = if (effectiveHoldTime > 0) {
-        (currentMillis.toFloat() / effectiveHoldTime.toFloat()).coerceAtMost(1f)
-    } else {
-        0f
+    fun cancelAutomaticCloseTimer() {
+        closeDialogJob?.cancel()
+        closeDialogJob = null
     }
 
-    var startTime by remember { mutableLongStateOf(0) }
+    fun cancelConfirmHold() {
+        confirmHoldJob?.cancel()
+        confirmHoldJob = null
+    }
+
+    fun runNoClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
+        latestHandleNoClick()
+    }
+
+    fun runAutomaticClose() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelConfirmHold()
+        latestHandleOnAutomaticClose()
+    }
+
+    fun runYesClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        latestHandleYesClick()
+    }
 
     fun startAutomaticCloseTimer() {
-        closeDialogJob?.cancel()
+        cancelAutomaticCloseTimer()
         closeDialogJob = coroutineScope.launch {
             delay(closeTimerInMillis)
-            handleOnAutomaticClose()
+            runAutomaticClose()
         }
     }
 
     LaunchedEffect(show) {
         if (show) {
             hasBeenShownOnce = true
+            hasHandledDialogAction = false
+        } else {
+            cancelAutomaticCloseTimer()
+            cancelConfirmHold()
         }
 
         if (hasBeenShownOnce) {
@@ -106,165 +141,158 @@ fun CustomDialogYesOnLongPress(
             startAutomaticCloseTimer()
         }
 
+        confirmHoldJob?.cancel()
         hasBeenPressedLongEnough = false
-        currentMillis = 0
+        holdProgress.snapTo(0f)
     }
 
-    LaunchedEffect(currentMillis){
-        // Only auto-trigger if dialog is shown, hold time is set, and threshold is reached
-        if (show && currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
-            hasBeenPressedLongEnough = true
-            longPressCoroutineScope.coroutineContext.cancelChildren()
-            coroutineScope.launch {
-                delay(100)
-                handleYesClick()
-                showProgressBar = false
-                currentMillis = 0
+    fun startConfirmHold() {
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
+        hasBeenPressedLongEnough = false
+        confirmHoldJob = coroutineScope.launch {
+            holdProgress.snapTo(0f)
+            holdProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = holdDurationMillis,
+                    easing = LinearEasing,
+                ),
+            )
+            if (show && !hasBeenPressedLongEnough) {
+                hasBeenPressedLongEnough = true
+                runYesClick()
+                holdProgress.snapTo(0f)
             }
         }
     }
 
-    fun onBeforeLongPressRepeat() {
-        closeDialogJob?.cancel()
-        hasBeenPressedLongEnough = false
-        showProgressBar = true
-        currentMillis = 0
-
-        startTime = System.currentTimeMillis()
-    }
-
-    fun onLongPressRepeat() {
-        val currentTime = System.currentTimeMillis()
-        currentMillis = currentTime - startTime
-    }
-
-    fun onRelease() {
-
-        showProgressBar = false
-        currentMillis = 0
-        startTime = 0
-        hasBeenPressedLongEnough = false
-
-        if (show && closeTimerInMillis > 0) {
+    fun stopConfirmHold() {
+        confirmHoldJob?.cancel()
+        confirmHoldJob = null
+        coroutineScope.launch { holdProgress.snapTo(0f) }
+        if (show && closeTimerInMillis > 0 && !hasBeenPressedLongEnough) {
             startAutomaticCloseTimer()
         }
+        hasBeenPressedLongEnough = false
     }
 
-    val density = LocalDensity.current.density
    if(show){
         Dialog(
             onDismissRequest = {  },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false)
         ) {
-            BoxWithConstraints(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
+                Column(
                     modifier = Modifier
-                        .size((constraints.maxWidth/density).dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
+                    Text(
+                        text = title,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = message,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Hold check to confirm",
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(
-                            text = title,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(20.dp,8.dp)
-                        )
-                        Text(
-                            text = message,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(8.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
+                        FilledTonalIconButton(
+                            onClick = {
+                                runNoClick()
+                            },
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .size(72.dp)
+                                .clip(CircleShape),
                         ) {
-                            EnhancedIconButton(
-                                buttonSize = 50.dp,
-                                hitBoxScale = 2f,
-                                onClick = {
-                                    closeDialogJob?.cancel()
-                                    handleNoClick()
+                            Icon(
+                                modifier = Modifier.size(36.dp),
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(32.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(MobileConfirmationIndicatorSize)
+                                .pointerInput(show, holdDurationMillis) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            startConfirmHold()
+                                            try {
+                                                tryAwaitRelease()
+                                            } finally {
+                                                stopConfirmHold()
+                                            }
+                                        }
+                                    )
                                 },
-                                buttonModifier = Modifier
-                                    .clip(CircleShape),
-                            ) {
-                                Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Close, contentDescription = "Close",tint = MaterialTheme.colorScheme.onBackground)
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (holdProgress.value > 0f) {
+                                CircularProgressIndicator(
+                                    progress = { holdProgress.value },
+                                    modifier = Modifier.size(MobileConfirmationIndicatorSize),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    strokeWidth = 6.dp,
+                                    trackColor = MediumDarkGray,
+                                )
                             }
-                            Spacer(modifier = Modifier.width(5.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(100.dp)
-                                    .repeatActionOnLongPress(
-                                        longPressCoroutineScope,
-                                        thresholdMillis = 10,
-                                        intervalMillis = 10,
-                                        onPressStart = { },
-                                        onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
-                                        onLongPressRepeat = { onLongPressRepeat() },
-                                        onRelease = { onRelease() }
-                                    ),
+                                    .size(MobileConfirmationButtonSize)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary),
-                                    contentAlignment = Alignment.Center
-                                ){
-                                    Icon(
-                                        modifier = Modifier.size(25.dp),
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Done",
-                                        tint = MaterialTheme.colorScheme.background
-                                    )
-                                }
+                                Icon(
+                                    modifier = Modifier.size(36.dp),
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Done",
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
                             }
                         }
                     }
-
-                    if (showProgressBar) {
-                        CircularProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxSize().padding(10.dp),
-                            //.graphicsLayer(alpha = progressBarAlpha),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 4.dp,
-                            trackColor = MediumDarkGray,
-                        )
-                    }
                 }
-
-
             }
-
-/*            val progressBarAlpha: Float by animateFloatAsState(
-                targetValue = if (showProgressBar) 1f else 0f,
-                animationSpec = if (showProgressBar) {
-                    tween(durationMillis = 100)
-                } else {
-                    snap()
-                },
-                label = "DialogProgressBarAlpha"
-            )*/
-
-
 
         }
     }
 }
-

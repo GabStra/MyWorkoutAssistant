@@ -11,12 +11,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.MuscleHeatMapBackground
+import com.gabstra.myworkoutassistant.shared.PrimaryMuscleGroupColor
+import com.gabstra.myworkoutassistant.shared.SecondaryMuscleGroupColor
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
@@ -55,11 +60,20 @@ fun PageMuscles(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
+        Text(
+            text = "Muscle groups",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+        )
+
         if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
                 text = "No muscle groups",
+                modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         } else {
             MuscleHeatMap(
@@ -69,10 +83,10 @@ fun PageMuscles(
                 activeMuscles = muscleGroups,
                 secondaryMuscles = secondaryMuscleGroups,
                 viewMode = effectiveViewMode,
-                highlightColor = MaterialTheme.colorScheme.primary,
-                secondaryHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                baseColor = MaterialTheme.colorScheme.surface,
-                outlineColor = MaterialTheme.colorScheme.surface
+                highlightColor = PrimaryMuscleGroupColor,
+                secondaryHighlightColor = SecondaryMuscleGroupColor,
+                baseColor = MuscleHeatMapBackground,
+                outlineColor = MuscleHeatMapBackground,
             )
         }
     }
@@ -116,5 +130,4 @@ private fun PageMusclesPreview() {
         PageMuscles(exercise = sampleExercise)
     }
 }
-
 

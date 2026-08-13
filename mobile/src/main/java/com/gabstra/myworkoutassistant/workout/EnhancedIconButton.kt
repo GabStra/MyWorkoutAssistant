@@ -1,12 +1,10 @@
 package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.IconButtonColors
 import androidx.compose.material3.IconButtonDefaults
@@ -18,8 +16,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 @Composable
 fun EnhancedIconButton(
@@ -42,23 +38,20 @@ fun EnhancedIconButton(
     Box(
         modifier = modifier
             .size(hitBoxSize)
-            .pointerInput(enabled) {
-                coroutineScope {
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        val press = PressInteraction.Press(down.position)
-                        launch { interactionSource.emit(press) }
-                        if (enabled) {
-                            onClick()
-                        }
-                        waitForUpOrCancellation()
-                        launch { interactionSource.emit(PressInteraction.Release(press)) }
-                    }
-                }
-            }
     ) {
+        // This sibling sits behind the visual button and owns only the expanded area.
+        // Taps inside the visual bounds are handled by FilledTonalIconButton itself.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(enabled, onClick) {
+                    if (enabled) {
+                        detectTapGestures(onTap = { onClick() })
+                    }
+                },
+        )
         FilledTonalIconButton(
-            onClick = { /* Handled by Box */ },
+            onClick = onClick,
             modifier = buttonModifier
                 .size(buttonSize)
                 .align(Alignment.Center),

@@ -55,20 +55,44 @@ class HapticsHelper(context: Context) {
 }
 
 class HapticsViewModel(
+    private val appContext: Context,
     private val haptics: HapticsHelper
 ) : ViewModel() {
 
     fun doHardVibration() = haptics.vibrateHard()
     fun doGentleVibration() = haptics.vibrateGentle()
-    fun doHardVibrationWithBeep() = haptics.vibrateHardAndBeep()
+    fun doHardVibrationWithBeep() {
+        if (AlertSoundPreferences.isEnabled(appContext)) {
+            haptics.vibrateHardAndBeep()
+        } else {
+            haptics.vibrateHard()
+        }
+    }
     fun doHardVibrationTwice() = viewModelScope.launch {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
     fun doHardVibrationTwiceWithBeep() = viewModelScope.launch {
-        haptics.vibrateHardAndBeep(); delay(200); haptics.vibrateHardAndBeep()
+        repeat(2) { pulseIndex ->
+            if (AlertSoundPreferences.isEnabled(appContext)) {
+                haptics.vibrateHardAndBeep()
+            } else {
+                haptics.vibrateHard()
+            }
+            if (pulseIndex == 0) delay(200)
+        }
     }
     fun doShortImpulse() = viewModelScope.launch {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard(); delay(200); haptics.vibrateHard()
+    }
+    fun doShortImpulseWithBeep() = viewModelScope.launch {
+        repeat(3) { pulseIndex ->
+            if (AlertSoundPreferences.isEnabled(appContext)) {
+                haptics.vibrateHardAndBeep()
+            } else {
+                haptics.vibrateHard()
+            }
+            if (pulseIndex < 2) delay(200)
+        }
     }
 
     override fun onCleared() {
@@ -80,7 +104,7 @@ class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvid
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HapticsViewModel::class.java)) {
-            return HapticsViewModel(HapticsHelper(appContext)) as T
+            return HapticsViewModel(appContext, HapticsHelper(appContext)) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
