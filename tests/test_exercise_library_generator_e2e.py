@@ -2752,8 +2752,7 @@ def test_candidate_enforces_cardio_machine_exercise_type_compatibility() -> None
     timed_with_weights = dict(candidate, equipmentId="machine-id")
     timed_with_weights["requiredCapabilities"] = ["USE_EQUIPMENT:machine-id"]
     timed_with_weights["implementUsage"] = [{"equipmentId": "machine-id", "quantity": 1}]
-    with pytest.raises(ValueError, match="MACHINE is incompatible with exerciseType COUNTUP"):
-        _validate_candidate(timed_with_weights, equipment)
+    assert _validate_candidate(timed_with_weights, equipment)["equipmentId"] == "machine-id"
 
 
 def test_definition_rejects_undeclared_equipment_and_capabilities_in_instructions() -> None:

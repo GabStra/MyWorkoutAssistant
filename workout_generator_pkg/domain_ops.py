@@ -265,7 +265,7 @@ def validate_equipment_exercise_type_compatibility(exercise, equipment_dict):
     elif equipment_type == "ACCESSORY":
         compatible = False
     else:
-        compatible = exercise_type in {"WEIGHT", "BODY_WEIGHT"}
+        compatible = exercise_type in {"WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"}
     if compatible:
         return True, None
 
@@ -312,7 +312,7 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
     if equipment_id is None:
         return True, None, []
     
-    if exercise_type not in ["WEIGHT", "BODY_WEIGHT"]:
+    if exercise_type not in ["WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"]:
         return True, None, []
     
     # Get equipment
@@ -359,6 +359,14 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
             is_valid = any(abs(additional_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
             if not is_valid:
                 invalid_weights.append((set_index, additional_weight, "BodyWeightSet"))
+
+        elif exercise_type in {"COUNTUP", "COUNTDOWN"} and set_type in {"EnduranceSet", "TimedDurationSet"}:
+            target_weight = set_item.get("targetWeight")
+            if target_weight is None:
+                continue
+            is_valid = any(abs(target_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
+            if not is_valid:
+                invalid_weights.append((set_index, target_weight, set_type))
     
     if invalid_weights:
         # Build error message
@@ -406,7 +414,7 @@ def fix_equipment_weights(exercise, equipment_dict):
     equipment_id = exercise.get("equipmentId")
     exercise_type = exercise.get("exerciseType")
     
-    if equipment_id is None or exercise_type not in ["WEIGHT", "BODY_WEIGHT"]:
+    if equipment_id is None or exercise_type not in ["WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"]:
         return []
     
     # Get equipment
@@ -469,6 +477,20 @@ def fix_equipment_weights(exercise, equipment_dict):
                     exercise_name = exercise.get("name", "Unknown")
                     fixes_applied.append(
                         f"Exercise '{exercise_name}' Set {set_index}: Fixed additionalWeight from {additional_weight}kg to {closest_valid}kg"
+                    )
+
+        elif exercise_type in {"COUNTUP", "COUNTDOWN"} and set_type in {"EnduranceSet", "TimedDurationSet"}:
+            target_weight = set_item.get("targetWeight")
+            if target_weight is None:
+                continue
+            is_valid = any(abs(target_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
+            if not is_valid:
+                closest_valid = find_closest_valid_weight(target_weight)
+                if closest_valid is not None:
+                    set_item["targetWeight"] = closest_valid
+                    exercise_name = exercise.get("name", "Unknown")
+                    fixes_applied.append(
+                        f"Exercise '{exercise_name}' Set {set_index}: Fixed targetWeight from {target_weight}kg to {closest_valid}kg"
                     )
     
     return fixes_applied
@@ -1008,6 +1030,7 @@ def get_selectable_weights_for_exercise(exercise_type, equipment):
     Shared/mobile parity:
     - WEIGHT exercises use equipment.getWeightsCombinations().
     - BODY_WEIGHT exercises with equipment use the same set plus 0.0 additional load.
+    - COUNTUP/COUNTDOWN externally loaded exercises use the equipment combinations.
     """
     valid_combinations = set(calculate_equipment_weight_combinations(equipment))
     if exercise_type == "BODY_WEIGHT":

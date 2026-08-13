@@ -137,7 +137,8 @@ JSON_SCHEMA = {
                 "type": {"const": "TimedDurationSet"},                                                                                                                                                                                           
                 "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
                 "autoStart": {"type": "boolean"},                                                                                                                                                                                                
-                "autoStop": {"type": "boolean"}                                                                                                                                                                                                  
+                "autoStop": {"type": "boolean"},
+                "targetWeight": {"type": ["number", "null"], "minimum": 0}
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
         "EnduranceSet": {                                                                                                                                                                                                                        
@@ -149,7 +150,8 @@ JSON_SCHEMA = {
                 "type": {"const": "EnduranceSet"},                                                                                                                                                                                               
                 "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
                 "autoStart": {"type": "boolean"},                                                                                                                                                                                                
-                "autoStop": {"type": "boolean"}                                                                                                                                                                                                  
+                "autoStop": {"type": "boolean"},
+                "targetWeight": {"type": ["number", "null"], "minimum": 0}
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
         "RestSet": {                                                                                                                                                                                                                             

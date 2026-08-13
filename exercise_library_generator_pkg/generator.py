@@ -143,7 +143,8 @@ warmupDemand using the supplied closed enums. Every physical implement or specia
 needed for safe execution must be declared. Omit an exercise if any requirement is unavailable.
 COUNTDOWN and COUNTUP are only for genuinely time-based activities.
 Inventory compatibility rule: CARDIO_MACHINE is primary equipment for COUNTUP/COUNTDOWN only.
-All other primary equipment types are valid for WEIGHT/BODY_WEIGHT only. Cardio machines are not
+Other load-bearing primary equipment types are valid for WEIGHT/BODY_WEIGHT and for externally
+loaded COUNTUP/COUNTDOWN movements. Cardio machines are not
 accessories and must never appear in requiredAccessoryEquipmentIds."""
 
 AUDIT_SYSTEM_PROMPT = """Audit an exercise inventory for material omissions. Return JSON only as
@@ -320,7 +321,8 @@ def _validate_primary_equipment_compatibility(
     compatible = (
         exercise_type in {"COUNTUP", "COUNTDOWN"}
         if equipment_type == "CARDIO_MACHINE"
-        else exercise_type in {"WEIGHT", "BODY_WEIGHT"}
+        else equipment_type != "ACCESSORY"
+        and exercise_type in {"WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"}
     )
     if not compatible:
         raise ValueError(

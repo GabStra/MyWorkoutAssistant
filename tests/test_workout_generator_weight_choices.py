@@ -92,14 +92,13 @@ def test_plan_contract_enforces_primary_equipment_exercise_type_compatibility():
     with pytest.raises(ContractValidationError, match="incompatible_equipment_exercise_type"):
         validate_plan_index_contract(invalid_weight_plan)
 
-    invalid_cardio_plan = copy.deepcopy(base_plan)
-    invalid_cardio_plan["equipments"][0] = {
+    loaded_timed_plan = copy.deepcopy(base_plan)
+    loaded_timed_plan["equipments"][0] = {
         "id": "EQUIPMENT_0",
         "type": "MACHINE",
         "name": "Weight Machine",
     }
-    with pytest.raises(ContractValidationError, match="incompatible_equipment_exercise_type"):
-        validate_plan_index_contract(invalid_cardio_plan)
+    validate_plan_index_contract(loaded_timed_plan)
 
 
 def test_summarization_prompt_preserves_bodyweight_load_semantics():
@@ -349,6 +348,37 @@ def test_validate_equipment_weights_allows_zero_load_when_calibration_is_require
     assert is_valid is True
     assert error_message is None
     assert invalid_weights == []
+
+
+def test_validate_equipment_weights_checks_loaded_timed_target_weight():
+    equipment = {
+        "id": "EQUIPMENT_0",
+        "type": "DUMBBELLS",
+        "name": "Dumbbells",
+        "dumbbells": [{"weight": 10.0}, {"weight": 12.5}],
+    }
+    exercise = {
+        "name": "Dumbbell Farmer Carry",
+        "exerciseType": "COUNTUP",
+        "equipmentId": "EQUIPMENT_0",
+        "sets": [{
+            "id": "SET_0",
+            "type": "EnduranceSet",
+            "timeInMillis": 60000,
+            "autoStart": False,
+            "autoStop": False,
+            "targetWeight": 22.0,
+        }],
+    }
+
+    is_valid, error_message, invalid_weights = validate_equipment_weight_combinations(
+        exercise,
+        {"EQUIPMENT_0": equipment},
+    )
+
+    assert is_valid is False
+    assert invalid_weights == [(0, 22.0, "EnduranceSet")]
+    assert "nearest selectable weight" in error_message
 
 
 def test_contract_allows_empty_target_prescriptions_without_exact_loads():
