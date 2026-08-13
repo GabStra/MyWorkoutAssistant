@@ -141,7 +141,10 @@ allowed app enum or null for timed activities. Also declare requiredCapabilities
 with exact equipment/accessory IDs and physical quantity, jointDemand, loadingDemand, and
 warmupDemand using the supplied closed enums. Every physical implement or special capability
 needed for safe execution must be declared. Omit an exercise if any requirement is unavailable.
-COUNTDOWN and COUNTUP are only for genuinely time-based activities."""
+COUNTDOWN and COUNTUP are only for genuinely time-based activities.
+Inventory compatibility rule: CARDIO_MACHINE is primary equipment for COUNTUP/COUNTDOWN only.
+All other primary equipment types are valid for WEIGHT/BODY_WEIGHT only. Cardio machines are not
+accessories and must never appear in requiredAccessoryEquipmentIds."""
 
 AUDIT_SYSTEM_PROMPT = """Audit an exercise inventory for material omissions. Return JSON only as
 {"exercises": [...]}, containing only missing distinct exercises that are possible with the
@@ -301,6 +304,31 @@ class DefinitionValidationError(ValueError):
         self.repair_paths = repair_paths or set()
 
 
+def _validate_primary_equipment_compatibility(
+    exercise: dict[str, Any],
+    equipment: dict[str, Any],
+) -> None:
+    equipment_id = exercise.get("equipmentId")
+    if equipment_id is None:
+        return
+    equipment_item = _equipment_by_id(equipment).get(equipment_id)
+    if equipment_item is None:
+        return  # Unknown IDs are reported by the owning validation path.
+
+    exercise_type = exercise.get("exerciseType")
+    equipment_type = str(equipment_item.get("type", "")).upper()
+    compatible = (
+        exercise_type in {"COUNTUP", "COUNTDOWN"}
+        if equipment_type == "CARDIO_MACHINE"
+        else exercise_type in {"WEIGHT", "BODY_WEIGHT"}
+    )
+    if not compatible:
+        raise ValueError(
+            f"{exercise.get('name', 'Unknown')}: equipment type {equipment_type} "
+            f"is incompatible with exerciseType {exercise_type}"
+        )
+
+
 def _validate_reviewed_definition(
     definition: dict[str, Any],
     equipment: dict[str, Any],
@@ -310,6 +338,7 @@ def _validate_reviewed_definition(
         raise ValueError("semantic review produced an invalid exerciseType")
     if definition.get("equipmentId") is not None and definition["equipmentId"] not in primary_ids:
         raise ValueError("semantic review introduced an unknown equipmentId")
+    _validate_primary_equipment_compatibility(definition, equipment)
     accessories = definition.get("requiredAccessoryEquipmentIds")
     if not isinstance(accessories, list) or set(accessories) - accessory_ids:
         raise ValueError("semantic review introduced unknown accessory IDs")
@@ -1536,6 +1565,7 @@ def _validate_candidate(
         raise ValueError(f"{name}: invalid exerciseType {exercise_type!r}")
     if equipment_id is not None and equipment_id not in primary_ids:
         raise ValueError(f"{name}: unknown equipmentId {equipment_id!r}")
+    _validate_primary_equipment_compatibility(candidate, equipment)
     equipment_is_outside_batch = (
         allowed_equipment_ids is not None
         and (

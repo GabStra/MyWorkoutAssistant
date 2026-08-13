@@ -2718,6 +2718,44 @@ def test_cable_candidate_requires_linked_pulley_and_attachment_capabilities() ->
     assert _validate_candidate(candidate, equipment)["name"] == "Cable Pushdown"
 
 
+def test_candidate_enforces_cardio_machine_exercise_type_compatibility() -> None:
+    equipment = {
+        "equipments": [
+            {"id": "bike-id", "type": "CARDIO_MACHINE", "name": "Spin Bike"},
+            {"id": "machine-id", "type": "MACHINE", "name": "Weight Machine"},
+        ],
+        "accessoryEquipments": [],
+    }
+    candidate = {
+        "name": "Stationary Cycling",
+        "exerciseType": "COUNTUP",
+        "equipmentId": "bike-id",
+        "bodyWeightPercentage": None,
+        "requiredAccessoryEquipmentIds": [],
+        "executionMode": "OPEN_DURATION",
+        "resistanceMode": "EXTERNAL_LOAD",
+        "movementKey": "stationary-cycling",
+        "exerciseCategory": None,
+        "requiredCapabilities": ["USE_EQUIPMENT:bike-id"],
+        "implementUsage": [{"equipmentId": "bike-id", "quantity": 1}],
+        "jointDemand": "MULTI_JOINT",
+        "loadingDemand": "MODERATE",
+        "warmupDemand": "LOW",
+    }
+
+    assert _validate_candidate(candidate, equipment)["equipmentId"] == "bike-id"
+
+    weighted_with_cardio = dict(candidate, exerciseType="WEIGHT", executionMode="REPETITIONS")
+    with pytest.raises(ValueError, match="CARDIO_MACHINE is incompatible with exerciseType WEIGHT"):
+        _validate_candidate(weighted_with_cardio, equipment)
+
+    timed_with_weights = dict(candidate, equipmentId="machine-id")
+    timed_with_weights["requiredCapabilities"] = ["USE_EQUIPMENT:machine-id"]
+    timed_with_weights["implementUsage"] = [{"equipmentId": "machine-id", "quantity": 1}]
+    with pytest.raises(ValueError, match="MACHINE is incompatible with exerciseType COUNTUP"):
+        _validate_candidate(timed_with_weights, equipment)
+
+
 def test_definition_rejects_undeclared_equipment_and_capabilities_in_instructions() -> None:
     equipment = {
         "equipments": [{"id": "bar-id", "type": "BARBELL", "name": "Barbell"}],
