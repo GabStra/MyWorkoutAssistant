@@ -1264,7 +1264,7 @@ open class WorkoutViewModel(
                     _hasWorkoutRecord.value = true
                     _workoutResumeInfo.value = WorkoutResumeInfo(
                         exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
-                        setNumber = setIndex.toInt() + 1,
+                        setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
                         startedAt = currentWorkoutHistory?.startTime,
                         sessionStatus = when (ownerDevice) {
                             SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
@@ -1314,7 +1314,7 @@ open class WorkoutViewModel(
             _hasWorkoutRecord.value = true
             _workoutResumeInfo.value = WorkoutResumeInfo(
                 exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
-                setNumber = setIndex.toInt() + 1,
+                setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
                 startedAt = currentWorkoutHistory?.startTime,
                 sessionStatus = when (ownerDevice) {
                     SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
@@ -1378,7 +1378,7 @@ open class WorkoutViewModel(
         workout: Workout,
         workoutRecord: WorkoutRecord
     ): WorkoutResumeInfo {
-        val resumeExerciseName = exercisesById[workoutRecord.exerciseId]?.name
+        val resumeExercise = exercisesById[workoutRecord.exerciseId]
             ?: workout.workoutComponents
                 .flatMap { component ->
                     when (component) {
@@ -1388,7 +1388,7 @@ open class WorkoutViewModel(
                     }
                 }
                 .firstOrNull { it.id == workoutRecord.exerciseId }
-                ?.name
+        val resumeExerciseName = resumeExercise?.name
             ?: "Current exercise"
 
         val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
@@ -1397,11 +1397,43 @@ open class WorkoutViewModel(
 
         return WorkoutResumeInfo(
             exerciseName = resumeExerciseName,
-            setNumber = workoutRecord.setIndex.toInt() + 1,
+            setLabel = resolveWorkoutResumeSetLabel(resumeExercise, workoutRecord.setIndex),
             startedAt = workoutHistory.startTime,
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
         )
+    }
+
+    private fun resolveWorkoutResumeSetLabel(exercise: Exercise?, setIndex: UInt): String {
+        val sets = exercise?.sets ?: return "Work set 1"
+        val currentSetIndex = setIndex.toInt()
+        val set = sets.getOrNull(currentSetIndex) ?: return "Work set 1"
+        val baseLabel = workoutResumeSetTypeLabel(set)
+        if (set is RestSet) return baseLabel
+
+        val setNumberWithinType = sets
+            .take(currentSetIndex + 1)
+            .count { candidate -> workoutResumeSetTypeLabel(candidate) == baseLabel }
+            .coerceAtLeast(1)
+        return "$baseLabel $setNumberWithinType"
+    }
+
+    private fun workoutResumeSetTypeLabel(set: Set): String {
+        if (set is RestSet) return "Rest"
+
+        val subCategory = when (set) {
+            is WeightSet -> set.subCategory
+            is BodyWeightSet -> set.subCategory
+            else -> SetSubCategory.WorkSet
+        }
+        return when (subCategory) {
+            SetSubCategory.WarmupSet -> "Warm-up set"
+            SetSubCategory.BackOffSet -> "Back-off set"
+            SetSubCategory.RestPauseSet -> "Rest-pause set"
+            SetSubCategory.CalibrationPendingSet,
+            SetSubCategory.CalibrationSet -> "Calibration set"
+            SetSubCategory.WorkSet -> "Work set"
+        }
     }
 
     /**

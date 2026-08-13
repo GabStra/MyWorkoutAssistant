@@ -570,7 +570,7 @@ private fun WorkoutSessionActionCardPreview() {
                 hasWorkoutRecord = true,
                 workoutResumeInfo = WorkoutResumeInfo(
                     exerciseName = "Barbell bench press",
-                    setNumber = 3,
+                    setLabel = "Work set 2",
                     startedAt = LocalDateTime.of(2026, 8, 3, 18, 30),
                     sessionStatus = WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
                     lastActiveSyncAt = null
@@ -596,25 +596,25 @@ private fun buildResumeDescription(
     val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
     val staleTime = workoutResumeInfo.lastActiveSyncAt?.format(timeFormatter)
 
-    return buildString {
-        when (workoutResumeInfo.sessionStatus) {
-            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> append("This workout is still running on your watch. Resume on phone at ")
-            WorkoutSessionStatus.STOPPED_ON_WEAR -> append("You returned home on your watch. Resume on phone at ")
-            WorkoutSessionStatus.STALE_ON_WEAR -> append("Your watch stopped communicating. Resume on phone at ")
-            WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-            WorkoutSessionStatus.INTERRUPTED,
-            WorkoutSessionStatus.COMPLETED -> append("Resume at ")
-        }
-        append(workoutResumeInfo.exerciseName)
-        append(", set ")
-        append(workoutResumeInfo.setNumber)
+    return buildList {
+        add(
+            when (workoutResumeInfo.sessionStatus) {
+                WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "This workout is still active on your watch."
+                WorkoutSessionStatus.STOPPED_ON_WEAR -> "This workout was left from the watch home screen."
+                WorkoutSessionStatus.STALE_ON_WEAR -> "The watch has stopped sending workout updates."
+                WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+                WorkoutSessionStatus.INTERRUPTED,
+                WorkoutSessionStatus.COMPLETED -> "Continue where you left off."
+            }
+        )
+        add("Resume from:")
+        add(workoutResumeInfo.exerciseName)
+        add(workoutResumeInfo.setLabel)
         if (sessionTime != null) {
-            append(". Started ")
-            append(sessionTime)
+            add("Started: $sessionTime")
         }
         if (workoutResumeInfo.sessionStatus == WorkoutSessionStatus.STALE_ON_WEAR && staleTime != null) {
-            append(". Last watch update ")
-            append(staleTime)
+            add("Last watch update: $staleTime")
         }
-    }
+    }.joinToString(separator = "\n")
 }

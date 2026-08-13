@@ -5,7 +5,7 @@ import java.time.LocalDateTime
 
 data class WorkoutResumeInfo(
     val exerciseName: String,
-    val setNumber: Int,
+    val setLabel: String,
     val startedAt: LocalDateTime?,
     val sessionStatus: WorkoutSessionStatus,
     val lastActiveSyncAt: LocalDateTime?,
