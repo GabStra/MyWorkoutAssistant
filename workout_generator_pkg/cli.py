@@ -1946,9 +1946,15 @@ def generate_index(
     
     # Include provided equipment if available with planner-specific constraints
     if provided_equipment:
+        exercise_library = provided_equipment.get("exerciseDefinitions") or []
         formatted_equipment = format_planner_equipment_context(
             provided_equipment.get("equipments", []),
             provided_equipment.get("accessoryEquipments", [])
+        )
+        gear_creation_constraint = (
+            "Strict exercise-library mode is active: you MUST NOT create equipment or accessories.\n"
+            if exercise_library
+            else "If necessary gear is missing, you MAY create new equipment or accessories with non-conflicting EQUIPMENT_X/ACCESSORY_X IDs.\n"
         )
         user_content += (
             f"{formatted_equipment}\n\n"
@@ -1958,33 +1964,32 @@ def generate_index(
             f"requiredAccessoryEquipmentIds may reference only Accessory Equipment IDs (ACCESSORY_X). Never put an EQUIPMENT_X there.\n"
             f"When exact target loads are requested, choose an equipmentId whose listed selectable app loads can represent those exact values. Do not approximate or pick the nearest load.\n"
             f"When an exercise requires an accessory that is already in the list above (same name), you MUST use that existing ID. Do NOT create a new accessory with a new ID for the same item.\n"
-            f"If necessary equipment or accessories are missing from the list above, you MAY create new equipment or accessory entries with new placeholder IDs.\n"
-            f"When creating new equipment or accessories, use new placeholder IDs (EQUIPMENT_X, ACCESSORY_X) that don't conflict with the IDs shown above.\n"
-            f"Ensure all equipmentId and requiredAccessoryEquipmentIds values match equipment/accessories from either the provided list OR newly created entries.\n\n"
+            f"{gear_creation_constraint}"
+            f"Ensure all equipmentId and requiredAccessoryEquipmentIds values reference valid entries under that gear policy.\n\n"
         )
-        exercise_library = provided_equipment.get("exerciseDefinitions") or []
         if exercise_library:
-            compact_library = [
-                {
-                    key: definition.get(key)
-                    for key in (
-                        "id", "name", "exerciseType", "equipmentId",
-                        "bodyWeightPercentage", "muscleGroups", "secondaryMuscleGroups",
-                        "requiredAccessoryEquipmentIds", "exerciseCategory", "movementRef",
-                    )
-                    if definition.get(key) is not None
-                }
-                for definition in exercise_library
-            ]
+            compact_library = [[
+                definition.get("id"),
+                definition.get("name"),
+                definition.get("exerciseType"),
+                definition.get("equipmentId"),
+            ] for definition in exercise_library]
             user_content += (
-                "Exercise library (definition-owned fields are immutable):\n"
+                "Exercise library compact selection catalog. Each row is "
+                "[libraryDefinitionId,name,exerciseType,equipmentId]:\n"
                 f"{json.dumps(compact_library, separators=(',', ':'))}\n"
-                "For every planned exercise occurrence, reuse the exact name, exerciseType, "
-                "equipmentId, movementRef, and other definition-owned fields from a matching "
-                "library entry. A match is the same movement/name, exerciseType, and equipmentId. "
+                "The catalog is the sole allowed source of movements. Every planned exercise "
+                "must copy one listed libraryDefinitionId. Do not invent or infer a movement that "
+                "is absent from this catalog. The generator will resolve the selected ID to the "
+                "full immutable definition after planning. You may optionally set nameOverride to "
+                "a workout-local alias, but name must remain the canonical catalog name. "
                 "Periodized phases may and should use separate EXERCISE_X entries for independent "
-                "sets, reps, loads, rests, and progression while retaining those same identity fields. "
-                "Create a new movement identity only when no library entry matches.\n\n"
+                "sets, reps, loads, rests, and progression while selecting the same libraryDefinitionId. "
+                "If the request cannot be satisfied from the catalog, do not substitute a new exercise.\n\n"
+            )
+            user_content += (
+                "Strict library mode also forbids creating equipment or accessories. Use only gear "
+                "from the supplied file, because every selected definition already declares its setup.\n\n"
             )
     
     user_content += (

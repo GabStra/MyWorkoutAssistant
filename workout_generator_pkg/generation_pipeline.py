@@ -14,6 +14,7 @@ from .deps import resolve_pipeline_deps
 from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store
 from .plan_contract import (
     ContractValidationError,
+    hydrate_plan_index_from_exercise_library,
     validate_exercise_definitions_contract,
     validate_plan_index_contract,
     validate_uuid_conversion_parity,
@@ -547,6 +548,10 @@ def execute_workout_generation(
                 )
                 if plan_index is None:
                     return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
+                hydrate_plan_index_from_exercise_library(
+                    plan_index,
+                    provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
+                )
                 try:
                     validate_plan_index_contract(plan_index, provided_equipment)
                     break
@@ -629,6 +634,10 @@ def execute_workout_generation(
             if not plan_index:
                 return {"success": False, "filepath": None, "error": "Missing plan_index in saved progress"}
             try:
+                hydrate_plan_index_from_exercise_library(
+                    plan_index,
+                    provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
+                )
                 validate_plan_index_contract(plan_index, provided_equipment)
             except ContractValidationError as e:
                 _log_step_error("Step 1", e, prefix="Contract validation failed")
@@ -728,7 +737,9 @@ def execute_workout_generation(
                     
                     provided_equipment = {
                         "equipments": updated_equipments,
-                        "accessoryEquipments": updated_accessories
+                        "accessoryEquipments": updated_accessories,
+                        "exerciseDefinitions": provided_equipment.get("exerciseDefinitions", []),
+                        "exerciseMovements": provided_equipment.get("exerciseMovements", []),
                     }
                 
                 step_time = time.time() - step_start_time

@@ -101,27 +101,12 @@ def _build_initial_messages(
             )
         )
     if exercise_definitions:
-        compact_definitions = [
-            {
-                key: definition.get(key)
-                for key in (
-                    "id", "name", "exerciseType", "equipmentId",
-                    "bodyWeightPercentage", "muscleGroups", "secondaryMuscleGroups",
-                    "requiredAccessoryEquipmentIds", "exerciseCategory", "movementRef",
-                )
-                if definition.get(key) is not None
-            }
-            for definition in exercise_definitions
-        ]
         messages.append(_message(
             "system",
             content=(
-                "EXERCISE LIBRARY (schema v2):\n"
-                + json.dumps(compact_definitions, ensure_ascii=False, separators=(",", ":"))
-                + "\nTreat these fields as definition-owned and immutable. Reuse a definition "
-                  "when movement/name, exerciseType, and equipmentId match. Otherwise create a "
-                  "new definition. Workout occurrences are prescriptions: each must have a unique "
-                  "id, exerciseDefinitionId, placement notes, settings, and unique set IDs."
+                f"A strict exercise library with {len(exercise_definitions)} definitions is loaded. "
+                "It is the sole allowed movement source. Its compact selection catalog is supplied "
+                "only to the workout-planning stage to avoid duplicating the full library in chat context."
             ),
         ))
     return messages

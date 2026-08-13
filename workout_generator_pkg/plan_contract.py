@@ -3,10 +3,56 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from .domain_ops import get_selectable_weights_for_exercise, validate_exercise_type_profile
+from .domain_ops import (
+    get_selectable_weights_for_exercise,
+    validate_equipment_exercise_type_compatibility,
+    validate_exercise_type_profile,
+)
+
+
+LIBRARY_DEFINITION_OWNED_FIELDS = (
+    "name",
+    "exerciseType",
+    "equipmentId",
+    "bodyWeightPercentage",
+    "muscleGroups",
+    "secondaryMuscleGroups",
+    "requiredAccessoryEquipmentIds",
+    "exerciseCategory",
+    "movementRef",
+)
+
+
+def hydrate_plan_index_from_exercise_library(
+    plan_index: Dict[str, Any],
+    exercise_definitions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve planner selections to immutable library-owned definition fields."""
+    if not exercise_definitions:
+        return plan_index
+
+    definitions_by_id = {
+        definition.get("id"): definition
+        for definition in exercise_definitions
+        if isinstance(definition, dict) and definition.get("id")
+    }
+    for exercise in plan_index.get("exercises", []) or []:
+        if not isinstance(exercise, dict):
+            continue
+        definition_id = exercise.get("libraryDefinitionId")
+        definition = definitions_by_id.get(definition_id)
+        if definition is None:
+            continue  # Contract validation reports the precise selection error.
+        for field in LIBRARY_DEFINITION_OWNED_FIELDS:
+            if field in definition:
+                exercise[field] = copy.deepcopy(definition[field])
+            else:
+                exercise.pop(field, None)
+    return plan_index
 
 
 class ContractValidationError(ValueError):
@@ -273,6 +319,45 @@ def _collect_contract_issues_plan_index(
 ) -> List[ContractIssue]:
     issues: List[ContractIssue] = []
     equipment_lookup = _build_equipment_lookup(plan_index, provided_equipment)
+    library_definitions = (
+        provided_equipment.get("exerciseDefinitions", [])
+        if isinstance(provided_equipment, dict)
+        else []
+    )
+    library_definition_ids = {
+        definition.get("id")
+        for definition in library_definitions
+        if isinstance(definition, dict) and definition.get("id")
+    }
+    if library_definition_ids:
+        provided_equipment_ids = {
+            item.get("id")
+            for item in provided_equipment.get("equipments", []) or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        provided_accessory_ids = {
+            item.get("id")
+            for item in provided_equipment.get("accessoryEquipments", []) or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        new_equipment_ids = {
+            item.get("id")
+            for item in plan_index.get("equipments", []) or []
+            if isinstance(item, dict) and item.get("id") and item.get("id") not in provided_equipment_ids
+        }
+        new_accessory_ids = {
+            item.get("id")
+            for item in plan_index.get("accessoryEquipments", []) or []
+            if isinstance(item, dict) and item.get("id") and item.get("id") not in provided_accessory_ids
+        }
+        if new_equipment_ids or new_accessory_ids:
+            issues.append(
+                ContractIssue(
+                    "library_mode_created_gear",
+                    "Strict exercise-library mode cannot create equipment or accessories; "
+                    f"new equipment={sorted(new_equipment_ids)}, new accessories={sorted(new_accessory_ids)}.",
+                )
+            )
 
     plan_name = plan_index.get("planName")
     if not isinstance(plan_name, str) or not plan_name.strip():
@@ -303,6 +388,15 @@ def _collect_contract_issues_plan_index(
         if not isinstance(ex, dict):
             issues.append(ContractIssue("invalid_exercise_entry", "PlanIndex contains a non-object exercise entry."))
             continue
+        if library_definition_ids:
+            library_definition_id = ex.get("libraryDefinitionId")
+            if library_definition_id not in library_definition_ids:
+                issues.append(
+                    ContractIssue(
+                        "invalid_library_definition_reference",
+                        f"Exercise '{ex.get('id') or ex.get('name') or 'Unknown'}' must select one supplied libraryDefinitionId; got {library_definition_id!r}.",
+                    )
+                )
 
         ex_id = ex.get("id")
         ex_name = ex.get("name", "Unknown")
@@ -339,6 +433,14 @@ def _collect_contract_issues_plan_index(
         if equipment_id is not None and not _is_canonical_plan_placeholder(equipment_id, "equipment"):
             issues.append(
                 ContractIssue("invalid_equipment_reference", f"Exercise '{ex_id or ex_name}' references non-canonical equipmentId '{equipment_id}'.")
+            )
+        is_compatible, compatibility_error = validate_equipment_exercise_type_compatibility(
+            ex,
+            equipment_lookup,
+        )
+        if not is_compatible:
+            issues.append(
+                ContractIssue("incompatible_equipment_exercise_type", compatibility_error)
             )
         if ex_type == "BODY_WEIGHT":
             body_weight_percentage = ex.get("bodyWeightPercentage")

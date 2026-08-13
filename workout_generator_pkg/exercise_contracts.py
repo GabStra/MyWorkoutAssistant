@@ -20,6 +20,7 @@ def _build_type_specific_exercise_schema(
         "type": {"const": "Exercise"},
         "enabled": {"type": "boolean"},
         "name": {"type": "string"},
+        "nameOverride": {"type": ["string", "null"]},
         "notes": {"type": "string", "maxLength": 500},
         "placementNotes": {"type": "string", "maxLength": 500},
         "sets": {

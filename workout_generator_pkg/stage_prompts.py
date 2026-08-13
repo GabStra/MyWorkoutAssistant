@@ -25,6 +25,7 @@ EQUIPMENT_SCHEMA = {
                     {"$ref": "#/$defs/EquipmentPlateLoadedCable"},
                     {"$ref": "#/$defs/EquipmentWeightVest"},
                     {"$ref": "#/$defs/EquipmentMachine"},
+                    {"$ref": "#/$defs/EquipmentCardioMachine"},
                 ]
             },
         }
@@ -121,12 +122,13 @@ EQUIPMENT_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate only the equipment list using placeholder IDs (EQUIPMENT_X, ACCESSORY_X).\n"
     "Do not use real UUIDs. Do not use IRONNECK.\n\n"
-    "Allowed types (exact): BARBELL, DUMBBELLS, DUMBBELL, PLATELOADEDCABLE, WEIGHTVEST, MACHINE, ACCESSORY.\n"
+    "Allowed types (exact): BARBELL, DUMBBELLS, DUMBBELL, PLATELOADEDCABLE, WEIGHTVEST, MACHINE, CARDIO_MACHINE, ACCESSORY.\n"
     "Required structures:\n"
     "- BARBELL/PLATELOADEDCABLE availablePlates: array of {weight, thickness} objects.\n"
     "- DUMBBELLS/DUMBBELL extraWeights and dumbbells: array of {weight} objects.\n"
     "- WEIGHTVEST availableWeights: array of {weight} objects.\n"
     "- MACHINE availableWeights and extraWeights: array of {weight} objects.\n"
+    "- CARDIO_MACHINE: id, type, name only; use for stationary cardio machines, never weight-loaded equipment.\n"
     "- ACCESSORY: id, type, name only.\n"
     "Never output numeric arrays for weight lists.\n\n"
     "Output format:\n"
@@ -294,6 +296,8 @@ EXERCISE_SYSTEM_PROMPT = (
     f"- muscleGroups must use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- Keep muscleGroups non-empty unless the exercise brief explicitly allows an empty array.\n"
     "- requiredAccessoryEquipmentIds must use ACCESSORY_X placeholders (use [] when none).\n"
+    "- CARDIO_MACHINE equipmentId is valid only for COUNTUP or COUNTDOWN exercises.\n"
+    "- Weight-loaded equipmentId is valid only for WEIGHT or BODY_WEIGHT exercises.\n"
     "- BODY_WEIGHT exercises must include bodyWeightPercentage and it must never be null.\n"
     "- bodyWeightPercentage uses percentage semantics, not unit fractions. Example: use 100.0 for full bodyweight and 65.0 for about sixty-five percent of bodyweight; do not use 1.0 to mean 100%.\n"
     "- bodyWeightPercentage is the percentage of the user's body mass that counts toward the movement's effective load baseline.\n"
@@ -478,6 +482,8 @@ PLAN_INDEX_EXAMPLE = {
 PLAN_INDEX_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
+    "When an exercise-library catalog is supplied, every exercise must include a listed libraryDefinitionId.\n"
+    "Never create a movement outside that catalog. nameOverride may provide a workout-local alias.\n"
     "For periodized or versioned programming, emit a separate EXERCISE_X prescription for each "
     "independently programmed occurrence, even when multiple occurrences share the same movement.\n"
     "Shared movement identity fields (name, exerciseType, equipmentId, body-weight semantics, muscles, "
@@ -497,7 +503,9 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Create new items only when missing, with non-conflicting placeholders.\n"
     "- equipmentId must be null or an EQUIPMENT_X placeholder only. Never use an ACCESSORY_X as equipmentId.\n"
     "- requiredAccessoryEquipmentIds must contain ACCESSORY_X placeholders only. Never use an EQUIPMENT_X there.\n"
-    "- Ensure all equipmentId/requiredAccessoryEquipmentIds references exist.\n\n"
+    "- Ensure all equipmentId/requiredAccessoryEquipmentIds references exist.\n"
+    "- CARDIO_MACHINE equipmentId is valid only for COUNTUP or COUNTDOWN exercises.\n"
+    "- Weight-loaded equipment is valid only for WEIGHT or BODY_WEIGHT exercises.\n\n"
     "Exercise constraints:\n"
     "- Exercise names must be movement-only labels (remove equipment/accessory wording and set/time details).\n"
     "- Examples: 'Barbell Back Squat' -> 'Back Squat', 'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n"

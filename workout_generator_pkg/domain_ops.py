@@ -248,6 +248,33 @@ def validate_equipment_references(exercise, equipment_ids, accessory_ids=None):
     return True, None
 
 
+def validate_equipment_exercise_type_compatibility(exercise, equipment_dict):
+    """Validate the same primary-equipment compatibility enforced by the apps."""
+    equipment_id = exercise.get("equipmentId")
+    if equipment_id is None:
+        return True, None
+
+    equipment = equipment_dict.get(equipment_id) if isinstance(equipment_dict, dict) else None
+    if not equipment:
+        return True, None  # Missing references are reported separately.
+
+    exercise_type = exercise.get("exerciseType")
+    equipment_type = str(equipment.get("type", "")).upper()
+    if equipment_type == "CARDIO_MACHINE":
+        compatible = exercise_type in {"COUNTUP", "COUNTDOWN"}
+    elif equipment_type == "ACCESSORY":
+        compatible = False
+    else:
+        compatible = exercise_type in {"WEIGHT", "BODY_WEIGHT"}
+    if compatible:
+        return True, None
+
+    return False, (
+        f"Exercise '{exercise.get('name', 'Unknown')}' cannot use equipmentId "
+        f"'{equipment_id}' of type '{equipment_type}' with exerciseType '{exercise_type}'."
+    )
+
+
 def _is_calibration_placeholder_load(exercise, set_item):
     if set_item.get("subCategory") == "CalibrationPendingSet":
         return True
@@ -713,6 +740,7 @@ def finalize_and_validate_exercise_definition(
         validate_reps_for_exercise_type(exercise),
         validate_muscle_groups(exercise),
         validate_equipment_references(exercise, equipment_ids, accessory_ids),
+        validate_equipment_exercise_type_compatibility(exercise, equipment_by_id),
     ]
     for is_valid, error in checks:
         if not is_valid and error:
@@ -1042,6 +1070,10 @@ def format_planner_equipment_context(equipment_list, accessory_list=None):
             eq_type = eq.get("type", "").upper()
             lines.append(f"{eq_id} ({eq_name}, {eq_type})")
             lines.append("  - Use only as equipmentId, never as requiredAccessoryEquipmentIds.")
+            if eq_type == "CARDIO_MACHINE":
+                lines.append("  - Compatible exercise types: COUNTUP, COUNTDOWN only.")
+            else:
+                lines.append("  - Compatible exercise types: WEIGHT, BODY_WEIGHT only.")
             selectable_loads = calculate_equipment_weight_combinations(eq)
             if selectable_loads:
                 sorted_loads = sorted(selectable_loads)
@@ -2116,6 +2148,8 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
         return exercise
 
     fields_to_sync = [
+        "name",
+        "nameOverride",
         "exerciseType",
         "equipmentId",
         "bodyWeightPercentage",
@@ -2943,7 +2977,7 @@ def EquipmentItem(equipment_dict):
         dict: Equipment item with placeholder ID
     """
     # Validate it's one of the equipment types
-    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "ACCESSORY"]
+    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "CARDIO_MACHINE", "ACCESSORY"]
     eq_type = equipment_dict.get("type", "")
     if eq_type not in valid_types:
         raise ValueError(f"Invalid equipment type: {eq_type}")

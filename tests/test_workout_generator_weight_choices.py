@@ -10,6 +10,7 @@ from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
 from workout_generator_pkg.constants import JSON_SYSTEM_PROMPT
 from workout_generator_pkg.constants import SUMMARIZATION_SYSTEM_PROMPT
 from workout_generator_pkg.cli import PlaceholderIdManager
+from workout_generator_pkg.domain_ops import EquipmentItem
 from workout_generator_pkg.domain_ops import calculate_equipment_weight_combinations
 from workout_generator_pkg.domain_ops import create_placeholder_schema
 from workout_generator_pkg.domain_ops import fix_set_errors
@@ -33,10 +34,72 @@ from workout_generator_pkg.plan_contract import validate_plan_index_contract
 from workout_generator_pkg.plan_contract import validate_exercise_definitions_contract
 from workout_generator_pkg.plan_contract import validate_workout_structures_contract
 from workout_generator_pkg.stage_prompts import (
+    EQUIPMENT_SCHEMA,
+    EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
     PLAN_INDEX_SYSTEM_PROMPT,
     WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
+
+
+def test_cardio_machine_is_a_supported_load_free_primary_equipment_type():
+    cardio = EquipmentItem({
+        "id": "EQUIPMENT_0",
+        "type": "CARDIO_MACHINE",
+        "name": "Spin Bike",
+    })
+
+    assert cardio == {
+        "id": "EQUIPMENT_0",
+        "type": "CARDIO_MACHINE",
+        "name": "Spin Bike",
+    }
+    equipment_refs = EQUIPMENT_SCHEMA["properties"]["equipments"]["items"]["oneOf"]
+    assert {"$ref": "#/$defs/EquipmentCardioMachine"} in equipment_refs
+    assert "CARDIO_MACHINE" in EQUIPMENT_SYSTEM_PROMPT
+
+
+def test_planner_context_explains_cardio_machine_compatibility():
+    formatted = format_planner_equipment_context([
+        {"id": "EQUIPMENT_0", "type": "CARDIO_MACHINE", "name": "Spin Bike"},
+    ])
+
+    assert "Compatible exercise types: COUNTUP, COUNTDOWN only." in formatted
+
+
+def test_plan_contract_enforces_primary_equipment_exercise_type_compatibility():
+    base_plan = {
+        "planName": "Cardio Plan",
+        "equipments": [{"id": "EQUIPMENT_0", "type": "CARDIO_MACHINE", "name": "Spin Bike"}],
+        "accessoryEquipments": [],
+        "exercises": [{
+            "id": "EXERCISE_0",
+            "name": "Stationary Cycling",
+            "exerciseType": "COUNTUP",
+            "equipmentId": "EQUIPMENT_0",
+            "requiredAccessoryEquipmentIds": [],
+        }],
+        "workouts": [],
+    }
+    validate_plan_index_contract(base_plan)
+
+    invalid_weight_plan = copy.deepcopy(base_plan)
+    invalid_weight_plan["exercises"][0].update({
+        "exerciseType": "WEIGHT",
+        "minReps": 8,
+        "maxReps": 10,
+    })
+    with pytest.raises(ContractValidationError, match="incompatible_equipment_exercise_type"):
+        validate_plan_index_contract(invalid_weight_plan)
+
+    invalid_cardio_plan = copy.deepcopy(base_plan)
+    invalid_cardio_plan["equipments"][0] = {
+        "id": "EQUIPMENT_0",
+        "type": "MACHINE",
+        "name": "Weight Machine",
+    }
+    with pytest.raises(ContractValidationError, match="incompatible_equipment_exercise_type"):
+        validate_plan_index_contract(invalid_cardio_plan)
 
 
 def test_summarization_prompt_preserves_bodyweight_load_semantics():

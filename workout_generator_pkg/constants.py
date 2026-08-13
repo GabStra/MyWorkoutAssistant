@@ -194,6 +194,7 @@ JSON_SCHEMA = {
                 "type": {"const": "Exercise"},                                                                                                                                                                                                   
                 "enabled": {"type": "boolean"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "nameOverride": {"type": ["string", "null"]},
                 "notes": {"type": "string", "maxLength": 500},                                                                                                                                                                                                     
                 "placementNotes": {"type": "string", "maxLength": 500},
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
@@ -460,6 +461,16 @@ JSON_SCHEMA = {
                 "extraWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}                                                                                                                                                       
             }                                                                                                                                                                                                                                    
         },
+        "EquipmentCardioMachine": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "name"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "CARDIO_MACHINE"},
+                "name": {"type": "string"}
+            }
+        },
         "EquipmentAccessory": {
             "type": "object",
             "additionalProperties": False,
@@ -477,7 +488,8 @@ JSON_SCHEMA = {
                 {"$ref": "#/$defs/EquipmentDumbbell"},                                                                                                                                                                                           
                 {"$ref": "#/$defs/EquipmentPlateLoadedCable"},                                                                                                                                                                                   
                 {"$ref": "#/$defs/EquipmentWeightVest"},                                                                                                                                                                                         
-                {"$ref": "#/$defs/EquipmentMachine"}                                                                                                                                                                                             
+                {"$ref": "#/$defs/EquipmentMachine"},
+                {"$ref": "#/$defs/EquipmentCardioMachine"},
             ]                                                                                                                                                                                                                                    
         }                                                                                                                                                                                                                                        
     }                                                                                                                                                                                                                                            
