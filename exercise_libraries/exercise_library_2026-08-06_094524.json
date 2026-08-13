@@ -3461,11 +3461,9 @@
     {
       "name": "Stationary Cycling",
       "exerciseType": "COUNTUP",
-      "equipmentId": null,
+      "equipmentId": "1bbc8e63-a0d0-4d98-809a-928a337644e1",
       "bodyWeightPercentage": null,
-      "requiredAccessoryEquipmentIds": [
-        "1bbc8e63-a0d0-4d98-809a-928a337644e1"
-      ],
+      "requiredAccessoryEquipmentIds": [],
       "muscleGroups": [
         "FRONT_QUADRICEPS",
         "BACK_GLUTEAL",
@@ -5102,17 +5100,17 @@
       "capabilities": [
         "ADJUSTABLE_WEIGHT"
       ]
-    }
-  ],
-  "accessoryEquipments": [
+    },
     {
       "id": "1bbc8e63-a0d0-4d98-809a-928a337644e1",
-      "type": "ACCESSORY",
+      "type": "CARDIO_MACHINE",
       "name": "Spin Bike",
       "capabilities": [
         "CARDIO_STATIONARY"
       ]
-    },
+    }
+  ],
+  "accessoryEquipments": [
     {
       "id": "ef01a523-f4f3-4aa9-8e85-68fc08b73a49",
       "type": "ACCESSORY",
