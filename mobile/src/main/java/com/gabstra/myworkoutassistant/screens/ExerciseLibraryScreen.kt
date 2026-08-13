@@ -66,6 +66,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
+import java.nio.charset.StandardCharsets
 
 private data class ExerciseDefinitionUsage(
     val workout: Workout,
@@ -86,22 +87,16 @@ private data class ExerciseFamily(
     val variations: List<ExerciseDefinition>,
 )
 
+private data class ExerciseEquipmentGroup(
+    val label: String,
+    val families: List<ExerciseFamily>,
+)
+
 private fun String.toDisplayLabel(): String = lowercase()
     .split('_')
     .joinToString(" ") { word -> word.replaceFirstChar { it.titlecase() } }
 
-private fun ExerciseDefinition.variationLabel(
-    equipmentNamesById: Map<UUID, String>,
-): String = buildList {
-    add(exerciseType.name.toDisplayLabel())
-    equipmentId?.let { add(equipmentNamesById[it] ?: "Unknown equipment") }
-        ?: when (exerciseType) {
-            ExerciseType.BODY_WEIGHT -> Unit
-            ExerciseType.WEIGHT -> add("No equipment")
-            ExerciseType.COUNTUP,
-            ExerciseType.COUNTDOWN -> add("Timed")
-        }
-}.distinct().joinToString(" · ")
+private fun ExerciseDefinition.variationLabel(): String = exerciseType.name.toDisplayLabel()
 
 private fun ExerciseDefinition.details(
     equipmentNamesById: Map<UUID, String>,
@@ -223,31 +218,53 @@ fun ExerciseLibraryScreen(
     val usagesByDefinitionId = remember(workouts, plans) {
         buildExerciseDefinitionUsages(workouts, plans)
     }
-    val families = remember(definitions, equipmentNamesById) {
-        definitions.groupBy { it.effectiveFamilyId() }.map { (familyId, familyDefinitions) ->
-            ExerciseFamily(
-                id = familyId,
-                name = familyDefinitions.first().name,
-                variations = familyDefinitions.sortedWith(
-                    compareBy<ExerciseDefinition> {
-                        it.equipmentId?.let(equipmentNamesById::get).orEmpty().lowercase()
-                    }.thenBy { it.exerciseType.name },
-                ),
+    val equipmentGroups = remember(definitions, equipmentNamesById) {
+        definitions
+            .groupBy { it.equipmentId }
+            .map { (equipmentId, equipmentDefinitions) ->
+                val equipmentLabel = equipmentId?.let { id ->
+                    equipmentNamesById[id] ?: "Unknown equipment"
+                } ?: "No equipment"
+                ExerciseEquipmentGroup(
+                    label = equipmentLabel,
+                    families = equipmentDefinitions
+                        .groupBy { it.effectiveFamilyId() }
+                        .map { (familyId, familyDefinitions) ->
+                            ExerciseFamily(
+                                id = UUID.nameUUIDFromBytes(
+                                    "$familyId:${equipmentId ?: "none"}"
+                                        .toByteArray(StandardCharsets.UTF_8),
+                                ),
+                                name = familyDefinitions.first().name,
+                                variations = familyDefinitions.sortedBy { it.exerciseType.name },
+                            )
+                        }
+                        .sortedBy { it.name.lowercase() },
+                )
+            }
+            .sortedWith(
+                compareBy<ExerciseEquipmentGroup> { it.label == "No equipment" }
+                    .thenBy { it.label.lowercase() },
             )
-        }.sortedBy { it.name.lowercase() }
     }
-    val filteredFamilies = remember(query, families) {
+    val filteredGroups = remember(query, equipmentGroups) {
         val normalizedQuery = query.trim()
-        families.filter { family ->
-            family.name.contains(normalizedQuery, ignoreCase = true) ||
-                family.variations.any { variation ->
-                    variation.exerciseType.name.toDisplayLabel()
-                        .contains(normalizedQuery, ignoreCase = true) ||
-                        variation.equipmentId?.let(equipmentNamesById::get)
-                            ?.contains(normalizedQuery, ignoreCase = true) == true
+        equipmentGroups.mapNotNull { group ->
+            val matchingFamilies = if (group.label.contains(normalizedQuery, ignoreCase = true)) {
+                group.families
+            } else {
+                group.families.filter { family ->
+                    family.name.contains(normalizedQuery, ignoreCase = true) ||
+                        family.variations.any { variation ->
+                            variation.exerciseType.name.toDisplayLabel()
+                                .contains(normalizedQuery, ignoreCase = true)
+                        }
                 }
+            }
+            group.takeIf { matchingFamilies.isNotEmpty() }?.copy(families = matchingFamilies)
         }
     }
+    val filteredFamilies = remember(filteredGroups) { filteredGroups.flatMap { it.families } }
 
     LaunchedEffect(filteredFamilies.map { it.id }) {
         val visibleIds = filteredFamilies.mapTo(mutableSetOf()) { it.id }
@@ -277,15 +294,24 @@ fun ExerciseLibraryScreen(
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (filteredFamilies.isEmpty()) {
+            if (filteredGroups.isEmpty()) {
                 Text(
                     if (definitions.isEmpty()) "No exercise definitions yet." else "No matching exercises.",
                     modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xl),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                GenericSelectableList(
-                items = filteredFamilies,
+                filteredGroups.forEach { group ->
+                    Text(
+                        text = group.label,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = Spacing.lg, bottom = Spacing.sm),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    GenericSelectableList(
+                items = group.families,
                 selectedItems = selectedFamilies,
                 isSelectionModeActive = isSelectionModeActive,
                 onItemClick = { family ->
@@ -377,7 +403,7 @@ fun ExerciseLibraryScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Text(
-                                                text = definition.variationLabel(equipmentNamesById),
+                                                text = definition.variationLabel(),
                                                 modifier = Modifier.weight(1f),
                                                 style = MaterialTheme.typography.labelLarge,
                                                 color = MaterialTheme.colorScheme.onSurface,
@@ -390,7 +416,7 @@ fun ExerciseLibraryScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Edit,
-                                                    contentDescription = "Edit ${definition.variationLabel(equipmentNamesById)} variation",
+                                                    contentDescription = "Edit ${definition.variationLabel()} variation",
                                                     modifier = Modifier.size(18.dp),
                                                     tint = MaterialTheme.colorScheme.primary,
                                                 )
@@ -413,7 +439,7 @@ fun ExerciseLibraryScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Delete,
-                                                    contentDescription = "Delete ${definition.variationLabel(equipmentNamesById)} variation",
+                                                    contentDescription = "Delete ${definition.variationLabel()} variation",
                                                     modifier = Modifier.size(18.dp),
                                                     tint = Red,
                                                 )
@@ -431,7 +457,8 @@ fun ExerciseLibraryScreen(
                         }
                     }
                 },
-                )
+                    )
+                }
             }
             if (!isSelectionModeActive) {
                 Spacer(Modifier.height(Spacing.md))

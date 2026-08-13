@@ -32,13 +32,14 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppListFilterToggle
-import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
+import com.gabstra.myworkoutassistant.composables.ExerciseVariationInfo
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.SetPreviewItemCard
 import com.gabstra.myworkoutassistant.composables.SetTableHeaderRow
 import com.gabstra.myworkoutassistant.composables.buildExerciseTemplatePreviewItems
+import com.gabstra.myworkoutassistant.composables.formatTargetRepRange
 import com.gabstra.myworkoutassistant.composables.inferSetTableHeader
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -82,6 +83,26 @@ fun ExerciseOverviewTab(
             Spacer(modifier = Modifier.height(Spacing.md))
         }
 
+        val selectedEquipment = selectedEquipmentId
+            ?.let { equipmentId -> equipments.find { it.id == equipmentId } }
+        val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
+            .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+        val linkedDefinitionName = exercise.exerciseDefinitionId
+            ?.let { definitionId ->
+                appViewModel.workoutStore.exerciseDefinitions
+                    .firstOrNull { it.id == definitionId }
+                    ?.name
+            }
+        ExerciseVariationInfo(
+            modifier = Modifier.padding(bottom = Spacing.md),
+            exerciseType = exercise.exerciseType,
+            targetRepRange = formatTargetRepRange(exercise.minReps, exercise.maxReps),
+            equipmentName = selectedEquipment?.name,
+            accessoryNames = accessoryNames,
+            definitionName = linkedDefinitionName,
+            displayName = exercise.name,
+        )
+
         if (sets.isEmpty()) {
             Row(
                 modifier = Modifier
@@ -98,22 +119,11 @@ fun ExerciseOverviewTab(
                 )
             }
         } else {
-            val selectedEquipment =
-                if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
-            val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-                .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
-
             AppListFilterToggle(
                 label = "Show rests",
                 checked = showRest,
                 onCheckedChange = onShowRestChange,
             )
-            EquipmentAccessoryMetadata(
-                modifier = Modifier.padding(bottom = Spacing.md),
-                equipmentName = selectedEquipment?.name,
-                accessoryNames = accessoryNames,
-            )
-
             if (exercise.requiresLoadCalibration &&
                 CalibrationHelper.supportsCalibrationForExercise(exercise)
             ) {
