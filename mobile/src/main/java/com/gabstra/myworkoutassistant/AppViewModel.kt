@@ -514,13 +514,47 @@ class AppViewModel(
             return (existing + imported).distinctBy(idOf)
         }
 
-        val mergedEquipment = mergeExactById(
-            workoutStore.equipments, exerciseLibrary.equipments, { it.id }, "Equipment"
+        fun <T> mergeReferencesById(
+            existing: List<T>,
+            imported: List<T>,
+            idOf: (T) -> UUID,
+            kindOf: (T) -> String,
+            itemLabel: String,
+        ): List<T> {
+            val existingById = existing.associateBy(idOf)
+            imported.forEach { importedItem ->
+                val id = idOf(importedItem)
+                val existingItem = existingById[id] ?: return@forEach
+                require(kindOf(existingItem) == kindOf(importedItem)) {
+                    "$itemLabel $id changes type from ${kindOf(existingItem)} to ${kindOf(importedItem)}."
+                }
+            }
+            return existing + imported.filterNot { idOf(it) in existingById }
+        }
+
+        val existingPrimaryIds = workoutStore.equipments.mapTo(mutableSetOf()) { it.id }
+        val existingAccessoryIds = workoutStore.accessoryEquipments.mapTo(mutableSetOf()) { it.id }
+        val importedPrimaryIds = exerciseLibrary.equipments.mapTo(mutableSetOf()) { it.id }
+        val importedAccessoryIds = exerciseLibrary.accessoryEquipments.mapTo(mutableSetOf()) { it.id }
+        require((importedPrimaryIds intersect existingAccessoryIds).isEmpty()) {
+            "The library uses an existing accessory ID as primary equipment: ${importedPrimaryIds intersect existingAccessoryIds}."
+        }
+        require((importedAccessoryIds intersect existingPrimaryIds).isEmpty()) {
+            "The library uses an existing primary-equipment ID as an accessory: ${importedAccessoryIds intersect existingPrimaryIds}."
+        }
+
+        val mergedEquipment = mergeReferencesById(
+            workoutStore.equipments,
+            exerciseLibrary.equipments,
+            { it.id },
+            { it.type.name },
+            "Equipment",
         )
-        val mergedAccessories = mergeExactById(
+        val mergedAccessories = mergeReferencesById(
             workoutStore.accessoryEquipments,
             exerciseLibrary.accessoryEquipments,
             { it.id },
+            { EquipmentType.ACCESSORY.name },
             "Accessory equipment",
         )
         val importedDefinitions = exerciseLibrary.exerciseDefinitions.map { definition ->
