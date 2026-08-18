@@ -19,6 +19,26 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+fun formatTimerNotificationStatus(timerUiState: WorkoutTimerService.TimerUiState?): String? {
+    timerUiState ?: return null
+    val totalSeconds = timerUiState.displaySeconds.coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    val formattedTime = if (hours > 0) {
+        "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+    } else {
+        "${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+    }
+    val timerLabel = when (timerUiState.timerType) {
+        WorkoutTimerService.TimerType.REST -> "Rest"
+        WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
+        WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
+    }
+    val pausedSuffix = if (timerUiState.isRunning) "" else " (paused)"
+    return "$timerLabel · $formattedTime$pausedSuffix"
+}
+
 /**
  * Service that manages workout timers independently of composable lifecycle.
  * Updates state.currentSetData.endTimer continuously so ExerciseIndicator

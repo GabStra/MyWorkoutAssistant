@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.content.Context
 import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
@@ -57,6 +59,10 @@ import com.gabstra.myworkoutassistant.heart_rate.ExternalHeartRateConnectionStat
 import com.gabstra.myworkoutassistant.heart_rate.PolarHeartRateViewModel
 import com.gabstra.myworkoutassistant.heart_rate.WhoopHeartRateViewModel
 import com.gabstra.myworkoutassistant.heart_rate.hasBluetoothPermission
+import com.gabstra.myworkoutassistant.notifications.cancelActiveWorkoutNotification
+import com.gabstra.myworkoutassistant.notifications.isAppInForeground
+import com.gabstra.myworkoutassistant.notifications.showActiveWorkoutNotification
+import com.gabstra.myworkoutassistant.notifications.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -157,6 +163,15 @@ fun WorkoutScreen(
     val context = LocalContext.current
     val screenState by workoutViewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
+    val timerUiStates by workoutViewModel.workoutTimerService.timerUiStates.collectAsState()
+    val activeTimerUiState = when (workoutState) {
+        is WorkoutState.Rest -> timerUiStates[workoutState.set.id]
+        is WorkoutState.Set -> timerUiStates[workoutState.set.id]
+        else -> null
+    }
+    val notificationTimerUiState = activeTimerUiState?.copy(
+        isRunning = activeTimerUiState.isRunning && !screenState.isPaused,
+    )
     val selectedWorkout = screenState.selectedWorkout
     val isPaused = screenState.isPaused
     val isSessionHydrationInFlight by workoutViewModel.isSessionHydrationInFlightFlow.collectAsState()
@@ -185,6 +200,40 @@ fun WorkoutScreen(
         ) {
             externalHeartRateController?.connect()
         }
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) showActiveWorkoutNotification(context, notificationTimerUiState)
+    }
+
+    LaunchedEffect(selectedWorkout.id) {
+        if (
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            showActiveWorkoutNotification(context)
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    LaunchedEffect(workoutState is WorkoutState.Completed) {
+        if (workoutState is WorkoutState.Completed) {
+            cancelActiveWorkoutNotification(context)
+        }
+    }
+    LaunchedEffect(
+        notificationTimerUiState?.setId,
+        notificationTimerUiState?.timerType,
+        notificationTimerUiState?.isRunning,
+        notificationTimerUiState?.startValue,
+    ) {
+        showActiveWorkoutNotification(
+            context = context,
+            timerUiState = notificationTimerUiState,
+        )
     }
 
     LaunchedEffect(
@@ -533,6 +582,13 @@ fun WorkoutScreen(
                             state,
                             { },
                             onTimerEnd = {
+                                if (!isAppInForeground()) {
+                                    showTimerCompletedNotification(
+                                        context = context,
+                                        title = "Rest finished",
+                                        message = "Time for your next set",
+                                    )
+                                }
                                 workoutViewModel.storeSetData()
                                 workoutViewModel.pushAndStoreWorkoutData(false, context) {
                                     workoutViewModel.goToNextState()
@@ -570,6 +626,7 @@ fun WorkoutScreen(
 
                 val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
                 prefs.edit { putBoolean("isWorkoutInProgress", false) }
+                cancelActiveWorkoutNotification(context)
 
                 appViewModel.goBack()
                 appViewModel.triggerUpdate()

@@ -18,6 +18,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.notifications.isAppInForeground
+import com.gabstra.myworkoutassistant.notifications.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -136,6 +138,13 @@ fun ExerciseDetail(
                 modifier = modifier,
                 state = updatedState,
                 onTimerEnd = {
+                    if (!isAppInForeground()) {
+                        showTimerCompletedNotification(
+                            context = context,
+                            title = "Set timer finished",
+                            message = "Time for your next set",
+                        )
+                    }
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.goToNextState()
@@ -157,6 +166,13 @@ fun ExerciseDetail(
             modifier = modifier,
             state = updatedState,
             onTimerEnd = {
+                if (!isAppInForeground()) {
+                    showTimerCompletedNotification(
+                        context = context,
+                        title = "Set timer finished",
+                        message = "Time for your next set",
+                    )
+                }
                 viewModel.storeSetData()
                 viewModel.pushAndStoreWorkoutData(false, context) {
                     viewModel.goToNextState()

@@ -142,6 +142,15 @@ fun WorkoutScreen(
     val scope = rememberWearCoroutineScope()
     val screenState by viewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
+    val timerUiStates by viewModel.workoutTimerService.timerUiStates.collectAsState()
+    val activeTimerUiState = when (workoutState) {
+        is WorkoutState.Rest -> timerUiStates[workoutState.set.id]
+        is WorkoutState.Set -> timerUiStates[workoutState.set.id]
+        else -> null
+    }
+    val notificationTimerUiState = activeTimerUiState?.copy(
+        isRunning = activeTimerUiState.isRunning && !screenState.isPaused,
+    )
     var hrStatus by remember(workoutState) { mutableStateOf<HeartRateStatus?>(null) }
     val selectedWorkout = screenState.selectedWorkout
     val sessionPhase = screenState.sessionPhase
@@ -201,7 +210,11 @@ fun WorkoutScreen(
         try {
             val notificationHelper = WorkoutNotificationHelper(context)
             notificationHelper.clearChannelNotifications()
-            showWorkoutInProgressNotification(context, selectedWorkout.globalId)
+            showWorkoutInProgressNotification(
+                context,
+                selectedWorkout.globalId,
+                notificationTimerUiState,
+            )
         } catch (exception: Exception) {
             android.util.Log.e("WorkoutScreen", "Error showing workout notification", exception)
         }
@@ -209,9 +222,31 @@ fun WorkoutScreen(
 
     LaunchedEffect(selectedWorkout.globalId) {
         try {
-            showWorkoutInProgressNotification(context, selectedWorkout.globalId)
+            showWorkoutInProgressNotification(
+                context,
+                selectedWorkout.globalId,
+                notificationTimerUiState,
+            )
         } catch (exception: Exception) {
             android.util.Log.e("WorkoutScreen", "Error refreshing workout notification", exception)
+        }
+    }
+
+    LaunchedEffect(
+        selectedWorkout.globalId,
+        notificationTimerUiState?.setId,
+        notificationTimerUiState?.timerType,
+        notificationTimerUiState?.isRunning,
+        notificationTimerUiState?.startValue,
+    ) {
+        try {
+            showWorkoutInProgressNotification(
+                context = context,
+                workoutGlobalId = selectedWorkout.globalId,
+                timerUiState = notificationTimerUiState,
+            )
+        } catch (exception: Exception) {
+            android.util.Log.e("WorkoutScreen", "Error updating workout timer notification", exception)
         }
     }
 

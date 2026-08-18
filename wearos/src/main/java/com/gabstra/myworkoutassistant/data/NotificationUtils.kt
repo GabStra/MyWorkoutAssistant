@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -13,6 +14,8 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
+import com.gabstra.myworkoutassistant.shared.workout.timer.formatTimerNotificationStatus
 import java.util.UUID
 
 internal const val OPEN_ACTIVE_WORKOUT_ACTION =
@@ -29,7 +32,11 @@ internal fun Intent.configureOpenActiveWorkoutIntent(workoutGlobalId: UUID? = nu
 }
 
 @SuppressLint("MissingPermission")
-fun showWorkoutInProgressNotification(context: Context, workoutGlobalId: UUID? = null) {
+fun showWorkoutInProgressNotification(
+    context: Context,
+    workoutGlobalId: UUID? = null,
+    timerUiState: WorkoutTimerService.TimerUiState? = null,
+) {
     val channelId = "workout_progress_channel"
     val notificationId = 1
 
@@ -58,7 +65,6 @@ fun showWorkoutInProgressNotification(context: Context, workoutGlobalId: UUID? =
     val notificationBuilder = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(R.drawable.ic_workout_icon) // Notification small icon; OngoingActivity supplies the watch-face badge.
         .setContentTitle("Workout in Progress")
-        .setContentText("Tap to open the app.")
         .setContentIntent(pendingIntent)
         .setCategory(NotificationCompat.CATEGORY_WORKOUT)
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -67,10 +73,52 @@ fun showWorkoutInProgressNotification(context: Context, workoutGlobalId: UUID? =
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .setOngoing(true)
 
-    // *** 1. Create and apply the Ongoing Activity ***
-    val ongoingActivityStatus = Status.Builder()
-        .addTemplate("Workout in progress")
-        .build()
+    val ongoingActivityStatus = if (timerUiState == null) {
+        notificationBuilder
+            .setContentText("Tap to open the app.")
+            .setShowWhen(false)
+            .setUsesChronometer(false)
+        Status.Builder().addTemplate("Workout in progress").build()
+    } else if (!timerUiState.isRunning) {
+        val pausedStatus = formatTimerNotificationStatus(timerUiState) ?: "Workout in progress"
+        notificationBuilder
+            .setContentText(pausedStatus)
+            .setShowWhen(false)
+            .setUsesChronometer(false)
+        Status.Builder().addTemplate(pausedStatus).build()
+    } else {
+        val elapsedRealtime = SystemClock.elapsedRealtime()
+        val timerLabel = when (timerUiState.timerType) {
+            WorkoutTimerService.TimerType.REST -> "Rest"
+            WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
+            WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
+        }
+        val timerPart = when (timerUiState.timerType) {
+            WorkoutTimerService.TimerType.REST,
+            WorkoutTimerService.TimerType.TIMED_DURATION_SET ->
+                Status.TimerPart(elapsedRealtime + timerUiState.displayMillis)
+
+            WorkoutTimerService.TimerType.ENDURANCE_SET ->
+                Status.StopwatchPart(elapsedRealtime - timerUiState.displayMillis)
+        }
+        val isCountdown = timerUiState.timerType != WorkoutTimerService.TimerType.ENDURANCE_SET
+        val timerBaseWallClockMillis = if (isCountdown) {
+            System.currentTimeMillis() + timerUiState.displayMillis
+        } else {
+            System.currentTimeMillis() - timerUiState.displayMillis
+        }
+        notificationBuilder
+            .setContentText(timerLabel)
+            .setWhen(timerBaseWallClockMillis)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(isCountdown)
+        Status.Builder()
+            .addTemplate("#label# #timer#")
+            .addPart("label", Status.TextPart(timerLabel))
+            .addPart("timer", timerPart)
+            .build()
+    }
 
     OngoingActivity.Builder(context, notificationId, notificationBuilder)
         // The watch face ongoing button does not inherit notification colorization,
