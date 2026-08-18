@@ -32,7 +32,7 @@ mobile/release/
 test_output.txt
 dump.txt
 MUJOCO_LOG.TXT
-merged_workout_store_backup.json
+*workout_store_backup*.json
 wearos/wearos/build/e2e-logs/
 .env
 .env.*
@@ -554,9 +554,22 @@ wearos/src/debug/assets/exercise_motion/
 # Local scratch outputs
 /.agents/
 /tmp/
+.tmp/
 /$inputDir/
 .git-group*.patch
+.git-commit-grouper-stage.py
+.codex-tmp*/
+.pytest-*/
+.test-tmp/
+build.protected-stale*/
 tmp*.tmp*
+
+# Generated library/capability snapshots (keep the committed current copies)
+exercise_libraries/exercise_library_*.json
+!exercise_libraries/exercise_library_2026-08-06_094524.json
+exercise_libraries/review_checkpoints/
+equipment_capabilities/equipment_capabilities_*.json
+!equipment_capabilities/equipment_capabilities_2026-08-04_160832.json
 
 # Local model downloads
 yolo*-pose.pt
