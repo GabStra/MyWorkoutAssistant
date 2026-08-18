@@ -128,9 +128,9 @@ fun ExerciseScreen(
 
     val exercise = viewModel.exercisesById[state.exerciseId]!!
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
-    val accessoryEquipments = remember(exercise) {
+    val accessoryEquipmentNames = remember(exercise) {
         (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
-            viewModel.getAccessoryEquipmentById(id)
+            viewModel.getLinkedSupportName(id)
         }
     }
     val isEquipmentChangeSupported =
@@ -456,7 +456,7 @@ fun ExerciseScreen(
                         val infoSections = remember(
                             exercise,
                             equipment,
-                            accessoryEquipments,
+                            accessoryEquipmentNames,
                             state,
                             isSuperset,
                             exerciseOrSupersetId,
@@ -466,7 +466,7 @@ fun ExerciseScreen(
                                 exercise = exercise,
                                 state = state,
                                 equipmentName = equipment?.name,
-                                accessoryEquipmentNames = accessoryEquipments.map { it.name },
+                                accessoryEquipmentNames = accessoryEquipmentNames,
                                 supersetExercises = if (isSuperset) {
                                     viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty()
                                 } else {

@@ -1,17 +1,22 @@
 package com.gabstra.myworkoutassistant.motionrenderer
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -23,8 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -43,6 +52,7 @@ import com.google.android.filament.RenderableManager
 import com.google.android.filament.Renderer
 import com.google.android.filament.Scene
 import com.google.android.filament.SwapChain
+import com.google.android.filament.Texture
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.UiHelper
@@ -50,6 +60,8 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import java.nio.ShortBuffer
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -61,12 +73,15 @@ import com.google.android.filament.Box as FilamentBox
 import com.google.android.filament.View as FilamentView
 
 private const val OrbitDegreesPerSecond = 18f
-private const val FilamentVertexFloatCount = 7
-private const val FilamentVertexStrideBytes = FilamentVertexFloatCount * 4
+private const val FilamentPoseFloatCount = 7
+private const val FilamentPoseStrideBytes = FilamentPoseFloatCount * 4
 private const val FilamentPositionOffsetBytes = 0
-private const val FilamentColorOffsetBytes = 3 * 4
+private const val FilamentNormalOffsetBytes = 3 * 4
+private const val FilamentColorFloatCount = 4
+private const val FilamentColorStrideBytes = FilamentColorFloatCount * 4
 private const val DragRotationDegreesPerPixel = 0.45f
 private const val SkeletonPreviewContentDescription = "Exercise movement preview"
+private const val ListThumbnailPixelSize = 160
 private const val SkeletonKeyLightYawOffsetDegrees = -25f
 private const val SkeletonKeyLightElevationDegrees = 50f
 private const val SkeletonAmbientLightLevel = 0.38f
@@ -91,40 +106,6 @@ private fun createSkeletonPalette(primaryFill: Color): SkeletonPalette {
         headFill = primaryFill,
         jointFill = MediumGray,
         grid = primaryFill,
-    )
-}
-
-private fun SkeletonPalette.withVisibility(
-    visibility: Float,
-    backgroundColor: Color,
-): SkeletonPalette {
-    val amount = visibility.coerceIn(0f, 1f)
-    return SkeletonPalette(
-        limbFill = limbFill.blendToward(backgroundColor, amount),
-        coreFill = coreFill.blendToward(backgroundColor, amount),
-        headFill = headFill.blendToward(backgroundColor, amount),
-        jointFill = jointFill.blendToward(backgroundColor, amount),
-        grid = grid.blendToward(backgroundColor, amount),
-    )
-}
-
-private fun Color.blendToward(backgroundColor: Color, amount: Float): Color {
-    val resolvedAmount = amount.coerceIn(0f, 1f)
-    return Color(
-        red = backgroundColor.red + (red - backgroundColor.red) * resolvedAmount,
-        green = backgroundColor.green + (green - backgroundColor.green) * resolvedAmount,
-        blue = backgroundColor.blue + (blue - backgroundColor.blue) * resolvedAmount,
-        alpha = alpha,
-    )
-}
-
-private fun Color.scaleRgb(amount: Float): Color {
-    val scale = amount.coerceIn(0f, 1f)
-    return Color(
-        red = (red * scale).coerceIn(0f, 1f),
-        green = (green * scale).coerceIn(0f, 1f),
-        blue = (blue * scale).coerceIn(0f, 1f),
-        alpha = alpha,
     )
 }
 
@@ -255,14 +236,14 @@ private val VisibleJointCapNames = setOf(
 )
 
 private val SkeletonLimbs = arrayOf(
-    LimbSpec("left_hip", "left_knee", LimbProfile(0.25f, 0.205f, 0.44f, 1.16f, 0.42f)),
-    LimbSpec("left_knee", "left_ankle", LimbProfile(0.215f, 0.16f, 0.42f, 1.12f, 0.46f)),
-    LimbSpec("right_hip", "right_knee", LimbProfile(0.25f, 0.205f, 0.44f, 1.16f, 0.42f)),
-    LimbSpec("right_knee", "right_ankle", LimbProfile(0.215f, 0.16f, 0.42f, 1.12f, 0.46f)),
-    LimbSpec("left_shoulder", "left_elbow", LimbProfile(0.27f, 0.215f, 0.42f, 1.18f, 0.48f)),
-    LimbSpec("left_elbow", "left_wrist", LimbProfile(0.225f, 0.17f, 0.40f, 1.10f, 0.40f)),
-    LimbSpec("right_shoulder", "right_elbow", LimbProfile(0.27f, 0.215f, 0.42f, 1.18f, 0.48f)),
-    LimbSpec("right_elbow", "right_wrist", LimbProfile(0.225f, 0.17f, 0.40f, 1.10f, 0.40f)),
+    LimbSpec("left_hip", "left_knee", LimbProfile(0.27f, 0.215f, 0.46f, 1.24f, 0.42f)),
+    LimbSpec("left_knee", "left_ankle", LimbProfile(0.225f, 0.165f, 0.44f, 1.18f, 0.46f)),
+    LimbSpec("right_hip", "right_knee", LimbProfile(0.27f, 0.215f, 0.46f, 1.24f, 0.42f)),
+    LimbSpec("right_knee", "right_ankle", LimbProfile(0.225f, 0.165f, 0.44f, 1.18f, 0.46f)),
+    LimbSpec("left_shoulder", "left_elbow", LimbProfile(0.30f, 0.225f, 0.44f, 1.26f, 0.48f)),
+    LimbSpec("left_elbow", "left_wrist", LimbProfile(0.235f, 0.175f, 0.42f, 1.16f, 0.40f)),
+    LimbSpec("right_shoulder", "right_elbow", LimbProfile(0.30f, 0.225f, 0.44f, 1.26f, 0.48f)),
+    LimbSpec("right_elbow", "right_wrist", LimbProfile(0.235f, 0.175f, 0.42f, 1.16f, 0.40f)),
 )
 
 @Composable
@@ -280,7 +261,18 @@ fun SkeletonMotionPreview(
     dragRotationDegreesPerPixel: Float = DragRotationDegreesPerPixel,
     dragRotationHorizontalInset: Dp = 0.dp,
     isRenderingActive: Boolean = true,
+    listThumbnail: Boolean = false,
 ) {
+    if (listThumbnail) {
+        SkeletonListThumbnailPreview(
+            skeletonJson = skeletonJson,
+            modifier = modifier,
+            backgroundColor = backgroundColor,
+            primaryFill = primaryFill,
+            isRenderingActive = isRenderingActive,
+        )
+        return
+    }
     val skeleton = remember(skeletonJson) {
         parseWearSkeleton(skeletonJson)
     }
@@ -402,17 +394,14 @@ fun SkeletonMotionPreview(
     } else {
         baseViewYawDegrees
     } + dragYawOffsetDegrees
-    val visiblePalette = remember(palette, backgroundColor, playbackVisibility) {
-        palette.withVisibility(playbackVisibility, backgroundColor)
-    }
-
     Box(modifier = modifier.fillMaxSize()) {
         WearSkeletonRenderer(
             skeleton = skeleton,
             frameIndex = frameIndex,
             viewYawDegrees = resolvedYawDegrees,
             viewPitchDegrees = baseViewPitchDegrees,
-            palette = visiblePalette,
+            palette = palette,
+            visibility = playbackVisibility,
             backgroundColor = backgroundColor,
             keyLightDirection = keyLightDirection,
             isRenderingActive = isRenderingActive,
@@ -423,6 +412,49 @@ fun SkeletonMotionPreview(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(movementInteractionModifier),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SkeletonListThumbnailPreview(
+    skeletonJson: String,
+    modifier: Modifier,
+    backgroundColor: Color,
+    primaryFill: Color,
+    isRenderingActive: Boolean,
+) {
+    val context = LocalContext.current.applicationContext
+    var frameBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    val slotId = remember { Any() }
+    DisposableEffect(skeletonJson, backgroundColor, primaryFill, isRenderingActive) {
+        if (isRenderingActive) {
+            SharedSkeletonThumbnailRuntime.register(
+                context = context,
+                slotId = slotId,
+                skeletonJson = skeletonJson,
+                backgroundColor = backgroundColor,
+                primaryFill = primaryFill,
+                onFrame = { frameBitmap = it },
+            )
+        }
+        onDispose {
+            SharedSkeletonThumbnailRuntime.unregister(slotId)
+        }
+    }
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .semantics { contentDescription = SkeletonPreviewContentDescription },
+    ) {
+        frameBitmap?.let { bitmap ->
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
             )
         }
     }
@@ -486,6 +518,7 @@ private fun WearSkeletonRenderer(
     viewYawDegrees: Float,
     viewPitchDegrees: Float,
     palette: SkeletonPalette,
+    visibility: Float,
     backgroundColor: Color,
     keyLightDirection: WearSkeletonVec3,
     isRenderingActive: Boolean,
@@ -505,6 +538,7 @@ private fun WearSkeletonRenderer(
                     viewYawDegrees = viewYawDegrees,
                     viewPitchDegrees = viewPitchDegrees,
                     palette = palette,
+                    visibility = visibility,
                     backgroundColor = backgroundColor,
                     keyLightDirection = keyLightDirection,
                 )
@@ -518,6 +552,7 @@ private fun WearSkeletonRenderer(
                 viewYawDegrees = viewYawDegrees,
                 viewPitchDegrees = viewPitchDegrees,
                 palette = palette,
+                visibility = visibility,
                 backgroundColor = backgroundColor,
                 keyLightDirection = keyLightDirection,
             )
@@ -556,6 +591,7 @@ private class WearSkeletonFilamentView(
         viewYawDegrees: Float,
         viewPitchDegrees: Float,
         palette: SkeletonPalette,
+        visibility: Float,
         backgroundColor: Color,
         keyLightDirection: WearSkeletonVec3,
     ) {
@@ -569,6 +605,7 @@ private class WearSkeletonFilamentView(
             viewYawDegrees = viewYawDegrees,
             viewPitchDegrees = viewPitchDegrees,
             palette = palette,
+            visibility = visibility,
             backgroundColor = backgroundColor,
             keyLightDirection = keyLightDirection,
         )
@@ -623,6 +660,7 @@ private class WearSkeletonFilamentView(
 
 private class WearSkeletonFilamentRenderer(
     private val context: Context,
+    private val thumbnailMode: Boolean = false,
 ) {
     private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
     private val engine: Engine
@@ -634,21 +672,31 @@ private class WearSkeletonFilamentRenderer(
     private val material: Material
     private val materialInstance: MaterialInstance
     private var swapChain: SwapChain? = null
-    private var renderableEntity: Int = 0
-    private var vertexBuffer: VertexBuffer? = null
-    private var indexBuffer: IndexBuffer? = null
-    private var vertexBufferCapacity: Int = 0
-    private var indexBufferCapacity: Int = 0
+    private var bodyEntity: Int = 0
+    private var bodyVertexBuffer: VertexBuffer? = null
+    private var bodyIndexBuffer: IndexBuffer? = null
+    private var bodyVertexCount: Int = 0
+    private var bodyIndexCount: Int = 0
+    private var floorEntity: Int = 0
+    private var floorVertexBuffer: VertexBuffer? = null
+    private var floorIndexBuffer: IndexBuffer? = null
+    private var poseUploadBuffer: FloatBuffer? = null
+    private var colorUploadBuffer: FloatBuffer? = null
+    private var indexUploadBuffer: ShortBuffer? = null
     private var viewportWidth: Int = 0
     private var viewportHeight: Int = 0
-    private var lastGeometryKey: FilamentGeometryKey? = null
-    private var lastCameraBoundsSkeletonId: Int? = null
+    private var lastSkeletonId: Int? = null
+    private var lastFrameIndex: Int? = null
+    private var lastPalette: SkeletonPalette? = null
     private var lastBounds: FilamentMeshBounds? = null
     private var lastCameraTarget: WearSkeletonVec3? = null
     private var lastOrbitHorizontalRadius: Float? = null
     private var lastOrbitVerticalHalfExtent: Float? = null
     private var lastYawDegrees: Float = -28f
     private var lastPitchDegrees: Float = 18f
+    private var lastVisibility: Float? = null
+    private var lastBackgroundColor: Color? = null
+    private var lastKeyLightDirection: WearSkeletonVec3? = null
     private var destroyed = false
 
     init {
@@ -661,14 +709,23 @@ private class WearSkeletonFilamentRenderer(
         camera = engine.createCamera(cameraEntity)
         view.setScene(scene)
         view.setCamera(camera)
-        view.setPostProcessingEnabled(true)
-        view.setAntiAliasing(FilamentView.AntiAliasing.FXAA)
-        view.setMultiSampleAntiAliasingOptions(
-            FilamentView.MultiSampleAntiAliasingOptions().apply {
-                enabled = true
-                sampleCount = 4
-            }
-        )
+        if (thumbnailMode) {
+            view.setPostProcessingEnabled(false)
+            view.setAntiAliasing(FilamentView.AntiAliasing.NONE)
+            view.setMultiSampleAntiAliasingOptions(
+                FilamentView.MultiSampleAntiAliasingOptions().apply {
+                    enabled = false
+                }
+            )
+        } else {
+            view.setPostProcessingEnabled(true)
+            view.setAntiAliasing(FilamentView.AntiAliasing.FXAA)
+            view.setMultiSampleAntiAliasingOptions(
+                FilamentView.MultiSampleAntiAliasingOptions().apply {
+                    enabled = false
+                }
+            )
+        }
         renderer.setClearOptions(
             Renderer.ClearOptions().apply {
                 clear = true
@@ -683,6 +740,19 @@ private class WearSkeletonFilamentRenderer(
         materialInstance = material.createInstance("wear-skeleton").apply {
             setDoubleSided(false)
             setCullingMode(Material.CullingMode.BACK)
+            setParameter("ambientLight", SkeletonAmbientLightLevel)
+            setParameter("keyLightStrength", SkeletonKeyLightStrength)
+            setParameter("fillLightStrength", SkeletonFillLightStrength)
+            setParameter("hemisphereLightStrength", SkeletonHemisphereLightStrength)
+            setParameter("visibility", 1f)
+            setParameter("keyLightDirection", 0f, 1f, 0f)
+            setParameter("backgroundColor", 0f, 0f, 0f)
+        }
+        if (thumbnailMode) {
+            viewportWidth = ListThumbnailPixelSize
+            viewportHeight = ListThumbnailPixelSize
+            view.setViewport(Viewport(0, 0, viewportWidth, viewportHeight))
+            swapChain = engine.createSwapChain(viewportWidth, viewportHeight, 0)
         }
     }
 
@@ -719,6 +789,7 @@ private class WearSkeletonFilamentRenderer(
         viewYawDegrees: Float,
         viewPitchDegrees: Float,
         palette: SkeletonPalette,
+        visibility: Float,
         backgroundColor: Color,
         keyLightDirection: WearSkeletonVec3,
     ) {
@@ -726,29 +797,34 @@ private class WearSkeletonFilamentRenderer(
             return
         }
 
-        updateClearColor(backgroundColor)
+        if (lastBackgroundColor != backgroundColor) {
+            updateClearColor(backgroundColor)
+            materialInstance.setParameter(
+                "backgroundColor",
+                backgroundColor.red.srgbToLinearChannel(),
+                backgroundColor.green.srgbToLinearChannel(),
+                backgroundColor.blue.srgbToLinearChannel(),
+            )
+            lastBackgroundColor = backgroundColor
+        }
         lastYawDegrees = viewYawDegrees
         lastPitchDegrees = viewPitchDegrees
         val resolvedFrameIndex = frameIndex.coerceIn(0, skeleton.frames.lastIndex)
-        val geometryKey = FilamentGeometryKey(
-            skeletonId = System.identityHashCode(skeleton),
-            frameIndex = resolvedFrameIndex,
-            palette = palette,
-            keyLightDirection = keyLightDirection,
-        )
+        val skeletonId = System.identityHashCode(skeleton)
+        updateLookUniforms(visibility, keyLightDirection)
 
-        if (geometryKey != lastGeometryKey) {
-            val frame = skeleton.frames[resolvedFrameIndex]
-            val mesh = buildFilamentMesh(
-                frame = frame,
-                bounds = skeleton.bounds,
-                palette = palette,
-                stableLimbSides = skeleton.limbSidesByFrame.getOrNull(resolvedFrameIndex).orEmpty(),
-                keyLightDirection = keyLightDirection,
-            )
-            replaceRenderable(mesh)
-            lastGeometryKey = geometryKey
-            if (lastCameraBoundsSkeletonId != geometryKey.skeletonId) {
+        val skeletonChanged = lastSkeletonId != skeletonId
+        val poseChanged = skeletonChanged || lastFrameIndex != resolvedFrameIndex
+        val paletteChanged = lastPalette != palette
+
+        if (skeletonChanged) {
+            if (thumbnailMode) {
+                val thumbnailBounds = skeleton.bounds.toStableFilamentBounds()
+                lastBounds = thumbnailBounds
+                lastCameraTarget = thumbnailBounds.center
+                lastOrbitHorizontalRadius = null
+                lastOrbitVerticalHalfExtent = null
+            } else {
                 val cameraFrame = skeleton.toStableRenderedSceneCameraFrame(
                     palette = palette,
                     pitchDegrees = viewPitchDegrees,
@@ -757,13 +833,56 @@ private class WearSkeletonFilamentRenderer(
                 lastCameraTarget = cameraFrame.target
                 lastOrbitHorizontalRadius = cameraFrame.orbitHorizontalRadius
                 lastOrbitVerticalHalfExtent = cameraFrame.orbitVerticalHalfExtent
-                lastCameraBoundsSkeletonId = geometryKey.skeletonId
             }
+            replaceFloorRenderable(buildFloorMesh(skeleton.bounds, palette.grid))
+        } else if (paletteChanged) {
+            replaceFloorRenderable(buildFloorMesh(skeleton.bounds, palette.grid))
+        }
+
+        if (poseChanged || paletteChanged) {
+            val generatedMesh = buildSingleLowPolyMesh(
+                joints = skeleton.frames[resolvedFrameIndex].joints,
+                palette = palette,
+                stableLimbSides = skeleton.limbSidesByFrame.getOrNull(resolvedFrameIndex).orEmpty(),
+            ) ?: GeneratedLowPolyMesh()
+            val reuseTopology = bodyEntity != 0 &&
+                generatedMesh.vertices.size == bodyVertexCount &&
+                bodyVertexCount > 0
+            val includeColors = !reuseTopology || paletteChanged || skeletonChanged
+            val mesh = generatedMesh.toShadedMesh(
+                modelBounds = skeleton.bounds.toStableFilamentBounds(),
+                includeColors = includeColors,
+                includeIndices = !reuseTopology,
+            )
+            replaceBodyRenderable(mesh, uploadColors = includeColors)
+            lastSkeletonId = skeletonId
+            lastFrameIndex = resolvedFrameIndex
+            lastPalette = palette
         }
         if (lastCameraTarget == null) {
             lastCameraTarget = lastBounds?.center
         }
         updateCamera()
+    }
+
+    private fun updateLookUniforms(
+        visibility: Float,
+        keyLightDirection: WearSkeletonVec3,
+    ) {
+        val resolvedVisibility = visibility.coerceIn(0f, 1f)
+        if (lastVisibility != resolvedVisibility) {
+            materialInstance.setParameter("visibility", resolvedVisibility)
+            lastVisibility = resolvedVisibility
+        }
+        if (lastKeyLightDirection != keyLightDirection) {
+            materialInstance.setParameter(
+                "keyLightDirection",
+                keyLightDirection.x,
+                keyLightDirection.y,
+                keyLightDirection.z,
+            )
+            lastKeyLightDirection = keyLightDirection
+        }
     }
 
     private fun updateClearColor(backgroundColor: Color) {
@@ -790,13 +909,50 @@ private class WearSkeletonFilamentRenderer(
         }
     }
 
+    fun renderAndReadPixels(
+        frameTimeNanos: Long,
+        output: ByteBuffer,
+        onComplete: () -> Unit,
+    ) {
+        val chain = swapChain
+        if (destroyed || chain == null || viewportWidth <= 0 || viewportHeight <= 0) {
+            onComplete()
+            return
+        }
+        if (!renderer.beginFrame(chain, frameTimeNanos)) {
+            onComplete()
+            return
+        }
+        renderer.render(view)
+        output.clear()
+        val descriptor = Texture.PixelBufferDescriptor(
+            output,
+            Texture.Format.RGBA,
+            Texture.Type.UBYTE,
+        )
+        descriptor.setCallback(Handler(Looper.getMainLooper())) {
+            output.rewind()
+            onComplete()
+        }
+        renderer.readPixels(0, 0, viewportWidth, viewportHeight, descriptor)
+        renderer.endFrame()
+    }
+
     fun destroy() {
         if (destroyed) {
             return
         }
         destroyed = true
-        uiHelper.detach()
-        clearRenderable()
+        if (!thumbnailMode) {
+            uiHelper.detach()
+        }
+        swapChain?.let { chain ->
+            engine.destroySwapChain(chain)
+            engine.flushAndWait()
+        }
+        swapChain = null
+        clearBodyRenderable()
+        clearFloorRenderable()
         engine.destroyMaterialInstance(materialInstance)
         engine.destroyMaterial(material)
         engine.destroyCameraComponent(cameraEntity)
@@ -807,58 +963,64 @@ private class WearSkeletonFilamentRenderer(
         engine.destroy()
     }
 
-    private fun replaceRenderable(mesh: FilamentMeshData) {
-        if (mesh.indices.isEmpty() || mesh.vertices.isEmpty()) {
-            clearRenderable()
+    private fun replaceBodyRenderable(mesh: ShadedMeshData, uploadColors: Boolean) {
+        if (mesh.poseVertices.isEmpty()) {
+            clearBodyRenderable()
             return
         }
 
-        val vertexData = ByteBuffer
-            .allocateDirect(mesh.vertices.size * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-            .apply {
-                put(mesh.vertices)
-                flip()
-            }
-
-        val reusableVertexBuffer = vertexBuffer
-        if (
-            renderableEntity != 0 &&
+        val poseBuffer = writeDirectFloats(poseUploadBuffer, mesh.poseVertices)
+        poseUploadBuffer = poseBuffer
+        val reusableVertexBuffer = bodyVertexBuffer
+        val reusableIndexBuffer = bodyIndexBuffer
+        val canReuseTopology = bodyEntity != 0 &&
             reusableVertexBuffer != null &&
-            vertexBufferCapacity == mesh.vertexCount &&
-            indexBufferCapacity == mesh.indices.size
-        ) {
-            reusableVertexBuffer.setBufferAt(engine, 0, vertexData)
+            reusableIndexBuffer != null &&
+            bodyVertexCount == mesh.vertexCount &&
+            (mesh.indices.isEmpty() || bodyIndexCount == mesh.indices.size)
+        if (canReuseTopology) {
+            reusableVertexBuffer.setBufferAt(engine, 0, poseBuffer)
+            if (uploadColors && mesh.colors.isNotEmpty()) {
+                val colorBuffer = writeDirectFloats(colorUploadBuffer, mesh.colors)
+                colorUploadBuffer = colorBuffer
+                reusableVertexBuffer.setBufferAt(engine, 1, colorBuffer)
+            }
             return
         }
 
-        clearRenderable()
-        val indexData = ByteBuffer
-            .allocateDirect(mesh.indices.size * 2)
-            .order(ByteOrder.nativeOrder())
-            .asShortBuffer()
-            .apply {
-                mesh.indices.forEach { put(it.toShort()) }
-                flip()
-            }
+        if (mesh.indices.isEmpty() || mesh.colors.isEmpty()) {
+            return
+        }
+
+        clearBodyRenderable()
+        val colorBuffer = writeDirectFloats(colorUploadBuffer, mesh.colors)
+        colorUploadBuffer = colorBuffer
+        val indexBufferData = writeDirectShorts(indexUploadBuffer, mesh.indices)
+        indexUploadBuffer = indexBufferData
 
         val newVertexBuffer = VertexBuffer.Builder()
             .vertexCount(mesh.vertexCount)
-            .bufferCount(1)
+            .bufferCount(2)
             .attribute(
                 VertexBuffer.VertexAttribute.POSITION,
                 0,
                 VertexBuffer.AttributeType.FLOAT3,
                 FilamentPositionOffsetBytes,
-                FilamentVertexStrideBytes,
+                FilamentPoseStrideBytes,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.CUSTOM0,
+                0,
+                VertexBuffer.AttributeType.FLOAT4,
+                FilamentNormalOffsetBytes,
+                FilamentPoseStrideBytes,
             )
             .attribute(
                 VertexBuffer.VertexAttribute.COLOR,
-                0,
+                1,
                 VertexBuffer.AttributeType.FLOAT4,
-                FilamentColorOffsetBytes,
-                FilamentVertexStrideBytes,
+                0,
+                FilamentColorStrideBytes,
             )
             .build(engine)
         val newIndexBuffer = IndexBuffer.Builder()
@@ -866,8 +1028,9 @@ private class WearSkeletonFilamentRenderer(
             .bufferType(IndexBuffer.Builder.IndexType.USHORT)
             .build(engine)
 
-        newVertexBuffer.setBufferAt(engine, 0, vertexData)
-        newIndexBuffer.setBuffer(engine, indexData)
+        newVertexBuffer.setBufferAt(engine, 0, poseBuffer)
+        newVertexBuffer.setBufferAt(engine, 1, colorBuffer)
+        newIndexBuffer.setBuffer(engine, indexBufferData)
 
         val entity = EntityManager.get().create()
         RenderableManager.Builder(1)
@@ -887,26 +1050,102 @@ private class WearSkeletonFilamentRenderer(
             .build(engine, entity)
         scene.addEntity(entity)
 
-        renderableEntity = entity
-        vertexBuffer = newVertexBuffer
-        indexBuffer = newIndexBuffer
-        vertexBufferCapacity = mesh.vertexCount
-        indexBufferCapacity = mesh.indices.size
+        bodyEntity = entity
+        bodyVertexBuffer = newVertexBuffer
+        bodyIndexBuffer = newIndexBuffer
+        bodyVertexCount = mesh.vertexCount
+        bodyIndexCount = mesh.indices.size
     }
 
-    private fun clearRenderable() {
-        if (renderableEntity != 0) {
-            scene.removeEntity(renderableEntity)
-            engine.renderableManager.destroy(renderableEntity)
-            EntityManager.get().destroy(renderableEntity)
-            renderableEntity = 0
+    private fun replaceFloorRenderable(mesh: ShadedMeshData) {
+        clearFloorRenderable()
+        if (mesh.indices.isEmpty() || mesh.poseVertices.isEmpty()) {
+            return
         }
-        indexBuffer?.let(engine::destroyIndexBuffer)
-        vertexBuffer?.let(engine::destroyVertexBuffer)
-        indexBuffer = null
-        vertexBuffer = null
-        vertexBufferCapacity = 0
-        indexBufferCapacity = 0
+        val poseBuffer = writeDirectFloats(null, mesh.poseVertices)
+        val colorBuffer = writeDirectFloats(null, mesh.colors)
+        val indexBufferData = writeDirectShorts(null, mesh.indices)
+        val newVertexBuffer = VertexBuffer.Builder()
+            .vertexCount(mesh.vertexCount)
+            .bufferCount(2)
+            .attribute(
+                VertexBuffer.VertexAttribute.POSITION,
+                0,
+                VertexBuffer.AttributeType.FLOAT3,
+                FilamentPositionOffsetBytes,
+                FilamentPoseStrideBytes,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.CUSTOM0,
+                0,
+                VertexBuffer.AttributeType.FLOAT4,
+                FilamentNormalOffsetBytes,
+                FilamentPoseStrideBytes,
+            )
+            .attribute(
+                VertexBuffer.VertexAttribute.COLOR,
+                1,
+                VertexBuffer.AttributeType.FLOAT4,
+                0,
+                FilamentColorStrideBytes,
+            )
+            .build(engine)
+        val newIndexBuffer = IndexBuffer.Builder()
+            .indexCount(mesh.indices.size)
+            .bufferType(IndexBuffer.Builder.IndexType.USHORT)
+            .build(engine)
+        newVertexBuffer.setBufferAt(engine, 0, poseBuffer)
+        newVertexBuffer.setBufferAt(engine, 1, colorBuffer)
+        newIndexBuffer.setBuffer(engine, indexBufferData)
+
+        val entity = EntityManager.get().create()
+        RenderableManager.Builder(1)
+            .boundingBox(mesh.modelBounds.toFilamentBox())
+            .geometry(
+                0,
+                RenderableManager.PrimitiveType.TRIANGLES,
+                newVertexBuffer,
+                newIndexBuffer,
+                0,
+                mesh.indices.size,
+            )
+            .material(0, materialInstance)
+            .culling(true)
+            .receiveShadows(false)
+            .castShadows(false)
+            .build(engine, entity)
+        scene.addEntity(entity)
+        floorEntity = entity
+        floorVertexBuffer = newVertexBuffer
+        floorIndexBuffer = newIndexBuffer
+    }
+
+    private fun clearBodyRenderable() {
+        if (bodyEntity != 0) {
+            scene.removeEntity(bodyEntity)
+            engine.renderableManager.destroy(bodyEntity)
+            EntityManager.get().destroy(bodyEntity)
+            bodyEntity = 0
+        }
+        bodyIndexBuffer?.let(engine::destroyIndexBuffer)
+        bodyVertexBuffer?.let(engine::destroyVertexBuffer)
+        bodyIndexBuffer = null
+        bodyVertexBuffer = null
+        bodyVertexCount = 0
+        bodyIndexCount = 0
+    }
+
+    private fun clearFloorRenderable() {
+        if (floorEntity != 0) {
+            scene.removeEntity(floorEntity)
+            engine.renderableManager.destroy(floorEntity)
+            EntityManager.get().destroy(floorEntity)
+            floorEntity = 0
+        }
+        floorIndexBuffer?.let(engine::destroyIndexBuffer)
+        floorVertexBuffer?.let(engine::destroyVertexBuffer)
+        floorIndexBuffer = null
+        floorVertexBuffer = null
     }
 
     private fun updateCamera() {
@@ -961,15 +1200,174 @@ private object WearSkeletonFilamentRuntime {
     }
 }
 
-private data class FilamentGeometryKey(
-    val skeletonId: Int,
-    val frameIndex: Int,
-    val palette: SkeletonPalette,
-    val keyLightDirection: WearSkeletonVec3,
-)
+private fun createListThumbnailBitmap(): Bitmap {
+    return Bitmap.createBitmap(
+        ListThumbnailPixelSize,
+        ListThumbnailPixelSize,
+        Bitmap.Config.ARGB_8888,
+    )
+}
 
-private data class FilamentMeshData(
-    val vertices: FloatArray,
+private class ThumbnailSlot(
+    val skeleton: WearSkeleton,
+    val palette: SkeletonPalette,
+    val backgroundColor: Color,
+    val keyLightDirection: WearSkeletonVec3,
+    val onFrame: (ImageBitmap) -> Unit,
+    var elapsedSeconds: Double = 0.0,
+) {
+    private val bitmaps = arrayOf(createListThumbnailBitmap(), createListThumbnailBitmap())
+    private val frames = arrayOf(bitmaps[0].asImageBitmap(), bitmaps[1].asImageBitmap())
+    private var displayIndex = 1
+
+    fun publishPixels(pixels: IntArray) {
+        val writeIndex = 1 - displayIndex
+        val width = ListThumbnailPixelSize
+        bitmaps[writeIndex].setPixels(pixels, 0, width, 0, 0, width, width)
+        displayIndex = writeIndex
+        onFrame(frames[writeIndex])
+    }
+}
+
+private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
+    private val choreographer = Choreographer.getInstance()
+    private val slots = LinkedHashMap<Any, ThumbnailSlot>()
+    private val scratchPixels = IntArray(ListThumbnailPixelSize * ListThumbnailPixelSize)
+    private var renderer: WearSkeletonFilamentRenderer? = null
+    private var pixelBuffer: ByteBuffer? = null
+    private var nextSlotIndex = 0
+    private var readInFlight = false
+    private var scheduled = false
+    private var lastFrameTimeNanos: Long? = null
+
+    fun register(
+        context: Context,
+        slotId: Any,
+        skeletonJson: String,
+        backgroundColor: Color,
+        primaryFill: Color,
+        onFrame: (ImageBitmap) -> Unit,
+    ) {
+        val skeleton = parseWearSkeleton(skeletonJson)
+        val yaw = skeleton.display.viewYawDegrees ?: -28f
+        slots[slotId] = ThumbnailSlot(
+            skeleton = skeleton,
+            palette = createSkeletonPalette(primaryFill),
+            backgroundColor = backgroundColor,
+            keyLightDirection = skeletonKeyLightDirection(yaw),
+            onFrame = onFrame,
+        )
+        if (renderer == null) {
+            renderer = WearSkeletonFilamentRenderer(context.applicationContext, thumbnailMode = true)
+            pixelBuffer = ByteBuffer.allocateDirect(ListThumbnailPixelSize * ListThumbnailPixelSize * 4)
+                .order(ByteOrder.nativeOrder())
+        }
+        start()
+    }
+
+    fun unregister(slotId: Any) {
+        slots.remove(slotId)
+        if (slots.isEmpty()) {
+            stop()
+        }
+    }
+
+    private fun start() {
+        if (!scheduled) {
+            scheduled = true
+            choreographer.postFrameCallback(this)
+        }
+    }
+
+    private fun stop() {
+        scheduled = false
+        lastFrameTimeNanos = null
+        choreographer.removeFrameCallback(this)
+    }
+
+    override fun doFrame(frameTimeNanos: Long) {
+        scheduled = false
+        if (slots.isEmpty()) {
+            lastFrameTimeNanos = null
+            return
+        }
+        start()
+        val previousFrameTimeNanos = lastFrameTimeNanos
+        lastFrameTimeNanos = frameTimeNanos
+        if (previousFrameTimeNanos != null) {
+            val deltaSeconds = (frameTimeNanos - previousFrameTimeNanos) / 1_000_000_000.0
+            slots.values.forEach { slot ->
+                slot.elapsedSeconds += deltaSeconds
+            }
+        }
+        if (readInFlight) {
+            return
+        }
+        renderNext(frameTimeNanos)
+    }
+
+    private fun renderNext(frameTimeNanos: Long) {
+        val renderer = renderer ?: return
+        val pixelBuffer = pixelBuffer ?: return
+        val slot = pickSlot() ?: return
+        val playback = resolveLoopPlayback(
+            elapsedSeconds = slot.elapsedSeconds,
+            frameCount = slot.skeleton.frames.size,
+            fps = slot.skeleton.fps,
+            loopRestartFadeMillis = 0,
+        )
+        renderer.updateScene(
+            skeleton = slot.skeleton,
+            frameIndex = playback.frameIndex,
+            viewYawDegrees = slot.skeleton.display.viewYawDegrees ?: -28f,
+            viewPitchDegrees = slot.skeleton.display.viewPitchDegrees ?: 15f,
+            palette = slot.palette,
+            visibility = 1f,
+            backgroundColor = slot.backgroundColor,
+            keyLightDirection = slot.keyLightDirection,
+        )
+        readInFlight = true
+        renderer.renderAndReadPixels(frameTimeNanos, pixelBuffer) {
+            copyPixelsToSlot(slot, pixelBuffer)
+            readInFlight = false
+        }
+    }
+
+    private fun pickSlot(): ThumbnailSlot? {
+        if (slots.isEmpty()) {
+            return null
+        }
+        val values = slots.values.toList()
+        val index = nextSlotIndex.floorMod(values.size)
+        nextSlotIndex = index + 1
+        return values[index]
+    }
+
+    private fun copyPixelsToSlot(slot: ThumbnailSlot, buffer: ByteBuffer) {
+        val width = ListThumbnailPixelSize
+        val height = ListThumbnailPixelSize
+        buffer.rewind()
+        var pixelIndex = 0
+        for (y in 0 until height) {
+            val sourceY = height - 1 - y
+            var sourceIndex = sourceY * width * 4
+            for (x in 0 until width) {
+                val red = buffer.get(sourceIndex).toInt() and 0xff
+                val green = buffer.get(sourceIndex + 1).toInt() and 0xff
+                val blue = buffer.get(sourceIndex + 2).toInt() and 0xff
+                val alpha = buffer.get(sourceIndex + 3).toInt() and 0xff
+                scratchPixels[pixelIndex] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
+                pixelIndex += 1
+                sourceIndex += 4
+            }
+        }
+        slot.publishPixels(scratchPixels)
+    }
+}
+
+private data class ShadedMeshData(
+    val poseVertices: FloatArray,
+    val colors: FloatArray,
     val indices: IntArray,
     val vertexCount: Int,
     val modelBounds: FilamentMeshBounds,
@@ -1080,49 +1478,194 @@ private fun createVertexColorMaterial(context: Context, engine: Engine): Materia
         .build(engine)
 }
 
-private fun buildFilamentMesh(
-    frame: WearSkeletonFrame,
-    bounds: WearSkeletonBounds,
-    palette: SkeletonPalette,
-    stableLimbSides: Map<LimbKey, WearSkeletonVec3>,
-    keyLightDirection: WearSkeletonVec3,
-): FilamentMeshData {
-    val generatedMesh = buildSingleLowPolyMesh(
-        joints = frame.joints,
-        palette = palette,
-        stableLimbSides = stableLimbSides,
-    ) ?: GeneratedLowPolyMesh()
-    val modelBounds = bounds.toStableFilamentBounds()
-    val vertexValues = mutableListOf<Float>()
-    val indices = mutableListOf<Int>()
+private fun writeDirectFloats(existing: FloatBuffer?, values: FloatArray): FloatBuffer {
+    val buffer = if (existing != null && existing.capacity() >= values.size) {
+        existing
+    } else {
+        ByteBuffer.allocateDirect(values.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+    }
+    buffer.clear()
+    buffer.put(values)
+    buffer.flip()
+    return buffer
+}
 
-    generatedMesh.faces.forEach { face ->
-        val points = face.vertexIndices.mapNotNull { index -> generatedMesh.vertices.getOrNull(index) }
+private fun writeDirectShorts(existing: ShortBuffer?, values: IntArray): ShortBuffer {
+    val buffer = if (existing != null && existing.capacity() >= values.size) {
+        existing
+    } else {
+        ByteBuffer.allocateDirect(values.size * 2).order(ByteOrder.nativeOrder()).asShortBuffer()
+    }
+    buffer.clear()
+    values.forEach { index -> buffer.put(index.toShort()) }
+    buffer.flip()
+    return buffer
+}
+
+private fun GeneratedLowPolyMesh.toShadedMesh(
+    modelBounds: FilamentMeshBounds,
+    includeColors: Boolean = true,
+    includeIndices: Boolean = true,
+): ShadedMeshData {
+    val vertexCount = vertices.size
+    val normals = Array(vertexCount) { WearSkeletonVec3(0f, 0f, 0f) }
+    val fills = if (includeColors) Array(vertexCount) { Color.White } else emptyArray()
+    faces.forEach { face ->
+        val points = face.vertexIndices.mapNotNull { index -> vertices.getOrNull(index) }
         if (points.size < 3) {
             return@forEach
         }
-        val normal = (points[1] - points[0])
-            .cross(points[2] - points[1])
-            .normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
-        val fill = tintColorForLightDirection(face.fill, normal, keyLightDirection)
-        for (index in 1 until points.lastIndex) {
-            addFilamentTriangle(
-                vertices = vertexValues,
-                indices = indices,
-                a = points[0],
-                b = points[index],
-                c = points[index + 1],
-                color = fill,
-            )
+        val normal = (points[1] - points[0]).cross(points[2] - points[1])
+        face.vertexIndices.forEach { index ->
+            if (index in 0 until vertexCount) {
+                normals[index] = normals[index] + normal
+                if (includeColors) {
+                    fills[index] = face.fill
+                }
+            }
         }
     }
-    addFilamentFloorGrid(vertexValues, indices, bounds, palette.grid)
 
-    return FilamentMeshData(
-        vertices = vertexValues.toFloatArray(),
-        indices = indices.toIntArray(),
-        vertexCount = vertexValues.size / FilamentVertexFloatCount,
+    val poseVertices = FloatArray(vertexCount * FilamentPoseFloatCount)
+    val colors = if (includeColors) {
+        FloatArray(vertexCount * FilamentColorFloatCount)
+    } else {
+        FloatArray(0)
+    }
+    for (index in 0 until vertexCount) {
+        val point = vertices[index]
+        val normal = normals[index].normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
+        val poseOffset = index * FilamentPoseFloatCount
+        poseVertices[poseOffset] = point.x
+        poseVertices[poseOffset + 1] = point.y
+        poseVertices[poseOffset + 2] = point.z
+        poseVertices[poseOffset + 3] = normal.x
+        poseVertices[poseOffset + 4] = normal.y
+        poseVertices[poseOffset + 5] = normal.z
+        poseVertices[poseOffset + 6] = 0f
+        if (includeColors) {
+            val colorOffset = index * FilamentColorFloatCount
+            val fill = fills[index]
+            colors[colorOffset] = fill.red.srgbToLinearChannel()
+            colors[colorOffset + 1] = fill.green.srgbToLinearChannel()
+            colors[colorOffset + 2] = fill.blue.srgbToLinearChannel()
+            colors[colorOffset + 3] = fill.alpha
+        }
+    }
+
+    val indices = if (!includeIndices) {
+        intArrayOf()
+    } else {
+        val indexList = ArrayList<Int>()
+        faces.forEach { face ->
+            val corners = face.vertexIndices.filter { it in 0 until vertexCount }
+            if (corners.size < 3) {
+                return@forEach
+            }
+            for (fanIndex in 1 until corners.lastIndex) {
+                require(indexList.size + 3 <= UShort.MAX_VALUE.toInt()) {
+                    "Wear skeleton mesh exceeded 16-bit index capacity."
+                }
+                indexList += corners[0]
+                indexList += corners[fanIndex]
+                indexList += corners[fanIndex + 1]
+            }
+        }
+        indexList.toIntArray()
+    }
+
+    return ShadedMeshData(
+        poseVertices = poseVertices,
+        colors = colors,
+        indices = indices,
+        vertexCount = vertexCount,
         modelBounds = modelBounds,
+    )
+}
+
+private fun buildFloorMesh(
+    bounds: WearSkeletonBounds,
+    color: Color,
+): ShadedMeshData {
+    val poseVertices = ArrayList<Float>()
+    val colors = ArrayList<Float>()
+    val indices = ArrayList<Int>()
+    val up = WearSkeletonVec3(0f, 1f, 0f)
+    fun addFloorVertex(point: WearSkeletonVec3) {
+        require(poseVertices.size / FilamentPoseFloatCount <= UShort.MAX_VALUE.toInt()) {
+            "Wear skeleton mesh exceeded 16-bit index capacity."
+        }
+        poseVertices += point.x
+        poseVertices += point.y
+        poseVertices += point.z
+        poseVertices += up.x
+        poseVertices += up.y
+        poseVertices += up.z
+        poseVertices += 0f
+        colors += color.red.srgbToLinearChannel()
+        colors += color.green.srgbToLinearChannel()
+        colors += color.blue.srgbToLinearChannel()
+        colors += color.alpha
+    }
+
+    val height = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
+    val floorY = bounds.minY - (height * 0.014f)
+    val width = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
+    val depth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
+    val floorSize = max(width, depth) * 1.24f
+    val halfFloorSize = floorSize * 0.5f
+    val centerX = (bounds.minX + bounds.maxX) * 0.5f
+    val centerZ = (bounds.minZ + bounds.maxZ) * 0.5f
+    val minX = centerX - halfFloorSize
+    val maxX = centerX + halfFloorSize
+    val minZ = centerZ - halfFloorSize
+    val maxZ = centerZ + halfFloorSize
+    val lineHalfWidth = floorSize * 0.0046f
+    val divisions = 4
+
+    fun addFloorQuad(
+        a: WearSkeletonVec3,
+        b: WearSkeletonVec3,
+        c: WearSkeletonVec3,
+        d: WearSkeletonVec3,
+    ) {
+        val start = poseVertices.size / FilamentPoseFloatCount
+        addFloorVertex(a)
+        addFloorVertex(b)
+        addFloorVertex(c)
+        addFloorVertex(d)
+        indices += start
+        indices += start + 2
+        indices += start + 1
+        indices += start
+        indices += start + 3
+        indices += start + 2
+    }
+
+    for (index in 0..divisions) {
+        val amount = index / divisions.toFloat()
+        val x = minX + (maxX - minX) * amount
+        val z = minZ + (maxZ - minZ) * amount
+        addFloorQuad(
+            WearSkeletonVec3(x - lineHalfWidth, floorY, minZ),
+            WearSkeletonVec3(x + lineHalfWidth, floorY, minZ),
+            WearSkeletonVec3(x + lineHalfWidth, floorY, maxZ),
+            WearSkeletonVec3(x - lineHalfWidth, floorY, maxZ),
+        )
+        addFloorQuad(
+            WearSkeletonVec3(minX, floorY, z - lineHalfWidth),
+            WearSkeletonVec3(maxX, floorY, z - lineHalfWidth),
+            WearSkeletonVec3(maxX, floorY, z + lineHalfWidth),
+            WearSkeletonVec3(minX, floorY, z + lineHalfWidth),
+        )
+    }
+
+    return ShadedMeshData(
+        poseVertices = poseVertices.toFloatArray(),
+        colors = colors.toFloatArray(),
+        indices = indices.toIntArray(),
+        vertexCount = poseVertices.size / FilamentPoseFloatCount,
+        modelBounds = bounds.toStableFilamentBounds(),
     )
 }
 
@@ -1167,12 +1710,15 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
         maxZ = max(maxZ, point.z)
     }
 
+    val frameVertices = ArrayList<List<WearSkeletonVec3>>(frames.size)
     frames.forEachIndexed { frameIndex, frame ->
-        buildSingleLowPolyMesh(
+        val meshVertices = buildSingleLowPolyMesh(
             joints = frame.joints,
             palette = palette,
             stableLimbSides = limbSidesByFrame.getOrNull(frameIndex).orEmpty(),
-        )?.vertices?.forEach(::includeInBounds)
+        )?.vertices.orEmpty()
+        meshVertices.forEach(::includeInBounds)
+        frameVertices += meshVertices
     }
 
     val modelBounds = if (minX.isFinite() && minY.isFinite() && minZ.isFinite()) {
@@ -1204,12 +1750,8 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
         maxOrbitProjectedY = max(maxOrbitProjectedY, verticalCenter + orbitVerticalRadius)
     }
 
-    frames.forEachIndexed { frameIndex, frame ->
-        buildSingleLowPolyMesh(
-            joints = frame.joints,
-            palette = palette,
-            stableLimbSides = limbSidesByFrame.getOrNull(frameIndex).orEmpty(),
-        )?.vertices?.forEach(::includeInOrbitEnvelope)
+    frameVertices.forEach { vertices ->
+        vertices.forEach(::includeInOrbitEnvelope)
     }
 
     val skeletonHeight = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
@@ -1273,62 +1815,6 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
     )
 }
 
-private fun addFilamentVertex(
-    vertices: MutableList<Float>,
-    indices: MutableList<Int>,
-    point: WearSkeletonVec3,
-    color: Color,
-) {
-    val index = vertices.size / FilamentVertexFloatCount
-    require(index <= UShort.MAX_VALUE.toInt()) {
-        "Wear skeleton mesh exceeded 16-bit index capacity."
-    }
-    vertices += point.x
-    vertices += point.y
-    vertices += point.z
-    vertices += color.red.srgbToLinearChannel()
-    vertices += color.green.srgbToLinearChannel()
-    vertices += color.blue.srgbToLinearChannel()
-    vertices += color.alpha
-    indices += index
-}
-
-private fun addFilamentTriangle(
-    vertices: MutableList<Float>,
-    indices: MutableList<Int>,
-    a: WearSkeletonVec3,
-    b: WearSkeletonVec3,
-    c: WearSkeletonVec3,
-    color: Color,
-) {
-    addFilamentVertex(vertices, indices, a, color)
-    addFilamentVertex(vertices, indices, b, color)
-    addFilamentVertex(vertices, indices, c, color)
-}
-
-private fun tintColorForLightDirection(
-    fill: Color,
-    worldNormal: WearSkeletonVec3,
-    keyLightDirection: WearSkeletonVec3,
-): Color {
-    val normal = worldNormal.normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
-    val keyDiffuse = normal.dot(keyLightDirection).coerceIn(0f, 1f)
-    val fillLightDirection = WearSkeletonVec3(
-        x = -keyLightDirection.x,
-        y = abs(keyLightDirection.y) * 0.35f,
-        z = -keyLightDirection.z,
-    ).normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
-    val fillDiffuse = normal.dot(fillLightDirection).coerceIn(0f, 1f)
-    val upperHemisphere = (normal.y * 0.5f + 0.5f).coerceIn(0f, 1f)
-    val lightLevel = (
-        SkeletonAmbientLightLevel +
-            keyDiffuse * SkeletonKeyLightStrength +
-            fillDiffuse * SkeletonFillLightStrength +
-            upperHemisphere * SkeletonHemisphereLightStrength
-        ).coerceIn(0f, 1f)
-    return fill.scaleRgb(lightLevel)
-}
-
 private fun skeletonKeyLightDirection(initialViewYawDegrees: Float): WearSkeletonVec3 {
     val yawRadians = (initialViewYawDegrees + SkeletonKeyLightYawOffsetDegrees) * PI.toFloat() / 180f
     val elevationRadians = SkeletonKeyLightElevationDegrees * PI.toFloat() / 180f
@@ -1338,65 +1824,6 @@ private fun skeletonKeyLightDirection(initialViewYawDegrees: Float): WearSkeleto
         y = sin(elevationRadians),
         z = cos(yawRadians) * horizontalScale,
     ).normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
-}
-
-private fun addFilamentFloorGrid(
-    vertices: MutableList<Float>,
-    indices: MutableList<Int>,
-    bounds: WearSkeletonBounds,
-    color: Color,
-) {
-    val height = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
-    val floorY = bounds.minY - (height * 0.014f)
-    val width = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
-    val depth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
-    val floorSize = max(width, depth) * 1.24f
-    val halfFloorSize = floorSize * 0.5f
-    val centerX = (bounds.minX + bounds.maxX) * 0.5f
-    val centerZ = (bounds.minZ + bounds.maxZ) * 0.5f
-    val minX = centerX - halfFloorSize
-    val maxX = centerX + halfFloorSize
-    val minZ = centerZ - halfFloorSize
-    val maxZ = centerZ + halfFloorSize
-    val lineHalfWidth = floorSize * 0.0046f
-    val divisions = 4
-
-    for (index in 0..divisions) {
-        val amount = index / divisions.toFloat()
-        val x = minX + (maxX - minX) * amount
-        val z = minZ + (maxZ - minZ) * amount
-        addFilamentQuad(
-            vertices = vertices,
-            indices = indices,
-            a = WearSkeletonVec3(x - lineHalfWidth, floorY, minZ),
-            b = WearSkeletonVec3(x + lineHalfWidth, floorY, minZ),
-            c = WearSkeletonVec3(x + lineHalfWidth, floorY, maxZ),
-            d = WearSkeletonVec3(x - lineHalfWidth, floorY, maxZ),
-            color = color,
-        )
-        addFilamentQuad(
-            vertices = vertices,
-            indices = indices,
-            a = WearSkeletonVec3(minX, floorY, z - lineHalfWidth),
-            b = WearSkeletonVec3(maxX, floorY, z - lineHalfWidth),
-            c = WearSkeletonVec3(maxX, floorY, z + lineHalfWidth),
-            d = WearSkeletonVec3(minX, floorY, z + lineHalfWidth),
-            color = color,
-        )
-    }
-}
-
-private fun addFilamentQuad(
-    vertices: MutableList<Float>,
-    indices: MutableList<Int>,
-    a: WearSkeletonVec3,
-    b: WearSkeletonVec3,
-    c: WearSkeletonVec3,
-    d: WearSkeletonVec3,
-    color: Color,
-) {
-    addFilamentTriangle(vertices, indices, a, c, b, color)
-    addFilamentTriangle(vertices, indices, a, d, c, color)
 }
 
 private fun buildSingleLowPolyMesh(
@@ -1419,9 +1846,28 @@ private fun buildSingleLowPolyMesh(
     val shoulderWidth = (rightShoulder - leftShoulder).length()
     val pelvisWidth = max(hipWidth * 1.08f, shoulderWidth * 0.64f)
     val footScale = max(hipWidth * 0.98f, shoulderWidth * 0.58f)
+    val down = bodyAxes.up * -1f
+    val resolvedJoints = joints.toMutableMap()
+    fun ensureJoint(name: String, fallback: WearSkeletonVec3) {
+        if (resolvedJoints[name] == null) {
+            resolvedJoints[name] = fallback
+        }
+    }
+    ensureJoint("left_knee", leftHip + down * (hipWidth * 0.45f))
+    ensureJoint("right_knee", rightHip + down * (hipWidth * 0.45f))
+    ensureJoint("left_ankle", resolvedJoints.getValue("left_knee") + down * (hipWidth * 0.45f))
+    ensureJoint("right_ankle", resolvedJoints.getValue("right_knee") + down * (hipWidth * 0.45f))
+    ensureJoint("left_foot", resolvedJoints.getValue("left_ankle") + bodyAxes.forward * (footScale * 0.35f))
+    ensureJoint("right_foot", resolvedJoints.getValue("right_ankle") + bodyAxes.forward * (footScale * 0.35f))
+    ensureJoint("left_elbow", leftShoulder + down * (shoulderWidth * 0.35f) + bodyAxes.side * -(shoulderWidth * 0.08f))
+    ensureJoint("right_elbow", rightShoulder + down * (shoulderWidth * 0.35f) + bodyAxes.side * (shoulderWidth * 0.08f))
+    ensureJoint("left_wrist", resolvedJoints.getValue("left_elbow") + down * (shoulderWidth * 0.28f))
+    ensureJoint("right_wrist", resolvedJoints.getValue("right_elbow") + down * (shoulderWidth * 0.28f))
+    ensureJoint("left_hand", resolvedJoints.getValue("left_wrist") + down * (shoulderWidth * 0.12f))
+    ensureJoint("right_hand", resolvedJoints.getValue("right_wrist") + down * (shoulderWidth * 0.12f))
     val torsoUp = (neck - hipCenter).normalizedOr(bodyAxes.up)
     val torsoLength = (neck - hipCenter).length()
-    val chestForward = bodyAxes.forward * (shoulderWidth * 0.04f)
+    val chestForward = bodyAxes.forward * (shoulderWidth * 0.06f)
     val waistCenter = joints["spine1"] ?: (hipCenter + torsoUp * (torsoLength * 0.40f))
     val chestCenter = joints["spine2"] ?: (hipCenter + torsoUp * (torsoLength * 0.60f))
     val upperChestCenter = joints["spine3"] ?: chestCenter.lerp(neck, 0.52f)
@@ -1432,22 +1878,52 @@ private fun buildSingleLowPolyMesh(
     val chestTopAxes = spineRingAxes(upperChestCenter, chestTopCenter, neck, bodyAxes)
 
     val chestRings = listOf(
-        addMeshBoxRing(mesh, waistCenter, waistAxes.side, waistAxes.forward, shoulderWidth * 0.28f, shoulderWidth * 0.14f),
-        addMeshBoxRing(mesh, chestCenter, chestAxes.side, chestAxes.forward, shoulderWidth * 0.34f, shoulderWidth * 0.16f),
-        addMeshBoxRing(mesh, upperChestCenter, upperChestAxes.side, upperChestAxes.forward, shoulderWidth * 0.43f, shoulderWidth * 0.19f),
-        addMeshBoxRing(mesh, chestTopCenter, chestTopAxes.side, chestTopAxes.forward, shoulderWidth * 0.49f, shoulderWidth * 0.20f),
+        addMeshTorsoRing(
+            mesh, waistCenter, waistAxes.side, waistAxes.forward,
+            shoulderWidth * 0.24f, shoulderWidth * 0.16f,
+            latWidthScale = 1.20f, latDepthScale = 0.30f,
+            erectorWidthScale = 0.36f, erectorDepthScale = 1.22f,
+            grooveWidthScale = 0.12f, grooveDepthScale = 0.68f,
+        ),
+        addMeshTorsoRing(
+            mesh, chestCenter, chestAxes.side, chestAxes.forward,
+            shoulderWidth * 0.36f, shoulderWidth * 0.22f,
+            latWidthScale = 1.30f, latDepthScale = 0.36f,
+            erectorWidthScale = 0.34f, erectorDepthScale = 1.28f,
+            grooveWidthScale = 0.11f, grooveDepthScale = 0.62f,
+        ),
+        addMeshTorsoRing(
+            mesh, upperChestCenter, upperChestAxes.side, upperChestAxes.forward,
+            shoulderWidth * 0.45f, shoulderWidth * 0.26f,
+            latWidthScale = 1.34f, latDepthScale = 0.40f,
+            erectorWidthScale = 0.32f, erectorDepthScale = 1.32f,
+            grooveWidthScale = 0.10f, grooveDepthScale = 0.58f,
+        ),
+        addMeshTorsoRing(
+            mesh, chestTopCenter, chestTopAxes.side, chestTopAxes.forward,
+            shoulderWidth * 0.51f, shoulderWidth * 0.24f,
+            latWidthScale = 1.16f, latDepthScale = 0.34f,
+            erectorWidthScale = 0.40f, erectorDepthScale = 1.26f,
+            grooveWidthScale = 0.13f, grooveDepthScale = 0.64f,
+        ),
     )
     chestRings.zipWithNext().forEach { (lower, upper) ->
         addMeshStrip(mesh, lower, upper, palette.coreFill)
     }
     val trapeziusTopCenter = chestTopCenter.lerp(neck, 0.38f)
-    val trapeziusTopRing = addMeshBoxRing(
+    val trapeziusTopRing = addMeshTorsoRing(
         mesh = mesh,
         center = trapeziusTopCenter,
         side = bodyAxes.side,
         depth = bodyAxes.forward,
-        halfWidth = shoulderWidth * 0.18f,
-        halfDepth = shoulderWidth * 0.13f,
+        halfWidth = shoulderWidth * 0.20f,
+        halfDepth = shoulderWidth * 0.15f,
+        latWidthScale = 1.08f,
+        latDepthScale = 0.28f,
+        erectorWidthScale = 0.52f,
+        erectorDepthScale = 1.30f,
+        grooveWidthScale = 0.16f,
+        grooveDepthScale = 0.72f,
     )
     addMeshStrip(mesh, chestRings.last(), trapeziusTopRing, palette.coreFill)
 
@@ -1465,9 +1941,27 @@ private fun buildSingleLowPolyMesh(
     val pelvisBottomCenter = hipCenter.lerp(waistCenter, 0.06f)
     val pelvisJunctionCenter = pelvisTopCenter + pelvisAxes.forward * (pelvisWidth * 0.03f)
     val pelvisRings = listOf(
-        addMeshDirectionalRing(mesh, pelvisJunctionCenter, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * 0.44f, pelvisWidth * 0.31f, pelvisWidth * 0.23f),
-        addMeshDirectionalRing(mesh, pelvisMidCenter, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * 0.56f, pelvisWidth * 0.44f, pelvisWidth * 0.28f),
-        addMeshDirectionalRing(mesh, pelvisBottomCenter, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * 0.40f, pelvisWidth * 0.29f, pelvisWidth * 0.23f),
+        addMeshTorsoRing(
+            mesh, pelvisJunctionCenter, pelvisAxes.side, pelvisAxes.forward,
+            pelvisWidth * 0.42f, pelvisWidth * 0.30f,
+            latWidthScale = 1.18f, latDepthScale = 0.38f,
+            erectorWidthScale = 0.42f, erectorDepthScale = 1.12f,
+            grooveWidthScale = 0.14f, grooveDepthScale = 0.64f,
+        ),
+        addMeshTorsoRing(
+            mesh, pelvisMidCenter, pelvisAxes.side, pelvisAxes.forward,
+            pelvisWidth * 0.58f, pelvisWidth * 0.50f,
+            latWidthScale = 1.20f, latDepthScale = 0.42f,
+            erectorWidthScale = 0.52f, erectorDepthScale = 1.24f,
+            grooveWidthScale = 0.12f, grooveDepthScale = 0.56f,
+        ),
+        addMeshTorsoRing(
+            mesh, pelvisBottomCenter, pelvisAxes.side, pelvisAxes.forward,
+            pelvisWidth * 0.38f, pelvisWidth * 0.32f,
+            latWidthScale = 1.14f, latDepthScale = 0.48f,
+            erectorWidthScale = 0.44f, erectorDepthScale = 1.14f,
+            grooveWidthScale = 0.16f, grooveDepthScale = 0.62f,
+        ),
     )
     addMeshStrip(mesh, pelvisRings[2], pelvisRings[1], palette.coreFill)
     addMeshStrip(mesh, pelvisRings[1], pelvisRings[0], palette.coreFill)
@@ -1475,52 +1969,50 @@ private fun buildSingleLowPolyMesh(
     addMeshStrip(mesh, pelvisRings[0], chestRings[0], palette.coreFill)
 
     fun segmentScaledWidth(startName: String, endName: String, scale: Float): Float {
-        val start = joints[startName] ?: return 0f
-        val end = joints[endName] ?: return 0f
+        val start = resolvedJoints[startName] ?: return 0f
+        val end = resolvedJoints[endName] ?: return 0f
         return (end - start).length() * scale
     }
 
     addJointCap(mesh, neck, bodyAxes, shoulderWidth * 0.10f, palette.jointFill)
-    addJointCap(mesh, leftHip, bodyAxes, segmentScaledWidth("left_hip", "left_knee", 0.25f) * 0.56f, palette.jointFill)
-    addJointCap(mesh, rightHip, bodyAxes, segmentScaledWidth("right_hip", "right_knee", 0.25f) * 0.56f, palette.jointFill)
-    addJointCap(mesh, leftShoulder, bodyAxes, segmentScaledWidth("left_shoulder", "left_elbow", 0.27f) * 0.52f, palette.jointFill)
-    addJointCap(mesh, rightShoulder, bodyAxes, segmentScaledWidth("right_shoulder", "right_elbow", 0.27f) * 0.52f, palette.jointFill)
+    addJointCap(mesh, leftHip, bodyAxes, segmentScaledWidth("left_hip", "left_knee", 0.27f) * 0.62f, palette.jointFill)
+    addJointCap(mesh, rightHip, bodyAxes, segmentScaledWidth("right_hip", "right_knee", 0.27f) * 0.62f, palette.jointFill)
+    addJointCap(mesh, leftShoulder, bodyAxes, segmentScaledWidth("left_shoulder", "left_elbow", 0.30f) * 0.68f, palette.jointFill)
+    addJointCap(mesh, rightShoulder, bodyAxes, segmentScaledWidth("right_shoulder", "right_elbow", 0.30f) * 0.68f, palette.jointFill)
     addNeckConnector(mesh, neck, trapeziusTopCenter, bodyAxes, torsoLength, shoulderWidth, palette.jointFill)
     addHeadVolume(mesh, neck, head, bodyAxes, shoulderWidth, palette.headFill)
 
     SkeletonLimbs.forEach { limb ->
-        val start = joints[limb.startName]
-        val end = joints[limb.endName]
-        if (start != null && end != null) {
-            val segmentLength = (end - start).length()
-            val startWidth = segmentLength * limb.profile.startWidth
-            val endWidth = segmentLength * limb.profile.endWidth
-            addMeshSegment(
-                mesh = mesh,
-                start = start,
-                end = end,
-                bodyAxes = bodyAxes,
-                startWidth = startWidth,
-                endWidth = endWidth,
-                depthScale = limb.profile.depthScale,
-                sides = 4,
-                fill = palette.limbFill,
-                startInset = jointCapClearance(limb.startName, startWidth),
-                endInset = jointCapClearance(limb.endName, endWidth),
-                preferredSide = stableLimbSides[LimbKey(limb.startName, limb.endName)],
-                muscleBulgeScale = limb.profile.muscleBulgeScale,
-                muscleBulgePosition = limb.profile.muscleBulgePosition,
-            )
-        }
+        val start = resolvedJoints.getValue(limb.startName)
+        val end = resolvedJoints.getValue(limb.endName)
+        val segmentLength = max((end - start).length(), hipWidth * 0.08f)
+        val startWidth = segmentLength * limb.profile.startWidth
+        val endWidth = segmentLength * limb.profile.endWidth
+        addMeshSegment(
+            mesh = mesh,
+            start = start,
+            end = end,
+            bodyAxes = bodyAxes,
+            startWidth = startWidth,
+            endWidth = endWidth,
+            depthScale = limb.profile.depthScale,
+            sides = 4,
+            fill = palette.limbFill,
+            startInset = jointCapClearance(limb.startName, startWidth),
+            endInset = jointCapClearance(limb.endName, endWidth),
+            preferredSide = stableLimbSides[LimbKey(limb.startName, limb.endName)],
+            muscleBulgeScale = limb.profile.muscleBulgeScale,
+            muscleBulgePosition = limb.profile.muscleBulgePosition,
+        )
     }
     fun addHand(
         wristName: String,
         handName: String,
         elbowName: String,
     ) {
-        val wrist = joints[wristName] ?: return
-        val hand = joints[handName] ?: return
-        val handLength = (hand - wrist).length()
+        val wrist = resolvedJoints.getValue(wristName)
+        val hand = resolvedJoints.getValue(handName)
+        val handLength = max((hand - wrist).length(), shoulderWidth * 0.08f)
         val wristWidth = max(
             segmentScaledWidth(elbowName, wristName, 0.17f) * 0.90f,
             handLength * 0.42f,
@@ -1543,19 +2035,19 @@ private fun buildSingleLowPolyMesh(
     }
     addHand("left_wrist", "left_hand", "left_elbow")
     addHand("right_wrist", "right_hand", "right_elbow")
-    val leftShoeAdded = addShoeBlockFromNames(mesh, joints, "left_ankle", "left_foot", bodyAxes, footScale, palette)
-    val rightShoeAdded = addShoeBlockFromNames(mesh, joints, "right_ankle", "right_foot", bodyAxes, footScale, palette)
-    addJointCapAtNames(mesh, joints, "left_elbow", bodyAxes, max(
-        segmentScaledWidth("left_shoulder", "left_elbow", 0.215f),
-        segmentScaledWidth("left_elbow", "left_wrist", 0.225f),
+    addShoeBlockFromNames(mesh, resolvedJoints, "left_ankle", "left_foot", bodyAxes, footScale, palette)
+    addShoeBlockFromNames(mesh, resolvedJoints, "right_ankle", "right_foot", bodyAxes, footScale, palette)
+    addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
+        segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),
+        segmentScaledWidth("left_elbow", "left_wrist", 0.235f),
     ) * 0.48f, palette.jointFill)
-    addJointCapAtNames(mesh, joints, "right_elbow", bodyAxes, max(
-        segmentScaledWidth("right_shoulder", "right_elbow", 0.215f),
-        segmentScaledWidth("right_elbow", "right_wrist", 0.225f),
+    addJointCapAtNames(mesh, resolvedJoints, "right_elbow", bodyAxes, max(
+        segmentScaledWidth("right_shoulder", "right_elbow", 0.225f),
+        segmentScaledWidth("right_elbow", "right_wrist", 0.235f),
     ) * 0.48f, palette.jointFill)
     addJointCapAtNames(
         mesh,
-        joints,
+        resolvedJoints,
         "left_wrist",
         bodyAxes,
         segmentScaledWidth("left_elbow", "left_wrist", 0.17f) * 0.48f,
@@ -1563,36 +2055,34 @@ private fun buildSingleLowPolyMesh(
     )
     addJointCapAtNames(
         mesh,
-        joints,
+        resolvedJoints,
         "right_wrist",
         bodyAxes,
         segmentScaledWidth("right_elbow", "right_wrist", 0.17f) * 0.48f,
         palette.jointFill,
     )
-    addJointCapAtNames(mesh, joints, "left_knee", bodyAxes, max(
-        segmentScaledWidth("left_hip", "left_knee", 0.205f),
-        segmentScaledWidth("left_knee", "left_ankle", 0.215f),
+    addJointCapAtNames(mesh, resolvedJoints, "left_knee", bodyAxes, max(
+        segmentScaledWidth("left_hip", "left_knee", 0.215f),
+        segmentScaledWidth("left_knee", "left_ankle", 0.225f),
     ) * 0.48f, palette.jointFill)
-    addJointCapAtNames(mesh, joints, "right_knee", bodyAxes, max(
-        segmentScaledWidth("right_hip", "right_knee", 0.205f),
-        segmentScaledWidth("right_knee", "right_ankle", 0.215f),
+    addJointCapAtNames(mesh, resolvedJoints, "right_knee", bodyAxes, max(
+        segmentScaledWidth("right_hip", "right_knee", 0.215f),
+        segmentScaledWidth("right_knee", "right_ankle", 0.225f),
     ) * 0.48f, palette.jointFill)
     addJointCapAtNames(
         mesh = mesh,
-        joints = joints,
+        joints = resolvedJoints,
         jointName = "left_ankle",
         bodyAxes = bodyAxes,
-        radius = segmentScaledWidth("left_knee", "left_ankle", 0.16f) *
-            if (leftShoeAdded) 0.42f else 0.52f,
+        radius = segmentScaledWidth("left_knee", "left_ankle", 0.165f) * 0.42f,
         fill = palette.jointFill,
     )
     addJointCapAtNames(
         mesh = mesh,
-        joints = joints,
+        joints = resolvedJoints,
         jointName = "right_ankle",
         bodyAxes = bodyAxes,
-        radius = segmentScaledWidth("right_knee", "right_ankle", 0.16f) *
-            if (rightShoeAdded) 0.42f else 0.52f,
+        radius = segmentScaledWidth("right_knee", "right_ankle", 0.165f) * 0.42f,
         fill = palette.jointFill,
     )
     return mesh
@@ -1643,21 +2133,20 @@ private fun addShoeBlockFromNames(
     val foot = joints[footName] ?: return false
     val worldUp = WearSkeletonVec3(0f, 1f, 0f)
     val footVector = foot - ankle
-    val horizontalFoot = footVector - worldUp * footVector.dot(worldUp)
-    val horizontalLength = horizontalFoot.length()
+    val footLength = footVector.length()
     val bodyForward = bodyAxes.forward - worldUp * bodyAxes.forward.dot(worldUp)
     val stableForward = bodyForward.normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
-    val footForward = if (horizontalLength > 0.0001f) {
-        horizontalFoot * (1f / horizontalLength)
+    val footForward = if (footLength > 0.0001f) {
+        footVector * (1f / footLength)
     } else {
         stableForward
     }
-    val fallbackSide = (bodyAxes.side - worldUp * bodyAxes.side.dot(worldUp)).normalizedOr(bodyAxes.side)
+    val shoeUp = (worldUp - footForward * worldUp.dot(footForward)).normalizedOr(bodyAxes.up)
+    val fallbackSide = bodyAxes.side.projectOntoPlane(footForward).normalizedOr(bodyAxes.side)
     // Box-ring winding expects side x up to point opposite the extrusion.
-    val footSide = footForward.cross(worldUp).normalizedOr(fallbackSide)
-    val shoeUp = worldUp
-    val shoeScale = if (horizontalLength > 0.0001f) {
-        horizontalLength
+    val footSide = footForward.cross(shoeUp).normalizedOr(fallbackSide)
+    val shoeScale = if (footLength > 0.0001f) {
+        footLength
     } else {
         footScale * 0.60f
     }
@@ -1758,10 +2247,7 @@ private fun addHeadVolume(
     fill: Color,
 ) {
     val segment = head - neck
-    val height = segment.length()
-    if (height <= 0.0001f) {
-        return
-    }
+    val height = max(segment.length(), shoulderWidth * 0.12f)
     val up = bodyAxes.up
     val side = bodyAxes.side
     val depth = bodyAxes.forward
@@ -1798,27 +2284,35 @@ private fun addMeshSegment(
     muscleBulgePosition: Float = 0.5f,
 ) {
     val segment = end - start
-    val length = segment.length()
-    if (length <= 0.0001f) {
-        return
+    val rawLength = segment.length()
+    val direction = if (rawLength > 0.0001f) {
+        segment * (1f / rawLength)
+    } else {
+        bodyAxes.up
     }
-    val direction = segment * (1f / length)
+    val length = max(rawLength, 0.001f)
+    val resolvedEnd = if (rawLength > 0.0001f) end else start + direction * length
     val maxInset = length * 0.10f
     val safeStart = start + direction * min(startInset, maxInset)
-    val safeEnd = end - direction * min(endInset, maxInset)
-    if ((safeEnd - safeStart).length() <= 0.0001f) {
-        return
+    val safeEnd = resolvedEnd - direction * min(endInset, maxInset)
+    val safeSpan = safeEnd - safeStart
+    val safeLength = max(safeSpan.length(), 0.001f)
+    val safeDirection = if (safeSpan.length() > 0.0001f) {
+        safeSpan * (1f / safeSpan.length())
+    } else {
+        direction
     }
+    val emitEnd = if (safeSpan.length() > 0.0001f) safeEnd else safeStart + safeDirection * safeLength
     val side = preferredSide
-        ?.projectOntoPlane(direction)
-        ?.normalizedOr(stableLimbSide(direction, bodyAxes))
-        ?: stableLimbSide(direction, bodyAxes)
-    val depth = side.cross(direction).normalizedOr(bodyAxes.forward)
-    val startRing = addMeshSegmentRing(mesh, safeStart, side, depth, startWidth, depthScale, sides)
-    val endRing = addMeshSegmentRing(mesh, safeEnd, side, depth, endWidth, depthScale, sides)
+        ?.projectOntoPlane(safeDirection)
+        ?.normalizedOr(stableLimbSide(safeDirection, bodyAxes))
+        ?: stableLimbSide(safeDirection, bodyAxes)
+    val depth = side.cross(safeDirection).normalizedOr(bodyAxes.forward)
+    val startRing = addMeshSegmentRing(mesh, safeStart, side, depth, max(startWidth, 0.001f), depthScale, sides)
+    val endRing = addMeshSegmentRing(mesh, emitEnd, side, depth, max(endWidth, 0.001f), depthScale, sides)
     if (muscleBulgeScale > 1f) {
         val safeBulgePosition = muscleBulgePosition.coerceIn(0.2f, 0.8f)
-        val bulgeCenter = safeStart.lerp(safeEnd, safeBulgePosition)
+        val bulgeCenter = safeStart.lerp(emitEnd, safeBulgePosition)
         val interpolatedWidth = startWidth + (endWidth - startWidth) * safeBulgePosition
         val bulgeWidth = max(startWidth, max(endWidth, interpolatedWidth)) * muscleBulgeScale
         val bulgeRing = addMeshSegmentRing(
@@ -1954,6 +2448,43 @@ private fun addMeshBoxRing(
         center + side * halfWidth - depth * halfDepth,
     )
     return corners.map { point ->
+        mesh.vertices += point
+        mesh.vertices.lastIndex
+    }
+}
+
+private fun addMeshTorsoRing(
+    mesh: GeneratedLowPolyMesh,
+    center: WearSkeletonVec3,
+    side: WearSkeletonVec3,
+    depth: WearSkeletonVec3,
+    halfWidth: Float,
+    halfDepth: Float,
+    latWidthScale: Float,
+    latDepthScale: Float,
+    erectorWidthScale: Float,
+    erectorDepthScale: Float,
+    grooveWidthScale: Float,
+    grooveDepthScale: Float,
+): List<Int> {
+    // Muscular octagon: pec shelf, side lat wings, erector columns, spinal groove.
+    val latHalfWidth = halfWidth * latWidthScale
+    val erectorHalfWidth = halfWidth * erectorWidthScale
+    val grooveHalfWidth = halfWidth * grooveWidthScale
+    val latDepth = halfDepth * latDepthScale
+    val erectorDepth = halfDepth * erectorDepthScale
+    val grooveDepth = halfDepth * grooveDepthScale
+    val contour = listOf(
+        center + side * halfWidth + depth * halfDepth,
+        center - side * halfWidth + depth * halfDepth,
+        center - side * latHalfWidth - depth * latDepth,
+        center - side * erectorHalfWidth - depth * erectorDepth,
+        center - side * grooveHalfWidth - depth * grooveDepth,
+        center + side * grooveHalfWidth - depth * grooveDepth,
+        center + side * erectorHalfWidth - depth * erectorDepth,
+        center + side * latHalfWidth - depth * latDepth,
+    )
+    return contour.map { point ->
         mesh.vertices += point
         mesh.vertices.lastIndex
     }

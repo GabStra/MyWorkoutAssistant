@@ -86,7 +86,7 @@ fun ExerciseOverviewTab(
         val selectedEquipment = selectedEquipmentId
             ?.let { equipmentId -> equipments.find { it.id == equipmentId } }
         val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-            .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+            .mapNotNull { id -> appViewModel.getLinkedSupportName(id) }
         val linkedDefinitionName = exercise.exerciseDefinitionId
             ?.let { definitionId ->
                 appViewModel.workoutStore.exerciseDefinitions

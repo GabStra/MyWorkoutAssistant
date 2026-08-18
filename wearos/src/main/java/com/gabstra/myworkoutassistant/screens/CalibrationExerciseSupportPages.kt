@@ -46,8 +46,7 @@ internal fun buildCalibrationExerciseInfoSections(
         ?.let(viewModel::getEquipmentById)
         ?.let { add(TitledLinesSection("Equipment", listOf(it.name))) }
     val accessories = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-        .mapNotNull(viewModel::getAccessoryEquipmentById)
-        .map { it.name }
+        .mapNotNull(viewModel::getLinkedSupportName)
     if (accessories.isNotEmpty()) {
         add(TitledLinesSection("Accessories", accessories))
     }

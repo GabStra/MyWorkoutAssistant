@@ -7,8 +7,6 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
 
-private const val WearMovementLoopRestartFadeMillis = 250
-
 @Composable
 fun WearSkeletonMotionPreview(
     skeletonJson: String,
@@ -17,7 +15,7 @@ fun WearSkeletonMotionPreview(
     viewYawDegrees: Float = -28f,
     viewPitchDegrees: Float = 15f,
     orbitView: Boolean = false,
-    loopRestartFadeMillis: Int = WearMovementLoopRestartFadeMillis,
+    loopRestartFadeMillis: Int = 0,
     dragRotationEnabled: Boolean = true,
     dragRotationHorizontalInset: Dp = 0.dp,
     isRenderingActive: Boolean = true,

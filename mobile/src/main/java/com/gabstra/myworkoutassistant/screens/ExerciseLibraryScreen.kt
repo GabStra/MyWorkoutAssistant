@@ -58,6 +58,7 @@ import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
@@ -91,6 +92,15 @@ private data class ExerciseEquipmentGroup(
     val label: String,
     val families: List<ExerciseFamily>,
 )
+
+@Composable
+private fun LibraryMovementPreview(
+    movementRef: ExerciseMovementRef?,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+) {
+    CompactMovementPreview(movementRef, contentDescription, modifier)
+}
 
 private fun String.toDisplayLabel(): String = lowercase()
     .split('_')
@@ -138,7 +148,7 @@ private fun ExerciseDefinition.details(
             ExerciseDefinitionDetail(
                 "Accessories",
                 accessoryIds.map { id ->
-                    accessoryNamesById[id] ?: "Unknown accessory"
+                    accessoryNamesById[id] ?: equipmentNamesById[id] ?: "Unknown accessory"
                 }.sorted().joinToString(),
             ),
         )
@@ -329,6 +339,9 @@ fun ExerciseLibraryScreen(
                 keySelector = { it.id },
                 itemContent = { family, onItemClick, onItemLongClick ->
                     val expanded = family.id in expandedFamilyIds
+                    val familyMovementRef = remember(family.variations) {
+                        family.variations.firstNotNullOfOrNull { it.movementRef }
+                    }
                         StyledCard(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -341,19 +354,29 @@ fun ExerciseLibraryScreen(
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
-                                Text(
-                                    text = family.name,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyLarge,
+                                LibraryMovementPreview(
+                                    movementRef = familyMovementRef,
+                                    contentDescription = if (familyMovementRef == null) {
+                                        "No movement available for ${family.name}"
+                                    } else {
+                                        "Movement preview for ${family.name}"
+                                    },
+                                    modifier = Modifier.size(72.dp),
                                 )
-                                if (family.variations.size > 1) {
+                                Spacer(Modifier.width(Spacing.md))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "${family.variations.size} variations",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = family.name,
+                                        style = MaterialTheme.typography.bodyLarge,
                                     )
+                                    if (family.variations.size > 1) {
+                                        Text(
+                                            text = "${family.variations.size} variations",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                                 Box(
                                     modifier = Modifier
@@ -447,7 +470,11 @@ fun ExerciseLibraryScreen(
                                         }
                                         ExerciseDefinitionDetailsSection(
                                             definition.details(equipmentNamesById, accessoryNamesById)
-                                                .filterNot { it.label == "Type" || it.label == "Equipment" },
+                                                .filterNot {
+                                                    it.label == "Type" ||
+                                                        it.label == "Equipment" ||
+                                                        it.label == "Motion preview"
+                                                },
                                         )
                                         UsageSection(activeUsages, onOpenPlan, onOpenWorkout)
                                     }

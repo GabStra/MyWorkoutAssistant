@@ -62,7 +62,7 @@ fun SetHistoriesRenderer(
         }
         if (showMetadata) {
             val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-                .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+                .mapNotNull { id -> appViewModel.getLinkedSupportName(id) }
             EquipmentAccessoryMetadata(
                 equipmentName = equipmentName,
                 accessoryNames = accessoryNames,

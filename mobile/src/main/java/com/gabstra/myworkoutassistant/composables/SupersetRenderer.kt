@@ -89,11 +89,13 @@ fun SupersetRenderer(
                                 color = textColor,
                                 modifier = Modifier.padding(end = 10.dp)
                             )
-                            Text(
-                                text = exercise.name,
+                            WorkoutExerciseHeader(
+                                exercise = exercise,
+                                appViewModel = appViewModel,
                                 modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = textColor,
+                                previewSize = 48.dp,
+                                horizontalPadding = 0.dp,
+                                verticalPadding = 2.dp,
                             )
                         }
                     }
@@ -115,7 +117,7 @@ fun SupersetRenderer(
                             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
                             val accessoryNames = exercise.requiredAccessoryEquipmentIds
                                 .orEmpty()
-                                .mapNotNull { appViewModel.getAccessoryEquipmentById(it)?.name }
+                                .mapNotNull { appViewModel.getLinkedSupportName(it) }
                             val linkedDefinitionName = exercise.exerciseDefinitionId
                                 ?.let { definitionId ->
                                     appViewModel.workoutStore.exerciseDefinitions

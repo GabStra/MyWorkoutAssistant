@@ -90,9 +90,9 @@ fun ExerciseScreen(
     var showEquipmentPicker by remember(state.set.id) { mutableStateOf(false) }
     var pendingEquipmentId by remember(state.set.id) { mutableStateOf(exercise.equipmentId) }
 
-    val accessoryEquipments = remember(exercise) {
+    val accessoryNames = remember(exercise) {
         (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
-            viewModel.getAccessoryEquipmentById(id)
+            viewModel.getLinkedSupportName(id)
         }
     }
 
@@ -277,7 +277,7 @@ fun ExerciseScreen(
                 PageType.INFO -> ExerciseSessionInfoPage(
                     exerciseName = animatedExercise.name,
                     equipmentName = equipment?.name,
-                    accessoryNames = accessoryEquipments.map { it.name },
+                    accessoryNames = accessoryNames,
                     notes = animatedExercise.notes,
                     targetRepRange = targetRepRange,
                     progressionLabel = state.progressionState?.name

@@ -4,8 +4,11 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -17,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.screens.CompactMovementPreview
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -395,22 +399,63 @@ private fun ExerciseTitleOnlyRow(
     exercise: Exercise,
     modifier: Modifier,
     titleModifier: Modifier,
+    appViewModel: AppViewModel,
 ) {
+    WorkoutExerciseHeader(
+        exercise = exercise,
+        appViewModel = appViewModel,
+        modifier = modifier.then(titleModifier),
+    )
+}
+
+@Composable
+internal fun WorkoutExerciseHeader(
+    exercise: Exercise,
+    appViewModel: AppViewModel,
+    modifier: Modifier = Modifier,
+    previewSize: androidx.compose.ui.unit.Dp = 72.dp,
+    horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
+    verticalPadding: androidx.compose.ui.unit.Dp = 8.dp,
+) {
+    val linkedDefinition = exercise.exerciseDefinitionId?.let { definitionId ->
+        appViewModel.workoutStore.exerciseDefinitions.firstOrNull { it.id == definitionId }
+    }
+    val familyName = linkedDefinition?.name ?: exercise.name
+    val nameOverride = exercise.nameOverride?.trim()?.takeIf { it.isNotEmpty() }
+    val movementRef = exercise.movementRef ?: linkedDefinition?.movementRef
+    val textColor = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
+
     Row(
-        modifier = modifier.then(titleModifier).padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        modifier = modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp)
-                .basicMarquee(iterations = Int.MAX_VALUE),
-            text = exercise.name,
-            maxLines = 2,
-            style = historyExerciseNameTextStyle(),
-            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+        CompactMovementPreview(
+            movementRef = movementRef,
+            contentDescription = if (movementRef == null) {
+                "No movement available for $familyName"
+            } else {
+                "Movement preview for $familyName"
+            },
+            modifier = Modifier.size(previewSize),
         )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                text = nameOverride ?: familyName,
+                maxLines = 1,
+                style = historyExerciseNameTextStyle(),
+                color = textColor,
+            )
+            if (nameOverride != null) {
+                Text(
+                    text = familyName,
+                    maxLines = 1,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
@@ -458,8 +503,8 @@ private fun ExerciseExpandableSetTableBody(
                 ),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                val accessoryEquipments = (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
-                    appViewModel.getAccessoryEquipmentById(id)
+                val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
+                    appViewModel.getLinkedSupportName(id)
                 }
                 val repRange = formatTargetRepRange(exercise.minReps, exercise.maxReps)
 
@@ -486,7 +531,7 @@ private fun ExerciseExpandableSetTableBody(
                         exerciseType = exercise.exerciseType,
                         targetRepRange = repRange,
                         equipmentName = equipmentNameOverride ?: equipment?.name,
-                        accessoryNames = accessoryEquipments.map { it.name },
+                        accessoryNames = accessoryNames,
                         definitionName = linkedDefinitionName,
                         displayName = exercise.name,
                         modifier = Modifier.fillMaxWidth(),
@@ -520,6 +565,7 @@ fun ExerciseTemplateRenderer(
             exercise = exercise,
             modifier = modifier,
             titleModifier = titleModifier,
+            appViewModel = appViewModel,
         )
         return
     }
@@ -537,14 +583,10 @@ fun ExerciseTemplateRenderer(
         equipment = equipment,
         appViewModel = appViewModel,
         title = { m ->
-            Text(
-                modifier = m
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .basicMarquee(iterations = Int.MAX_VALUE),
-                text = exercise.name,
-                maxLines = 2,
-                style = historyExerciseNameTextStyle(),
-                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
+            WorkoutExerciseHeader(
+                exercise = exercise,
+                appViewModel = appViewModel,
+                modifier = m,
             )
         },
         rows = rows,
@@ -591,6 +633,7 @@ fun ExerciseHistoryRenderer(
             exercise = exercise,
             modifier = modifier,
             titleModifier = titleModifier,
+            appViewModel = appViewModel,
         )
         return
     }
