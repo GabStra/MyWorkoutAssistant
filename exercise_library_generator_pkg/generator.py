@@ -23,7 +23,6 @@ from workout_generator_pkg.api_client import (
     json_call_reasoner_only_with_loading,
 )
 from workout_generator_pkg.cli import load_equipment_from_file, test_connection
-from workout_generator_pkg.constants import EXACT_GENERATION_CONFIRMATION
 from workout_generator_pkg.domain_ops import (
     build_exercise_definition_id,
     fix_muscle_groups,
@@ -144,8 +143,9 @@ needed for safe execution must be declared. Omit an exercise if any requirement 
 COUNTDOWN and COUNTUP are only for genuinely time-based activities.
 Inventory compatibility rule: CARDIO_MACHINE is primary equipment for COUNTUP/COUNTDOWN only.
 Other load-bearing primary equipment types are valid for WEIGHT/BODY_WEIGHT and for externally
-loaded COUNTUP/COUNTDOWN movements. Cardio machines are not
-accessories and must never appear in requiredAccessoryEquipmentIds."""
+loaded COUNTUP/COUNTDOWN movements. Cardio machines are not accessories and must never appear in
+requiredAccessoryEquipmentIds. A WEIGHTVEST may appear there as additional load on another
+primary movement."""
 
 AUDIT_SYSTEM_PROMPT = """Audit an exercise inventory for material omissions. Return JSON only as
 {"exercises": [...]}, containing only missing distinct exercises that are possible with the
@@ -254,15 +254,104 @@ INSTRUCTION_CAPABILITY_REQUIREMENTS = (
     ),
     (
         re.compile(r"\bdecline bench\b", re.I),
-        {"DECLINE_BENCH", "ADJUSTABLE_BENCH"},
+        {"DECLINE_BENCH"},
         "decline bench",
     ),
+)
+
+NAME_REQUIREMENT_CLAUSES = (
+    (re.compile(r"\bdecline\b", re.I), {"DECLINE_BENCH"}, None, "decline bench"),
+    (
+        re.compile(r"\bincline\b", re.I),
+        {"INCLINE_BENCH", "ADJUSTABLE_BENCH"},
+        re.compile(r"\b(?:incline|adjustable)\b", re.I),
+        "incline bench",
+    ),
+    (
+        re.compile(r"\b(?:muscle[-\s]?up)s?\b", re.I),
+        {"MUSCLE_UP_CLEARANCE"},
+        None,
+        "muscle-up clearance",
+    ),
+    (
+        re.compile(r"\bskin the cat\b", re.I),
+        {"MUSCLE_UP_CLEARANCE", "OVER_IMPLEMENT_TRANSITION_CLEARANCE"},
+        None,
+        "transition clearance",
+    ),
+    (
+        re.compile(r"\bnordic\b", re.I),
+        {"NORDIC_CURL_SUPPORT"},
+        re.compile(r"\bnordic\b", re.I),
+        "nordic curl support",
+    ),
+    (
+        re.compile(r"\b(?:ab[- ]?wheel|wheel rollouts?)\b", re.I),
+        {"CORE_ROLLER"},
+        re.compile(r"\b(?:ab[- ]?wheel|wheel)\b", re.I),
+        "ab wheel",
+    ),
+    (
+        re.compile(r"\brings?\b", re.I),
+        {"GYMNASTIC_RINGS"},
+        re.compile(r"\brings?\b", re.I),
+        "rings",
+    ),
+    (
+        re.compile(
+            r"\b(?:pull[-\s]?ups?|chin[-\s]?ups?|toes[-\s]?to[-\s]?bar|dead hang|hanging)\b",
+            re.I,
+        ),
+        {"PULL_UP_BAR", "GYMNASTIC_RINGS"},
+        re.compile(r"\b(?:pull[-\s]?up|chin[-\s]?up|rings?)\b", re.I),
+        "pull-up support",
+    ),
+    (
+        re.compile(r"\bdips?\b", re.I),
+        {"DIP_HANDLES", "GYMNASTIC_RINGS", "BENCH", "FLAT_BENCH", "ADJUSTABLE_BENCH"},
+        re.compile(r"\b(?:dips?|rings?|bench)\b", re.I),
+        "dip support",
+    ),
+)
+NAME_CABLE_CAPABILITY_REQUIREMENTS = (
+    (
+        re.compile(r"\b(?:crossover|cable fly|cable flies)\b", re.I),
+        {"SECOND_CABLE_STATION", "DUAL_HANDLE_SUPPLY"},
+        "second cable station",
+    ),
+    (
+        re.compile(r"\b(?:lat pulldown|wide[-\s]?grip pulldown)\b", re.I),
+        {"WIDE_BAR_ATTACHMENT", "STRAIGHT_BAR_ATTACHMENT"},
+        "lat-pulldown bar",
+    ),
+    (
+        re.compile(r"\b(?:leg curl|ankle|glute kickback|cable kickback)\b", re.I),
+        {"ANKLE_STRAP_ATTACHMENT"},
+        "ankle attachment",
+    ),
+)
+NAME_CABLE_EXPLICIT_LOW_PULLEY = re.compile(
+    r"\b(?:low\b|overhead (?:tricep|triceps) extensions?|kickbacks?|"
+    r"hip abduction|glute kickbacks?|cable kickbacks?|upright rows?)\b",
+    re.I,
+)
+NAME_CABLE_HIGH_PULLEY_MARKER = re.compile(
+    r"\bhigh\b|\bface[- ]?pulls?\b|\bpushdowns?\b|\bpressdowns?\b",
+    re.I,
+)
+NAME_CABLE_DEFAULT_LOW_PULLEY = re.compile(r"\b(?:rows?|curls?)\b", re.I)
+NAME_ONE_ARM = re.compile(r"\b(?:one|single)[- ]?arm\b", re.I)
+NAME_ROLLOUT = re.compile(r"\brollouts?\b", re.I)
+BAR_LOADED_EQUIPMENT_TYPES = {"BARBELL", "DUMBBELL", "DUMBBELLS"}
+ADDITIONAL_LOAD_EQUIPMENT_TYPES = {"WEIGHTVEST"}
+NAME_ACCESSORY_CLASS_REQUIREMENTS = (
+    (re.compile(r"\bbox jumps?\b", re.I), re.compile(r"\bbox\b", re.I), "box"),
 )
 
 CAPABILITY_IMPLICATIONS = {
     "LOADABLE_BAR": {"ADJUSTABLE_WEIGHT"},
     "SUPPORTS_PLATES": {"ADJUSTABLE_WEIGHT"},
-    "ADJUSTABLE_BENCH": {"FLAT_BENCH", "INCLINE_BENCH", "DECLINE_BENCH"},
+    "ADJUSTABLE_BENCH": {"FLAT_BENCH", "INCLINE_BENCH"},
     "ADJUSTABLE_PULLEY": {"HIGH_PULLEY", "LOW_PULLEY"},
     "NORDIC_CURL_SUPPORT": {"ANKLE_RESTRAINT", "THIGH_HOLD_DOWN"},
     "MUSCLE_UP_CLEARANCE": {"OVER_IMPLEMENT_TRANSITION_CLEARANCE"},
@@ -335,14 +424,14 @@ def _validate_reviewed_definition(
     definition: dict[str, Any],
     equipment: dict[str, Any],
 ) -> dict[str, Any]:
-    primary_ids, accessory_ids = _equipment_ids(equipment)
+    primary_ids, _accessory_ids = _equipment_ids(equipment)
     if definition.get("exerciseType") not in EXERCISE_TYPES:
         raise ValueError("semantic review produced an invalid exerciseType")
     if definition.get("equipmentId") is not None and definition["equipmentId"] not in primary_ids:
         raise ValueError("semantic review introduced an unknown equipmentId")
     _validate_primary_equipment_compatibility(definition, equipment)
     accessories = definition.get("requiredAccessoryEquipmentIds")
-    if not isinstance(accessories, list) or set(accessories) - accessory_ids:
+    if not isinstance(accessories, list) or set(accessories) - _accepted_support_ids(equipment):
         raise ValueError("semantic review introduced unknown accessory IDs")
     if definition["exerciseType"] == "BODY_WEIGHT":
         percentage = definition.get("bodyWeightPercentage")
@@ -1281,6 +1370,95 @@ def _capabilities_for_equipment_ids(
     return capabilities
 
 
+def _linked_equipment_ids(definition: dict[str, Any]) -> set[str]:
+    accessories = definition.get("requiredAccessoryEquipmentIds")
+    if not isinstance(accessories, list):
+        accessories = []
+    return {
+        value
+        for value in [definition.get("equipmentId"), *accessories]
+        if value is not None
+    }
+
+
+def _name_implied_requirement_issues(
+    definition: dict[str, Any],
+    equipment: dict[str, Any],
+) -> list[str]:
+    name = str(definition.get("name") or "")
+    if not name.strip():
+        return []
+    linked_ids = _linked_equipment_ids(definition)
+    linked_capabilities = _capabilities_for_equipment_ids(equipment, linked_ids)
+    items = _all_equipment_items(equipment)
+    linked_names = [
+        str(items[item_id].get("name") or "")
+        for item_id in linked_ids
+        if item_id in items
+    ]
+    issues: list[str] = []
+    for pattern, alternatives, accessory_pattern, label in NAME_REQUIREMENT_CLAUSES:
+        if not pattern.search(name):
+            continue
+        capability_ok = bool(linked_capabilities.intersection(alternatives))
+        accessory_ok = bool(
+            accessory_pattern is not None
+            and any(accessory_pattern.search(value) for value in linked_names)
+        )
+        if not capability_ok and not accessory_ok:
+            issues.append(label)
+    primary = items.get(definition.get("equipmentId"), {})
+    if NAME_ROLLOUT.search(name) and not re.search(
+        r"\b(?:ab[- ]?wheel|wheel rollouts?)\b", name, re.I
+    ):
+        primary_type = str(primary.get("type") or "")
+        if primary_type not in BAR_LOADED_EQUIPMENT_TYPES:
+            wheel_ok = "CORE_ROLLER" in linked_capabilities or any(
+                re.search(r"\b(?:ab[- ]?wheel|wheel)\b", value, re.I) for value in linked_names
+            )
+            if not wheel_ok:
+                issues.append("ab wheel")
+    if primary.get("type") == "PLATELOADEDCABLE":
+        pulley_needed: set[str] | None = None
+        pulley_label = None
+        if NAME_CABLE_EXPLICIT_LOW_PULLEY.search(name):
+            pulley_needed = {"LOW_PULLEY", "ADJUSTABLE_PULLEY"}
+            pulley_label = "low pulley"
+        elif NAME_CABLE_HIGH_PULLEY_MARKER.search(name):
+            pulley_needed = {"HIGH_PULLEY", "ADJUSTABLE_PULLEY"}
+            pulley_label = "high pulley"
+        elif NAME_CABLE_DEFAULT_LOW_PULLEY.search(name):
+            pulley_needed = {"LOW_PULLEY", "ADJUSTABLE_PULLEY"}
+            pulley_label = "low pulley"
+        if pulley_needed and pulley_label and not linked_capabilities.intersection(pulley_needed):
+            issues.append(pulley_label)
+        for pattern, alternatives, label in NAME_CABLE_CAPABILITY_REQUIREMENTS:
+            if not pattern.search(name):
+                continue
+            if label == "lat-pulldown bar" and NAME_ONE_ARM.search(name):
+                continue
+            if not linked_capabilities.intersection(alternatives):
+                issues.append(label)
+    for name_pattern, accessory_pattern, label in NAME_ACCESSORY_CLASS_REQUIREMENTS:
+        if name_pattern.search(name) and not any(
+            accessory_pattern.search(value) for value in linked_names
+        ):
+            issues.append(label)
+    return list(dict.fromkeys(issues))
+
+
+def _validate_name_implied_requirements(
+    definition: dict[str, Any],
+    equipment: dict[str, Any],
+) -> None:
+    issues = _name_implied_requirement_issues(definition, equipment)
+    if issues:
+        raise ValueError(
+            f"{definition.get('name', 'Unknown')}: name implies unavailable requirements: "
+            + ", ".join(issues)
+        )
+
+
 def _validate_equipment_family_capabilities(
     candidate: dict[str, Any], equipment: dict[str, Any]
 ) -> None:
@@ -1485,6 +1663,33 @@ def _equipment_ids(equipment: dict[str, Any]) -> tuple[set[str], set[str]]:
     return primary, accessories
 
 
+def _additional_load_equipment_ids(equipment: dict[str, Any]) -> set[str]:
+    primary_ids, _accessory_ids = _equipment_ids(equipment)
+    items = _all_equipment_items(equipment)
+    return {
+        item_id
+        for item_id in primary_ids
+        if items.get(item_id, {}).get("type") in ADDITIONAL_LOAD_EQUIPMENT_TYPES
+    }
+
+
+def _accepted_support_ids(equipment: dict[str, Any]) -> set[str]:
+    _primary_ids, accessory_ids = _equipment_ids(equipment)
+    return accessory_ids | _additional_load_equipment_ids(equipment)
+
+
+class InventoryCandidateError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        errors: list[dict[str, Any]],
+        candidate: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.errors = errors
+        self.candidate = candidate
+
+
 def _validate_candidate(
     candidate: Any,
     equipment: dict[str, Any],
@@ -1552,22 +1757,47 @@ def _validate_candidate(
     try:
         validate_json_schema(candidate, INVENTORY_CANDIDATE_SCHEMA)
     except JsonSchemaValidationError as error:
-        raise ValueError(f"Candidate does not match the inventory schema: {error.message}") from error
-    candidate = _normalize_candidate_semantics(candidate, equipment)
+        json_path = (
+            "/" + "/".join(str(part) for part in error.absolute_path)
+            if error.absolute_path
+            else None
+        )
+        raise InventoryCandidateError(
+            f"Candidate does not match the inventory schema: {error.message}",
+            [{"path": json_path, "code": "INVALID_SCHEMA", "message": error.message}],
+            candidate=candidate,
+        ) from error
+        candidate = _normalize_candidate_semantics(candidate, equipment)
     primary_ids, accessory_ids = _equipment_ids(equipment)
     name = candidate.get("name")
     exercise_type = candidate.get("exerciseType")
     equipment_id = candidate.get("equipmentId")
     body_weight_percentage = candidate.get("bodyWeightPercentage")
     required_accessories = candidate.get("requiredAccessoryEquipmentIds")
+    errors: list[dict[str, Any]] = []
+
+    def add(path: str | None, code: str, message: str) -> None:
+        errors.append({"path": path, "code": code, "message": message})
 
     if not isinstance(name, str) or not name.strip():
-        raise ValueError("Exercise candidate is missing a name")
+        add("/name", "INVALID_NAME", "Exercise candidate is missing a name")
+        name = name if isinstance(name, str) else "Unknown"
     if exercise_type not in EXERCISE_TYPES:
-        raise ValueError(f"{name}: invalid exerciseType {exercise_type!r}")
+        add(
+            "/exerciseType",
+            "INVALID_EXERCISE_TYPE",
+            f"{name}: invalid exerciseType {exercise_type!r}",
+        )
     if equipment_id is not None and equipment_id not in primary_ids:
-        raise ValueError(f"{name}: unknown equipmentId {equipment_id!r}")
-    _validate_primary_equipment_compatibility(candidate, equipment)
+        add(
+            "/equipmentId" if equipment_id in accessory_ids else None,
+            "UNKNOWN_PRIMARY_EQUIPMENT",
+            f"{name}: unknown equipmentId {equipment_id!r}",
+        )
+    try:
+        _validate_primary_equipment_compatibility(candidate, equipment)
+    except ValueError as error:
+        add("/exerciseType", "EQUIPMENT_TYPE_MISMATCH", str(error))
     equipment_is_outside_batch = (
         allowed_equipment_ids is not None
         and (
@@ -1577,18 +1807,39 @@ def _validate_candidate(
     )
     if equipment_is_outside_batch:
         allowed_text = sorted(allowed_equipment_ids) if allowed_equipment_ids else [None]
-        raise ValueError(
-            f"{name}: equipmentId {equipment_id!r} is outside this batch; allowed {allowed_text}"
+        add(
+            None,
+            "OUTSIDE_BATCH",
+            f"{name}: equipmentId {equipment_id!r} is outside this batch; allowed {allowed_text}",
         )
     if not isinstance(required_accessories, list):
-        raise ValueError(f"{name}: requiredAccessoryEquipmentIds must be an array")
+        add(
+            "/requiredAccessoryEquipmentIds",
+            "INVALID_ACCESSORIES",
+            f"{name}: requiredAccessoryEquipmentIds must be an array",
+        )
+        required_accessories = []
     if len(required_accessories) != len(set(required_accessories)):
-        raise ValueError(f"{name}: duplicate accessory IDs")
-    unknown_accessories = set(required_accessories) - accessory_ids
+        add(
+            "/requiredAccessoryEquipmentIds",
+            "DUPLICATE_ACCESSORY",
+            f"{name}: duplicate accessory IDs",
+        )
+    unknown_accessories = set(required_accessories) - _accepted_support_ids(equipment)
     if unknown_accessories:
-        raise ValueError(f"{name}: unknown accessory IDs {sorted(unknown_accessories)}")
+        add(
+            "/requiredAccessoryEquipmentIds"
+            if unknown_accessories <= (primary_ids - _additional_load_equipment_ids(equipment))
+            else None,
+            "UNKNOWN_ACCESSORY",
+            f"{name}: unknown accessory IDs {sorted(unknown_accessories)}",
+        )
     if require_any_accessory and not required_accessories:
-        raise ValueError(f"{name}: this batch requires at least one listed accessory")
+        add(
+            "/requiredAccessoryEquipmentIds",
+            "MISSING_ACCESSORY",
+            f"{name}: this batch requires at least one listed accessory",
+        )
     linked_ids = {
         item for item in [equipment_id, *required_accessories] if item is not None
     }
@@ -1596,28 +1847,50 @@ def _validate_candidate(
         equipment, linked_ids
     )
     if unavailable_capabilities:
-        raise ValueError(
-            f"{name}: requires unavailable capabilities {sorted(unavailable_capabilities)}"
+        add(
+            "/requiredCapabilities",
+            "UNAVAILABLE_CAPABILITY",
+            f"{name}: requires unavailable capabilities {sorted(unavailable_capabilities)}",
         )
-    _validate_equipment_family_capabilities(candidate, equipment)
+    implied_issues = _name_implied_requirement_issues(candidate, equipment)
+    if implied_issues:
+        add(
+            None,
+            "INFEASIBLE_NAMED_REQUIREMENT",
+            f"{name}: name implies unavailable requirements: " + ", ".join(implied_issues),
+        )
+    else:
+        try:
+            _validate_equipment_family_capabilities(candidate, equipment)
+        except ValueError as error:
+            add("/requiredCapabilities", "CABLE_FAMILY", str(error))
     all_items = _all_equipment_items(equipment)
     usage_ids = [usage["equipmentId"] for usage in candidate["implementUsage"]]
     declared_ids = {
         item for item in [equipment_id, *required_accessories] if item is not None
     }
     if set(usage_ids) != declared_ids or len(usage_ids) != len(set(usage_ids)):
-        raise ValueError(
-            f"{name}: implementUsage must declare every and only linked equipment ID once"
+        add(
+            "/implementUsage",
+            "IMPLEMENT_USAGE",
+            f"{name}: implementUsage must declare every and only linked equipment ID once",
         )
     for usage in candidate["implementUsage"]:
         item = all_items.get(usage["equipmentId"])
         if item is None:
-            raise ValueError(f"{name}: implementUsage contains an unknown equipment ID")
+            add(
+                "/implementUsage",
+                "IMPLEMENT_USAGE",
+                f"{name}: implementUsage contains an unknown equipment ID",
+            )
+            break
         expected_quantity = {"DUMBBELL": 1, "DUMBBELLS": 2}.get(item.get("type"))
         if expected_quantity is not None and usage["quantity"] != expected_quantity:
-            raise ValueError(
+            add(
+                "/implementUsage",
+                "IMPLEMENT_USAGE",
                 f"{name}: {item.get('name', item['id'])} requires quantity "
-                f"{expected_quantity}, got {usage['quantity']}"
+                f"{expected_quantity}, got {usage['quantity']}",
             )
     if exercise_type == "BODY_WEIGHT":
         if (
@@ -1625,11 +1898,19 @@ def _validate_candidate(
             or isinstance(body_weight_percentage, bool)
             or not 1 < body_weight_percentage <= 100
         ):
-            raise ValueError(
-                f"{name}: BODY_WEIGHT requires movement-specific percentage semantics in (1, 100]"
+            add(
+                "/bodyWeightPercentage",
+                "BODY_WEIGHT_PERCENTAGE",
+                f"{name}: BODY_WEIGHT requires movement-specific percentage semantics in (1, 100]",
             )
     elif body_weight_percentage is not None:
-        raise ValueError(f"{name}: non-BODY_WEIGHT bodyWeightPercentage must be null")
+        add(
+            "/bodyWeightPercentage",
+            "NON_BODY_WEIGHT_PERCENTAGE",
+            f"{name}: non-BODY_WEIGHT bodyWeightPercentage must be null",
+        )
+    if errors:
+        raise InventoryCandidateError(str(errors[0]["message"]), errors, candidate=candidate)
 
     return {
         "name": name.strip(),
@@ -1670,12 +1951,158 @@ def _candidate_key(candidate: dict[str, Any]) -> tuple[str, str, str | None]:
     )
 
 
+def _expand_candidate_repair_paths(error_paths: set[str]) -> set[str]:
+    allowed = {path for path in error_paths if path and path != "/name"}
+    type_group = {
+        "/bodyWeightPercentage",
+        "/exerciseType",
+        "/resistanceMode",
+        "/executionMode",
+        "/exerciseCategory",
+    }
+    link_group = {"/equipmentId", "/requiredAccessoryEquipmentIds", "/implementUsage"}
+    if allowed.intersection(type_group):
+        allowed.update(type_group)
+    if allowed.intersection(link_group):
+        allowed.update(link_group)
+        allowed.update(
+            {
+                "/requiredCapabilities",
+                "/exerciseType",
+                "/resistanceMode",
+                "/executionMode",
+                "/bodyWeightPercentage",
+                "/exerciseCategory",
+            }
+        )
+    return allowed
+
+
+def _candidate_errors_are_repairable(errors: list[dict[str, Any]]) -> bool:
+    return bool(errors) and all(
+        isinstance(error.get("path"), str) and error["path"] not in {"", "/name"}
+        for error in errors
+    )
+
+
+def _repair_inventory_candidates(
+    client: Any,
+    items: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+    equipment: dict[str, Any],
+    caller: Callable[..., str | None],
+    *,
+    allowed_equipment_ids: set[str] | None = None,
+    require_any_accessory: bool = False,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not items:
+        return [], []
+    payload_items = []
+    allowed_by_index: dict[int, set[str]] = {}
+    for index, (candidate, errors) in enumerate(items):
+        allowed_paths = _expand_candidate_repair_paths(
+            {str(error.get("path")) for error in errors}
+        )
+        allowed_by_index[index] = allowed_paths
+        payload_items.append(
+            {
+                "index": index,
+                "candidate": candidate,
+                "validationErrors": errors,
+                "allowedPatchPaths": sorted(allowed_paths),
+            }
+        )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Repair inventory exercise candidates using RFC 6902 JSON Patch. Return JSON only "
+                "as {\"patches\":[{\"index\":0,\"patch\":[...]}]}. Fix only the supplied field "
+                "errors. Never change /name. Never invent equipment IDs. Cardio machines must not "
+                "appear in requiredAccessoryEquipmentIds. A WEIGHTVEST may stay there as additional "
+                "load on another primary movement. Other primary equipment IDs must not appear in "
+                "requiredAccessoryEquipmentIds; drop them or switch equipmentId if the true "
+                "primary implement was mis-assigned. BODY_WEIGHT needs bodyWeightPercentage in "
+                "(1, 100]. Weighted calisthenics stay BODY_WEIGHT with a percentage. Keep "
+                "implementUsage aligned with linked equipment IDs."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "candidates": payload_items,
+                    "equipment": {
+                        "equipments": equipment.get("equipments", []),
+                        "accessoryEquipments": equipment.get("accessoryEquipments", []),
+                    },
+                    "availableCapabilities": sorted(_available_capabilities(equipment)),
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    content = caller(
+        client,
+        messages,
+        f"Repairing {len(items)} inventory candidate(s)",
+        show_loading=False,
+    )
+    payload = _json_object(content, "inventory candidate repair")
+    patches = payload.get("patches")
+    if not isinstance(patches, list):
+        raise ValueError("inventory candidate repair must contain a patches array")
+    repaired: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    repaired_indexes: set[int] = set()
+    for entry in patches:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            index = int(entry["index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if index in repaired_indexes or index not in allowed_by_index:
+            continue
+        operations = entry.get("patch")
+        if not isinstance(operations, list):
+            continue
+        candidate, _errors = items[index]
+        allowed_paths = allowed_by_index[index]
+        try:
+            validate_patch_operations_scope(operations, allowed_paths, allowed_paths)
+            patched = apply_json_patch(candidate, operations)
+            validate_changed_paths_scope(
+                collect_changed_json_paths(candidate, patched),
+                allowed_paths,
+                allowed_paths,
+            )
+            repaired.append(
+                _validate_candidate(
+                    patched,
+                    equipment,
+                    allowed_equipment_ids=allowed_equipment_ids,
+                    require_any_accessory=require_any_accessory,
+                )
+            )
+            repaired_indexes.add(index)
+        except (IndexError, KeyError, TypeError, ValueError) as error:
+            rejected.append(f"{candidate.get('name', 'Unknown')}: {error}")
+            repaired_indexes.add(index)
+    for index, (candidate, errors) in enumerate(items):
+        if index in repaired_indexes:
+            continue
+        rejected.append(str(errors[0]["message"]))
+    return repaired, rejected
+
+
 def _parse_inventory(
     content: str | None,
     equipment: dict[str, Any],
     allowed_equipment_ids: set[str] | None = None,
     recover_all_invalid: bool = False,
     require_any_accessory: bool = False,
+    repair_client: Any | None = None,
+    repair_caller: Callable[..., str | None] | None = None,
 ) -> list[dict[str, Any]]:
     payload = _json_object(content, "exercise inventory")
     raw_exercises = payload.get("exercises")
@@ -1683,22 +2110,66 @@ def _parse_inventory(
         raise ValueError("Exercise inventory must contain an exercises array")
     exercises: list[dict[str, Any]] = []
     seen = set()
-    rejected = []
-    for raw_candidate in raw_exercises:
-        try:
-            candidate = _validate_candidate(
-                raw_candidate,
-                equipment,
-                allowed_equipment_ids=allowed_equipment_ids,
-                require_any_accessory=require_any_accessory,
-            )
-        except ValueError as error:
-            rejected.append(str(error))
-            continue
+    rejected: list[str] = []
+    pending_repair: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+
+    def retain(candidate: dict[str, Any]) -> None:
         key = _candidate_key(candidate)
         if key not in seen:
             seen.add(key)
             exercises.append(candidate)
+
+    for raw_candidate in raw_exercises:
+        try:
+            retain(
+                _validate_candidate(
+                    raw_candidate,
+                    equipment,
+                    allowed_equipment_ids=allowed_equipment_ids,
+                    require_any_accessory=require_any_accessory,
+                )
+            )
+        except InventoryCandidateError as error:
+            if (
+                repair_client is not None
+                and repair_caller is not None
+                and isinstance(error.candidate, dict)
+                and _candidate_errors_are_repairable(error.errors)
+                and _expand_candidate_repair_paths(
+                    {str(item.get("path")) for item in error.errors}
+                )
+            ):
+                pending_repair.append((error.candidate, error.errors))
+            else:
+                rejected.append(str(error))
+        except ValueError as error:
+            rejected.append(str(error))
+    if pending_repair:
+        try:
+            repaired, repair_rejected = _repair_inventory_candidates(
+                repair_client,
+                pending_repair,
+                equipment,
+                repair_caller,
+                allowed_equipment_ids=allowed_equipment_ids,
+                require_any_accessory=require_any_accessory,
+            )
+        except ValueError as error:
+            repaired = []
+            repair_rejected = [
+                str(errors[0]["message"]) for _candidate, errors in pending_repair
+            ]
+            repair_rejected.append(str(error))
+        if repaired:
+            print(
+                f"Inventory validation repaired {len(repaired)} candidate(s).",
+                flush=True,
+            )
+            for candidate in repaired[:5]:
+                print(f"  - {candidate['name']}", flush=True)
+            for candidate in repaired:
+                retain(candidate)
+        rejected.extend(repair_rejected)
     if rejected:
         print(
             f"Inventory validation recovered by rejecting {len(rejected)} invalid candidate(s).",
@@ -1840,6 +2311,8 @@ def _call_inventory(
                 allowed_equipment_ids=allowed_equipment_ids,
                 recover_all_invalid=audit_existing is not None,
                 require_any_accessory=require_any_accessory,
+                repair_client=client,
+                repair_caller=call_json,
             )
             print(
                 f"{loading_message}: received {len(parsed)} valid distinct candidate(s).",
@@ -3670,7 +4143,7 @@ def generate_exercise_library(
         raise ValueError("The model did not identify any exercises")
 
     print(
-        f"Stage 3/3: Emitting {len(candidates)} canonical exercise definition(s) "
+        f"Stage 2/3: Emitting {len(candidates)} canonical exercise definition(s) "
         f"with {max(1, max_workers)} worker(s).",
         flush=True,
     )
@@ -3725,6 +4198,7 @@ def generate_exercise_library(
     if not definitions:
         details = "\n".join(f"- {error}" for error in generation_failures[:10])
         raise ValueError(f"No valid exercise definitions were generated:\n{details}")
+    print("Stage 3/3: Reviewing muscle semantics and physical feasibility.", flush=True)
     muscle_review_payload = review_library_muscle_semantics(
         client,
         {
@@ -5796,12 +6270,12 @@ def _structured_definition_errors(
         add("/name", "INVALID_NAME", "name must be a non-empty string")
     if definition.get("exerciseType") not in EXERCISE_TYPES:
         add(None, "INVALID_EXERCISE_TYPE", "exerciseType is outside the closed enum")
-    primary_ids, accessory_ids = _equipment_ids(equipment)
+    primary_ids, _accessory_ids = _equipment_ids(equipment)
     equipment_id = definition.get("equipmentId")
     if equipment_id is not None and equipment_id not in primary_ids:
         add(None, "UNKNOWN_PRIMARY_EQUIPMENT", f"unknown equipmentId {equipment_id!r}")
     accessories = definition.get("requiredAccessoryEquipmentIds")
-    if not isinstance(accessories, list) or set(accessories) - accessory_ids:
+    if not isinstance(accessories, list) or set(accessories) - _accepted_support_ids(equipment):
         add(None, "UNKNOWN_ACCESSORY_EQUIPMENT", "requiredAccessoryEquipmentIds contains unknown IDs")
     primary_muscles = definition.get("muscleGroups")
     secondary_muscles = definition.get("secondaryMuscleGroups")
@@ -5835,6 +6309,12 @@ def _structured_definition_errors(
         add("/exerciseCategory", "INVALID_CATEGORY", "exerciseCategory is outside the closed enum")
     if "instructions" in definition or "instructionEquipmentIds" in definition:
         add(None, "OBSOLETE_INSTRUCTION_FIELD", "definition contains removed instruction fields")
+    for issue in _name_implied_requirement_issues(definition, equipment):
+        add(
+            None,
+            "INFEASIBLE_NAMED_REQUIREMENT",
+            f"name implies unavailable requirements: {issue}",
+        )
     return errors
 
 
@@ -7237,10 +7717,6 @@ def main() -> None:
         f"Loaded {explicit_capability_count} explicit equipment capability declaration(s)."
     )
     print("The reasoner will enumerate practical distinct exercises and audit for omissions.")
-    confirmation = input(f"Type {EXACT_GENERATION_CONFIRMATION} to continue: ").strip()
-    if confirmation != EXACT_GENERATION_CONFIRMATION:
-        print("Generation cancelled: exact confirmation was not provided.")
-        return
 
     if args.request_timeout_seconds <= 0:
         parser.error("--request-timeout-seconds must be greater than zero")
