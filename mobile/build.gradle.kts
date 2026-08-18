@@ -176,6 +176,10 @@ dependencies {
     implementation("com.openai:openai-java:4.50.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
+    // Polar SDK + Rx
+    implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")
+    implementation("io.reactivex.rxjava3:rxjava:3.1.12")
+
     // Misc
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.patrykandpatrick.vico:compose:3.2.3")

@@ -276,8 +276,6 @@ abstract class StandardBleHeartRateViewModel(
     }
 }
 
-class PolarHeartRateViewModel : StandardBleHeartRateViewModel(HeartRateSource.POLAR_BLE)
-
 class WhoopHeartRateViewModel : StandardBleHeartRateViewModel(HeartRateSource.WHOOP_BLE)
 
 fun hasBluetoothPermission(context: Context): Boolean =
