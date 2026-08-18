@@ -14,6 +14,8 @@ GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
 GPU_LOCK_PATH_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_PATH"
 GPU_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_TIMEOUT_SECONDS"
 DEFAULT_GPU_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
+_LOCAL_GPU_LOCK_RELEASED = threading.Condition()
+_LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
 
 
 class GlobalGpuLock:
@@ -43,27 +45,40 @@ class GlobalGpuLock:
                 self.wait_seconds = time.perf_counter() - started
                 return self.wait_seconds
             except FileExistsError:
-                if gpu_lock_is_stale(self.path, timeout_seconds=self.timeout_seconds):
-                    try:
-                        self.path.unlink()
-                        continue
-                    except OSError:
-                        pass
                 active_payload = lock_payload(self.path)
                 if (
                     isinstance(active_payload, dict)
                     and active_payload.get("pid") == os.getpid()
                 ):
-                    raise RuntimeError(
-                        "Nested global GPU lock acquisition in the same process would deadlock: "
-                        f"currentStage={active_payload.get('stage')} requestedStage={self.stage} "
-                        f"currentThreadId={active_payload.get('threadId')} requestedThreadId={threading.get_ident()} "
-                        f"lockPath={self.path}"
-                    )
+                    current_thread_id = threading.get_ident()
+                    if active_payload.get("threadId") == current_thread_id:
+                        raise RuntimeError(
+                            "Nested global GPU lock acquisition in the same thread would deadlock: "
+                            f"currentStage={active_payload.get('stage')} requestedStage={self.stage} "
+                            f"threadId={current_thread_id} lockPath={self.path}"
+                        )
+                elif not self.path.exists():
+                    continue
+                elif gpu_lock_is_stale(self.path, timeout_seconds=self.timeout_seconds):
+                    try:
+                        self.path.unlink()
+                        continue
+                    except OSError:
+                        pass
                 elapsed = time.perf_counter() - started
                 if elapsed >= self.timeout_seconds:
                     raise TimeoutError(f"Timed out waiting for global GPU lock: {self.path}")
-                time.sleep(2.0)
+                if (
+                    isinstance(active_payload, dict)
+                    and active_payload.get("pid") == os.getpid()
+                ):
+                    remaining_seconds = self.timeout_seconds - elapsed
+                    with _LOCAL_GPU_LOCK_RELEASED:
+                        _LOCAL_GPU_LOCK_RELEASED.wait(
+                            timeout=min(_LOCAL_GPU_LOCK_WAIT_SECONDS, remaining_seconds)
+                        )
+                else:
+                    time.sleep(2.0)
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         if self._handle is not None:
@@ -74,6 +89,9 @@ class GlobalGpuLock:
                 self.path.unlink()
             except FileNotFoundError:
                 pass
+            finally:
+                with _LOCAL_GPU_LOCK_RELEASED:
+                    _LOCAL_GPU_LOCK_RELEASED.notify_all()
 
 
 def gpu_stage_lock(*, stage: str, enabled: bool = True) -> GlobalGpuLock:
