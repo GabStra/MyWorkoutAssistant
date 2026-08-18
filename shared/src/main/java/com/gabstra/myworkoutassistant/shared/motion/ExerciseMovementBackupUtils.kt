@@ -12,30 +12,48 @@ fun collectExerciseMovementBackups(
     context: Context,
     workoutStore: WorkoutStore,
 ): List<ExerciseMovementBackup> {
-    return workoutStore.workouts
-        .asSequence()
-        .flatMap { workout ->
-            workout.workoutComponents.asSequence().flatMap { component ->
-                when (component) {
-                    is Exercise -> sequenceOf(component)
-                    is Superset -> component.exercises.asSequence()
-                    else -> emptySequence()
-                }
+    return workoutStore.referencedMovementRefs()
+        .map { movementRef ->
+            val compressedJson = requireNotNull(
+                ExerciseMovementStorage.readCompressedMovementJsonBytes(context, movementRef)
+            ) {
+                "Cannot back up movement ${movementRef.movementId}: its payload is missing or invalid"
             }
-        }
-        .mapNotNull { exercise -> exercise.movementRef }
-        .distinctBy { movementRef -> movementRef.movementId to movementRef.contentHash }
-        .mapNotNull { movementRef ->
-            ExerciseMovementStorage.readCompressedMovementJsonBytes(context, movementRef)?.let { compressedJson ->
-                ExerciseMovementBackup(
-                    movementRef = movementRef,
-                    compressedJsonBase64 = Base64.getEncoder().encodeToString(compressedJson),
-                    compression = ExerciseMovementBackup.COMPRESSION_GZIP_BASE64,
-                )
-            }
+            ExerciseMovementBackup(
+                movementRef = movementRef,
+                compressedJsonBase64 = Base64.getEncoder().encodeToString(compressedJson),
+                compression = ExerciseMovementBackup.COMPRESSION_GZIP_BASE64,
+            )
         }
         .toList()
 }
+
+fun requireExerciseMovementPayloads(
+    context: Context,
+    workoutStore: WorkoutStore,
+) {
+    val missingMovementIds = workoutStore.referencedMovementRefs()
+        .filter { movementRef -> ExerciseMovementStorage.readMovementJson(context, movementRef) == null }
+        .map { movementRef -> movementRef.movementId }
+        .distinct()
+        .toList()
+    require(missingMovementIds.isEmpty()) {
+        "Missing movement payloads for ${missingMovementIds.joinToString()}"
+    }
+}
+
+private fun WorkoutStore.referencedMovementRefs() = sequence {
+    yieldAll(exerciseDefinitions.asSequence().mapNotNull { definition -> definition.movementRef })
+    workouts.forEach { workout ->
+        workout.workoutComponents.forEach { component ->
+            when (component) {
+                is Exercise -> component.movementRef?.let { yield(it) }
+                is Superset -> yieldAll(component.exercises.asSequence().mapNotNull { it.movementRef })
+                else -> Unit
+            }
+        }
+    }
+}.distinctBy { movementRef -> movementRef.movementId to movementRef.contentHash }
 
 fun restoreExerciseMovementBackups(
     context: Context,

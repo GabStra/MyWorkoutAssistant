@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import java.util.UUID
 
 data class WorkoutStore(
     val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
@@ -23,3 +24,7 @@ data class WorkoutStore(
         const val CURRENT_SCHEMA_VERSION = 3
     }
 }
+
+fun WorkoutStore.linkedSupportName(id: UUID): String? =
+    accessoryEquipments.firstOrNull { it.id == id }?.name
+        ?: equipments.firstOrNull { it.id == id }?.name

@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.motion
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.ExerciseMovementBackup
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -11,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -55,6 +57,64 @@ class ExerciseMovementStorageTest {
         assertEquals(null, backup.json)
         assertEquals(ExerciseMovementBackup.COMPRESSION_GZIP_BASE64, backup.compression)
         assertEquals(movementJson, backup.resolveMovementJson())
+    }
+
+    @Test
+    fun `collect backups includes movements used only by library definitions`() {
+        val movementJson = repeatedMovementJson()
+        val movementRef = ExerciseMovementRef.forWearSkeletonJson(
+            movementId = "library-only-${UUID.randomUUID()}",
+            json = movementJson,
+        )
+        ExerciseMovementStorage.writeMovementJson(context, movementRef, movementJson)
+        val workoutStore = WorkoutStore(
+            exerciseDefinitions = listOf(
+                ExerciseDefinition(
+                    id = UUID.randomUUID(),
+                    name = "Library-only movement",
+                    exerciseType = ExerciseType.WEIGHT,
+                    movementRef = movementRef,
+                )
+            ),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
+
+        val backup = collectExerciseMovementBackups(context, workoutStore).single()
+
+        assertEquals(movementRef, backup.movementRef)
+        assertEquals(movementJson, backup.resolveMovementJson())
+        requireExerciseMovementPayloads(context, workoutStore)
+    }
+
+    @Test
+    fun `movement payload validation rejects a dangling library reference`() {
+        val movementJson = repeatedMovementJson()
+        val movementRef = ExerciseMovementRef.forWearSkeletonJson(
+            movementId = "missing-library-${UUID.randomUUID()}",
+            json = movementJson,
+        )
+        val workoutStore = WorkoutStore(
+            exerciseDefinitions = listOf(
+                ExerciseDefinition(
+                    id = UUID.randomUUID(),
+                    name = "Missing library movement",
+                    exerciseType = ExerciseType.WEIGHT,
+                    movementRef = movementRef,
+                )
+            ),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.0,
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            requireExerciseMovementPayloads(context, workoutStore)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            collectExerciseMovementBackups(context, workoutStore)
+        }
     }
 
     @Test

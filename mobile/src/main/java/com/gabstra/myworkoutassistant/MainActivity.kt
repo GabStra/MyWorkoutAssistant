@@ -129,6 +129,7 @@ import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
@@ -674,6 +675,7 @@ fun MyWorkoutAssistantNavHost(
                                         context = context,
                                         movementBackups = importedWorkoutPlanPackage.exerciseMovements
                                     )
+                                    requireExerciseMovementPayloads(context, importedWorkoutStoreWithPlan)
                                 }
 
                                 appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
@@ -777,6 +779,7 @@ fun MyWorkoutAssistantNavHost(
                 context = context,
                 movementBackups = appBackup.ExerciseMovements.orEmpty()
             )
+            requireExerciseMovementPayloads(context, newWorkoutStore)
 
             val deleteAndInsertJob = coroutineScope {
                 async {

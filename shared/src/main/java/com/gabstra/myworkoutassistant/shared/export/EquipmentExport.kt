@@ -68,9 +68,13 @@ fun extractEquipmentFromWorkouts(
 ): Pair<List<WeightLoadedEquipment>, List<AccessoryEquipment>> {
     val workouts = workoutStore.workouts.filter { it.id in workoutIds }
     val (equipmentIds, accessoryEquipmentIds) = extractEquipmentIdsFromWorkouts(workouts)
-    
-    val filteredEquipments = workoutStore.equipments.filter { it.id in equipmentIds }
-    val filteredAccessoryEquipments = workoutStore.accessoryEquipments.filter { it.id in accessoryEquipmentIds }
+    val extraLoadEquipmentIds = accessoryEquipmentIds.filter { id ->
+        workoutStore.equipments.any { it.id == id }
+    }.toSet()
+    val filteredEquipments = workoutStore.equipments.filter { it.id in equipmentIds || it.id in extraLoadEquipmentIds }
+    val filteredAccessoryEquipments = workoutStore.accessoryEquipments.filter {
+        it.id in accessoryEquipmentIds && it.id !in extraLoadEquipmentIds
+    }
     
     return Pair(filteredEquipments, filteredAccessoryEquipments)
 }

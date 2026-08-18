@@ -32,6 +32,7 @@ import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
 import com.gabstra.myworkoutassistant.shared.normalizedWorkoutHistories
 import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -1536,6 +1537,10 @@ class DataLayerListenerService : WearableListenerService() {
                                             restoreExerciseMovementBackups(
                                                 context = this@DataLayerListenerService,
                                                 movementBackups = appBackup.ExerciseMovements.orEmpty()
+                                            )
+                                            requireExerciseMovementPayloads(
+                                                this@DataLayerListenerService,
+                                                appBackup.WorkoutStore,
                                             )
                                             workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 

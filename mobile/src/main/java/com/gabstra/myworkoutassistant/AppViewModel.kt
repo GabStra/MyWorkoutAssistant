@@ -37,6 +37,9 @@ import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.ExerciseLibraryPackage
 import com.gabstra.myworkoutassistant.shared.deleteExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
+import com.gabstra.myworkoutassistant.shared.addExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovements
+import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovementOwnership
 import com.gabstra.myworkoutassistant.shared.updateExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -473,15 +476,7 @@ class AppViewModel(
     }
 
     fun addExerciseDefinition(definition: ExerciseDefinition) {
-        require(workoutStore.exerciseDefinitions.none { it.id == definition.id }) {
-            "Exercise definition ${definition.id} already exists"
-        }
-        val normalizedDefinition = definition.copy(
-            exerciseFamilyId = definition.effectiveFamilyId(),
-        )
-        updateWorkoutStore(workoutStore.copy(
-            exerciseDefinitions = workoutStore.exerciseDefinitions + normalizedDefinition,
-        ))
+        updateWorkoutStore(workoutStore.addExerciseDefinition(definition))
     }
 
     fun updateExerciseDefinition(definition: ExerciseDefinition) {
@@ -495,23 +490,6 @@ class AppViewModel(
     fun importExerciseLibrary(exerciseLibrary: ExerciseLibraryPackage): Int {
         require(exerciseLibrary.exerciseDefinitions.isNotEmpty()) {
             "The exercise library does not contain any definitions."
-        }
-
-        fun <T> mergeExactById(
-            existing: List<T>,
-            imported: List<T>,
-            idOf: (T) -> UUID,
-            itemLabel: String,
-        ): List<T> {
-            val existingById = existing.associateBy(idOf)
-            imported.forEach { importedItem ->
-                val id = idOf(importedItem)
-                val existingItem = existingById[id]
-                require(existingItem == null || existingItem == importedItem) {
-                    "$itemLabel $id conflicts with an existing item."
-                }
-            }
-            return (existing + imported).distinctBy(idOf)
         }
 
         fun <T> mergeReferencesById(
@@ -559,13 +537,26 @@ class AppViewModel(
         )
         val importedDefinitions = exerciseLibrary.exerciseDefinitions.map { definition ->
             definition.copy(exerciseFamilyId = definition.effectiveFamilyId())
+        }.normalizeExerciseFamilyMovements()
+        val importedDefinitionsById = importedDefinitions.associateBy { it.id }
+        importedDefinitions.forEach { importedDefinition ->
+            val existingDefinition = workoutStore.exerciseDefinitions
+                .firstOrNull { it.id == importedDefinition.id }
+                ?: return@forEach
+            require(
+                existingDefinition.copy(movementRef = importedDefinition.movementRef) ==
+                    importedDefinition
+            ) {
+                "Exercise definition ${importedDefinition.id} conflicts with an existing item."
+            }
         }
-        val mergedDefinitions = mergeExactById(
-            workoutStore.exerciseDefinitions,
-            importedDefinitions,
-            { it.id },
-            "Exercise definition",
-        )
+        val mergedDefinitions = (
+            workoutStore.exerciseDefinitions.map { existingDefinition ->
+                importedDefinitionsById[existingDefinition.id] ?: existingDefinition
+            } + importedDefinitions.filterNot { importedDefinition ->
+                workoutStore.exerciseDefinitions.any { it.id == importedDefinition.id }
+            }
+        ).normalizeExerciseFamilyMovements()
         val equipmentIds = mergedEquipment.mapTo(mutableSetOf()) { it.id }
         val accessoryIds = mergedAccessories.mapTo(mutableSetOf()) { it.id }
         importedDefinitions.forEach { definition ->
@@ -573,7 +564,7 @@ class AppViewModel(
                 "${definition.name} references missing equipment ${definition.equipmentId}."
             }
             val missingAccessories = definition.requiredAccessoryEquipmentIds.orEmpty()
-                .filterNot { it in accessoryIds }
+                .filterNot { it in accessoryIds || it in equipmentIds }
             require(missingAccessories.isEmpty()) {
                 "${definition.name} references missing accessory equipment $missingAccessories."
             }
@@ -585,7 +576,7 @@ class AppViewModel(
                 exerciseDefinitions = mergedDefinitions,
                 equipments = mergedEquipment,
                 accessoryEquipments = mergedAccessories,
-            )
+            ).normalizeExerciseFamilyMovementOwnership()
         )
         return addedCount
     }
@@ -715,6 +706,10 @@ class AppViewModel(
 
     fun getAccessoryEquipmentById(equipmentId: UUID): AccessoryEquipment? {
         return workoutStore.accessoryEquipments.find { it.id == equipmentId }
+    }
+
+    fun getLinkedSupportName(id: UUID): String? {
+        return getAccessoryEquipmentById(id)?.name ?: getEquipmentById(id)?.name
     }
 
     fun getWorkoutById(workoutId: UUID): Workout? {
@@ -1385,10 +1380,20 @@ class AppViewModel(
                 when (component) {
                     is Exercise -> {
                         component.equipmentId?.let { equipmentIds.add(it) }
+                        component.requiredAccessoryEquipmentIds?.forEach { supportId ->
+                            if (workoutStore.equipments.any { it.id == supportId }) {
+                                equipmentIds.add(supportId)
+                            }
+                        }
                     }
                     is Superset -> {
                         component.exercises.forEach { exercise ->
                             exercise.equipmentId?.let { equipmentIds.add(it) }
+                            exercise.requiredAccessoryEquipmentIds?.forEach { supportId ->
+                                if (workoutStore.equipments.any { it.id == supportId }) {
+                                    equipmentIds.add(supportId)
+                                }
+                            }
                         }
                     }
                     is Rest -> { /* No equipment */ }

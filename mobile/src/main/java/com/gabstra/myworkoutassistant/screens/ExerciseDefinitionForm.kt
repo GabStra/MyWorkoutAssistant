@@ -1,14 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,14 +36,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -63,7 +57,6 @@ import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.ZoomableMuscleHeatMap
-import com.gabstra.myworkoutassistant.motionrenderer.SkeletonMotionPreview
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -71,12 +64,7 @@ import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
-import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
-import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementStorage
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,8 +78,6 @@ fun ExerciseDefinitionForm(
     onCancel: () -> Unit,
     breadcrumbContent: (@Composable () -> Unit)? = null,
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var name by rememberSaveable { mutableStateOf(definition?.name.orEmpty()) }
     var exerciseType by rememberSaveable {
         mutableStateOf(definition?.exerciseType ?: ExerciseType.WEIGHT)
@@ -115,10 +101,6 @@ fun ExerciseDefinitionForm(
     var equipmentExpanded by rememberSaveable { mutableStateOf(false) }
     var musclesExpanded by rememberSaveable { mutableStateOf(false) }
     var movementExpanded by rememberSaveable { mutableStateOf(false) }
-    var movementRef by remember(definition?.id) { mutableStateOf(definition?.movementRef) }
-    var movementJson by remember(definition?.id) { mutableStateOf<String?>(null) }
-    var movementError by remember { mutableStateOf<String?>(null) }
-    var isMovementLoading by remember { mutableStateOf(false) }
 
     val typeItems = remember {
         ExerciseType.entries.map {
@@ -138,41 +120,6 @@ fun ExerciseDefinitionForm(
             StandardFilterDropdownItem<ExerciseCategory?>(ExerciseCategory.ISOLATION, "Isolation"),
         )
     }
-    val movementPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        if (isMovementLoading) return@rememberLauncherForActivityResult
-        scope.launch {
-            isMovementLoading = true
-            movementError = null
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val json = context.contentResolver.openInputStream(uri)
-                        ?.bufferedReader()?.use { it.readText() }
-                        ?: error("Unable to read selected movement file.")
-                    validateWearSkeletonJson(json)
-                    val movementId = context.resolveMovementId(uri, json)
-                    ExerciseMovementRef.forWearSkeletonJson(movementId, json) to json
-                }
-            }.onSuccess { (newMovementRef, json) ->
-                movementRef = newMovementRef
-                movementJson = json
-            }.onFailure { error ->
-                movementError = error.message ?: "Unable to load selected movement JSON."
-            }
-            isMovementLoading = false
-        }
-    }
-
-    LaunchedEffect(definition?.movementRef) {
-        movementJson = definition?.movementRef?.let { existingRef ->
-            withContext(Dispatchers.IO) {
-                ExerciseMovementStorage.readMovementJson(context, existingRef)
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             Column {
@@ -389,43 +336,15 @@ fun ExerciseDefinitionForm(
             Spacer(Modifier.height(Spacing.md))
             CollapsibleSection(
                 title = "Movement",
-                summary = movementRef?.movementId?.let { "Movement: $it" } ?: "No movement assigned",
+                summary = definition?.movementRef?.movementId?.let { "Movement: $it" }
+                    ?: "No movement in exercise library",
                 expanded = movementExpanded,
                 onToggle = { movementExpanded = !movementExpanded },
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                    ) {
-                        AppPrimaryOutlinedButton(
-                            text = "Pick JSON",
-                            onClick = { movementPicker.launch(arrayOf("application/json", "text/*", "*/*")) },
-                            enabled = !isMovementLoading,
-                            modifier = Modifier.weight(1f),
-                        )
-                        AppSecondaryButton(
-                            text = "Clear",
-                            onClick = { movementRef = null; movementJson = null; movementError = null },
-                            enabled = !isMovementLoading && movementRef != null,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    movementError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error)
-                    }
-                    movementJson?.let { json ->
-                        SkeletonMotionPreview(
-                            skeletonJson = json,
-                            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-                            backgroundColor = MaterialTheme.colorScheme.background,
-                            primaryFill = MaterialTheme.colorScheme.primary,
-                            animated = true,
-                            orbitView = false,
-                            dragRotationEnabled = true,
-                        )
-                    }
-                }
+                ExerciseMovementPreviewPage(
+                    movementRef = definition?.movementRef,
+                    modifier = Modifier.fillMaxWidth().height(240.dp),
+                )
             }
 
             Spacer(Modifier.height(Spacing.xl))
@@ -461,7 +380,6 @@ fun ExerciseDefinitionForm(
                                 secondaryMuscleGroups = selectedSecondaryMuscles,
                                 requiredAccessoryEquipmentIds = selectedAccessoryIds,
                                 exerciseCategory = exerciseCategory,
-                                movementRef = movementRef,
                             )
                         )
                     },

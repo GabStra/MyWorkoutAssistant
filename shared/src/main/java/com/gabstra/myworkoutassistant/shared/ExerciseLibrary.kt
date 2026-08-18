@@ -30,6 +30,44 @@ data class ExerciseVariationResolution(
 fun ExerciseDefinition.effectiveFamilyId(): UUID =
     exerciseFamilyId ?: deterministicExerciseFamilyId(name)
 
+fun List<ExerciseDefinition>.normalizeExerciseFamilyMovements(): List<ExerciseDefinition> {
+    val movementByFamilyId = groupBy(ExerciseDefinition::effectiveFamilyId).mapValues { (_, family) ->
+        family.sortedBy { it.id.toString() }.firstNotNullOfOrNull { it.movementRef }
+    }
+    return map { definition ->
+        val familyId = definition.effectiveFamilyId()
+        definition.copy(
+            exerciseFamilyId = familyId,
+            movementRef = movementByFamilyId[familyId],
+        )
+    }
+}
+
+fun WorkoutStore.normalizeExerciseFamilyMovementOwnership(): WorkoutStore {
+    val normalizedDefinitions = exerciseDefinitions.normalizeExerciseFamilyMovements()
+    val definitionsById = normalizedDefinitions.associateBy { it.id }
+    fun materializeMovement(exercise: Exercise): Exercise {
+        val definition = exercise.exerciseDefinitionId?.let(definitionsById::get) ?: return exercise
+        return exercise.copy(movementRef = definition.movementRef)
+    }
+    return copy(
+        exerciseDefinitions = normalizedDefinitions,
+        workouts = workouts.map { workout ->
+            workout.copy(
+                workoutComponents = workout.workoutComponents.map { component ->
+                    when (component) {
+                        is Exercise -> materializeMovement(component)
+                        is Superset -> component.copy(
+                            exercises = component.exercises.map(::materializeMovement),
+                        )
+                        else -> component
+                    }
+                },
+            )
+        },
+    )
+}
+
 fun WorkoutStore.resolveExercise(prescription: Exercise): ResolvedExercise {
     val definitionId = requireNotNull(prescription.exerciseDefinitionId) {
         "Exercise prescription ${prescription.id} has no definition reference"
@@ -57,6 +95,7 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
             definition.effectiveFamilyId() == familyId -> definition.copy(
                 exerciseFamilyId = familyId,
                 name = normalizedUpdated.name,
+                movementRef = normalizedUpdated.movementRef,
             )
             else -> definition
         }
@@ -91,6 +130,26 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
     )
 }
 
+fun WorkoutStore.addExerciseDefinition(definition: ExerciseDefinition): WorkoutStore {
+    require(exerciseDefinitions.none { it.id == definition.id }) {
+        "Exercise definition ${definition.id} already exists"
+    }
+    val familyId = definition.effectiveFamilyId()
+    val existingFamilyMovement = exerciseDefinitions
+        .filter { it.effectiveFamilyId() == familyId }
+        .firstNotNullOfOrNull { it.movementRef }
+    val familyMovement = existingFamilyMovement ?: definition.movementRef
+    val updatedDefinitions = exerciseDefinitions.map { existing ->
+        if (existing.effectiveFamilyId() == familyId) {
+            existing.copy(exerciseFamilyId = familyId, movementRef = familyMovement)
+        } else {
+            existing
+        }
+    } + definition.copy(exerciseFamilyId = familyId, movementRef = familyMovement)
+    return copy(exerciseDefinitions = updatedDefinitions)
+        .normalizeExerciseFamilyMovementOwnership()
+}
+
 fun WorkoutStore.deleteExerciseDefinition(definitionId: UUID): WorkoutStore {
     require(allExercisePrescriptions().none { it.exerciseDefinitionId == definitionId }) {
         "Referenced exercise definitions cannot be deleted"
@@ -122,7 +181,9 @@ fun WorkoutStore.resolveExerciseVariation(
         secondaryMuscleGroups = candidate.secondaryMuscleGroups,
         requiredAccessoryEquipmentIds = candidate.requiredAccessoryEquipmentIds,
         exerciseCategory = candidate.exerciseCategory,
-        movementRef = candidate.movementRef,
+        movementRef = exerciseDefinitions
+            .filter { it.effectiveFamilyId() == familyId }
+            .firstNotNullOfOrNull { it.movementRef },
     )
     val matchingDefinition = exerciseDefinitions.firstOrNull { definition ->
         definition.effectiveFamilyId() == familyId &&
@@ -181,7 +242,10 @@ fun WorkoutStore.migrateExerciseLibrary(): WorkoutStore {
         allExercisePrescriptions().all {
             it.exerciseDefinitionId != null && it.placementNotes != null &&
                 (it.notes.isBlank() || it.notes == it.placementNotes)
-        } && exerciseDefinitions.all { it.exerciseFamilyId != null }
+        } && exerciseDefinitions.all { it.exerciseFamilyId != null } &&
+        exerciseDefinitions.groupBy(ExerciseDefinition::effectiveFamilyId).values.all { family ->
+            family.map { it.movementRef }.distinct().size <= 1
+        }
     ) return this
 
     val definitionsByFingerprint = linkedMapOf<String, ExerciseDefinition>()
@@ -234,7 +298,7 @@ fun WorkoutStore.migrateExerciseLibrary(): WorkoutStore {
         schemaVersion = WorkoutStore.CURRENT_SCHEMA_VERSION,
         exerciseDefinitions = definitionsByFingerprint.values.toList(),
         workouts = migratedWorkouts,
-    )
+    ).normalizeExerciseFamilyMovementOwnership()
 }
 
 fun WorkoutStore.allExercisePrescriptions(): List<Exercise> = buildList {
@@ -267,14 +331,12 @@ private fun ExerciseDefinition.fingerprint(): String = listOf(
     exerciseFamilyId, name, exerciseType.name, equipmentId, bodyWeightPercentage,
     muscleGroups?.map { it.name }?.sorted(), secondaryMuscleGroups?.map { it.name }?.sorted(),
     requiredAccessoryEquipmentIds?.map(UUID::toString)?.sorted(), exerciseCategory?.name,
-    movementRef,
 ).joinToString(separator = "\u001f") { it?.toString() ?: "<null>" }
 
 private fun ExerciseDefinition.variationFingerprint(): String = listOf(
     exerciseType.name, equipmentId, bodyWeightPercentage,
     muscleGroups?.map { it.name }?.sorted(), secondaryMuscleGroups?.map { it.name }?.sorted(),
     requiredAccessoryEquipmentIds?.map(UUID::toString)?.sorted(), exerciseCategory?.name,
-    movementRef,
 ).joinToString(separator = "\u001f") { it?.toString() ?: "<null>" }
 
 private fun deterministicExerciseDefinitionId(fingerprint: String): UUID =

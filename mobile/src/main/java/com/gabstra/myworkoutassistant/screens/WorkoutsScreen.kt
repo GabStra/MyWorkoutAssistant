@@ -76,6 +76,7 @@ import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.fromJSONToExerciseLibraryPackage
 import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -883,6 +884,13 @@ fun WorkoutsScreen(
                                                             restoreExerciseMovementBackups(
                                                                 context,
                                                                 importedLibrary.exerciseMovements,
+                                                            )
+                                                            requireExerciseMovementPayloads(
+                                                                context,
+                                                                workoutStore.copy(
+                                                                    exerciseDefinitions = importedLibrary.exerciseDefinitions,
+                                                                    workouts = emptyList(),
+                                                                ),
                                                             )
                                                         }
                                                         val addedDefinitions = appViewModel

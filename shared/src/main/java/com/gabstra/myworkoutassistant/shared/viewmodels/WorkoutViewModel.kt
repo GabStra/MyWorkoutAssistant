@@ -416,6 +416,10 @@ open class WorkoutViewModel(
         return currentWorkoutStore.accessoryEquipments.find { it.id == id }
     }
 
+    fun getLinkedSupportName(id: UUID): String? {
+        return getAccessoryEquipmentById(id)?.name ?: getEquipmentById(id)?.name
+    }
+
     private val _isPaused = mutableStateOf(false) // Private mutable state
     open val isPaused: State<Boolean> = _isPaused // read-only State access
 
