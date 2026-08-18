@@ -77,16 +77,16 @@ param(
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe",
     [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(5).gguf",
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "C:\Users\gabri\Downloads\mtp-gemma-4-12B-it(1).gguf",
     [int]$LlamaCppSpecDraftNMax = 3,
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 512,
-    [double]$LlamaCppTemperature = 1.0,
-    [Nullable[double]]$LlamaCppTopP = 0.95,
-    [Nullable[int]]$LlamaCppTopK = 64,
+    [double]$LlamaCppTemperature = 0.0,
+    [Nullable[double]]$LlamaCppTopP = 1.0,
+    [Nullable[int]]$LlamaCppTopK = 0,
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
@@ -100,7 +100,7 @@ param(
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
     [Nullable[int]]$LlamaCppParallel = 1,
-    [Nullable[int]]$LlamaCppThreadsHttp,
+    [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
     [string]$LlamaCppFit = "on",
@@ -118,7 +118,7 @@ param(
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
     [double]$LlamaCppRequestTimeoutSeconds = 240.0,
     [ValidateSet("debug", "full")]
-    [string]$ArtifactRetention = "full"
+    [string]$ArtifactRetention = "debug"
 )
 
 $ErrorActionPreference = "Stop"
@@ -203,18 +203,23 @@ function Start-WhamWarmWorker {
     if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
         $dockerArgs += @("--shm-size", $WhamDockerShmSize)
     }
+    $workerModuleDir = Split-Path -Parent $WorkerScriptPath
+    $trackingPreflightPath = Join-Path $workerModuleDir "wham_tracking_preflight.py"
+    $trackingCoveragePath = Join-Path $workerModuleDir "wham_tracking_coverage.py"
     $dockerArgs += @(
         "-v", "$($resolvedWhamRepoPath):/code",
         "-v", "$($MountRoot):/workspace",
         "-v", "$($SessionDir):/worker_state",
         "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
+        "-v", "$($trackingPreflightPath):/worker/wham_tracking_preflight.py:ro",
+        "-v", "$($trackingCoveragePath):/worker/wham_tracking_coverage.py:ro",
         "-w", "/code",
         $WhamDockerImage,
         "python", "-u", "/worker/wham_warm_worker.py",
         "--state-dir", "/worker_state"
     )
 
-    Write-Host "Starting warm WHAM worker container '$containerName'."
+    Write-Host "Starting motion extractor..."
     $containerId = (& docker @dockerArgs 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to start warm WHAM worker container: $containerId"
@@ -226,7 +231,7 @@ function Start-WhamWarmWorker {
     while ((Get-Date) -lt $deadline) {
         if (Test-Path -LiteralPath $readyPath) {
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
-            Write-Host ("Warm WHAM worker ready in {0}s. GPU: {1}" -f $ready.loadSeconds, $ready.gpuName)
+            Write-Host ("Motion extractor ready in {0}s ({1})." -f $ready.loadSeconds, $ready.gpuName)
             return [pscustomobject]@{
                 containerName = $containerName
                 containerId = $containerId

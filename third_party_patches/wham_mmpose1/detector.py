@@ -8,9 +8,11 @@ from types import SimpleNamespace
 import numpy as np
 import scipy.signal as signal
 import torch
+from mmengine.dataset import Compose, pseudo_collate
+from mmengine.registry import init_default_scope
 
 from ultralytics import YOLO
-from mmpose.apis import init_model, inference_topdown
+from mmpose.apis import init_model
 
 
 ROOT_DIR = osp.abspath(f"{__file__}/../../../../")
@@ -20,6 +22,8 @@ BBOX_CONF = float(os.environ.get("WHAM_BBOX_CONF", "0.5"))
 TRACKING_THR = float(os.environ.get("WHAM_TRACKING_THR", "0.1"))
 MINIMUM_FRAMES = int(os.environ.get("WHAM_MINIMUM_TRACK_FRAMES", "30"))
 MINIMUM_JOINTS = int(os.environ.get("WHAM_MINIMUM_JOINTS", "6"))
+MAX_TRACK_GAP_FRAMES = max(0, int(os.environ.get("WHAM_MAX_TRACK_GAP_FRAMES", "3")))
+POSE_BATCH_SIZE = max(1, int(os.environ.get("WHAM_POSE_BATCH_SIZE", "16")))
 DUPLICATE_BBOX_IOU_THRESHOLD = float(
     os.environ.get("WHAM_DUPLICATE_BBOX_IOU_THRESHOLD", "0.9")
 )
@@ -37,6 +41,8 @@ DEFAULT_POSE_CHECKPOINT = osp.join(
     "td-hm_ViTPose-huge_8xb64-210e_coco-256x192-e32adcd4_20230314.pth",
 )
 DEFAULT_BBOX_MODEL = osp.join(ROOT_DIR, "checkpoints", "yolo26x.pt")
+DEFAULT_YOLO_POSE_MODEL = osp.join(ROOT_DIR, "checkpoints", "yolo26x-pose.pt")
+DEFAULT_POSE_BACKEND = "vitpose"
 
 
 def _init_trusted_mmpose_model(config, checkpoint, device):
@@ -66,7 +72,13 @@ def _cfg_value(cfg, name, default):
 
 
 def _runtime_cfg(mmpose_cfg=None):
+    pose_backend = os.environ.get("WHAM_POSE_BACKEND", DEFAULT_POSE_BACKEND).strip().lower()
+    if pose_backend not in {"vitpose", "yolo_pose"}:
+        raise ValueError(
+            "WHAM_POSE_BACKEND must be either 'vitpose' or 'yolo_pose'."
+        )
     return SimpleNamespace(
+        pose_backend=pose_backend,
         pose_config=os.environ.get(
             "WHAM_MMPOSE_CONFIG",
             _cfg_value(mmpose_cfg, "POSE_CONFIG", DEFAULT_POSE_CONFIG),
@@ -79,9 +91,15 @@ def _runtime_cfg(mmpose_cfg=None):
             "WHAM_YOLO_BBOX_MODEL",
             _cfg_value(mmpose_cfg, "DET_CHECKPOINT", DEFAULT_BBOX_MODEL),
         ),
+        yolo_pose_model=os.environ.get(
+            "WHAM_YOLO_POSE_MODEL",
+            DEFAULT_YOLO_POSE_MODEL,
+        ),
         bbox_conf=float(_cfg_value(mmpose_cfg, "BBOX_CONF", BBOX_CONF)),
         tracking_thr=float(_cfg_value(mmpose_cfg, "TRACKING_THR", TRACKING_THR)),
         min_frames=int(_cfg_value(mmpose_cfg, "MINIMUM_FRAMES", MINIMUM_FRAMES)),
+        max_track_gap_frames=MAX_TRACK_GAP_FRAMES,
+        pose_batch_size=POSE_BATCH_SIZE,
     )
 
 
@@ -142,15 +160,73 @@ def _deduplicate_overlapping_bboxes(bboxes, scores, iou_threshold):
     return bboxes[kept_indices]
 
 
+def _deduplicate_overlapping_detection_indices(bboxes, scores, iou_threshold):
+    bboxes = np.asarray(bboxes, dtype=np.float32)
+    scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+    kept_indices = []
+    for index in np.argsort(-scores):
+        if all(
+            _bbox_iou(bboxes[index], bboxes[kept_index]) < iou_threshold
+            for kept_index in kept_indices
+        ):
+            kept_indices.append(int(index))
+    return kept_indices
+
+
+def _interpolate_short_track_gaps(track, max_gap_frames):
+    frame_ids = np.asarray(track["frame_id"], dtype=np.int64)
+    if len(frame_ids) <= 1 or max_gap_frames <= 0:
+        return track
+
+    bboxes = np.asarray(track["bbox"], dtype=np.float32)
+    keypoints = np.asarray(track["keypoints"], dtype=np.float32)
+    output_frame_ids = []
+    output_bboxes = []
+    output_keypoints = []
+    for index in range(len(frame_ids) - 1):
+        output_frame_ids.append(frame_ids[index])
+        output_bboxes.append(bboxes[index])
+        output_keypoints.append(keypoints[index])
+        missing_count = int(frame_ids[index + 1] - frame_ids[index] - 1)
+        if missing_count <= 0 or missing_count > max_gap_frames:
+            continue
+        for offset in range(1, missing_count + 1):
+            alpha = offset / float(missing_count + 1)
+            output_frame_ids.append(frame_ids[index] + offset)
+            output_bboxes.append((1.0 - alpha) * bboxes[index] + alpha * bboxes[index + 1])
+            output_keypoints.append(
+                (1.0 - alpha) * keypoints[index] + alpha * keypoints[index + 1]
+            )
+
+    output_frame_ids.append(frame_ids[-1])
+    output_bboxes.append(bboxes[-1])
+    output_keypoints.append(keypoints[-1])
+    track["frame_id"] = np.asarray(output_frame_ids, dtype=np.int64)
+    track["bbox"] = np.asarray(output_bboxes, dtype=np.float32)
+    track["keypoints"] = np.asarray(output_keypoints, dtype=np.float32)
+    return track
+
+
 class DetectionModel(object):
     def __init__(self, device, mmpose_cfg=None):
         self.cfg = _runtime_cfg(mmpose_cfg)
-        self.pose_model = _init_trusted_mmpose_model(
-            self.cfg.pose_config,
-            self.cfg.pose_checkpoint,
-            device=device.lower(),
-        )
-        self.bbox_model = YOLO(self.cfg.bbox_model)
+        if self.cfg.pose_backend == "yolo_pose":
+            self.pose_model = YOLO(self.cfg.yolo_pose_model)
+            self.bbox_model = None
+            self.pose_pipeline = None
+        else:
+            self.pose_model = _init_trusted_mmpose_model(
+                self.cfg.pose_config,
+                self.cfg.pose_checkpoint,
+                device=device.lower(),
+            )
+            self.bbox_model = YOLO(self.cfg.bbox_model)
+            scope = self.pose_model.cfg.get("default_scope", "mmpose")
+            if scope is not None:
+                init_default_scope(scope)
+            self.pose_pipeline = Compose(
+                self.pose_model.cfg.test_dataloader.dataset.pipeline
+            )
         self.device = device
         self.initialize_tracking()
 
@@ -158,6 +234,8 @@ class DetectionModel(object):
         self.next_id = 0
         self.frame_id = 0
         self.pose_results_last = []
+        self.missed_tracking_frames = 0
+        self.pending_vitpose_frames = []
         self.tracking_results = {
             "id": [],
             "frame_id": [],
@@ -211,8 +289,24 @@ class DetectionModel(object):
         self.next_id += 1
         return track_id
 
+    def _record_missing_tracking_frame(self):
+        self.missed_tracking_frames += 1
+        if self.missed_tracking_frames > self.cfg.max_track_gap_frames:
+            self.pose_results_last = []
+
+    def _record_current_tracking_results(self, current_results):
+        if current_results:
+            self.pose_results_last = current_results
+            self.missed_tracking_frames = 0
+        else:
+            self._record_missing_tracking_frame()
+
     def track(self, img, fps, length):
         del fps, length
+
+        if self.cfg.pose_backend == "yolo_pose":
+            self._track_with_yolo_pose(img)
+            return
 
         detected = self.bbox_model.predict(
             img,
@@ -229,26 +323,127 @@ class DetectionModel(object):
             scores,
             DUPLICATE_BBOX_IOU_THRESHOLD,
         )
-        if len(bboxes) == 0:
-            self.frame_id += 1
-            self.pose_results_last = []
+        self.pending_vitpose_frames.append(
+            {
+                "frame_id": self.frame_id,
+                "image": img.copy() if len(bboxes) > 0 else None,
+                "bboxes": bboxes,
+            }
+        )
+        self.frame_id += 1
+
+    def _materialize_pending_vitpose_frames(self):
+        if not self.pending_vitpose_frames:
             return
 
-        pose_results = inference_topdown(
-            self.pose_model,
-            img,
-            bboxes=bboxes,
-            bbox_format="xyxy",
-        )
+        pose_inputs = []
+        pose_input_locations = []
+        results_by_frame = defaultdict(list)
+        for frame_index, pending_frame in enumerate(self.pending_vitpose_frames):
+            image = pending_frame["image"]
+            for bbox in pending_frame["bboxes"]:
+                data_info = {
+                    "img": image,
+                    "bbox": np.asarray(bbox, dtype=np.float32)[None],
+                    "bbox_score": np.ones(1, dtype=np.float32),
+                }
+                data_info.update(self.pose_model.dataset_meta)
+                pose_inputs.append(self.pose_pipeline(data_info))
+                pose_input_locations.append((frame_index, bbox))
 
-        current_results = []
-        used_last_ids = set()
-        for pose_index, pose_result in enumerate(pose_results):
+        pose_results = self._run_vitpose_batches(pose_inputs)
+        for (frame_index, fallback_bbox), pose_result in zip(
+            pose_input_locations,
+            pose_results,
+        ):
             pred = pose_result.pred_instances
             bbox = _normalize_bbox(
-                pred.bboxes if hasattr(pred, "bboxes") else bboxes[pose_index]
+                pred.bboxes if hasattr(pred, "bboxes") else fallback_bbox
             )
             keypoints = _normalize_keypoints(pred.keypoints, pred.keypoint_scores)
+            if (keypoints[:, -1] > VIS_THRESH).sum() < MINIMUM_JOINTS:
+                continue
+            results_by_frame[frame_index].append((bbox, keypoints))
+
+        for frame_index, pending_frame in enumerate(self.pending_vitpose_frames):
+            current_results = []
+            used_last_ids = set()
+            for bbox, keypoints in results_by_frame[frame_index]:
+                track_id = self._assign_track_id(bbox, used_last_ids)
+                self.tracking_results["id"].append(track_id)
+                self.tracking_results["frame_id"].append(pending_frame["frame_id"])
+                self.tracking_results["bbox"].append(self.xyxy_to_cxcys(bbox)[0])
+                self.tracking_results["keypoints"].append(keypoints)
+                current_results.append({"id": track_id, "bbox": bbox})
+            self._record_current_tracking_results(current_results)
+
+        self.pending_vitpose_frames = []
+
+    def _run_vitpose_batches(self, data_list):
+        if not data_list:
+            return []
+        results = []
+        batch_size = min(self.cfg.pose_batch_size, len(data_list))
+        offset = 0
+        while offset < len(data_list):
+            current_batch_size = min(batch_size, len(data_list) - offset)
+            batch_data = data_list[offset : offset + current_batch_size]
+            try:
+                with torch.inference_mode():
+                    batch_results = self.pose_model.test_step(
+                        pseudo_collate(batch_data)
+                    )
+            except torch.cuda.OutOfMemoryError:
+                if current_batch_size <= 1:
+                    raise
+                torch.cuda.empty_cache()
+                batch_size = max(1, current_batch_size // 2)
+                continue
+            results.extend(batch_results)
+            offset += current_batch_size
+        return results
+
+    def _track_with_yolo_pose(self, img):
+        detected = self.pose_model.predict(
+            img,
+            device=self.device,
+            classes=0,
+            conf=self.cfg.bbox_conf,
+            save=False,
+            verbose=False,
+        )[0]
+        if detected.boxes is None or detected.keypoints is None:
+            self.frame_id += 1
+            self._record_missing_tracking_frame()
+            return
+
+        bboxes = detected.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
+        scores = detected.boxes.conf.detach().cpu().numpy().astype(np.float32)
+        keypoint_xy = detected.keypoints.xy.detach().cpu().numpy().astype(np.float32)
+        keypoint_conf_tensor = detected.keypoints.conf
+        keypoint_confidence = (
+            keypoint_conf_tensor.detach().cpu().numpy().astype(np.float32)
+            if keypoint_conf_tensor is not None
+            else np.ones(keypoint_xy.shape[:2], dtype=np.float32)
+        )
+        if len(bboxes) == 0:
+            self.frame_id += 1
+            self._record_missing_tracking_frame()
+            return
+
+        kept_indices = _deduplicate_overlapping_detection_indices(
+            bboxes,
+            scores,
+            DUPLICATE_BBOX_IOU_THRESHOLD,
+        )
+        current_results = []
+        used_last_ids = set()
+        for detection_index in kept_indices:
+            bbox = bboxes[detection_index]
+            keypoints = _normalize_keypoints(
+                keypoint_xy[detection_index],
+                keypoint_confidence[detection_index],
+            )
             if (keypoints[:, -1] > VIS_THRESH).sum() < MINIMUM_JOINTS:
                 continue
 
@@ -260,9 +455,11 @@ class DetectionModel(object):
             current_results.append({"id": track_id, "bbox": bbox})
 
         self.frame_id += 1
-        self.pose_results_last = current_results
+        self._record_current_tracking_results(current_results)
 
     def process(self, fps):
+        if self.cfg.pose_backend == "vitpose":
+            self._materialize_pending_vitpose_frames()
         if len(self.tracking_results["id"]) == 0:
             return defaultdict(lambda: defaultdict(list))
 
@@ -280,6 +477,10 @@ class DetectionModel(object):
                 output[track_id][key] = val[idxs]
 
         for track_id in list(output.keys()):
+            output[track_id] = _interpolate_short_track_gaps(
+                output[track_id],
+                self.cfg.max_track_gap_frames,
+            )
             if len(output[track_id]["bbox"]) < self.cfg.min_frames:
                 del output[track_id]
                 continue

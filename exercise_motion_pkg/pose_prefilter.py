@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gc
 import math
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.target_motion import (
     TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
     observable_motion_spec_for_contract,
+    observable_target_motion_range,
     target_motion_profile_for_exercise,
 )
 from exercise_motion_pkg.video_utils import BasicVideoMetadata, read_basic_video_metadata
@@ -79,6 +81,11 @@ FRAME_LAYOUT_CUT_JUMP_THRESHOLD = 0.045
 FRAME_EDGE_CUT_JUMP_THRESHOLD = 0.035
 FRAME_LAYOUT_HARD_CUT_JUMP_THRESHOLD = 0.075
 FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD = 0.060
+# A usable motion source must have a stationary camera. These thresholds only
+# tolerate compression noise and tiny stabilization jitter; sustained pans,
+# tilts, zooms, or reframing are rejected.
+FRAME_LAYOUT_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.010
+FRAME_EDGE_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.008
 FULL_BODY_JOINT_SAFETY_THRESHOLD = 0.999
 FULL_BODY_SAFE_SAMPLE_RATIO = 0.95
 BODY_FRAME_CLEARANCE_MARGIN_RATIO = 0.01
@@ -314,6 +321,30 @@ def torch_cuda_available() -> bool:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
+
+
+def release_yolo_pose_cuda_memory() -> None:
+    """Return transient YOLO allocations before the following GPU stage starts."""
+    # YOLO models live in worker-thread-local caches while a pose review pool is
+    # active. Once that pool has joined, collect those models and explicitly
+    # return PyTorch's process-wide CUDA cache. Otherwise llama.cpp starts with
+    # several gigabytes unavailable and either partially offloads or runs with
+    # almost no VRAM safety margin.
+    gc.collect()
+    try:
+        import torch
+    except Exception:
+        return
+    try:
+        if not torch.cuda.is_available():
+            return
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    except Exception:
+        # Memory cleanup is an optimization boundary. It must not turn an
+        # otherwise valid candidate review into a failed exercise.
+        return
 
 
 def iter_sampled_video_frames(
@@ -585,6 +616,7 @@ def recover_transient_pose_window_failures(
             and int(integrity.get("visualContinuityComparedPairs", 0)) <= 0
         )
         and int(integrity.get("visualContinuityCutCount", 0)) == 0
+        and not bool(integrity.get("excessiveCameraMotion", False))
         and target_motion_passed
     )
     if not recoverable:
@@ -1127,6 +1159,11 @@ def source_window_integrity_metrics(
             "visualContinuityComparedPairs": 0,
             "maxFrameLayoutJump": 0.0,
             "maxFrameEdgeJump": 0.0,
+            "medianFrameLayoutJump": 0.0,
+            "medianFrameEdgeJump": 0.0,
+            "meanFrameLayoutJump": 0.0,
+            "meanFrameEdgeJump": 0.0,
+            "excessiveCameraMotion": False,
             "sampleCount": len(samples),
             "presentSampleRatio": 0.0,
             "multiPersonRatio": 0.0,
@@ -1212,6 +1249,7 @@ def source_window_integrity_metrics(
         and max_scale_jump <= 0.45
         and scene_cut_count == 0
         and int(visual_jump_metrics["visualContinuityCutCount"]) == 0
+        and not bool(visual_jump_metrics["excessiveCameraMotion"])
     )
     return {
         "passed": single_person_passed and full_body_passed and joint_visibility_passed and camera_passed,
@@ -1338,11 +1376,27 @@ def frame_visual_jump_metrics(samples: list[PoseSample]) -> dict[str, Any]:
         )
         if is_visual_cut:
             visual_cut_count += 1
+    median_layout_jump = median(layout_jumps) if layout_jumps else 0.0
+    median_edge_jump = median(edge_jumps) if edge_jumps else 0.0
+    mean_layout_jump = sum(layout_jumps) / len(layout_jumps) if layout_jumps else 0.0
+    mean_edge_jump = sum(edge_jumps) / len(edge_jumps) if edge_jumps else 0.0
+    excessive_camera_motion = bool(
+        compared_pair_count >= 2
+        and (
+            median_layout_jump >= FRAME_LAYOUT_SUSTAINED_CAMERA_MOTION_THRESHOLD
+            and median_edge_jump >= FRAME_EDGE_SUSTAINED_CAMERA_MOTION_THRESHOLD
+        )
+    )
     return {
         "visualContinuityCutCount": visual_cut_count,
         "visualContinuityComparedPairs": compared_pair_count,
         "maxFrameLayoutJump": max(layout_jumps) if layout_jumps else 0.0,
         "maxFrameEdgeJump": max(edge_jumps) if edge_jumps else 0.0,
+        "medianFrameLayoutJump": median_layout_jump,
+        "medianFrameEdgeJump": median_edge_jump,
+        "meanFrameLayoutJump": mean_layout_jump,
+        "meanFrameEdgeJump": mean_edge_jump,
+        "excessiveCameraMotion": excessive_camera_motion,
     }
 
 
@@ -1559,6 +1613,7 @@ def target_pose_motion_observability(
 
 
 GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO = 0.035
+GENERIC_POSE_OBSERVABLE_MOTION_MIN_FLEXION_RANGE_RATIO = 0.08
 
 
 def target_pose_observable_motion_spec_observability(
@@ -1607,11 +1662,23 @@ def target_pose_observable_motion_spec_observability(
         ),
         default=0.0,
     )
-    target_motion_range = max(primary_motion_range, relative_motion_range)
+    flexion_range = pose_observable_motion_flexion_range(present, primary_regions)
+    target_motion_range = observable_target_motion_range(
+        primary_motion_range=primary_motion_range,
+        relative_motion_range=relative_motion_range,
+        flexion_range=flexion_range,
+        reference_regions=reference_regions,
+        motion_pattern=pattern,
+    )
+    min_motion_range = (
+        GENERIC_POSE_OBSERVABLE_MOTION_MIN_FLEXION_RANGE_RATIO
+        if pattern == "joint_flex_extend" and flexion_range >= target_motion_range
+        else GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO
+    )
     failure_reasons: list[str] = []
     if not moving_groups:
         failure_reasons.append("missing_observable_primary_moving_region")
-    if target_motion_range < GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO:
+    if target_motion_range < min_motion_range:
         failure_reasons.append("weak_observable_target_motion")
     return {
         "required": True,
@@ -1627,9 +1694,66 @@ def target_pose_observable_motion_spec_observability(
         "motionPattern": pattern,
         "primaryMotionRangeRatio": primary_motion_range,
         "relativeMotionRangeRatio": relative_motion_range,
+        "flexionRangeRatio": flexion_range,
         "targetMotionRangeRatio": target_motion_range,
-        "minTargetMotionRangeRatio": GENERIC_POSE_OBSERVABLE_MOTION_MIN_RANGE_RATIO,
+        "minTargetMotionRangeRatio": min_motion_range,
     }
+
+
+def pose_observable_motion_flexion_range(
+    detections: list[PoseDetection],
+    regions: list[str],
+) -> float:
+    ranges: list[float] = []
+    if "elbows" in regions:
+        ranges.extend(
+            pose_joint_angle_range_ratio(
+                detections,
+                f"{side}_shoulder",
+                f"{side}_elbow",
+                f"{side}_wrist",
+            )
+            for side in ("left", "right")
+        )
+    if "knees" in regions:
+        ranges.extend(
+            pose_joint_angle_range_ratio(
+                detections,
+                f"{side}_hip",
+                f"{side}_knee",
+                f"{side}_ankle",
+            )
+            for side in ("left", "right")
+        )
+    return max(ranges, default=0.0)
+
+
+def pose_joint_angle_range_ratio(
+    detections: list[PoseDetection],
+    start_joint: str,
+    middle_joint: str,
+    end_joint: str,
+) -> float:
+    angles: list[float] = []
+    for detection in detections:
+        start = detection.keypoints.get(start_joint)
+        middle = detection.keypoints.get(middle_joint)
+        end = detection.keypoints.get(end_joint)
+        if start is None or middle is None or end is None:
+            continue
+        start_vector = (start[0] - middle[0], start[1] - middle[1])
+        end_vector = (end[0] - middle[0], end[1] - middle[1])
+        start_length = math.hypot(*start_vector)
+        end_length = math.hypot(*end_vector)
+        if start_length <= 1e-6 or end_length <= 1e-6:
+            continue
+        alignment = (
+            start_vector[0] * end_vector[0] + start_vector[1] * end_vector[1]
+        ) / (start_length * end_length)
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, alignment)))))
+    if len(angles) < 3:
+        return 0.0
+    return (max(angles) - min(angles)) / 180.0
 
 
 def pose_joint_groups_for_observable_regions(regions: Iterable[str]) -> list[tuple[str, ...]]:

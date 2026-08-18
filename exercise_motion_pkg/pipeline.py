@@ -12,7 +12,7 @@ import uuid
 from dataclasses import replace
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
@@ -20,7 +20,11 @@ from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.paths import PipelinePaths
-from exercise_motion_pkg.preview import write_preview_html, write_wear_skeleton_json
+from exercise_motion_pkg.preview import (
+    ensure_three_module_asset,
+    write_preview_html,
+    write_wear_skeleton_json,
+)
 from exercise_motion_pkg.retarget_contract import build_target_rig_contract
 from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_motion_clip, apply_spinepose_to_wham_pkl
 from exercise_motion_pkg.structural_refinement import refine_motion_clip_structurally
@@ -31,6 +35,7 @@ from exercise_motion_pkg.wham_runner import (
     DEFAULT_WHAM_DOCKER_SHM_SIZE,
     DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
     run_wham_locally,
+    wham_preprocessing_environment,
 )
 from exercise_motion_pkg.wham_smpl_preview import (
     load_wham_smpl_mesh_sequence,
@@ -46,7 +51,7 @@ SPINEPOSE_CONDA_ENV_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_CONDA_ENV"
 DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
-WHAM_GLOBAL_CACHE_VERSION = 1
+WHAM_GLOBAL_CACHE_VERSION = 2
 WHAM_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
 SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "import ctypes, os, pathlib, site; "
@@ -108,6 +113,8 @@ class GenerateRequest:
     wham_worker_mount_root: Path | None = None
     wham_worker_timeout_seconds: float | None = None
     wham_timeout_seconds: float | None = None
+    wham_tracking_preflight: bool = False
+    require_wham_cache: bool = False
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     spinepose_enabled: bool = False
@@ -136,6 +143,7 @@ class GenerateRequest:
     non_dominant_radius_scale: float = 1.0
     motion_tuning_enabled: bool = True
     ground_contact_mode: str = "unknown"
+    support_mode_hint: str | None = None
     export_wham_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
@@ -201,6 +209,7 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
                 "runSmplify": request.wham_run_smplify,
                 "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
                 "outputRotationDegrees": request.wham_output_rotation_degrees,
+                "preprocessingEnvironment": wham_preprocessing_environment(),
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -304,6 +313,7 @@ def publish_global_wham_results(
         "estimateLocalOnly": request.wham_estimate_local_only,
         "runSmplify": request.wham_run_smplify,
         "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
+        "preprocessingEnvironment": wham_preprocessing_environment(),
     }
     destination.with_name("cache_manifest.json").write_text(
         json.dumps(metadata, indent=2) + "\n",
@@ -341,7 +351,11 @@ def resolve_wham_results_source(
     )
 
 
-def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
+def run_generation_pipeline(
+    request: GenerateRequest,
+    *,
+    run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+) -> GenerateResult:
     pipeline_started = time.perf_counter()
     timings: dict[str, Any] = {}
     if request.spinepose_merge_mode not in {"motion", "legacy_pkl"}:
@@ -353,6 +367,9 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         timings[name] = round(time.perf_counter() - started, 3)
 
     paths = PipelinePaths.create(request.workspace, request.exercise_slug)
+    stage_started = time.perf_counter()
+    three_module_path = ensure_three_module_asset()
+    record_timing("preparePreviewRuntimeSeconds", stage_started)
     stage_started = time.perf_counter()
     input_video_path = prepare_input_video(request, paths)
     record_timing("prepareInputVideoSeconds", stage_started)
@@ -392,29 +409,44 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             wham_cache_status = "reused_local" if reusable_results_pkl == local_cached else "reused_global"
         else:
             wham_cache_status = wham_source.cache_status
+        if wham_source.should_run_wham and request.require_wham_cache:
+            raise FileNotFoundError(
+                "Staged finalization requires a precomputed WHAM cache, but none was found "
+                f"for {input_video_path}."
+            )
         if wham_source.should_run_wham:
             if request.wham_repo_path is None:
                 raise ValueError(
                     "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
                 )
             stage_started = time.perf_counter()
-            wham_result = run_wham_locally(
-                wham_repo_path=request.wham_repo_path.expanduser().resolve(),
-                input_video=input_video_path,
-                output_root=wham_output_dir,
-                logs_dir=paths.logs_dir,
-                python_command=request.wham_python_command,
-                estimate_local_only=request.wham_estimate_local_only,
-                run_smplify=request.wham_run_smplify,
-                use_docker=request.use_wham_docker,
-                docker_image=request.wham_docker_image,
-                docker_gpus=request.wham_docker_gpus,
-                docker_shm_size=request.wham_docker_shm_size,
-                use_warm_worker=request.use_warm_wham_worker,
-                warm_worker_session_dir=request.wham_worker_session_dir,
-                warm_worker_mount_root=request.wham_worker_mount_root,
-                warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
-                timeout_seconds=request.wham_timeout_seconds,
+            def invoke_wham() -> Any:
+                return run_wham_locally(
+                    wham_repo_path=request.wham_repo_path.expanduser().resolve(),
+                    input_video=input_video_path,
+                    output_root=wham_output_dir,
+                    logs_dir=paths.logs_dir,
+                    python_command=request.wham_python_command,
+                    estimate_local_only=request.wham_estimate_local_only,
+                    run_smplify=request.wham_run_smplify,
+                    use_docker=request.use_wham_docker,
+                    docker_image=request.wham_docker_image,
+                    docker_gpus=request.wham_docker_gpus,
+                    docker_shm_size=request.wham_docker_shm_size,
+                    use_warm_worker=request.use_warm_wham_worker,
+                    warm_worker_session_dir=request.wham_worker_session_dir,
+                    warm_worker_mount_root=request.wham_worker_mount_root,
+                    warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+                    timeout_seconds=request.wham_timeout_seconds,
+                    tracking_preflight=request.wham_tracking_preflight,
+                    required_start_seconds=request.output_crop_start_seconds,
+                    required_end_seconds=request.output_crop_end_seconds,
+                )
+
+            wham_result = (
+                run_wham_exclusive(invoke_wham)
+                if run_wham_exclusive is not None
+                else invoke_wham()
             )
             record_timing("whamRunSeconds", stage_started)
             timings["wham"] = wham_result.timing_payload()
@@ -565,7 +597,12 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             "motionTuning": _motion_tuning_metadata(enabled=False),
         },
     )
-    write_preview_html(raw_preview_html_path, raw_preview_clip, title=f"{request.exercise_slug}-raw")
+    write_preview_html(
+        raw_preview_html_path,
+        raw_preview_clip,
+        title=f"{request.exercise_slug}-raw",
+        three_module_path=three_module_path,
+    )
     record_timing("writeRawPreviewSeconds", stage_started)
 
     if request.motion_tuning_enabled:
@@ -581,6 +618,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
             motion_threshold=request.motion_threshold,
             padding_frames=request.padding_frames,
             ground_contact_mode=request.ground_contact_mode,
+            support_mode_hint=request.support_mode_hint,
         )
         record_timing("cleanupMotionSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -651,6 +689,7 @@ def run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         preview_html_path,
         cleaned_clip,
         title=request.exercise_slug,
+        three_module_path=three_module_path,
     )
     record_timing("writeCleanedPreviewSeconds", stage_started)
     wear_skeleton_json_path = paths.wear_dir / "skeleton.preview.json"

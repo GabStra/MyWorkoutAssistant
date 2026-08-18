@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -20,8 +21,8 @@ MOVEMENT_COMPRESSION = "gzip+base64"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Attach generated wear skeleton movement JSON files to a workout-plan package "
-            "using a workout_motion_generation_summary.json file."
+            "Attach generated wear skeleton movement JSON files to a workout-plan or exercise-library package "
+            "using a workout motion summary or exercise-library revalidation report."
         )
     )
     parser.add_argument(
@@ -32,7 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--motion-summary-json",
         required=True,
-        help="workout_motion_generation_summary.json produced by run_exercise_motion_workout_plan.ps1.",
+        help=(
+            "workout_motion_generation_summary.json or exercise_library_revalidation_report.json "
+            "produced by the movement pipeline."
+        ),
     )
     parser.add_argument(
         "--output-json",
@@ -75,6 +79,55 @@ def normalize_name(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
 
 
+def is_approved_summary_item(summary_item: dict[str, Any]) -> bool:
+    """Accept legacy summaries, but reject any explicitly non-completed result."""
+    status = summary_item.get("status")
+    return status is None or normalize_key(status) in {"completed", "valid"}
+
+
+def iter_motion_summary_items(summary: dict[str, Any]):
+    items = summary.get("exercises")
+    if not isinstance(items, list):
+        items = summary.get("results")
+    return items if isinstance(items, list) else []
+
+
+def revalidated_selection_motion_path(
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> Path | None:
+    selected_path = resolve_motion_path(
+        summary_item.get("selectedWearSkeletonPath"),
+        summary_path,
+        summary,
+    )
+    if selected_path is not None:
+        return selected_path
+    workspace = resolve_motion_path(summary_item.get("workspace"), summary_path, summary)
+    if workspace is None or not workspace.is_dir():
+        return None
+    selected_dir = workspace / "selected"
+    selected_manifest_path = selected_dir / "selection_manifest.json"
+    if selected_manifest_path.exists():
+        try:
+            selected_manifest = load_json_file(selected_manifest_path)
+            selected = selected_manifest.get("selected") if isinstance(selected_manifest, dict) else None
+            if isinstance(selected, dict):
+                selected_path = resolve_motion_path(
+                    selected.get("selectedWearSkeletonPath"),
+                    summary_path,
+                    summary,
+                )
+                if selected_path is not None:
+                    return selected_path
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    copied_skeletons = sorted(selected_dir.glob("*_wear_skeleton.json"))
+    return copied_skeletons[0].resolve() if len(copied_skeletons) == 1 else None
+
+
 def movement_id_for(prefix: str, exercise_id: Any, exercise_name: Any) -> str:
     raw_key = str(exercise_id).strip() if exercise_id is not None and str(exercise_id).strip() else ""
     if not raw_key:
@@ -90,6 +143,12 @@ def gzip_base64(data: str) -> str:
 
 
 def iter_package_exercises(workout_plan_package: dict[str, Any]):
+    for definition_index, definition in enumerate(
+        workout_plan_package.get("exerciseDefinitions") or []
+    ):
+        if isinstance(definition, dict):
+            yield definition, f"exerciseDefinitions[{definition_index}]"
+
     for workout_index, workout in enumerate(workout_plan_package.get("workouts") or []):
         if not isinstance(workout, dict):
             continue
@@ -188,15 +247,23 @@ def main() -> int:
 
     movement_backups = existing_backups_by_key(workout_plan_package)
     attached_count = 0
+    skipped_unapproved_count = 0
     warning_count = 0
 
-    for summary_item in summary.get("exercises") or []:
+    for summary_item in iter_motion_summary_items(summary):
         if not isinstance(summary_item, dict):
+            continue
+        if not is_approved_summary_item(summary_item):
+            skipped_unapproved_count += 1
             continue
 
         exercise_id = summary_item.get("exerciseId")
         exercise_name = summary_item.get("exerciseName")
-        selected_path = resolve_motion_path(summary_item.get("selectedWearSkeletonPath"), summary_path, summary)
+        selected_path = revalidated_selection_motion_path(
+            summary_item,
+            summary_path=summary_path,
+            summary=summary,
+        )
         if selected_path is None:
             continue
 
@@ -261,13 +328,19 @@ def main() -> int:
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        json.dump(workout_plan_package, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
+    temporary_output_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(workout_plan_package, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(temporary_output_path, output_path)
+    finally:
+        temporary_output_path.unlink(missing_ok=True)
 
     print(
         f"wrote {output_path} with {attached_count} exercise movement ref attachment(s), "
-        f"{len(movement_backups)} movement backup(s), {warning_count} warning(s)"
+        f"{len(movement_backups)} movement backup(s), "
+        f"{skipped_unapproved_count} unapproved result(s) skipped, {warning_count} warning(s)"
     )
     return 0
 

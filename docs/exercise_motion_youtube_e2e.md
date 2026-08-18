@@ -139,6 +139,85 @@ pwsh ./scripts/run_exercise_motion_workout_plan.ps1 `
   -ArtifactRetention full
 ```
 
+## Exercise Library
+
+Use the library wrapper to generate and attach movements for every definition in an
+`myworkoutassistant.exercise-library` package:
+
+```powershell
+pwsh ./scripts/run_exercise_motion_library.ps1 `
+  -ExerciseLibraryJson "C:\Users\gabri\Downloads\my_exercise_library.json" `
+  -WorkspaceRoot "build/exercise_motion/exercise-library" `
+  -SpeedProfile fast `
+  -MaxSelectedResults 1 `
+  -ProgressIntervalSeconds 300
+```
+
+The library JSON already embeds `equipments` and `accessoryEquipments`, so `-EquipmentJson`
+is optional. Pass it only to override or supplement that embedded inventory.
+
+The wrapper runs two phases automatically. The first phase tries one recommended
+candidate per unresolved definition and postpones unsuccessful definitions instead
+of expanding their search immediately. After every definition has had that chance,
+the second phase automatically applies the deeper search to only the postponed
+definitions.
+
+Candidate preparation is pipelined automatically. Two CPU/network prefetch workers
+keep up to six upcoming exercises ready and each uses twelve parallel preview
+downloads. The library runner groups ready exercises into resumable 20-exercise
+waves by default. Each wave keeps one VLM session for source-cut validation,
+releases it, runs the prepared candidates through one warm WHAM worker, releases
+WHAM, and then keeps one VLM session for the unchanged final validators. Only
+unsuccessful exercises enter the deeper individual retry lane. This prevents
+per-exercise model loading and keeps GPU-backed VLM and WHAM stages mutually
+exclusive on a 12 GB GPU. The defaults can be tuned with `-StagedWaveSize`,
+`-PrefetchWorkers`, and `-PrefetchQueueDepth`; use `-DisableStagedWaves` or
+`-DisableCpuPrefetch` only for troubleshooting.
+The llama.cpp server uses eight HTTP worker threads by default, leaving the other
+logical CPU threads available for candidate downloads, FFmpeg, and orchestration.
+
+The wrapper resumes by default. Each successful exercise is materialized under its
+own workspace immediately, and aggregate progress is checkpointed after every
+terminal exercise. If the process is interrupted, run the same command again;
+completed selections and the current phase are reused. Use `-Fresh` only when
+completed selections should be regenerated.
+
+On the first resume after a selection-policy upgrade, the wrapper automatically
+revalidates legacy selections before reusing them. The report is written to
+`exercise_library_revalidation_report.json`; each exercise receives a versioned
+`selected/revalidation.json` marker. A selection remains reusable whenever that
+specific existing artifact still passes the current policy, even if another baked
+settings variant scores higher. Only rejected selections are queued for regeneration;
+missing legacy review evidence is reported for manual review. Use
+`-SkipExistingSelectionRevalidation` only when you
+intentionally want to bypass this migration check.
+
+Only candidates that completed identity review and were recommended by discovery
+may enter baking. A failed first pass is postponed; it is not silently replaced by
+an unreviewed lower-ranked source. Equipment type, equipment name, required
+accessories, exercise type, category, and muscle context from the library are
+preserved in each one-exercise plan and supplied to movement-contract and final
+output review. Risky outputs (including adjacent title variants and rigid two-hand
+equipment) receive source-versus-preview visual validation; low-risk outputs keep
+the deterministic fast path.
+
+Each exercise also stores `youtube_candidate_prefetch.json`. On resume, a manifest
+whose source-plan hash still matches skips repeated prefetch work; if a cached
+preview is missing, the normal review stage downloads it again.
+
+The default output is `my_exercise_library_with_movements.json` beside the input
+library. Use `-OutputJson` to choose another destination. A partial importable package
+is written after phase one and updated after phase two. It preserves every definition
+ID, adds `movementRef` to completed definitions, and embeds the compressed movement
+files in `exerciseMovements`; unresolved definitions remain valid without a movement.
+
+For a small batch or a single definition, append one or more filters:
+
+```powershell
+  -OnlyExerciseName "Pull-Up" `
+  -OnlyExerciseName "Spin Bike Seated Cycling"
+```
+
 The clearer alias script forwards to the same implementation:
 
 ```powershell

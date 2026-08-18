@@ -18,6 +18,10 @@ DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
 DEFAULT_WHAM_TIMEOUT_SECONDS = 0.0
+DEFAULT_WHAM_POSE_BACKEND = "vitpose"
+DEFAULT_WHAM_POSE_BATCH_SIZE = 16
+DEFAULT_WHAM_FEATURE_BATCH_SIZE = 32
+DEFAULT_WHAM_MAX_TRACK_GAP_FRAMES = 3
 WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
 WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS"
 WHAM_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_TIMEOUT_SECONDS"
@@ -27,6 +31,24 @@ WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_TIM
 DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
 DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS = DEFAULT_WHAM_TIMEOUT_SECONDS
 WHAM_TRACKING_PREFLIGHT_REJECTED_EXIT_CODE = 42
+
+
+class WhamTrackingPreflightRejected(RuntimeError):
+    def __init__(self, report: dict[str, Any]) -> None:
+        super().__init__(
+            "WHAM tracking preflight rejected the input because the required movement interval "
+            "is not continuously tracked."
+        )
+        self.report = report
+
+
+def wham_preprocessing_environment() -> dict[str, str]:
+    return {
+        "WHAM_POSE_BACKEND": DEFAULT_WHAM_POSE_BACKEND,
+        "WHAM_POSE_BATCH_SIZE": str(DEFAULT_WHAM_POSE_BATCH_SIZE),
+        "WHAM_FEATURE_BATCH_SIZE": str(DEFAULT_WHAM_FEATURE_BATCH_SIZE),
+        "WHAM_MAX_TRACK_GAP_FRAMES": str(DEFAULT_WHAM_MAX_TRACK_GAP_FRAMES),
+    }
 
 
 @dataclass(frozen=True)
@@ -70,6 +92,12 @@ class WhamRunResult:
             "dockerLockWaitSeconds": round(self.docker_lock_wait_seconds, 3) if self.use_docker else 0.0,
             "gpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
             "stageTimings": self.stage_timings,
+            "preprocessing": {
+                "poseBackend": DEFAULT_WHAM_POSE_BACKEND,
+                "poseBatchSize": DEFAULT_WHAM_POSE_BATCH_SIZE,
+                "featureBatchSize": DEFAULT_WHAM_FEATURE_BATCH_SIZE,
+                "maxTrackGapFrames": DEFAULT_WHAM_MAX_TRACK_GAP_FRAMES,
+            },
         }
 
 
@@ -95,6 +123,9 @@ def run_wham_locally(
     warm_worker_mount_root: Path | None = None,
     warm_worker_timeout_seconds: float | None = None,
     timeout_seconds: float | None = None,
+    tracking_preflight: bool = False,
+    required_start_seconds: float | None = None,
+    required_end_seconds: float | None = None,
 ) -> WhamRunResult:
     validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -116,6 +147,9 @@ def run_wham_locally(
             warm_worker_session_dir=warm_worker_session_dir,
             warm_worker_mount_root=warm_worker_mount_root,
             timeout_seconds=warm_worker_timeout_seconds if warm_worker_timeout_seconds is not None else timeout_seconds,
+            tracking_preflight=tracking_preflight,
+            required_start_seconds=required_start_seconds,
+            required_end_seconds=required_end_seconds,
         )
     timeout = resolve_wham_timeout_seconds(timeout_seconds)
     docker_container_name = f"mwa-wham-job-{uuid.uuid4().hex}" if use_docker else None
@@ -141,6 +175,43 @@ def run_wham_locally(
     ) as stderr_handle:
         with gpu_stage_lock(stage="wham") as gpu_lock_wait_seconds:
             with wham_docker_run_lock(enabled=use_docker) as lock_wait_seconds:
+                if tracking_preflight:
+                    preflight_report_path = (
+                        output_root / input_video.stem / "tracking_preflight.json"
+                    )
+                    preflight_report_path.parent.mkdir(parents=True, exist_ok=True)
+                    preflight_command = build_wham_tracking_preflight_command(
+                        wham_repo_path=wham_repo_path,
+                        script_path=Path(__file__).with_name("wham_tracking_preflight.py"),
+                        input_video=input_video,
+                        output_root=output_root,
+                        report_path=preflight_report_path,
+                        python_command=python_command,
+                        required_start_seconds=required_start_seconds,
+                        required_end_seconds=required_end_seconds,
+                        use_docker=use_docker,
+                        docker_image=docker_image,
+                        docker_gpus=docker_gpus,
+                        docker_shm_size=docker_shm_size,
+                    )
+                    preflight_returncode = run_wham_process(
+                        preflight_command,
+                        cwd=str(wham_repo_path),
+                        stdout=stdout_handle,
+                        stderr=stderr_handle,
+                        timeout_seconds=timeout,
+                    )
+                    if preflight_returncode == WHAM_TRACKING_PREFLIGHT_REJECTED_EXIT_CODE:
+                        try:
+                            report = json.loads(preflight_report_path.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            report = {"passed": False, "reportPath": str(preflight_report_path)}
+                        raise WhamTrackingPreflightRejected(report)
+                    if preflight_returncode != 0:
+                        raise RuntimeError(
+                            "WHAM tracking preflight failed. Check logs:\n"
+                            f"- {stdout_log}\n- {stderr_log}"
+                        )
                 returncode = run_wham_process(
                     command,
                     cwd=str(wham_repo_path),
@@ -197,6 +268,9 @@ def run_wham_with_warm_worker(
     warm_worker_session_dir: Path | None,
     warm_worker_mount_root: Path | None,
     timeout_seconds: float | None,
+    tracking_preflight: bool = False,
+    required_start_seconds: float | None = None,
+    required_end_seconds: float | None = None,
 ) -> WhamRunResult:
     if not use_docker:
         raise ValueError("Warm WHAM worker mode currently requires Docker WHAM execution.")
@@ -221,6 +295,9 @@ def run_wham_with_warm_worker(
         "outputRoot": container_output_root,
         "estimateLocalOnly": estimate_local_only,
         "runSmplify": run_smplify,
+        "trackingPreflight": tracking_preflight,
+        "requiredStartSeconds": required_start_seconds,
+        "requiredEndSeconds": required_end_seconds,
     }
     job_path = jobs_dir / f"{job_id}.json"
     tmp_job_path = jobs_dir / f"{job_id}.json.tmp"
@@ -238,6 +315,10 @@ def run_wham_with_warm_worker(
     worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
     copy_worker_log(worker_stdout_log, stdout_log)
     copy_worker_log(worker_stderr_log, stderr_log)
+    if result_payload.get("status") == "rejected_tracking_preflight":
+        raise WhamTrackingPreflightRejected(
+            dict(result_payload.get("trackingPreflight") or {"passed": False})
+        )
     if result_payload.get("status") != "completed":
         error = result_payload.get("error") or "unknown warm worker failure"
         raise RuntimeError(
@@ -517,6 +598,8 @@ def build_wham_command(
             command.extend(["--gpus", docker_gpus])
         if docker_shm_size:
             command.extend(["--shm-size", docker_shm_size])
+        for name, value in wham_preprocessing_environment().items():
+            command.extend(["-e", f"{name}={value}"])
         command.extend(
             [
                 "-v",
@@ -585,6 +668,8 @@ def build_wham_tracking_preflight_command(
             command.extend(["--gpus", docker_gpus])
         if docker_shm_size:
             command.extend(["--shm-size", docker_shm_size])
+        for name, value in wham_preprocessing_environment().items():
+            command.extend(["-e", f"{name}={value}"])
         command.extend(
             [
                 "-v",

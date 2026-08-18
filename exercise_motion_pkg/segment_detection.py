@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
@@ -1468,6 +1469,22 @@ class LlamaCppVisionClient:
         self.recovery_callback = recovery_callback
         self.max_recovery_retries = max(0, int(max_recovery_retries))
         self.client = httpx.Client(timeout=self.request_timeout_seconds)
+        self._client_generation = 0
+        self._recovery_lock = threading.Lock()
+        self._retired_clients: list[httpx.Client] = []
+
+    def close(self) -> None:
+        clients = [self.client, *self._retired_clients]
+        self._retired_clients = []
+        closed_client_ids: set[int] = set()
+        for client in clients:
+            if id(client) in closed_client_ids:
+                continue
+            closed_client_ids.add(id(client))
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def detect_window(
         self,
@@ -1597,6 +1614,7 @@ class LlamaCppVisionClient:
         recovery_events: list[dict[str, object]] = []
         for attempt_index in range(self.max_recovery_retries + 1):
             attempt_started = time.monotonic()
+            attempt_client_generation = self._client_generation
             try:
                 response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
                 if response.status_code >= 400:
@@ -1656,48 +1674,76 @@ class LlamaCppVisionClient:
                     if critical is exc:
                         raise
                     raise critical from exc
-                recovery_events.append(self._recover_after_vlm_failure(critical))
+                recovery_events.append(
+                    self._recover_after_vlm_failure(
+                        critical,
+                        failed_client_generation=attempt_client_generation,
+                    )
+                )
         if last_error is not None:
             raise last_error
         raise RuntimeError("llama-cpp vision request failed without a response.")
 
-    def _recover_after_vlm_failure(self, error: CriticalVlmInteractionError) -> dict[str, object]:
+    def _recover_after_vlm_failure(
+        self,
+        error: CriticalVlmInteractionError,
+        *,
+        failed_client_generation: int,
+    ) -> dict[str, object]:
         started = time.monotonic()
         event: dict[str, object] = {
             "startedAt": datetime.now(timezone.utc).isoformat(),
             "trigger": error.cause_type or type(error).__name__,
+            "failedClientGeneration": failed_client_generation,
             "serverSnapshotBeforeRecovery": self._server_debug_snapshot(),
         }
-        try:
-            self.client.close()
-        except Exception:
-            pass
-        if self.recovery_callback is not None:
-            try:
-                self.recovery_callback()
-            except Exception as exc:
-                raise CriticalVlmInteractionError(
-                    f"VLM self-recovery callback failed after {error.interaction}: {type(exc).__name__}: {exc}",
-                    interaction=error.interaction,
-                    recoverable=False,
-                    timeout_seconds=error.timeout_seconds,
-                    cause_type=type(exc).__name__,
-                    details={
-                        **error.details,
-                        **event,
-                        "recoveryCallbackError": str(exc),
-                        "recoveryElapsedSeconds": round(time.monotonic() - started, 3),
-                    },
-                ) from exc
-        self.client = httpx.Client(timeout=self.request_timeout_seconds)
-        self._wait_for_chat_ready_after_recovery(error)
-        event.update(
-            {
-                "completed": True,
-                "elapsedSeconds": round(time.monotonic() - started, 3),
-                "serverSnapshotAfterRecovery": self._server_debug_snapshot(),
-            }
-        )
+        with self._recovery_lock:
+            if failed_client_generation != self._client_generation:
+                event.update(
+                    {
+                        "completed": True,
+                        "reusedConcurrentRecovery": True,
+                        "activeClientGeneration": self._client_generation,
+                        "elapsedSeconds": round(time.monotonic() - started, 3),
+                    }
+                )
+            else:
+                previous_client = self.client
+                replacement_client = httpx.Client(timeout=self.request_timeout_seconds)
+                try:
+                    if self.recovery_callback is not None:
+                        self.recovery_callback()
+                    self.client = replacement_client
+                    self._wait_for_chat_ready_after_recovery(error)
+                except Exception as exc:
+                    replacement_client.close()
+                    self.client = previous_client
+                    if isinstance(exc, CriticalVlmInteractionError):
+                        raise
+                    raise CriticalVlmInteractionError(
+                        f"VLM self-recovery callback failed after {error.interaction}: {type(exc).__name__}: {exc}",
+                        interaction=error.interaction,
+                        recoverable=False,
+                        timeout_seconds=error.timeout_seconds,
+                        cause_type=type(exc).__name__,
+                        details={
+                            **error.details,
+                            **event,
+                            "recoveryCallbackError": str(exc),
+                            "recoveryElapsedSeconds": round(time.monotonic() - started, 3),
+                        },
+                    ) from exc
+                self._retired_clients.append(previous_client)
+                self._client_generation += 1
+                event.update(
+                    {
+                        "completed": True,
+                        "reusedConcurrentRecovery": False,
+                        "activeClientGeneration": self._client_generation,
+                        "elapsedSeconds": round(time.monotonic() - started, 3),
+                        "serverSnapshotAfterRecovery": self._server_debug_snapshot(),
+                    }
+                )
         existing_events = error.details.get("recoveryEvents")
         recovery_events = existing_events if isinstance(existing_events, list) else []
         error.add_details(recoveryEvents=[*recovery_events, event])

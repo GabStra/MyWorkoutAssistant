@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import fields
+from dataclasses import fields, replace
 import json
 from pathlib import Path
 
@@ -18,8 +18,10 @@ from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     BakeAndRankRequest,
     audit_selected_outputs,
+    prefetch_ranked_youtube_sources,
     run_bake_and_rank_pipeline,
     run_bake_and_rank_reselection,
+    revalidate_library_workspace,
 )
 from exercise_motion_pkg.ground import embed_ground_metadata_in_clip, generate_ground_metadata
 from exercise_motion_pkg.llama_defaults import (
@@ -64,11 +66,15 @@ from exercise_motion_pkg.wham_runner import (
     DEFAULT_WHAM_TIMEOUT_SECONDS,
 )
 from exercise_motion_pkg.youtube import (
+    DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS,
     YouTubeRankingSettings,
     discover_and_rank_youtube_candidates,
     load_youtube_candidate_exclusion_keys,
     load_workout_plan_exercises,
+    prefetch_exercise_motion_contracts,
+    prefetch_youtube_candidate_previews,
 )
+from exercise_motion_pkg.wave_pipeline import StagedWaveItem, run_staged_bake_wave
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -314,6 +320,12 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--results-per-query", type=int, default=100)
     youtube_search.add_argument("--youtube-search-empty-retries", type=int, default=5)
     youtube_search.add_argument(
+        "--youtube-search-timeout-seconds",
+        type=float,
+        default=DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS,
+        help="Maximum wall-clock seconds allowed for each yt-dlp search query.",
+    )
+    youtube_search.add_argument(
         "--youtube-cookies",
         "--youtube-cookies-path",
         type=Path,
@@ -446,6 +458,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable the generated exercise-specific motion contract used by source-review prompts.",
     )
+    youtube_search.add_argument(
+        "--exercise-motion-contract-cache-dir",
+        type=Path,
+        help="Reuse exercise-specific motion contracts across discovery attempts and resumed runs.",
+    )
+    youtube_search.add_argument(
+        "--contract-prefetch-only",
+        action="store_true",
+        help="Generate missing exercise motion contracts into the shared cache, then exit.",
+    )
+    youtube_search.add_argument("--contract-prefetch-workers", type=int)
+    youtube_search.add_argument("--only-exercise-id", action="append", default=[])
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
     youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
@@ -524,10 +548,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="YouTube URL to skip during discovery. Can be passed multiple times.",
     )
     youtube_search.add_argument("--include-disabled", action="store_true")
+    youtube_search.add_argument(
+        "--prefetched-candidates-json",
+        help="Reuse a matching raw candidate-prefetch manifest before searching any new queries.",
+    )
+    youtube_search.add_argument(
+        "--prefetch-only",
+        action="store_true",
+        help="Only search for candidates and warm the preview cache; do not start pose or llama.cpp review.",
+    )
 
     list_plan_exercises = subparsers.add_parser(
         "list-workout-plan-exercises",
-        help="Extract motion-generatable exercises from a workout plan JSON.",
+        help="Extract motion-generatable exercises from a workout plan or exercise-library JSON.",
     )
     list_plan_exercises.add_argument("--workout-plan-json", required=True)
     list_plan_exercises.add_argument(
@@ -539,11 +572,31 @@ def build_parser() -> argparse.ArgumentParser:
     list_plan_exercises.add_argument("--out-json", required=True)
     list_plan_exercises.add_argument("--include-disabled", action="store_true")
 
+    source_prefetch = subparsers.add_parser(
+        "prefetch-youtube-sources",
+        help="Download ranked full-resolution YouTube sources into the shared bake cache.",
+    )
+    source_prefetch.add_argument("--candidates-json", required=True, type=Path)
+    source_prefetch.add_argument("--youtube-source-cache-dir", required=True, type=Path)
+    source_prefetch.add_argument("--youtube-cookies", type=Path)
+    source_prefetch.add_argument("--max-candidates", type=int, default=3)
+    source_prefetch.add_argument("--start-index", type=int, default=0)
+    source_prefetch.add_argument("--workers", type=int, default=2)
+    source_prefetch.add_argument("--out-json", required=True, type=Path)
+
     bake_and_rank = subparsers.add_parser(
         "bake-and-rank",
         help="Run WHAM, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
+    bake_and_rank.add_argument(
+        "--staged-wave-manifest",
+        type=Path,
+        help=(
+            "Run a cache-first source/WHAM/final-validation wave described by this JSON file. "
+            "The normal bake options become the shared settings for every item."
+        ),
+    )
     bake_and_rank.add_argument("--fallback-candidates", type=int, default=DEFAULT_FALLBACK_CANDIDATES)
     bake_and_rank.add_argument(
         "--max-source-window-attempts",
@@ -880,7 +933,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--artifact-retention",
         choices=("debug", "full"),
-        default="full",
+        default="debug",
         help=(
             "debug keeps final preview/Wear/debug evidence and prunes raw WHAM/frame/source intermediates; "
             "full keeps all generated files."
@@ -900,6 +953,29 @@ def build_parser() -> argparse.ArgumentParser:
     reselect_baked.add_argument("--review-frames", type=int)
     reselect_baked.add_argument("--max-review-windows", type=int)
     reselect_baked.add_argument("--max-selected-results", type=int)
+
+    revalidate_library = subparsers.add_parser(
+        "revalidate-library-workspace",
+        help="Revalidate existing selected exercise-library motions under the current quality policy.",
+    )
+    revalidate_library.add_argument("--workspace-root", required=True)
+    revalidate_library.add_argument("--exercise-library-json", required=True)
+    revalidate_library.add_argument(
+        "--equipment-json",
+        help="Optional equipment export JSON. Exercise-library packages already embed equipment.",
+    )
+    revalidate_library.add_argument("--out-json", required=True)
+    revalidate_library.add_argument(
+        "--only-exercise-slug",
+        action="append",
+        default=[],
+        help="Revalidate only the named workspace slug; repeat for multiple exercises.",
+    )
+    revalidate_library.add_argument(
+        "--selected-artifacts-only",
+        action="store_true",
+        help="Audit each retained selection without searching historical alternatives after a rejection.",
+    )
 
     audit_selected = subparsers.add_parser(
         "audit-selected",
@@ -1333,6 +1409,7 @@ def main() -> None:
                     "slug": exercise.slug,
                     "sourceExerciseName": exercise.source_name,
                     "equipmentQualifiedExerciseName": exercise.equipment_qualified_name,
+                    "motionContext": exercise.motion_context,
                     "exerciseNameRewrite": {
                         "applied": exercise.name_was_rewritten,
                         "reason": exercise.name_rewrite_reason,
@@ -1353,21 +1430,123 @@ def main() -> None:
             video_ids=args.exclude_youtube_video_id,
             urls=args.exclude_youtube_url,
         )
+        settings = build_youtube_ranking_settings(
+            args,
+            preview_cache_dir=preview_cache_dir,
+            excluded_candidate_keys=excluded_candidate_keys,
+        )
+        if args.contract_prefetch_only:
+            last_reported = 0
+
+            def report_contract_progress(
+                completed: int,
+                total: int,
+                result: dict[str, object],
+            ) -> None:
+                nonlocal last_reported
+                if completed < total and completed - last_reported < 10:
+                    return
+                last_reported = completed
+                print(
+                    f"Exercise contracts: {completed}/{total} complete "
+                    f"(latest: {result.get('exerciseName')} -> {result.get('status')}).",
+                    flush=True,
+                )
+
+            report = prefetch_exercise_motion_contracts(
+                workout_plan_json=Path(args.workout_plan_json),
+                equipment_json=Path(args.equipment_json) if args.equipment_json else None,
+                out_json=out_json,
+                settings=settings,
+                exercise_ids=set(args.only_exercise_id),
+                workers=args.contract_prefetch_workers,
+                progress_callback=report_contract_progress,
+            )
+            print(f"Exercise contract report: {out_json.resolve()}")
+            print(f"Counts: {report['counts']}")
+            return
+        if args.prefetch_only:
+            manifest = prefetch_youtube_candidate_previews(
+                workout_plan_json=Path(args.workout_plan_json),
+                equipment_json=Path(args.equipment_json) if args.equipment_json else None,
+                out_json=out_json,
+                settings=settings,
+            )
+            print(f"YouTube prefetch JSON: {out_json.resolve()}")
+            print(f"Exercises: {len(manifest['exercises'])}")
+            return
         manifest = discover_and_rank_youtube_candidates(
             workout_plan_json=Path(args.workout_plan_json),
             equipment_json=Path(args.equipment_json) if args.equipment_json else None,
             out_json=out_json,
-            settings=build_youtube_ranking_settings(
-                args,
-                preview_cache_dir=preview_cache_dir,
-                excluded_candidate_keys=excluded_candidate_keys,
+            settings=settings,
+            prefetched_candidates_json=(
+                Path(args.prefetched_candidates_json)
+                if args.prefetched_candidates_json
+                else None
             ),
         )
         print(f"YouTube candidates JSON: {Path(args.out_json).resolve()}")
         print(f"Exercises: {len(manifest['exercises'])}")
         return
+    if args.command == "prefetch-youtube-sources":
+        manifest = prefetch_ranked_youtube_sources(
+            candidates_json=args.candidates_json,
+            youtube_source_cache_dir=args.youtube_source_cache_dir,
+            youtube_cookies=args.youtube_cookies,
+            max_candidates=args.max_candidates,
+            start_index=args.start_index,
+            workers=args.workers,
+        )
+        args.out_json.parent.mkdir(parents=True, exist_ok=True)
+        args.out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print(
+            "Full-source prefetch: "
+            f"{manifest['cachedOrDownloadedCount']}/{manifest['requestedCount']} ready, "
+            f"{manifest['failedCount']} failed."
+        )
+        print(f"Full-source prefetch JSON: {args.out_json.resolve()}")
+        return
     if args.command == "bake-and-rank":
-        manifest = run_bake_and_rank_pipeline(build_bake_and_rank_request(args))
+        request = build_bake_and_rank_request(args)
+        if args.staged_wave_manifest is not None:
+            wave_manifest_path = args.staged_wave_manifest.expanduser().resolve()
+            wave_payload = json.loads(wave_manifest_path.read_text(encoding="utf-8"))
+            wave_id = str(wave_payload.get("waveId") or wave_manifest_path.stem)
+            wave_workspace = Path(
+                wave_payload.get("workspace") or wave_manifest_path.parent / wave_id
+            )
+            wave_items: list[StagedWaveItem] = []
+            for index, item_payload in enumerate(wave_payload.get("items") or []):
+                if not isinstance(item_payload, dict):
+                    continue
+                candidates_json = Path(str(item_payload["candidatesJson"])).expanduser().resolve()
+                item_workspace = Path(str(item_payload["workspace"])).expanduser().resolve()
+                exercise_id = str(item_payload.get("exerciseId") or f"exercise-{index + 1}")
+                exercise_name = str(item_payload.get("exerciseName") or exercise_id)
+                wave_items.append(
+                    StagedWaveItem(
+                        exercise_id=exercise_id,
+                        exercise_name=exercise_name,
+                        request=replace(
+                            request,
+                            candidates_json=candidates_json,
+                            workspace=item_workspace,
+                        ),
+                    )
+                )
+            report = run_staged_bake_wave(
+                wave_items,
+                workspace=wave_workspace,
+                wave_id=wave_id,
+                progress=lambda message: print(message, flush=True),
+            )
+            print(
+                f"Batch finished: {report['completedExerciseCount']} kept, "
+                f"{report['retryExerciseCount']} need another try."
+            )
+            return
+        manifest = run_bake_and_rank_pipeline(request)
         selection_path = Path(args.workspace) / "selection_manifest.json"
         print(f"Selection manifest: {selection_path.resolve()}")
         selected = manifest.get("selected")
@@ -1411,6 +1590,26 @@ def main() -> None:
         else:
             print("Selected Wear skeleton: none")
             raise SystemExit(1)
+        return
+    if args.command == "revalidate-library-workspace":
+        exercises = load_workout_plan_exercises(
+            Path(args.exercise_library_json),
+            equipment_path=Path(args.equipment_json) if args.equipment_json else None,
+        )
+        report = revalidate_library_workspace(
+            workspace_root=Path(args.workspace_root),
+            motion_context_by_exercise_id={
+                exercise.exercise_id: exercise.motion_context
+                for exercise in exercises
+            },
+            exercise_id_by_slug={exercise.slug: exercise.exercise_id for exercise in exercises},
+            exercise_slugs=set(args.only_exercise_slug),
+            selected_artifacts_only=args.selected_artifacts_only,
+            out_json=Path(args.out_json),
+            progress=lambda message: print(message, flush=True),
+        )
+        print(f"Revalidation report: {Path(args.out_json).resolve()}")
+        print(f"Counts: {report['counts']}")
         return
     if args.command == "audit-selected":
         report = audit_selected_outputs(
@@ -1570,4 +1769,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Interrupted. Completed checkpoints were preserved and owned processes were stopped.", flush=True)
+        raise SystemExit(130) from None

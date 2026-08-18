@@ -83,6 +83,7 @@ def cleanup_motion_clip(
     motion_threshold: float = 0.015,
     padding_frames: int = 3,
     ground_contact_mode: str = "unknown",
+    support_mode_hint: str | None = None,
 ) -> tuple[MotionClip, CleanupStats]:
     repaired_clip, repaired_joint_outliers = repair_isolated_joint_position_outliers(clip)
     trimmed_clip, start_trim, end_trim = trim_static_edges(
@@ -92,19 +93,32 @@ def cleanup_motion_clip(
     )
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
-    support_mode = detect_support_mode(trimmed_clip)
+    support_mode = detect_support_mode(trimmed_clip, support_mode_hint=support_mode_hint)
+    preserve_horizontal_orientation = support_mode in {
+        "horizontal_unspecified",
+        "supine",
+        "prone",
+    }
     raw_support_states = detect_support_contact_states(trimmed_clip, support_mode=support_mode)
-    grounded = ground_to_floor(
-        trimmed_clip,
-        support_states=raw_support_states,
-        support_mode=support_mode,
+    grounded = (
+        trimmed_clip
+        if preserve_horizontal_orientation
+        else ground_to_floor(
+            trimmed_clip,
+            support_states=raw_support_states,
+            support_mode=support_mode,
+        )
     )
     support_states = detect_support_contact_states(grounded, support_mode=support_mode)
     support_ground_y = estimate_support_ground_height(grounded, support_states)
-    support_stabilized = stabilize_global_translation_from_support_contacts(
-        grounded,
-        contact_states=support_states,
-        support_ground_y=support_ground_y,
+    support_stabilized = (
+        grounded
+        if preserve_horizontal_orientation
+        else stabilize_global_translation_from_support_contacts(
+            grounded,
+            contact_states=support_states,
+            support_ground_y=support_ground_y,
+        )
     )
     smoothed = smooth_root_translation(
         support_stabilized,
@@ -113,10 +127,18 @@ def cleanup_motion_clip(
         beta=one_euro_beta,
         derivative_cutoff=one_euro_derivative_cutoff,
     )
-    vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
-        smoothed,
-        ground_contact_mode="continuous" if support_mode == "quadruped" else ground_contact_mode,
-    )
+    if preserve_horizontal_orientation:
+        vertically_grounded = smoothed
+        vertical_grounding = {
+            "applied": False,
+            "groundContactMode": str(ground_contact_mode or "unknown").strip().casefold(),
+            "reason": "horizontal_support_orientation_requires_explicit_solver",
+        }
+    else:
+        vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
+            smoothed,
+            ground_contact_mode="continuous" if support_mode == "quadruped" else ground_contact_mode,
+        )
     if support_mode == "quadruped":
         support_constrained, support_constraint = solve_quadruped_support(
             vertically_grounded,
@@ -127,7 +149,14 @@ def cleanup_motion_clip(
         )
     else:
         support_constrained = vertically_grounded
-        support_constraint = {"applied": False, "reason": "upright_support_uses_existing_grounding"}
+        support_constraint = {
+            "applied": False,
+            "reason": (
+                "horizontal_support_orientation_requires_explicit_solver"
+                if preserve_horizontal_orientation
+                else "upright_support_uses_existing_grounding"
+            ),
+        }
     final_support_states = detect_support_contact_states(
         support_constrained,
         support_mode=support_mode,
@@ -1205,7 +1234,14 @@ def horizontal_frame_speed(clip: MotionClip, *, frame_index: int, joint_name: st
     return horizontal_joint_distance(clip.frames[frame_index - 1], clip.frames[frame_index], joint_name)
 
 
-def detect_support_mode(clip: MotionClip) -> str:
+def detect_support_mode(
+    clip: MotionClip,
+    *,
+    support_mode_hint: str | None = None,
+) -> str:
+    normalized_hint = str(support_mode_hint or "").strip().casefold()
+    if normalized_hint in {"upright", "quadruped", "supine", "prone"}:
+        return normalized_hint
     torso_samples: list[tuple[float, float]] = []
     for frame in clip.frames:
         pelvis = frame.joints.get("pelvis")
@@ -1219,9 +1255,11 @@ def detect_support_mode(clip: MotionClip) -> str:
         return "upright"
     vertical = statistics.median(sample[0] for sample in torso_samples)
     horizontal = statistics.median(sample[1] for sample in torso_samples)
-    required_joints = ("left_hand", "right_hand", "left_knee", "right_knee")
-    if horizontal > vertical and all(joint in clip.joint_names for joint in required_joints):
-        return "quadruped"
+    if horizontal > vertical:
+        # A horizontal torso is shared by supine, prone, bench-supported, and
+        # true hands-and-knees exercises.  Geometry alone cannot distinguish
+        # them reliably, so destructive quadruped grounding must be opt-in.
+        return "horizontal_unspecified"
     return "upright"
 
 

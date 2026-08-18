@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import gc
 import importlib.util
 import json
 import os
@@ -88,6 +89,16 @@ def load_wham_once() -> dict[str, Any]:
 
     demo.DetectionModel = cached_detection_model
     demo.FeatureExtractor = cached_feature_extractor
+    preflight_path = Path(__file__).with_name("wham_tracking_preflight.py")
+    preflight_spec = importlib.util.spec_from_file_location(
+        "wham_tracking_preflight",
+        preflight_path,
+    )
+    if preflight_spec is None or preflight_spec.loader is None:
+        raise RuntimeError(f"Failed to load WHAM tracking preflight from {preflight_path}")
+    tracking_preflight = importlib.util.module_from_spec(preflight_spec)
+    sys.modules["wham_tracking_preflight"] = tracking_preflight
+    preflight_spec.loader.exec_module(tracking_preflight)
     gpu_name = None
     try:
         gpu_name = torch.cuda.get_device_name()
@@ -97,11 +108,29 @@ def load_wham_once() -> dict[str, Any]:
         "demo": demo,
         "cfg": cfg,
         "network": network,
+        "trackingPreflight": tracking_preflight,
         "loadSeconds": round(time.perf_counter() - started, 3),
         "gpuName": gpu_name,
         "preprocessingModels": preprocessing_models,
         "preprocessingLoadSeconds": lambda: preprocessing_load_seconds,
     }
+
+
+def release_wham_state(wham_state: dict[str, Any]) -> None:
+    """Release CUDA allocations before advertising that the worker stopped."""
+    wham_state.clear()
+    sys.modules.pop("wham_demo", None)
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except Exception:
+        # Process exit remains the final release boundary even if CUDA cleanup
+        # itself cannot run during shutdown.
+        pass
 
 
 def sequence_output_dir(output_root: Path, video_path: Path) -> Path:
@@ -134,6 +163,41 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
         wham_state["demo"].args = SimpleNamespace(run_smplify=bool(job.get("runSmplify", True)))
         with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open("w", encoding="utf-8") as stderr_handle:
             with contextlib.redirect_stdout(stdout_handle), contextlib.redirect_stderr(stderr_handle):
+                preflight_report: dict[str, Any] | None = None
+                preflight_seconds = 0.0
+                if bool(job.get("trackingPreflight", False)):
+                    preflight_started = time.perf_counter()
+                    preflight_report = wham_state["trackingPreflight"].run_tracking_preflight(
+                        video_path=video_path,
+                        output_root=output_root,
+                        report_path=output_path / "tracking_preflight.json",
+                        required_start_seconds=job.get("requiredStartSeconds"),
+                        required_end_seconds=job.get("requiredEndSeconds"),
+                        cfg=wham_state["cfg"],
+                        detection_model_factory=wham_state["demo"].DetectionModel,
+                        feature_extractor_factory=wham_state["demo"].FeatureExtractor,
+                    )
+                    preflight_seconds = time.perf_counter() - preflight_started
+                    payload["trackingPreflight"] = preflight_report
+                    if not bool(preflight_report.get("passed")):
+                        payload.update(
+                            {
+                                "status": "rejected_tracking_preflight",
+                                "elapsedSeconds": round(time.perf_counter() - started, 3),
+                                "timings": {
+                                    "workerModelLoadSeconds": wham_state["loadSeconds"],
+                                    "trackingPreflightSeconds": round(preflight_seconds, 3),
+                                    "trackingPreflightCacheHit": preflight_report.get("cacheStatus") == "reused",
+                                    "jobElapsedSeconds": round(time.perf_counter() - started, 3),
+                                },
+                            }
+                        )
+                        write_json(result_path, payload)
+                        print(
+                            f"{RESULT_PREFIX} {json.dumps({'jobId': job_id, 'status': payload['status']})}",
+                            flush=True,
+                        )
+                        return
                 wham_state["demo"].run(
                     wham_state["cfg"],
                     str(video_path),
@@ -160,6 +224,11 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
                         3,
                     ),
                     "preprocessingCacheHit": preprocessing_cache_hit,
+                    "trackingPreflightSeconds": round(preflight_seconds, 3),
+                    "trackingPreflightCacheHit": bool(
+                        preflight_report
+                        and preflight_report.get("cacheStatus") == "reused"
+                    ),
                     "jobElapsedSeconds": round(time.perf_counter() - started, 3),
                 },
             }
@@ -229,6 +298,7 @@ def main() -> int:
                 running_path.unlink()
             except FileNotFoundError:
                 pass
+    release_wham_state(wham_state)
     write_json(state_dir / "stopped.json", {"status": "stopped", "pid": os.getpid()})
     return 0
 

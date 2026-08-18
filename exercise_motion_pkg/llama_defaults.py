@@ -1,4 +1,4 @@
-DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Downloads\\llama-b10038-bin-win-cuda-12.4-x64"
+DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Downloads\\llama-b10424-bin-win-cuda-12.4-x64"
 DEFAULT_LLAMA_CPP_SERVER_COMMAND = f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe"
 DEFAULT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
 DEFAULT_LLAMA_CPP_MMPROJ = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(5).gguf"
@@ -8,9 +8,12 @@ DEFAULT_TEXT_LLAMA_CPP_MODEL = DEFAULT_LLAMA_CPP_MODEL
 DEFAULT_TEXT_LLAMA_CPP_MMPROJ = None
 DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL = DEFAULT_TEXT_LLAMA_CPP_MODEL
 DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MMPROJ = DEFAULT_TEXT_LLAMA_CPP_MMPROJ
-DEFAULT_LLAMA_CPP_TEMPERATURE = 1.0
-DEFAULT_LLAMA_CPP_TOP_P = 0.95
-DEFAULT_LLAMA_CPP_TOP_K = 64
+# Motion discovery and validation are structured classification tasks. Greedy
+# decoding removes run-to-run candidate drift and avoids stochastic expansions
+# that can multiply the number of reviewed chunks.
+DEFAULT_LLAMA_CPP_TEMPERATURE = 0.0
+DEFAULT_LLAMA_CPP_TOP_P = 1.0
+DEFAULT_LLAMA_CPP_TOP_K = 0
 DEFAULT_LLAMA_CPP_REASONING_BUDGET = 64
 DEFAULT_LLAMA_CPP_REASONING_BUDGET_MESSAGE = "Now stop thinking and return the JSON object."
 DEFAULT_LLAMA_CPP_CTX_SIZE = 8192

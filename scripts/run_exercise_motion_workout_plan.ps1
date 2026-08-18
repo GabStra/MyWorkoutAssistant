@@ -6,6 +6,7 @@ param(
     [string]$EquipmentJson,
     [string]$WorkspaceRoot = "build/exercise_motion/workout-plan",
     [string]$MobilePackageOutputJson = "",
+    [string]$IncrementalMobilePackageOutputJson = "",
     [ValidateSet("quality", "fast", "max")]
     [string]$SpeedProfile = "fast",
     [string[]]$OnlyExerciseSlug = @(),
@@ -21,6 +22,7 @@ param(
     [string]$YouTubePreviewCacheDir,
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 100,
+    [double]$YouTubeSearchTimeoutSeconds = 60.0,
     [int]$MaxCandidates = 12,
     [int]$CandidateReviewBatchSize = 12,
     [int]$CandidateReviewTargetSuitableCount = 2,
@@ -39,6 +41,7 @@ param(
     [int]$VisionLlmWorkers = 4,
     [switch]$NoExerciseNameRewrite,
     [switch]$NoExerciseMotionContract,
+    [switch]$SkipExerciseMotionContractPrefetch,
     [switch]$SkipVisionRanking,
     [switch]$SemanticGateWithLlamaCpp,
     [switch]$SkipSemanticGate,
@@ -63,18 +66,27 @@ param(
     [int]$ExerciseWorkers = 1,
     [Nullable[int]]$DiscoveryWorkers,
     [Nullable[int]]$BakeWorkers,
+    [int]$StagedWaveSize = 0,
+    [switch]$CpuPrefetchDuringBake,
+    [int]$PrefetchWorkers = 2,
+    [int]$PrefetchQueueDepth = 6,
+    [int]$SourceDownloadWorkers = 2,
+    [int]$SourceDownloadCandidates = 3,
     [ValidateSet("auto", "allow", "avoid")]
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 5,
     [int]$MaxFinalOutputRejections = 0,
-    [double]$SourceReviewTimeoutSeconds = 90.0,
+    [double]$SourceReviewTimeoutSeconds = 180.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
     [double]$CandidateTimeoutSeconds = 0.0,
     [double]$ExerciseTimeoutSeconds = 0.0,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
+    [Alias("Resume")]
     [switch]$ReuseExistingSelected,
+    [switch]$DisableStageResume,
+    [switch]$DeferAfterFirstAttempt,
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
@@ -102,7 +114,7 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 0.0,
     [switch]$SkipPreWhamSourceValidation,
-    [int]$SegmentClassificationWorkers = 3,
+    [int]$SegmentClassificationWorkers = 4,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
     [switch]$SkipAdaptivePreviewSettings,
@@ -117,10 +129,11 @@ param(
     [bool]$FinalOutputValidation = $true,
     [switch]$SkipFinalOutputValidation,
     [switch]$TwoScaleSourceValidation,
+    [switch]$SkipTwoScaleSourceValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe",
     [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(5).gguf",
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "C:\Users\gabri\Downloads\mtp-gemma-4-12B-it(1).gguf",
@@ -129,20 +142,20 @@ param(
     [AllowEmptyString()]
     [string]$TextLlamaCppMmproj = "",
     [string]$LlamaCppBackend = "gpu",
-    [double]$LlamaCppTemperature = 1.0,
-    [Nullable[double]]$LlamaCppTopP = 0.95,
-    [Nullable[int]]$LlamaCppTopK = 64,
-    [Nullable[int]]$LlamaCppCtxSize = 8192,
+    [double]$LlamaCppTemperature = 0.0,
+    [Nullable[double]]$LlamaCppTopP = 1.0,
+    [Nullable[int]]$LlamaCppTopK = 0,
+    [Nullable[int]]$LlamaCppCtxSize = 32768,
     [Nullable[int]]$LlamaCppBatchSize = 256,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 1,
-    [Nullable[int]]$LlamaCppThreadsHttp,
+    [Nullable[int]]$LlamaCppParallel = 4,
+    [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 8192,
+    [Nullable[int]]$LlamaCppFitCtx = 32768,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
     [Nullable[int]]$LlamaCppImageMinTokens = 1024,
     [Nullable[int]]$LlamaCppImageMaxTokens = 2048,
@@ -153,18 +166,38 @@ param(
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
-    [double]$LlamaCppRequestTimeoutSeconds = 240.0,
+    [double]$LlamaCppRequestTimeoutSeconds = 180.0,
     [ValidateSet("debug", "full")]
-    [string]$ArtifactRetention = "full",
+    [string]$ArtifactRetention = "debug",
     [int]$ProgressIntervalSeconds = 90,
     [switch]$DetailedProgressLogs,
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
 )
 
+$SelectionValidationPolicyVersion = 47
+$RetainedSelectedRevalidationVersion = 3
+
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
+trap {
+    if (
+        $_.Exception -is [System.Management.Automation.PipelineStoppedException] -or
+        (Test-MotionRunCancelRequested)
+    ) {
+        Write-MotionInterruptReceived
+        exit 130
+    }
+    throw
+}
+
 $script:LastProgressDetailByLogPath = @{}
 $script:LiveLogStateByPath = @{}
+$script:LastStagedWaveCheckpointVersionByPath = @{}
+$script:AnnouncedIndividualGeneration = $false
+$script:WhamWorkerStartedOnce = $false
+$discoveryStagePolicyVersion = 1
+$sourceDownloadStagePolicyVersion = 1
 
 function Get-RepoRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -207,6 +240,16 @@ function ConvertTo-StringSet {
         }
     }
     return $set
+}
+
+function Get-ArgumentArraySha256 {
+    param([string[]]$Arguments)
+
+    $signatureText = [string]::Join("`u{001f}", @($Arguments))
+    $signatureBytes = [System.Text.Encoding]::UTF8.GetBytes($signatureText)
+    return [Convert]::ToHexString(
+        [System.Security.Cryptography.SHA256]::HashData($signatureBytes)
+    ).ToLowerInvariant()
 }
 
 function Add-LlamaCppTextArgs {
@@ -281,7 +324,7 @@ function Add-LlamaCppTuningArgs {
 }
 
 function Ensure-LlamaCppParallelContext {
-    $minContextPerSlot = 4096
+    $minContextPerSlot = 8192
     $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
     $minTotalContext = $parallelSlots * $minContextPerSlot
     if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {
@@ -410,8 +453,13 @@ function Resolve-MotionPythonCommand {
 function Invoke-PythonModule {
     param([string[]]$Arguments)
     & $PythonCommand @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "python command failed with exit code $LASTEXITCODE."
+    $pythonExitCode = $LASTEXITCODE
+    if ((Test-MotionRunCancelRequested) -or $pythonExitCode -eq 130) {
+        Write-MotionInterruptReceived
+        exit 130
+    }
+    if ($pythonExitCode -ne 0) {
+        throw "python command failed with exit code $pythonExitCode."
     }
 }
 
@@ -569,7 +617,13 @@ function New-TerminalExerciseSummary {
         selectedCandidateDecisionsPath = $null
         attempts = @($WorkItem.attempts)
         timings = [ordered]@{
+            prefetchSeconds = [Math]::Round([double]$WorkItem.prefetchSeconds, 3)
+            prefetchReused = [bool]$WorkItem.prefetchReused
             discoverySeconds = [Math]::Round([double]$WorkItem.discoverySeconds, 3)
+            discoveryReused = [bool]$WorkItem.discoveryReused
+            sourceDownloadSeconds = [Math]::Round([double]$WorkItem.sourceDownloadSeconds, 3)
+            primarySourceDownloadReused = [bool]$WorkItem.primarySourceDownloadReused
+            fallbackSourceDownloadReused = [bool]$WorkItem.fallbackSourceDownloadReused
             bakeCommandSeconds = [Math]::Round([double]$WorkItem.bakeCommandSeconds, 3)
             discoveryAttempts = [int]$WorkItem.discoveryAttemptCount
             bakeAttempts = [int]$WorkItem.bakeAttemptCount
@@ -601,7 +655,7 @@ function New-OneExercisePlanJson {
         id = [string]($Exercise.exerciseId ?? $Exercise.id ?? $Exercise.slug ?? $Exercise.exerciseName ?? "exercise")
         name = [string]($Exercise.exerciseName ?? $Exercise.name ?? $Exercise.id ?? "exercise")
     }
-    foreach ($propertyName in @("sourceExerciseName", "equipmentQualifiedExerciseName", "exerciseNameRewrite")) {
+    foreach ($propertyName in @("sourceExerciseName", "equipmentQualifiedExerciseName", "exerciseNameRewrite", "motionContext")) {
         if ($Exercise.PSObject.Properties.Name -contains $propertyName) {
             $exerciseRecord[$propertyName] = $Exercise.$propertyName
         }
@@ -627,6 +681,77 @@ function Copy-SelectedFile {
     $destinationPath = Join-Path $DestinationDirectory $DestinationFileName
     Copy-Item -LiteralPath $SourcePath -Destination $destinationPath -Force
     return $destinationPath
+}
+
+function Copy-SelectedPreviewRuntimeAssets {
+    param(
+        [string]$SourcePreviewHtmlPath,
+        [string]$DestinationDirectory
+    )
+    if ([string]::IsNullOrWhiteSpace($SourcePreviewHtmlPath)) {
+        return
+    }
+    $sourceDirectory = Split-Path -Parent $SourcePreviewHtmlPath
+    if ([string]::IsNullOrWhiteSpace($sourceDirectory) -or -not (Test-Path -LiteralPath $sourceDirectory)) {
+        return
+    }
+    foreach ($asset in @(Get-ChildItem -LiteralPath $sourceDirectory -Filter "three.module.*.js" -File -ErrorAction SilentlyContinue)) {
+        Copy-SelectedFile `
+            -SourcePath $asset.FullName `
+            -DestinationDirectory $DestinationDirectory `
+            -DestinationFileName $asset.Name | Out-Null
+    }
+}
+
+function Copy-SelectedSourceAuditEvidence {
+    param(
+        [string]$CandidateWorkspace,
+        [string]$DestinationDirectory
+    )
+    if ([string]::IsNullOrWhiteSpace($CandidateWorkspace)) {
+        return $null
+    }
+
+    $sourceDirectory = Join-Path $CandidateWorkspace "segment_detection"
+    $sourceValidationPath = Join-Path $sourceDirectory "exact_source_phase_validation.json"
+    if (-not (Test-Path -LiteralPath $sourceValidationPath)) {
+        return $null
+    }
+
+    $destinationAuditDirectory = Join-Path $DestinationDirectory "segment_detection"
+    New-Item -ItemType Directory -Force -Path $destinationAuditDirectory | Out-Null
+    $destinationPosePath = Copy-SelectedFile `
+        -SourcePath (Join-Path $sourceDirectory "exact_source_pose_reference.json") `
+        -DestinationDirectory $destinationAuditDirectory `
+        -DestinationFileName "exact_source_pose_reference.json"
+    $destinationValidationPath = Copy-SelectedFile `
+        -SourcePath $sourceValidationPath `
+        -DestinationDirectory $destinationAuditDirectory `
+        -DestinationFileName "exact_source_phase_validation.json"
+    $destinationSelectionPath = Copy-SelectedFile `
+        -SourcePath (Join-Path $sourceDirectory "segment_selection.json") `
+        -DestinationDirectory $destinationAuditDirectory `
+        -DestinationFileName "segment_selection.json"
+
+    if ($destinationPosePath -and $destinationValidationPath) {
+        try {
+            $validation = Get-Content -LiteralPath $destinationValidationPath -Raw | ConvertFrom-Json
+            if ($validation.metrics) {
+                $validation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
+                $validation | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $destinationValidationPath -Encoding UTF8
+            }
+            if ($destinationSelectionPath) {
+                $selection = Get-Content -LiteralPath $destinationSelectionPath -Raw | ConvertFrom-Json
+                if ($selection.exactSourcePhaseValidation -and $selection.exactSourcePhaseValidation.metrics) {
+                    $selection.exactSourcePhaseValidation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
+                    $selection | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $destinationSelectionPath -Encoding UTF8
+                }
+            }
+        } catch {
+            Write-Warning "Could not rewrite retained source-audit paths for '$CandidateWorkspace': $($_.Exception.Message)"
+        }
+    }
+    return $destinationAuditDirectory
 }
 
 function Convert-SelectedSourceVideoToWebm {
@@ -673,7 +798,10 @@ function ConvertTo-UrlComponent {
 }
 
 function ConvertTo-SelectedPreviewOptionsJson {
-    param([object]$Options)
+    param(
+        [object]$Options,
+        [string]$WearSkeletonPath
+    )
 
     $previewOptions = [ordered]@{}
     if ($Options -is [System.Collections.IDictionary]) {
@@ -687,8 +815,37 @@ function ConvertTo-SelectedPreviewOptionsJson {
             }
         }
     }
-    $previewOptions["cameraYawDegrees"] = 45.0
-    $previewOptions["cameraPitchDegrees"] = 30.0
+    if (-not [string]::IsNullOrWhiteSpace($WearSkeletonPath) -and (Test-Path -LiteralPath $WearSkeletonPath)) {
+        try {
+            $skeletonPayload = Get-Content -Raw -LiteralPath $WearSkeletonPath | ConvertFrom-Json
+            $selectedPreviewSettings = Get-ObjectProperty -Object $skeletonPayload -Name "selectedPreviewSettings"
+            $wearDisplay = Get-ObjectProperty -Object $skeletonPayload -Name "wearDisplay"
+            $cameraYawDegrees = Get-OptionalDouble -Value (
+                Get-ObjectProperty -Object $selectedPreviewSettings -Name "cameraYawDegrees"
+            )
+            if ($null -eq $cameraYawDegrees) {
+                $cameraYawDegrees = Get-OptionalDouble -Value (
+                    Get-ObjectProperty -Object $wearDisplay -Name "viewYawDegrees"
+                )
+            }
+            $cameraPitchDegrees = Get-OptionalDouble -Value (
+                Get-ObjectProperty -Object $selectedPreviewSettings -Name "cameraPitchDegrees"
+            )
+            if ($null -eq $cameraPitchDegrees) {
+                $cameraPitchDegrees = Get-OptionalDouble -Value (
+                    Get-ObjectProperty -Object $wearDisplay -Name "viewPitchDegrees"
+                )
+            }
+            if ($null -ne $cameraYawDegrees) {
+                $previewOptions["cameraYawDegrees"] = $cameraYawDegrees
+            }
+            if ($null -ne $cameraPitchDegrees) {
+                $previewOptions["cameraPitchDegrees"] = $cameraPitchDegrees
+            }
+        } catch {
+            Write-Warning "Could not read selected preview camera settings from $WearSkeletonPath; preserving the recorded option values."
+        }
+    }
     return ($previewOptions | ConvertTo-Json -Depth 32 -Compress)
 }
 
@@ -869,6 +1026,14 @@ function Start-WhamWarmWorker {
         $dockerArgs += @("--shm-size", $WhamDockerShmSize)
     }
     $dockerArgs += @(
+        "-e", "WHAM_POSE_BACKEND=vitpose",
+        "-e", "WHAM_POSE_BATCH_SIZE=16",
+        "-e", "WHAM_FEATURE_BATCH_SIZE=32",
+        "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
+    )
+    $dockerArgs += @(
+        "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_preflight.py')):/worker/wham_tracking_preflight.py:ro",
+        "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_coverage.py')):/worker/wham_tracking_coverage.py:ro",
         "-v", "$($resolvedWhamRepoPath):/code",
         "-v", "$($MountRoot):/workspace",
         "-v", "$($SessionDir):/worker_state",
@@ -879,7 +1044,12 @@ function Start-WhamWarmWorker {
         "--state-dir", "/worker_state"
     )
 
-    Write-Host "Starting warm WHAM worker container '$containerName'."
+    if ($script:WhamWorkerStartedOnce) {
+        Write-Host "Restarting motion extractor..."
+    } else {
+        Write-Host "Starting motion extractor..."
+        $script:WhamWorkerStartedOnce = $true
+    }
     $containerId = (& docker @dockerArgs 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to start warm WHAM worker container: $containerId"
@@ -891,7 +1061,7 @@ function Start-WhamWarmWorker {
     while ((Get-Date) -lt $deadline) {
         if (Test-Path -LiteralPath $readyPath) {
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
-            Write-Host ("Warm WHAM worker ready in {0}s. GPU: {1}" -f $ready.loadSeconds, $ready.gpuName)
+            Write-Host ("Motion extractor ready in {0}s ({1})." -f $ready.loadSeconds, $ready.gpuName)
             return [pscustomobject]@{
                 containerName = $containerName
                 containerId = $containerId
@@ -995,6 +1165,38 @@ function Get-ExistingSelectedSummary {
     } catch {
         $selection = $null
     }
+    $revalidationPath = Join-Path $selectedOutputDir "revalidation.json"
+    $currentRevalidation = $null
+    if (Test-Path -LiteralPath $revalidationPath) {
+        try {
+            $candidateRevalidation = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json
+            if ([int]$candidateRevalidation.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion) {
+                $currentRevalidation = $candidateRevalidation
+            }
+        } catch {
+            return $null
+        }
+    }
+    if ($currentRevalidation -and $currentRevalidation.status -ne "valid") {
+        return $null
+    }
+    $bakeSelectionManifestPath = Join-Path $WorkItem.exerciseWorkspace "bake\selection_manifest.json"
+    if (
+        $currentRevalidation -and
+        -not (Test-Path -LiteralPath $bakeSelectionManifestPath) -and
+        (
+            -not ($currentRevalidation.PSObject.Properties.Name -contains "retainedSelectedArtifactFallbackVersion") -or
+            [int]$currentRevalidation.retainedSelectedArtifactFallbackVersion -lt $RetainedSelectedRevalidationVersion
+        )
+    ) {
+        return $null
+    }
+    $selectionPolicyCurrent = $selection -and (
+        $selection.PSObject.Properties.Name -contains "selectionValidationPolicyVersion"
+    ) -and [int]$selection.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
+    if (-not $selectionPolicyCurrent -and -not $currentRevalidation) {
+        return $null
+    }
     $manifestSelected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
     $manifestSelectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
         @($selection.selectedResults)
@@ -1023,7 +1225,7 @@ function Get-ExistingSelectedSummary {
         }
     }
 
-    Write-Host "[reused] $($WorkItem.exerciseName) -> $selectedOutputDir"
+    Write-Host ("Already have a movement for {0}." -f $WorkItem.exerciseName)
 
     return [ordered]@{
         exerciseId = $WorkItem.exerciseId
@@ -1052,7 +1254,7 @@ function Get-ExistingSelectedSummary {
 function Start-InitialDiscoveryJob {
     param([object]$WorkItem)
 
-    Write-Host "[start] discovery: $($WorkItem.exerciseName)"
+    Write-Host ("Finding a source for {0}." -f $WorkItem.exerciseName)
     $job = Start-Job -Name "discover-$($WorkItem.exerciseSlug)" -ScriptBlock {
         param(
             [string]$PythonCommand,
@@ -1062,7 +1264,11 @@ function Start-InitialDiscoveryJob {
             [int]$InitialTargetSuitableCount,
             [int]$MaxTargetSuitableCount,
             [int]$BaseMaxCandidates,
-            [int]$BaseVisionCandidates
+            [int]$BaseVisionCandidates,
+            [string]$ArgumentsSha256,
+            [string]$ExercisePlanSha256,
+            [string]$EquipmentSha256,
+            [int]$StagePolicyVersion
         )
 
         $ErrorActionPreference = "Continue"
@@ -1134,6 +1340,25 @@ function Start-InitialDiscoveryJob {
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
             $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0 -and (Test-Path -LiteralPath $CandidatesPath)) {
+                try {
+                    $candidatePayload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json
+                    $candidatePayload | Add-Member -NotePropertyName wrapperDiscoverySignature -NotePropertyValue ([pscustomobject]@{
+                        schemaVersion = 1
+                        policyVersion = $StagePolicyVersion
+                        completedAt = (Get-Date).ToUniversalTime().ToString("o")
+                        argumentsSha256 = $ArgumentsSha256
+                        exercisePlanSha256 = $ExercisePlanSha256
+                        equipmentSha256 = if ([string]::IsNullOrWhiteSpace($EquipmentSha256)) { $null } else { $EquipmentSha256 }
+                    }) -Force
+                    $temporaryCandidatesPath = "$CandidatesPath.tmp"
+                    $candidatePayload | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryCandidatesPath -Encoding UTF8
+                    Move-Item -Force -LiteralPath $temporaryCandidatesPath -Destination $CandidatesPath
+                } catch {
+                    "[$(Get-Date -Format o)] discovery completion signature write failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    $exitCode = 1
+                }
+            }
             $stopwatch.Stop()
             $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
             $discoverySeconds = [Math]::Round(($discoverySeconds + $elapsedSeconds), 3)
@@ -1170,18 +1395,270 @@ function Start-InitialDiscoveryJob {
             attemptIndex = $discoveryAttempts.Count
             targetSuitableCount = $targetSuitableCount
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.discoveryArgumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256, $discoveryStagePolicyVersion
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
+}
+
+function Start-CandidatePrefetchJob {
+    param([object]$WorkItem)
+
+    $job = Start-Job -Name "prefetch-$($WorkItem.exerciseSlug)" -ScriptBlock {
+        param(
+            [string]$PythonCommand,
+            [string[]]$PrefetchArguments,
+            [string]$LogPath,
+            [string]$PrefetchPath,
+            [string]$ArgumentsSha256,
+            [string]$ExercisePlanSha256,
+            [string]$EquipmentSha256
+        )
+
+        $ErrorActionPreference = "Continue"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+        "[$(Get-Date -Format o)] CPU/network candidate prefetch started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        & $PythonCommand @PrefetchArguments *>> $LogPath
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0 -and (Test-Path -LiteralPath $PrefetchPath)) {
+            try {
+                $prefetchPayload = Get-Content -LiteralPath $PrefetchPath -Raw | ConvertFrom-Json
+                $prefetchPayload | Add-Member -NotePropertyName wrapperPrefetchSignature -NotePropertyValue ([pscustomobject]@{
+                    schemaVersion = 1
+                    argumentsSha256 = $ArgumentsSha256
+                    exercisePlanSha256 = $ExercisePlanSha256
+                    equipmentSha256 = if ([string]::IsNullOrWhiteSpace($EquipmentSha256)) { $null } else { $EquipmentSha256 }
+                }) -Force
+                $temporaryPrefetchPath = "$PrefetchPath.tmp"
+                $prefetchPayload | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryPrefetchPath -Encoding UTF8
+                Move-Item -Force -LiteralPath $temporaryPrefetchPath -Destination $PrefetchPath
+            } catch {
+                "[$(Get-Date -Format o)] candidate prefetch signature write failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                $exitCode = 1
+            }
+        }
+        $stopwatch.Stop()
+        $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+        "[$(Get-Date -Format o)] CPU/network candidate prefetch finished with exit code $exitCode; elapsed ${elapsedSeconds}s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        [pscustomobject]@{
+            exitCode = $exitCode
+            stage = "candidate_prefetch"
+            prefetchSeconds = $elapsedSeconds
+        }
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.prefetchArgs), $WorkItem.logPath, $WorkItem.prefetchPath, $WorkItem.prefetchArgumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256
+    $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
+    return $job
+}
+
+function Start-SourceDownloadJob {
+    param(
+        [object]$WorkItem,
+        [string[]]$Arguments,
+        [ValidateSet("primary", "fallback")]
+        [string]$Kind
+    )
+
+    $sourceDownloadLogPath = if ($Kind -eq "primary") {
+        $WorkItem.primarySourceDownloadLogPath
+    } else {
+        $WorkItem.fallbackSourceDownloadLogPath
+    }
+    $reportPath = if ($Kind -eq "primary") {
+        $WorkItem.sourceDownloadReportPath
+    } else {
+        $WorkItem.fallbackSourceDownloadReportPath
+    }
+    $argumentsSha256 = if ($Kind -eq "primary") {
+        $WorkItem.primarySourceDownloadArgumentsSha256
+    } else {
+        $WorkItem.fallbackSourceDownloadArgumentsSha256
+    }
+    $job = Start-Job -Name "source-download-$Kind-$($WorkItem.exerciseSlug)" -ScriptBlock {
+        param(
+            [string]$PythonCommand,
+            [string[]]$SourceDownloadArguments,
+            [string]$LogPath,
+            [string]$DownloadKind,
+            [string]$ReportPath,
+            [string]$CandidatesPath,
+            [string]$ArgumentsSha256,
+            [string]$ExercisePlanSha256,
+            [string]$EquipmentSha256,
+            [int]$StagePolicyVersion
+        )
+
+        $ErrorActionPreference = "Continue"
+        "[$(Get-Date -Format o)] $DownloadKind full-source download prefetch started" | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        & $PythonCommand @SourceDownloadArguments *>> $LogPath
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0 -and (Test-Path -LiteralPath $ReportPath) -and (Test-Path -LiteralPath $CandidatesPath)) {
+            try {
+                $sourcePayload = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+                $candidateSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $CandidatesPath).Hash.ToLowerInvariant()
+                $sourcePayload | Add-Member -NotePropertyName wrapperSourceDownloadSignature -NotePropertyValue ([pscustomobject]@{
+                    schemaVersion = 1
+                    policyVersion = $StagePolicyVersion
+                    kind = $DownloadKind
+                    completedAt = (Get-Date).ToUniversalTime().ToString("o")
+                    argumentsSha256 = $ArgumentsSha256
+                    exercisePlanSha256 = $ExercisePlanSha256
+                    equipmentSha256 = if ([string]::IsNullOrWhiteSpace($EquipmentSha256)) { $null } else { $EquipmentSha256 }
+                    candidatesSha256 = $candidateSha256
+                }) -Force
+                $temporaryReportPath = "$ReportPath.tmp"
+                $sourcePayload | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryReportPath -Encoding UTF8
+                Move-Item -Force -LiteralPath $temporaryReportPath -Destination $ReportPath
+            } catch {
+                "[$(Get-Date -Format o)] $DownloadKind source-download completion signature write failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                $exitCode = 1
+            }
+        }
+        $stopwatch.Stop()
+        $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+        "[$(Get-Date -Format o)] $DownloadKind full-source download prefetch finished with exit code $exitCode; elapsed ${elapsedSeconds}s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        [pscustomobject]@{
+            exitCode = $exitCode
+            stage = "source_download_prefetch"
+            sourceDownloadSeconds = $elapsedSeconds
+            logPath = $LogPath
+        }
+    } -ArgumentList $PythonCommand, ([string[]]$Arguments), $sourceDownloadLogPath, $Kind, $reportPath, $WorkItem.exerciseCandidatesPath, $argumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256, $sourceDownloadStagePolicyVersion
+    $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
+    $job | Add-Member -MemberType NoteProperty -Name DownloadKind -Value $Kind
+    return $job
+}
+
+function Test-CandidatePrefetchReady {
+    param([object]$WorkItem)
+
+    if (-not (Test-Path -LiteralPath $WorkItem.prefetchPath)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -LiteralPath $WorkItem.prefetchPath -Raw | ConvertFrom-Json
+        if ($payload.kind -ne "youtube_candidate_prefetch") {
+            return $false
+        }
+        if ("$($payload.sourcePlanSha256)".ToLowerInvariant() -ne $WorkItem.exercisePlanSha256) {
+            return $false
+        }
+        $signature = $payload.wrapperPrefetchSignature
+        if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
+            return $false
+        }
+        if ("$($signature.argumentsSha256)".ToLowerInvariant() -ne $WorkItem.prefetchArgumentsSha256) {
+            return $false
+        }
+        if ("$($signature.exercisePlanSha256)".ToLowerInvariant() -ne $WorkItem.exercisePlanSha256) {
+            return $false
+        }
+        $cachedEquipmentHash = "$($signature.equipmentSha256)".ToLowerInvariant()
+        if ($cachedEquipmentHash -ne $WorkItem.equipmentSha256) {
+            return $false
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Test-DiscoveryStageReady {
+    param([object]$WorkItem)
+
+    if (-not (Test-Path -LiteralPath $WorkItem.exerciseCandidatesPath)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+        $signature = $payload.wrapperDiscoverySignature
+        if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
+            return $false
+        }
+        if ([int]$signature.policyVersion -ne $discoveryStagePolicyVersion) {
+            return $false
+        }
+        if ("$($signature.argumentsSha256)".ToLowerInvariant() -ne $WorkItem.discoveryArgumentsSha256) {
+            return $false
+        }
+        if ("$($signature.exercisePlanSha256)".ToLowerInvariant() -ne $WorkItem.exercisePlanSha256) {
+            return $false
+        }
+        if ("$($signature.equipmentSha256)".ToLowerInvariant() -ne $WorkItem.equipmentSha256) {
+            return $false
+        }
+        return @($payload.exercises).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+function Test-SourceDownloadStageReady {
+    param(
+        [object]$WorkItem,
+        [ValidateSet("primary", "fallback")]
+        [string]$Kind
+    )
+
+    $reportPath = if ($Kind -eq "primary") {
+        $WorkItem.sourceDownloadReportPath
+    } else {
+        $WorkItem.fallbackSourceDownloadReportPath
+    }
+    $argumentsSha256 = if ($Kind -eq "primary") {
+        $WorkItem.primarySourceDownloadArgumentsSha256
+    } else {
+        $WorkItem.fallbackSourceDownloadArgumentsSha256
+    }
+    if (-not (Test-Path -LiteralPath $reportPath) -or -not (Test-Path -LiteralPath $WorkItem.exerciseCandidatesPath)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $signature = $payload.wrapperSourceDownloadSignature
+        if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
+            return $false
+        }
+        if ([int]$signature.policyVersion -ne $sourceDownloadStagePolicyVersion -or "$($signature.kind)" -ne $Kind) {
+            return $false
+        }
+        if ("$($signature.argumentsSha256)".ToLowerInvariant() -ne $argumentsSha256) {
+            return $false
+        }
+        if ("$($signature.exercisePlanSha256)".ToLowerInvariant() -ne $WorkItem.exercisePlanSha256) {
+            return $false
+        }
+        if ("$($signature.equipmentSha256)".ToLowerInvariant() -ne $WorkItem.equipmentSha256) {
+            return $false
+        }
+        $candidateSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $WorkItem.exerciseCandidatesPath).Hash.ToLowerInvariant()
+        if ("$($signature.candidatesSha256)".ToLowerInvariant() -ne $candidateSha256) {
+            return $false
+        }
+        foreach ($result in @($payload.results)) {
+            $artifactPath = "$($result.path)"
+            if (-not [string]::IsNullOrWhiteSpace($artifactPath) -and -not (Test-Path -LiteralPath $artifactPath)) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Start-BakeJob {
     param(
         [object]$WorkItem,
-        [bool]$UseExistingCandidatesForFirstAttempt = $true
+        [bool]$UseExistingCandidatesForFirstAttempt = $true,
+        [bool]$ReusePreviousTerminalResults = $false
     )
 
-    Write-Host "[start] bake: $($WorkItem.exerciseName)"
+    if (-not $script:AnnouncedIndividualGeneration) {
+        Write-Host "Retrying remaining exercises one at a time."
+        $script:AnnouncedIndividualGeneration = $true
+    }
+    Write-Host ("Generating: {0}" -f $WorkItem.exerciseName)
     $job = Start-Job -Name $WorkItem.exerciseSlug -ScriptBlock {
         param(
             [string]$PythonCommand,
@@ -1195,7 +1672,12 @@ function Start-BakeJob {
             [int]$BaseMaxCandidates,
             [int]$BaseVisionCandidates,
             [int]$MaxSelectedResults,
-            [bool]$UseExistingCandidatesForFirstAttempt
+            [bool]$UseExistingCandidatesForFirstAttempt,
+            [bool]$ReusePreviousTerminalResults,
+            [string]$DiscoveryArgumentsSha256,
+            [string]$ExercisePlanSha256,
+            [string]$EquipmentSha256,
+            [int]$DiscoveryStagePolicyVersion
         )
 
         $ErrorActionPreference = "Continue"
@@ -1304,6 +1786,32 @@ function Start-BakeJob {
             )
         }
 
+        function Write-DiscoveryCompletionSignature {
+            param([string]$Path)
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return $false
+            }
+            try {
+                $candidatePayload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $candidatePayload | Add-Member -NotePropertyName wrapperDiscoverySignature -NotePropertyValue ([pscustomobject]@{
+                    schemaVersion = 1
+                    policyVersion = $DiscoveryStagePolicyVersion
+                    completedAt = (Get-Date).ToUniversalTime().ToString("o")
+                    argumentsSha256 = $DiscoveryArgumentsSha256
+                    exercisePlanSha256 = $ExercisePlanSha256
+                    equipmentSha256 = if ([string]::IsNullOrWhiteSpace($EquipmentSha256)) { $null } else { $EquipmentSha256 }
+                }) -Force
+                $temporaryCandidatesPath = "$Path.tmp"
+                $candidatePayload | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryCandidatesPath -Encoding UTF8
+                Move-Item -Force -LiteralPath $temporaryCandidatesPath -Destination $Path
+                return $true
+            } catch {
+                "[$(Get-Date -Format o)] discovery completion signature write failed: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                return $false
+            }
+        }
+
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
         if (Test-Path -LiteralPath $LogPath) {
             "[$(Get-Date -Format o)] bake stage started" | Add-Content -LiteralPath $LogPath -Encoding UTF8
@@ -1364,6 +1872,9 @@ function Start-BakeJob {
                     $discoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                     & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
                     $discoveryExitCode = $LASTEXITCODE
+                    if ($discoveryExitCode -eq 0 -and -not (Write-DiscoveryCompletionSignature -Path $CandidatesPath)) {
+                        $discoveryExitCode = 1
+                    }
                     $discoveryStopwatch.Stop()
                     $discoverySeconds = [Math]::Round($discoveryStopwatch.Elapsed.TotalSeconds, 3)
                     $discoverySecondsTotal = [Math]::Round(($discoverySecondsTotal + $discoverySeconds), 3)
@@ -1434,7 +1945,7 @@ function Start-BakeJob {
             "[$(Get-Date -Format o)] bake attempt $attemptIndex started with $recommendedCount recommended candidate(s)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             $bakeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             $attemptBakeArguments = @($BakeArguments)
-            if ($bakeAttemptCount -gt 0) {
+            if ($bakeAttemptCount -gt 0 -or $ReusePreviousTerminalResults) {
                 $attemptBakeArguments += "--reuse-previous-terminal-results"
             }
             & $PythonCommand @attemptBakeArguments *>> $LogPath
@@ -1520,7 +2031,99 @@ function Start-BakeJob {
             $attemptIndex += 1
             "[$(Get-Date -Format o)] no selected Wear skeleton; expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults, $UseExistingCandidatesForFirstAttempt
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults, $UseExistingCandidatesForFirstAttempt, $ReusePreviousTerminalResults, $WorkItem.discoveryArgumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256, $discoveryStagePolicyVersion
+    $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
+    return $job
+}
+
+function Start-StagedBakeWaveJob {
+    param(
+        [object[]]$WorkItems,
+        [int]$WaveIndex
+    )
+
+    if ($WorkItems.Count -eq 0) {
+        throw "Cannot start an empty staged movement wave."
+    }
+    $waveId = "wave-{0:D4}" -f $WaveIndex
+    $waveWorkspace = Join-Path (Join-Path $resolvedWorkspaceRoot "staged-waves") $waveId
+    New-Item -ItemType Directory -Force -Path $waveWorkspace | Out-Null
+    $waveManifestPath = Join-Path $waveWorkspace "wave_manifest.json"
+    $waveLogPath = Join-Path $waveWorkspace "wave.log"
+    $staleCheckpointPath = Join-Path $waveWorkspace "staged_wave_checkpoint.json"
+    if (Test-Path -LiteralPath $staleCheckpointPath) {
+        Remove-Item -LiteralPath $staleCheckpointPath -Force
+    }
+    $wavePayload = [ordered]@{
+        schemaVersion = 1
+        waveId = $waveId
+        workspace = $waveWorkspace
+        items = @(
+            $WorkItems | ForEach-Object {
+                [ordered]@{
+                    exerciseId = $_.exerciseId
+                    exerciseName = $_.exerciseName
+                    candidatesJson = $_.exerciseCandidatesPath
+                    workspace = $_.bakeWorkspace
+                }
+            }
+        )
+    }
+    $wavePayload | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $waveManifestPath -Encoding UTF8
+    $waveArguments = [string[]](@($WorkItems[0].bakeArgs) + @("--staged-wave-manifest", $waveManifestPath))
+    Write-Host ("Starting batch {0} ({1} exercises)." -f $WaveIndex, $WorkItems.Count)
+    $job = Start-Job -Name $waveId -ScriptBlock {
+        param(
+            [string]$PythonCommand,
+            [string[]]$Arguments,
+            [string]$LogPath,
+            [string]$WaveWorkspace
+        )
+        $ErrorActionPreference = "Continue"
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        & $PythonCommand @Arguments *>> $LogPath
+        $exitCode = $LASTEXITCODE
+        $stopwatch.Stop()
+        $reportPath = Join-Path $WaveWorkspace "staged_wave_report.json"
+        $report = $null
+        if (Test-Path -LiteralPath $reportPath) {
+            try {
+                $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            } catch {
+            }
+        }
+        [pscustomobject]@{
+            exitCode = $exitCode
+            stage = "staged_wave"
+            elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            reportPath = $reportPath
+            report = $report
+            logPath = $LogPath
+        }
+    } -ArgumentList $PythonCommand, $waveArguments, $waveLogPath, $waveWorkspace
+    $job | Add-Member -MemberType NoteProperty -Name WorkItems -Value $WorkItems
+    $job | Add-Member -MemberType NoteProperty -Name IsStagedWave -Value $true
+    $job | Add-Member -MemberType NoteProperty -Name WaveWorkspace -Value $waveWorkspace
+    $job | Add-Member -MemberType NoteProperty -Name WaveId -Value $waveId
+    $job | Add-Member -MemberType NoteProperty -Name StartedAt -Value (Get-Date)
+    return $job
+}
+
+function Start-StagedResultCompletionJob {
+    param([object]$WorkItem)
+
+    $job = Start-Job -Name "complete-$($WorkItem.exerciseSlug)" -ScriptBlock {
+        [pscustomobject]@{
+            exitCode = 0
+            stage = "staged_wave_completion"
+            selectedResultCount = 1
+            discoverySeconds = 0.0
+            bakeSeconds = 0.0
+            discoveryAttemptCount = 0
+            bakeAttemptCount = 1
+            attempts = @()
+        }
+    }
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
 }
@@ -1674,6 +2277,9 @@ function Complete-BakeJob {
             -SourcePath $manualReviewInteractiveSourcePath `
             -DestinationDirectory $manualReviewOutputDir `
             -DestinationFileName "$($manualReviewFilePrefix)_interactive_preview.html"
+        Copy-SelectedPreviewRuntimeAssets `
+            -SourcePreviewHtmlPath $manualReviewInteractiveSourcePath `
+            -DestinationDirectory $manualReviewOutputDir
         $manualReviewStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "selectedSectionStartSeconds")
         if ($null -eq $manualReviewStartSeconds) {
             $manualReviewStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $manualReviewFallback -Name "sectionStartSeconds")
@@ -1692,7 +2298,8 @@ function Complete-BakeJob {
             $manualReviewEndSeconds = 0.0
         }
         $manualReviewSettingsJson = ConvertTo-SelectedPreviewOptionsJson `
-            -Options (Get-ObjectProperty -Object $manualReviewFallback -Name "settingsOptions")
+            -Options (Get-ObjectProperty -Object $manualReviewFallback -Name "settingsOptions") `
+            -WearSkeletonPath $selectedWearSkeletonPath
         $selectedPreviewHtmlPath = Join-Path $manualReviewOutputDir "$($manualReviewFilePrefix)_manual_review.html"
         $selectedPreviewHtmlPath = Write-SelectedPreviewHtml `
             -DestinationPath $selectedPreviewHtmlPath `
@@ -1793,11 +2400,23 @@ function Complete-BakeJob {
                         -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_selected_input.webm"
                 }
             }
+            $optionCandidateWorkspace = Get-ObjectProperty -Object $option -Name "candidateWorkspace"
+            $optionAuditOutputDirectory = if ($optionIndex -eq 1) {
+                $selectedOutputDir
+            } else {
+                Join-Path $selectedOutputDir ("audit\option_{0:D2}" -f $optionIndex)
+            }
+            $optionSourceAuditDirectory = Copy-SelectedSourceAuditEvidence `
+                -CandidateWorkspace $optionCandidateWorkspace `
+                -DestinationDirectory $optionAuditOutputDirectory
             $optionInteractivePreviewSourcePath = Get-ObjectProperty -Object $option -Name "sourcePreviewHtmlPath"
             $optionInteractivePreviewPath = Copy-SelectedFile `
                 -SourcePath $optionInteractivePreviewSourcePath `
                 -DestinationDirectory $selectedOutputDir `
                 -DestinationFileName "$($selectedFilePrefix)$($optionSuffix)_interactive_preview.html"
+            Copy-SelectedPreviewRuntimeAssets `
+                -SourcePreviewHtmlPath $optionInteractivePreviewSourcePath `
+                -DestinationDirectory $selectedOutputDir
             $optionStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "selectedSectionStartSeconds")
             if ($null -eq $optionStartSeconds) {
                 $optionStartSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $option -Name "loopStartSeconds")
@@ -1816,7 +2435,9 @@ function Complete-BakeJob {
                 $optionEndSeconds = 0.0
             }
             $optionSettingsOptions = Get-ObjectProperty -Object $option -Name "settingsOptions"
-            $optionSettingsOptionsJson = ConvertTo-SelectedPreviewOptionsJson -Options $optionSettingsOptions
+            $optionSettingsOptionsJson = ConvertTo-SelectedPreviewOptionsJson `
+                -Options $optionSettingsOptions `
+                -WearSkeletonPath $optionWearSkeletonPath
             $optionPreviewHtmlPath = Join-Path $selectedOutputDir "$($selectedFilePrefix)$($optionSuffix)_selected_preview.html"
             $optionPreviewHtmlPath = Write-SelectedPreviewHtml `
                 -DestinationPath $optionPreviewHtmlPath `
@@ -1841,6 +2462,7 @@ function Complete-BakeJob {
                 selectedSourceVideoWebmPath = $optionInputVideoWebmPath
                 selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
                 selectedSourceVideoMissing = $optionInputVideoMissing
+                selectedSourceAuditDirectory = $optionSourceAuditDirectory
                 selectionScore = if ($option.PSObject.Properties.Name -contains "selectionScore") { $option.selectionScore } else { $null }
                 candidateTitle = if ($option.PSObject.Properties.Name -contains "candidateTitle") { $option.candidateTitle } else { $null }
             }
@@ -1862,11 +2484,10 @@ function Complete-BakeJob {
 
     if ($status -eq "completed") {
         $optionText = if ($selectedResultOutputs.Count -gt 1) { " ($($selectedResultOutputs.Count) options)" } else { "" }
-        Write-Host "[$status] $($workItem.exerciseName) -> $selectedOutputDir$optionText"
+        Write-Host ("Ready: {0}{1}" -f $workItem.exerciseName, $optionText)
     } else {
-        $stageText = if (-not [string]::IsNullOrWhiteSpace($failureStage)) { " [$failureStage]" } else { "" }
-        $reasonText = if (-not [string]::IsNullOrWhiteSpace($errorMessage)) { " - $errorMessage" } else { "" }
-        Write-Host "[$status] $($workItem.exerciseName)$stageText (log: $($workItem.logPath))$reasonText"
+        $reasonText = if (-not [string]::IsNullOrWhiteSpace($errorMessage)) { " $errorMessage" } else { "" }
+        Write-Host ("Failed: {0}.{1} See {2}" -f $workItem.exerciseName, $reasonText, $workItem.logPath)
     }
 
     return [ordered]@{
@@ -1894,9 +2515,15 @@ function Complete-BakeJob {
         selectedCandidateDecisionsPath = $selectedCandidateDecisionsPath
         attempts = $attempts
         timings = [ordered]@{
+            prefetchSeconds = [Math]::Round([double]$workItem.prefetchSeconds, 3)
+            prefetchReused = [bool]$workItem.prefetchReused
             discoverySeconds = [Math]::Round(($initialDiscoverySeconds + $retryDiscoverySeconds), 3)
+            discoveryReused = [bool]$workItem.discoveryReused
             initialDiscoverySeconds = [Math]::Round($initialDiscoverySeconds, 3)
             retryDiscoverySeconds = [Math]::Round($retryDiscoverySeconds, 3)
+            sourceDownloadSeconds = [Math]::Round([double]$workItem.sourceDownloadSeconds, 3)
+            primarySourceDownloadReused = [bool]$workItem.primarySourceDownloadReused
+            fallbackSourceDownloadReused = [bool]$workItem.fallbackSourceDownloadReused
             bakeCommandSeconds = [Math]::Round($bakeCommandSeconds, 3)
             discoveryAttempts = ([int]$workItem.discoveryAttemptCount + [int](Get-ObjectProperty -Object $jobResult -Name "discoveryAttemptCount"))
             bakeAttempts = [int](Get-ObjectProperty -Object $jobResult -Name "bakeAttemptCount")
@@ -1925,6 +2552,11 @@ function Test-UsefulProgressLogLine {
         "\[bake-and-rank\] candidate .* selected",
         "\[bake-and-rank\] source family blocked",
         "\[bake-and-rank\] Stopped after",
+        "Checking source videos",
+        "Extracting motion",
+        "Extracted motion for",
+        "Reviewing .* generated movement",
+        "Batch finished:",
         "\[youtube\] full download attempt",
         "rejections=\d+/\d+",
         "selected \d+/\d+ result",
@@ -1976,6 +2608,10 @@ function Write-LiveLogUpdates {
     param([object[]]$RunningJobs)
 
     foreach ($job in $RunningJobs) {
+        $isStagedWave = $job.PSObject.Properties.Name -contains "IsStagedWave" -and $job.IsStagedWave
+        if ($isStagedWave) {
+            continue
+        }
         $path = [string]$job.WorkItem.logPath
         $latestLine = Get-LatestUsefulLogLine -Path $path
         if (-not $latestLine) {
@@ -1986,7 +2622,131 @@ function Write-LiveLogUpdates {
         }
         $script:LiveLogStateByPath[$path] = $latestLine
         $script:LastProgressDetailByLogPath[$path] = $latestLine
-        Write-Host ("  progress: {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+        Write-Host ("  {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+    }
+}
+
+function Get-RunningJobExerciseNames {
+    param([object]$Job)
+
+    if ($Job.PSObject.Properties.Name -contains "WorkItem" -and $null -ne $Job.WorkItem) {
+        return @($Job.WorkItem.exerciseName)
+    }
+    if ($Job.PSObject.Properties.Name -contains "WorkItems" -and $null -ne $Job.WorkItems) {
+        return @($Job.WorkItems | ForEach-Object { $_.exerciseName })
+    }
+    return @()
+}
+
+function Format-CompactElapsed {
+    param([timespan]$Elapsed)
+
+    if ($Elapsed.TotalSeconds -lt 0) {
+        $Elapsed = [timespan]::Zero
+    }
+    if ($Elapsed.TotalHours -ge 1) {
+        return "{0}h {1:D2}m" -f [int][Math]::Floor($Elapsed.TotalHours), $Elapsed.Minutes
+    }
+    if ($Elapsed.TotalMinutes -ge 1) {
+        return "{0}m {1:D2}s" -f [int][Math]::Floor($Elapsed.TotalMinutes), $Elapsed.Seconds
+    }
+    return "{0}s" -f [int][Math]::Floor($Elapsed.TotalSeconds)
+}
+
+function Get-StagedWaveActivityText {
+    param([object]$Job)
+
+    if (-not ($Job.PSObject.Properties.Name -contains "IsStagedWave") -or -not $Job.IsStagedWave) {
+        return $null
+    }
+    $checkpointPath = Join-Path $Job.WaveWorkspace "staged_wave_checkpoint.json"
+    $itemCount = if ($Job.PSObject.Properties.Name -contains "WorkItems") { @($Job.WorkItems).Count } else { 0 }
+    if (-not (Test-Path -LiteralPath $checkpointPath)) {
+        if ($itemCount -gt 0) {
+            return "Starting batch of $itemCount exercises"
+        }
+        return "Starting batch"
+    }
+    try {
+        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+        $items = @($checkpoint.items)
+        $latestName = [string](Get-ObjectProperty -Object $checkpoint -Name "latestExerciseName")
+        $latestSuffix = if (-not [string]::IsNullOrWhiteSpace($latestName)) { " — $latestName" } else { "" }
+        switch ("$($checkpoint.stage)") {
+            "source_validation" {
+                $finished = @($items | Where-Object { "$($_.source.status)" -ne "pending" }).Count
+                $usable = @($items | Where-Object { "$($_.source.status)" -eq "prepared" }).Count
+                $failed = @($items | Where-Object { "$($_.source.status)" -eq "failed" }).Count
+                return "Checking source videos: $finished of $($items.Count) ($usable usable, $failed failed)$latestSuffix"
+            }
+            "wham_generation" {
+                $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
+                $finished = @($eligible | Where-Object { "$($_.wham.status)" -ne "pending" }).Count
+                $failed = @($eligible | Where-Object { "$($_.wham.status)" -eq "failed" }).Count
+                $stillRunning = [Math]::Max(0, $eligible.Count - $finished)
+                $failedText = if ($failed -gt 0) { ", $failed failed" } else { "" }
+                $runningText = if ($stillRunning -gt 0) { ", $stillRunning still running" } else { "" }
+                return "Extracting motion: $finished of $($eligible.Count) done$failedText$runningText$latestSuffix"
+            }
+            "wham_released" {
+                $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
+                $ready = @($eligible | Where-Object { "$($_.wham.status)" -eq "prepared" }).Count
+                return "Motion extraction finished ($ready ready). Starting review"
+            }
+            "final_validation" {
+                $eligible = @($items | Where-Object { "$($_.wham.status)" -eq "prepared" })
+                $finished = @($eligible | Where-Object { "$($_.finalValidation.status)" -ne "pending" }).Count
+                $selected = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "selected" }).Count
+                $failed = @($eligible | Where-Object { "$($_.finalValidation.status)" -in @("failed", "no_selection") }).Count
+                return "Reviewing movements: $finished of $($eligible.Count) ($selected kept, $failed rejected)$latestSuffix"
+            }
+            "completed" {
+                $completed = @($items | Where-Object { "$($_.status)" -eq "completed" }).Count
+                return "Batch finished: $completed of $($items.Count) kept"
+            }
+            default {
+                $stageName = "$($checkpoint.stage)".Replace("_", " ")
+                return "Batch $stageName$latestSuffix"
+            }
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Get-StagedWaveProgressLine {
+    param([object]$Job)
+
+    $activity = Get-StagedWaveActivityText -Job $Job
+    if ([string]::IsNullOrWhiteSpace($activity)) {
+        return $null
+    }
+    return "{0}." -f $activity.TrimEnd(".")
+}
+
+function Write-StagedWaveProgressUpdates {
+    param([object[]]$RunningJobs)
+
+    foreach ($job in $RunningJobs) {
+        if (-not ($job.PSObject.Properties.Name -contains "IsStagedWave") -or -not $job.IsStagedWave) {
+            continue
+        }
+        $checkpointPath = Join-Path $job.WaveWorkspace "staged_wave_checkpoint.json"
+        if (-not (Test-Path -LiteralPath $checkpointPath)) {
+            continue
+        }
+        $checkpointVersion = (Get-Item -LiteralPath $checkpointPath).LastWriteTimeUtc.Ticks
+        if (
+            $script:LastStagedWaveCheckpointVersionByPath.ContainsKey($checkpointPath) -and
+            $script:LastStagedWaveCheckpointVersionByPath[$checkpointPath] -eq $checkpointVersion
+        ) {
+            continue
+        }
+        $script:LastStagedWaveCheckpointVersionByPath[$checkpointPath] = $checkpointVersion
+        $progressLine = Get-StagedWaveProgressLine -Job $job
+        if ($progressLine) {
+            Write-Host ("  {0}" -f $progressLine)
+        }
     }
 }
 
@@ -2013,37 +2773,64 @@ function Write-ProgressSnapshot {
         [string]$Stage = "movement generation",
         [datetime]$StartedAt = [datetime]::MinValue,
         [object[]]$RunningJobs,
-        [int]$CompletedCount,
+        [int]$SuccessfulCount,
+        [int]$UnsuccessfulCount,
+        [int]$ProcessedCount,
         [int]$TotalCount,
         [int]$PendingCount,
         [switch]$DetailedLogs
     )
 
-    $activeNames = @($RunningJobs | ForEach-Object { $_.WorkItem.exerciseName })
+    $activeNames = @(
+        $RunningJobs |
+            ForEach-Object { Get-RunningJobExerciseNames -Job $_ } |
+            Select-Object -Unique
+    )
     $elapsedText = ""
     if ($StartedAt -ne [datetime]::MinValue) {
-        $elapsedText = " elapsed {0:c}," -f ((Get-Date) - $StartedAt)
+        $elapsedText = " after {0}." -f (Format-CompactElapsed -Elapsed ((Get-Date) - $StartedAt))
     }
-    Write-Host ("{0}:{1} {2}/{3} done, {4} running, {5} queued." -f $Stage, $elapsedText, $CompletedCount, $TotalCount, $RunningJobs.Count, $PendingCount)
+    $remainingCount = [Math]::Max(0, $TotalCount - $ProcessedCount - $activeNames.Count)
+    $status = "{0}/{1} movements ready" -f $SuccessfulCount, $TotalCount
+    if ($UnsuccessfulCount -gt 0) {
+        $status += ", $UnsuccessfulCount failed"
+    }
+    if ($remainingCount -gt 0) {
+        $status += ", $remainingCount remaining"
+    }
+    $activityTexts = @(
+        $RunningJobs |
+            ForEach-Object { Get-StagedWaveActivityText -Job $_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($activityTexts.Count -gt 0) {
+        $status += ". " + ($activityTexts -join "; ")
+    } elseif ($activeNames.Count -gt 0) {
+        $shownNames = @($activeNames | Select-Object -First 3)
+        $nameText = $shownNames -join ", "
+        if ($activeNames.Count -gt $shownNames.Count) {
+            $nameText += ", and $($activeNames.Count - $shownNames.Count) more"
+        }
+        $status += ". Generating: $nameText"
+    }
+    Write-Host ($status + $elapsedText.TrimEnd(".") + ".")
     if ($DetailedLogs -and $activeNames.Count -gt 0) {
         Write-Host ("  active: {0}" -f ($activeNames -join ", "))
     }
+    if (-not $DetailedLogs) {
+        return
+    }
     foreach ($job in $RunningJobs) {
-        $latestLine = Get-LatestUsefulLogLine -Path $job.WorkItem.logPath -Detailed:$DetailedLogs
-        if (-not $latestLine) {
-            continue
-        }
-        if (-not $DetailedLogs) {
-            $detailKey = $job.WorkItem.logPath
-            if ($script:LastProgressDetailByLogPath.ContainsKey($detailKey) -and $script:LastProgressDetailByLogPath[$detailKey] -eq $latestLine) {
-                continue
-            }
-            $script:LastProgressDetailByLogPath[$detailKey] = $latestLine
-        }
-        if ($DetailedLogs) {
-            Write-Host ("  {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+        $isStagedWave = $job.PSObject.Properties.Name -contains "IsStagedWave" -and $job.IsStagedWave
+        $logPath = if ($isStagedWave) {
+            Join-Path $job.WaveWorkspace "wave.log"
         } else {
-            Write-Host ("  changed: {0}: {1}" -f $job.WorkItem.exerciseName, $latestLine)
+            $job.WorkItem.logPath
+        }
+        $latestLine = Get-LatestUsefulLogLine -Path $logPath -Detailed
+        if ($latestLine) {
+            $label = if ($isStagedWave) { "batch" } else { $job.WorkItem.exerciseName }
+            Write-Host ("  {0}: {1}" -f $label, $latestLine)
         }
     }
 }
@@ -2055,7 +2842,7 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("ResultsPerQuery")) { $ResultsPerQuery = 100 }
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 24 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 12 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 1 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
         if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 12 }
         if (-not $PSBoundParameters.ContainsKey("VisionMaxChunksPerCandidate")) { $VisionMaxChunksPerCandidate = 2 }
@@ -2077,7 +2864,7 @@ switch ($SpeedProfile) {
     "max" {
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 6 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 6 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 1 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
         if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 6 }
@@ -2091,6 +2878,42 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 768 }
     }
 }
+if ($SkipTwoScaleSourceValidation) {
+    $TwoScaleSourceValidation = $false
+} elseif (-not $PSBoundParameters.ContainsKey("TwoScaleSourceValidation")) {
+    $TwoScaleSourceValidation = $true
+}
+
+function Set-CommandArgumentValue {
+    param(
+        [string[]]$Arguments,
+        [string]$Name,
+        [string]$Value
+    )
+
+    $result = @()
+    $found = $false
+    for ($index = 0; $index -lt $Arguments.Count; $index += 1) {
+        if ($Arguments[$index] -eq $Name) {
+            $result += @($Name, $Value)
+            $found = $true
+            $index += 1
+            continue
+        }
+        $result += $Arguments[$index]
+    }
+    if (-not $found) {
+        $result += @($Name, $Value)
+    }
+    return [string[]]$result
+}
+if ($DeferAfterFirstAttempt) {
+    $CandidateReviewTargetSuitableCount = 1
+    $MaxCandidateReviewTargetSuitableCount = 1
+    $FallbackCandidates = 0
+    $MaxFinalOutputRejections = 2
+    $CandidateWorkers = 1
+}
 if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
     $LlamaCppFitCtx = $LlamaCppCtxSize
 }
@@ -2103,6 +2926,9 @@ if (-not $PSBoundParameters.ContainsKey("ReviewLlmWorkers")) {
 }
 if (-not $PSBoundParameters.ContainsKey("SegmentClassificationWorkers")) {
     $SegmentClassificationWorkers = [Math]::Max(1, $llamaParallelSlots)
+}
+if (-not $PSBoundParameters.ContainsKey("SemanticGateLlmWorkers")) {
+    $SemanticGateLlmWorkers = [Math]::Max(1, $llamaParallelSlots)
 }
 if (-not $PSBoundParameters.ContainsKey("VisionDownloadWorkers")) {
     $VisionDownloadWorkers = [Math]::Max(8, [Math]::Min(16, $llamaParallelSlots * 2))
@@ -2159,21 +2985,36 @@ if ($llamaCppDiscoveryUsesGpu) {
     $gpuDiscoveryStages += "llama_cpp_discovery"
 }
 $discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
+$gpuLockSetting = "$env:EXERCISE_MOTION_GPU_LOCK".Trim().ToLowerInvariant()
+$globalGpuLockEnabled = [string]::IsNullOrWhiteSpace($gpuLockSetting) -or $gpuLockSetting -notin @("0", "false", "off", "no")
 $effectiveGpuDiscoveryBakeOverlap = if ($GpuDiscoveryBakeOverlap -eq "auto") {
-    if ($discoveryUsesGpu) { "avoid" } else { "allow" }
+    # Every CUDA owner (YOLO, llama.cpp, WHAM, and SpinePose) uses the shared
+    # cross-process GPU lock. Let discovery overlap bake CPU/browser work while
+    # that lock continues to serialize VRAM-heavy sections.
+    if ($globalGpuLockEnabled) { "allow" } elseif ($discoveryUsesGpu) { "avoid" } else { "allow" }
 } else {
     $GpuDiscoveryBakeOverlap
 }
 $avoidGpuDiscoveryBakeOverlap = $effectiveGpuDiscoveryBakeOverlap -eq "avoid"
 $defaultDiscoveryWorkerCap = if ($posePrefilterUsesGpu) { 1 } else { 4 }
 $resolvedDiscoveryWorkers = if ($null -ne $DiscoveryWorkers) { [int]$DiscoveryWorkers } else { [Math]::Max(1, [Math]::Min($defaultDiscoveryWorkerCap, $llamaParallelSlots)) }
-$resolvedBakeWorkers = if ($null -ne $BakeWorkers) { [int]$BakeWorkers } else { 1 }
+$resolvedBakeWorkers = if ($null -ne $BakeWorkers) { [int]$BakeWorkers } else { 2 }
 if ($resolvedDiscoveryWorkers -lt 1) {
     throw "DiscoveryWorkers must be at least 1."
 }
 if ($resolvedBakeWorkers -lt 1) {
     throw "BakeWorkers must be at least 1."
 }
+if ($PrefetchWorkers -lt 1) {
+    throw "PrefetchWorkers must be at least 1."
+}
+if ($PrefetchQueueDepth -lt 1) {
+    throw "PrefetchQueueDepth must be at least 1."
+}
+if ($StagedWaveSize -lt 0) {
+    throw "StagedWaveSize must be 0 (disabled) or at least 1."
+}
+$stagedWavesEnabled = $StagedWaveSize -gt 0
 if ($ProgressIntervalSeconds -lt 1) {
     throw "ProgressIntervalSeconds must be at least 1."
 }
@@ -2229,6 +3070,10 @@ $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheD
     $YouTubePreviewCacheDir
 }
 New-Item -ItemType Directory -Force -Path $sharedPreviewCachePath | Out-Null
+$sharedSourceCachePath = Join-Path $resolvedWorkspaceRoot "youtube-source-cache"
+New-Item -ItemType Directory -Force -Path $sharedSourceCachePath | Out-Null
+$exerciseMotionContractCachePath = Join-Path $resolvedWorkspaceRoot "exercise-motion-contract-cache"
+New-Item -ItemType Directory -Force -Path $exerciseMotionContractCachePath | Out-Null
 $exerciseListPath = Join-Path $resolvedWorkspaceRoot "workout_plan_exercises.json"
 $summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
 
@@ -2255,11 +3100,13 @@ $youtubeBaseArgs = @(
     "-m", "exercise_motion_pkg.cli",
     "find-youtube-videos",
     "--results-per-query", "$ResultsPerQuery",
+    "--youtube-search-timeout-seconds", "$YouTubeSearchTimeoutSeconds",
     "--max-candidates", "$MaxCandidates",
     "--candidate-review-batch-size", "$CandidateReviewBatchSize",
     "--candidate-review-target-suitable-count", "$CandidateReviewTargetSuitableCount",
     "--vision-candidates-per-exercise", "$VisionCandidatesPerExercise",
     "--vision-download-workers", "$VisionDownloadWorkers",
+    "--exercise-motion-contract-cache-dir", $exerciseMotionContractCachePath,
     "--llama-cpp-base-url", $LlamaCppBaseUrl,
     "--llama-cpp-backend", $LlamaCppBackend,
     "--llama-cpp-temperature", "$LlamaCppTemperature",
@@ -2415,6 +3262,12 @@ foreach ($exercise in $exerciseList.exercises) {
     $exerciseWorkspace = Join-Path $resolvedWorkspaceRoot $exerciseSlug
     $exercisePlanPath = Join-Path $exerciseWorkspace "exercise_plan.json"
     $exerciseCandidatesPath = Join-Path $exerciseWorkspace "youtube_candidates.json"
+    $prefetchPath = Join-Path $exerciseWorkspace "youtube_candidate_prefetch.json"
+    $sourceDownloadReportPath = Join-Path $exerciseWorkspace "youtube_source_prefetch.json"
+    $fallbackSourceDownloadReportPath = Join-Path $exerciseWorkspace "youtube_source_fallback_prefetch.json"
+    $primarySourceDownloadLogPath = Join-Path $exerciseWorkspace "source_download.primary.log"
+    $fallbackSourceDownloadLogPath = Join-Path $exerciseWorkspace "source_download.fallback.log"
+    $sourceCachePath = $sharedSourceCachePath
     $previewCachePath = $sharedPreviewCachePath
     $bakeWorkspace = Join-Path $exerciseWorkspace "bake"
     $logPath = Join-Path $exerciseWorkspace "bake.log"
@@ -2446,6 +3299,44 @@ foreach ($exercise in $exerciseList.exercises) {
             $discoveryArgs += @("--exclude-youtube-url", $excludeUrl)
         }
     }
+    $prefetchArgs = Set-CommandArgumentValue -Arguments $discoveryArgs -Name "--out-json" -Value $prefetchPath
+    $prefetchArgs = [string[]](@($prefetchArgs) + "--prefetch-only")
+    $exercisePlanSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $exercisePlanPath).Hash.ToLowerInvariant()
+    $equipmentSha256 = if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $EquipmentJson).Hash.ToLowerInvariant()
+    } else {
+        ""
+    }
+    $prefetchArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $prefetchArgs
+    $discoveryArgs = [string[]](@($discoveryArgs) + @("--prefetched-candidates-json", $prefetchPath))
+    $primarySourceDownloadArgs = @(
+        "-m", "exercise_motion_pkg.cli",
+        "prefetch-youtube-sources",
+        "--candidates-json", $exerciseCandidatesPath,
+        "--youtube-source-cache-dir", $sourceCachePath,
+        "--max-candidates", "1",
+        "--start-index", "0",
+        "--workers", "1",
+        "--out-json", $sourceDownloadReportPath
+    )
+    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+        $primarySourceDownloadArgs += @("--youtube-cookies", $YouTubeCookiesPath)
+    }
+    $fallbackSourceDownloadArgs = @(
+        "-m", "exercise_motion_pkg.cli",
+        "prefetch-youtube-sources",
+        "--candidates-json", $exerciseCandidatesPath,
+        "--youtube-source-cache-dir", $sourceCachePath,
+        "--max-candidates", "$([Math]::Max(1, $SourceDownloadCandidates - 1))",
+        "--start-index", "1",
+        "--workers", "1",
+        "--out-json", $fallbackSourceDownloadReportPath
+    )
+    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+        $fallbackSourceDownloadArgs += @("--youtube-cookies", $YouTubeCookiesPath)
+    }
+    $primarySourceDownloadArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $primarySourceDownloadArgs
+    $fallbackSourceDownloadArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $fallbackSourceDownloadArgs
 
     $bakeArgs = @(
         "-m", "exercise_motion_pkg.cli",
@@ -2460,6 +3351,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
         "--max-selected-results", "$MaxSelectedResults",
         "--candidate-workers", "$CandidateWorkers",
+        "--youtube-source-cache-dir", $sourceCachePath,
         "--workspace", $bakeWorkspace,
         "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
@@ -2595,6 +3487,19 @@ foreach ($exercise in $exerciseList.exercises) {
         exerciseWorkspace = $exerciseWorkspace
         exercisePlanPath = $exercisePlanPath
         exerciseCandidatesPath = $exerciseCandidatesPath
+        prefetchPath = $prefetchPath
+        prefetchArgumentsSha256 = $prefetchArgumentsSha256
+        discoveryArgumentsSha256 = ""
+        exercisePlanSha256 = $exercisePlanSha256
+        equipmentSha256 = $equipmentSha256
+        sourceDownloadReportPath = $sourceDownloadReportPath
+        fallbackSourceDownloadReportPath = $fallbackSourceDownloadReportPath
+        primarySourceDownloadArgumentsSha256 = $primarySourceDownloadArgumentsSha256
+        fallbackSourceDownloadArgumentsSha256 = $fallbackSourceDownloadArgumentsSha256
+        primarySourceDownloadLogPath = $primarySourceDownloadLogPath
+        fallbackSourceDownloadLogPath = $fallbackSourceDownloadLogPath
+        hasFallbackSourceDownloads = $SourceDownloadCandidates -gt 1
+        sourceCachePath = $sourceCachePath
         previewCachePath = $previewCachePath
         excludeCandidateJsonPaths = [string[]]($exerciseExcludeCandidateJsonPaths | Select-Object -Unique)
         bakeWorkspace = $bakeWorkspace
@@ -2605,11 +3510,20 @@ foreach ($exercise in $exerciseList.exercises) {
         maxCandidates = $MaxCandidates
         visionCandidatesPerExercise = $VisionCandidatesPerExercise
         discoverySeconds = 0.0
+        prefetchSeconds = 0.0
+        prefetchReused = $false
+        discoveryReused = $false
+        primarySourceDownloadReused = $false
+        fallbackSourceDownloadReused = $false
+        sourceDownloadSeconds = 0.0
         bakeCommandSeconds = 0.0
         discoveryAttemptCount = 0
         bakeAttemptCount = 0
         attempts = @()
         discoveryArgs = [string[]]$discoveryArgs
+        prefetchArgs = [string[]]$prefetchArgs
+        primarySourceDownloadArgs = [string[]]$primarySourceDownloadArgs
+        fallbackSourceDownloadArgs = [string[]]$fallbackSourceDownloadArgs
         bakeArgs = [string[]]$bakeArgs
     }
     $exerciseIndex += 1
@@ -2632,12 +3546,131 @@ if (-not $visionLlmWorkersExplicit) {
 }
 foreach ($workItem in $workItems) {
     $workItem.discoveryArgs = [string[]](@($workItem.discoveryArgs) + @("--vision-llm-workers", "$resolvedDiscoveryVisionLlmWorkers"))
+    $workItem.discoveryArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $workItem.discoveryArgs
+}
+
+$contractPrefetchSummary = [ordered]@{
+    enabled = $false
+    reportPath = $null
+    elapsedSeconds = 0.0
+    counts = $null
+}
+if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipExerciseMotionContractPrefetch) {
+    $contractPrefetchReportPath = Join-Path $resolvedWorkspaceRoot "exercise_motion_contract_prefetch_report.json"
+    $contractPrefetchArgs = [string[]](@(
+        $youtubeBaseArgs
+        "--workout-plan-json", $resolvedWorkoutPlanJson,
+        "--out-json", $contractPrefetchReportPath,
+        "--contract-prefetch-only",
+        "--contract-prefetch-workers", "$llamaParallelSlots"
+    ))
+    if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+        $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
+    }
+    foreach ($workItem in $workItems) {
+        $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
+    }
+    Write-Host ("Preparing {0} missing exercise motion contract(s) with one persistent llama.cpp server." -f $workItems.Count)
+    $contractPrefetchStarted = Get-Date
+    Invoke-PythonModule -Arguments $contractPrefetchArgs
+    $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
+    $contractPrefetchSummary = [ordered]@{
+        enabled = $true
+        reportPath = $contractPrefetchReportPath
+        elapsedSeconds = [Math]::Round(((Get-Date) - $contractPrefetchStarted).TotalSeconds, 3)
+        counts = $contractPrefetchReport.counts
+    }
 }
 
 $summaryByIndex = @{}
+$progressCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
+$script:LastIncrementalMobilePackageSuccessfulCount = -1
+$script:NextIncrementalMobilePackageAttemptAt = [datetime]::MinValue
+
+function Update-IncrementalMobilePackage {
+    param([int]$SuccessfulCount)
+
+    if ([string]::IsNullOrWhiteSpace($IncrementalMobilePackageOutputJson)) {
+        return
+    }
+    if ($SuccessfulCount -eq $script:LastIncrementalMobilePackageSuccessfulCount) {
+        return
+    }
+    if ((Get-Date) -lt $script:NextIncrementalMobilePackageAttemptAt) {
+        return
+    }
+
+    $mobilePackageBuilder = Join-Path $PSScriptRoot "build_workout_plan_movement_package.ps1"
+    $resolvedIncrementalOutputJson = [System.IO.Path]::GetFullPath($IncrementalMobilePackageOutputJson)
+    $builderOutput = @(
+        & pwsh -NoProfile -File $mobilePackageBuilder `
+            -WorkoutPlanPackageJson $resolvedWorkoutPlanJson `
+            -MotionSummaryJson $progressCheckpointPath `
+            -OutputJson $resolvedIncrementalOutputJson `
+            -StrictIdMatch `
+            -AllowEmpty 2>&1
+    )
+    $builderExitCode = $LASTEXITCODE
+    if ($builderExitCode -ne 0) {
+        $script:NextIncrementalMobilePackageAttemptAt = (Get-Date).AddSeconds(30)
+        $builderError = ($builderOutput | ForEach-Object { "$_" }) -join " "
+        Write-Warning "Could not refresh the mobile import package; it will be retried. $builderError"
+        return
+    }
+
+    $script:LastIncrementalMobilePackageSuccessfulCount = $SuccessfulCount
+    $script:NextIncrementalMobilePackageAttemptAt = [datetime]::MinValue
+    Write-Host ("Mobile package updated: {0} approved movement(s) at {1}" -f $SuccessfulCount, $resolvedIncrementalOutputJson)
+}
+
+function Write-ProgressCheckpoint {
+    $checkpointItems = @(
+        $summaryByIndex.Keys |
+            Sort-Object |
+            ForEach-Object { $summaryByIndex[$_] }
+    )
+    $successfulItems = @($checkpointItems | Where-Object { "$($_.status)" -eq "completed" })
+    $unsuccessfulItems = @($checkpointItems | Where-Object { "$($_.status)" -ne "completed" })
+    $checkpoint = [ordered]@{
+        schemaVersion = 2
+        updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+        sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
+        workspaceRoot = $resolvedWorkspaceRoot
+        totalExerciseCount = $workItems.Count
+        terminalExerciseCount = $checkpointItems.Count
+        successfulExerciseCount = $successfulItems.Count
+        unsuccessfulExerciseCount = $unsuccessfulItems.Count
+        pendingExerciseCount = [Math]::Max(0, $workItems.Count - $checkpointItems.Count)
+        pipeline = [ordered]@{
+            pendingPrefetchCount = if (Get-Variable -Name pendingPrefetchItems -ErrorAction SilentlyContinue) { $pendingPrefetchItems.Count } else { 0 }
+            pendingReviewCount = if (Get-Variable -Name pendingDiscoveryItems -ErrorAction SilentlyContinue) { $pendingDiscoveryItems.Count } else { 0 }
+            pendingSourceDownloadCount = if (Get-Variable -Name pendingSourceDownloadItems -ErrorAction SilentlyContinue) { $pendingSourceDownloadItems.Count } else { 0 }
+            pendingFallbackSourceDownloadCount = if (Get-Variable -Name pendingFallbackSourceDownloadItems -ErrorAction SilentlyContinue) { $pendingFallbackSourceDownloadItems.Count } else { 0 }
+            pendingBakeCount = if (Get-Variable -Name pendingBakeItems -ErrorAction SilentlyContinue) {
+                $pendingBakeItems.Count +
+                    $(if (Get-Variable -Name pendingLegacyBakeItems -ErrorAction SilentlyContinue) { $pendingLegacyBakeItems.Count } else { 0 }) +
+                    $(if (Get-Variable -Name pendingCompletionItems -ErrorAction SilentlyContinue) { $pendingCompletionItems.Count } else { 0 })
+            } else { 0 }
+            activePrefetchCount = if (Get-Variable -Name prefetchRunningJobs -ErrorAction SilentlyContinue) { $prefetchRunningJobs.Count } else { 0 }
+            activeReviewCount = if (Get-Variable -Name discoveryRunningJobs -ErrorAction SilentlyContinue) { $discoveryRunningJobs.Count } else { 0 }
+            activeSourceDownloadCount = if (Get-Variable -Name sourceDownloadRunningJobs -ErrorAction SilentlyContinue) { $sourceDownloadRunningJobs.Count } else { 0 }
+            activeBakeCount = if (Get-Variable -Name bakeRunningJobs -ErrorAction SilentlyContinue) { $bakeRunningJobs.Count } else { 0 }
+        }
+        exercises = $checkpointItems
+    }
+    $temporaryCheckpointPath = "$progressCheckpointPath.tmp"
+    $checkpoint | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryCheckpointPath -Encoding UTF8
+    Move-Item -Force -LiteralPath $temporaryCheckpointPath -Destination $progressCheckpointPath
+    Update-IncrementalMobilePackage -SuccessfulCount $successfulItems.Count
+}
 $completedCount = 0
+$pendingPrefetchItems = [System.Collections.Queue]::new()
 $pendingDiscoveryItems = [System.Collections.Queue]::new()
+$pendingSourceDownloadItems = [System.Collections.Queue]::new()
+$pendingFallbackSourceDownloadItems = [System.Collections.Queue]::new()
 $pendingBakeItems = [System.Collections.Queue]::new()
+$pendingLegacyBakeItems = [System.Collections.Queue]::new()
+$pendingCompletionItems = [System.Collections.Queue]::new()
 foreach ($workItem in $workItems) {
     $existingSummary = if ($ReuseExistingSelected) { Get-ExistingSelectedSummary -WorkItem $workItem } else { $null }
     if ($existingSummary) {
@@ -2645,35 +3678,122 @@ foreach ($workItem in $workItems) {
         $completedCount += 1
         continue
     }
-    $pendingDiscoveryItems.Enqueue($workItem)
+    if (-not $DisableStageResume -and (Test-DiscoveryStageReady -WorkItem $workItem)) {
+        $workItem.discoveryReused = $true
+        $candidateCounts = Get-CandidateManifestCounts -Path $workItem.exerciseCandidatesPath
+        $workItem.candidateCount = $candidateCounts.candidateCount
+        $workItem.hasFallbackSourceDownloads = (
+            $workItem.hasFallbackSourceDownloads -and
+            $candidateCounts.recommendedCount -gt 1
+        )
+        "[$(Get-Date -Format o)] reused completed source discovery" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+
+        if (Test-SourceDownloadStageReady -WorkItem $workItem -Kind "primary") {
+            $workItem.primarySourceDownloadReused = $true
+            "[$(Get-Date -Format o)] reused completed primary source downloads" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+            $pendingBakeItems.Enqueue($workItem)
+            if ($workItem.hasFallbackSourceDownloads) {
+                if (Test-SourceDownloadStageReady -WorkItem $workItem -Kind "fallback") {
+                    $workItem.fallbackSourceDownloadReused = $true
+                    "[$(Get-Date -Format o)] reused completed fallback source downloads" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+                } else {
+                    $pendingFallbackSourceDownloadItems.Enqueue($workItem)
+                }
+            }
+            Write-Host ("Resuming {0} at movement generation." -f $workItem.exerciseName)
+        } else {
+            $pendingSourceDownloadItems.Enqueue($workItem)
+            Write-Host ("Resuming {0} at source download." -f $workItem.exerciseName)
+        }
+        continue
+    }
+    if ($CpuPrefetchDuringBake) {
+        if (-not $DisableStageResume -and (Test-CandidatePrefetchReady -WorkItem $workItem)) {
+            $workItem.prefetchReused = $true
+            "[$(Get-Date -Format o)] reused unchanged CPU/network candidate prefetch" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+            $pendingDiscoveryItems.Enqueue($workItem)
+        } else {
+            $pendingPrefetchItems.Enqueue($workItem)
+        }
+    } else {
+        $pendingDiscoveryItems.Enqueue($workItem)
+    }
 }
+Write-ProgressCheckpoint
 
 $overallStartedAt = Get-Date
-if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
+if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or $pendingSourceDownloadItems.Count -gt 0 -or $pendingFallbackSourceDownloadItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0 -or $pendingCompletionItems.Count -gt 0) {
+    $prefetchRunningJobs = @()
     $discoveryRunningJobs = @()
+    $sourceDownloadRunningJobs = @()
     $bakeRunningJobs = @()
     $discoveryCompletedCount = 0
     $bakeCompletedCount = 0
     $bakeTotalCount = $pendingBakeItems.Count
+    $stagedWaveIndex = 0
     $lastProgressAt = [datetime]::MinValue
     $warmWhamWorkerInstance = $null
-    Write-Host "Pipelining candidate discovery and movement baking with $resolvedDiscoveryWorkers discovery worker(s) and $resolvedBakeWorkers bake worker(s)."
-    if (-not $NoWhamDocker -and $resolvedBakeWorkers -gt 1) {
-        Write-Warning "WHAM Docker runs are still serialized by the shared lock; extra bake workers can overlap non-WHAM work but will not run multiple WHAM containers at once."
+    $script:WhamWorkerStartedOnce = $false
+    $reusedCount = $completedCount
+    if ($reusedCount -gt 0) {
+        Write-Host "Generating movements for $($workItems.Count) exercises. $reusedCount already have a selected movement, $($workItems.Count - $reusedCount) remaining."
+    } else {
+        Write-Host "Generating movements for $($workItems.Count) exercises."
     }
     try {
         while (
+            $pendingPrefetchItems.Count -gt 0 -or
+            $prefetchRunningJobs.Count -gt 0 -or
             $pendingDiscoveryItems.Count -gt 0 -or
             $discoveryRunningJobs.Count -gt 0 -or
+            $pendingSourceDownloadItems.Count -gt 0 -or
+            $pendingFallbackSourceDownloadItems.Count -gt 0 -or
+            $sourceDownloadRunningJobs.Count -gt 0 -or
             $pendingBakeItems.Count -gt 0 -or
+            $pendingLegacyBakeItems.Count -gt 0 -or
+            $pendingCompletionItems.Count -gt 0 -or
             $bakeRunningJobs.Count -gt 0
         ) {
+            if (Test-MotionRunCancelRequested) {
+                break
+            }
+            while (
+                $pendingPrefetchItems.Count -gt 0 -and
+                $prefetchRunningJobs.Count -lt $PrefetchWorkers -and
+                ($pendingDiscoveryItems.Count + $prefetchRunningJobs.Count) -lt $PrefetchQueueDepth
+            ) {
+                $prefetchRunningJobs += Start-CandidatePrefetchJob -WorkItem ($pendingPrefetchItems.Dequeue())
+                Write-ProgressCheckpoint
+            }
+
+            if (
+                $null -ne $warmWhamWorkerInstance -and
+                $pendingLegacyBakeItems.Count -eq 0 -and
+                $bakeRunningJobs.Count -eq 0
+            ) {
+                Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+                $warmWhamWorkerInstance = $null
+            }
+
+            $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -ge $StagedWaveSize
             $canLaunchDiscovery = -not (
                 $avoidGpuDiscoveryBakeOverlap -and
-                ($pendingBakeItems.Count -gt 0 -or $bakeRunningJobs.Count -gt 0)
+                ($bakeRunningJobs.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0 -or $stagedWaveReady)
             )
             while ($canLaunchDiscovery -and $pendingDiscoveryItems.Count -gt 0 -and $discoveryRunningJobs.Count -lt $resolvedDiscoveryWorkers) {
                 $discoveryRunningJobs += Start-InitialDiscoveryJob -WorkItem ($pendingDiscoveryItems.Dequeue())
+                Write-ProgressCheckpoint
+            }
+
+            while ($pendingSourceDownloadItems.Count -gt 0 -and $sourceDownloadRunningJobs.Count -lt $SourceDownloadWorkers) {
+                $primaryDownloadItem = $pendingSourceDownloadItems.Dequeue()
+                $sourceDownloadRunningJobs += Start-SourceDownloadJob -WorkItem $primaryDownloadItem -Arguments $primaryDownloadItem.primarySourceDownloadArgs -Kind "primary"
+                Write-ProgressCheckpoint
+            }
+            while ($pendingFallbackSourceDownloadItems.Count -gt 0 -and $sourceDownloadRunningJobs.Count -lt $SourceDownloadWorkers) {
+                $fallbackDownloadItem = $pendingFallbackSourceDownloadItems.Dequeue()
+                $sourceDownloadRunningJobs += Start-SourceDownloadJob -WorkItem $fallbackDownloadItem -Arguments $fallbackDownloadItem.fallbackSourceDownloadArgs -Kind "fallback"
+                Write-ProgressCheckpoint
             }
 
             $canLaunchBake = -not (
@@ -2681,38 +3801,121 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
                 $discoveryRunningJobs.Count -gt 0
             )
 
-            if ($canLaunchBake -and $pendingBakeItems.Count -gt 0 -and $null -eq $warmWhamWorkerInstance -and $effectiveWarmWhamWorker) {
+            $discoveryAndDownloadDrained = (
+                $pendingDiscoveryItems.Count -eq 0 -and
+                $discoveryRunningJobs.Count -eq 0 -and
+                $pendingSourceDownloadItems.Count -eq 0 -and
+                $pendingFallbackSourceDownloadItems.Count -eq 0 -and
+                $sourceDownloadRunningJobs.Count -eq 0
+            )
+            $canStartStagedWave = (
+                $stagedWavesEnabled -and
+                $canLaunchBake -and
+                $bakeRunningJobs.Count -eq 0 -and
+                $pendingLegacyBakeItems.Count -eq 0 -and
+                $pendingCompletionItems.Count -eq 0 -and
+                $pendingBakeItems.Count -gt 0 -and
+                ($pendingBakeItems.Count -ge $StagedWaveSize -or $discoveryAndDownloadDrained)
+            )
+
+            while ($pendingCompletionItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+                $bakeRunningJobs += Start-StagedResultCompletionJob -WorkItem ($pendingCompletionItems.Dequeue())
+                Write-ProgressCheckpoint
+            }
+
+            if ($canLaunchBake -and ($canStartStagedWave -or $pendingLegacyBakeItems.Count -gt 0) -and $null -eq $warmWhamWorkerInstance -and $effectiveWarmWhamWorker) {
                 $warmWhamWorkerInstance = Start-WhamWarmWorker `
                     -SessionDir $resolvedWhamWorkerSessionDir `
                     -MountRoot $resolvedWorkspaceRoot `
                     -WorkerScriptPath $whamWarmWorkerScriptPath
             }
 
-            while ($canLaunchBake -and $pendingBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
-                $bakeRunningJobs += Start-BakeJob -WorkItem ($pendingBakeItems.Dequeue()) -UseExistingCandidatesForFirstAttempt $true
+            if ($canStartStagedWave) {
+                $waveItems = @()
+                while ($pendingBakeItems.Count -gt 0 -and $waveItems.Count -lt $StagedWaveSize) {
+                    $waveItems += $pendingBakeItems.Dequeue()
+                }
+                $stagedWaveIndex += 1
+                $bakeRunningJobs += Start-StagedBakeWaveJob -WorkItems $waveItems -WaveIndex $stagedWaveIndex
+                Write-ProgressCheckpoint
             }
 
-            $runningJobs = @($discoveryRunningJobs + $bakeRunningJobs)
+            while ($canLaunchBake -and $pendingLegacyBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+                $legacyItem = $pendingLegacyBakeItems.Dequeue()
+                $bakeRunningJobs += Start-BakeJob `
+                    -WorkItem $legacyItem `
+                    -UseExistingCandidatesForFirstAttempt $true `
+                    -ReusePreviousTerminalResults $ReuseExistingSelected
+                Write-ProgressCheckpoint
+            }
+
+            while (-not $stagedWavesEnabled -and $canLaunchBake -and $pendingBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+                $bakeRunningJobs += Start-BakeJob `
+                    -WorkItem ($pendingBakeItems.Dequeue()) `
+                    -UseExistingCandidatesForFirstAttempt $true `
+                    -ReusePreviousTerminalResults $ReuseExistingSelected
+                Write-ProgressCheckpoint
+            }
+
+            $runningJobs = @($prefetchRunningJobs + $discoveryRunningJobs + $sourceDownloadRunningJobs + $bakeRunningJobs)
             if ($runningJobs.Count -eq 0) {
                 continue
             }
 
-            Write-LiveLogUpdates -RunningJobs $runningJobs
+            Write-StagedWaveProgressUpdates -RunningJobs $runningJobs
+            if ($DetailedProgressLogs) {
+                Write-LiveLogUpdates -RunningJobs $runningJobs
+            }
             $now = Get-Date
             if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
-                Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -CompletedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingDiscoveryItems.Count + $pendingBakeItems.Count) -DetailedLogs:$DetailedProgressLogs
+                $successfulCount = @($summaryByIndex.Values | Where-Object { "$($_.status)" -eq "completed" }).Count
+                $unsuccessfulCount = @($summaryByIndex.Values | Where-Object { "$($_.status)" -ne "completed" }).Count
+                Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -SuccessfulCount $successfulCount -UnsuccessfulCount $unsuccessfulCount -ProcessedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingPrefetchItems.Count + $pendingDiscoveryItems.Count + $pendingSourceDownloadItems.Count + $pendingFallbackSourceDownloadItems.Count + $pendingBakeItems.Count + $pendingLegacyBakeItems.Count + $pendingCompletionItems.Count) -DetailedLogs:$DetailedProgressLogs
                 $lastProgressAt = $now
             }
 
             $finishedJobs = @(Wait-Job -Job $runningJobs -Any -Timeout 2)
+            if (Test-MotionRunCancelRequested) {
+                break
+            }
             if ($finishedJobs.Count -eq 0) {
                 continue
             }
 
+            $prefetchJobIds = @($prefetchRunningJobs | ForEach-Object { $_.Id })
             $discoveryJobIds = @($discoveryRunningJobs | ForEach-Object { $_.Id })
+            $sourceDownloadJobIds = @($sourceDownloadRunningJobs | ForEach-Object { $_.Id })
             $bakeJobIds = @($bakeRunningJobs | ForEach-Object { $_.Id })
             foreach ($job in $finishedJobs) {
-                if ($discoveryJobIds -contains $job.Id) {
+                if ($prefetchJobIds -contains $job.Id) {
+                    $workItem = $job.WorkItem
+                    $jobResult = $null
+                    $errorMessage = $null
+                    try {
+                        $received = @(Receive-Job -Job $job -Wait -ErrorAction Stop)
+                        if ($received.Count -gt 0) {
+                            $jobResult = $received[-1]
+                        }
+                    } catch {
+                        $errorMessage = $_.Exception.Message
+                    } finally {
+                        Remove-Job -Job $job -Force
+                    }
+                    $prefetchSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $jobResult -Name "prefetchSeconds")
+                    if ($null -ne $prefetchSeconds) {
+                        $workItem.prefetchSeconds = Add-OptionalSeconds -Current $workItem.prefetchSeconds -Value $prefetchSeconds
+                    }
+                    if (-not $jobResult -or $jobResult.exitCode -ne 0) {
+                        $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
+                        if ([string]::IsNullOrWhiteSpace($errorMessage)) {
+                            $errorMessage = "python candidate prefetch command failed with exit code $exitCode. See log: $($workItem.logPath)"
+                        }
+                        Write-Warning "Candidate prefetch failed for $($workItem.exerciseName); continuing through normal discovery. $errorMessage"
+                        $pendingDiscoveryItems.Enqueue($workItem)
+                    } else {
+                        $pendingDiscoveryItems.Enqueue($workItem)
+                    }
+                } elseif ($discoveryJobIds -contains $job.Id) {
                     $workItem = $job.WorkItem
                     $jobResult = $null
                     $status = "completed"
@@ -2758,28 +3961,125 @@ if ($pendingDiscoveryItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0) {
                     }
 
                     if ($status -eq "failed") {
-                        Write-Host "[failed] $($workItem.exerciseName) [initial_discovery] (log: $($workItem.logPath)) - $errorMessage"
+                        Write-Host ("Could not find a source for {0}. See {1}" -f $workItem.exerciseName, $workItem.logPath)
                         $discoveryExitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
                         $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "failed" -ErrorMessage $errorMessage -Stage "initial_discovery" -ExitCode $discoveryExitCode
                         $completedCount += 1
+                        Write-ProgressCheckpoint
                     } else {
-                        $pendingBakeItems.Enqueue($workItem)
+                        $recommendedCount = [int](Get-ObjectProperty -Object $jobResult -Name "recommendedCount")
+                        $workItem.hasFallbackSourceDownloads = (
+                            $workItem.hasFallbackSourceDownloads -and
+                            $recommendedCount -gt 1
+                        )
+                        $pendingSourceDownloadItems.Enqueue($workItem)
                         $bakeTotalCount += 1
                     }
                     $discoveryCompletedCount += 1
+                } elseif ($sourceDownloadJobIds -contains $job.Id) {
+                    $workItem = $job.WorkItem
+                    $downloadKind = $job.DownloadKind
+                    $jobResult = $null
+                    try {
+                        $received = @(Receive-Job -Job $job -Wait -ErrorAction Stop)
+                        if ($received.Count -gt 0) {
+                            $jobResult = $received[-1]
+                        }
+                    } catch {
+                        Write-Warning "Full-source prefetch job failed for $($workItem.exerciseName); bake will retry missing sources. $($_.Exception.Message)"
+                    } finally {
+                        Remove-Job -Job $job -Force
+                    }
+                    $sourceDownloadSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $jobResult -Name "sourceDownloadSeconds")
+                    if ($null -ne $sourceDownloadSeconds) {
+                        $workItem.sourceDownloadSeconds = Add-OptionalSeconds -Current $workItem.sourceDownloadSeconds -Value $sourceDownloadSeconds
+                    }
+                    if (-not $jobResult -or $jobResult.exitCode -ne 0) {
+                        Write-Warning "Full-source prefetch did not complete for $($workItem.exerciseName); continuing with bake fallback downloads."
+                    }
+                    if ($downloadKind -eq "primary") {
+                        $pendingBakeItems.Enqueue($workItem)
+                        if ($workItem.hasFallbackSourceDownloads) {
+                            $pendingFallbackSourceDownloadItems.Enqueue($workItem)
+                        }
+                    }
                 } elseif ($bakeJobIds -contains $job.Id) {
-                    $summaryByIndex[$job.WorkItem.index] = Complete-BakeJob -Job $job
-                    $completedCount += 1
-                    $bakeCompletedCount += 1
+                    if ($job.PSObject.Properties.Name -contains "IsStagedWave" -and $job.IsStagedWave) {
+                        $waveResult = $null
+                        try {
+                            $received = @(Receive-Job -Job $job -Wait -ErrorAction Stop)
+                            if ($received.Count -gt 0) {
+                                $waveResult = $received[-1]
+                            }
+                        } catch {
+                            Write-Warning "Staged movement wave failed; its exercises will continue through the retry lane. $($_.Exception.Message)"
+                        } finally {
+                            Remove-Job -Job $job -Force
+                        }
+                        # A successful staged coordinator stops the resident
+                        # WHAM worker before loading the final-validation VLM.
+                        # On an early failure, stop it here before retrying.
+                        if (-not $waveResult -or $waveResult.exitCode -ne 0) {
+                            Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+                        }
+                        $warmWhamWorkerInstance = $null
+                        $waveStates = @{}
+                        if ($waveResult -and $waveResult.report -and $waveResult.report.items) {
+                            foreach ($waveState in @($waveResult.report.items)) {
+                                $waveStates["$($waveState.exerciseId)"] = $waveState
+                            }
+                        }
+                        foreach ($waveItem in @($job.WorkItems)) {
+                            $waveState = $waveStates["$($waveItem.exerciseId)"]
+                            $reuseStagedResult = (
+                                $waveResult -and
+                                $waveResult.exitCode -eq 0 -and
+                                $waveState -and
+                                "$($waveState.status)" -eq "completed"
+                            )
+                            if ($reuseStagedResult) {
+                                $pendingCompletionItems.Enqueue($waveItem)
+                            } else {
+                                $pendingLegacyBakeItems.Enqueue($waveItem)
+                            }
+                        }
+                        if (-not $waveResult -or $waveResult.exitCode -ne 0) {
+                            $waveLog = if ($waveResult) { $waveResult.logPath } else { "the staged-wave log" }
+                            Write-Warning "Staged movement wave did not finish cleanly; retrying its exercises individually. Details: $waveLog"
+                        }
+                        Write-ProgressCheckpoint
+                    } else {
+                        $summaryByIndex[$job.WorkItem.index] = Complete-BakeJob -Job $job
+                        $completedCount += 1
+                        $bakeCompletedCount += 1
+                        Write-ProgressCheckpoint
+                    }
                 }
             }
             $finishedJobIds = @($finishedJobs | ForEach-Object { $_.Id })
+            $prefetchRunningJobs = @($prefetchRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
             $discoveryRunningJobs = @($discoveryRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
+            $sourceDownloadRunningJobs = @($sourceDownloadRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
             $bakeRunningJobs = @($bakeRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
+            Write-ProgressCheckpoint
         }
     } finally {
+        if (Test-MotionRunCancelRequested) {
+            Write-Host "Stopping background jobs and the motion extractor..." -ForegroundColor Yellow
+            foreach ($job in @($prefetchRunningJobs + $discoveryRunningJobs + $sourceDownloadRunningJobs + $bakeRunningJobs)) {
+                if ($null -ne $job) {
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
         Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
     }
+}
+
+if (Test-MotionRunCancelRequested) {
+    Write-Host "Motion run stopped." -ForegroundColor Yellow
+    exit 130
 }
 
 $summaryItems = @()
@@ -2798,22 +4098,33 @@ $summary = [ordered]@{
     excludeYoutubeVideoIds = @($ExcludeYoutubeVideoId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     excludeYoutubeUrls = @($ExcludeYoutubeUrl | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     exerciseListJsonPath = $exerciseListPath
-    processingOrder = "pipelined_discovery_and_bake"
+    processingOrder = "pipelined_discovery_source_download_and_bake"
     speedProfile = $SpeedProfile
     exerciseWorkers = $ExerciseWorkers
     discoveryWorkers = $resolvedDiscoveryWorkers
     bakeWorkers = $resolvedBakeWorkers
+    stagedWaveSize = $StagedWaveSize
+    stagedWavesEnabled = $stagedWavesEnabled
     candidateWorkers = $CandidateWorkers
+    exerciseMotionContractPrefetch = $contractPrefetchSummary
     parallelism = [ordered]@{
+        cpuPrefetchDuringBake = [bool]$CpuPrefetchDuringBake
+    prefetchWorkers = $PrefetchWorkers
+    prefetchQueueDepth = $PrefetchQueueDepth
+    sourceDownloadWorkers = $SourceDownloadWorkers
+    sourceDownloadCandidates = $SourceDownloadCandidates
         llamaCppParallel = $LlamaCppParallel
+        llamaCppThreadsHttp = $LlamaCppThreadsHttp
         activeDiscoveryWorkerBudget = $activeDiscoveryWorkerBudget
         visionDownloadWorkers = $VisionDownloadWorkers
         discoveryVisionLlmWorkers = $resolvedDiscoveryVisionLlmWorkers
         requestedVisionLlmWorkers = if ($visionLlmWorkersExplicit) { $VisionLlmWorkers } else { $null }
         posePrefilterWorkers = $PosePrefilterWorkers
+        semanticGateLlmWorkers = $SemanticGateLlmWorkers
         segmentClassificationWorkers = $SegmentClassificationWorkers
         reviewLlmWorkers = $ReviewLlmWorkers
         gpuDiscoveryStages = $gpuDiscoveryStages
+        globalGpuLockEnabled = $globalGpuLockEnabled
         gpuDiscoveryBakeOverlap = $effectiveGpuDiscoveryBakeOverlap
         defaultDiscoveryWorkerCap = $defaultDiscoveryWorkerCap
     }

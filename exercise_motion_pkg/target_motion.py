@@ -97,6 +97,10 @@ def normalize_observable_motion_spec(value: Any) -> dict[str, Any] | None:
     visible_regions = normalize_observable_motion_regions(value.get("mustBeVisibleRegions"), limit=8)
     axis = normalize_observable_motion_axis(value.get("primaryAxis"))
     pattern = normalize_observable_motion_pattern(value.get("motionPattern"))
+    pattern = normalize_joint_center_motion_pattern(
+        pattern,
+        primary_regions=primary_regions,
+    )
     requires_return = parse_contract_bool(value.get("requiresReturnToStart"))
     one_way_invalid = parse_contract_bool(value.get("oneWayPartialIsInvalid"))
     must_show_full_cycle = parse_contract_bool(value.get("mustShowFullCycle"))
@@ -113,6 +117,26 @@ def normalize_observable_motion_spec(value: Any) -> dict[str, Any] | None:
         "mustShowFullCycle": must_show_full_cycle if must_show_full_cycle is not None else True,
         "mustBeVisibleRegions": visible_regions,
     }
+
+
+def normalize_joint_center_motion_pattern(
+    pattern: str,
+    *,
+    primary_regions: list[str] | tuple[str, ...],
+) -> str:
+    """Use joint angle for hinge-joint targets whose centers should stay anchored.
+
+    Small generated contracts sometimes describe an elbow or knee action as
+    ``joint_travel``. That is the wrong observable for extensions/curls: the
+    joint center can remain nearly stationary while the distal limb rotates.
+    A contract that names only hinge joints therefore owns flexion/extension
+    evidence regardless of that model wording error.
+    """
+
+    primary = {str(region) for region in primary_regions if str(region)}
+    if pattern == "joint_travel" and primary and primary.issubset({"elbows", "knees"}):
+        return "joint_flex_extend"
+    return pattern
 
 
 def observable_motion_spec_for_contract(contract: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -140,6 +164,28 @@ def observable_motion_spec_for_contract(contract: dict[str, Any] | None) -> dict
         "mustBeVisibleRegions": contract.get("mustBeVisibleRegions") or contract.get("mustBeVisible"),
     }
     return normalize_observable_motion_spec(spec_payload)
+
+
+def observable_target_motion_range(
+    *,
+    primary_motion_range: float,
+    relative_motion_range: float,
+    flexion_range: float = 0.0,
+    reference_regions: list[str] | tuple[str, ...] | None,
+    motion_pattern: str,
+) -> float:
+    """Select motion that proves the contract relationship, not incidental travel.
+
+    When a contract names a reference region, absolute movement can come from
+    camera/root translation and is not sufficient evidence of the exercise.
+    Flexion remains valid for a flex/extend contract because it is inherently
+    body-relative. Without a reference, absolute joint travel is the available
+    observable signal.
+    """
+    flexion_evidence = flexion_range if motion_pattern == "joint_flex_extend" else 0.0
+    if reference_regions:
+        return max(relative_motion_range, flexion_evidence)
+    return max(primary_motion_range, flexion_evidence)
 
 
 def contract_plain_text_for_return_detection(contract: dict[str, Any] | None) -> str:

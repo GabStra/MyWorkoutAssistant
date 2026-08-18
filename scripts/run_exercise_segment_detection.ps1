@@ -11,13 +11,13 @@ param(
     [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b10038-bin-win-cuda-12.4-x64\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b10424-bin-win-cuda-12.4-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
-    [double]$LlamaCppTemperature = 1.0,
-    [Nullable[double]]$LlamaCppTopP = 0.95,
-    [Nullable[int]]$LlamaCppTopK = 64,
+    [double]$LlamaCppTemperature = 0.0,
+    [Nullable[double]]$LlamaCppTopP = 1.0,
+    [Nullable[int]]$LlamaCppTopK = 0,
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
@@ -94,7 +94,7 @@ function Get-LlamaCppServerCommand {
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    $fallback = "C:\Users\gabri\Downloads\llama-b10038-bin-win-cuda-12.4-x64\llama-server.exe"
+    $fallback = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }

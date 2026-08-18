@@ -176,6 +176,12 @@ if ($UseDocker) {
         $dockerArgs += @("--shm-size", $DockerShmSize)
     }
     $dockerArgs += @(
+        "-e", "WHAM_POSE_BACKEND=vitpose",
+        "-e", "WHAM_POSE_BATCH_SIZE=16",
+        "-e", "WHAM_FEATURE_BATCH_SIZE=32",
+        "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
+    )
+    $dockerArgs += @(
         "-v", "${resolvedRepo}:/code",
         "-v", "${inputDir}:/input",
         "-v", "${resolvedOutputRoot}:/output",

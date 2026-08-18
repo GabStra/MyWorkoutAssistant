@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import shutil
+import threading
+import urllib.request
 from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame
@@ -173,6 +177,57 @@ DOMINANT_MOVEMENT_AXIS_GROUPS = (
 DOMINANT_MOVEMENT_AXIS_MIN_RANGE = 0.035
 DOMINANT_MOVEMENT_AXIS_VERTICAL_RATIO = 1.25
 DOMINANT_MOVEMENT_AXIS_MIN_HORIZONTAL_RANGE = 0.025
+THREE_MODULE_VERSION = "0.169.0"
+THREE_MODULE_FILE_NAME = f"three.module.{THREE_MODULE_VERSION}.js"
+THREE_MODULE_DOWNLOAD_URL = (
+    f"https://cdn.jsdelivr.net/npm/three@{THREE_MODULE_VERSION}/build/three.module.js"
+)
+_THREE_MODULE_DOWNLOAD_LOCK = threading.Lock()
+
+
+def ensure_three_module_asset(cache_directory: Path | None = None) -> Path:
+    configured_cache = os.environ.get("EXERCISE_MOTION_WEB_ASSET_CACHE")
+    cache_root = (
+        Path(configured_cache).expanduser()
+        if configured_cache
+        else cache_directory
+        if cache_directory is not None
+        else Path.cwd() / "build" / "exercise_motion" / "web-assets"
+    )
+    destination = cache_root / THREE_MODULE_FILE_NAME
+
+    def usable(path: Path) -> bool:
+        if not path.is_file() or path.stat().st_size < 100_000:
+            return False
+        try:
+            payload = path.read_bytes()
+        except OSError:
+            return False
+        return b"WebGLRenderer" in payload and b"export" in payload
+
+    if usable(destination):
+        return destination
+    with _THREE_MODULE_DOWNLOAD_LOCK:
+        if usable(destination):
+            return destination
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(
+            THREE_MODULE_DOWNLOAD_URL,
+            headers={"User-Agent": "MyWorkoutAssistant exercise-motion generator"},
+        )
+        with urllib.request.urlopen(request, timeout=60.0) as response:
+            payload = response.read()
+        temporary = destination.with_name(
+            f"{destination.name}.{os.getpid()}.{threading.get_ident()}.part"
+        )
+        temporary.write_bytes(payload)
+        if not usable(temporary):
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Downloaded Three.js module is invalid: {THREE_MODULE_DOWNLOAD_URL}"
+            )
+        temporary.replace(destination)
+    return destination
 
 
 def write_preview_html(
@@ -181,6 +236,7 @@ def write_preview_html(
     *,
     title: str,
     debug_json_path: Path | None = None,
+    three_module_path: Path | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
@@ -251,7 +307,18 @@ def write_preview_html(
             else {}
         ),
     }
-    html = _build_html(payload)
+    three_module_url = THREE_MODULE_DOWNLOAD_URL
+    if three_module_path is not None:
+        resolved_three_module_path = three_module_path.expanduser().resolve()
+        if not resolved_three_module_path.is_file():
+            raise FileNotFoundError(
+                f"Local Three.js module not found: {resolved_three_module_path}"
+            )
+        local_three_module_path = path.parent / THREE_MODULE_FILE_NAME
+        if resolved_three_module_path != local_three_module_path.resolve():
+            shutil.copy2(resolved_three_module_path, local_three_module_path)
+        three_module_url = f"./{THREE_MODULE_FILE_NAME}"
+    html = _build_html(payload, three_module_url=three_module_url)
     path.write_text(html, encoding="utf-8")
 
 
@@ -3120,10 +3187,10 @@ def _wear_humanoid_geometry() -> dict[str, object]:
         },
         "limbs": {
             "scaleBasis": "segment_length",
-            "hipToKnee": {"startWidth": 0.25, "endWidth": 0.205, "depthScale": 0.44, "muscleBulgeScale": 1.16, "muscleBulgePosition": 0.42},
-            "kneeToAnkle": {"startWidth": 0.215, "endWidth": 0.16, "depthScale": 0.42, "muscleBulgeScale": 1.12, "muscleBulgePosition": 0.46},
-            "shoulderToElbow": {"startWidth": 0.27, "endWidth": 0.215, "depthScale": 0.42, "muscleBulgeScale": 1.18, "muscleBulgePosition": 0.48},
-            "elbowToWrist": {"startWidth": 0.225, "endWidth": 0.17, "depthScale": 0.40, "muscleBulgeScale": 1.10, "muscleBulgePosition": 0.40},
+            "hipToKnee": {"startWidth": 0.27, "endWidth": 0.215, "depthScale": 0.46, "muscleBulgeScale": 1.24, "muscleBulgePosition": 0.42},
+            "kneeToAnkle": {"startWidth": 0.225, "endWidth": 0.165, "depthScale": 0.44, "muscleBulgeScale": 1.18, "muscleBulgePosition": 0.46},
+            "shoulderToElbow": {"startWidth": 0.30, "endWidth": 0.225, "depthScale": 0.44, "muscleBulgeScale": 1.26, "muscleBulgePosition": 0.48},
+            "elbowToWrist": {"startWidth": 0.235, "endWidth": 0.175, "depthScale": 0.42, "muscleBulgeScale": 1.16, "muscleBulgePosition": 0.40},
             "wristToHand": {
                 "scaleBasis": "hand_and_forearm_length",
                 "handLengthStartWidth": 0.42,
@@ -3138,7 +3205,7 @@ def _wear_humanoid_geometry() -> dict[str, object]:
             "scaleBasis": "adjacent_limb_width",
             "radialSides": 8,
             "axialRings": 3,
-            "hipScale": 0.56,
+            "hipScale": 0.62,
             "kneeScale": 0.48,
             "elbowScale": 0.48,
             "wristScale": 0.48,
@@ -3554,7 +3621,11 @@ def _localize_point(point: tuple[float, float, float], *, origin: tuple[float, f
     )
 
 
-def _build_html(payload: dict[str, object]) -> str:
+def _build_html(
+    payload: dict[str, object],
+    *,
+    three_module_url: str = THREE_MODULE_DOWNLOAD_URL,
+) -> str:
     payload_json = json.dumps(payload)
     wear_exact_mesh_javascript = (
         Path(__file__).with_name("wear_exact_mesh.js").read_text(encoding="utf-8")
@@ -3836,8 +3907,7 @@ def _build_html(payload: dict[str, object]) -> str:
     <script type="importmap">
     {{
       "imports": {{
-        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+        "three": {json.dumps(three_module_url)}
       }}
     }}
     </script>
