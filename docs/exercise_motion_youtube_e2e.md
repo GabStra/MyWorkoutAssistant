@@ -19,9 +19,9 @@ The current default path is optimized for source quality first:
 - The default WHAM repo is `C:\Users\gabri\Downloads\WHAM`; otherwise the scripts try `third_party\WHAM`.
 - The default body model root is `<WHAM>\dataset\body_models`.
 - The default VLM path uses llama.cpp with:
-  - `C:\Users\gabri\Downloads\gemma-4-12b-it-UD-Q4_K_XL.gguf`
-  - `C:\Users\gabri\Downloads\mmproj-BF16(4).gguf`
-  - The same Gemma model handles text-only stages without the projector and visual stages with the projector. Context/fit context is `8192`, image min tokens is `1024`, memory mapping is enabled, and `mlock` is disabled.
+  - `C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf`
+  - `C:\Users\gabri\Downloads\mmproj-BF16(6).gguf`
+  - The same Qwen 3.5 9B model handles text-only stages without the projector and visual stages with the projector. Context/fit context is `8192`, image min tokens is `1024`, memory mapping is enabled, and `mlock` is disabled.
 - A YouTube cookies file is strongly recommended for reliable downloads.
 
 Use a long shell/tool timeout when running these. A good source can finish much faster, but difficult searches or first-time cache misses can take 10-25 minutes.
