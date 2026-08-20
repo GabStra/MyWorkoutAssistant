@@ -1,5 +1,8 @@
 # Shared Ctrl+C handling for exercise-motion PowerShell wrappers.
 # Uses a C# ConsoleCancelEventHandler so the signal thread never invokes a PowerShell scriptblock.
+# Nested wrappers (library -> workout-plan pwsh) should register -Silent so only the inner
+# process prints the Ctrl+C message. Windows delivers CTRL_C_EVENT to every process in the
+# console group, so both would otherwise acknowledge the same keypress.
 
 if (-not ("MotionRunInterrupt" -as [type])) {
     Add-Type @"
@@ -11,6 +14,7 @@ public static class MotionRunInterrupt
     private static int _cancelRequested;
     private static int _acknowledged;
     private static int _handlerRegistered;
+    private static int _silent;
 
     public static bool CancelRequested
     {
@@ -22,8 +26,23 @@ public static class MotionRunInterrupt
         get { return Interlocked.CompareExchange(ref _acknowledged, 0, 0) != 0; }
     }
 
+    public static bool Silent
+    {
+        get { return Interlocked.CompareExchange(ref _silent, 0, 0) != 0; }
+    }
+
     public static void RegisterOnce()
     {
+        RegisterOnce(false);
+    }
+
+    public static void RegisterOnce(bool silent)
+    {
+        if (silent)
+        {
+            Interlocked.Exchange(ref _silent, 1);
+        }
+
         if (Interlocked.CompareExchange(ref _handlerRegistered, 1, 0) != 0)
         {
             return;
@@ -32,21 +51,32 @@ public static class MotionRunInterrupt
         Console.CancelKeyPress += OnCancelKeyPress;
     }
 
+    public static bool TryAcknowledge()
+    {
+        return Interlocked.CompareExchange(ref _acknowledged, 1, 0) == 0;
+    }
+
     private static void OnCancelKeyPress(object sender, ConsoleCancelEventArgs e)
     {
         e.Cancel = true;
         Interlocked.Exchange(ref _cancelRequested, 1);
-        if (Interlocked.CompareExchange(ref _acknowledged, 1, 0) == 0)
+        if (Silent)
         {
-            try
-            {
-                Console.Error.WriteLine("");
-                Console.Error.WriteLine("Ctrl+C received. Stopping the motion run; workers and GPU processes may take a few seconds to exit.");
-                Console.Error.Flush();
-            }
-            catch
-            {
-            }
+            Interlocked.Exchange(ref _acknowledged, 1);
+            return;
+        }
+        if (!TryAcknowledge())
+        {
+            return;
+        }
+        try
+        {
+            Console.Error.WriteLine("");
+            Console.Error.WriteLine("Ctrl+C received. Stopping the motion run; workers and GPU processes may take a few seconds to exit.");
+            Console.Error.Flush();
+        }
+        catch
+        {
         }
     }
 }
@@ -54,7 +84,10 @@ public static class MotionRunInterrupt
 }
 
 function Write-MotionInterruptReceived {
-    if ([MotionRunInterrupt]::Acknowledged) {
+    if ([MotionRunInterrupt]::Silent) {
+        return
+    }
+    if (-not [MotionRunInterrupt]::TryAcknowledge()) {
         return
     }
     $message = "Ctrl+C received. Stopping the motion run; workers and GPU processes may take a few seconds to exit."
@@ -73,7 +106,8 @@ function Test-MotionRunCancelRequested {
 }
 
 function Register-MotionInterruptHandler {
-    [MotionRunInterrupt]::RegisterOnce()
+    param([switch]$Silent)
+    [MotionRunInterrupt]::RegisterOnce([bool]$Silent)
 }
 
 function Exit-IfMotionRunInterrupted {

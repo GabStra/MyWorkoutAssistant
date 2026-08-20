@@ -21,6 +21,9 @@ def test_library_wrapper_acknowledges_ctrl_c_immediately() -> None:
     assert "motion_run_interrupt.ps1" in script
     assert "MotionRunInterrupt" in interrupt
     assert "RegisterOnce" in interrupt
+    assert "Register-MotionInterruptHandler -Silent" in script
+    assert "[switch]$Silent" in interrupt
+    assert "TryAcknowledge" in interrupt
     assert "Ctrl+C received. Stopping the motion run" in interrupt
     assert "Exit-IfMotionRunInterrupted" in script
     assert "exit 130" in script

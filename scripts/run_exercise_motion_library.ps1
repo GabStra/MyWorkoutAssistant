@@ -31,6 +31,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
+Register-MotionInterruptHandler -Silent
 trap {
     if (
         $_.Exception -is [System.Management.Automation.PipelineStoppedException] -or
