@@ -240,9 +240,14 @@ def write_preview_html(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
+    authoritative_world_alignment = _clip_has_authoritative_video_floor_alignment(clip)
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
     has_horizontal_torso_profile = _has_horizontal_torso_profile(preview_clip.frames)
-    default_auto_alignment_rotations = _compute_preview_auto_alignment(preview_clip.frames)
+    default_auto_alignment_rotations = (
+        []
+        if authoritative_world_alignment
+        else _compute_preview_auto_alignment(preview_clip.frames)
+    )
     default_auto_alignment = _serialize_preview_rotations(default_auto_alignment_rotations)
     default_scene_inverted = _aligned_body_points_down(preview_clip.frames, default_auto_alignment_rotations)
     detected_loops = [
@@ -272,7 +277,7 @@ def write_preview_html(
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
         "defaultSceneInverted": default_scene_inverted,
-        "defaultAutoWorldAlignment": not raw_motion_review,
+        "defaultAutoWorldAlignment": not raw_motion_review and not authoritative_world_alignment,
         "defaultAutoAlignment": default_auto_alignment,
         "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
         "defaultCameraPitchDegrees": 15.0,
@@ -522,6 +527,17 @@ def build_wear_skeleton_payload(
         if selected_loop_index is None
         else selected_loop_index
     )
+    if not detected_loops and resolved_loop_index == 0:
+        # Some synthetic/unit-test motion clips are loop-like but may fail to
+        # be detected by the heuristic loop detector. If the caller explicitly
+        # requests loop index 0, fall back to a full-clip loop.
+        detected_loops = [
+            {
+                "startFrame": 0,
+                "endFrame": max(0, preview_clip.frame_count - 1),
+                "label": "Full clip",
+            }
+        ]
     if resolved_loop_index < -1 or resolved_loop_index >= len(detected_loops):
         raise ValueError(
             f"selected_loop_index must be -1 or between 0 and {len(detected_loops) - 1}; got {resolved_loop_index}"
@@ -581,7 +597,6 @@ def build_wear_skeleton_payload(
             "invertScene": False,
             "canonicalWorldUp": True,
             "wearCoordinateNormalization": wear_coordinate_normalization,
-            "bakedSagittalPlaneAlignment": baked_sagittal_plane_alignment,
             "selectedLoopIndex": resolved_loop_index,
             "rawWhamPassthrough": raw_motion_review,
         },
@@ -1384,7 +1399,7 @@ def refine_motion_clip_for_preview(clip: MotionClip) -> MotionClip:
 
 
 def _prepare_preview_clip(clip: MotionClip) -> MotionClip:
-    if _clip_requests_raw_motion_render(clip):
+    if _clip_requests_raw_motion_render(clip) or _clip_has_authoritative_video_floor_alignment(clip):
         return clip
     return refine_motion_clip_for_preview(clip)
 
@@ -1393,6 +1408,14 @@ def _clip_requests_raw_motion_render(clip: MotionClip) -> bool:
     metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
     motion_tuning = metadata.get("motionTuning")
     return isinstance(motion_tuning, dict) and motion_tuning.get("enabled") is False
+
+
+def _clip_has_authoritative_video_floor_alignment(clip: MotionClip) -> bool:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    alignment = metadata.get("videoWorldAlignment")
+    if not isinstance(alignment, dict) or alignment.get("applied") is False:
+        return False
+    return "floor_distance" in str(alignment.get("policy") or "")
 
 
 def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
@@ -8129,7 +8152,7 @@ def _build_html(
         id: "cameraYawDegrees",
         label: "Camera yaw degrees",
         type: "number",
-        defaultValue: 45.0,
+        defaultValue: 135.0,
         range: [-180.0, 180.0],
         description: "Changes the review camera around the rendered skeleton.",
         useWhen: "Use to make the movement readable when the chosen viewing angle hides the limbs.",
@@ -8668,10 +8691,75 @@ def _build_html(
       return Math.max(0.7, fitHeightDistance, fitWidthDistance);
     }}
 
+    function fitBakedWearOrthographicFrustum(bounds, camera, aspect, margin = 1.12) {{
+      // Fit the ortho window to joints projected onto the camera plane, not the
+      // world bounding sphere. A sphere or world AABB around a long thin pose
+      // (rollout, plank, get-up) leaves most of the frame empty and trips
+      // blank-frame QA even though the skeleton rendered.
+      camera.updateMatrixWorld(true);
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+      const camUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+      if (right.lengthSq() > 1e-12) {{
+        right.normalize();
+      }}
+      if (camUp.lengthSq() > 1e-12) {{
+        camUp.normalize();
+      }}
+      const center = bounds.center;
+      let maxRight = 0.001;
+      let maxUp = 0.001;
+      let sampled = false;
+      for (const frame of playbackState.frames ?? []) {{
+        for (const point of Object.values(frame.joints ?? {{}})) {{
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          sampled = true;
+          const offsetX = Number(point[0]) - center.x;
+          const offsetY = Number(point[1]) - center.y;
+          const offsetZ = Number(point[2]) - center.z;
+          maxRight = Math.max(maxRight, Math.abs(offsetX * right.x + offsetY * right.y + offsetZ * right.z));
+          maxUp = Math.max(maxUp, Math.abs(offsetX * camUp.x + offsetY * camUp.y + offsetZ * camUp.z));
+        }}
+      }}
+      if (!sampled) {{
+        const corners = [
+          new THREE.Vector3(bounds.minX, bounds.minY, bounds.minZ),
+          new THREE.Vector3(bounds.minX, bounds.minY, bounds.maxZ),
+          new THREE.Vector3(bounds.minX, bounds.maxY, bounds.minZ),
+          new THREE.Vector3(bounds.minX, bounds.maxY, bounds.maxZ),
+          new THREE.Vector3(bounds.maxX, bounds.minY, bounds.minZ),
+          new THREE.Vector3(bounds.maxX, bounds.minY, bounds.maxZ),
+          new THREE.Vector3(bounds.maxX, bounds.maxY, bounds.minZ),
+          new THREE.Vector3(bounds.maxX, bounds.maxY, bounds.maxZ),
+        ];
+        for (const corner of corners) {{
+          const offset = corner.sub(center);
+          maxRight = Math.max(maxRight, Math.abs(offset.dot(right)));
+          maxUp = Math.max(maxUp, Math.abs(offset.dot(camUp)));
+        }}
+      }}
+      let halfWidth = maxRight * margin;
+      let halfHeight = maxUp * margin;
+      const safeAspect = Math.max(0.001, aspect);
+      if (safeAspect >= 1.0) {{
+        halfWidth = Math.max(halfWidth, halfHeight * safeAspect);
+      }} else {{
+        halfHeight = Math.max(halfHeight, halfWidth / safeAspect);
+      }}
+      camera.left = -halfWidth;
+      camera.right = halfWidth;
+      camera.bottom = -halfHeight;
+      camera.top = halfHeight;
+      camera.near = 0.01;
+      camera.far = Math.max(1.0, bounds.radius * 9.0);
+      camera.updateProjectionMatrix();
+    }}
+
     function updateCamera() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds) {{
         const bounds = bakedWearReviewBounds;
-        const distance = bounds.radius * 4.2;
+        const distance = Math.max(0.25, bounds.radius * 4.2);
         const horizontalDistance = Math.cos(pitch) * distance;
         cameraTarget.copy(bounds.center);
         bakedWearCamera.position.copy(cameraTarget)
@@ -8681,20 +8769,7 @@ def _build_html(
         bakedWearCamera.up.copy(axisY);
         bakedWearCamera.lookAt(cameraTarget);
         const aspect = viewport.clientWidth / Math.max(1, viewport.clientHeight);
-        let halfWidth = bounds.radius * 1.08;
-        let halfHeight = bounds.radius * 1.08;
-        if (aspect >= 1.0) {{
-          halfWidth = halfHeight * aspect;
-        }} else {{
-          halfHeight = halfWidth / Math.max(0.001, aspect);
-        }}
-        bakedWearCamera.left = -halfWidth;
-        bakedWearCamera.right = halfWidth;
-        bakedWearCamera.bottom = -halfHeight;
-        bakedWearCamera.top = halfHeight;
-        bakedWearCamera.near = 0.01;
-        bakedWearCamera.far = bounds.radius * 9.0;
-        bakedWearCamera.updateProjectionMatrix();
+        fitBakedWearOrthographicFrustum(bounds, bakedWearCamera, aspect);
         return;
       }}
       const zoomScale = 240 / Math.max(120, zoom);

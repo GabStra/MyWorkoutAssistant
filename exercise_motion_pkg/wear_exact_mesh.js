@@ -10,6 +10,8 @@
     );
     wearExactMesh.visible = false;
     scene.add(wearExactMesh);
+    let wearStableBodyProportions = null;
+    const wearStableSegmentLengths = new Map();
 
     const wearLimbs = [
       ["left_hip", "left_knee", .27, .215, .46, 1.24, .42],
@@ -78,6 +80,31 @@
       };
     }
 
+    function wearSpineProgress(hipCenter, neck, point) {
+      const axis = neck.clone().sub(hipCenter);
+      const lengthSq = axis.lengthSq();
+      if (lengthSq <= 1e-6) return 0.5;
+      return Math.max(0, Math.min(1, point.clone().sub(hipCenter).dot(axis) / lengthSq));
+    }
+
+    function wearTorsoBodyWidth(hipWidth, shoulderWidth, progress) {
+      const t = Math.max(0, Math.min(1, progress));
+      return hipWidth + (shoulderWidth - hipWidth) * t;
+    }
+
+    function wearAlignRingAxes(reference, candidate) {
+      const up = candidate.up;
+      let side = candidate.side;
+      if (side.dot(reference.side) < 0) {
+        side = side.clone().multiplyScalar(-1);
+      }
+      return {
+        side,
+        up,
+        forward: wearUnit(side.clone().cross(up), candidate.forward),
+      };
+    }
+
     function wearLimbSides(joints, axes) {
       const current = new Map();
       for (const [startName, endName] of wearLimbs) {
@@ -128,33 +155,42 @@
     function wearTorsoRing(
       mesh, center, side, depth, halfWidth, halfDepth,
       latWidthScale, latDepthScale, erectorWidthScale, erectorDepthScale,
-      grooveWidthScale, grooveDepthScale
+      grooveWidthScale, grooveDepthScale, backDepthTracker = null,
+      backDepthBoost = 1.0, backCenterBias = null, minBackDepth = null
     ) {
-      // Muscular octagon: pec shelf, side lat wings, erector columns, spinal groove.
-      const latHalfWidth = halfWidth * latWidthScale;
-      const erectorHalfWidth = halfWidth * erectorWidthScale;
-      const grooveHalfWidth = halfWidth * grooveWidthScale;
-      const latDepth = halfDepth * latDepthScale;
-      const erectorDepth = halfDepth * erectorDepthScale;
-      const grooveDepth = halfDepth * grooveDepthScale;
-      return [
-        center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, halfDepth),
-        center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, halfDepth),
-        center.clone().addScaledVector(side, -latHalfWidth).addScaledVector(depth, -latDepth),
-        center.clone().addScaledVector(side, -erectorHalfWidth).addScaledVector(depth, -erectorDepth),
-        center.clone().addScaledVector(side, -grooveHalfWidth).addScaledVector(depth, -grooveDepth),
-        center.clone().addScaledVector(side, grooveHalfWidth).addScaledVector(depth, -grooveDepth),
-        center.clone().addScaledVector(side, erectorHalfWidth).addScaledVector(depth, -erectorDepth),
-        center.clone().addScaledVector(side, latHalfWidth).addScaledVector(depth, -latDepth),
-      ].map((point) => wearVertex(mesh, point));
+      const latScale = Math.max(1.0, Math.min(1.18, latWidthScale));
+      const frontDepth = Math.max(
+        halfDepth * 0.85,
+        Math.min(halfDepth * 1.08, halfDepth * (0.90 + latDepthScale * 0.08))
+      );
+      let backDepth = Math.max(
+        halfDepth * 0.86,
+        Math.min(halfDepth * 1.12, halfDepth * (0.92 + erectorDepthScale * 0.04))
+      ) * backDepthBoost;
+      if (backDepthTracker && backDepthTracker.value > 0) {
+        backDepth = Math.max(backDepth, backDepthTracker.value);
+      }
+      if (minBackDepth != null) {
+        backDepth = Math.max(backDepth, minBackDepth);
+      }
+      if (backDepthTracker) {
+        backDepthTracker.value = Math.max(backDepthTracker.value, backDepth);
+      }
+      const width = halfWidth * latScale;
+      return wearDirectionalRing(
+        mesh, center, side, depth, width, frontDepth, backDepth, backCenterBias
+      );
     }
 
-    function wearDirectionalRing(mesh, center, side, depth, halfWidth, frontDepth, backDepth) {
+    function wearDirectionalRing(
+      mesh, center, side, depth, halfWidth, frontDepth, backDepth, backCenterBias = null
+    ) {
+      const backCenter = backCenterBias ? center.clone().add(backCenterBias) : center;
       return [
         center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, frontDepth),
         center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, frontDepth),
-        center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, -backDepth),
-        center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, -backDepth),
+        backCenter.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, -backDepth),
+        backCenter.clone().addScaledVector(side, halfWidth).addScaledVector(depth, -backDepth),
       ].map((point) => wearVertex(mesh, point));
     }
 
@@ -179,7 +215,13 @@
     }
 
     function wearCap(mesh, ring, fill) {
-      if (ring.length >= 3) wearFace(mesh, ring, fill);
+      if (ring.length === 3 || ring.length === 4) {
+        wearFace(mesh, ring, fill);
+        return;
+      }
+      for (let index = 1; index < ring.length - 1; index += 1) {
+        wearFace(mesh, [ring[0], ring[index], ring[index + 1]], fill);
+      }
     }
 
     function wearFan(mesh, center, ring, fill) {
@@ -211,10 +253,10 @@
 
     function wearClearance(name, width) {
       if (!wearCapNames.has(name)) return 0;
-      if (name.includes("hip")) return width * .46;
-      if (name.includes("shoulder")) return width * .32;
-      if (name.includes("ankle")) return width * .44;
-      return width * .20;
+      if (name.includes("hip")) return width * .12;
+      if (name.includes("shoulder")) return width * .12;
+      if (name.includes("ankle")) return width * .16;
+      return width * .08;
     }
 
     function wearSegment(
@@ -315,42 +357,37 @@
       const axes = wearAxes(joints);
       const limbSides = wearLimbSides(joints, axes);
       const hipCenter = joints.left_hip.clone().lerp(joints.right_hip, .5);
-      const shoulderCenter = joints.left_shoulder.clone().lerp(joints.right_shoulder, .5);
-      const hipWidth = joints.right_hip.distanceTo(joints.left_hip);
-      const shoulderWidth = joints.right_shoulder.distanceTo(joints.left_shoulder);
+      if (!wearStableBodyProportions) {
+        wearStableBodyProportions = {
+          hipWidth: joints.right_hip.distanceTo(joints.left_hip),
+          shoulderWidth: joints.right_shoulder.distanceTo(joints.left_shoulder),
+        };
+      }
+      const hipWidth = wearStableBodyProportions.hipWidth;
+      const shoulderWidth = wearStableBodyProportions.shoulderWidth;
+      const stableSegmentLength = (startName, endName) => {
+        if (!joints[startName] || !joints[endName]) return 0;
+        const key = `${startName}->${endName}`;
+        if (!wearStableSegmentLengths.has(key)) {
+          wearStableSegmentLengths.set(
+            key,
+            joints[startName].distanceTo(joints[endName])
+          );
+        }
+        return wearStableSegmentLengths.get(key);
+      };
       const pelvisWidth = Math.max(hipWidth * 1.08, shoulderWidth * .64);
       const footScale = Math.max(hipWidth * .98, shoulderWidth * .58);
       const torsoVector = joints.neck.clone().sub(hipCenter);
       const torsoLength = torsoVector.length();
       const torsoUp = wearUnit(torsoVector, axes.up);
-      const chestForward = axes.forward.clone().multiplyScalar(shoulderWidth * .06);
       const waist = joints.spine1
         ?? hipCenter.clone().addScaledVector(torsoUp, torsoLength * .40);
-      const chest = joints.spine2
-        ?? hipCenter.clone().addScaledVector(torsoUp, torsoLength * .60);
-      const upperChest = joints.spine3
-        ?? chest.clone().lerp(joints.neck, .52);
-      const chestTop = shoulderCenter.clone().lerp(joints.neck, .04).add(chestForward);
-      const waistAxes = wearSpineRingAxes(hipCenter, waist, chest, axes);
-      const chestAxes = wearSpineRingAxes(waist, chest, upperChest, axes);
-      const upperChestAxes = wearSpineRingAxes(chest, upperChest, chestTop, axes);
-      const chestTopAxes = wearSpineRingAxes(upperChest, chestTop, joints.neck, axes);
-      const chestRings = [
-        wearTorsoRing(mesh, waist, waistAxes.side, waistAxes.forward, shoulderWidth * .24, shoulderWidth * .16, 1.20, .30, .36, 1.22, .12, .68),
-        wearTorsoRing(mesh, chest, chestAxes.side, chestAxes.forward, shoulderWidth * .36, shoulderWidth * .22, 1.30, .36, .34, 1.28, .11, .62),
-        wearTorsoRing(mesh, upperChest, upperChestAxes.side, upperChestAxes.forward, shoulderWidth * .45, shoulderWidth * .26, 1.34, .40, .32, 1.32, .10, .58),
-        wearTorsoRing(mesh, chestTop, chestTopAxes.side, chestTopAxes.forward, shoulderWidth * .51, shoulderWidth * .24, 1.16, .34, .40, 1.26, .13, .64),
-      ];
-      for (let index = 0; index < chestRings.length - 1; index += 1) {
-        wearStrip(mesh, chestRings[index], chestRings[index + 1], primary);
-      }
-      const trapeziusTop = chestTop.clone().lerp(joints.neck, .38);
-      const trapeziusTopRing = wearTorsoRing(
-        mesh, trapeziusTop, axes.side, axes.forward,
-        shoulderWidth * .20, shoulderWidth * .15, 1.08, .28, .52, 1.30, .16, .72
-      );
-      wearStrip(mesh, chestRings[chestRings.length - 1], trapeziusTopRing, primary);
-
+      const chest = waist.clone().lerp(joints.neck, .38);
+      const upperChest = waist.clone().lerp(joints.neck, .66);
+      const chestTop = waist.clone().lerp(joints.neck, .80);
+      const upperBackCenter = waist.clone().lerp(joints.neck, .88);
+      const upperTransitionCenter = waist.clone().lerp(joints.neck, .94);
       const pelvisUp = wearUnit(waist.clone().sub(hipCenter), torsoUp);
       const hipSide = joints.right_hip.clone().sub(joints.left_hip);
       const pelvisSide = wearUnit(
@@ -362,49 +399,157 @@
         up: pelvisUp,
         forward: wearUnit(pelvisSide.clone().cross(pelvisUp), axes.forward),
       };
-      const pelvisTop = hipCenter.clone().lerp(waist, .78);
-      const pelvisMid = hipCenter.clone().lerp(waist, .42);
+      let previousRingAxes = pelvisAxes;
+      const waistAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(hipCenter, waist, chest, axes)
+      );
+      previousRingAxes = waistAxes;
+      const chestAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(waist, chest, upperChest, axes)
+      );
+      previousRingAxes = chestAxes;
+      const upperChestAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(chest, upperChest, chestTop, axes)
+      );
+      previousRingAxes = upperChestAxes;
+      const chestTopAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(upperChest, chestTop, upperBackCenter, axes)
+      );
+      previousRingAxes = chestTopAxes;
+      const upperBackAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(chestTop, upperBackCenter, upperTransitionCenter, axes)
+      );
+      previousRingAxes = upperBackAxes;
+      const upperTransitionAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(upperBackCenter, upperTransitionCenter, joints.neck, axes)
+      );
+      previousRingAxes = upperTransitionAxes;
+      const waistResolvedBackDepth = shoulderWidth * .18;
+      const waistRing = wearDirectionalRing(
+        mesh, waist, waistAxes.side, waistAxes.forward,
+        shoulderWidth * .30, shoulderWidth * .16, waistResolvedBackDepth
+      );
+      const chestRings = [
+        waistRing,
+        wearDirectionalRing(
+          mesh, chest, chestAxes.side, chestAxes.forward,
+          shoulderWidth * .40, shoulderWidth * .22, shoulderWidth * .24
+        ),
+        wearDirectionalRing(
+          mesh, upperChest, upperChestAxes.side, upperChestAxes.forward,
+          shoulderWidth * .50, shoulderWidth * .26, shoulderWidth * .28
+        ),
+        wearDirectionalRing(
+          mesh, chestTop, chestTopAxes.side, chestTopAxes.forward,
+          shoulderWidth * .47, shoulderWidth * .24, shoulderWidth * .27
+        ),
+      ];
+      for (let index = 0; index < chestRings.length - 1; index += 1) {
+        wearStrip(mesh, chestRings[index], chestRings[index + 1], primary);
+      }
+      const upperBackHalfWidth = shoulderWidth * .46;
+      const upperBackRing = wearDirectionalRing(
+        mesh, upperBackCenter, upperBackAxes.side, upperBackAxes.forward,
+        upperBackHalfWidth, shoulderWidth * .23, shoulderWidth * .31
+      );
+      wearStrip(mesh, chestRings[chestRings.length - 1], upperBackRing, primary);
+      const upperTransitionHalfWidth = shoulderWidth * .36;
+      const upperTransitionFrontDepth = shoulderWidth * .13;
+      const upperTransitionBackDepth = shoulderWidth * .18;
+      const upperTransitionRing = wearDirectionalRing(
+        mesh, upperTransitionCenter, upperTransitionAxes.side, upperTransitionAxes.forward,
+        upperTransitionHalfWidth, upperTransitionFrontDepth, upperTransitionBackDepth
+      );
+      wearStrip(mesh, upperBackRing, upperTransitionRing, primary);
+      const neckLowerCenter = upperTransitionCenter;
+      const neckLowerRing = upperTransitionRing;
+      const neckMidLerp = .55;
+      const neckMid = neckLowerCenter.clone().lerp(joints.neck, neckMidLerp);
+      const neckMidAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(neckLowerCenter, neckMid, joints.neck, axes)
+      );
+      previousRingAxes = neckMidAxes;
+      const neckUpperCenter = joints.neck.clone();
+      const neckMidHalfWidth = shoulderWidth * .14;
+      const neckUpperHalfWidth = shoulderWidth * .115;
+      const neckMidRing = wearDirectionalRing(
+        mesh, neckMid, neckMidAxes.side, neckMidAxes.forward,
+        neckMidHalfWidth, shoulderWidth * .105,
+        shoulderWidth * .09
+      );
+      const neckUpperRing = wearDirectionalRing(
+        mesh, neckUpperCenter, neckMidAxes.side, neckMidAxes.forward,
+        neckUpperHalfWidth, shoulderWidth * .085,
+        shoulderWidth * .075
+      );
+      wearStrip(mesh, neckLowerRing, neckMidRing, primary);
+      wearStrip(mesh, neckMidRing, neckUpperRing, joint);
+      wearCap(mesh, [...neckUpperRing].reverse(), joint);
+      const neckMidPoint = joints.neck.clone().lerp(joints.head, .5);
+      const headAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(joints.neck, neckMidPoint, joints.head, axes)
+      );
+
+      const pelvisTop = hipCenter.clone().lerp(waist, .76);
+      const pelvisMid = hipCenter.clone().lerp(waist, .38);
       const pelvisBottom = hipCenter.clone().lerp(waist, .06);
       const pelvisJunction = pelvisTop.clone().addScaledVector(pelvisAxes.forward, pelvisWidth * .03);
-      const pelvisRings = [
-        wearTorsoRing(mesh, pelvisJunction, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * .42, pelvisWidth * .30, 1.18, .38, .42, 1.12, .14, .64),
-        wearTorsoRing(mesh, pelvisMid, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * .58, pelvisWidth * .50, 1.20, .42, .52, 1.24, .12, .56),
-        wearTorsoRing(mesh, pelvisBottom, pelvisAxes.side, pelvisAxes.forward, pelvisWidth * .38, pelvisWidth * .32, 1.14, .48, .44, 1.14, .16, .62),
-      ];
+      const pelvisJunctionWidth = wearTorsoBodyWidth(
+        hipWidth,
+        shoulderWidth,
+        wearSpineProgress(hipCenter, joints.neck, pelvisJunction)
+      );
+      const pelvisMidWidth = wearTorsoBodyWidth(
+        hipWidth,
+        shoulderWidth,
+        wearSpineProgress(hipCenter, joints.neck, pelvisMid)
+      );
+      const pelvisBackDepth = { value: 0 };
+      const pelvisBottomRing = wearTorsoRing(
+        mesh, pelvisBottom, pelvisAxes.side, pelvisAxes.forward, hipWidth * .50, hipWidth * .34,
+        1.06, .42, .44, 1.08, .14, .56, pelvisBackDepth
+      );
+      const pelvisMidRing = wearTorsoRing(
+        mesh, pelvisMid, pelvisAxes.side, pelvisAxes.forward, pelvisMidWidth * .52, pelvisMidWidth * .36,
+        1.08, .40, .48, 1.14, .12, .54, pelvisBackDepth
+      );
+      pelvisBackDepth.value = Math.max(pelvisBackDepth.value, waistResolvedBackDepth * 0.96);
+      const pelvisJunctionRing = wearTorsoRing(
+        mesh, pelvisJunction, pelvisAxes.side, pelvisAxes.forward, pelvisJunctionWidth * .50, pelvisJunctionWidth * .30,
+        1.10, .36, .42, 1.10, .14, .62, pelvisBackDepth
+      );
+      const pelvisRings = [pelvisJunctionRing, pelvisMidRing, pelvisBottomRing];
       wearStrip(mesh, pelvisRings[2], pelvisRings[1], primary);
       wearStrip(mesh, pelvisRings[1], pelvisRings[0], primary);
       wearCap(mesh, pelvisRings[2], primary);
       wearStrip(mesh, pelvisRings[0], chestRings[0], primary);
 
-      const segmentWidth = (startName, endName, scale) => (
-        joints[startName] && joints[endName]
-          ? joints[startName].distanceTo(joints[endName]) * scale
-          : 0
-      );
-      wearSphere(mesh, joints.neck, axes, shoulderWidth * .10, joint);
-      wearSphere(mesh, joints.left_hip, axes, segmentWidth("left_hip", "left_knee", .27) * .62, joint);
-      wearSphere(mesh, joints.right_hip, axes, segmentWidth("right_hip", "right_knee", .27) * .62, joint);
-      wearSphere(mesh, joints.left_shoulder, axes, segmentWidth("left_shoulder", "left_elbow", .30) * .68, joint);
-      wearSphere(mesh, joints.right_shoulder, axes, segmentWidth("right_shoulder", "right_elbow", .30) * .68, joint);
+      const segmentWidth = (startName, endName, scale) =>
+        stableSegmentLength(startName, endName) * scale;
+      wearSphere(mesh, joints.left_hip, axes, segmentWidth("left_hip", "left_knee", .27) * .58, joint);
+      wearSphere(mesh, joints.right_hip, axes, segmentWidth("right_hip", "right_knee", .27) * .58, joint);
+      wearSphere(mesh, joints.left_shoulder, axes, segmentWidth("left_shoulder", "left_elbow", .30) * .56, joint);
+      wearSphere(mesh, joints.right_shoulder, axes, segmentWidth("right_shoulder", "right_elbow", .30) * .56, joint);
 
-      const neckSpan = joints.neck.clone().sub(trapeziusTop);
-      const neckHeight = Math.max(torsoLength * .10, shoulderWidth * .22, neckSpan.length() * 1.25);
-      const neckLower = wearBoxRing(mesh, trapeziusTop, axes.side, axes.forward, shoulderWidth * .18, shoulderWidth * .13);
-      const neckUpper = wearBoxRing(mesh, joints.neck.clone().addScaledVector(axes.up, neckHeight * .26), axes.side, axes.forward, shoulderWidth * .095, shoulderWidth * .070);
-      wearStrip(mesh, neckLower, neckUpper, joint);
-      wearCap(mesh, [...neckUpper].reverse(), joint);
-
-      const headHeightAtJoint = joints.head.distanceTo(joints.neck);
+      const headHeightAtJoint = stableSegmentLength("neck", "head");
       if (headHeightAtJoint > .0001) {
         const headHeight = Math.max(headHeightAtJoint * 1.65, shoulderWidth * .45);
         const headWidth = Math.max(headHeightAtJoint * 1.08, shoulderWidth * .37);
         const headDepth = headWidth * .82;
-        const base = joints.neck.clone().addScaledVector(axes.up, headHeight * .06);
-        const center = base.clone().addScaledVector(axes.up, headHeight * .44);
+        const base = joints.neck.clone().addScaledVector(headAxes.up, headHeight * .06);
+        const center = base.clone().addScaledVector(headAxes.up, headHeight * .44);
         const rings = [
-          wearBoxRing(mesh, base, axes.side, axes.forward, headWidth * .34, headDepth * .34),
-          wearBoxRing(mesh, center, axes.side, axes.forward, headWidth * .52, headDepth * .52),
-          wearBoxRing(mesh, base.clone().addScaledVector(axes.up, headHeight), axes.side, axes.forward, headWidth * .44, headDepth * .44),
+          wearBoxRing(mesh, base, headAxes.side, headAxes.forward, headWidth * .34, headDepth * .34),
+          wearBoxRing(mesh, center, headAxes.side, headAxes.forward, headWidth * .52, headDepth * .52),
+          wearBoxRing(mesh, base.clone().addScaledVector(headAxes.up, headHeight), headAxes.side, headAxes.forward, headWidth * .44, headDepth * .44),
         ];
         wearStrip(mesh, rings[0], rings[1], primary);
         wearStrip(mesh, rings[1], rings[2], primary);
@@ -417,7 +562,7 @@
         muscleBulgeScale, muscleBulgePosition,
       ] of wearLimbs) {
         if (!joints[startName] || !joints[endName]) continue;
-        const segmentLength = joints[startName].distanceTo(joints[endName]);
+        const segmentLength = stableSegmentLength(startName, endName);
         const scaledStartWidth = segmentLength * startWidth;
         const scaledEndWidth = segmentLength * endWidth;
         wearSegment(
@@ -434,7 +579,7 @@
         const wrist = joints[wristName];
         const hand = joints[handName];
         if (!wrist || !hand) return;
-        const handLength = wrist.distanceTo(hand);
+        const handLength = stableSegmentLength(wristName, handName);
         const wristWidth = Math.max(
           segmentWidth(elbowName, wristName, .17) * .90,
           handLength * .42
