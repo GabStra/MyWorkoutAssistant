@@ -10,7 +10,7 @@ import numpy as np
 from exercise_motion_pkg.segment_detection import DetectionWindow
 
 
-CAMERA_STABILITY_POLICY_VERSION = 2
+CAMERA_STABILITY_POLICY_VERSION = 3
 CAMERA_STABILITY_SAMPLE_FPS = 4.0
 CAMERA_STABILITY_MAX_SAMPLES_PER_SCENE = 48
 CAMERA_STABILITY_MIN_FEATURES = 16
@@ -201,14 +201,17 @@ def analyze_scene_camera_stability(
         reasons.append("sustained_camera_zoom")
     if strong_step_motion:
         reasons.append("strong_camera_motion_step")
+    if moderate:
+        reasons.append("moderate_camera_motion")
+    stable = classification == "stable"
     return {
         "sceneIndex": scene_window.index,
         "startSeconds": round(scene_window.start_seconds, 3),
         "endSeconds": round(scene_window.end_seconds, 3),
         "status": "analyzed",
         "classification": classification,
-        "passed": classification != "unstable",
-        "rejectionReasons": ["source_scene_unstable_camera"] if unstable else [],
+        "passed": stable,
+        "rejectionReasons": [] if stable else ["source_scene_unstable_camera"],
         "classificationReasons": reasons,
         "sampledFrameCount": len(sampled),
         "pairCount": len(pair_metrics),
