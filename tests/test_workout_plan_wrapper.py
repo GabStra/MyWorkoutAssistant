@@ -316,7 +316,24 @@ def write_workout_plan(tmp_path: Path, exercise_count: int = 3) -> Path:
     return workout_plan
 
 
-def test_workout_plan_wrappers_disable_total_wall_clock_timeouts_by_default() -> None:
+def test_youtube_discovery_wrappers_keep_semantic_gate_budget_independent_of_attempt_max() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    youtube_bake = (repo_root / "scripts/run_exercise_motion_youtube_bake_and_rank.ps1").read_text(encoding="utf-8")
+    workout_plan = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+
+    for script in (youtube_bake, workout_plan):
+        assert "--semantic-gate-candidates-per-exercise\" -Value \"$attemptMaxCandidates\"" not in script
+        assert "--semantic-gate-max-candidates-per-exercise\" -Value \"$attemptMaxCandidates\"" not in script
+        assert '"--semantic-gate-max-candidates-per-exercise", "$SemanticGateMaxCandidatesPerExercise"' in script
+
+
+def test_youtube_bake_wrapper_passes_exercise_motion_contract_cache_dir() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_youtube_bake_and_rank.ps1").read_text(encoding="utf-8")
+
+    assert "[string]$ExerciseMotionContractCacheDir" in script
+    assert '"--exercise-motion-contract-cache-dir", $contractCachePath' in script
+    assert 'Join-Path $repoRoot "build\\exercise_motion\\exercise-library\\exercise-motion-contract-cache"' in script
     repo_root = Path(__file__).resolve().parents[1]
     for relative_path in (
         "scripts/run_exercise_motion_workout_plan.ps1",
@@ -360,6 +377,8 @@ def test_workout_plan_wrapper_acknowledges_ctrl_c_immediately() -> None:
     assert "motion_run_interrupt.ps1" in script
     assert "MotionRunInterrupt" in interrupt
     assert "RegisterOnce" in interrupt
+    assert "Register-MotionInterruptHandler -Silent" not in script
+    assert "TryAcknowledge" in interrupt
     assert "Ctrl+C received. Stopping the motion run" in interrupt
     assert "Stopping background jobs and the motion extractor..." in script
     assert "Motion run stopped." in script

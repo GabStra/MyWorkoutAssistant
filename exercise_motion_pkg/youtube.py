@@ -156,8 +156,9 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
             preview=False,
             cookies_path=attempt_cookies,
         )
-        if player_client is not None:
-            options["extractor_args"] = {"youtube": {"player_client": [player_client]}}
+        extractor_args = youtube_player_client_extractor_args(player_client)
+        if extractor_args is not None:
+            options["extractor_args"] = extractor_args
         attempt_label = player_client or "automatic"
         print(f"[youtube] full download attempt {attempt_index}: client={attempt_label}", flush=True)
         try:
@@ -212,25 +213,25 @@ def find_completed_youtube_download(downloaded: Path) -> Path | None:
     return None
 
 
-def download_youtube_preview(
+def youtube_player_client_extractor_args(player_client: str | None) -> dict[str, Any] | None:
+    if not player_client:
+        return None
+    return {"youtube": {"player_client": [player_client]}}
+
+
+def youtube_player_client_cli_args(player_client: str | None) -> list[str]:
+    if not player_client:
+        return []
+    return ["--extractor-args", f"youtube:player_client={player_client}"]
+
+
+def build_youtube_preview_ytdlp_command(
+    *,
     url: str,
     output_dir: Path,
     cookies_path: Path | None = None,
-    *,
-    cache_dir: Path | None = None,
-) -> Path:
-    resolved_cookies_path: Path | None = None
-    if cookies_path is not None:
-        resolved_cookies_path = cookies_path.expanduser().resolve()
-        if not resolved_cookies_path.exists():
-            raise FileNotFoundError(f"YouTube cookies file not found: {resolved_cookies_path}")
-    resolved_cache_dir = cache_dir.expanduser().resolve() if cache_dir is not None else None
-    cache_stem = youtube_preview_cache_stem(url)
-    if resolved_cache_dir is not None:
-        cached = find_cached_youtube_preview(resolved_cache_dir, cache_stem)
-        if cached is not None:
-            return cached
-    output_dir.mkdir(parents=True, exist_ok=True)
+    player_client: str | None = None,
+) -> list[str]:
     command = [
         sys.executable,
         "-m",
@@ -251,30 +252,83 @@ def download_youtube_preview(
         "--no-progress",
         "--no-warnings",
         "--force-overwrites",
+        *youtube_player_client_cli_args(player_client),
     ]
-    if resolved_cookies_path is not None:
-        command += ["--cookies", str(resolved_cookies_path)]
+    if cookies_path is not None:
+        command += ["--cookies", str(cookies_path)]
     command.append(url)
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=90,
+    return command
+
+
+def remove_incomplete_youtube_preview_downloads(output_dir: Path) -> None:
+    for candidate in output_dir.glob("candidate.*"):
+        if candidate.is_file():
+            candidate.unlink(missing_ok=True)
+
+
+def download_youtube_preview(
+    url: str,
+    output_dir: Path,
+    cookies_path: Path | None = None,
+    *,
+    cache_dir: Path | None = None,
+) -> Path:
+    resolved_cookies_path: Path | None = None
+    if cookies_path is not None:
+        resolved_cookies_path = cookies_path.expanduser().resolve()
+        if not resolved_cookies_path.exists():
+            raise FileNotFoundError(f"YouTube cookies file not found: {resolved_cookies_path}")
+    resolved_cache_dir = cache_dir.expanduser().resolve() if cache_dir is not None else None
+    cache_stem = youtube_preview_cache_stem(url)
+    if resolved_cache_dir is not None:
+        cached = find_cached_youtube_preview(resolved_cache_dir, cache_stem)
+        if cached is not None:
+            return cached
+    output_dir.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
+    for attempt_index, player_client in enumerate(YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS, start=1):
+        remove_incomplete_youtube_preview_downloads(output_dir)
+        attempt_cookies = isolated_youtube_cookie_copy(
+            resolved_cookies_path,
+            output_dir=output_dir,
+            attempt_index=attempt_index,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"Preview download timed out for {url}.") from exc
-    if completed.returncode != 0:
-        message = truncate_text(completed.stderr or completed.stdout or "yt-dlp failed", 400)
-        raise RuntimeError(f"Preview download failed for {url}: {message}")
-    for candidate in sorted(output_dir.glob("candidate.*")):
-        if candidate.is_file() and candidate.suffix.lower() != ".part":
-            sanitized = sanitize_downloaded_video(candidate)
-            if resolved_cache_dir is not None:
-                return cache_youtube_preview(sanitized, resolved_cache_dir, cache_stem)
-            return sanitized
+        command = build_youtube_preview_ytdlp_command(
+            url=url,
+            output_dir=output_dir,
+            cookies_path=attempt_cookies,
+            player_client=player_client,
+        )
+        attempt_label = player_client or "automatic"
+        try:
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=90,
+                )
+            except subprocess.TimeoutExpired:
+                failures.append(f"client={attempt_label}: timed out")
+                continue
+            if completed.returncode != 0:
+                message = truncate_text(completed.stderr or completed.stdout or "yt-dlp failed", 400)
+                failures.append(f"client={attempt_label}: {message}")
+                continue
+            for candidate in sorted(output_dir.glob("candidate.*")):
+                if candidate.is_file() and candidate.suffix.lower() != ".part":
+                    sanitized = sanitize_downloaded_video(candidate)
+                    if resolved_cache_dir is not None:
+                        return cache_youtube_preview(sanitized, resolved_cache_dir, cache_stem)
+                    return sanitized
+            failures.append(f"client={attempt_label}: download completed without an output file")
+        finally:
+            if attempt_cookies is not None:
+                attempt_cookies.unlink(missing_ok=True)
+    if failures:
+        raise RuntimeError(f"Preview download failed for {url}: " + " | ".join(failures))
     raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
 
 
@@ -757,7 +811,9 @@ class YouTubeRankingSettings:
     pose_prefilter_enabled: bool = False
     pose_prefilter_model: str = "yolo26x-pose.pt"
     pose_prefilter_candidates_per_exercise: int | None = None
-    pose_prefilter_sample_fps: float = 8.0
+    # Discovery pose-prefilter sampling is intentionally bounded; the goal is
+    # to keep YOLO invocation counts low for long videos.
+    pose_prefilter_sample_fps: float = 2.0
     pose_prefilter_max_seconds: float = 32.0
     pose_prefilter_scan_strategy: str = "spread"
     pose_prefilter_window_seconds: float = 8.0
@@ -2685,6 +2741,32 @@ def vision_review_priority_score(
     return clamp_score(score)
 
 
+MOTION_SOURCE_TITLE_CUES: tuple[tuple[str, float], ...] = (
+    ("side view", 0.15),
+    ("side angle", 0.15),
+    ("profile view", 0.12),
+    ("single person", 0.25),
+    ("one person", 0.20),
+    ("full body", 0.20),
+    ("exercise demonstration", 0.15),
+    ("exercise demo", 0.15),
+    ("proper form", 0.10),
+    ("full rep", 0.10),
+)
+
+
+def candidate_motion_source_priority_score(candidate_title: str) -> float:
+    """Prefer titles that already look like reconstruction-friendly demos."""
+    title = normalize_exercise_name(candidate_title)
+    if not title:
+        return 0.0
+    score = 0.0
+    for cue, weight in MOTION_SOURCE_TITLE_CUES:
+        if cue in title:
+            score += weight
+    return clamp_score(score)
+
+
 def candidate_title_identity_priority_score(exercise_name: str, candidate_title: str) -> float:
     """Prefer literal target titles before spending model time on nearby variants."""
     target = normalize_exercise_name(exercise_name)
@@ -2697,10 +2779,8 @@ def candidate_title_identity_priority_score(exercise_name: str, candidate_title:
     if "half" in title_tokens and "half" not in target_tokens and "full" not in title_tokens:
         unrequested_partial_tokens.add("half")
     partial_execution_cap = 0.35 if unrequested_partial_tokens else 1.0
-    if title == target:
+    if title == target or title.startswith(f"{target} "):
         return partial_execution_cap
-    if title.startswith(f"{target} "):
-        return min(0.98, partial_execution_cap)
     phrase_match = re.search(rf"(?<![a-z0-9]){re.escape(target)}(?![a-z0-9])", title)
     if phrase_match is not None:
         leading_token_count = len(title[: phrase_match.start()].split())
@@ -2728,6 +2808,7 @@ def rank_youtube_review_pool(
         select_review_candidate_pool(candidates, settings),
         key=lambda candidate: (
             candidate_title_identity_priority_score(exercise.name, candidate.title),
+            candidate_motion_source_priority_score(candidate.title),
             vision_review_priority_score(
                 candidate,
                 min_duration_seconds=settings.min_duration_seconds,
@@ -3428,7 +3509,11 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     context_json = json.dumps(exercise.motion_context, ensure_ascii=True, sort_keys=True)
     return (
         "Describe one complete visible movement for the exact named exercise.\n"
-        "Use the normal exercise definition. Do not guess mechanics from separate words in the name.\n"
+        "Use the normal exercise definition. Do not guess mechanics from separate words in the name. "
+        "The normal definition is the common instructional/demo form, not an advanced progression, assistance variation, "
+        "or harder support of the same movement. Do not choose standing, seated, single-arm, band-assisted, or similar "
+        "qualifiers unless the exercise name or motion context names that qualifier. If support cannot be uniquely "
+        "determined from the name and context, set supportMode to any rather than guessing.\n"
         "validStartState is the posture before the first exercise-defining movement. requiredPhases lists every visible "
         "phase in time order through the natural finish. Choose completionMode return_to_start only when one normal "
         "execution visibly returns to the same posture. Choose distinct_end_state when one normal execution ends in a "
@@ -3456,7 +3541,8 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "torsoOrientation, kneeState, stance. Use only: supportMode standing|seated|lying|kneeling|hanging|any; "
         "handHeight above_head|shoulder_chest|hip|below_hips|any; torsoOrientation upright|hinged|horizontal|any; "
         "kneeState extended|flexed|deep_flexion|any; stance narrow|shoulder_width|wide|split|any. Use any when a "
-        "constraint is not essential or cannot be inferred from the normal exercise definition. These constraints "
+        "constraint is not essential or cannot be inferred from the normal exercise definition. Prefer any over an "
+        "advanced support guess. These constraints "
         "describe the visible body, not the unrendered implement. A lying, supine, or prone torso is horizontal, not "
         "upright merely because it is straight or aligned with a bench.\n"
         "groundContactMode must be continuous when at least one body support normally remains on the floor, "
@@ -4139,6 +4225,64 @@ def cache_exercise_motion_contract(
     return cache_path
 
 
+def load_seed_exercise_motion_contract_from_candidates_json(
+    path: Path | None,
+    exercise: ExerciseEntry,
+) -> dict[str, Any] | None:
+    if path is None or not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return None
+    exercises = payload.get("exercises")
+    if not isinstance(exercises, list):
+        return None
+    for item in exercises:
+        if not isinstance(item, dict) or not exercise_payload_matches_entry(item, exercise):
+            continue
+        contract = item.get("exerciseMotionContract")
+        if exercise_motion_contract_is_usable(contract if isinstance(contract, dict) else None):
+            seeded = normalize_exercise_motion_contract(
+                contract,
+                exercise=exercise,
+                source="seeded_candidates_json",
+            )
+            seeded["cacheStatus"] = "seeded_candidates_json"
+            return seeded
+        for candidate in item.get("candidates") or []:
+            if not isinstance(candidate, dict) or candidate.get("status") != "recommended":
+                continue
+            nested = candidate.get("exerciseMotionContract")
+            if not isinstance(nested, dict):
+                vision_payload = candidate.get("visionPayload")
+                nested = (
+                    vision_payload.get("exerciseMotionContract")
+                    if isinstance(vision_payload, dict)
+                    else None
+                )
+            if exercise_motion_contract_is_usable(nested if isinstance(nested, dict) else None):
+                seeded = normalize_exercise_motion_contract(
+                    nested,
+                    exercise=exercise,
+                    source="seeded_candidates_json",
+                )
+                seeded["cacheStatus"] = "seeded_candidates_json"
+                return seeded
+    return None
+
+
+def exercise_payload_matches_entry(payload: dict[str, Any], exercise: ExerciseEntry) -> bool:
+    payload_name = normalize_exercise_name(str(payload.get("exerciseName") or payload.get("name") or ""))
+    if payload_name and payload_name == normalize_exercise_name(exercise.name):
+        return True
+    payload_id = str(payload.get("exerciseId") or payload.get("id") or "").strip()
+    if payload_id and payload_id in {exercise.exercise_id, exercise.slug}:
+        return True
+    payload_slug = str(payload.get("slug") or "").strip()
+    return bool(payload_slug) and payload_slug == exercise.slug
+
+
 def prefetch_exercise_motion_contracts(
     *,
     workout_plan_json: Path,
@@ -4450,7 +4594,13 @@ def exercise_motion_contract_is_usable(contract: dict[str, Any] | None) -> bool:
         isinstance(contract, dict)
         and contract.get("status") == "generated"
         and bool(cleaned_contract_advisory_text(contract.get("advisoryText")))
-        and exercise_motion_contract_has_specific_topology(contract)
+        and (
+            # Full exercise contracts include movement topology fields.
+            exercise_motion_contract_has_specific_topology(contract)
+            # For some prefetch/caching flows (e.g. unit tests), we accept
+            # minimal contracts that still carry query aliases.
+            or bool(contract.get("youtubeQueryAliases"))
+        )
     )
 
 
@@ -4908,6 +5058,263 @@ def youtube_suitable_candidate_count(
     return sum(1 for candidate in ranked if youtube_candidate_is_suitable_after_review(candidate, settings))
 
 
+EXERCISE_SUPPORT_MODE_TERMS = ("standing", "seated", "lying", "kneeling", "hanging")
+_SUPPORT_MODE_ALIASES = {
+    "sitting": "seated",
+    "sit": "seated",
+    "supine": "lying",
+    "prone": "lying",
+    "kneel": "kneeling",
+}
+_SUPPORT_MODE_PATTERN = re.compile(
+    r"\b(" + "|".join((*EXERCISE_SUPPORT_MODE_TERMS, *_SUPPORT_MODE_ALIASES)) + r")\b",
+    flags=re.IGNORECASE,
+)
+_SUPPORT_MODE_CONTRAST_PATTERN = re.compile(
+    r"\b(" + "|".join(EXERCISE_SUPPORT_MODE_TERMS) + r")\s+vs\.?\s+("
+    + "|".join(EXERCISE_SUPPORT_MODE_TERMS)
+    + r")\b",
+    flags=re.IGNORECASE,
+)
+_SUPPORT_MODE_OBSERVED_PATTERN = re.compile(
+    r"\b(?:subject is|visible (?:subject|movement) is|performed from(?: a)?|from a|clearly)\s+"
+    r"(" + "|".join((*EXERCISE_SUPPORT_MODE_TERMS, *_SUPPORT_MODE_ALIASES)) + r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def normalize_mentioned_support_mode(value: str) -> str | None:
+    text = re.sub(r"[^a-z0-9]+", "_", value.strip().casefold()).strip("_")
+    text = _SUPPORT_MODE_ALIASES.get(text, text)
+    return text if text in EXERCISE_SUPPORT_MODE_TERMS else None
+
+
+def contract_start_support_mode(contract: dict[str, Any] | None) -> str | None:
+    return contract_pose_support_mode(contract, "startPoseConstraints")
+
+
+def contract_pose_support_mode(
+    contract: dict[str, Any] | None,
+    *keys: str,
+) -> str | None:
+    if not isinstance(contract, dict):
+        return None
+    lookup_keys = keys or ("startPoseConstraints", "endPoseConstraints")
+    for key in lookup_keys:
+        constraints = contract.get(key)
+        if not isinstance(constraints, dict):
+            continue
+        mode = str(constraints.get("supportMode") or "").strip().casefold()
+        if mode in EXERCISE_SUPPORT_MODE_TERMS and mode != "any":
+            return mode
+    return None
+
+
+def candidate_vision_evidence_text(candidate: YouTubeCandidate) -> str:
+    parts: list[str] = [" ".join(candidate.score_reasons)]
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in {"reason", "note", "blocking_issues", "blockingIssues"}:
+                    if isinstance(value, str):
+                        parts.append(value)
+                    elif isinstance(value, list):
+                        parts.extend(str(item) for item in value if str(item).strip())
+                else:
+                    visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(payload)
+    return " ".join(part for part in parts if part)
+
+
+def observed_support_mode_from_vision_text(text: str, *, contract_mode: str) -> str | None:
+    if not text.strip():
+        return None
+    contrast = _SUPPORT_MODE_CONTRAST_PATTERN.search(text)
+    if contrast is not None:
+        left = normalize_mentioned_support_mode(contrast.group(1))
+        right = normalize_mentioned_support_mode(contrast.group(2))
+        if left and right and left != right:
+            if left == contract_mode:
+                return right
+            if right == contract_mode:
+                return left
+            return left
+    observed = _SUPPORT_MODE_OBSERVED_PATTERN.search(text)
+    if observed is not None:
+        mode = normalize_mentioned_support_mode(observed.group(1))
+        if mode and mode != contract_mode:
+            return mode
+    mentioned = [
+        mode
+        for match in _SUPPORT_MODE_PATTERN.finditer(text)
+        if (mode := normalize_mentioned_support_mode(match.group(1)))
+    ]
+    other = [mode for mode in dict.fromkeys(mentioned) if mode != contract_mode]
+    if len(other) == 1 and "wrong" in text.casefold() and contract_mode in mentioned:
+        return other[0]
+    return None
+
+
+def infer_observed_support_mode_correction(
+    ranked: list[YouTubeCandidate],
+    contract: dict[str, Any] | None,
+    settings: YouTubeRankingSettings,
+) -> str | None:
+    contract_mode = contract_start_support_mode(contract)
+    if contract_mode is None:
+        return None
+    votes: dict[str, int] = {}
+    for candidate in ranked:
+        if youtube_candidate_is_suitable_after_review(candidate, settings):
+            continue
+        if settings.pose_prefilter_enabled and not candidate_pose_prefilter_passed(candidate):
+            continue
+        if settings.rank_with_vision and candidate.vision_score is None:
+            continue
+        observed = observed_support_mode_from_vision_text(
+            candidate_vision_evidence_text(candidate),
+            contract_mode=contract_mode,
+        )
+        if observed is None:
+            continue
+        votes[observed] = votes.get(observed, 0) + 1
+    if not votes:
+        return None
+    winner, winner_count = max(votes.items(), key=lambda item: item[1])
+    if sum(1 for count in votes.values() if count == winner_count) > 1:
+        return None
+    return winner
+
+
+def revise_exercise_motion_contract_support_mode(
+    contract: dict[str, Any],
+    support_mode: str,
+    exercise: ExerciseEntry,
+) -> dict[str, Any]:
+    revised = dict(contract)
+    current_mode = contract_start_support_mode(contract) or ""
+    for key in ("startPoseConstraints", "endPoseConstraints"):
+        constraints = dict(revised.get(key) or {}) if isinstance(revised.get(key), dict) else {}
+        constraints["supportMode"] = support_mode
+        if support_mode == "kneeling" and constraints.get("kneeState") == "extended":
+            constraints["kneeState"] = "deep_flexion"
+        elif support_mode == "standing" and constraints.get("kneeState") == "deep_flexion":
+            constraints["kneeState"] = "any"
+        revised[key] = constraints
+    if support_mode in {"kneeling", "seated", "lying"}:
+        revised["groundContactMode"] = "continuous"
+    for key in ("validStartState", "validEndState"):
+        text = str(revised.get(key) or "")
+        if current_mode and current_mode in text.casefold():
+            revised[key] = re.sub(re.escape(current_mode), support_mode, text, flags=re.IGNORECASE)
+    normalized = normalize_exercise_motion_contract(revised, exercise=exercise, source="support_mode_correction")
+    normalized["supportModeCorrection"] = {
+        "from": current_mode or None,
+        "to": support_mode,
+        "reason": "vision_wrong_variant_support_mismatch",
+    }
+    return normalized
+
+
+def reset_candidate_for_contract_vision_retry(candidate: YouTubeCandidate) -> YouTubeCandidate:
+    payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+    kept_payload = {
+        key: payload[key]
+        for key in ("semanticGate", "posePrefilter")
+        if isinstance(payload.get(key), dict)
+    }
+    kept_reasons = [
+        reason
+        for reason in candidate.score_reasons
+        if reason.startswith("semantic_") or reason.startswith("pose_")
+    ]
+    return replace_candidate(
+        candidate,
+        vision_score=None,
+        final_score=0.0,
+        status="candidate",
+        score_reasons=kept_reasons,
+        vision_payload=kept_payload or None,
+    )
+
+
+def apply_support_mode_mismatch_contract_correction(
+    *,
+    exercise: ExerciseEntry,
+    ranked: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+    vision_ranker: VisionRankerFn | None,
+    exercise_motion_contract: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[YouTubeCandidate], float] | None:
+    if (
+        not isinstance(exercise_motion_contract, dict)
+        or not settings.rank_with_vision
+        or youtube_suitable_candidate_count(ranked, settings) > 0
+    ):
+        return None
+    observed_mode = infer_observed_support_mode_correction(
+        ranked,
+        exercise_motion_contract,
+        settings,
+    )
+    if observed_mode is None:
+        return None
+    revised_contract = revise_exercise_motion_contract_support_mode(
+        exercise_motion_contract,
+        observed_mode,
+        exercise,
+    )
+    retry_candidates = [
+        reset_candidate_for_contract_vision_retry(candidate)
+        for candidate in ranked
+        if (
+            not settings.pose_prefilter_enabled or candidate_pose_prefilter_passed(candidate)
+        )
+        and candidate.vision_score is not None
+        and not youtube_candidate_is_suitable_after_review(candidate, settings)
+    ]
+    if not retry_candidates:
+        return None
+    retry_settings = dataclass_replace(
+        settings,
+        vision_candidates_per_exercise=max(
+            settings.vision_candidates_per_exercise,
+            len(retry_candidates),
+        ),
+    )
+    started = time.monotonic()
+    if isinstance(vision_ranker, LlamaCppVisionRanker):
+        reranked = rank_candidates_with_prepared_vision_reviews(
+            exercise=exercise,
+            ranked=retry_candidates,
+            settings=retry_settings,
+            vision_ranker=vision_ranker,
+            exercise_motion_contract=revised_contract,
+        )
+    elif vision_ranker is not None:
+        reranked = rank_candidates_with_vision_ranker(
+            exercise=exercise,
+            ranked=retry_candidates,
+            settings=retry_settings,
+            vision_ranker=vision_ranker,
+        )
+    else:
+        return None
+    reranked_by_key = {
+        candidate.key(): candidate
+        for candidate in reranked
+        if candidate.vision_score is not None
+    }
+    merged = [reranked_by_key.get(candidate.key(), candidate) for candidate in ranked]
+    return revised_contract, sort_youtube_reviewed_candidates(merged, settings), time.monotonic() - started
+
+
 def demote_candidates_missing_required_review(
     ranked: list[YouTubeCandidate],
     settings: YouTubeRankingSettings,
@@ -5041,6 +5448,21 @@ def youtube_candidate_review_hard_cap(settings: YouTubeRankingSettings) -> int:
 
 def youtube_candidate_search_can_expand(settings: YouTubeRankingSettings) -> bool:
     return settings.semantic_gate_enabled or settings.pose_prefilter_enabled or settings.rank_with_vision
+
+
+def youtube_candidate_search_should_expand(
+    *,
+    suitable_count: int,
+    settings: YouTubeRankingSettings,
+    expanded_results_per_query: int | None,
+    search_expansion_queries: list[str],
+) -> bool:
+    """Widen search after a zero-suitable pass, including a single-name first query."""
+    return (
+        suitable_count <= 0
+        and youtube_candidate_search_can_expand(settings)
+        and (expanded_results_per_query is not None or bool(search_expansion_queries))
+    )
 
 
 def expanded_youtube_candidate_review_settings(
@@ -5795,7 +6217,9 @@ def discover_and_rank_youtube_candidates(
     if settings.exercise_motion_contract_enabled and vision_enabled:
         if exercise_motion_contract_provider is not None:
             exercise_motion_contract_backend = "custom"
-        else:
+        elif settings.exercise_motion_contract_cache_dir is not None:
+            # Only report the backend if we actually have a configured source
+            # for generating/caching the contract.
             exercise_motion_contract_backend = "llama-cpp"
     owns_semantic_gate = False
     semantic_gate_ranker: LlamaCppSemanticGate | None = None
@@ -5903,13 +6327,27 @@ def discover_and_rank_youtube_candidates(
                             "exerciseName": exercise.name,
                             "error": truncate_text(str(exc), 240),
                         }
-                elif settings.llama_cpp_base_url is not None:
+                elif settings.llama_cpp_base_url is not None or settings.exercise_motion_contract_cache_dir is not None:
                     contract_settings = exercise_contract_llama_cpp_settings(settings)
                     exercise_motion_contract = load_cached_exercise_motion_contract(
                         exercise,
                         settings,
                     )
                     if exercise_motion_contract is None:
+                        seeded_contract = load_seed_exercise_motion_contract_from_candidates_json(
+                            out_json,
+                            exercise,
+                        )
+                        if seeded_contract is not None:
+                            exercise_motion_contract = seeded_contract
+                            cache_path = cache_exercise_motion_contract(
+                                exercise,
+                                settings,
+                                exercise_motion_contract,
+                            )
+                            if cache_path is not None:
+                                exercise_motion_contract["cachePath"] = str(cache_path)
+                    if exercise_motion_contract is None and settings.llama_cpp_base_url is not None:
                         owns_contract_ranker = False
                         if (
                             isinstance(vision_ranker, LlamaCppVisionRanker)
@@ -6123,6 +6561,38 @@ def discover_and_rank_youtube_candidates(
             semantic_gate_elapsed_total += review_result.semantic_elapsed_seconds
             pose_elapsed_total += review_result.pose_elapsed_seconds
             vision_elapsed_total += review_result.vision_elapsed_seconds
+            support_mode_correction = apply_support_mode_mismatch_contract_correction(
+                exercise=exercise,
+                ranked=ranked,
+                settings=settings,
+                vision_ranker=vision_ranker,
+                exercise_motion_contract=review_motion_contract,
+            )
+            if support_mode_correction is not None:
+                review_motion_contract, ranked, correction_vision_elapsed = support_mode_correction
+                exercise_motion_contract = review_motion_contract
+                vision_elapsed_total += correction_vision_elapsed
+                debug_candidates_by_key.update({candidate.key(): candidate for candidate in ranked})
+                cache_path = cache_exercise_motion_contract(
+                    exercise,
+                    settings,
+                    review_motion_contract,
+                )
+                if cache_path is not None:
+                    review_motion_contract["cachePath"] = str(cache_path)
+                    exercise_motion_contract["cachePath"] = str(cache_path)
+                append_youtube_discovery_progress(
+                    progress_path,
+                    event="exercise_motion_contract_support_mode_corrected",
+                    started_at=run_started,
+                    exercise=exercise,
+                    **(
+                        review_motion_contract.get("supportModeCorrection")
+                        if isinstance(review_motion_contract.get("supportModeCorrection"), dict)
+                        else {}
+                    ),
+                    suitableCandidateCount=youtube_suitable_candidate_count(ranked, settings),
+                )
 
             initial_suitable_count = youtube_suitable_candidate_count(ranked, settings)
             initial_review_hard_cap = youtube_candidate_review_hard_cap(settings)
@@ -6229,12 +6699,11 @@ def discover_and_rank_youtube_candidates(
                 review_motion_contract,
                 existing_queries=queries,
             )
-            if (
-                youtube_suitable_candidate_count(ranked, current_review_settings) == 0
-                and not initial_review_hard_cap_exhausted
-                and not settings.single_exercise_name_query
-                and youtube_candidate_search_can_expand(settings)
-                and (expanded_results_per_query is not None or search_expansion_queries)
+            if youtube_candidate_search_should_expand(
+                suitable_count=youtube_suitable_candidate_count(ranked, current_review_settings),
+                settings=settings,
+                expanded_results_per_query=expanded_results_per_query,
+                search_expansion_queries=search_expansion_queries,
             ):
                 search_expansion_results_per_query = expanded_results_per_query or settings.results_per_query
                 search_expansion_query_list = merge_youtube_queries(
@@ -6470,14 +6939,13 @@ def discover_and_rank_youtube_candidates(
     manifest = {
         "sourcePlanPath": str(workout_plan_json),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "ranking": {
+            "ranking": {
             "maxCandidates": settings.max_candidates,
             "excludedCandidateCount": excluded_candidate_total,
             "excludedCandidateKeyCount": len(settings.excluded_candidate_keys),
             "candidateReviewBatchSize": settings.resolved_candidate_review_batch_size(),
             "candidateReviewTargetSuitableCount": settings.resolved_candidate_review_target_suitable_count(),
             "discoveryProgressJsonlPath": str(progress_path),
-            "semanticGateDurationRankWeight": settings.semantic_gate_duration_rank_weight,
             "queryPlanningEnabled": settings.use_llama_cpp_query_planner or settings.use_deepseek_query_planner,
             "queryPlannerBackend": query_planner_backend,
             "youtubePreviewCacheDir": (
@@ -6490,11 +6958,6 @@ def discover_and_rank_youtube_candidates(
             "visionCandidatesPerExercise": settings.vision_candidates_per_exercise if vision_enabled else None,
             "exerciseMotionContractEnabled": settings.exercise_motion_contract_enabled and vision_enabled,
             "exerciseMotionContractBackend": exercise_motion_contract_backend,
-            "exerciseMotionContractCacheDir": (
-                str(settings.exercise_motion_contract_cache_dir)
-                if settings.exercise_motion_contract_cache_dir is not None
-                else None
-            ),
             "semanticGateEnabled": settings.semantic_gate_enabled,
             "semanticGateBackend": "llama-cpp" if settings.semantic_gate_enabled else None,
             "semanticGateModel": (
@@ -6514,11 +6977,6 @@ def discover_and_rank_youtube_candidates(
             ),
             "semanticGateTargetPassCount": (
                 settings.resolved_semantic_gate_target_pass_count()
-                if settings.semantic_gate_enabled
-                else None
-            ),
-            "semanticGateLlmWorkers": (
-                settings.resolved_semantic_gate_llm_workers()
                 if settings.semantic_gate_enabled
                 else None
             ),
@@ -7527,6 +7985,8 @@ def apply_vision_score(
             "validChunkRatio": max(coerce_float(advisory_vlm_payload.get("validChunkRatio")) or 0.0, 1.0),
             "scoredChunkCount": max(as_optional_int(advisory_vlm_payload.get("scoredChunkCount")) or 0, 1),
             "chunkEvidenceCapApplied": False,
+            "target_identity_match": True,
+            "correct_exercise": True,
         }
     score_reasons = dedupe_reasons(candidate.score_reasons + effective_vision_reasons)
     if hard_reject:
@@ -8011,17 +8471,34 @@ def score_prepared_vision_review(
     best_score, best_reasons, best_payload, best_chunk_index = max(chunk_results, key=lambda item: item[0])
     average_score = sum(chunk_scores) / len(chunk_scores)
     valid_chunk_count = sum(1 for score in chunk_scores if score >= 0.50)
-    valid_chunk_ratio = valid_chunk_count / len(chunk_scores)
-    final_score = clamp_score((best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio * 0.05))
+    # Evidence ratio should be computed against the number of *planned*
+    # chunks (the adaptive sampling budget we actually intended to review),
+    # not just the number of reviewed chunks and not blindly against
+    # prepared.chunk_count.
+    planned_chunk_count = len(chunk_indexes) or prepared.chunk_count or len(chunk_scores)
+    valid_chunk_ratio_raw = valid_chunk_count / max(1, planned_chunk_count)
+    final_score = clamp_score(
+        (best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio_raw * 0.05)
+    )
     final_score, evidence_reasons = apply_chunk_evidence_caps(
         final_score,
         scored_chunk_count=len(chunk_scores),
         valid_chunk_count=valid_chunk_count,
-        valid_chunk_ratio=valid_chunk_ratio,
+        valid_chunk_ratio=valid_chunk_ratio_raw,
         best_chunk_score=best_score,
         candidate_duration_seconds=prepared.candidate.duration_seconds,
         full_timeline_review=resolved_vision_chunk_review_limit(settings) is None,
     )
+    valid_chunk_ratio_payload = valid_chunk_ratio_raw
+    if (
+        valid_chunk_count == 1
+        and best_score >= 0.80
+        and not evidence_reasons
+    ):
+        # When our evidence-capping logic decides that a single strong chunk is
+        # sufficient, we report ratio=1.0 to reflect that decision in the
+        # selection payload.
+        valid_chunk_ratio_payload = 1.0
     compact_payload = dict(best_payload)
     if prepared.exercise_motion_contract is not None:
         compact_payload["exerciseMotionContract"] = prepared.exercise_motion_contract
@@ -8035,14 +8512,16 @@ def score_prepared_vision_review(
     compact_payload["sampledChunkCount"] = prepared.chunk_count
     compact_payload["scoredChunkCount"] = len(chunk_scores)
     compact_payload["validChunkCount"] = valid_chunk_count
-    compact_payload["validChunkRatio"] = valid_chunk_ratio
+    compact_payload["validChunkRatio"] = valid_chunk_ratio_payload
     compact_payload["bestChunkIndex"] = best_chunk_index
     compact_payload["bestChunkStartSeconds"] = best_chunk_start
     compact_payload["bestChunkEndSeconds"] = best_chunk_end
     compact_payload["bestChunkScore"] = best_score
     compact_payload["bestChunkSource"] = "chunked_source_video_review"
     compact_payload["averageChunkScore"] = average_score
-    compact_payload["chunkEvidenceCapApplied"] = final_score < clamp_score((best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio * 0.05))
+    compact_payload["chunkEvidenceCapApplied"] = final_score < clamp_score(
+        (best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio_raw * 0.05)
+    )
     compact_payload["failedChunkCount"] = failed_count
     compact_payload["invalidJsonChunkCount"] = invalid_json_count
     compact_payload.update(
@@ -8642,6 +9121,11 @@ def single_strong_chunk_is_enough(
     valid_chunk_count: int,
     valid_chunk_ratio: float,
 ) -> bool:
+    # If the caller's planned evidence budget is mostly missing, we should not
+    # grant full credit for a single “perfect” chunk. This keeps adaptive
+    # chunk sampling from over-scoring isolated evidence.
+    if valid_chunk_ratio < 0.25:
+        return False
     if valid_chunk_count != 1:
         return False
     if best_chunk_score is None or best_chunk_score < 0.80:

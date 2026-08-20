@@ -8,6 +8,7 @@ param(
     [string]$BodyModelRoot,
     [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
+    [string]$ExerciseMotionContractCacheDir,
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 30,
     [int]$YoutubeSearchEmptyRetries = 5,
@@ -127,11 +128,11 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(5).gguf",
+    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(6).gguf",
     [AllowEmptyString()]
-    [string]$LlamaCppMtpModel = "C:\Users\gabri\Downloads\mtp-gemma-4-12B-it(1).gguf",
+    [string]$LlamaCppMtpModel = "",
     [int]$LlamaCppSpecDraftNMax = 3,
     [string]$LlamaCppBackend = "gpu",
     [int]$LlamaCppNPredict = 512,
@@ -837,6 +838,14 @@ $previewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
 }
 New-Item -ItemType Directory -Force -Path $exerciseWorkspace | Out-Null
 New-Item -ItemType Directory -Force -Path $previewCachePath | Out-Null
+$contractCachePath = if (-not [string]::IsNullOrWhiteSpace($ExerciseMotionContractCacheDir)) {
+    New-Item -ItemType Directory -Force -Path $ExerciseMotionContractCacheDir | Out-Null
+    (Resolve-Path -LiteralPath $ExerciseMotionContractCacheDir).Path
+} else {
+    $defaultContractCache = Join-Path $repoRoot "build\exercise_motion\exercise-library\exercise-motion-contract-cache"
+    New-Item -ItemType Directory -Force -Path $defaultContractCache | Out-Null
+    (Resolve-Path -LiteralPath $defaultContractCache).Path
+}
 $script:ExerciseWorkspace = $exerciseWorkspace
 $script:ExerciseRunStartedAt = (Get-Date).ToString("o")
 $exerciseRunLockPath = Join-Path $exerciseWorkspace ".exercise-motion-run.lock.json"
@@ -859,6 +868,7 @@ $youtubeArgs = @(
     "--workout-plan-json", $planPath,
     "--out-json", $candidatesPath,
     "--youtube-preview-cache-dir", $previewCachePath,
+    "--exercise-motion-contract-cache-dir", $contractCachePath,
     "--results-per-query", "$ResultsPerQuery",
     "--youtube-search-empty-retries", "$YoutubeSearchEmptyRetries",
     "--youtube-search-timeout-seconds", "$YouTubeSearchTimeoutSeconds",
@@ -1212,16 +1222,16 @@ try {
             -WorkerScriptPath $whamWarmWorkerScriptPath
     }
     while ($true) {
-        # Discover only as much as the current attempt needs. Failed candidates
-        # are excluded below, so each retry asks for one additional replacement
-        # instead of front-loading the maximum review budget.
+        # Keep pose/vision and the recommended-candidate cap at the current
+        # attempt size. Do not shrink the semantic gate to that same size:
+        # text screening is cheap and needs to cover more of the search pool
+        # before pose/vision spend GPU time. Failed candidates are excluded
+        # below, so each retry asks for one additional replacement.
         $attemptMaxCandidates = [Math]::Max($MaxCandidates, $currentTargetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($VisionCandidatesPerExercise, $currentTargetSuitableCount)
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count" -Value "$currentTargetSuitableCount"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
-        $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--semantic-gate-candidates-per-exercise" -Value "$attemptMaxCandidates"
-        $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--semantic-gate-max-candidates-per-exercise" -Value "$attemptMaxCandidates"
         foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
             if (Test-Path -LiteralPath $previousAttemptCandidateJsonPath) {
                 $attemptYoutubeArgs += @("--exclude-youtube-candidates-json", $previousAttemptCandidateJsonPath)
