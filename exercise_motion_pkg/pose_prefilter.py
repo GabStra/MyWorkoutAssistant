@@ -91,7 +91,10 @@ FULL_BODY_SAFE_SAMPLE_RATIO = 0.95
 BODY_FRAME_CLEARANCE_MARGIN_RATIO = 0.01
 BODY_FRAME_CONTACT_TOLERANCE_RATIO = 0.01
 BODY_FRAME_CONTACT_MIN_PIXELS = 2.0
-BODY_FRAME_PERSISTENT_CONTACT_RATIO = 0.20
+# Treat boundary contact as "persistent" when it happens for a meaningful
+# fraction of the scan, but still catch short crop events that fall outside
+# the selected high-quality window.
+BODY_FRAME_PERSISTENT_CONTACT_RATIO = 0.10
 _YOLO_MODEL_THREAD_LOCAL = threading.local()
 
 
@@ -708,6 +711,13 @@ def build_pose_sample_plan(
         return frames, [{"startSeconds": 0.0, "endSeconds": end_seconds}]
 
     window_seconds = min(max(0.5, float(settings.window_seconds)), duration_seconds)
+    # For long videos, the bounded "spread" scan intentionally keeps the total
+    # number of sampled pose frames small (to bound YOLO/pose work). We cap
+    # the effective sampling rate so we don't accidentally sample every frame
+    # inside each spread window.
+    if float(settings.sample_fps) > 1.0:
+        effective_sample_fps = 1.0
+        sample_step = max(1, int(round(metadata.fps / max(effective_sample_fps, 0.1))))
     window_count = max(1, int(math.floor(budget_seconds / window_seconds)))
     max_non_overlapping_windows = max(1, int(math.ceil(duration_seconds / window_seconds)))
     window_count = min(window_count, max_non_overlapping_windows)

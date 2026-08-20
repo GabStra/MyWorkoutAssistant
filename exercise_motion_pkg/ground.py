@@ -60,6 +60,7 @@ def generate_ground_metadata(
     video_path: Path,
     cleaned_clip: MotionClip,
     output_path: Path,
+    video_alignment_metadata: dict[str, object] | None = None,
 ) -> GroundMetadata:
     motion_plane = estimate_motion_ground_plane(cleaned_clip)
     motion_origin = estimate_motion_ground_origin(cleaned_clip, motion_plane)
@@ -70,16 +71,37 @@ def generate_ground_metadata(
     notes = [
         "renderGroundPlane is motion/contact-derived and is the authoritative floor for rendering.",
     ]
+    camera_plane = _camera_plane_from_alignment_metadata(video_alignment_metadata)
+    sample_frame_seconds: list[float] = []
+    frames_used = 0
+    model_name = None
+    if isinstance(video_alignment_metadata, dict) and bool(video_alignment_metadata.get("applied")):
+        alignment_status = "video_depth_yolo_aligned"
+        render_source = "video_depth_yolo_aligned_motion_contact"
+        notes.append(
+            "Video-grounded UniDepth floor + YOLO rigid alignment was applied before cleanup.",
+        )
+        sample_value = video_alignment_metadata.get("sampleFrameSeconds")
+        if isinstance(sample_value, list):
+            sample_frame_seconds = [
+                float(value) for value in sample_value if isinstance(value, (int, float))
+            ]
+        frames_value = video_alignment_metadata.get("framesUsed")
+        if isinstance(frames_value, int):
+            frames_used = frames_value
+        model_value = video_alignment_metadata.get("modelName")
+        if isinstance(model_value, str) and model_value.strip():
+            model_name = model_value.strip()
 
     metadata = GroundMetadata(
         render_plane=render_plane,
         render_origin=render_origin,
         motion_plane=motion_plane,
         motion_origin=motion_origin,
-        camera_plane=None,
-        sample_frame_seconds=[],
-        frames_used=0,
-        model_name=None,
+        camera_plane=camera_plane,
+        sample_frame_seconds=sample_frame_seconds,
+        frames_used=frames_used,
+        model_name=model_name,
         alignment_status=alignment_status,
         render_source=render_source,
         notes=notes,
@@ -114,18 +136,19 @@ def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
         if isinstance(raw_support_ground_y, (int, float)) and math.isfinite(raw_support_ground_y):
             support_ground_y = float(raw_support_ground_y)
 
-    if support_ground_y is not None:
-        support_heights = _collect_support_heights(clip)
-        rms_error = None
-        if support_heights:
-            rms_error = math.sqrt(
-                sum((value - support_ground_y) ** 2 for value in support_heights) / len(support_heights)
-            )
-        return PlaneEstimate(
-            normal=(0.0, 1.0, 0.0),
-            offset=-support_ground_y,
-            rms_error=rms_error,
+    # Sanity-check against measured support joint heights.
+    support_heights = _collect_support_heights(clip)
+    if support_heights:
+        measured_ground_y = _median(support_heights)
+        if support_ground_y is not None and abs(support_ground_y - measured_ground_y) <= 0.05:
+            ground_y = support_ground_y
+        else:
+            ground_y = measured_ground_y
+
+        rms_error = math.sqrt(
+            sum((value - ground_y) ** 2 for value in support_heights) / len(support_heights)
         )
+        return PlaneEstimate(normal=(0.0, 1.0, 0.0), offset=-ground_y, rms_error=rms_error)
 
     ankle_heights: list[float] = []
     for frame in clip.frames:
@@ -181,7 +204,7 @@ def adjust_render_ground_height_to_clip(
     tolerance: float = 0.01,
     validation_quantile: float = 0.1,
 ) -> float:
-    support_heights = _collect_support_heights(clip)
+    support_heights = _collect_support_joint_center_heights(clip)
     if not support_heights:
         return proposed_ground_y
 
@@ -248,11 +271,53 @@ def _collect_support_heights(clip: MotionClip) -> list[float]:
     return support_heights
 
 
+def _collect_support_joint_center_heights(clip: MotionClip) -> list[float]:
+    """Collect support joint CENTER heights (no capsule-surface subtraction)."""
+    support_joint_names = _support_joint_names(clip)
+    support_heights: list[float] = []
+    for frame in clip.frames:
+        supports = [
+            frame.joints[name]
+            for name in support_joint_names
+            if name in frame.joints
+        ]
+        if not supports:
+            continue
+        support = min(supports, key=lambda point: point[1])
+        support_heights.append(float(support[1]))
+    return support_heights
+
+
+def _camera_plane_from_alignment_metadata(
+    video_alignment_metadata: dict[str, object] | None,
+) -> PlaneEstimate | None:
+    if not isinstance(video_alignment_metadata, dict):
+        return None
+    payload = video_alignment_metadata.get("cameraGroundPlane")
+    if not isinstance(payload, dict):
+        return None
+    normal_value = payload.get("normal")
+    offset_value = payload.get("offset")
+    if not isinstance(normal_value, list) or len(normal_value) != 3:
+        return None
+    if not isinstance(offset_value, (int, float)) or not math.isfinite(offset_value):
+        return None
+    rms_value = payload.get("rmsError")
+    rms_error = float(rms_value) if isinstance(rms_value, (int, float)) else None
+    return PlaneEstimate(
+        normal=(float(normal_value[0]), float(normal_value[1]), float(normal_value[2])),
+        offset=float(offset_value),
+        rms_error=rms_error,
+    )
+
+
 def _support_joint_names(clip: MotionClip) -> tuple[str, ...]:
     cleanup_metadata = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
     support_mode = cleanup_metadata.get("supportMode") if isinstance(cleanup_metadata, dict) else None
     if support_mode == "quadruped":
         return ("left_hand", "right_hand", "left_knee", "right_knee")
+    if support_mode == "kneeling":
+        return ("left_knee", "right_knee")
     return (
         "left_foot",
         "right_foot",

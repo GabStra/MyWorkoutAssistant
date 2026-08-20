@@ -221,14 +221,16 @@ def trim_video(
 ) -> Path:
     ffmpeg_path = resolve_ffmpeg_path()
     if ffmpeg_path is not None:
-        return _trim_video_with_ffmpeg(
-            source_path=source_path,
-            output_path=output_path,
-            start_seconds=start_seconds,
-            end_seconds=end_seconds,
-            target_fps=target_fps,
-            ffmpeg=ffmpeg_path,
-        )
+        kwargs: dict[str, object] = {
+            "source_path": source_path,
+            "output_path": output_path,
+            "start_seconds": start_seconds,
+            "end_seconds": end_seconds,
+            "ffmpeg": ffmpeg_path,
+        }
+        if target_fps is not None:
+            kwargs["target_fps"] = target_fps
+        return _trim_video_with_ffmpeg(**kwargs)
 
     try:
         import cv2
@@ -319,7 +321,7 @@ def _trim_video_with_ffmpeg(
     output_path: Path,
     start_seconds: float,
     end_seconds: float,
-    target_fps: float | None,
+    target_fps: float | None = None,
     ffmpeg: str,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)

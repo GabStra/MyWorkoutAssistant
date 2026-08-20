@@ -41,6 +41,11 @@ from exercise_motion_pkg.wham_smpl_preview import (
     load_wham_smpl_mesh_sequence,
     write_baked_wham_smpl_preview_json,
 )
+from exercise_motion_pkg.video_world_alignment import (
+    align_motion_clip_to_video,
+    discover_source_pose_reference_path,
+    load_source_pose_payload,
+)
 from exercise_motion_pkg.youtube import download_youtube, sanitize_video_for_processing
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 
@@ -152,6 +157,8 @@ class GenerateRequest:
     allow_incomplete_wham_boundary_crop: bool = False
     wham_output_rotation_degrees: float = 0.0
     youtube_cookies: Path | None = None
+    source_pose_reference_path: Path | None = None
+    video_world_alignment_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -367,6 +374,12 @@ def run_generation_pipeline(
         timings[name] = round(time.perf_counter() - started, 3)
 
     paths = PipelinePaths.create(request.workspace, request.exercise_slug)
+    # If the caller already provides normalized motion JSON, we should not run
+    # video-based world alignment stages. This keeps the post-processing
+    # pipeline consistent with the “normalized-only” contract.
+    video_world_alignment_should_run = (
+        request.video_world_alignment_enabled and request.normalized_motion_json is None
+    )
     stage_started = time.perf_counter()
     three_module_path = ensure_three_module_asset()
     record_timing("preparePreviewRuntimeSeconds", stage_started)
@@ -606,6 +619,29 @@ def run_generation_pipeline(
     record_timing("writeRawPreviewSeconds", stage_started)
 
     if request.motion_tuning_enabled:
+        video_alignment_metadata: dict[str, object] | None = None
+        if video_world_alignment_should_run:
+            stage_started = time.perf_counter()
+            source_pose_reference_path = request.source_pose_reference_path
+            if source_pose_reference_path is None:
+                discovered = discover_source_pose_reference_path(paths.root)
+                source_pose_reference_path = discovered
+            source_pose_payload = (
+                load_source_pose_payload(source_pose_reference_path.expanduser().resolve())
+                if source_pose_reference_path is not None and source_pose_reference_path.is_file()
+                else None
+            )
+            alignment_result = align_motion_clip_to_video(
+                raw_clip,
+                video_path=input_video_path,
+                source_pose_payload=source_pose_payload,
+                support_mode_hint=request.support_mode_hint,
+            )
+            raw_clip = alignment_result.clip
+            save_motion_json(raw_motion_json_path, raw_clip)
+            video_alignment_metadata = alignment_result.to_metadata()
+            record_timing("videoWorldAlignmentSeconds", stage_started)
+            timings["videoWorldAlignment"] = video_alignment_metadata
         stage_started = time.perf_counter()
         tuning_input_clip = canonicalize_camera_motion_clip(raw_clip)
         record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
@@ -635,6 +671,7 @@ def run_generation_pipeline(
             video_path=input_video_path,
             cleaned_clip=cleaned_clip,
             output_path=ground_metadata_path,
+            video_alignment_metadata=video_alignment_metadata,
         )
         record_timing("groundMetadataSeconds", stage_started)
         cleaned_clip = replace(
@@ -643,9 +680,19 @@ def run_generation_pipeline(
                 **cleaned_clip.metadata,
                 "ground": ground_metadata.to_dict(),
                 "motionTuning": _motion_tuning_metadata(enabled=True),
+                **(
+                    {"videoWorldAlignment": video_alignment_metadata}
+                    if isinstance(video_alignment_metadata, dict)
+                    else {}
+                ),
             },
         )
         post_processing_steps = [
+            *(
+                ["video_depth_yolo_world_alignment"]
+                if video_world_alignment_should_run
+                else []
+            ),
             "camera_to_canonical_world_coordinates",
             "ground_plane_fitting",
             "support_global_translation_stabilization",
