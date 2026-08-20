@@ -16,6 +16,19 @@ LEG_PAIRS = (
     ("left_ankle", "right_ankle"),
     ("left_foot", "right_foot"),
 )
+CORE_BILATERAL_PAIRS = (
+    ("left_collar", "right_collar"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_hip", "right_hip"),
+)
+AXIAL_CENTERLINE_JOINTS = (
+    "pelvis",
+    "spine1",
+    "spine2",
+    "spine3",
+    "neck",
+    "head",
+)
 STRUCTURAL_BONES = (
     ("pelvis", "spine1"),
     ("spine1", "spine2"),
@@ -57,6 +70,7 @@ DOMINANT_CHAIN_RATIO = 0.35
 NON_DOMINANT_CHAIN_RATIO = 0.65
 MAX_SUPPRESSION_CORRECTION_METERS = 0.035
 MAX_TORSO_CORRECTION_METERS = 0.025
+MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(15.0)
 SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
@@ -65,6 +79,10 @@ SOFT_LEG_SYMMETRY_MIN_BLEND = 0.16
 SOFT_LEG_SYMMETRY_MAX_BLEND = 0.34
 SOFT_LEG_SYMMETRY_BLEND_SCALE = 0.45
 SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS = 0.028
+SOFT_ARM_SYMMETRY_MIN_BLEND = 0.25
+SOFT_ARM_SYMMETRY_MAX_BLEND = 0.80
+SOFT_ARM_SYMMETRY_BLEND_SCALE = 0.80
+SOFT_ARM_SYMMETRY_MAX_CORRECTION_METERS = 0.050
 ARM_MOTION_DRIVEN_SYMMETRY_MIN_RATIO = 0.70
 ARM_MOTION_DRIVEN_SYMMETRY_MIN_CORRELATION = 0.90
 ARM_MOTION_DRIVEN_SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.20
@@ -89,6 +107,7 @@ def refine_motion_clip_structurally(
     dominant_chain_ratio = min(max(dominant_chain_ratio, 0.1), 1.0)
     non_dominant_damping = min(max(non_dominant_damping, 0.0), 1.0)
     non_dominant_radius_scale = max(0.1, non_dominant_radius_scale)
+    source_clip = clip
 
     chain_motion = _chain_motion_summary(clip)
     chain_range = _chain_range_summary(clip)
@@ -111,6 +130,34 @@ def refine_motion_clip_structurally(
             **dominant_profile,
             "bilateralModes": bilateral_modes,
         }
+    noise_metrics = _motion_noise_metrics(clip, body_height=body_height)
+    has_directional_noise = (
+        clip.frame_count >= 15
+        and
+        noise_metrics["medianResidual"] > max(0.001, body_height * 0.0006)
+        and noise_metrics["p90Residual"] > max(0.004, body_height * 0.0025)
+    )
+    if "torso" in dominant_groups or has_directional_noise:
+        dynamic_child_joints = _range_dominant_chain_child_joints(dominant_profile)
+        stabilize_body_orientation = any(
+            isinstance(mode, dict) and mode.get("mode") == "same_phase_symmetric"
+            for mode in bilateral_modes.values()
+        )
+        clip, directional_denoising = _denoise_along_dominant_motion_axis(
+            clip,
+            dynamic_length_child_joints=dynamic_child_joints,
+            stabilize_body_orientation=stabilize_body_orientation,
+        )
+        directional_denoising = {
+            **directional_denoising,
+            "noiseMetrics": noise_metrics,
+        }
+    else:
+        directional_denoising = {
+            "applied": False,
+            "reason": "no_significant_directional_noise",
+            "noiseMetrics": noise_metrics,
+        }
     if "torso" in dominant_groups:
         refined, refinement_metadata = _refine_torso_dominant_motion_conservatively(
             clip,
@@ -131,9 +178,44 @@ def refine_motion_clip_structurally(
         }
     else:
         refined, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
+    if _has_authoritative_support_anchors(refined):
+        refined, temporal_polish_metadata = _polish_motion_clip_temporally(refined)
+        refined, final_bone_projection_metadata = _preserve_reference_bone_lengths(
+            refined,
+            reference_clip=source_clip,
+            excluded_child_joints={
+                "left_knee",
+                "right_knee",
+                "left_ankle",
+                "right_ankle",
+                "left_foot",
+                "right_foot",
+            },
+        )
+    else:
+        temporal_polish_metadata = {
+            "applied": False,
+            "reason": "no_authoritative_support_anchors",
+        }
+        final_bone_projection_metadata = {
+            "applied": False,
+            "reason": "final_polish_not_applied",
+        }
+    refined, support_anchor_metadata = _restore_authoritative_support_anchors(refined)
+    refined, whole_skeleton_metadata = _solve_clip_wide_skeleton_constraints(
+        refined,
+        reference_clip=source_clip,
+        bilateral_modes=bilateral_modes,
+        dominant_profile=dominant_profile,
+    )
     refinement_metadata = {
         **refinement_metadata,
+        "directionalDenoising": directional_denoising,
         "headPosePreservation": head_metadata,
+        "temporalPolish": temporal_polish_metadata,
+        "finalBoneProjection": final_bone_projection_metadata,
+        "supportAnchorRestoration": support_anchor_metadata,
+        "wholeSkeletonSolver": whole_skeleton_metadata,
     }
     metadata = dict(refined.metadata)
     metadata["structuralRefinement"] = {
@@ -148,7 +230,7 @@ def refine_motion_clip_structurally(
                     for joint_name, point in frame.joints.items()
                 },
             }
-            for index, frame in enumerate(clip.frames)
+            for index, frame in enumerate(source_clip.frames)
         ],
         "strongestChainMotion": strongest_chain_motion,
         "activeThreshold": active_threshold,
@@ -164,6 +246,1513 @@ def refine_motion_clip_structurally(
         **refinement_metadata,
     }
     return replace(refined, metadata=metadata)
+
+
+def _has_authoritative_support_anchors(clip: MotionClip) -> bool:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup_metadata = metadata.get("cleanup")
+    support_constraint = (
+        cleanup_metadata.get("supportSurfaceConstraint")
+        if isinstance(cleanup_metadata, dict)
+        else None
+    )
+    knee_lock = (
+        support_constraint.get("kneeLock")
+        if isinstance(support_constraint, dict)
+        else None
+    )
+    anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    return isinstance(anchors, dict) and bool(anchors)
+
+
+def _solve_clip_wide_skeleton_constraints(
+    clip: MotionClip,
+    *,
+    reference_clip: MotionClip,
+    bilateral_modes: dict[str, dict[str, object]],
+    dominant_profile: dict[str, object],
+) -> tuple[MotionClip, dict[str, object]]:
+    if not _has_authoritative_support_anchors(clip):
+        return clip, {
+            "applied": False,
+            "reason": "no_authoritative_support_anchors",
+        }
+    bone_lengths = {
+        (parent, child): _median_bone_length(reference_clip, parent, child)
+        for parent, child in STRUCTURAL_BONES
+        if parent in clip.joint_names
+        and child in clip.joint_names
+        and parent in reference_clip.joint_names
+        and child in reference_clip.joint_names
+    }
+    bilateral_pairs = list(CORE_BILATERAL_PAIRS)
+    arms_mode = bilateral_modes.get("arms", {})
+    legs_mode = bilateral_modes.get("legs", {})
+    clip_metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    clip_cleanup_metadata = clip_metadata.get("cleanup")
+    clip_support_constraint = (
+        clip_cleanup_metadata.get("supportSurfaceConstraint")
+        if isinstance(clip_cleanup_metadata, dict)
+        else None
+    )
+    clip_knee_lock = (
+        clip_support_constraint.get("kneeLock")
+        if isinstance(clip_support_constraint, dict)
+        else None
+    )
+    has_bilateral_knee_anchors = (
+        isinstance(clip_knee_lock, dict)
+        and {
+            name
+            for name in clip_knee_lock.get("supportJoints", [])
+            if isinstance(name, str)
+        }
+        >= {"left_knee", "right_knee"}
+    )
+    if (
+        arms_mode.get("mode") == "same_phase_symmetric"
+        or arms_mode.get("motionSymmetric") is True
+    ):
+        bilateral_pairs.extend(ARM_PAIRS)
+    if (
+        legs_mode.get("mode") == "same_phase_symmetric"
+        or legs_mode.get("motionSymmetric") is True
+        or has_bilateral_knee_anchors
+    ):
+        bilateral_pairs.extend(LEG_PAIRS)
+    bilateral_pairs = [
+        pair
+        for pair in bilateral_pairs
+        if all(
+            joint in clip.joint_names and joint in reference_clip.joint_names
+            for joint in pair
+        )
+    ]
+    bilateral_widths = {
+        pair: median(
+            _distance(frame.joints[pair[0]], frame.joints[pair[1]])
+            for frame in reference_clip.frames
+        )
+        for pair in bilateral_pairs
+    }
+    for (parent, child), target_length in list(bone_lengths.items()):
+        if "left_" not in parent and "left_" not in child:
+            continue
+        opposite_bone = (
+            parent.replace("left_", "right_"),
+            child.replace("left_", "right_"),
+        )
+        if opposite_bone not in bone_lengths:
+            continue
+        child_pair = (child, opposite_bone[1])
+        if child_pair not in bilateral_pairs:
+            continue
+        shared_length = (target_length + bone_lengths[opposite_bone]) * 0.5
+        bone_lengths[(parent, child)] = shared_length
+        bone_lengths[opposite_bone] = shared_length
+    body_frames = [
+        body_frame
+        for frame in clip.frames
+        if (body_frame := _body_local_frame(frame)) is not None
+    ]
+    median_lateral = (
+        _median_point([frame.right for frame in body_frames])
+        if body_frames
+        else None
+    )
+    lateral_axis = (
+        _normalize((median_lateral[0], 0.0, median_lateral[2]))
+        if median_lateral is not None
+        else None
+    )
+    pair_groups = {
+        **{pair: "torso" for pair in CORE_BILATERAL_PAIRS},
+        **{pair: "arms" for pair in ARM_PAIRS},
+        **{pair: "legs" for pair in LEG_PAIRS},
+    }
+    pair_parents = {
+        ("left_collar", "right_collar"): ("neck", "neck"),
+        ("left_shoulder", "right_shoulder"): ("left_collar", "right_collar"),
+        ("left_elbow", "right_elbow"): ("left_shoulder", "right_shoulder"),
+        ("left_wrist", "right_wrist"): ("left_elbow", "right_elbow"),
+        ("left_hand", "right_hand"): ("left_wrist", "right_wrist"),
+        ("left_hip", "right_hip"): ("pelvis", "pelvis"),
+        ("left_knee", "right_knee"): ("left_hip", "right_hip"),
+        ("left_ankle", "right_ankle"): ("left_knee", "right_knee"),
+        ("left_foot", "right_foot"): ("left_ankle", "right_ankle"),
+    }
+    motion_dominant_groups = set(
+        dominant_profile.get("motionDominantGroups", [])
+    )
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup_metadata = metadata.get("cleanup")
+    support_constraint = (
+        cleanup_metadata.get("supportSurfaceConstraint")
+        if isinstance(cleanup_metadata, dict)
+        else None
+    )
+    knee_lock = (
+        support_constraint.get("kneeLock")
+        if isinstance(support_constraint, dict)
+        else None
+    )
+    support_names = (
+        knee_lock.get("supportJoints")
+        if isinstance(knee_lock, dict)
+        else None
+    )
+    anchored_joints = {
+        name
+        for name in support_names or []
+        if isinstance(name, str) and name in clip.joint_names
+    }
+    anchor_positions = {
+        name: clip.frames[0].joints[name]
+        for name in anchored_joints
+    }
+    movement_plane_coordinate = None
+    if lateral_axis is not None:
+        body_center_coordinates = [
+            _dot(frame.joints["pelvis"], lateral_axis)
+            for frame in clip.frames
+            if "pelvis" in frame.joints
+        ]
+        body_center_coordinate = (
+            median(body_center_coordinates)
+            if body_center_coordinates
+            else None
+        )
+        movement_plane_coordinate = body_center_coordinate
+        for pair, target_width in bilateral_widths.items():
+            if not all(joint in anchored_joints for joint in pair):
+                continue
+            midpoint = _average_points(
+                [anchor_positions[pair[0]], anchor_positions[pair[1]]]
+            )
+            if body_center_coordinate is not None:
+                midpoint = _add(
+                    midpoint,
+                    _scale(
+                        lateral_axis,
+                        body_center_coordinate - _dot(midpoint, lateral_axis),
+                    ),
+                )
+            half_width = target_width * 0.5
+            anchor_positions[pair[0]] = _subtract(
+                midpoint,
+                _scale(lateral_axis, half_width),
+            )
+            anchor_positions[pair[1]] = _add(
+                midpoint,
+                _scale(lateral_axis, half_width),
+            )
+    static_joint_names = set(anchored_joints)
+    changed = True
+    while changed:
+        changed = False
+        for pair in bilateral_pairs:
+            if pair_groups.get(pair) in motion_dominant_groups:
+                continue
+            parent_pair = pair_parents.get(pair)
+            if (
+                parent_pair is None
+                or not all(joint in static_joint_names for joint in parent_pair)
+            ):
+                continue
+            for joint_name in pair:
+                if joint_name not in static_joint_names:
+                    static_joint_names.add(joint_name)
+                    changed = True
+    stable_head_angle = None
+    head_length = bone_lengths.get(("neck", "head"))
+    if lateral_axis is not None and head_length is not None:
+        head_angles = []
+        for frame in clip.frames:
+            if not all(
+                joint in frame.joints
+                for joint in ("pelvis", "neck", "head")
+            ):
+                continue
+            torso_vector = _subtract(
+                frame.joints["neck"],
+                frame.joints["pelvis"],
+            )
+            head_vector = _subtract(
+                frame.joints["head"],
+                frame.joints["neck"],
+            )
+            torso_direction = _normalize(
+                _subtract(
+                    torso_vector,
+                    _scale(lateral_axis, _dot(torso_vector, lateral_axis)),
+                )
+            )
+            head_direction = _normalize(
+                _subtract(
+                    head_vector,
+                    _scale(lateral_axis, _dot(head_vector, lateral_axis)),
+                )
+            )
+            if torso_direction is None or head_direction is None:
+                continue
+            head_angles.append(
+                math.atan2(
+                    _dot(_cross(torso_direction, head_direction), lateral_axis),
+                    _dot(torso_direction, head_direction),
+                )
+            )
+        if head_angles:
+            stable_head_angle = max(
+                -MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS,
+                min(
+                    MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS,
+                    median(head_angles),
+                ),
+            )
+
+    def project_distance_constraint(
+        joints: dict[str, Point3],
+        first_name: str,
+        second_name: str,
+        target_distance: float,
+    ) -> None:
+        first = joints.get(first_name)
+        second = joints.get(second_name)
+        if first is None or second is None:
+            return
+        delta = _subtract(second, first)
+        distance = _length(delta)
+        if distance <= 1e-8:
+            return
+        first_weight = 0.0 if first_name in anchored_joints else 1.0
+        second_weight = 0.0 if second_name in anchored_joints else 1.0
+        total_weight = first_weight + second_weight
+        if total_weight <= 1e-8:
+            return
+        correction = _scale(delta, (distance - target_distance) / distance)
+        if first_weight > 0.0:
+            joints[first_name] = _add(
+                first,
+                _scale(correction, first_weight / total_weight),
+            )
+        if second_weight > 0.0:
+            joints[second_name] = _subtract(
+                second,
+                _scale(correction, second_weight / total_weight),
+            )
+
+    def project_mirrored_pair(
+        joints: dict[str, Point3],
+        pair: tuple[str, str],
+        target_width: float,
+    ) -> None:
+        if lateral_axis is None:
+            project_distance_constraint(
+                joints,
+                pair[0],
+                pair[1],
+                target_width,
+            )
+            return
+        left = joints.get(pair[0])
+        right = joints.get(pair[1])
+        if left is None or right is None:
+            return
+        left_anchored = pair[0] in anchored_joints
+        right_anchored = pair[1] in anchored_joints
+        if left_anchored and right_anchored:
+            return
+        if left_anchored:
+            joints[pair[1]] = _add(left, _scale(lateral_axis, target_width))
+            return
+        if right_anchored:
+            joints[pair[0]] = _subtract(right, _scale(lateral_axis, target_width))
+            return
+        midpoint = _average_points([left, right])
+        if movement_plane_coordinate is not None:
+            midpoint = _add(
+                midpoint,
+                _scale(
+                    lateral_axis,
+                    movement_plane_coordinate - _dot(midpoint, lateral_axis),
+                ),
+            )
+        half_width = target_width * 0.5
+        joints[pair[0]] = _subtract(
+            midpoint,
+            _scale(lateral_axis, half_width),
+        )
+        joints[pair[1]] = _add(
+            midpoint,
+            _scale(lateral_axis, half_width),
+        )
+
+    def project_axial_centerline(joints: dict[str, Point3]) -> None:
+        if lateral_axis is None or movement_plane_coordinate is None:
+            return
+        for joint_name in AXIAL_CENTERLINE_JOINTS:
+            point = joints.get(joint_name)
+            if point is None:
+                continue
+            joints[joint_name] = _add(
+                point,
+                _scale(
+                    lateral_axis,
+                    movement_plane_coordinate - _dot(point, lateral_axis),
+                ),
+            )
+        if stable_head_angle is None or head_length is None:
+            return
+        pelvis = joints.get("pelvis")
+        neck = joints.get("neck")
+        if pelvis is None or neck is None or "head" not in joints:
+            return
+        torso_direction = _normalize(_subtract(neck, pelvis))
+        if torso_direction is None:
+            return
+        head_direction = _rotate_vector_about_axis(
+            torso_direction,
+            axis=lateral_axis,
+            angle_radians=stable_head_angle,
+        )
+        joints["head"] = _add(
+            neck,
+            _scale(head_direction, head_length),
+        )
+
+    frames = [
+        MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints))
+        for frame in clip.frames
+    ]
+    for _ in range(4):
+        tracks = {
+            joint_name: [frame.joints[joint_name] for frame in frames]
+            for joint_name in clip.joint_names
+        }
+        temporal_targets = {
+            joint_name: (
+                [_median_point(track)] * len(track)
+                if joint_name in static_joint_names
+                else _zero_phase_smooth_points(track, radius=2)
+            )
+            for joint_name, track in tracks.items()
+        }
+        solved_frames: list[MotionFrame] = []
+        for frame_index, frame in enumerate(frames):
+            joints = dict(frame.joints)
+            for joint_name in clip.joint_names:
+                if joint_name in anchored_joints:
+                    continue
+                if joint_name in static_joint_names:
+                    joints[joint_name] = temporal_targets[joint_name][frame_index]
+                else:
+                    joints[joint_name] = _limited_lerp_point(
+                        joints[joint_name],
+                        temporal_targets[joint_name][frame_index],
+                        0.35,
+                        0.004,
+                    )
+            for _constraint_iteration in range(32):
+                for (parent, child), target_length in bone_lengths.items():
+                    project_distance_constraint(
+                        joints,
+                        parent,
+                        child,
+                        target_length,
+                    )
+                for pair, target_width in bilateral_widths.items():
+                    project_mirrored_pair(
+                        joints,
+                        pair,
+                        target_width,
+                    )
+                for joint_name, anchor in anchor_positions.items():
+                    joints[joint_name] = anchor
+                project_axial_centerline(joints)
+            solved_frames.append(
+                MotionFrame(time_sec=frame.time_sec, joints=joints)
+            )
+        frames = solved_frames
+
+    solved = replace(clip, frames=frames)
+    displacement = _average_joint_displacement(
+        clip,
+        solved,
+        list(clip.joint_names),
+    )
+    maximum_bone_error = max(
+        (
+            abs(
+                _distance(frame.joints[parent], frame.joints[child])
+                - target_length
+            )
+            for frame in solved.frames
+            for (parent, child), target_length in bone_lengths.items()
+        ),
+        default=0.0,
+    )
+    maximum_width_error = max(
+        (
+            abs(
+                _distance(frame.joints[pair[0]], frame.joints[pair[1]])
+                - target_width
+            )
+            for frame in solved.frames
+            for pair, target_width in bilateral_widths.items()
+        ),
+        default=0.0,
+    )
+    maximum_mirror_error = (
+        max(
+            (
+                _distance(
+                    _subtract(
+                        frame.joints[pair[1]],
+                        frame.joints[pair[0]],
+                    ),
+                    _scale(lateral_axis, target_width),
+                )
+                for frame in solved.frames
+                for pair, target_width in bilateral_widths.items()
+                if not all(joint in anchored_joints for joint in pair)
+            ),
+            default=0.0,
+        )
+        if lateral_axis is not None
+        else 0.0
+    )
+    maximum_axial_plane_error = (
+        max(
+            (
+                abs(
+                    _dot(frame.joints[joint_name], lateral_axis)
+                    - movement_plane_coordinate
+                )
+                for frame in solved.frames
+                for joint_name in AXIAL_CENTERLINE_JOINTS
+                if joint_name in frame.joints
+            ),
+            default=0.0,
+        )
+        if lateral_axis is not None and movement_plane_coordinate is not None
+        else 0.0
+    )
+    return solved, {
+        "applied": True,
+        "strategy": "clip_wide_temporal_graph_constraint_projection",
+        "temporalPasses": 4,
+        "constraintIterationsPerPass": 32,
+        "boneConstraintCount": len(bone_lengths),
+        "bilateralConstraintCount": len(bilateral_widths),
+        "staticTrajectoryJoints": sorted(
+            static_joint_names - anchored_joints
+        ),
+        "anchoredJoints": sorted(anchored_joints),
+        "averageCorrection": displacement["average"],
+        "maxCorrection": displacement["max"],
+        "maximumBoneLengthError": maximum_bone_error,
+        "maximumBilateralWidthError": maximum_width_error,
+        "maximumBilateralMirrorError": maximum_mirror_error,
+        "maximumAxialPlaneError": maximum_axial_plane_error,
+        "stableHeadToTorsoAngleDegrees": (
+            math.degrees(stable_head_angle)
+            if stable_head_angle is not None
+            else None
+        ),
+    }
+
+
+def _polish_motion_clip_temporally(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    if clip.frame_count < 5 or "pelvis" not in clip.joint_names:
+        return clip, {"applied": False, "reason": "insufficient_root_track"}
+    source_root_track = [frame.joints["pelvis"] for frame in clip.frames]
+    smoothed_root_track = _zero_phase_smooth_points(source_root_track, radius=3)
+    polished_root_track = [
+        _limited_lerp_point(
+            source,
+            smoothed,
+            0.60,
+            0.008,
+        )
+        for source, smoothed in zip(source_root_track, smoothed_root_track)
+    ]
+    offset_tracks = {
+        joint_name: [
+            _subtract(frame.joints[joint_name], frame.joints["pelvis"])
+            for frame in clip.frames
+        ]
+        for joint_name in clip.joint_names
+        if joint_name != "pelvis"
+    }
+    smoothed_offset_tracks = {
+        joint_name: _zero_phase_smooth_points(points, radius=2)
+        for joint_name, points in offset_tracks.items()
+    }
+    frames: list[MotionFrame] = []
+    maximum_correction = 0.0
+    total_correction = 0.0
+    samples = 0
+    for frame_index, frame in enumerate(clip.frames):
+        source_root = source_root_track[frame_index]
+        polished_root = polished_root_track[frame_index]
+        joints = {"pelvis": polished_root}
+        for joint_name, point in frame.joints.items():
+            if joint_name == "pelvis":
+                continue
+            translated = _add(
+                point,
+                _subtract(polished_root, source_root),
+            )
+            target = _add(
+                polished_root,
+                smoothed_offset_tracks[joint_name][frame_index],
+            )
+            polished = _limited_lerp_point(
+                translated,
+                target,
+                0.58,
+                0.006,
+            )
+            correction = _distance(point, polished)
+            maximum_correction = max(maximum_correction, correction)
+            total_correction += correction
+            samples += 1
+            joints[joint_name] = polished
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    polished_clip = replace(clip, frames=frames)
+    return polished_clip, {
+        "applied": True,
+        "strategy": "clip_wide_zero_phase_root_and_root_relative_polish",
+        "rootWindowRadius": 3,
+        "jointWindowRadius": 2,
+        "maximumRootCorrection": 0.008,
+        "maximumRelativeCorrection": 0.006,
+        "averageCorrection": total_correction / samples if samples else 0.0,
+        "maxCorrection": maximum_correction,
+    }
+
+
+def _solve_clip_wide_reachable_pelvis_track(
+    clip: MotionClip,
+    *,
+    reachable_configs: list[tuple[str, Point3, float, float]],
+) -> list[Point3]:
+    source_track = [
+        frame.joints.get("pelvis", (0.0, 0.0, 0.0))
+        for frame in clip.frames
+    ]
+    if not reachable_configs:
+        return source_track
+
+    def project_to_reachable_region(point: Point3) -> Point3:
+        projected = point
+        for _ in range(12):
+            for _hip_name, anchor, pelvis_to_hip, hip_to_knee in reachable_configs:
+                anchor_to_pelvis = _subtract(projected, anchor)
+                distance = _length(anchor_to_pelvis)
+                maximum_reach = max(
+                    1e-6,
+                    pelvis_to_hip + hip_to_knee - 1e-5,
+                )
+                if distance > maximum_reach:
+                    projected = _add(
+                        anchor,
+                        _scale(anchor_to_pelvis, maximum_reach / distance),
+                    )
+        return projected
+
+    solved_track = [project_to_reachable_region(point) for point in source_track]
+    for _ in range(8):
+        corrections = [
+            _subtract(solved, source)
+            for source, solved in zip(source_track, solved_track)
+        ]
+        smoothed_corrections = _zero_phase_smooth_points(corrections, radius=3)
+        solved_track = [
+            project_to_reachable_region(
+                _add(
+                    source,
+                    _lerp_point(correction, smoothed, 0.75),
+                )
+            )
+            for source, correction, smoothed in zip(
+                source_track,
+                corrections,
+                smoothed_corrections,
+            )
+        ]
+    return solved_track
+
+
+def _solve_clip_wide_two_bone_mid_track(
+    clip: MotionClip,
+    *,
+    hip_name: str,
+    pelvis_track: list[Point3],
+    knee_anchor: Point3,
+    pelvis_to_hip: float,
+    hip_to_knee: float,
+) -> list[Point3]:
+    line_directions: list[Point3] = []
+    projection_lengths: list[float] = []
+    bend_heights: list[float] = []
+    bend_directions: list[Point3] = []
+    previous_bend: Point3 | None = None
+    for frame, solved_pelvis in zip(clip.frames, pelvis_track):
+        source_pelvis = frame.joints["pelvis"]
+        translated_hip = _add(
+            frame.joints[hip_name],
+            _subtract(solved_pelvis, source_pelvis),
+        )
+        root_to_knee = _subtract(knee_anchor, solved_pelvis)
+        distance = max(_length(root_to_knee), 1e-6)
+        direction = _scale(root_to_knee, 1.0 / distance)
+        projection_length = (
+            pelvis_to_hip * pelvis_to_hip
+            - hip_to_knee * hip_to_knee
+            + distance * distance
+        ) / (2.0 * distance)
+        bend_height = math.sqrt(
+            max(
+                0.0,
+                pelvis_to_hip * pelvis_to_hip
+                - projection_length * projection_length,
+            )
+        )
+        projected_hip = _add(
+            solved_pelvis,
+            _scale(direction, projection_length),
+        )
+        bend = _normalize(_subtract(translated_hip, projected_hip))
+        if bend is None:
+            bend = previous_bend or _normalize(_cross(direction, (0.0, 1.0, 0.0)))
+        if bend is None:
+            bend = (1.0, 0.0, 0.0)
+        if previous_bend is not None and _dot(bend, previous_bend) < 0.0:
+            bend = _scale(bend, -1.0)
+        previous_bend = bend
+        line_directions.append(direction)
+        projection_lengths.append(projection_length)
+        bend_heights.append(bend_height)
+        bend_directions.append(bend)
+
+    smoothed_bends = bend_directions
+    for _ in range(4):
+        smoothed_bends = _zero_phase_smooth_points(smoothed_bends, radius=3)
+        smoothed_bends = [
+            _normalize(
+                _subtract(smoothed, _scale(line, _dot(smoothed, line)))
+            )
+            or original
+            for smoothed, line, original in zip(
+                smoothed_bends,
+                line_directions,
+                bend_directions,
+            )
+        ]
+    return [
+        _add(
+            _add(pelvis, _scale(line, projection_length)),
+            _scale(bend, bend_height),
+        )
+        for pelvis, line, projection_length, bend, bend_height in zip(
+            pelvis_track,
+            line_directions,
+            projection_lengths,
+            smoothed_bends,
+            bend_heights,
+        )
+    ]
+
+
+def _solve_coupled_bilateral_hip_tracks(
+    *,
+    pelvis_track: list[Point3],
+    left_knee_anchor: Point3,
+    right_knee_anchor: Point3,
+    left_pelvis_to_hip: float,
+    right_pelvis_to_hip: float,
+    left_hip_to_knee: float,
+    right_hip_to_knee: float,
+    target_hip_width: float,
+    left_initial_track: list[Point3],
+    right_initial_track: list[Point3],
+) -> tuple[list[Point3], list[Point3]]:
+    def project_distance(point: Point3, anchor: Point3, distance: float) -> Point3:
+        direction = _subtract(point, anchor)
+        length = _length(direction)
+        if length <= 1e-8:
+            return point
+        return _add(anchor, _scale(direction, distance / length))
+
+    def solve_frame(
+        pelvis: Point3,
+        left: Point3,
+        right: Point3,
+    ) -> tuple[Point3, Point3]:
+        for _ in range(48):
+            left = project_distance(left, pelvis, left_pelvis_to_hip)
+            left = project_distance(left, left_knee_anchor, left_hip_to_knee)
+            right = project_distance(right, pelvis, right_pelvis_to_hip)
+            right = project_distance(right, right_knee_anchor, right_hip_to_knee)
+            separation = _subtract(right, left)
+            separation_length = _length(separation)
+            if separation_length > 1e-8:
+                correction = _scale(
+                    separation,
+                    (target_hip_width - separation_length)
+                    / separation_length
+                    * 0.5,
+                )
+                left = _subtract(left, correction)
+                right = _add(right, correction)
+        return left, right
+
+    left_track = list(left_initial_track)
+    right_track = list(right_initial_track)
+    for _ in range(4):
+        smoothed_left = _zero_phase_smooth_points(left_track, radius=2)
+        smoothed_right = _zero_phase_smooth_points(right_track, radius=2)
+        solved_pairs = [
+            solve_frame(
+                pelvis,
+                _lerp_point(left, left_smoothed, 0.45),
+                _lerp_point(right, right_smoothed, 0.45),
+            )
+            for pelvis, left, right, left_smoothed, right_smoothed in zip(
+                pelvis_track,
+                left_track,
+                right_track,
+                smoothed_left,
+                smoothed_right,
+            )
+        ]
+        left_track = [pair[0] for pair in solved_pairs]
+        right_track = [pair[1] for pair in solved_pairs]
+    return left_track, right_track
+
+
+def _restore_authoritative_support_anchors(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup_metadata = metadata.get("cleanup")
+    if not isinstance(cleanup_metadata, dict):
+        return clip, {"applied": False, "reason": "missing_cleanup_metadata"}
+    support_constraint = cleanup_metadata.get("supportSurfaceConstraint")
+    knee_lock = (
+        support_constraint.get("kneeLock")
+        if isinstance(support_constraint, dict)
+        else None
+    )
+    orientation_anchors = metadata.get("_orientationSupportAnchors")
+    raw_anchors = (
+        orientation_anchors
+        if isinstance(orientation_anchors, dict) and orientation_anchors
+        else knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    )
+    if not isinstance(raw_anchors, dict):
+        return clip, {"applied": False, "reason": "no_authoritative_support_anchors"}
+
+    anchors: dict[str, Point3] = {}
+    for joint_name, value in raw_anchors.items():
+        if (
+            isinstance(joint_name, str)
+            and isinstance(value, list)
+            and len(value) >= 3
+            and all(isinstance(component, (int, float)) for component in value[:3])
+        ):
+            anchors[joint_name] = (
+                float(value[0]),
+                float(value[1]),
+                float(value[2]),
+            )
+    if not anchors:
+        return clip, {"applied": False, "reason": "invalid_support_anchors"}
+
+    support_descendants = {
+        "left_knee": ("left_ankle", "left_foot"),
+        "right_knee": ("right_ankle", "right_foot"),
+    }
+    raw_reference_lengths = (
+        knee_lock.get("referenceBoneLengths")
+        if isinstance(knee_lock, dict)
+        else None
+    )
+    reference_lengths = (
+        raw_reference_lengths
+        if isinstance(raw_reference_lengths, dict)
+        else {}
+    )
+    reachable_configs: list[tuple[str, Point3, float, float]] = []
+    for joint_name, anchor in anchors.items():
+        side = joint_name.removesuffix("_knee")
+        hip_name = f"{side}_hip"
+        lengths = reference_lengths.get(joint_name)
+        pelvis_to_hip = (
+            _optional_float(lengths.get("pelvisToHip"))
+            if isinstance(lengths, dict)
+            else None
+        )
+        hip_to_knee = (
+            _optional_float(lengths.get("hipToKnee"))
+            if isinstance(lengths, dict)
+            else None
+        )
+        if (
+            hip_name in clip.joint_names
+            and pelvis_to_hip is not None
+            and hip_to_knee is not None
+        ):
+            reachable_configs.append(
+                (hip_name, anchor, pelvis_to_hip, hip_to_knee)
+            )
+    solved_pelvis_track = _solve_clip_wide_reachable_pelvis_track(
+        clip,
+        reachable_configs=reachable_configs,
+    )
+    solved_hip_tracks = {
+        hip_name: _solve_clip_wide_two_bone_mid_track(
+            clip,
+            hip_name=hip_name,
+            pelvis_track=solved_pelvis_track,
+            knee_anchor=anchor,
+            pelvis_to_hip=pelvis_to_hip,
+            hip_to_knee=hip_to_knee,
+        )
+        for hip_name, anchor, pelvis_to_hip, hip_to_knee in reachable_configs
+    }
+    reference_hip_width = (
+        _optional_float(knee_lock.get("referenceHipWidth"))
+        if isinstance(knee_lock, dict)
+        else None
+    )
+    config_by_hip = {
+        hip_name: (anchor, pelvis_to_hip, hip_to_knee)
+        for hip_name, anchor, pelvis_to_hip, hip_to_knee in reachable_configs
+    }
+    if (
+        reference_hip_width is not None
+        and "left_hip" in solved_hip_tracks
+        and "right_hip" in solved_hip_tracks
+        and "left_hip" in config_by_hip
+        and "right_hip" in config_by_hip
+    ):
+        left_config = config_by_hip["left_hip"]
+        right_config = config_by_hip["right_hip"]
+        left_track, right_track = _solve_coupled_bilateral_hip_tracks(
+            pelvis_track=solved_pelvis_track,
+            left_knee_anchor=left_config[0],
+            right_knee_anchor=right_config[0],
+            left_pelvis_to_hip=left_config[1],
+            right_pelvis_to_hip=right_config[1],
+            left_hip_to_knee=left_config[2],
+            right_hip_to_knee=right_config[2],
+            target_hip_width=reference_hip_width,
+            left_initial_track=solved_hip_tracks["left_hip"],
+            right_initial_track=solved_hip_tracks["right_hip"],
+        )
+        solved_hip_tracks["left_hip"] = left_track
+        solved_hip_tracks["right_hip"] = right_track
+    frames: list[MotionFrame] = []
+    maximum_correction = 0.0
+    maximum_pelvis_correction = 0.0
+    maximum_thigh_length_error = 0.0
+    for frame_index, frame in enumerate(clip.frames):
+        joints = dict(frame.joints)
+        pelvis = joints.get("pelvis")
+        if pelvis is not None and reachable_configs:
+            solved_pelvis = solved_pelvis_track[frame_index]
+            pelvis_correction = _subtract(solved_pelvis, pelvis)
+            pelvis_correction_length = _length(pelvis_correction)
+            maximum_pelvis_correction = max(
+                maximum_pelvis_correction,
+                pelvis_correction_length,
+            )
+            if pelvis_correction_length > 1e-8:
+                distal_joints = {
+                    joint_name
+                    for support_joint in anchors
+                    for joint_name in (
+                        support_joint,
+                        *support_descendants.get(support_joint, ()),
+                    )
+                }
+                joints = {
+                    name: (
+                        point
+                        if name in distal_joints
+                        else _add(point, pelvis_correction)
+                    )
+                    for name, point in joints.items()
+                }
+            for hip_name, anchor, pelvis_to_hip, hip_to_knee in reachable_configs:
+                solved_hip = solved_hip_tracks[hip_name][frame_index]
+                joints[hip_name] = solved_hip
+                maximum_thigh_length_error = max(
+                    maximum_thigh_length_error,
+                    abs(_distance(solved_hip, anchor) - hip_to_knee),
+                )
+        for joint_name, anchor in anchors.items():
+            current = joints.get(joint_name)
+            if current is None:
+                continue
+            correction = _subtract(anchor, current)
+            maximum_correction = max(maximum_correction, _length(correction))
+            joints[joint_name] = anchor
+            for descendant_name in support_descendants.get(joint_name, ()):
+                descendant = joints.get(descendant_name)
+                if descendant is not None:
+                    joints[descendant_name] = _add(descendant, correction)
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    solved_hip_widths = [
+        _distance(frame.joints["left_hip"], frame.joints["right_hip"])
+        for frame in frames
+        if "left_hip" in frame.joints and "right_hip" in frame.joints
+    ]
+    output_metadata = dict(clip.metadata)
+    output_metadata.pop("_orientationSupportAnchors", None)
+    return replace(clip, frames=frames, metadata=output_metadata), {
+        "applied": True,
+        "strategy": "clip_wide_temporal_planted_support_ik",
+        "supportJoints": sorted(anchors),
+        "temporalSmoothingPasses": 8,
+        "hipBendSmoothingPasses": 4,
+        "targetHipWidth": reference_hip_width,
+        "hipWidthRange": (
+            max(solved_hip_widths) - min(solved_hip_widths)
+            if solved_hip_widths
+            else 0.0
+        ),
+        "maximumCorrection": maximum_correction,
+        "maximumPelvisReachCorrection": maximum_pelvis_correction,
+        "maximumThighLengthError": maximum_thigh_length_error,
+    }
+
+
+def _denoise_along_dominant_motion_axis(
+    clip: MotionClip,
+    *,
+    dynamic_length_child_joints: set[str],
+    stabilize_body_orientation: bool,
+) -> tuple[MotionClip, dict[str, object]]:
+    if clip.frame_count < 5:
+        return clip, {"applied": False, "reason": "too_few_frames"}
+    axis, confidence = _dominant_motion_axis(clip)
+    if axis is None or confidence < 0.45:
+        return clip, {
+            "applied": False,
+            "reason": "no_coherent_dominant_motion_axis",
+            "confidence": confidence,
+        }
+
+    body_height = max(_median_body_height(clip), 0.5)
+    max_correction = min(0.04, max(0.012, body_height * 0.025))
+    joint_tracks = {
+        joint_name: [
+            frame.joints[joint_name]
+            for frame in clip.frames
+            if joint_name in frame.joints
+        ]
+        for joint_name in clip.joint_names
+    }
+    denoised_by_joint: dict[str, list[Point3]] = {}
+    joint_coherence: dict[str, float] = {}
+    total_correction = 0.0
+    maximum_correction = 0.0
+    correction_samples = 0
+
+    for joint_name, points in joint_tracks.items():
+        if len(points) != clip.frame_count:
+            continue
+        center = _median_point(points)
+        axial_values = [_dot(_subtract(point, center), axis) for point in points]
+        orthogonal_values = [
+            _subtract(_subtract(point, center), _scale(axis, axial))
+            for point, axial in zip(points, axial_values)
+        ]
+        axial_range = max(axial_values) - min(axial_values)
+        orthogonal_range = _point_cloud_extent(orthogonal_values)
+        coherence = axial_range / max(axial_range + orthogonal_range, 1e-8)
+        joint_coherence[joint_name] = coherence
+
+        motion_range = _point_cloud_extent(points)
+        if motion_range <= max(0.008, body_height * 0.008):
+            targets = [center] * clip.frame_count
+            axial_blend = 0.70
+            orthogonal_blend = 0.82
+        else:
+            targets = _zero_phase_smooth_points(points, radius=2)
+            axial_blend = 0.52 if coherence >= 0.55 else 0.38
+            orthogonal_blend = 0.88 if coherence >= 0.55 else 0.62
+
+        denoised_points: list[Point3] = []
+        for point, target in zip(points, targets):
+            raw_delta = _subtract(point, center)
+            target_delta = _subtract(target, center)
+            raw_axial = _dot(raw_delta, axis)
+            target_axial = _dot(target_delta, axis)
+            raw_orthogonal = _subtract(raw_delta, _scale(axis, raw_axial))
+            target_orthogonal = _subtract(target_delta, _scale(axis, target_axial))
+            solved_delta = _add(
+                _scale(
+                    axis,
+                    raw_axial + (target_axial - raw_axial) * axial_blend,
+                ),
+                _lerp_point(raw_orthogonal, target_orthogonal, orthogonal_blend),
+            )
+            solved = _limit_point_correction(
+                point,
+                _add(center, solved_delta),
+                max_correction=max_correction,
+            )
+            correction = _distance(point, solved)
+            if correction > 1e-8:
+                total_correction += correction
+                maximum_correction = max(maximum_correction, correction)
+                correction_samples += 1
+            denoised_points.append(solved)
+        denoised_by_joint[joint_name] = denoised_points
+
+    trajectory_frames: list[MotionFrame] = []
+    for frame_index, frame in enumerate(clip.frames):
+        joints = {
+            joint_name: denoised_by_joint.get(joint_name, [point] * clip.frame_count)[frame_index]
+            for joint_name, point in frame.joints.items()
+        }
+        trajectory_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    trajectory_clip = replace(clip, frames=trajectory_frames)
+    if stabilize_body_orientation:
+        trajectory_clip, orientation_metadata = _stabilize_body_orientation_to_motion_plane(
+            trajectory_clip,
+            dominant_axis=axis,
+        )
+    else:
+        orientation_metadata = {
+            "applied": False,
+            "reason": "bilateral_motion_is_not_same_phase_symmetric",
+        }
+    solved_clip, skeleton_metadata = _reconstruct_denoised_skeleton(
+        trajectory_clip,
+        reference_clip=clip,
+        dynamic_length_child_joints=dynamic_length_child_joints,
+    )
+    return solved_clip, {
+        "applied": True,
+        "strategy": "clip_wide_dominant_axis_zero_phase_denoising_with_skeletal_reconstruction",
+        "dominantAxis": [float(axis[0]), float(axis[1]), float(axis[2])],
+        "confidence": confidence,
+        "maximumCorrection": max_correction,
+        "averageTrajectoryCorrection": (
+            total_correction / correction_samples if correction_samples else 0.0
+        ),
+        "maxTrajectoryCorrection": maximum_correction,
+        "jointDirectionalCoherence": joint_coherence,
+        "bodyOrientationStabilization": orientation_metadata,
+        "skeletalReconstruction": skeleton_metadata,
+    }
+
+
+def _dominant_motion_axis(clip: MotionClip) -> tuple[Point3 | None, float]:
+    centered_samples: list[Point3] = []
+    for joint_name in clip.joint_names:
+        points = [
+            frame.joints[joint_name]
+            for frame in clip.frames
+            if joint_name in frame.joints
+        ]
+        if len(points) != clip.frame_count:
+            continue
+        center = _median_point(points)
+        centered_samples.extend(_subtract(point, center) for point in points)
+    if not centered_samples:
+        return None, 0.0
+
+    covariance = [[0.0] * 3 for _ in range(3)]
+    for sample in centered_samples:
+        for row in range(3):
+            for column in range(3):
+                covariance[row][column] += sample[row] * sample[column]
+    sample_count = float(len(centered_samples))
+    covariance = [
+        [value / sample_count for value in row]
+        for row in covariance
+    ]
+    trace = covariance[0][0] + covariance[1][1] + covariance[2][2]
+    if trace <= 1e-10:
+        return None, 0.0
+
+    largest_diagonal = max(range(3), key=lambda axis_index: covariance[axis_index][axis_index])
+    direction = [0.0, 0.0, 0.0]
+    direction[largest_diagonal] = 1.0
+    for _ in range(16):
+        projected = [
+            sum(covariance[row][column] * direction[column] for column in range(3))
+            for row in range(3)
+        ]
+        length = math.sqrt(sum(value * value for value in projected))
+        if length <= 1e-10:
+            return None, 0.0
+        direction = [value / length for value in projected]
+    axis = (direction[0], direction[1], direction[2])
+    dominant_variance = _dot(
+        axis,
+        (
+            sum(covariance[0][column] * axis[column] for column in range(3)),
+            sum(covariance[1][column] * axis[column] for column in range(3)),
+            sum(covariance[2][column] * axis[column] for column in range(3)),
+        ),
+    )
+    return axis, dominant_variance / trace
+
+
+def _stabilize_body_orientation_to_motion_plane(
+    clip: MotionClip,
+    *,
+    dominant_axis: Point3,
+) -> tuple[MotionClip, dict[str, object]]:
+    body_frames = [_body_local_frame(frame) for frame in clip.frames]
+    available_frames = [frame for frame in body_frames if frame is not None]
+    if not available_frames:
+        return clip, {"applied": False, "reason": "no_body_local_frames"}
+
+    median_right = _normalize(_median_point([frame.right for frame in available_frames]))
+    if median_right is None:
+        return clip, {"applied": False, "reason": "unstable_body_lateral_axis"}
+    horizontal_motion = _normalize((dominant_axis[0], 0.0, dominant_axis[2]))
+    if horizontal_motion is not None:
+        target_right = _normalize(_cross((0.0, 1.0, 0.0), horizontal_motion))
+    else:
+        target_right = _normalize((median_right[0], 0.0, median_right[2]))
+    if target_right is None:
+        return clip, {"applied": False, "reason": "no_horizontal_lateral_axis"}
+    if _dot(target_right, median_right) < 0.0:
+        target_right = _scale(target_right, -1.0)
+
+    maximum_angle = math.radians(35.0)
+    frames: list[MotionFrame] = []
+    corrections_degrees: list[float] = []
+    vertical_lifts: list[float] = []
+    for frame_index, (frame, body_frame) in enumerate(zip(clip.frames, body_frames)):
+        if body_frame is None:
+            frames.append(frame)
+            continue
+        horizontal_right = _normalize(
+            (body_frame.right[0], 0.0, body_frame.right[2])
+        )
+        if horizontal_right is None:
+            frames.append(frame)
+            continue
+        cosine = max(-1.0, min(1.0, _dot(horizontal_right, target_right)))
+        signed_sine = _cross(horizontal_right, target_right)[1]
+        signed_angle = math.atan2(signed_sine, cosine)
+        if abs(signed_angle) <= 1e-8:
+            frames.append(frame)
+            continue
+        angle = math.copysign(min(abs(signed_angle), maximum_angle), signed_angle)
+        support_joint_names = _orientation_support_joint_names(
+            clip,
+            frame_index=frame_index,
+        )
+        support_points = [
+            frame.joints[name]
+            for name in support_joint_names
+            if name in frame.joints
+        ]
+        pivot = _average_points(support_points) if support_points else body_frame.origin
+        rotated_joints = {
+            name: _add(
+                pivot,
+                _rotate_vector_about_axis(
+                    _subtract(point, pivot),
+                    axis=(0.0, 1.0, 0.0),
+                    angle_radians=angle,
+                ),
+            )
+            for name, point in frame.joints.items()
+        }
+        vertical_lift = 0.0
+        for left_name, right_name in (
+            ("left_hip", "right_hip"),
+            ("left_shoulder", "right_shoulder"),
+        ):
+            left = rotated_joints.get(left_name)
+            right = rotated_joints.get(right_name)
+            if left is None or right is None:
+                continue
+            shared_y = (left[1] + right[1]) * 0.5
+            rotated_joints[left_name] = (
+                left[0],
+                shared_y,
+                left[2],
+            )
+            rotated_joints[right_name] = (
+                right[0],
+                shared_y,
+                right[2],
+            )
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=rotated_joints))
+        corrections_degrees.append(abs(math.degrees(angle)))
+        vertical_lifts.append(vertical_lift)
+    if not corrections_degrees:
+        return clip, {"applied": False, "reason": "orientation_already_stable"}
+    support_names = sorted({
+        name
+        for frame_index in range(clip.frame_count)
+        for name in _orientation_support_joint_names(clip, frame_index=frame_index)
+    })
+    transformed_support_anchors = {
+        name: [
+            median(frame.joints[name][0] for frame in frames if name in frame.joints),
+            _authoritative_support_joint_height(
+                clip,
+                joint_name=name,
+                fallback=median(
+                    frame.joints[name][1]
+                    for frame in clip.frames
+                    if name in frame.joints
+                ),
+            ),
+            median(frame.joints[name][2] for frame in frames if name in frame.joints),
+        ]
+        for name in support_names
+        if any(name in frame.joints for frame in frames)
+    }
+    updated_metadata = dict(clip.metadata)
+    updated_metadata["_orientationSupportAnchors"] = transformed_support_anchors
+    return replace(clip, frames=frames, metadata=updated_metadata), {
+        "applied": True,
+        "strategy": "same_phase_bilateral_body_axis_aligned_to_dominant_motion_plane",
+        "targetRightAxis": [target_right[0], target_right[1], target_right[2]],
+        "medianCorrectionDegrees": median(corrections_degrees),
+        "maxCorrectionDegrees": max(corrections_degrees),
+        "maximumAllowedCorrectionDegrees": math.degrees(maximum_angle),
+        "maxVerticalNonPenetrationLift": max(vertical_lifts, default=0.0),
+    }
+
+
+def _orientation_support_joint_names(
+    clip: MotionClip,
+    *,
+    frame_index: int,
+) -> list[str]:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup_metadata = metadata.get("cleanup")
+    if not isinstance(cleanup_metadata, dict):
+        return []
+    contact_states = cleanup_metadata.get("footContacts")
+    state = (
+        contact_states[frame_index]
+        if isinstance(contact_states, list)
+        and frame_index < len(contact_states)
+        and isinstance(contact_states[frame_index], dict)
+        else {}
+    )
+    if cleanup_metadata.get("supportMode") == "kneeling":
+        knee_names = [
+            state.get("leftKneeJoint", "left_knee"),
+            state.get("rightKneeJoint", "right_knee"),
+        ]
+        return [name for name in knee_names if isinstance(name, str)]
+    contact_joints = state.get("contactJoints")
+    if not isinstance(contact_joints, list):
+        return []
+    return [name for name in contact_joints if isinstance(name, str)]
+
+
+def _authoritative_support_joint_height(
+    clip: MotionClip,
+    *,
+    joint_name: str,
+    fallback: float,
+) -> float:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup_metadata = metadata.get("cleanup")
+    support_constraint = (
+        cleanup_metadata.get("supportSurfaceConstraint")
+        if isinstance(cleanup_metadata, dict)
+        else None
+    )
+    knee_lock = (
+        support_constraint.get("kneeLock")
+        if isinstance(support_constraint, dict)
+        else None
+    )
+    anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    anchor = anchors.get(joint_name) if isinstance(anchors, dict) else None
+    if (
+        isinstance(anchor, list)
+        and len(anchor) >= 2
+        and isinstance(anchor[1], (int, float))
+    ):
+        return float(anchor[1])
+    return fallback
+
+
+def _rotate_vector_about_axis(
+    vector: Point3,
+    *,
+    axis: Point3,
+    angle_radians: float,
+) -> Point3:
+    cosine = math.cos(angle_radians)
+    sine = math.sin(angle_radians)
+    return _add(
+        _add(
+            _scale(vector, cosine),
+            _scale(_cross(axis, vector), sine),
+        ),
+        _scale(axis, _dot(axis, vector) * (1.0 - cosine)),
+    )
+
+
+def _zero_phase_smooth_points(points: list[Point3], *, radius: int) -> list[Point3]:
+    smoothed: list[Point3] = []
+    for index in range(len(points)):
+        weighted = [0.0, 0.0, 0.0]
+        total_weight = 0.0
+        for sample_index in range(max(0, index - radius), min(len(points), index + radius + 1)):
+            weight = float(radius + 1 - abs(sample_index - index))
+            point = points[sample_index]
+            for axis_index in range(3):
+                weighted[axis_index] += point[axis_index] * weight
+            total_weight += weight
+        smoothed.append((
+            weighted[0] / total_weight,
+            weighted[1] / total_weight,
+            weighted[2] / total_weight,
+        ))
+    return smoothed
+
+
+def _motion_noise_metrics(
+    clip: MotionClip,
+    *,
+    body_height: float,
+) -> dict[str, float]:
+    residuals: list[float] = []
+    for joint_name in clip.joint_names:
+        points = [
+            frame.joints[joint_name]
+            for frame in clip.frames
+            if joint_name in frame.joints
+        ]
+        if len(points) != clip.frame_count:
+            continue
+        smoothed = _zero_phase_smooth_points(points, radius=2)
+        residuals.extend(
+            _distance(point, target)
+            for point, target in zip(points, smoothed)
+        )
+    if not residuals:
+        return {
+            "medianResidual": 0.0,
+            "p90Residual": 0.0,
+            "bodyScale": body_height,
+        }
+    ordered = sorted(residuals)
+    p90_index = min(len(ordered) - 1, int(0.90 * (len(ordered) - 1)))
+    return {
+        "medianResidual": median(ordered),
+        "p90Residual": ordered[p90_index],
+        "bodyScale": body_height,
+    }
+
+
+def _point_cloud_extent(points: list[Point3]) -> float:
+    if not points:
+        return 0.0
+    return math.sqrt(sum(
+        (max(point[axis] for point in points) - min(point[axis] for point in points)) ** 2
+        for axis in range(3)
+    ))
+
+
+def _limit_point_correction(
+    source: Point3,
+    target: Point3,
+    *,
+    max_correction: float,
+) -> Point3:
+    delta = _subtract(target, source)
+    distance = _length(delta)
+    if distance <= max_correction or distance <= 1e-10:
+        return target
+    return _add(source, _scale(delta, max_correction / distance))
+
+
+def _reconstruct_denoised_skeleton(
+    clip: MotionClip,
+    *,
+    reference_clip: MotionClip,
+    dynamic_length_child_joints: set[str],
+) -> tuple[MotionClip, dict[str, object]]:
+    body_scale = max(_median_body_height(reference_clip), 0.5)
+    max_length_adjustment = min(0.02, max(0.008, body_scale * 0.01))
+    max_joint_correction = min(0.03, max(0.012, body_scale * 0.018))
+    reference_lengths = {
+        (parent, child): _median_bone_length(reference_clip, parent, child)
+        for parent, child in STRUCTURAL_BONES
+        if parent in reference_clip.joint_names and child in reference_clip.joint_names
+        and child not in dynamic_length_child_joints
+    }
+    direction_tracks: dict[tuple[str, str], list[Point3]] = {}
+    for bone, target_length in reference_lengths.items():
+        if target_length <= 1e-8:
+            continue
+        parent, child = bone
+        directions: list[Point3] = []
+        for frame in clip.frames:
+            direction = _normalize(_subtract(frame.joints[child], frame.joints[parent]))
+            directions.append(direction or (0.0, 1.0, 0.0))
+        direction_tracks[bone] = [
+            _normalize(point) or directions[index]
+            for index, point in enumerate(_zero_phase_smooth_points(directions, radius=2))
+        ]
+
+    frames: list[MotionFrame] = []
+    total_correction = 0.0
+    maximum_correction = 0.0
+    samples = 0
+    for frame_index, frame in enumerate(clip.frames):
+        joints = dict(frame.joints)
+        for bone, directions in direction_tracks.items():
+            parent, child = bone
+            if parent not in joints or child not in joints:
+                continue
+            current_length = _distance(joints[parent], joints[child])
+            reference_length = reference_lengths[bone]
+            target_length = min(
+                current_length + max_length_adjustment,
+                max(current_length - max_length_adjustment, reference_length),
+            )
+            unconstrained_target = _add(
+                joints[parent],
+                _scale(directions[frame_index], target_length),
+            )
+            target = _limit_point_correction(
+                joints[child],
+                unconstrained_target,
+                max_correction=max_joint_correction,
+            )
+            correction = _distance(joints[child], target)
+            total_correction += correction
+            maximum_correction = max(maximum_correction, correction)
+            samples += 1
+            joints[child] = target
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return replace(clip, frames=frames), {
+        "applied": bool(direction_tracks),
+        "boneCount": len(direction_tracks),
+        "dynamicLengthChildJoints": sorted(dynamic_length_child_joints),
+        "maximumLengthAdjustment": max_length_adjustment,
+        "maximumJointCorrection": max_joint_correction,
+        "averageCorrection": total_correction / samples if samples else 0.0,
+        "maxCorrection": maximum_correction,
+        "target": "median_bone_lengths_with_zero_phase_smoothed_bone_directions",
+    }
 
 
 def _preserve_reference_head_pose(
@@ -411,6 +2000,10 @@ def _refine_torso_dominant_motion_conservatively(
         refined,
         bilateral_modes=bilateral_modes,
     )
+    refined, soft_arm_metadata = _apply_soft_same_phase_arm_symmetry(
+        refined,
+        bilateral_modes=bilateral_modes,
+    )
     dynamic_bone_length_joints = _range_dominant_chain_child_joints(dominant_profile)
     refined, length_metadata = _preserve_reference_bone_lengths(
         refined,
@@ -426,6 +2019,7 @@ def _refine_torso_dominant_motion_conservatively(
         "distalLegSlidingStabilization": distal_leg_metadata,
         "footAxisLegAlignment": foot_axis_leg_metadata,
         "softBilateralSymmetry": soft_bilateral_metadata,
+        "softArmSymmetry": soft_arm_metadata,
         "boneLengthProjection": length_metadata,
         "steps": [
             "torso_dominant_preserve_body_motion",
@@ -435,6 +2029,7 @@ def _refine_torso_dominant_motion_conservatively(
             "torso_dominant_distal_leg_sliding_stabilization",
             "foot_axis_leg_motion_alignment",
             "soft_same_phase_leg_symmetry",
+            "soft_same_phase_arm_symmetry",
             "reference_bone_length_projection",
         ],
     }
@@ -1031,31 +2626,77 @@ def _apply_soft_same_phase_leg_symmetry(
     *,
     bilateral_modes: dict[str, dict[str, object]],
 ) -> tuple[MotionClip, dict[str, object]]:
-    legs_mode = bilateral_modes.get("legs")
-    if not isinstance(legs_mode, dict) or legs_mode.get("mode") != "same_phase_symmetric":
+    return _apply_soft_same_phase_pair_symmetry(
+        clip,
+        mode=bilateral_modes.get("legs"),
+        group_name="legs",
+        pairs=(
+            ("left_knee", "right_knee"),
+            ("left_ankle", "right_ankle"),
+            ("left_foot", "right_foot"),
+        ),
+        anchor_joints=("left_hip", "right_hip"),
+        minimum_blend=SOFT_LEG_SYMMETRY_MIN_BLEND,
+        maximum_blend=SOFT_LEG_SYMMETRY_MAX_BLEND,
+        blend_scale=SOFT_LEG_SYMMETRY_BLEND_SCALE,
+        max_correction=SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS,
+    )
+
+
+def _apply_soft_same_phase_arm_symmetry(
+    clip: MotionClip,
+    *,
+    bilateral_modes: dict[str, dict[str, object]],
+) -> tuple[MotionClip, dict[str, object]]:
+    return _apply_soft_same_phase_pair_symmetry(
+        clip,
+        mode=bilateral_modes.get("arms"),
+        group_name="arms",
+        pairs=(
+            ("left_elbow", "right_elbow"),
+            ("left_wrist", "right_wrist"),
+            ("left_hand", "right_hand"),
+        ),
+        anchor_joints=("left_shoulder", "right_shoulder"),
+        minimum_blend=SOFT_ARM_SYMMETRY_MIN_BLEND,
+        maximum_blend=SOFT_ARM_SYMMETRY_MAX_BLEND,
+        blend_scale=SOFT_ARM_SYMMETRY_BLEND_SCALE,
+        max_correction=SOFT_ARM_SYMMETRY_MAX_CORRECTION_METERS,
+    )
+
+
+def _apply_soft_same_phase_pair_symmetry(
+    clip: MotionClip,
+    *,
+    mode: dict[str, object] | None,
+    group_name: str,
+    pairs: tuple[tuple[str, str], ...],
+    anchor_joints: tuple[str, str],
+    minimum_blend: float,
+    maximum_blend: float,
+    blend_scale: float,
+    max_correction: float,
+) -> tuple[MotionClip, dict[str, object]]:
+    mode_key = f"{group_name}Mode"
+    if not isinstance(mode, dict) or mode.get("mode") != "same_phase_symmetric":
         return clip, {
             "applied": False,
-            "reason": "legs_not_same_phase_symmetric",
-            "legsMode": legs_mode,
+            "reason": f"{group_name}_not_same_phase_symmetric",
+            mode_key: mode,
         }
-    pairs = (
-        ("left_knee", "right_knee"),
-        ("left_ankle", "right_ankle"),
-        ("left_foot", "right_foot"),
-    )
-    required = ("left_hip", "right_hip", *[joint for pair in pairs for joint in pair])
+    required = (*anchor_joints, *[joint for pair in pairs for joint in pair])
     if any(joint not in clip.joint_names for joint in required):
         return clip, {
             "applied": False,
-            "reason": "missing_leg_joints",
-            "legsMode": legs_mode,
+            "reason": f"missing_{group_name}_joints",
+            mode_key: mode,
         }
-    mode_strength = _optional_float(legs_mode.get("symmetryStrength"))
+    mode_strength = _optional_float(mode.get("symmetryStrength"))
     if mode_strength is None:
         mode_strength = 0.50
     blend = min(
-        SOFT_LEG_SYMMETRY_MAX_BLEND,
-        max(SOFT_LEG_SYMMETRY_MIN_BLEND, mode_strength * SOFT_LEG_SYMMETRY_BLEND_SCALE),
+        maximum_blend,
+        max(minimum_blend, mode_strength * blend_scale),
     )
     frames: list[MotionFrame] = []
     total_displacement = 0.0
@@ -1083,7 +2724,7 @@ def _apply_soft_same_phase_leg_symmetry(
                 current,
                 target,
                 blend,
-                SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS,
+                max_correction,
             )
             displacement = _distance(current, updated)
             if displacement > 1e-6:
@@ -1095,8 +2736,8 @@ def _apply_soft_same_phase_leg_symmetry(
     if samples == 0:
         return clip, {
             "applied": False,
-            "reason": "no_leg_symmetry_correction_needed",
-            "legsMode": legs_mode,
+            "reason": f"no_{group_name}_symmetry_correction_needed",
+            mode_key: mode,
             "blend": blend,
         }
     refined = replace(clip, frames=frames)
@@ -1107,15 +2748,15 @@ def _apply_soft_same_phase_leg_symmetry(
     )
     return refined, {
         "applied": True,
-        "groups": ["legs"],
-        "target": "soft_body_local_mirrored_leg_pairs",
+        "groups": [group_name],
+        "target": f"soft_body_local_mirrored_{group_name}_pairs",
         "blend": blend,
-        "maxCorrection": SOFT_LEG_SYMMETRY_MAX_CORRECTION_METERS,
+        "maxCorrection": max_correction,
         "averageDisplacement": displacement["average"],
         "maxDisplacement": displacement["max"],
         "sampleAverageDisplacement": total_displacement / samples,
         "sampleMaxDisplacement": max_displacement,
-        "legsMode": legs_mode,
+        mode_key: mode,
     }
 
 
@@ -1527,11 +3168,14 @@ def _preserve_reference_bone_lengths(
     *,
     reference_clip: MotionClip,
     dynamic_length_child_joints: set[str] | None = None,
+    excluded_child_joints: set[str] | None = None,
 ) -> tuple[MotionClip, dict[str, object]]:
+    excluded_joints = set(excluded_child_joints or set())
     reference_lengths = {
         (parent, child): _median_bone_length(reference_clip, parent, child)
         for parent, child in STRUCTURAL_BONES
         if parent in reference_clip.joint_names and child in reference_clip.joint_names
+        and child not in excluded_joints
     }
     if not reference_lengths:
         return clip, {"applied": False, "reason": "no_reference_bones"}
@@ -1574,6 +3218,7 @@ def _preserve_reference_bone_lengths(
         "maxDisplacement": max_displacement,
         "dynamicLengthChildJoints": sorted(dynamic_joints),
         "dynamicLengthSampleCount": dynamic_samples,
+        "excludedChildJoints": sorted(excluded_joints),
     }
 
 
@@ -1717,8 +3362,10 @@ def _median_body_height(clip: MotionClip) -> float:
         points = list(frame.joints.values())
         if not points:
             continue
-        y_values = [point[1] for point in points]
-        frame_heights.append(max(y_values) - min(y_values))
+        frame_heights.append(max(
+            (_distance(left, right) for left in points for right in points),
+            default=0.0,
+        ))
     return median(frame_heights) if frame_heights else 0.0
 
 

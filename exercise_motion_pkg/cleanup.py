@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import statistics
+
+import numpy as np
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
 from exercise_motion_pkg.render_geometry import (
@@ -62,6 +64,1011 @@ LEFT_HAND_GROUP = ("left_hand", "left_wrist")
 RIGHT_HAND_GROUP = ("right_hand", "right_wrist")
 LEFT_KNEE_GROUP = ("left_knee",)
 RIGHT_KNEE_GROUP = ("right_knee",)
+LEFT_SHIN_DISTAL_GROUP = ("left_ankle", "l_ankle", "left_foot")
+RIGHT_SHIN_DISTAL_GROUP = ("right_ankle", "r_ankle", "right_foot")
+PROXIMAL_HIP_GROUP = ("left_hip", "right_hip", "pelvis")
+KNEE_FLOOR_SUPPORT_MODES = frozenset({"quadruped", "kneeling"})
+KNEELING_GRAVITY_SWAP_HEIGHT_MARGIN = 0.03
+CONTACT_ALIGNMENT_DISTANCE_TOLERANCE = 0.14
+CONTACT_ALIGNMENT_VERTICAL_SPEED_TOLERANCE = 0.12
+CONTACT_ALIGNMENT_MINIMUM_CONFIDENCE = 0.25
+CONTACT_HINGE_SEARCH_STEP_DEGREES = 3
+NON_PENETRATION_CLEARANCE = 0.0
+
+GENERIC_CONTACT_JOINT_GROUPS = (
+    ("left_foot", "left_ankle", "l_ankle"),
+    ("right_foot", "right_ankle", "r_ankle"),
+    ("left_knee",),
+    ("right_knee",),
+    ("left_hand", "left_wrist"),
+    ("right_hand", "right_wrist"),
+    ("left_elbow",),
+    ("right_elbow",),
+    ("pelvis",),
+    ("left_hip",),
+    ("right_hip",),
+    ("spine1",),
+    ("spine2",),
+    ("spine3",),
+    ("left_shoulder",),
+    ("right_shoulder",),
+)
+
+
+def uses_knee_floor_support(support_mode: str | None) -> bool:
+    return str(support_mode or "").strip().casefold() in KNEE_FLOOR_SUPPORT_MODES
+
+
+def _median_joint_height(clip: MotionClip, joint_names: list[str]) -> float | None:
+    samples = [
+        frame.joints[name][1]
+        for frame in clip.frames
+        for name in joint_names
+        if name in frame.joints
+    ]
+    return statistics.median(samples) if samples else None
+
+
+def kneeling_shin_distal_joint_names(clip: MotionClip) -> list[str]:
+    names: list[str] = []
+    for group in (LEFT_SHIN_DISTAL_GROUP, RIGHT_SHIN_DISTAL_GROUP):
+        joint_name = first_available_joint(clip, group)
+        if joint_name is not None:
+            names.append(joint_name)
+    return names
+
+
+def kneeling_hip_joint_names(clip: MotionClip) -> list[str]:
+    return [name for name in PROXIMAL_HIP_GROUP if name in clip.joint_names]
+
+
+def kneeling_reconstruction_gravity_is_swapped(clip: MotionClip) -> bool:
+    distal_height = _median_joint_height(clip, kneeling_shin_distal_joint_names(clip))
+    hip_height = _median_joint_height(clip, kneeling_hip_joint_names(clip))
+    if distal_height is None or hip_height is None:
+        return False
+    return distal_height > hip_height + KNEELING_GRAVITY_SWAP_HEIGHT_MARGIN
+
+
+def kneeling_support_pitch_joint_names(clip: MotionClip) -> list[str]:
+    knees = [
+        joint_name
+        for joint_name in (*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP)
+        if joint_name in clip.joint_names
+    ]
+    if kneeling_reconstruction_gravity_is_swapped(clip):
+        return knees + kneeling_shin_distal_joint_names(clip)
+    return knees
+
+
+def clip_preserves_video_floor_orientation(clip: MotionClip) -> bool:
+    payload = clip.metadata.get("videoWorldAlignment") if isinstance(clip.metadata, dict) else None
+    if not isinstance(payload, dict):
+        return False
+    policy = str(payload.get("policy") or "")
+    if "floor_distance" not in policy:
+        return False
+    return bool(payload.get("applied", True))
+
+
+def _median_spine_verticality(clip: MotionClip) -> float | None:
+    """Median |dy|/length for pelvis->(neck/head/spine3) across frames."""
+    verticalities: list[float] = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        spine_top = frame.joints.get("neck") or frame.joints.get("head") or frame.joints.get("spine3")
+        if pelvis is None or spine_top is None:
+            continue
+        dx = spine_top[0] - pelvis[0]
+        dy = spine_top[1] - pelvis[1]
+        dz = spine_top[2] - pelvis[2]
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length <= 1e-5:
+            continue
+        verticalities.append(abs(dy) / length)
+    if not verticalities:
+        return None
+    verticalities.sort()
+    return verticalities[len(verticalities) // 2]
+
+
+def _video_alignment_pitch_degrees(clip: MotionClip) -> float | None:
+    payload = clip.metadata.get("videoWorldAlignment") if isinstance(clip.metadata, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    rotation = payload.get("rotationMatrix")
+    if not (isinstance(rotation, list) and len(rotation) == 3 and all(isinstance(row, list) for row in rotation)):
+        return None
+    try:
+        r00 = float(rotation[0][0])
+        r01 = float(rotation[0][1])
+        r02 = float(rotation[0][2])
+        r10 = float(rotation[1][0])
+        r11 = float(rotation[1][1])
+        r12 = float(rotation[1][2])
+        r20 = float(rotation[2][0])
+        r21 = float(rotation[2][1])
+        r22 = float(rotation[2][2])
+    except (TypeError, ValueError):
+        return None
+
+    # Use the same pitch extraction that we used for debugging:
+    # pitch ~ asin(-R[2,1]) (deg).
+    try:
+        v = max(-1.0, min(1.0, -r21))
+        pitch = math.degrees(math.asin(v))
+    except ValueError:
+        return None
+    if not math.isfinite(pitch):
+        return None
+    return pitch
+
+
+def _estimate_torso_axis_average(clip: MotionClip) -> Point3 | None:
+    """Average normalized pelvis->(neck|head|spine3) vector across frames."""
+    axes: list[Point3] = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        spine_top = frame.joints.get("neck") or frame.joints.get("head") or frame.joints.get("spine3")
+        if pelvis is None or spine_top is None:
+            continue
+        dx = spine_top[0] - pelvis[0]
+        dy = spine_top[1] - pelvis[1]
+        dz = spine_top[2] - pelvis[2]
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length <= 1e-5:
+            continue
+        axes.append((dx / length, dy / length, dz / length))
+    if not axes:
+        return None
+    avg = (
+        sum(v[0] for v in axes) / len(axes),
+        sum(v[1] for v in axes) / len(axes),
+        sum(v[2] for v in axes) / len(axes),
+    )
+    avg_len = math.sqrt(avg[0] * avg[0] + avg[1] * avg[1] + avg[2] * avg[2])
+    if avg_len <= 1e-6:
+        return None
+    return (avg[0] / avg_len, avg[1] / avg_len, avg[2] / avg_len)
+
+
+def _rotate_point_rodigues(point: Point3, *, pivot: Point3, axis: Point3, angle_radians: float) -> Point3:
+    kx, ky, kz = axis
+    vx = point[0] - pivot[0]
+    vy = point[1] - pivot[1]
+    vz = point[2] - pivot[2]
+    cos_a = math.cos(angle_radians)
+    sin_a = math.sin(angle_radians)
+    dot = vx * kx + vy * ky + vz * kz
+    # Rodrigues' rotation formula: v_rot = v*cos + (k×v)*sin + k*(k·v)*(1-cos)
+    cross_x = ky * vz - kz * vy
+    cross_y = kz * vx - kx * vz
+    cross_z = kx * vy - ky * vx
+    rx = vx * cos_a + cross_x * sin_a + kx * dot * (1.0 - cos_a)
+    ry = vy * cos_a + cross_y * sin_a + ky * dot * (1.0 - cos_a)
+    rz = vz * cos_a + cross_z * sin_a + kz * dot * (1.0 - cos_a)
+    return (rx + pivot[0], ry + pivot[1], rz + pivot[2])
+
+
+def _rotate_clip_about_axis(
+    clip: MotionClip,
+    *,
+    pivot: Point3,
+    axis: Point3,
+    angle_radians: float,
+) -> MotionClip:
+    rotated_frames = []
+    for frame in clip.frames:
+        rotated_frames.append(
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    name: _rotate_point_rodigues(pt, pivot=pivot, axis=axis, angle_radians=angle_radians)
+                    for name, pt in frame.joints.items()
+                },
+            )
+        )
+    return replace(clip, frames=rotated_frames)
+
+
+def _video_floor_distances(clip: MotionClip) -> dict[str, float]:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    alignment = metadata.get("videoWorldAlignment")
+    if not isinstance(alignment, dict):
+        return {}
+    raw_distances = alignment.get("videoFloorDistances")
+    if not isinstance(raw_distances, dict):
+        return {}
+    return {
+        str(name): float(value)
+        for name, value in raw_distances.items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    }
+
+
+def _authoritative_world_floor_normal(clip: MotionClip) -> Point3 | None:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    alignment = metadata.get("videoWorldAlignment")
+    if not isinstance(alignment, dict):
+        return None
+    raw_plane = alignment.get("cameraGroundPlane")
+    if not isinstance(raw_plane, dict):
+        return None
+    raw_normal = raw_plane.get("normal")
+    if (
+        not isinstance(raw_normal, list)
+        or len(raw_normal) != 3
+        or not all(isinstance(value, (int, float)) for value in raw_normal)
+    ):
+        return None
+    normal = tuple(float(value) for value in raw_normal)
+    coordinate_normalization = metadata.get("coordinateNormalization")
+    if (
+        isinstance(coordinate_normalization, dict)
+        and coordinate_normalization.get("target") == "canonical_y_up_world"
+    ):
+        normal = (normal[0], -normal[1], -normal[2])
+    length = math.sqrt(sum(value * value for value in normal))
+    if length <= 1e-8:
+        return None
+    normalized = tuple(value / length for value in normal)
+    if normalized[1] < 0.0:
+        normalized = tuple(-value for value in normalized)
+    return normalized
+
+
+def _generic_contact_candidates(clip: MotionClip) -> list[str]:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    alignment = metadata.get("videoWorldAlignment")
+    if isinstance(alignment, dict):
+        inferred = alignment.get("inferredSupportJointNames")
+        if isinstance(inferred, list):
+            available_inferred = [
+                str(name)
+                for name in inferred
+                if isinstance(name, str) and name in clip.joint_names
+            ]
+            if available_inferred:
+                return available_inferred
+
+    distances = _video_floor_distances(clip)
+    representatives: list[tuple[str, float]] = []
+    for group in GENERIC_CONTACT_JOINT_GROUPS:
+        available = [name for name in group if name in clip.joint_names]
+        if not available:
+            continue
+        with_distance = [name for name in available if name in distances]
+        if with_distance:
+            representative = min(with_distance, key=lambda name: abs(distances[name]))
+            representatives.append((representative, abs(distances[representative])))
+
+    if representatives:
+        near_floor = [
+            name
+            for name, distance in representatives
+            if distance <= CONTACT_ALIGNMENT_DISTANCE_TOLERANCE
+        ]
+        if near_floor:
+            return near_floor
+        return []
+
+    # No video distances: use only joints occupying the lowest persistent
+    # height band. This fallback is intentionally conservative.
+    median_heights: list[tuple[str, float]] = []
+    for group in GENERIC_CONTACT_JOINT_GROUPS:
+        available = [name for name in group if name in clip.joint_names]
+        if not available:
+            continue
+        representative = min(
+            available,
+            key=lambda name: statistics.median(
+                support_surface_height(frame.joints[name][1])
+                for frame in clip.frames
+                if name in frame.joints
+            ),
+        )
+        heights = [
+            support_surface_height(frame.joints[representative][1])
+            for frame in clip.frames
+            if representative in frame.joints
+        ]
+        if heights:
+            median_heights.append((representative, statistics.median(heights)))
+    if not median_heights:
+        return []
+    lowest_height = min(height for _name, height in median_heights)
+    return [
+        name
+        for name, height in median_heights
+        if height <= lowest_height + CONTACT_ALIGNMENT_DISTANCE_TOLERANCE
+    ]
+
+
+def _generic_contact_frame_joints(
+    clip: MotionClip,
+    candidate_names: list[str],
+) -> list[list[str]]:
+    persistent_bilateral_knee_support = (
+        len(candidate_names) == 2
+        and all("knee" in name.casefold() for name in candidate_names)
+    )
+    if persistent_bilateral_knee_support:
+        return [
+            [name for name in candidate_names if name in frame.joints]
+            for frame in clip.frames
+        ]
+
+    floor_bands = {
+        name: percentile(
+            [
+                support_surface_height(frame.joints[name][1])
+                for frame in clip.frames
+                if name in frame.joints
+            ],
+            0.15,
+        )
+        for name in candidate_names
+        if any(name in frame.joints for frame in clip.frames)
+    }
+    if not floor_bands:
+        return [[] for _frame in clip.frames]
+    contacts: list[list[str]] = []
+    previous_contacts: set[str] = set()
+    for frame_index, frame in enumerate(clip.frames):
+        frame_contacts: list[str] = []
+        for name in candidate_names:
+            point = frame.joints.get(name)
+            if point is None:
+                continue
+            release_margin = 0.04 if name in previous_contacts else 0.0
+            height = support_surface_height(point[1])
+            vertical_speed = vertical_frame_speed(
+                clip,
+                frame_index=frame_index,
+                joint_name=name,
+            )
+            if (
+                height <= floor_bands[name] + CONTACT_ALIGNMENT_DISTANCE_TOLERANCE + release_margin
+                and abs(vertical_speed) <= CONTACT_ALIGNMENT_VERTICAL_SPEED_TOLERANCE
+            ):
+                frame_contacts.append(name)
+        contacts.append(frame_contacts)
+        previous_contacts = set(frame_contacts)
+    return contacts
+
+
+def _level_frame_contacts(
+    frame: MotionFrame,
+    contact_names: list[str],
+) -> tuple[MotionFrame, float]:
+    points = [
+        frame.joints[name]
+        for name in contact_names
+        if name in frame.joints
+    ]
+    if len(points) < 2:
+        return frame, 0.0
+    values = np.asarray(points, dtype=np.float64)
+    pivot_array = np.mean(values, axis=0)
+    source_normal: np.ndarray | None = None
+    if len(points) >= 3:
+        centered = values - pivot_array
+        try:
+            _u, singular_values, vh = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError:
+            return frame, 0.0
+        if len(singular_values) >= 2 and float(singular_values[1]) > 1e-6:
+            source_normal = vh[-1]
+    if source_normal is None:
+        source_axis = values[-1] - values[0]
+        horizontal_axis = np.asarray([source_axis[0], 0.0, source_axis[2]])
+        source_length = float(np.linalg.norm(source_axis))
+        horizontal_length = float(np.linalg.norm(horizontal_axis))
+        if source_length <= 1e-8 or horizontal_length <= 1e-8:
+            return frame, 0.0
+        source_normal = source_axis / source_length
+        target = horizontal_axis / horizontal_length
+    else:
+        source_normal = source_normal / max(float(np.linalg.norm(source_normal)), 1e-8)
+        if source_normal[1] < 0.0:
+            source_normal = -source_normal
+        target = np.asarray([0.0, 1.0, 0.0])
+
+    axis = np.cross(source_normal, target)
+    axis_length = float(np.linalg.norm(axis))
+    alignment = float(np.clip(np.dot(source_normal, target), -1.0, 1.0))
+    angle = math.acos(alignment)
+    if axis_length <= 1e-8 or angle <= 1e-8:
+        return frame, 0.0
+    axis = axis / axis_length
+    pivot = (float(pivot_array[0]), float(pivot_array[1]), float(pivot_array[2]))
+    rotated_joints = {
+        name: _rotate_point_rodigues(
+            point,
+            pivot=pivot,
+            axis=(float(axis[0]), float(axis[1]), float(axis[2])),
+            angle_radians=angle,
+        )
+        for name, point in frame.joints.items()
+    }
+    return (
+        MotionFrame(time_sec=frame.time_sec, joints=rotated_joints),
+        math.degrees(angle),
+    )
+
+
+def _dominant_contact_pair(
+    frame_contacts: list[list[str]],
+) -> tuple[str, str] | None:
+    pair_counts: dict[tuple[str, str], int] = {}
+    for names in frame_contacts:
+        if len(names) != 2:
+            continue
+        pair = (names[0], names[1])
+        pair_counts[pair] = pair_counts.get(pair, 0) + 1
+    if not pair_counts:
+        return None
+    pair = max(pair_counts, key=pair_counts.get)
+    if pair_counts[pair] < max(2, int(len(frame_contacts) * 0.60)):
+        return None
+    return pair
+
+
+def _rotate_frame_about_contact_pair(
+    frame: MotionFrame,
+    pair: tuple[str, str],
+    *,
+    angle_radians: float,
+) -> MotionFrame:
+    first = frame.joints.get(pair[0])
+    second = frame.joints.get(pair[1])
+    if first is None or second is None:
+        return frame
+    axis = (
+        second[0] - first[0],
+        0.0,
+        second[2] - first[2],
+    )
+    axis_length = math.hypot(axis[0], axis[2])
+    if axis_length <= 1e-8:
+        return frame
+    normalized_axis = (axis[0] / axis_length, 0.0, axis[2] / axis_length)
+    pivot = (
+        (first[0] + second[0]) * 0.5,
+        (first[1] + second[1]) * 0.5,
+        (first[2] + second[2]) * 0.5,
+    )
+    return MotionFrame(
+        time_sec=frame.time_sec,
+        joints={
+            name: _rotate_point_rodigues(
+                point,
+                pivot=pivot,
+                axis=normalized_axis,
+                angle_radians=angle_radians,
+            )
+            for name, point in frame.joints.items()
+        },
+    )
+
+
+def _contact_hinge_score(
+    frames: list[MotionFrame],
+    pair: tuple[str, str],
+    *,
+    angle_radians: float,
+    target_distances: dict[str, float],
+) -> float:
+    penetration_squared = 0.0
+    core_below_squared = 0.0
+    measured_distances: dict[str, list[float]] = {}
+    sample_count = 0
+    stride = max(1, len(frames) // 32)
+    for frame in frames[::stride]:
+        rotated = _rotate_frame_about_contact_pair(
+            frame,
+            pair,
+            angle_radians=angle_radians,
+        )
+        contact_points = [
+            rotated.joints[name]
+            for name in pair
+            if name in rotated.joints
+        ]
+        if len(contact_points) < 2:
+            continue
+        contact_surface = statistics.median(
+            support_surface_height(point[1])
+            for point in contact_points
+        )
+        for name, point in rotated.joints.items():
+            relative_surface = support_surface_height(point[1]) - contact_surface
+            if name in target_distances:
+                measured_distances.setdefault(name, []).append(relative_surface)
+            if relative_surface < 0.0:
+                penetration_squared += relative_surface * relative_surface
+        core_heights = [
+            support_surface_height(rotated.joints[name][1]) - contact_surface
+            for name in (
+                "pelvis",
+                "left_hip",
+                "right_hip",
+                "spine1",
+                "spine2",
+                "spine3",
+                "neck",
+            )
+            if name in rotated.joints
+        ]
+        if core_heights:
+            core_clearance = statistics.median(core_heights)
+            if core_clearance < 0.04:
+                deficit = 0.04 - core_clearance
+                core_below_squared += deficit * deficit
+        sample_count += 1
+    if sample_count == 0:
+        return float("inf")
+    target_error_squared = sum(
+        (
+            statistics.median(values) - target_distances[name]
+        ) ** 2
+        for name, values in measured_distances.items()
+    ) / max(1, len(measured_distances))
+    return (
+        20.0 * penetration_squared / sample_count
+        + 100.0 * core_below_squared / sample_count
+        + 30.0 * target_error_squared
+        + 0.002 * angle_radians * angle_radians
+    )
+
+
+def _apply_consistent_contact_hinge(
+    clip: MotionClip,
+    frame_contacts: list[list[str]],
+) -> tuple[MotionClip, float]:
+    pair = _dominant_contact_pair(frame_contacts)
+    if pair is None:
+        return clip, 0.0
+    target_distances = _video_floor_distances(clip)
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    alignment = metadata.get("videoWorldAlignment")
+    if isinstance(alignment, dict):
+        raw_constraint_names = alignment.get("orientationConstraintJointNames")
+        if isinstance(raw_constraint_names, list):
+            constraint_names = {
+                str(name)
+                for name in raw_constraint_names
+                if isinstance(name, str)
+            }
+            constrained_distances = {
+                name: distance
+                for name, distance in target_distances.items()
+                if name in constraint_names
+            }
+            if constrained_distances:
+                target_distances = constrained_distances
+    candidate_degrees = range(
+        -180,
+        181,
+        CONTACT_HINGE_SEARCH_STEP_DEGREES,
+    )
+    best_degrees = min(
+        candidate_degrees,
+        key=lambda degrees: _contact_hinge_score(
+            clip.frames,
+            pair,
+            angle_radians=math.radians(degrees),
+            target_distances=target_distances,
+        ),
+    )
+    if best_degrees == 0:
+        return clip, 0.0
+    angle_radians = math.radians(best_degrees)
+    return (
+        replace(
+            clip,
+            frames=[
+                _rotate_frame_about_contact_pair(
+                    frame,
+                    pair,
+                    angle_radians=angle_radians,
+                )
+                for frame in clip.frames
+            ],
+        ),
+        float(best_degrees),
+    )
+
+
+def _level_dominant_contact_pair_consistently(
+    clip: MotionClip,
+    frame_contacts: list[list[str]],
+) -> tuple[MotionClip, float]:
+    pair = _dominant_contact_pair(frame_contacts)
+    if pair is None:
+        return clip, 0.0
+    support_vectors: list[np.ndarray] = []
+    support_points: list[Point3] = []
+    for frame, names in zip(clip.frames, frame_contacts):
+        if pair[0] not in names or pair[1] not in names:
+            continue
+        first = frame.joints.get(pair[0])
+        second = frame.joints.get(pair[1])
+        if first is None or second is None:
+            continue
+        vector = np.asarray(second, dtype=np.float64) - np.asarray(
+            first,
+            dtype=np.float64,
+        )
+        length = float(np.linalg.norm(vector))
+        if length <= 1e-8:
+            continue
+        support_vectors.append(vector / length)
+        support_points.extend((first, second))
+    if not support_vectors:
+        return clip, 0.0
+    source_axis = np.mean(np.asarray(support_vectors), axis=0)
+    source_length = float(np.linalg.norm(source_axis))
+    if source_length <= 1e-8:
+        return clip, 0.0
+    source_axis /= source_length
+    target_axis = np.asarray([source_axis[0], 0.0, source_axis[2]])
+    target_length = float(np.linalg.norm(target_axis))
+    if target_length <= 1e-8:
+        return clip, 0.0
+    target_axis /= target_length
+    rotation_axis = np.cross(source_axis, target_axis)
+    rotation_axis_length = float(np.linalg.norm(rotation_axis))
+    alignment = float(np.clip(np.dot(source_axis, target_axis), -1.0, 1.0))
+    angle = math.acos(alignment)
+    if rotation_axis_length <= 1e-8 or angle <= 1e-8:
+        return clip, 0.0
+    rotation_axis /= rotation_axis_length
+    pivot_values = np.median(
+        np.asarray(support_points, dtype=np.float64),
+        axis=0,
+    )
+    return (
+        _rotate_clip_about_axis(
+            clip,
+            pivot=(
+                float(pivot_values[0]),
+                float(pivot_values[1]),
+                float(pivot_values[2]),
+            ),
+            axis=(
+                float(rotation_axis[0]),
+                float(rotation_axis[1]),
+                float(rotation_axis[2]),
+            ),
+            angle_radians=angle,
+        ),
+        math.degrees(angle),
+    )
+
+
+def _best_fit_contact_plane_normal(
+    clip: MotionClip,
+    frame_contacts: list[list[str]],
+) -> tuple[Point3, Point3] | None:
+    if max((len(set(names)) for names in frame_contacts), default=0) < 3:
+        return None
+    points = [
+        frame.joints[name]
+        for frame, names in zip(clip.frames, frame_contacts)
+        for name in names
+        if name in frame.joints
+    ]
+    if len(points) < 3:
+        return None
+    values = np.asarray(points, dtype=np.float64)
+    centroid = np.median(values, axis=0)
+    centered = values - centroid
+    try:
+        _u, singular_values, vh = np.linalg.svd(centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return None
+    if len(singular_values) < 2 or float(singular_values[1]) <= 1e-6:
+        return None
+    normal = vh[-1]
+    length = float(np.linalg.norm(normal))
+    if length <= 1e-8:
+        return None
+    normal = normal / length
+    if normal[1] < 0.0:
+        normal = -normal
+    return (
+        (float(normal[0]), float(normal[1]), float(normal[2])),
+        (float(centroid[0]), float(centroid[1]), float(centroid[2])),
+    )
+
+
+def _rotate_clip_normal_to_world_up(
+    clip: MotionClip,
+    *,
+    normal: Point3,
+    pivot: Point3,
+) -> tuple[MotionClip, float]:
+    target = (0.0, 1.0, 0.0)
+    axis = (
+        normal[1] * target[2] - normal[2] * target[1],
+        normal[2] * target[0] - normal[0] * target[2],
+        normal[0] * target[1] - normal[1] * target[0],
+    )
+    axis_length = math.sqrt(sum(value * value for value in axis))
+    alignment = max(-1.0, min(1.0, normal[1]))
+    angle = math.acos(alignment)
+    if axis_length <= 1e-8 or angle <= 1e-8:
+        return clip, 0.0
+    normalized_axis = tuple(value / axis_length for value in axis)
+    return (
+        _rotate_clip_about_axis(
+            clip,
+            pivot=pivot,
+            axis=normalized_axis,
+            angle_radians=angle,
+        ),
+        math.degrees(angle),
+    )
+
+
+def _interpolate_contact_corrections(
+    corrections: list[float | None],
+) -> list[float]:
+    known = [index for index, value in enumerate(corrections) if value is not None]
+    if not known:
+        return [0.0 for _value in corrections]
+    resolved: list[float] = []
+    for index, value in enumerate(corrections):
+        if value is not None:
+            resolved.append(float(value))
+            continue
+        previous = max((item for item in known if item < index), default=None)
+        following = min((item for item in known if item > index), default=None)
+        if previous is None:
+            resolved.append(float(corrections[following]))
+        elif following is None:
+            resolved.append(float(corrections[previous]))
+        else:
+            blend = (index - previous) / (following - previous)
+            resolved.append(
+                float(corrections[previous]) * (1.0 - blend)
+                + float(corrections[following]) * blend
+            )
+    return resolved
+
+
+def solve_contact_aware_rigid_world_alignment(
+    clip: MotionClip,
+    *,
+    ground_y: float = 0.0,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Ground arbitrary motion using only rigid whole-body transforms."""
+    from exercise_motion_pkg.temporal_contact_solver import (
+        solve_temporal_contact_rigid_world_alignment,
+    )
+
+    # Temporal solver encapsulates contact inference (from timestamped video
+    # observations) plus the clip-wide rigid alignment and collision clamping.
+    # We keep this wrapper for backwards compatibility with the existing tests.
+    return solve_temporal_contact_rigid_world_alignment(clip, ground_y=ground_y)
+
+    candidate_names = _generic_contact_candidates(clip)
+    if not candidate_names:
+        return clip, {
+            "applied": False,
+            "solver": "contact_aware_rigid_world_alignment",
+            "strategy": "preserve_no_confident_contacts",
+            "reason": "no_video_supported_contact_candidates",
+            "groundY": ground_y,
+        }
+
+    frame_contacts = _generic_contact_frame_joints(clip, candidate_names)
+    contact_frame_count = sum(1 for names in frame_contacts if names)
+    confidence = contact_frame_count / max(1, clip.frame_count)
+    if confidence < CONTACT_ALIGNMENT_MINIMUM_CONFIDENCE:
+        return clip, {
+            "applied": False,
+            "solver": "contact_aware_rigid_world_alignment",
+            "strategy": "preserve_low_contact_confidence",
+            "reason": "insufficient_temporal_contact_evidence",
+            "candidateJoints": candidate_names,
+            "contactFrameCount": contact_frame_count,
+            "confidence": confidence,
+            "groundY": ground_y,
+        }
+
+    aligned = clip
+    rotation_degrees = 0.0
+    authoritative_normal = _authoritative_world_floor_normal(clip)
+    uses_authoritative_floor_normal = authoritative_normal is not None
+    if authoritative_normal is not None:
+        support_points = [
+            frame.joints[name]
+            for frame, names in zip(clip.frames, frame_contacts)
+            for name in names
+            if name in frame.joints
+        ]
+        pivot_values = np.median(
+            np.asarray(support_points, dtype=np.float64),
+            axis=0,
+        )
+        aligned, rotation_degrees = _rotate_clip_normal_to_world_up(
+            clip,
+            normal=authoritative_normal,
+            pivot=(
+                float(pivot_values[0]),
+                float(pivot_values[1]),
+                float(pivot_values[2]),
+            ),
+        )
+    else:
+        plane = _best_fit_contact_plane_normal(clip, frame_contacts)
+        if plane is not None:
+            normal, pivot = plane
+            aligned, rotation_degrees = _rotate_clip_normal_to_world_up(
+                clip,
+                normal=normal,
+                pivot=pivot,
+            )
+
+    contact_pair_leveling_degrees = 0.0
+    if not uses_authoritative_floor_normal:
+        aligned, contact_pair_leveling_degrees = (
+            _level_dominant_contact_pair_consistently(
+                aligned,
+                frame_contacts,
+            )
+        )
+    aligned, hinge_rotation_degrees = _apply_consistent_contact_hinge(
+        aligned,
+        frame_contacts,
+    )
+
+    corrections: list[float | None] = []
+    for frame, names in zip(aligned.frames, frame_contacts):
+        heights = [
+            support_surface_height(frame.joints[name][1])
+            for name in names
+            if name in frame.joints
+        ]
+        corrections.append(
+            ground_y - min(heights)
+            if heights
+            else None
+        )
+    translations = _interpolate_contact_corrections(corrections)
+    grounded_frames: list[MotionFrame] = []
+    local_penetration_corrections: list[float] = []
+    for index, frame in enumerate(aligned.frames):
+        translated_joints = {
+            name: (point[0], point[1] + translations[index], point[2])
+            for name, point in frame.joints.items()
+        }
+        projected_joints: dict[str, Point3] = {}
+        for name, point in translated_joints.items():
+            correction = max(
+                0.0,
+                ground_y
+                + NON_PENETRATION_CLEARANCE
+                - support_surface_height(point[1]),
+            )
+            local_penetration_corrections.append(correction)
+            projected_joints[name] = (
+                point[0],
+                point[1] + correction,
+                point[2],
+            )
+        grounded_frames.append(
+            MotionFrame(time_sec=frame.time_sec, joints=projected_joints)
+        )
+    grounded = replace(aligned, frames=grounded_frames)
+    return grounded, {
+        "applied": True,
+        "solver": "contact_aware_rigid_world_alignment",
+        "strategy": "generic_video_contact_rigid_alignment",
+        "reason": "video_supported_contacts_rigidly_aligned_to_floor",
+        "candidateJoints": candidate_names,
+        "contactFrameCount": contact_frame_count,
+        "confidence": confidence,
+        "rotationDegrees": rotation_degrees,
+        "usedAuthoritativeFloorNormal": uses_authoritative_floor_normal,
+        "maximumFrameLevelingDegrees": contact_pair_leveling_degrees,
+        "contactPairLevelingDegrees": contact_pair_leveling_degrees,
+        "contactHingeRotationDegrees": hinge_rotation_degrees,
+        "groundY": ground_y,
+        "maximumVerticalCorrection": max((abs(value) for value in translations), default=0.0),
+        "maximumNonPenetrationLift": 0.0,
+        "maximumLocalPenetrationCorrection": max(
+            local_penetration_corrections,
+            default=0.0,
+        ),
+    }
+
+
+def _strong_torso_to_floor_reorientation_for_kneeling(
+    clip: MotionClip,
+    *,
+    ground_y: float,
+    sagittal_pitch_degrees: float | None,
+) -> MotionClip:
+    """
+    Rigidly orient a kneeling reconstruction so its torso is floor-parallel.
+
+    The same transform is applied to every joint, preserving WHAM's articulated
+    pose and all inter-joint distances.
+    """
+    median_vert = _median_spine_verticality(clip)
+    torso_axis = _estimate_torso_axis_average(clip)
+    if median_vert is None or torso_axis is None:
+        return clip
+    if sagittal_pitch_degrees is not None and abs(sagittal_pitch_degrees) >= 60.0:
+        return clip
+    if median_vert <= 0.35:
+        return clip
+    # Note: we intentionally do not gate on sagittalPitchDegrees here. In
+    # some configurations the kneeling solver pitch can be applied in a
+    # way that does not result in a horizontal rendered torso, so we use the
+    # measured torso verticality instead.
+
+    # Floor-aligned target: projection of torso axis onto Y=0 plane.
+    target = (torso_axis[0], 0.0, torso_axis[2])
+    target_len = math.sqrt(target[0] * target[0] + target[2] * target[2])
+    if target_len <= 1e-6:
+        return clip
+    target = (target[0] / target_len, 0.0, target[2] / target_len)
+
+    # Axis-angle rotation: rotate torso_axis -> target.
+    axis = (
+        torso_axis[1] * target[2] - torso_axis[2] * target[1],
+        torso_axis[2] * target[0] - torso_axis[0] * target[2],
+        torso_axis[0] * target[1] - torso_axis[1] * target[0],
+    )
+    axis_len = math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2])
+    if axis_len <= 1e-6:
+        return clip
+    axis = (axis[0] / axis_len, axis[1] / axis_len, axis[2] / axis_len)
+    dot = max(-1.0, min(1.0, torso_axis[0] * target[0] + torso_axis[1] * target[1] + torso_axis[2] * target[2]))
+    angle = math.acos(dot)
+    if not math.isfinite(angle) or angle <= 1e-6:
+        return clip
+
+    pelvis_points: list[Point3] = []
+    for frame in clip.frames:
+        p = frame.joints.get("pelvis")
+        if p is not None:
+            pelvis_points.append(p)
+    if pelvis_points:
+        pivot = (
+            statistics.median(p[0] for p in pelvis_points),
+            statistics.median(p[1] for p in pelvis_points),
+            statistics.median(p[2] for p in pelvis_points),
+        )
+    else:
+        knee_points: list[Point3] = []
+        for frame in clip.frames:
+            for joint_name in ("left_knee", "right_knee"):
+                p = frame.joints.get(joint_name)
+                if p is not None:
+                    knee_points.append(p)
+        if not knee_points:
+            return clip
+        pivot = (
+            statistics.median(p[0] for p in knee_points),
+            ground_y,
+            statistics.median(p[2] for p in knee_points),
+        )
+
+    rotated = _rotate_clip_about_axis(
+        clip,
+        pivot=pivot,
+        axis=axis,
+        angle_radians=angle,
+    )
+    return place_support_joints_on_floor(
+        rotated,
+        [*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP],
+    )
 
 
 @dataclass(frozen=True)
@@ -94,6 +1101,7 @@ def cleanup_motion_clip(
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
     support_mode = detect_support_mode(trimmed_clip, support_mode_hint=support_mode_hint)
+    preserve_video_floor_orientation = clip_preserves_video_floor_orientation(trimmed_clip)
     preserve_horizontal_orientation = support_mode in {
         "horizontal_unspecified",
         "supine",
@@ -137,16 +1145,68 @@ def cleanup_motion_clip(
     else:
         vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
             smoothed,
-            ground_contact_mode="continuous" if support_mode == "quadruped" else ground_contact_mode,
-        )
-    if support_mode == "quadruped":
-        support_constrained, support_constraint = solve_quadruped_support(
-            vertically_grounded,
-            contact_states=detect_support_contact_states(
-                vertically_grounded,
-                support_mode=support_mode,
+            ground_contact_mode=(
+                "continuous" if uses_knee_floor_support(support_mode) else ground_contact_mode
             ),
         )
+    if preserve_video_floor_orientation:
+        support_constrained, support_constraint = solve_contact_aware_rigid_world_alignment(
+            trimmed_clip,
+            ground_y=0.0,
+        )
+        if support_mode == "kneeling":
+            solved_ground_y = support_constraint.get("groundY")
+            knee_ground_y = (
+                float(solved_ground_y)
+                if isinstance(solved_ground_y, (int, float))
+                else 0.0
+            )
+            support_constrained, support_constraint = apply_kneeling_knee_lock(
+                support_constrained,
+                support_constraint,
+                ground_y=knee_ground_y,
+            )
+    elif uses_knee_floor_support(support_mode):
+        contact_states = detect_support_contact_states(
+            vertically_grounded,
+            support_mode=support_mode,
+        )
+        support_joint_names = None
+        proximal_joint_names = None
+        used_shin_plane = False
+        if support_mode == "kneeling":
+            used_shin_plane = kneeling_reconstruction_gravity_is_swapped(vertically_grounded)
+            support_joint_names = kneeling_support_pitch_joint_names(vertically_grounded)
+            proximal_joint_names = kneeling_hip_joint_names(vertically_grounded)
+        support_constrained, support_constraint = solve_quadruped_support(
+            vertically_grounded,
+            contact_states=contact_states,
+            support_joint_names=support_joint_names,
+            proximal_joint_names=proximal_joint_names,
+        )
+        if support_mode == "kneeling":
+            support_constraint = dict(support_constraint)
+            support_constraint["solver"] = "kneeling_support"
+            support_constraint["strategy"] = (
+                "rigid_kneeling_knee_shin_gravity_plane_alignment"
+                if used_shin_plane
+                else "rigid_kneeling_knee_support_plane_alignment"
+            )
+            support_constraint["gravitySwapCorrection"] = used_shin_plane
+            support_constrained = place_support_joints_on_floor(
+                support_constrained,
+                [*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP],
+            )
+            support_constrained, support_constraint = apply_kneeling_knee_lock(
+                support_constrained,
+                support_constraint,
+                ground_y=support_ground_y,
+            )
+            support_constrained = _strong_torso_to_floor_reorientation_for_kneeling(
+                support_constrained,
+                ground_y=support_ground_y,
+                sagittal_pitch_degrees=support_constraint.get("sagittalPitchDegrees") if isinstance(support_constraint, dict) else None,
+            )
     else:
         support_constrained = vertically_grounded
         support_constraint = {
@@ -166,7 +1226,11 @@ def cleanup_motion_clip(
         final_support_states,
     )
     solved_ground_y = support_constraint.get("groundY")
-    if support_mode == "quadruped" and isinstance(solved_ground_y, (int, float)):
+    uses_authoritative_solved_ground = (
+        support_mode == "quadruped"
+        or support_constraint.get("strategy") == "generic_video_contact_rigid_alignment"
+    )
+    if uses_authoritative_solved_ground and isinstance(solved_ground_y, (int, float)):
         final_support_ground_y = float(solved_ground_y)
     avg_root_after = average_joint_axis(support_constrained, root_joint, axis=1)
     support_profile = _summarize_support_states(final_support_states)
@@ -294,15 +1358,25 @@ def solve_quadruped_support(
     clip: MotionClip,
     *,
     contact_states: list[dict[str, object]],
+    support_joint_names: list[str] | None = None,
+    proximal_joint_names: list[str] | None = None,
 ) -> tuple[MotionClip, dict[str, object]]:
     forward_axis = _horizontal_torso_axis(clip)
     if forward_axis is None:
         return constrain_support_surfaces(clip, contact_states=contact_states)
-    support_joint_names = sorted({
-        joint_name
-        for state in contact_states
-        for joint_name in iter_contact_joint_names(state)
-    })
+    if support_joint_names is None:
+        support_joint_names = sorted({
+            joint_name
+            for state in contact_states
+            for joint_name in iter_contact_joint_names(state)
+        })
+    else:
+        support_joint_names = [name for name in support_joint_names if name in clip.joint_names]
+    proximal_joint_names = [
+        name
+        for name in (proximal_joint_names or [])
+        if name in clip.joint_names
+    ]
     centered_support_samples: list[tuple[float, float]] = []
     for frame in clip.frames:
         samples = [
@@ -339,6 +1413,15 @@ def solve_quadruped_support(
         statistics.median(point[2] for point in pivot_samples),
     )
     lateral_axis = (forward_axis[2], 0.0, -forward_axis[0])
+    if proximal_joint_names:
+        pitch_radians = _support_plane_pitch_with_proximal_above(
+            clip,
+            axis=lateral_axis,
+            pivot=pivot,
+            pitch_radians=pitch_radians,
+            proximal_joint_names=proximal_joint_names,
+            support_joint_names=support_joint_names,
+        )
     rotated_clip = _rotate_clip_about_axis(
         clip,
         axis=lateral_axis,
@@ -399,6 +1482,31 @@ def _minimum_variance_support_plane_pitch(
     while best_angle < -math.pi / 2.0:
         best_angle += math.pi
     return best_angle
+
+
+def _support_plane_pitch_with_proximal_above(
+    clip: MotionClip,
+    *,
+    axis: Point3,
+    pivot: Point3,
+    pitch_radians: float,
+    proximal_joint_names: list[str],
+    support_joint_names: list[str],
+) -> float:
+    def proximal_above_support(angle_radians: float) -> float:
+        rotated = _rotate_clip_about_axis(
+            clip,
+            axis=axis,
+            angle_radians=angle_radians,
+            pivot=pivot,
+        )
+        proximal_height = _median_joint_height(rotated, proximal_joint_names)
+        support_height = _median_joint_height(rotated, support_joint_names)
+        if proximal_height is None or support_height is None:
+            return float("-inf")
+        return proximal_height - support_height
+
+    return max((pitch_radians, -pitch_radians), key=proximal_above_support)
 
 
 def _horizontal_torso_axis(clip: MotionClip) -> Point3 | None:
@@ -855,7 +1963,9 @@ def estimate_support_ground_height(
         for joint_name in iter_contact_joint_names(state):
             coords = frame.joints.get(joint_name)
             if coords is not None:
-                support_heights.append(support_surface_height(coords[1]))
+                # Support-ground height is represented in the same space as the
+                # reconstructed joint Y coordinates.
+                support_heights.append(float(coords[1]))
     if not support_heights:
         return 0.0
     return percentile(support_heights, SUPPORT_GROUND_HEIGHT_QUANTILE)
@@ -887,6 +1997,231 @@ def estimate_support_floor_height(
     if not candidate_heights:
         return float("nan")
     return percentile(candidate_heights, FOOT_CONTACT_GROUND_QUANTILE)
+
+
+def place_support_joints_on_floor(
+    clip: MotionClip,
+    joint_names: list[str],
+) -> MotionClip:
+    support_names = [name for name in joint_names if name in clip.joint_names]
+    heights = [
+        support_surface_height(frame.joints[name][1])
+        for frame in clip.frames
+        for name in support_names
+        if name in frame.joints
+    ]
+    if not heights:
+        return clip
+    delta = -statistics.median(heights)
+    if abs(delta) <= 1e-8:
+        return clip
+    placed_frames = [
+        MotionFrame(
+            time_sec=frame.time_sec,
+            joints={
+                name: (point[0], point[1] + delta, point[2])
+                for name, point in frame.joints.items()
+            },
+        )
+        for frame in clip.frames
+    ]
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=placed_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    )
+
+
+def apply_kneeling_knee_lock(
+    clip: MotionClip,
+    support_constraint: dict[str, object],
+    *,
+    ground_y: float,
+) -> tuple[MotionClip, dict[str, object]]:
+    locked_clip, lock_metadata = lock_planted_support_joints(
+        clip,
+        [*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP],
+        ground_y=ground_y,
+        preserve_chain_lengths=True,
+    )
+    updated = dict(support_constraint)
+    updated["kneeLock"] = lock_metadata
+    if lock_metadata.get("applied"):
+        updated["applied"] = True
+    return locked_clip, updated
+
+
+def lock_planted_support_joints(
+    clip: MotionClip,
+    joint_names: list[str],
+    *,
+    ground_y: float = 0.0,
+    preserve_chain_lengths: bool = False,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Pin support joints to a stable floor anchor without moving the whole body.
+
+    Kneeling rollouts keep the knees planted while the torso travels. A global
+    root correction would cancel that travel, so only the support joints and
+    their distal chain are locked.
+    """
+    support_names = [name for name in joint_names if name in clip.joint_names]
+    if not support_names or not clip.frames:
+        return clip, {"applied": False, "reason": "no_support_joints"}
+    target_y = support_joint_height_for_surface(ground_y)
+    anchors: dict[str, Point3] = {}
+    for joint_name in support_names:
+        points = [
+            frame.joints[joint_name]
+            for frame in clip.frames
+            if joint_name in frame.joints
+        ]
+        if not points:
+            continue
+        anchors[joint_name] = (
+            statistics.median(point[0] for point in points),
+            target_y,
+            statistics.median(point[2] for point in points),
+        )
+    if not anchors:
+        return clip, {"applied": False, "reason": "no_support_joint_samples"}
+    reference_bone_lengths: dict[str, dict[str, float]] = {}
+    for joint_name in anchors:
+        parent_name = SUPPORT_CHAIN_CONSTRAINTS.get(joint_name, (None, ()))[0]
+        if not isinstance(parent_name, str):
+            continue
+        parent_lengths = [
+            math.dist(frame.joints[parent_name], frame.joints[joint_name])
+            for frame in clip.frames
+            if parent_name in frame.joints and joint_name in frame.joints
+        ]
+        pelvis_lengths = [
+            math.dist(frame.joints["pelvis"], frame.joints[parent_name])
+            for frame in clip.frames
+            if "pelvis" in frame.joints and parent_name in frame.joints
+        ]
+        if parent_lengths and pelvis_lengths:
+            reference_bone_lengths[joint_name] = {
+                "pelvisToHip": statistics.median(pelvis_lengths),
+                "hipToKnee": statistics.median(parent_lengths),
+            }
+    if preserve_chain_lengths:
+        anchors = optimize_reachable_support_anchors(
+            clip,
+            anchors=anchors,
+            reference_bone_lengths=reference_bone_lengths,
+        )
+    reference_hip_widths = [
+        math.dist(frame.joints["left_hip"], frame.joints["right_hip"])
+        for frame in clip.frames
+        if "left_hip" in frame.joints and "right_hip" in frame.joints
+    ]
+
+    locked_frames: list[MotionFrame] = []
+    resolved_anchor_frames: list[dict[str, list[float]]] = []
+    maximum_correction = 0.0
+    for frame in clip.frames:
+        joints = dict(frame.joints)
+        resolved_frame_anchors: dict[str, list[float]] = {}
+        for joint_name, anchor in anchors.items():
+            current = joints.get(joint_name)
+            if current is None:
+                continue
+            resolved_anchor = anchor
+            correction = (
+                resolved_anchor[0] - current[0],
+                resolved_anchor[1] - current[1],
+                resolved_anchor[2] - current[2],
+            )
+            correction_length = math.sqrt(sum(value * value for value in correction))
+            if correction_length <= 1e-8:
+                resolved_frame_anchors[joint_name] = list(resolved_anchor)
+                continue
+            joints[joint_name] = resolved_anchor
+            resolved_frame_anchors[joint_name] = list(resolved_anchor)
+            _descendants = SUPPORT_CHAIN_CONSTRAINTS.get(joint_name, (None, ()))[1]
+            for descendant_name in _descendants:
+                descendant = joints.get(descendant_name)
+                if descendant is None:
+                    continue
+                joints[descendant_name] = (
+                    descendant[0] + correction[0],
+                    descendant[1] + correction[1],
+                    descendant[2] + correction[2],
+                )
+            maximum_correction = max(maximum_correction, correction_length)
+        locked_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+        resolved_anchor_frames.append(resolved_frame_anchors)
+    return MotionClip(
+        fps=clip.fps,
+        joint_names=clip.joint_names,
+        frames=locked_frames,
+        source=clip.source,
+        metadata=clip.metadata,
+    ), {
+        "applied": True,
+        "strategy": "planted_support_joint_world_lock",
+        "supportJoints": list(anchors),
+        "groundY": ground_y,
+        "anchors": {
+            name: [anchor[0], anchor[1], anchor[2]]
+            for name, anchor in anchors.items()
+        },
+        "referenceBoneLengths": reference_bone_lengths,
+        "referenceHipWidth": (
+            statistics.median(reference_hip_widths)
+            if reference_hip_widths
+            else None
+        ),
+        "anchorFrames": resolved_anchor_frames,
+        "preserveChainLengths": preserve_chain_lengths,
+        "maximumCorrection": maximum_correction,
+    }
+
+
+def optimize_reachable_support_anchors(
+    clip: MotionClip,
+    *,
+    anchors: dict[str, Point3],
+    reference_bone_lengths: dict[str, dict[str, float]],
+) -> dict[str, Point3]:
+    optimized: dict[str, Point3] = {}
+    for joint_name, anchor in anchors.items():
+        lengths = reference_bone_lengths.get(joint_name)
+        if not isinstance(lengths, dict):
+            optimized[joint_name] = anchor
+            continue
+        pelvis_to_hip = lengths.get("pelvisToHip")
+        hip_to_knee = lengths.get("hipToKnee")
+        if not isinstance(pelvis_to_hip, (int, float)) or not isinstance(
+            hip_to_knee,
+            (int, float),
+        ):
+            optimized[joint_name] = anchor
+            continue
+        maximum_reach = float(pelvis_to_hip) + float(hip_to_knee) - 1e-5
+        anchor_x, anchor_y, anchor_z = anchor
+        for iteration in range(64):
+            frames = clip.frames if iteration % 2 == 0 else reversed(clip.frames)
+            for frame in frames:
+                pelvis = frame.joints.get("pelvis")
+                if pelvis is None:
+                    continue
+                vertical = pelvis[1] - anchor_y
+                horizontal_reach = math.sqrt(
+                    max(0.0, maximum_reach * maximum_reach - vertical * vertical)
+                )
+                delta_x = anchor_x - pelvis[0]
+                delta_z = anchor_z - pelvis[2]
+                horizontal_distance = math.hypot(delta_x, delta_z)
+                if horizontal_distance <= horizontal_reach or horizontal_distance <= 1e-8:
+                    continue
+                scale = horizontal_reach / horizontal_distance
+                anchor_x = pelvis[0] + delta_x * scale
+                anchor_z = pelvis[2] + delta_z * scale
+        optimized[joint_name] = (anchor_x, anchor_y, anchor_z)
+    return optimized
 
 
 def lift_clip_above_support_ground(
@@ -962,7 +2297,8 @@ def stabilize_global_translation_from_support_contacts(
             if target is None or joint_name not in previous_contacting_joints:
                 target = (
                     current_point[0],
-                    support_joint_height_for_surface(support_ground_y),
+                    # `support_ground_y` is already in joint-center Y space.
+                    float(support_ground_y),
                     current_point[2],
                 )
                 support_targets[joint_name] = target
@@ -1033,7 +2369,9 @@ def stabilize_multi_contact_support(
             if target is None or is_new_contact:
                 target = (
                     current_point[0],
-                    support_joint_height_for_surface(support_ground_y),
+                    # `support_ground_y` is the desired joint-center Y, not
+                    # the support capsule surface height.
+                    float(support_ground_y),
                     current_point[2],
                 )
                 support_targets[joint_name] = target
@@ -1240,7 +2578,7 @@ def detect_support_mode(
     support_mode_hint: str | None = None,
 ) -> str:
     normalized_hint = str(support_mode_hint or "").strip().casefold()
-    if normalized_hint in {"upright", "quadruped", "supine", "prone"}:
+    if normalized_hint in {"upright", "quadruped", "supine", "prone", "kneeling"}:
         return normalized_hint
     torso_samples: list[tuple[float, float]] = []
     for frame in clip.frames:
@@ -1264,11 +2602,12 @@ def detect_support_mode(
 
 
 def support_joint_names_for_mode(clip: MotionClip, support_mode: str) -> list[str]:
-    candidates = (
-        DEFAULT_HAND_JOINTS + LEFT_KNEE_GROUP + RIGHT_KNEE_GROUP
-        if support_mode == "quadruped"
-        else DEFAULT_FOOT_JOINTS + DEFAULT_HAND_JOINTS
-    )
+    if support_mode == "quadruped":
+        candidates = DEFAULT_HAND_JOINTS + LEFT_KNEE_GROUP + RIGHT_KNEE_GROUP
+    elif support_mode == "kneeling":
+        candidates = LEFT_KNEE_GROUP + RIGHT_KNEE_GROUP
+    else:
+        candidates = DEFAULT_FOOT_JOINTS + DEFAULT_HAND_JOINTS
     return [joint for joint in candidates if joint in clip.joint_names]
 
 
@@ -1279,9 +2618,9 @@ def detect_support_contact_states(
 ) -> list[dict[str, object]]:
     support_mode = support_mode or detect_support_mode(clip)
     states: list[dict[str, object]] = []
-    quadruped = support_mode == "quadruped"
-    left_joint = first_available_joint(clip, LEFT_KNEE_GROUP if quadruped else LEFT_FOOT_GROUP)
-    right_joint = first_available_joint(clip, RIGHT_KNEE_GROUP if quadruped else RIGHT_FOOT_GROUP)
+    knee_support = uses_knee_floor_support(support_mode)
+    left_joint = first_available_joint(clip, LEFT_KNEE_GROUP if knee_support else LEFT_FOOT_GROUP)
+    right_joint = first_available_joint(clip, RIGHT_KNEE_GROUP if knee_support else RIGHT_FOOT_GROUP)
     left_hand_joint = first_available_joint(clip, LEFT_HAND_GROUP)
     right_hand_joint = first_available_joint(clip, RIGHT_HAND_GROUP)
     gvhmr_static_joint_confidence = extract_gvhmr_static_joint_confidence(clip)
@@ -1344,14 +2683,22 @@ def detect_support_contact_states(
         )
         support_joint: str | None = None
         state = "airborne"
-        contacting_joints = [
-            joint_name
-            for joint_name, in_contact in (
+        contact_candidates = (
+            (
+                (left_joint, left_contact),
+                (right_joint, right_contact),
+            )
+            if support_mode == "kneeling"
+            else (
                 (left_joint, left_contact),
                 (right_joint, right_contact),
                 (left_hand_joint, left_hand_contact),
                 (right_hand_joint, right_hand_contact),
             )
+        )
+        contacting_joints = [
+            joint_name
+            for joint_name, in_contact in contact_candidates
             if joint_name is not None and in_contact
         ]
         if contacting_joints:
@@ -1363,7 +2710,11 @@ def detect_support_contact_states(
                 ),
             )
             foot_contacts = sum(1 for value in (left_contact, right_contact) if value)
-            hand_contacts = sum(1 for value in (left_hand_contact, right_hand_contact) if value)
+            hand_contacts = (
+                0
+                if support_mode == "kneeling"
+                else sum(1 for value in (left_hand_contact, right_hand_contact) if value)
+            )
             if foot_contacts >= 2 and hand_contacts == 0:
                 state = "double_support"
             elif foot_contacts == 1 and hand_contacts == 0:
@@ -1381,16 +2732,16 @@ def detect_support_contact_states(
                 "timeSec": clip.frames[frame_index].time_sec,
                 "leftFootJoint": left_joint,
                 "rightFootJoint": right_joint,
-                "leftKneeJoint": left_joint if quadruped else None,
-                "rightKneeJoint": right_joint if quadruped else None,
+                "leftKneeJoint": left_joint if knee_support else None,
+                "rightKneeJoint": right_joint if knee_support else None,
                 "leftHandJoint": left_hand_joint,
                 "rightHandJoint": right_hand_joint,
-                "leftInContact": left_contact if not quadruped else False,
-                "rightInContact": right_contact if not quadruped else False,
-                "leftKneeInContact": left_contact if quadruped else False,
-                "rightKneeInContact": right_contact if quadruped else False,
-                "leftHandInContact": left_hand_contact,
-                "rightHandInContact": right_hand_contact,
+                "leftInContact": left_contact if not knee_support else False,
+                "rightInContact": right_contact if not knee_support else False,
+                "leftKneeInContact": left_contact if knee_support else False,
+                "rightKneeInContact": right_contact if knee_support else False,
+                "leftHandInContact": left_hand_contact if support_mode != "kneeling" else False,
+                "rightHandInContact": right_hand_contact if support_mode != "kneeling" else False,
                 "supportJoint": support_joint,
                 "supportFoot": support_joint,
                 "state": state,

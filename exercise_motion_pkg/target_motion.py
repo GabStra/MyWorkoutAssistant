@@ -324,7 +324,7 @@ def observable_motion_spec_mentions_lower_body(contract: dict[str, Any] | None) 
     lower_body_regions = {"lower_limb", "hips", "knees", "feet"}
     regions = {
         str(region)
-        for key in ("primaryMovingRegions", "referenceRegions", "mustBeVisibleRegions")
+        for key in ("primaryMovingRegions", "referenceRegions")
         for region in spec.get(key, [])
     }
     return bool(regions.intersection(lower_body_regions))
