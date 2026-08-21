@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 
 RESULT_PREFIX = "__WHAM_WARM_WORKER__"
+HEARTBEAT_INTERVAL_SECONDS = 2.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +89,16 @@ def load_wham_once() -> dict[str, Any]:
             preprocessing_load_seconds += time.perf_counter() - load_started
         return model
 
+    def reset_preprocessing_models() -> None:
+        preprocessing_models.clear()
+        gc.collect()
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
     demo.DetectionModel = cached_detection_model
     demo.FeatureExtractor = cached_feature_extractor
     preflight_path = Path(__file__).with_name("wham_tracking_preflight.py")
@@ -113,6 +125,7 @@ def load_wham_once() -> dict[str, Any]:
         "gpuName": gpu_name,
         "preprocessingModels": preprocessing_models,
         "preprocessingLoadSeconds": lambda: preprocessing_load_seconds,
+        "resetPreprocessingModels": reset_preprocessing_models,
     }
 
 
@@ -197,6 +210,7 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
                             f"{RESULT_PREFIX} {json.dumps({'jobId': job_id, 'status': payload['status']})}",
                             flush=True,
                         )
+                        wham_state["resetPreprocessingModels"]()
                         return
                 wham_state["demo"].run(
                     wham_state["cfg"],
@@ -233,7 +247,7 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
                 },
             }
         )
-    except Exception as exc:
+    except BaseException as exc:
         payload.update(
             {
                 "status": "failed",
@@ -244,6 +258,31 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, wham_state
         )
     write_json(result_path, payload)
     print(f"{RESULT_PREFIX} {json.dumps({'jobId': job_id, 'status': payload['status']})}", flush=True)
+    wham_state["resetPreprocessingModels"]()
+
+
+def start_heartbeat(state_dir: Path) -> tuple[threading.Event, threading.Thread]:
+    stop_event = threading.Event()
+    heartbeat_path = state_dir / "heartbeat.json"
+
+    def heartbeat_loop() -> None:
+        while not stop_event.is_set():
+            try:
+                write_json(
+                    heartbeat_path,
+                    {
+                        "status": "alive",
+                        "pid": os.getpid(),
+                        "updatedAtUnixSeconds": time.time(),
+                    },
+                )
+            except OSError:
+                pass
+            stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+
+    thread = threading.Thread(target=heartbeat_loop, name="wham-worker-heartbeat", daemon=True)
+    thread.start()
+    return stop_event, thread
 
 
 def main() -> int:
@@ -269,6 +308,7 @@ def main() -> int:
         )
         return 1
 
+    heartbeat_stop, heartbeat_thread = start_heartbeat(state_dir)
     write_json(
         state_dir / "ready.json",
         {
@@ -282,24 +322,28 @@ def main() -> int:
 
     stop_path = state_dir / "stop"
     poll_seconds = max(0.05, float(args.poll_seconds))
-    while not stop_path.exists():
-        job_paths = sorted(jobs_dir.glob("*.json"))
-        if not job_paths:
-            time.sleep(poll_seconds)
-            continue
-        for job_path in job_paths:
-            running_path = running_dir / job_path.name
-            try:
-                job_path.replace(running_path)
-            except FileNotFoundError:
+    try:
+        while not stop_path.exists():
+            job_paths = sorted(jobs_dir.glob("*.json"))
+            if not job_paths:
+                time.sleep(poll_seconds)
                 continue
-            process_job(running_path, result_dir, job_logs_dir, wham_state)
-            try:
-                running_path.unlink()
-            except FileNotFoundError:
-                pass
-    release_wham_state(wham_state)
-    write_json(state_dir / "stopped.json", {"status": "stopped", "pid": os.getpid()})
+            for job_path in job_paths:
+                running_path = running_dir / job_path.name
+                try:
+                    job_path.replace(running_path)
+                except FileNotFoundError:
+                    continue
+                process_job(running_path, result_dir, job_logs_dir, wham_state)
+                try:
+                    running_path.unlink()
+                except FileNotFoundError:
+                    pass
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=HEARTBEAT_INTERVAL_SECONDS * 2.0)
+        release_wham_state(wham_state)
+        write_json(state_dir / "stopped.json", {"status": "stopped", "pid": os.getpid()})
     return 0
 
 

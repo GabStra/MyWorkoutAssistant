@@ -17,7 +17,7 @@ from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
-DEFAULT_WHAM_TIMEOUT_SECONDS = 0.0
+DEFAULT_WHAM_TIMEOUT_SECONDS = 20 * 60.0
 DEFAULT_WHAM_POSE_BACKEND = "vitpose"
 DEFAULT_WHAM_POSE_BATCH_SIZE = 16
 DEFAULT_WHAM_FEATURE_BATCH_SIZE = 32
@@ -30,6 +30,7 @@ WHAM_WARM_WORKER_MOUNT_ROOT_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_MOUNT_RO
 WHAM_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_WHAM_WARM_WORKER_TIMEOUT_SECONDS"
 DEFAULT_WHAM_DOCKER_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
 DEFAULT_WHAM_WARM_WORKER_TIMEOUT_SECONDS = DEFAULT_WHAM_TIMEOUT_SECONDS
+WHAM_WARM_WORKER_HEARTBEAT_STALE_SECONDS = 30.0
 WHAM_TRACKING_PREFLIGHT_REJECTED_EXIT_CODE = 42
 
 
@@ -285,6 +286,7 @@ def run_wham_with_warm_worker(
     ready_path = session_dir / "ready.json"
     if not ready_path.exists():
         raise RuntimeError(f"Warm WHAM worker is not ready: {ready_path}")
+    assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
 
     job_id = uuid.uuid4().hex
     container_input_video = path_inside_worker_mount(input_video, mount_root=mount_root)
@@ -309,7 +311,12 @@ def run_wham_with_warm_worker(
         with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
             tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
             tmp_job_path.replace(job_path)
-            result_payload = wait_for_warm_worker_result(result_path, timeout_seconds=timeout)
+            result_payload = wait_for_warm_worker_result(
+                result_path,
+                timeout_seconds=timeout,
+                heartbeat_path=session_dir / "heartbeat.json",
+                stopped_path=session_dir / "stopped.json",
+            )
     elapsed = time.perf_counter() - started
     worker_stdout_log = job_logs_dir / f"{job_id}.stdout.log"
     worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
@@ -415,7 +422,7 @@ def run_wham_process(
     stdout: Any,
     stderr: Any,
     timeout_seconds: float | None,
-    docker_container_name: str | None,
+    docker_container_name: str | None = None,
 ) -> int:
     process = subprocess.Popen(
         command,
@@ -460,11 +467,40 @@ def path_inside_worker_mount(path: Path, *, mount_root: Path) -> str:
     return "/workspace" if str(relative) == "." else "/workspace/" + relative.as_posix()
 
 
-def wait_for_warm_worker_result(path: Path, *, timeout_seconds: float | None) -> dict[str, Any]:
+def assert_warm_worker_heartbeat(path: Path) -> None:
+    if not path.exists():
+        raise RuntimeError(f"Warm WHAM worker heartbeat is missing: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        updated_at = float(payload.get("updatedAtUnixSeconds") or 0.0)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Warm WHAM worker heartbeat is unreadable: {path}") from exc
+    heartbeat_age = max(0.0, time.time() - updated_at)
+    if heartbeat_age > WHAM_WARM_WORKER_HEARTBEAT_STALE_SECONDS:
+        raise RuntimeError(
+            "Warm WHAM worker heartbeat became stale "
+            f"({heartbeat_age:.1f}s old): {path}"
+        )
+
+
+def wait_for_warm_worker_result(
+    path: Path,
+    *,
+    timeout_seconds: float | None,
+    heartbeat_path: Path | None = None,
+    stopped_path: Path | None = None,
+) -> dict[str, Any]:
     started = time.perf_counter()
     while True:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
+        if stopped_path is not None and stopped_path.exists():
+            raise RuntimeError(
+                "Warm WHAM worker stopped before producing the requested result: "
+                f"{path}"
+            )
+        if heartbeat_path is not None:
+            assert_warm_worker_heartbeat(heartbeat_path)
         if timeout_seconds is not None and time.perf_counter() - started >= timeout_seconds:
             raise TimeoutError(f"Timed out waiting for warm WHAM worker result: {path}")
         time.sleep(0.5)

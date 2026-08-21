@@ -105,6 +105,7 @@ def test_warm_worker_stops_before_reconstruction_when_preflight_rejects(
         "trackingPreflight": FakePreflight,
         "loadSeconds": 1.0,
         "preprocessingLoadSeconds": lambda: 0.0,
+        "resetPreprocessingModels": lambda: None,
     }
 
     process_job(job_path, results_dir, logs_dir, state)
@@ -114,3 +115,45 @@ def test_warm_worker_stops_before_reconstruction_when_preflight_rejects(
     assert result["trackingPreflight"]["endCovered"] is False
     assert preflight_calls[0]["required_start_seconds"] == 1.0
     assert preflight_calls[0]["required_end_seconds"] == 3.0
+
+
+def test_warm_worker_converts_system_exit_to_failed_result_and_resets_state(
+    tmp_path: Path,
+) -> None:
+    jobs_dir = tmp_path / "jobs"
+    results_dir = tmp_path / "results"
+    logs_dir = tmp_path / "logs"
+    for path in (jobs_dir, results_dir, logs_dir):
+        path.mkdir()
+    video_path = tmp_path / "input.mp4"
+    video_path.write_bytes(b"video")
+    job_path = jobs_dir / "job.json"
+    job_path.write_text(
+        json.dumps(
+            {
+                "jobId": "job",
+                "video": str(video_path),
+                "outputRoot": str(tmp_path / "output"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    reset_calls: list[bool] = []
+    state = {
+        "demo": SimpleNamespace(
+            args=None,
+            run=lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit(1)),
+        ),
+        "cfg": object(),
+        "network": object(),
+        "loadSeconds": 1.0,
+        "preprocessingLoadSeconds": lambda: 0.0,
+        "resetPreprocessingModels": lambda: reset_calls.append(True),
+    }
+
+    process_job(job_path, results_dir, logs_dir, state)
+
+    result = json.loads((results_dir / "job.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert result["error"] == "SystemExit: 1"
+    assert reset_calls == [True]
