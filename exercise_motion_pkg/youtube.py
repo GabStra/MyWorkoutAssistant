@@ -78,7 +78,7 @@ from exercise_motion_pkg.vlm_errors import (
 
 TEXT_ONLY_LLAMA_MAX_TOKENS = 192
 QUERY_PLANNER_LLAMA_MAX_TOKENS = 256
-EXERCISE_MOTION_CONTRACT_LLAMA_MAX_TOKENS = 768
+EXERCISE_MOTION_CONTRACT_LLAMA_MAX_TOKENS = 1280
 EXERCISE_MOTION_CONTRACT_TEXT_LIMIT = 1400
 SEMANTIC_GATE_LLAMA_MAX_TOKENS = 128
 SEMANTIC_GATE_DURATION_RANK_DEFAULT_WEIGHT = 0.15
@@ -124,8 +124,64 @@ LOW_RES_PROGRESSIVE_VIDEO_FORMAT = (
     "worst[vcodec!=none]/worst"
 )
 
+YOUTUBE_RATE_LIMIT_COOLDOWN_SECONDS = 60 * 60
+YOUTUBE_RATE_LIMIT_MARKER_ENV = "MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH"
+
+
+def youtube_rate_limit_marker_path() -> Path:
+    configured = os.environ.get(YOUTUBE_RATE_LIMIT_MARKER_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path(tempfile.gettempdir()) / "myworkoutassistant-youtube-rate-limit.json"
+
+
+def record_youtube_rate_limit(*, message: str) -> None:
+    marker_path = youtube_rate_limit_marker_path()
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "detectedAtEpochSeconds": time.time(),
+        "message": truncate_text(message, 400),
+    }
+    temporary_path = marker_path.with_name(
+        f"{marker_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    temporary_path.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(temporary_path, marker_path)
+
+
+def raise_if_youtube_rate_limit_cooldown_active() -> None:
+    marker_path = youtube_rate_limit_marker_path()
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        detected_at = float(payload["detectedAtEpochSeconds"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return
+    elapsed_seconds = max(0.0, time.time() - detected_at)
+    if elapsed_seconds >= YOUTUBE_RATE_LIMIT_COOLDOWN_SECONDS:
+        marker_path.unlink(missing_ok=True)
+        return
+    remaining_seconds = max(1, int(YOUTUBE_RATE_LIMIT_COOLDOWN_SECONDS - elapsed_seconds))
+    raise RuntimeError(
+        "YouTube requests are paused by the shared rate-limit circuit breaker "
+        f"for approximately {remaining_seconds} more second(s)."
+    )
+
+
+def youtube_failure_is_rate_limited(message: str) -> bool:
+    normalized = str(message).casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "rate-limited by youtube",
+            "rate limited by youtube",
+            "too many requests",
+            "http error 429",
+        )
+    )
+
 
 def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+    raise_if_youtube_rate_limit_cooldown_active()
     resolved_cookies_path: Path | None = None
     if cookies_path is not None:
         resolved_cookies_path = cookies_path.expanduser().resolve()
@@ -171,7 +227,14 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
                     return sanitize_downloaded_video(resolved_download)
                 failures.append(f"client={attempt_label}: download completed without an output file")
             except DownloadError as exc:
-                failures.append(f"client={attempt_label}: {truncate_text(str(exc), 300)}")
+                failure_message = str(exc)
+                failures.append(f"client={attempt_label}: {truncate_text(failure_message, 300)}")
+                if youtube_failure_is_rate_limited(failure_message):
+                    record_youtube_rate_limit(message=failure_message)
+                    raise RuntimeError(
+                        "YouTube download stopped because the current session is rate-limited; "
+                        "retrying alternate player clients would only extend the cooldown."
+                    ) from exc
                 print(
                     f"[youtube] full download attempt {attempt_index} failed; re-extracting with another client",
                     flush=True,
@@ -273,6 +336,7 @@ def download_youtube_preview(
     *,
     cache_dir: Path | None = None,
 ) -> Path:
+    raise_if_youtube_rate_limit_cooldown_active()
     resolved_cookies_path: Path | None = None
     if cookies_path is not None:
         resolved_cookies_path = cookies_path.expanduser().resolve()
@@ -316,6 +380,12 @@ def download_youtube_preview(
             if completed.returncode != 0:
                 message = truncate_text(completed.stderr or completed.stdout or "yt-dlp failed", 400)
                 failures.append(f"client={attempt_label}: {message}")
+                if youtube_failure_is_rate_limited(message):
+                    record_youtube_rate_limit(message=message)
+                    raise RuntimeError(
+                        "YouTube preview download stopped because the current session is rate-limited; "
+                        "retrying alternate player clients would only extend the cooldown."
+                    )
                 continue
             for candidate in sorted(output_dir.glob("candidate.*")):
                 if candidate.is_file() and candidate.suffix.lower() != ".part":
@@ -1904,9 +1974,13 @@ def build_youtube_queries_with_contract_aliases(
     contract: dict[str, Any] | None,
 ) -> list[str]:
     aliases = youtube_query_aliases_from_contract(contract)
-    if not aliases:
-        return build_youtube_queries(exercise_name)
     queries = build_youtube_queries(exercise_name)
+    completion_mode = normalize_exercise_completion_mode(
+        contract.get("completionMode") if isinstance(contract, dict) else None
+    )
+    mode_suffixes = youtube_query_suffixes_for_completion_mode(completion_mode)
+    base_term = quote_youtube_search_term(exercise_name)
+    queries.extend(f"{base_term} {suffix}" for suffix in mode_suffixes)
     for alias in aliases:
         alias_term = quote_youtube_search_term(alias)
         queries.extend(
@@ -1914,6 +1988,7 @@ def build_youtube_queries_with_contract_aliases(
                 f"{alias_term} exercise demonstration",
                 f"{alias_term} exercise demo full rep",
                 f"{alias_term} side view exercise",
+                *[f"{alias_term} {suffix}" for suffix in mode_suffixes],
             ]
         )
     return merge_youtube_queries(queries)
@@ -1927,6 +2002,10 @@ def build_youtube_search_expansion_queries(
     limit: int = 12,
 ) -> list[str]:
     aliases = [exercise_name, *youtube_query_aliases_from_contract(contract), *generic_youtube_query_aliases(exercise_name)]
+    completion_mode = normalize_exercise_completion_mode(
+        contract.get("completionMode") if isinstance(contract, dict) else None
+    )
+    mode_suffixes = youtube_query_suffixes_for_completion_mode(completion_mode)
     queries: list[str] = []
     for alias in aliases:
         alias_term = quote_youtube_search_term(alias)
@@ -1936,6 +2015,7 @@ def build_youtube_search_expansion_queries(
                 f"{alias_term} full range of motion exercise",
                 f"{alias_term} continuous reps side angle",
                 f"{alias_term} full body exercise demo",
+                *[f"{alias_term} {suffix}" for suffix in mode_suffixes],
             ]
         )
     existing_keys = {
@@ -1947,6 +2027,20 @@ def build_youtube_search_expansion_queries(
         for query in merge_youtube_queries(queries, limit=limit + len(existing_keys))
         if query.casefold() not in existing_keys
     ][:limit]
+
+
+def youtube_query_suffixes_for_completion_mode(completion_mode: str | None) -> list[str]:
+    if completion_mode == "stable_hold":
+        return ["full body static hold demonstration", "isometric hold side view"]
+    if completion_mode == "active_travel":
+        return ["full body continuous carry demonstration", "continuous travel side view"]
+    if completion_mode == "distinct_end_state":
+        return ["complete transition start to finish", "full body transition demonstration"]
+    if completion_mode == "alternating_pair":
+        return ["both sides continuous demonstration", "left right full sequence"]
+    if completion_mode in {"return_to_start", "representative_cycle"}:
+        return ["one complete repetition start to finish", "full cycle side view"]
+    return ["full body continuous demonstration"]
 
 
 def youtube_query_aliases_from_contract(contract: dict[str, Any] | None) -> list[str]:
@@ -3103,6 +3197,24 @@ def youtube_candidate_source_gate_reasons(candidate: YouTubeCandidate) -> list[s
     return [str(reason) for reason in gate.get("reasons") or [] if str(reason).strip()]
 
 
+def youtube_candidate_first_attempt_readiness(candidate: YouTubeCandidate) -> dict[str, Any]:
+    from exercise_motion_pkg.bake_and_rank import (
+        RankedCandidate,
+        first_attempt_readiness_assessment,
+    )
+
+    return first_attempt_readiness_assessment(
+        RankedCandidate(
+            exercise_index=0,
+            candidate_rank=0,
+            exercise_id=candidate.video_id or "discovery",
+            exercise_name=candidate.title,
+            exercise_slug="discovery",
+            candidate=candidate.to_manifest_dict(),
+        )
+    )
+
+
 def demote_candidates_failing_source_gate(
     ranked: list[YouTubeCandidate],
 ) -> list[YouTubeCandidate]:
@@ -3111,16 +3223,23 @@ def demote_candidates_failing_source_gate(
         if candidate.status != "recommended":
             demoted.append(candidate)
             continue
-        gate_reasons = youtube_candidate_source_gate_reasons(candidate)
-        if not gate_reasons:
-            demoted.append(candidate)
+        readiness = youtube_candidate_first_attempt_readiness(candidate)
+        vision_payload = dict(candidate.vision_payload or {})
+        vision_payload["firstAttemptReadiness"] = readiness
+        candidate_with_readiness = replace_candidate(candidate, vision_payload=vision_payload)
+        if bool(readiness.get("eligible")):
+            demoted.append(candidate_with_readiness)
             continue
         demoted.append(
             replace_candidate(
-                candidate,
+                candidate_with_readiness,
                 status="candidate",
                 score_reasons=dedupe_reasons(
-                    [*candidate.score_reasons, "source_gate_rejected", *gate_reasons]
+                    [
+                        *candidate.score_reasons,
+                        "first_attempt_readiness_rejected",
+                        *[str(reason) for reason in readiness.get("reasons") or []],
+                    ]
                 ),
             )
         )
@@ -3569,17 +3688,19 @@ def generate_exercise_motion_contract_with_ranker(
     ranker: "LlamaCppVisionRanker",
 ) -> dict[str, Any]:
     started = time.monotonic()
-    try:
+    failed_attempts: list[str] = []
+    for disable_reasoning in (False, True):
+        attempt_mode = "direct" if disable_reasoning else "thinking"
         caption_kwargs: dict[str, Any] = {
             "frame_paths": [],
             "prompt": build_exercise_motion_contract_prompt(exercise),
-            "max_tokens": capped_llama_cpp_text_tokens(
-                settings,
-                cap=EXERCISE_MOTION_CONTRACT_LLAMA_MAX_TOKENS,
-            ),
+            # A complete structured contract needs more room than the generic
+            # 512-token response default, especially when Qwen emits a bounded
+            # thinking trace before the JSON answer.
+            "max_tokens": EXERCISE_MOTION_CONTRACT_LLAMA_MAX_TOKENS,
         }
         if callable_accepts_keyword(ranker.client.caption_images, "disable_reasoning"):
-            caption_kwargs["disable_reasoning"] = False
+            caption_kwargs["disable_reasoning"] = disable_reasoning
         if callable_accepts_keyword(ranker.client.caption_images, "json_response"):
             caption_kwargs["json_response"] = True
         if callable_accepts_keyword(ranker.client.caption_images, "temperature"):
@@ -3593,31 +3714,42 @@ def generate_exercise_motion_contract_with_ranker(
                 1.0,
                 float(settings.llama_cpp_request_timeout_seconds),
             )
-        raw = ranker.client.caption_images(**caption_kwargs)
-        contract = normalize_exercise_motion_contract_response(raw, exercise=exercise, source="llm")
-        contract["motionContext"] = exercise.motion_context
-        contract["model"] = settings.llama_cpp_model
-        contract["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
-        return contract
-    except Exception as exc:
-        if is_critical_vlm_interaction_error(exc):
-            add_vlm_context(
-                exc,
-                stage="exercise_motion_contract_generation",
-                exerciseName=exercise.name,
-                model=settings.llama_cpp_model,
+        try:
+            raw = ranker.client.caption_images(**caption_kwargs)
+            contract = normalize_exercise_motion_contract_response(raw, exercise=exercise, source="llm")
+            contract["motionContext"] = exercise.motion_context
+            contract["model"] = settings.llama_cpp_model
+            contract["generationMode"] = attempt_mode
+            contract["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
+            if exercise_motion_contract_is_usable(contract):
+                if failed_attempts:
+                    contract["generationFallbackReasons"] = failed_attempts
+                return contract
+            failed_attempts.append(
+                f"{attempt_mode}: {exercise_motion_contract_unusable_reason(contract)}"
             )
-            raise
-        return {
-            "schemaVersion": 1,
-            "enabled": True,
-            "status": "failed",
-            "source": "llm",
-            "exerciseName": exercise.name,
-            "model": settings.llama_cpp_model,
-            "error": truncate_text(str(exc), 240),
-            "generationElapsedSeconds": round_elapsed(time.monotonic() - started),
-        }
+        except Exception as exc:
+            if is_critical_vlm_interaction_error(exc):
+                add_vlm_context(
+                    exc,
+                    stage="exercise_motion_contract_generation",
+                    exerciseName=exercise.name,
+                    model=settings.llama_cpp_model,
+                    generationMode=attempt_mode,
+                )
+                raise
+            failed_attempts.append(f"{attempt_mode}: {truncate_text(str(exc), 240)}")
+
+    return {
+        "schemaVersion": 1,
+        "enabled": True,
+        "status": "failed",
+        "source": "llm",
+        "exerciseName": exercise.name,
+        "model": settings.llama_cpp_model,
+        "error": " | ".join(failed_attempts),
+        "generationElapsedSeconds": round_elapsed(time.monotonic() - started),
+    }
 
 
 def text_llama_cpp_settings(settings: YouTubeRankingSettings) -> YouTubeRankingSettings:
@@ -3896,6 +4028,18 @@ def normalize_exercise_pose_constraints(value: Any) -> dict[str, str] | None:
         and normalized.get("torsoOrientation") == "upright"
     ):
         normalized["torsoOrientation"] = "horizontal"
+    if (
+        normalized.get("supportMode") == "kneeling"
+        and normalized.get("kneeState") == "extended"
+    ):
+        # A kneeling support state necessarily requires at least one flexed
+        # knee. Keep generated constraints physically self-consistent without
+        # encoding any exercise-name-specific posture.
+        normalized["kneeState"] = "flexed"
+    if normalized.get("supportMode") in {"lying", "hanging"}:
+        # Stance width is not an observable constraint when the feet are not
+        # the support base.
+        normalized["stance"] = "any"
     return normalized
 
 
@@ -4148,8 +4292,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 8
-EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 8
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 9
+EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 9
 
 
 def exercise_motion_contract_cache_path(
@@ -4357,7 +4501,11 @@ def prefetch_exercise_motion_contracts(
                     "status": "generated" if cache_path is not None else "failed",
                     "cachePath": str(cache_path) if cache_path is not None else None,
                     "generationElapsedSeconds": contract.get("generationElapsedSeconds"),
-                    "error": contract.get("error") if cache_path is None else None,
+                    "error": (
+                        exercise_motion_contract_unusable_reason(contract)
+                        if cache_path is None
+                        else None
+                    ),
                 }
 
             with ThreadPoolExecutor(max_workers=active_workers) as executor:
@@ -4602,6 +4750,22 @@ def exercise_motion_contract_is_usable(contract: dict[str, Any] | None) -> bool:
             or bool(contract.get("youtubeQueryAliases"))
         )
     )
+
+
+def exercise_motion_contract_unusable_reason(contract: dict[str, Any] | None) -> str:
+    if not isinstance(contract, dict):
+        return "exercise motion contract response was not a JSON object"
+    explicit_error = str(contract.get("error") or "").strip()
+    if explicit_error:
+        return explicit_error
+    status = str(contract.get("status") or "missing").strip()
+    if status != "generated":
+        return f"exercise motion contract status was {status}"
+    if not cleaned_contract_advisory_text(contract.get("advisoryText")):
+        return "generated exercise motion contract had no usable guidance text"
+    if not exercise_motion_contract_has_specific_topology(contract) and not contract.get("youtubeQueryAliases"):
+        return "generated exercise motion contract had no specific movement topology"
+    return "generated exercise motion contract was not cacheable"
 
 
 def exercise_motion_contract_for_prompt(contract: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -5036,6 +5200,8 @@ def youtube_candidate_is_suitable_after_review(
 ) -> bool:
     if candidate.status != "recommended":
         return False
+    if not bool(youtube_candidate_first_attempt_readiness(candidate).get("eligible")):
+        return False
     if youtube_candidate_source_gate_reasons(candidate):
         return False
     if settings.pose_prefilter_enabled and not candidate_pose_prefilter_passed(candidate):
@@ -5056,6 +5222,29 @@ def youtube_suitable_candidate_count(
     settings: YouTubeRankingSettings,
 ) -> int:
     return sum(1 for candidate in ranked if youtube_candidate_is_suitable_after_review(candidate, settings))
+
+
+def youtube_first_attempt_portfolio_target(
+    ranked: list[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+) -> tuple[int, str | None]:
+    """Return the bounded source count justified by the best ready candidate."""
+    suitable_readiness = [
+        youtube_candidate_first_attempt_readiness(candidate)
+        for candidate in ranked
+        if youtube_candidate_is_suitable_after_review(candidate, settings)
+    ]
+    tiers = {
+        str(readiness.get("tier") or "").strip().lower()
+        for readiness in suitable_readiness
+    }
+    if "high" in tiers:
+        return 1, "high"
+    if "medium" in tiers:
+        return 2, "medium"
+    if "marginal" in tiers:
+        return 3, "marginal"
+    return 1, None
 
 
 EXERCISE_SUPPORT_MODE_TERMS = ("standing", "seated", "lying", "kneeling", "hanging")
@@ -5350,7 +5539,7 @@ def run_youtube_candidate_review_batches(
         return CandidateReviewPassResult(ranked=[], debug_candidates_by_key=dict(debug_candidates_by_key))
 
     batch_size = settings.resolved_candidate_review_batch_size()
-    target_suitable_count = settings.resolved_candidate_review_target_suitable_count()
+    configured_target_suitable_count = settings.resolved_candidate_review_target_suitable_count()
     reviewed_by_key: dict[str, YouTubeCandidate] = {}
     debug_by_key = dict(debug_candidates_by_key)
     review_batches: list[dict[str, Any]] = []
@@ -5382,6 +5571,15 @@ def run_youtube_candidate_review_batches(
             debug_by_key[candidate.key()] = candidate
         accumulated_ranked = sort_youtube_reviewed_candidates(reviewed_by_key.values(), settings)
         suitable_count = youtube_suitable_candidate_count(accumulated_ranked, settings)
+        adaptive_target_suitable_count, best_readiness_tier = youtube_first_attempt_portfolio_target(
+            accumulated_ranked,
+            settings,
+        )
+        # The readiness tier defines the evidence-backed reconstruction
+        # portfolio. A configured expansion target is a search ceiling, not a
+        # mandatory up-front batch: if the chosen portfolio fails, the caller
+        # can expand discovery again with that failure evidence excluded.
+        target_suitable_count = adaptive_target_suitable_count
         batch_payload = {
             "batchIndex": batch_index,
             "startIndex": start,
@@ -5390,6 +5588,9 @@ def run_youtube_candidate_review_batches(
             "reviewedCandidateCount": len(reviewed_by_key),
             "suitableCandidateCount": suitable_count,
             "targetSuitableCandidateCount": target_suitable_count,
+            "configuredTargetSuitableCandidateCount": configured_target_suitable_count,
+            "adaptiveTargetSuitableCandidateCount": adaptive_target_suitable_count,
+            "bestFirstAttemptReadinessTier": best_readiness_tier,
             "semanticGateElapsedSeconds": round_elapsed(pass_result.semantic_elapsed_seconds),
             "posePrefilterElapsedSeconds": round_elapsed(pass_result.pose_elapsed_seconds),
             "visionScoringElapsedSeconds": round_elapsed(pass_result.vision_elapsed_seconds),
@@ -6863,6 +7064,18 @@ def discover_and_rank_youtube_candidates(
                         }
                     )
 
+            final_suitable_count = youtube_suitable_candidate_count(
+                ranked,
+                current_review_settings,
+            )
+            candidate_expansion_payload["finalFirstAttemptReadyCandidateCount"] = final_suitable_count
+            if final_suitable_count <= 0:
+                candidate_expansion_payload["terminalReason"] = "no_reconstruction_ready_source"
+                candidate_expansion_payload["noNewWork"] = bool(
+                    candidate_expansion_payload.get("searchExpansionTriggered")
+                    and int(candidate_expansion_payload.get("searchExpansionNewCandidateCount") or 0) <= 0
+                )
+
             ranked = ranked[: settings.max_candidates]
             debug_ranked = sorted(
                 debug_candidates_by_key.values(),
@@ -6909,7 +7122,7 @@ def discover_and_rank_youtube_candidates(
                 started_at=run_started,
                 exercise=exercise,
                 selectedCandidateCount=len(ranked[: settings.max_candidates]),
-                suitableCandidateCount=youtube_suitable_candidate_count(ranked, current_review_settings),
+                suitableCandidateCount=final_suitable_count,
                 candidateExpansionTriggered=bool(candidate_expansion_payload.get("triggered")),
             )
     finally:
