@@ -9,6 +9,13 @@ from exercise_motion_pkg.models import MotionClip, MotionFrame
 def load_motion_json(path: Path) -> MotionClip:
     data = json.loads(path.read_text(encoding="utf-8"))
     if "frames" in data:
+        metadata = dict(data.get("metadata") or {})
+        if data.get("kind") == "wearPreviewSkeleton":
+            metadata["bakedWearPayload"] = {
+                "kind": "wearPreviewSkeleton",
+                "selectedPreviewSettings": data.get("selectedPreviewSettings") or {},
+                "wearDisplay": data.get("wearDisplay") or {},
+            }
         frames = [
             MotionFrame(
                 time_sec=float(frame["timeSec"]),
@@ -22,7 +29,7 @@ def load_motion_json(path: Path) -> MotionClip:
             joint_names=joint_names,
             frames=frames,
             source={str(k): str(v) for k, v in (data.get("source") or {}).items()},
-            metadata=data.get("metadata") or {},
+            metadata=metadata,
         )
     if "positions" in data and "jointNames" in data:
         joint_names = [str(name) for name in data["jointNames"]]

@@ -240,6 +240,17 @@ def write_preview_html(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
+    baked_wear_payload = _baked_wear_payload_metadata(clip)
+    baked_preview_settings = (
+        baked_wear_payload.get("selectedPreviewSettings")
+        if isinstance(baked_wear_payload, dict)
+        else {}
+    )
+    baked_wear_display = (
+        baked_wear_payload.get("wearDisplay")
+        if isinstance(baked_wear_payload, dict)
+        else {}
+    )
     authoritative_world_alignment = _clip_has_authoritative_video_floor_alignment(clip)
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
     has_horizontal_torso_profile = _has_horizontal_torso_profile(preview_clip.frames)
@@ -270,17 +281,25 @@ def write_preview_html(
         "frameCount": preview_clip.frame_count,
         "jointNames": preview_clip.joint_names,
         "rootJoint": _find_root_joint(preview_clip),
-        "defaultFixedRoot": not raw_motion_review,
+        "defaultFixedRoot": bool(baked_preview_settings.get("fixedRoot", False))
+        if baked_wear_payload
+        else not raw_motion_review,
         "rootTranslationToggleLabel": (
             "Show original camera-space translation"
             if preview_clip.metadata.get("upstream") == "gvhmr"
             else "Lock global root drift"
         ) if isinstance(preview_clip.metadata, dict) else "Lock global root drift",
         "defaultSceneInverted": default_scene_inverted,
-        "defaultAutoWorldAlignment": not raw_motion_review and not authoritative_world_alignment,
+        "defaultAutoWorldAlignment": False
+        if baked_wear_payload
+        else not raw_motion_review and not authoritative_world_alignment,
         "defaultAutoAlignment": default_auto_alignment,
-        "defaultCameraYawDegrees": 180.0 if has_horizontal_torso_profile else 0.0,
-        "defaultCameraPitchDegrees": 15.0,
+        "defaultCameraYawDegrees": float(baked_wear_display.get("viewYawDegrees", 0.0))
+        if baked_wear_payload
+        else 180.0 if has_horizontal_torso_profile else 0.0,
+        "defaultCameraPitchDegrees": float(baked_wear_display.get("viewPitchDegrees", 15.0))
+        if baked_wear_payload
+        else 15.0,
         "horizontalTorsoProfile": has_horizontal_torso_profile,
         "previewMaxRenderFps": min(30.0, max(12.0, float(preview_clip.fps))),
         "motionTuningEnabled": not raw_motion_review,
@@ -293,6 +312,7 @@ def write_preview_html(
             {
                 "frameIndex": index,
                 "timeSec": frame.time_sec,
+                "sourceJoints": frame.joints,
                 "joints": frame.joints,
             }
             for index, frame in enumerate(preview_clip.frames)
@@ -674,6 +694,14 @@ def _build_wear_transformed_frames(
                 "timeSec": frame.time_sec - active_start_time,
                 "sourceTimeSec": frame.time_sec,
                 "rootTranslationApplied": _point_to_list(translation),
+                # Preserve the pre-preview coordinates so deterministic output
+                # validation can compare the baked animation with the exact
+                # same WHAM frames. Rigid transforms do not affect the paired-
+                # hand distance/correlation metrics used by that validator.
+                "sourceJoints": {
+                    joint_name: _point_to_list(point)
+                    for joint_name, point in frame.joints.items()
+                },
                 "joints": transformed_joints,
             }
         )
@@ -1356,12 +1384,19 @@ def _estimate_baked_sagittal_plane_alignment(
         ),
     )
 
-    return _build_full_normal_alignment_payload(
+    # The bilateral body axis can legitimately have a vertical component in
+    # asymmetric poses (split squats, step-ups, reaches).  Sagittal alignment
+    # is a camera-facing normalization, so it must preserve world-up instead
+    # of rotating that anatomical asymmetry onto the ground plane.
+    return _build_horizontal_normal_alignment_payload(
         frames,
         base_payload=base_payload,
-        normal=robust_normal,
+        normal_x=robust_normal[0],
+        normal_z=robust_normal[2],
         coherence=coherence,
         extra={
+            "normalBefore": _point_to_list(robust_normal),
+            "verticalNormalComponentIgnored": robust_normal[1],
             "estimator": "component_median_of_per_frame_3d_torso_axes",
             "pairSampleCount": pair_sample_count,
             "torsoPairs": [
@@ -1399,9 +1434,29 @@ def refine_motion_clip_for_preview(clip: MotionClip) -> MotionClip:
 
 
 def _prepare_preview_clip(clip: MotionClip) -> MotionClip:
-    if _clip_requests_raw_motion_render(clip) or _clip_has_authoritative_video_floor_alignment(clip):
+    if (
+        _clip_requests_raw_motion_render(clip)
+        or _baked_wear_payload_metadata(clip) is not None
+        or _clip_has_authoritative_video_floor_alignment(clip)
+        or _clip_has_structural_refinement(clip)
+    ):
         return clip
     return refine_motion_clip_for_preview(clip)
+
+
+def _baked_wear_payload_metadata(clip: MotionClip) -> dict[str, object] | None:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    baked = metadata.get("bakedWearPayload")
+    return baked if isinstance(baked, dict) else None
+
+
+def _clip_has_structural_refinement(clip: MotionClip) -> bool:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    refinement = metadata.get("structuralRefinement")
+    # `applied: false` means the structural stage intentionally retained the
+    # source motion unchanged; it does not authorize the legacy preview stage
+    # to make a second, unvalidated refinement attempt.
+    return isinstance(refinement, dict) and bool(refinement.get("strategy"))
 
 
 def _clip_requests_raw_motion_render(clip: MotionClip) -> bool:
@@ -4207,13 +4262,7 @@ def _build_html(
     }}
 
     function createFacetedHeadGeometry() {{
-      const levels = [
-        {{ y: -0.5, width: 0.68, depth: 0.58 }},
-        {{ y: -0.18, width: 0.9, depth: 0.78 }},
-        {{ y: 0.28, width: 0.84, depth: 0.72 }},
-        {{ y: 0.5, width: 0.58, depth: 0.54 }},
-      ];
-      return createStackedPrismGeometry(levels);
+      return new THREE.IcosahedronGeometry(0.5, 1);
     }}
 
     const limbGeometry = createStackedPrismGeometry([
@@ -4235,8 +4284,8 @@ def _build_html(
     const ribcageGeometry = createStackedPrismGeometry([
       {{ y: -0.5, width: 0.58, depth: 0.64 }},
       {{ y: -0.08, width: 0.78, depth: 0.82 }},
-      {{ y: 0.32, width: 1.0, depth: 0.94 }},
-      {{ y: 0.5, width: 0.84, depth: 0.76 }},
+      {{ y: 0.32, width: 1.0, depth: 0.78 }},
+      {{ y: 0.5, width: 0.84, depth: 0.68 }},
     ]);
     const clavicleGeometry = createStackedPrismGeometry([
       {{ y: -0.5, width: 1.0, depth: 0.7 }},
@@ -6213,11 +6262,18 @@ def _build_html(
       }}
       const weightedTranslation = new THREE.Vector3();
       let totalWeight = 0;
-      for (const target of activeTargets) {{
+      const continuousSupportTargets = activeTargets.filter((target) =>
+        isFootLockTarget(target)
+        && String(target.jointName).endsWith("_ankle")
+        && target.sourceConfirmedContinuousSupport
+      );
+      const bodyTranslationTargets = continuousSupportTargets.length > 0
+        ? continuousSupportTargets
+        : activeTargets;
+      for (const target of bodyTranslationTargets) {{
         if (
           !isFootLockTarget(target)
           || !String(target.jointName).endsWith("_ankle")
-          || target.sourceConfirmedContinuousSupport
           || !basePositions.has(target.jointName)
         ) {{
           continue;
@@ -6229,7 +6285,9 @@ def _build_html(
         const currentPoint = basePositions.get(target.jointName);
         const targetPoint = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ);
         const desiredTranslation = targetPoint.sub(currentPoint);
-        desiredTranslation.y = 0;
+        if (!target.sourceConfirmedContinuousSupport) {{
+          desiredTranslation.y = 0;
+        }}
         weightedTranslation.addScaledVector(desiredTranslation, targetWeight);
         totalWeight += targetWeight;
       }}
@@ -6654,38 +6712,6 @@ def _build_html(
         const originalAnkle = basePositions.get(ankleName);
         const originalHip = basePositions.get(`${{side}}_hip`);
         const originalKnee = basePositions.get(`${{side}}_knee`);
-        let kneeLateralConstraint = null;
-        if (
-          originalHip
-          && originalKnee
-          && basePositions.has("left_hip")
-          && basePositions.has("right_hip")
-        ) {{
-          const bodyLateralAxis = basePositions.get("right_hip")
-            .clone()
-            .sub(basePositions.get("left_hip"));
-          bodyLateralAxis.y = 0;
-          const originalLegAxis = originalAnkle.clone().sub(originalHip);
-          const originalLegLengthSquared = originalLegAxis.lengthSq();
-          if (
-            bodyLateralAxis.lengthSq() > 1e-8
-            && originalLegLengthSquared > 1e-8
-          ) {{
-            bodyLateralAxis.normalize();
-            const hipToKnee = originalKnee.clone().sub(originalHip);
-            const alongFraction = Math.max(0, Math.min(
-              1,
-              hipToKnee.dot(originalLegAxis) / originalLegLengthSquared
-            ));
-            const kneeFromLegLine = hipToKnee
-              .clone()
-              .sub(originalLegAxis.clone().multiplyScalar(alongFraction));
-            kneeLateralConstraint = {{
-              bodyLateralAxis,
-              signedDeviation: kneeFromLegLine.dot(bodyLateralAxis),
-            }};
-          }}
-        }}
         const ankleCorrection = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
           .sub(originalAnkle)
           .multiplyScalar(targetWeight);
@@ -6709,7 +6735,8 @@ def _build_html(
           chain.map((jointName) => basePositions.get(jointName).clone()),
           blendedTarget,
           stablePoleVectors.get(side) ?? null,
-          kneeLateralConstraint
+          null,
+          0.0
         );
         chain.forEach((jointName, index) => {{
           lockedJointPositions.set(jointName, solved[index]);
@@ -6787,7 +6814,8 @@ def _build_html(
       points,
       target,
       stablePoleVector = null,
-      kneeLateralConstraint = null
+      kneeLateralConstraint = null,
+      maximumExtensionDelta = Number.POSITIVE_INFINITY
     ) {{
       if (points.length < 3) {{
         return points.map((point) => point.clone());
@@ -6808,7 +6836,12 @@ def _build_html(
         targetDistance = 1;
       }}
       const targetAxis = rootToTarget.normalize();
-      const maxReach = Math.max(upperLength + lowerLength - 1e-4, 1e-6);
+      const originalReach = root.distanceTo(originalAnkle);
+      const anatomicalMaxReach = Math.max(upperLength + lowerLength - 1e-4, 1e-6);
+      const maxReach = Math.min(
+        anatomicalMaxReach,
+        originalReach + Math.max(0, Number(maximumExtensionDelta) || 0)
+      );
       const minReach = Math.max(Math.abs(upperLength - lowerLength) + 1e-4, 1e-6);
       const solvedDistance = Math.min(Math.max(targetDistance, minReach), maxReach);
       const solvedAnkle = root.clone().addScaledVector(targetAxis, solvedDistance);
@@ -6823,10 +6856,11 @@ def _build_html(
       const sourceBendDirection = sourceKneeOffset
         .clone()
         .sub(originalAxis.clone().multiplyScalar(sourceKneeOffset.dot(originalAxis)));
-      const preferredBendDirection = stablePoleVector instanceof THREE.Vector3
-        && stablePoleVector.lengthSq() > 1e-8
-        ? stablePoleVector.clone()
-        : sourceBendDirection.clone();
+      const preferredBendDirection = sourceBendDirection.lengthSq() > 1e-8
+        ? sourceBendDirection.clone()
+        : stablePoleVector instanceof THREE.Vector3 && stablePoleVector.lengthSq() > 1e-8
+          ? stablePoleVector.clone()
+          : sourceBendDirection.clone();
       let bendDirection = preferredBendDirection
         .clone()
         .sub(targetAxis.clone().multiplyScalar(preferredBendDirection.dot(targetAxis)));
@@ -7319,12 +7353,18 @@ def _build_html(
         return basePayload;
       }}
 
-      return sagittalAlignmentPayloadFrom3dNormal(
+      // Alignment only chooses the horizontal facing direction. A vertical
+      // component in the bilateral axis is anatomical pose evidence, not a
+      // camera roll correction; rotating it away tilts asymmetric exercises.
+      return sagittalAlignmentPayloadFromNormal(
         alignmentFrames,
         basePayload,
-        estimate.normal,
+        Number(estimate.normal[0]),
+        Number(estimate.normal[2]),
         estimate.coherence,
         {{
+          normalBefore: estimate.normal,
+          verticalNormalComponentIgnored: Number(estimate.normal[1]),
           estimator: "component_median_of_per_frame_3d_torso_axes",
           pairSampleCount: estimate.pairSampleCount,
           torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
@@ -7659,12 +7699,15 @@ def _build_html(
         return basePayload;
       }}
 
-      return sagittalAlignmentPayloadFrom3dNormal(
+      return sagittalAlignmentPayloadFromNormal(
         frames,
         basePayload,
-        estimate.normal,
+        Number(estimate.normal[0]),
+        Number(estimate.normal[2]),
         estimate.coherence,
         {{
+          normalBefore: estimate.normal,
+          verticalNormalComponentIgnored: Number(estimate.normal[1]),
           estimator: "component_median_of_per_frame_3d_torso_axes",
           pairSampleCount: estimate.pairSampleCount,
           torsoPairs: sagittalPlaneAlignmentPairs.map(([leftName, rightName]) => [leftName, rightName]),
@@ -7684,6 +7727,9 @@ def _build_html(
         ? alignment.pivot
         : [0.0, 0.0, 0.0];
       const pivotVector = new THREE.Vector3(...pivot.map(Number));
+      const rotationSequence = Array.isArray(alignment.rotationSequence)
+        ? alignment.rotationSequence
+        : [{{ axis: [axis.x, axis.y, axis.z], radians: angle }}];
       return frames.map((frame) => {{
         const joints = {{}};
         for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
@@ -7770,6 +7816,10 @@ def _build_html(
       let frames = activeFrames.map((frame, index) => {{
         activeRenderFrame = frame;
         const translation = getFrameBakeTranslation(frame, lockYDrift);
+        const sourceFrameIndex = Number.isInteger(frame.frameIndex) ? frame.frameIndex : index;
+        const sourcePayloadFrame = Array.isArray(payload.frames)
+          ? payload.frames[sourceFrameIndex]
+          : null;
         const joints = {{}};
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
@@ -7781,11 +7831,12 @@ def _build_html(
         }}
         return {{
           frameIndex: index,
-          sourceFrameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : index,
+          sourceFrameIndex,
           timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
           sourceTimeSec: frame.timeSec ?? 0,
           syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
           rootTranslationApplied: translation,
+          sourceJoints: sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints ?? null,
           joints,
         }};
       }});
@@ -8059,6 +8110,17 @@ def _build_html(
         Math.min(1.2, (Number(wearDisplay.viewPitchDegrees) || 0.0) * Math.PI / 180.0)
       );
       cameraTouched = true;
+      const layoutNode = document.querySelector(".layout");
+      const panelNode = document.querySelector(".panel");
+      if (layoutNode) {{
+        layoutNode.style.gridTemplateColumns = "1fr";
+      }}
+      if (panelNode) {{
+        panelNode.style.display = "none";
+      }}
+      viewport.style.width = "100vw";
+      viewport.style.height = "100vh";
+      resize();
       invalidateSceneBoundsCache();
       applySceneReframe();
     }}
@@ -9316,13 +9378,22 @@ def _build_html(
       if (headJoint) {{
         headMesh.visible = true;
         const neckSourceJoint = getFrameJointWorld(frame, frameTranslation, "neck");
-        const headAxis = neckSourceJoint ? headJoint.clone().sub(neckSourceJoint) : axisY.clone();
-        const headCenter = neckSourceJoint
-          ? neckSourceJoint.clone().lerp(headJoint, 0.82)
-          : headJoint.clone();
+        const upperSpineJoint = getFrameJointWorld(frame, frameTranslation, "spine3")
+          ?? getFrameJointWorld(frame, frameTranslation, "spine2");
+        const measuredHeadAxis = neckSourceJoint ? headJoint.clone().sub(neckSourceJoint) : axisY.clone();
+        const torsoHeadAxis = neckSourceJoint && upperSpineJoint
+          ? neckSourceJoint.clone().sub(upperSpineJoint)
+          : measuredHeadAxis;
+        const headAxis = torsoHeadAxis.lengthSq() > 1e-8 ? torsoHeadAxis : measuredHeadAxis;
+        const headDistance = neckSourceJoint ? headJoint.distanceTo(neckSourceJoint) : 0.135;
         const headScale = neckSourceJoint
-            ? Math.max(0.115, Math.min(0.165, headJoint.distanceTo(neckSourceJoint) * 0.68))
+            ? Math.max(0.115, Math.min(0.165, headDistance * 0.68))
             : 0.135;
+        const headCenter = neckSourceJoint
+          ? neckSourceJoint.clone().add(
+              headAxis.clone().normalize().multiplyScalar(Math.max(headDistance * 0.70, headScale * 0.54))
+            )
+          : headJoint.clone();
         setOrientedFrameVolume(
           headMesh,
           headCenter,
