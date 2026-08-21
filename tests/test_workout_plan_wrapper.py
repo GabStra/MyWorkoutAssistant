@@ -969,7 +969,7 @@ def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
-def test_workout_plan_wrapper_uses_gpu_lock_to_overlap_discovery_with_bake_by_default(tmp_path: Path) -> None:
+def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     wham_repo = tmp_path / "WHAM"
@@ -1023,7 +1023,7 @@ def test_workout_plan_wrapper_uses_gpu_lock_to_overlap_discovery_with_bake_by_de
     assert summary["bakeWorkers"] == 2
     assert summary["parallelism"]["gpuDiscoveryStages"] == ["yolo_pose_prefilter"]
     assert summary["parallelism"]["globalGpuLockEnabled"] is True
-    assert summary["parallelism"]["gpuDiscoveryBakeOverlap"] == "allow"
+    assert summary["parallelism"]["gpuDiscoveryBakeOverlap"] == "avoid"
     assert summary["parallelism"]["defaultDiscoveryWorkerCap"] == 1
     for exercise_workspace in workspace.iterdir():
         if not exercise_workspace.is_dir() or not (exercise_workspace / "bake.log").exists():
@@ -1080,3 +1080,15 @@ def test_workout_plan_wrapper_rejects_non_cuda_pose_prefilter_device(tmp_path: P
 
     assert result.returncode != 0
     assert "YOLO pose prefilter must use CUDA" in result.stdout + result.stderr
+
+
+def test_staged_fallback_retries_rotate_between_exercises() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "YieldAfterUnsuccessfulBake" in script
+    assert 'status = "retry_pending"' in script
+    assert "$pendingLegacyBakeItems.Enqueue($retryWorkItem)" in script
+    assert "individualRetryPassCount" in script

@@ -26,7 +26,7 @@ param(
     [int]$MaxCandidates = 12,
     [int]$CandidateReviewBatchSize = 12,
     [int]$CandidateReviewTargetSuitableCount = 2,
-    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 6,
+    [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = $null,
     [switch]$UseLlamaCppQueryPlanner,
     [switch]$SkipLlamaCppQueryPlanner,
     [switch]$UseDeepSeekQueryPlanner,
@@ -75,7 +75,7 @@ param(
     [ValidateSet("auto", "allow", "avoid")]
     [string]$GpuDiscoveryBakeOverlap = "auto",
     [int]$FallbackCandidates = 12,
-    [int]$MaxSourceWindowAttempts = 5,
+    [int]$MaxSourceWindowAttempts = 0,
     [int]$MaxFinalOutputRejections = 0,
     [double]$SourceReviewTimeoutSeconds = 180.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
@@ -96,8 +96,8 @@ param(
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 0.0,
-    [double]$WhamTimeoutSeconds = 0.0,
+    [double]$WhamWorkerJobTimeoutSeconds = 1200.0,
+    [double]$WhamTimeoutSeconds = 1200.0,
     [switch]$FullWhamCameraSlam,
     [switch]$SkipSmplify,
     [switch]$RunSmplify,
@@ -196,7 +196,7 @@ $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
 $script:WhamWorkerStartedOnce = $false
-$discoveryStagePolicyVersion = 1
+$discoveryStagePolicyVersion = 2
 $sourceDownloadStagePolicyVersion = 1
 
 function Get-RepoRoot {
@@ -1010,7 +1010,7 @@ function Start-WhamWarmWorker {
     foreach ($child in @("jobs", "running", "results", "job_logs")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
     }
-    foreach ($staleFile in @("ready.json", "startup_error.json", "stop", "stopped.json")) {
+    foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop", "stopped.json")) {
         $path = Join-Path $SessionDir $staleFile
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
@@ -1651,7 +1651,8 @@ function Start-BakeJob {
     param(
         [object]$WorkItem,
         [bool]$UseExistingCandidatesForFirstAttempt = $true,
-        [bool]$ReusePreviousTerminalResults = $false
+        [bool]$ReusePreviousTerminalResults = $false,
+        [bool]$YieldAfterUnsuccessfulBake = $true
     )
 
     if (-not $script:AnnouncedIndividualGeneration) {
@@ -1674,6 +1675,7 @@ function Start-BakeJob {
             [int]$MaxSelectedResults,
             [bool]$UseExistingCandidatesForFirstAttempt,
             [bool]$ReusePreviousTerminalResults,
+            [bool]$YieldAfterUnsuccessfulBake,
             [string]$DiscoveryArgumentsSha256,
             [string]$ExercisePlanSha256,
             [string]$EquipmentSha256,
@@ -1823,6 +1825,8 @@ function Start-BakeJob {
         # makes a zero-recommendation discovery look as though every retry has
         # already been consumed, so the exercise is never rediscovered.
         $targetSuitableCount = [Math]::Max(1, $InitialTargetSuitableCount)
+        $hasTargetLimit = $MaxTargetSuitableCount -gt 0
+        $targetLimitLabel = if ($hasTargetLimit) { "$MaxTargetSuitableCount" } else { "evidence-exhaustion" }
         $attemptIndex = 1
         $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $CandidatesPath)
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
@@ -1853,7 +1857,11 @@ function Start-BakeJob {
                 }
                 $useExistingCandidates = $false
             } else {
-                $cumulativeCandidateBudget = $BaseMaxCandidates * $MaxTargetSuitableCount
+                $cumulativeCandidateBudget = if ($hasTargetLimit) {
+                    $BaseMaxCandidates * $MaxTargetSuitableCount
+                } else {
+                    $BaseMaxCandidates
+                }
                 $attemptMaxCandidates = [Math]::Max($cumulativeCandidateBudget, $targetSuitableCount)
                 $attemptVisionCandidates = [Math]::Max($BaseVisionCandidates, $targetSuitableCount)
                 $attemptDiscoveryArgs = Set-ArgumentValue -Arguments $DiscoveryArguments -Name "--candidate-review-target-suitable-count" -Value "$targetSuitableCount"
@@ -1866,7 +1874,7 @@ function Start-BakeJob {
                 }
 
                 for ($serverAttempt = 1; $serverAttempt -le $maxTransientServerAttempts; $serverAttempt += 1) {
-                    "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$MaxTargetSuitableCount (server attempt $serverAttempt/$maxTransientServerAttempts)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                    "[$(Get-Date -Format o)] discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount/$targetLimitLabel (server attempt $serverAttempt/$maxTransientServerAttempts)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
                     $discoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                     & $PythonCommand @attemptDiscoveryArgs *>> $LogPath
                     $discoveryExitCode = $LASTEXITCODE
@@ -1921,7 +1929,7 @@ function Start-BakeJob {
                 }
             }
             if ($recommendedCount -le 0) {
-                if ($targetSuitableCount -ge $MaxTargetSuitableCount) {
+                if (-not $hasTargetLimit -or $targetSuitableCount -ge $MaxTargetSuitableCount) {
                     [pscustomobject]@{
                         exitCode = 0
                         stage = "discovery_no_recommended"
@@ -1930,6 +1938,8 @@ function Start-BakeJob {
                         bakeSeconds = $bakeSecondsTotal
                         discoveryAttemptCount = $discoveryAttemptCount
                         bakeAttemptCount = $bakeAttemptCount
+                        noNewWork = $true
+                        terminalReason = "no_reconstruction_ready_source"
                         attempts = $attempts
                     }
                     return
@@ -1965,8 +1975,10 @@ function Start-BakeJob {
                 elapsedSeconds = $bakeSeconds
             }
             if ($selectedResultCount -gt 0) {
-                if ($selectedResultCount -lt $MaxSelectedResults -and $targetSuitableCount -lt $MaxTargetSuitableCount) {
-                    $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+                if ($selectedResultCount -lt $MaxSelectedResults -and (-not $hasTargetLimit -or $targetSuitableCount -lt $MaxTargetSuitableCount)) {
+                    if ($hasTargetLimit) {
+                        $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+                    }
                     $attemptIndex += 1
                     "[$(Get-Date -Format o)] selected $selectedResultCount/$MaxSelectedResults result(s); expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
                     continue
@@ -2010,7 +2022,23 @@ function Start-BakeJob {
                 "[$(Get-Date -Format o)] bake returned exit code $bakeExitCode after writing a no-selection manifest; expanding review target if possible" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             }
 
-            if ($targetSuitableCount -ge $MaxTargetSuitableCount) {
+            if ($YieldAfterUnsuccessfulBake) {
+                [pscustomobject]@{
+                    exitCode = 0
+                    stage = "bake_round_robin_yield"
+                    logPath = $LogPath
+                    selectedResultCount = 0
+                    discoverySeconds = $discoverySecondsTotal
+                    bakeSeconds = $bakeSecondsTotal
+                    discoveryAttemptCount = $discoveryAttemptCount
+                    bakeAttemptCount = $bakeAttemptCount
+                    attempts = $attempts
+                    retryPending = $true
+                }
+                return
+            }
+
+            if ($hasTargetLimit -and $targetSuitableCount -ge $MaxTargetSuitableCount) {
                 [pscustomobject]@{
                     exitCode = 0
                     stage = "bake_no_selection"
@@ -2025,11 +2053,13 @@ function Start-BakeJob {
                 return
             }
 
-            $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+            if ($hasTargetLimit) {
+                $targetSuitableCount = [Math]::Min($MaxTargetSuitableCount, $targetSuitableCount + 1)
+            }
             $attemptIndex += 1
             "[$(Get-Date -Format o)] no selected Wear skeleton; expanding review target to $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         }
-    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults, $UseExistingCandidatesForFirstAttempt, $ReusePreviousTerminalResults, $WorkItem.discoveryArgumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256, $discoveryStagePolicyVersion
+    } -ArgumentList $PythonCommand, ([string[]]$WorkItem.discoveryArgs), ([string[]]$WorkItem.bakeArgs), $WorkItem.logPath, $WorkItem.exerciseCandidatesPath, $WorkItem.bakeWorkspace, $WorkItem.candidateReviewTargetSuitableCount, $WorkItem.maxCandidateReviewTargetSuitableCount, $WorkItem.maxCandidates, $WorkItem.visionCandidatesPerExercise, $WorkItem.maxSelectedResults, $UseExistingCandidatesForFirstAttempt, $ReusePreviousTerminalResults, $YieldAfterUnsuccessfulBake, $WorkItem.discoveryArgumentsSha256, $WorkItem.exercisePlanSha256, $WorkItem.equipmentSha256, $discoveryStagePolicyVersion
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
     return $job
 }
@@ -2148,6 +2178,18 @@ function Complete-BakeJob {
         Remove-Job -Job $Job -Force
     }
 
+    if ($jobResult -and $jobResult.retryPending -eq $true) {
+        $workItem.discoverySeconds = Add-OptionalSeconds -Current $workItem.discoverySeconds -Value (Get-OptionalDouble -Value $jobResult.discoverySeconds)
+        $workItem.discoveryAttemptCount = [int]$workItem.discoveryAttemptCount + [int]$jobResult.discoveryAttemptCount
+        $workItem.attempts += @($jobResult.attempts)
+        return [ordered]@{
+            exerciseId = $workItem.exerciseId
+            exerciseName = $workItem.exerciseName
+            status = "retry_pending"
+            workItem = $workItem
+        }
+    }
+
     if ($status -eq "completed" -and (-not $jobResult -or $jobResult.exitCode -ne 0)) {
         $status = "failed"
         $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
@@ -2172,7 +2214,10 @@ function Complete-BakeJob {
         @()
     }
     if ($status -eq "completed" -and $selectedOptions.Count -eq 0) {
-        if ($manualReviewFallback) {
+        if ($jobResult -and "$($jobResult.terminalReason)" -eq "no_reconstruction_ready_source") {
+            $status = "no_selection"
+            $errorMessage = "No unseen reconstruction-ready source was found after bounded discovery expansion."
+        } elseif ($manualReviewFallback) {
             $status = "needs_manual_review"
             $errorMessage = "No candidate passed automatic validation; the best generated movement is available for manual review."
         } else {
@@ -2675,7 +2720,9 @@ function Get-StagedWaveActivityText {
                 $finished = @($items | Where-Object { "$($_.source.status)" -ne "pending" }).Count
                 $usable = @($items | Where-Object { "$($_.source.status)" -eq "prepared" }).Count
                 $failed = @($items | Where-Object { "$($_.source.status)" -eq "failed" }).Count
-                return "Checking source videos: $finished of $($items.Count) ($usable usable, $failed failed)$latestSuffix"
+                $workerCount = [int](Get-ObjectProperty -Object $checkpoint.metrics -Name "sourceValidationWorkers")
+                $workerText = if ($workerCount -gt 1) { ", $workerCount parallel lanes" } else { "" }
+                return "Checking source videos: $finished of $($items.Count) ($usable usable, $failed failed$workerText)$latestSuffix"
             }
             "wham_generation" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
@@ -2689,14 +2736,14 @@ function Get-StagedWaveActivityText {
             "wham_released" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
                 $ready = @($eligible | Where-Object { "$($_.wham.status)" -eq "prepared" }).Count
-                return "Motion extraction finished ($ready ready). Starting review"
+                return "Motion extraction finished ($ready ready). Starting deterministic and model validation"
             }
             "final_validation" {
                 $eligible = @($items | Where-Object { "$($_.wham.status)" -eq "prepared" })
                 $finished = @($eligible | Where-Object { "$($_.finalValidation.status)" -ne "pending" }).Count
                 $selected = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "selected" }).Count
                 $failed = @($eligible | Where-Object { "$($_.finalValidation.status)" -in @("failed", "no_selection") }).Count
-                return "Reviewing movements: $finished of $($eligible.Count) ($selected kept, $failed rejected)$latestSuffix"
+                return "Validating generated movements: $finished of $($eligible.Count) ($selected kept, $failed rejected)$latestSuffix"
             }
             "completed" {
                 $completed = @($items | Where-Object { "$($_.status)" -eq "completed" }).Count
@@ -2839,14 +2886,14 @@ switch ($SpeedProfile) {
     "fast" {
         if (-not $PSBoundParameters.ContainsKey("ResultsPerQuery")) { $ResultsPerQuery = 100 }
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 24 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 12 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 4 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = $null }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 12 }
         if (-not $PSBoundParameters.ContainsKey("VisionMaxChunksPerCandidate")) { $VisionMaxChunksPerCandidate = 2 }
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 24 }
         if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 6 }
-        if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 3 }
+        if (-not $PSBoundParameters.ContainsKey("MaxSourceWindowAttempts")) { $MaxSourceWindowAttempts = 0 }
         if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 0 }
         if (-not $PSBoundParameters.ContainsKey("NoExerciseNameRewrite")) { $NoExerciseNameRewrite = $true }
         if (-not $PSBoundParameters.ContainsKey("SemanticGateWithLlamaCpp") -and -not $PSBoundParameters.ContainsKey("SkipSemanticGate")) {
@@ -2861,9 +2908,9 @@ switch ($SpeedProfile) {
     }
     "max" {
         if (-not $PSBoundParameters.ContainsKey("MaxCandidates")) { $MaxCandidates = 6 }
-        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 6 }
+        if (-not $PSBoundParameters.ContainsKey("CandidateReviewBatchSize")) { $CandidateReviewBatchSize = 4 }
         if (-not $PSBoundParameters.ContainsKey("CandidateReviewTargetSuitableCount")) { $CandidateReviewTargetSuitableCount = 2 }
-        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = 6 }
+        if (-not $PSBoundParameters.ContainsKey("MaxCandidateReviewTargetSuitableCount")) { $MaxCandidateReviewTargetSuitableCount = $null }
         if (-not $PSBoundParameters.ContainsKey("VisionCandidatesPerExercise")) { $VisionCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("PosePrefilterCandidatesPerExercise")) { $PosePrefilterCandidatesPerExercise = 6 }
         if (-not $PSBoundParameters.ContainsKey("FallbackCandidates")) { $FallbackCandidates = 2 }
@@ -2909,7 +2956,7 @@ if ($DeferAfterFirstAttempt) {
     $CandidateReviewTargetSuitableCount = 1
     $MaxCandidateReviewTargetSuitableCount = 1
     $FallbackCandidates = 0
-    $MaxFinalOutputRejections = 2
+    $MaxFinalOutputRejections = 0
     $CandidateWorkers = 1
 }
 if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
@@ -2986,10 +3033,11 @@ $discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
 $gpuLockSetting = "$env:EXERCISE_MOTION_GPU_LOCK".Trim().ToLowerInvariant()
 $globalGpuLockEnabled = [string]::IsNullOrWhiteSpace($gpuLockSetting) -or $gpuLockSetting -notin @("0", "false", "off", "no")
 $effectiveGpuDiscoveryBakeOverlap = if ($GpuDiscoveryBakeOverlap -eq "auto") {
-    # Every CUDA owner (YOLO, llama.cpp, WHAM, and SpinePose) uses the shared
-    # cross-process GPU lock. Let discovery overlap bake CPU/browser work while
-    # that lock continues to serialize VRAM-heavy sections.
-    if ($globalGpuLockEnabled) { "allow" } elseif ($discoveryUsesGpu) { "avoid" } else { "allow" }
+    # A persistent llama.cpp process can retain CUDA residency while another
+    # process waits on the shared lock. In that state neither the discovery VLM
+    # nor the bake-side source/final validator can make forward progress. Keep
+    # CPU-only discovery overlapped, but never overlap CUDA discovery with bake.
+    if ($discoveryUsesGpu) { "avoid" } else { "allow" }
 } else {
     $GpuDiscoveryBakeOverlap
 }
@@ -3025,10 +3073,10 @@ if ($MaxSelectedResults -lt 1) {
 $resolvedMaxCandidateReviewTargetSuitableCount = if ($null -ne $MaxCandidateReviewTargetSuitableCount) {
     [Math]::Max([int]$MaxCandidateReviewTargetSuitableCount, $MaxSelectedResults)
 } else {
-    [Math]::Max($FallbackCandidates, $CandidateReviewTargetSuitableCount, $MaxSelectedResults)
+    0
 }
 $initialTargetSuitableCount = [Math]::Max($CandidateReviewTargetSuitableCount, $MaxSelectedResults)
-if ($resolvedMaxCandidateReviewTargetSuitableCount -lt $initialTargetSuitableCount) {
+if ($resolvedMaxCandidateReviewTargetSuitableCount -gt 0 -and $resolvedMaxCandidateReviewTargetSuitableCount -lt $initialTargetSuitableCount) {
     throw "MaxCandidateReviewTargetSuitableCount must be greater than or equal to CandidateReviewTargetSuitableCount and MaxSelectedResults."
 }
 
@@ -3755,6 +3803,13 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             if (Test-MotionRunCancelRequested) {
                 break
             }
+            if ($null -ne $warmWhamWorkerInstance) {
+                $workerRunning = (& docker inspect -f "{{.State.Running}}" $warmWhamWorkerInstance.containerName 2>$null)
+                if ($LASTEXITCODE -ne 0 -or "$workerRunning".Trim().ToLowerInvariant() -ne "true") {
+                    Write-Warning "Motion extractor exited unexpectedly; it will be restarted before the next bake."
+                    $warmWhamWorkerInstance = $null
+                }
+            }
             while (
                 $pendingPrefetchItems.Count -gt 0 -and
                 $prefetchRunningJobs.Count -lt $PrefetchWorkers -and
@@ -3838,12 +3893,22 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 Write-ProgressCheckpoint
             }
 
-            while ($canLaunchBake -and $pendingLegacyBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+            # Staged fallbacks can re-enter GPU-backed discovery. Run these
+            # jobs literally one at a time so independent llama.cpp/YOLO
+            # subprocesses cannot wait on each other's server or GPU lock.
+            while ($canLaunchBake -and $pendingLegacyBakeItems.Count -gt 0 -and $bakeRunningJobs.Count -eq 0) {
                 $legacyItem = $pendingLegacyBakeItems.Dequeue()
+                # This item already ran in the staged wave. Skip the exact
+                # terminal windows so the individual fallback can only do new
+            # work and then expand discovery if none remain.
+                $useExistingForLegacyPass = -not (
+                    $legacyItem.PSObject.Properties.Name -contains "individualRetryPassCount" -and
+                    [int]$legacyItem.individualRetryPassCount -gt 0
+                )
                 $bakeRunningJobs += Start-BakeJob `
                     -WorkItem $legacyItem `
-                    -UseExistingCandidatesForFirstAttempt $true `
-                    -ReusePreviousTerminalResults $ReuseExistingSelected
+                    -UseExistingCandidatesForFirstAttempt $useExistingForLegacyPass `
+                    -ReusePreviousTerminalResults $true
                 Write-ProgressCheckpoint
             }
 
@@ -4047,9 +4112,25 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         }
                         Write-ProgressCheckpoint
                     } else {
-                        $summaryByIndex[$job.WorkItem.index] = Complete-BakeJob -Job $job
-                        $completedCount += 1
-                        $bakeCompletedCount += 1
+                        $bakeSummary = Complete-BakeJob -Job $job
+                        if ("$($bakeSummary.status)" -eq "retry_pending") {
+                            # Put the exercise at the back of the queue after one
+                            # unsuccessful candidate. This preserves evidence-
+                            # exhaustion semantics without allowing one hard
+                            # exercise to starve every other staged fallback.
+                            $retryWorkItem = $bakeSummary.workItem
+                            $retryPassCount = if ($retryWorkItem.PSObject.Properties.Name -contains "individualRetryPassCount") {
+                                [int]$retryWorkItem.individualRetryPassCount + 1
+                            } else {
+                                1
+                            }
+                            $retryWorkItem | Add-Member -NotePropertyName individualRetryPassCount -NotePropertyValue $retryPassCount -Force
+                            $pendingLegacyBakeItems.Enqueue($retryWorkItem)
+                        } else {
+                            $summaryByIndex[$job.WorkItem.index] = $bakeSummary
+                            $completedCount += 1
+                            $bakeCompletedCount += 1
+                        }
                         Write-ProgressCheckpoint
                     }
                 }
