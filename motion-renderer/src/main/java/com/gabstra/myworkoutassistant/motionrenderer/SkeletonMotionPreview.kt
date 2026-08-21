@@ -1973,7 +1973,7 @@ private fun buildSingleLowPolyMesh(
             side = chestAxes.side,
             depth = chestAxes.forward,
             halfWidth = shoulderWidth * 0.40f,
-            frontDepth = shoulderWidth * 0.22f,
+            frontDepth = shoulderWidth * 0.18f,
             backDepth = shoulderWidth * 0.24f,
         ),
         addMeshDirectionalRing(
@@ -1981,37 +1981,37 @@ private fun buildSingleLowPolyMesh(
             center = upperChestCenter,
             side = upperChestAxes.side,
             depth = upperChestAxes.forward,
-            halfWidth = shoulderWidth * 0.50f,
-            frontDepth = shoulderWidth * 0.26f,
-            backDepth = shoulderWidth * 0.28f,
+            halfWidth = shoulderWidth * 0.44f,
+            frontDepth = shoulderWidth * 0.17f,
+            backDepth = shoulderWidth * 0.27f,
         ),
         addMeshDirectionalRing(
             mesh = mesh,
             center = chestTopCenter,
             side = chestTopAxes.side,
             depth = chestTopAxes.forward,
-            halfWidth = shoulderWidth * 0.47f,
-            frontDepth = shoulderWidth * 0.24f,
-            backDepth = shoulderWidth * 0.27f,
+            halfWidth = shoulderWidth * 0.38f,
+            frontDepth = shoulderWidth * 0.15f,
+            backDepth = shoulderWidth * 0.25f,
         ),
     )
     chestRings.zipWithNext().forEach { (lower, upper) ->
         addMeshStrip(mesh, lower, upper, palette.coreFill)
     }
-    val upperBackHalfWidth = shoulderWidth * 0.46f
+    val upperBackHalfWidth = shoulderWidth * 0.30f
     val upperBackRing = addMeshDirectionalRing(
         mesh = mesh,
         center = upperBackCenter,
         side = upperBackAxes.side,
         depth = upperBackAxes.forward,
         halfWidth = upperBackHalfWidth,
-        frontDepth = shoulderWidth * 0.23f,
-        backDepth = shoulderWidth * 0.31f,
+        frontDepth = shoulderWidth * 0.14f,
+        backDepth = shoulderWidth * 0.24f,
     )
     addMeshStrip(mesh, chestRings.last(), upperBackRing, palette.coreFill)
-    val upperTransitionHalfWidth = shoulderWidth * 0.36f
-    val upperTransitionFrontDepth = shoulderWidth * 0.13f
-    val upperTransitionBackDepth = shoulderWidth * 0.18f
+    val upperTransitionHalfWidth = shoulderWidth * 0.18f
+    val upperTransitionFrontDepth = shoulderWidth * 0.11f
+    val upperTransitionBackDepth = shoulderWidth * 0.13f
     val upperTransitionRing = addMeshDirectionalRing(
         mesh = mesh,
         center = upperTransitionCenter,
@@ -2023,7 +2023,7 @@ private fun buildSingleLowPolyMesh(
     )
     addMeshStrip(mesh, upperBackRing, upperTransitionRing, palette.coreFill)
     val neckMidLerp = 0.55f
-    val neckTopAxes = addNeckConnector(
+    val neckConnector = addNeckConnector(
         mesh = mesh,
         neck = neck,
         lowerRing = upperTransitionRing,
@@ -2032,11 +2032,10 @@ private fun buildSingleLowPolyMesh(
         referenceAxes = previousRingAxes,
         shoulderWidth = shoulderWidth,
         midLerp = neckMidLerp,
-        torsoFill = palette.coreFill,
         neckFill = palette.jointFill,
     )
     val headAxes = alignRingAxes(
-        neckTopAxes,
+        neckConnector.axes,
         spineRingAxes(neck, neck.lerp(head, 0.5f), head, bodyAxes),
     )
 
@@ -2097,16 +2096,17 @@ private fun buildSingleLowPolyMesh(
         return stableSegmentLength(startName, endName) * scale
     }
 
-    addJointCap(mesh, leftHip, bodyAxes, segmentScaledWidth("left_hip", "left_knee", 0.27f) * 0.58f, palette.jointFill)
-    addJointCap(mesh, rightHip, bodyAxes, segmentScaledWidth("right_hip", "right_knee", 0.27f) * 0.58f, palette.jointFill)
-    addJointCap(mesh, leftShoulder, bodyAxes, segmentScaledWidth("left_shoulder", "left_elbow", 0.30f) * 0.56f, palette.jointFill)
-    addJointCap(mesh, rightShoulder, bodyAxes, segmentScaledWidth("right_shoulder", "right_elbow", 0.30f) * 0.56f, palette.jointFill)
+    addJointCap(mesh, leftHip, bodyAxes, segmentScaledWidth("left_hip", "left_knee", 0.27f) * 0.48f, palette.jointFill)
+    addJointCap(mesh, rightHip, bodyAxes, segmentScaledWidth("right_hip", "right_knee", 0.27f) * 0.48f, palette.jointFill)
+    addJointCap(mesh, leftShoulder, bodyAxes, segmentScaledWidth("left_shoulder", "left_elbow", 0.30f) * 0.48f, palette.jointFill)
+    addJointCap(mesh, rightShoulder, bodyAxes, segmentScaledWidth("right_shoulder", "right_elbow", 0.30f) * 0.48f, palette.jointFill)
     addHeadVolume(
         mesh = mesh,
         neck = neck,
         headAxes = headAxes,
         shoulderWidth = shoulderWidth,
         headSegmentLength = stableSegmentLength("neck", "head"),
+        neckUpperRing = neckConnector.upperRing,
         fill = palette.headFill,
     )
 
@@ -2175,17 +2175,17 @@ private fun buildSingleLowPolyMesh(
     addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
         segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),
         segmentScaledWidth("left_elbow", "left_wrist", 0.235f),
-    ) * 0.48f, palette.jointFill)
+    ) * 0.40f, palette.jointFill)
     addJointCapAtNames(mesh, resolvedJoints, "right_elbow", bodyAxes, max(
         segmentScaledWidth("right_shoulder", "right_elbow", 0.225f),
         segmentScaledWidth("right_elbow", "right_wrist", 0.235f),
-    ) * 0.48f, palette.jointFill)
+    ) * 0.40f, palette.jointFill)
     addJointCapAtNames(
         mesh,
         resolvedJoints,
         "left_wrist",
         bodyAxes,
-        segmentScaledWidth("left_elbow", "left_wrist", 0.17f) * 0.48f,
+        segmentScaledWidth("left_elbow", "left_wrist", 0.17f) * 0.30f,
         palette.jointFill,
     )
     addJointCapAtNames(
@@ -2193,31 +2193,37 @@ private fun buildSingleLowPolyMesh(
         resolvedJoints,
         "right_wrist",
         bodyAxes,
-        segmentScaledWidth("right_elbow", "right_wrist", 0.17f) * 0.48f,
+        segmentScaledWidth("right_elbow", "right_wrist", 0.17f) * 0.30f,
         palette.jointFill,
     )
     addJointCapAtNames(mesh, resolvedJoints, "left_knee", bodyAxes, max(
         segmentScaledWidth("left_hip", "left_knee", 0.215f),
         segmentScaledWidth("left_knee", "left_ankle", 0.225f),
-    ) * 0.48f, palette.jointFill)
+    ) * 0.40f, palette.jointFill)
     addJointCapAtNames(mesh, resolvedJoints, "right_knee", bodyAxes, max(
         segmentScaledWidth("right_hip", "right_knee", 0.215f),
         segmentScaledWidth("right_knee", "right_ankle", 0.225f),
-    ) * 0.48f, palette.jointFill)
-    addJointCapAtNames(
+    ) * 0.40f, palette.jointFill)
+    addJointCap(
         mesh = mesh,
-        joints = resolvedJoints,
-        jointName = "left_ankle",
+        center = ankleCapCenter(
+            resolvedJoints.getValue("left_knee"),
+            resolvedJoints.getValue("left_ankle"),
+            segmentScaledWidth("left_knee", "left_ankle", 0.165f),
+        ),
         bodyAxes = bodyAxes,
-        radius = segmentScaledWidth("left_knee", "left_ankle", 0.165f) * 0.42f,
+        radius = segmentScaledWidth("left_knee", "left_ankle", 0.165f) * 0.40f,
         fill = palette.jointFill,
     )
-    addJointCapAtNames(
+    addJointCap(
         mesh = mesh,
-        joints = resolvedJoints,
-        jointName = "right_ankle",
+        center = ankleCapCenter(
+            resolvedJoints.getValue("right_knee"),
+            resolvedJoints.getValue("right_ankle"),
+            segmentScaledWidth("right_knee", "right_ankle", 0.165f),
+        ),
         bodyAxes = bodyAxes,
-        radius = segmentScaledWidth("right_knee", "right_ankle", 0.165f) * 0.42f,
+        radius = segmentScaledWidth("right_knee", "right_ankle", 0.165f) * 0.40f,
         fill = palette.jointFill,
     )
     return mesh
@@ -2274,7 +2280,7 @@ private fun jointCapClearance(
         when (jointName) {
             "left_hip", "right_hip" -> limbWidth * 0.12f
             "left_shoulder", "right_shoulder" -> limbWidth * 0.12f
-            "left_ankle", "right_ankle" -> limbWidth * 0.16f
+            "left_ankle", "right_ankle" -> limbWidth * 0.65f
             else -> limbWidth * 0.08f
         }
     } else {
@@ -2326,7 +2332,7 @@ private fun addShoeBlockFromNames(
     val rings = profile.map { point ->
         addMeshBoxRing(
             mesh = mesh,
-            center = ankle + footForward * (length * point[0]) + shoeUp * (height * point[1]),
+            center = ankle + footForward * (length * (point[0] - 0.12f)) + shoeUp * (height * point[1]),
             side = footSide,
             depth = shoeUp,
             halfWidth = halfWidth * point[2],
@@ -2337,6 +2343,18 @@ private fun addShoeBlockFromNames(
     addMeshCap(mesh, rings.first(), fill)
     addMeshCap(mesh, rings.last().asReversed(), fill)
     return true
+}
+
+private fun ankleCapCenter(
+    knee: WearSkeletonVec3,
+    ankle: WearSkeletonVec3,
+    lowerLegEndWidth: Float,
+): WearSkeletonVec3 {
+    val shin = ankle - knee
+    val shinLength = shin.length()
+    if (shinLength <= 0.0001f) return ankle
+    val clearance = min(lowerLegEndWidth * 0.65f, shinLength * 0.10f)
+    return ankle - shin * (clearance * 0.5f / shinLength)
 }
 
 private fun addJointCapAtNames(
@@ -2369,6 +2387,11 @@ private fun addJointCap(
     )
 }
 
+private data class NeckConnectorResult(
+    val axes: BodyAxes,
+    val upperRing: List<Int>,
+)
+
 private fun addNeckConnector(
     mesh: GeneratedLowPolyMesh,
     neck: WearSkeletonVec3,
@@ -2378,9 +2401,8 @@ private fun addNeckConnector(
     referenceAxes: BodyAxes,
     shoulderWidth: Float,
     midLerp: Float,
-    torsoFill: Color,
     neckFill: Color,
-): BodyAxes {
+): NeckConnectorResult {
     val midCenter = torsoTopCenter.lerp(neck, midLerp)
     val neckAxes = alignRingAxes(
         referenceAxes,
@@ -2407,10 +2429,9 @@ private fun addNeckConnector(
         frontDepth = shoulderWidth * 0.085f,
         backDepth = shoulderWidth * 0.075f,
     )
-    addMeshStrip(mesh, lowerRing, midRing, torsoFill)
+    addMeshStrip(mesh, lowerRing, midRing, neckFill)
     addMeshStrip(mesh, midRing, upperRing, neckFill)
-    addMeshCap(mesh, upperRing.asReversed(), neckFill)
-    return neckAxes
+    return NeckConnectorResult(neckAxes, upperRing)
 }
 
 private fun addHeadVolume(
@@ -2419,6 +2440,7 @@ private fun addHeadVolume(
     headAxes: BodyAxes,
     shoulderWidth: Float,
     headSegmentLength: Float,
+    neckUpperRing: List<Int>,
     fill: Color,
 ) {
     val height = max(headSegmentLength, shoulderWidth * 0.12f)
@@ -2428,16 +2450,23 @@ private fun addHeadVolume(
     val headHeight = max(height * 1.65f, shoulderWidth * 0.45f)
     val headWidth = max(height * 1.08f, shoulderWidth * 0.37f)
     val headDepth = headWidth * 0.82f
-    val base = neck + up * (headHeight * 0.06f)
+    val base = neck + up * (headHeight * 0.02f)
     val center = base + up * (headHeight * 0.44f)
     val rings = listOf(
-        addMeshBoxRing(mesh, base, side, depth, headWidth * 0.34f, headDepth * 0.34f),
+        addMeshBoxRing(
+            mesh,
+            base,
+            side,
+            depth,
+            shoulderWidth * 0.12f,
+            shoulderWidth * 0.08f,
+        ),
         addMeshBoxRing(mesh, center, side, depth, headWidth * 0.52f, headDepth * 0.52f),
         addMeshBoxRing(mesh, base + up * headHeight, side, depth, headWidth * 0.44f, headDepth * 0.44f),
     )
+    addMeshStrip(mesh, neckUpperRing, rings[0], fill)
     addMeshStrip(mesh, rings[0], rings[1], fill)
     addMeshStrip(mesh, rings[1], rings[2], fill)
-    addMeshCap(mesh, rings[0], fill)
     addMeshCap(mesh, rings[2].asReversed(), fill)
 }
 
