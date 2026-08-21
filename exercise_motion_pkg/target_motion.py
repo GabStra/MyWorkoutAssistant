@@ -77,6 +77,10 @@ OBSERVABLE_MOTION_REGION_ALIASES = {
     "floor": "feet",
     "ground": "feet",
 }
+OBSERVABLE_MOTION_REGION_COMPONENTS = {
+    "upper_limb": {"upper_limb", "shoulders", "elbows", "hands"},
+    "lower_limb": {"lower_limb", "hips", "knees", "feet"},
+}
 
 
 def normalize_target_motion_profile_key(value: Any) -> str | None:
@@ -95,6 +99,11 @@ def normalize_observable_motion_spec(value: Any) -> dict[str, Any] | None:
     primary_regions = normalize_observable_motion_regions(value.get("primaryMovingRegions"), limit=8)
     reference_regions = normalize_observable_motion_regions(value.get("referenceRegions"), limit=8)
     visible_regions = normalize_observable_motion_regions(value.get("mustBeVisibleRegions"), limit=8)
+    reference_regions = normalize_observable_motion_reference_regions(
+        reference_regions,
+        primary_regions=primary_regions,
+        visible_regions=visible_regions,
+    )
     axis = normalize_observable_motion_axis(value.get("primaryAxis"))
     pattern = normalize_observable_motion_pattern(value.get("motionPattern"))
     pattern = normalize_joint_center_motion_pattern(
@@ -117,6 +126,32 @@ def normalize_observable_motion_spec(value: Any) -> dict[str, Any] | None:
         "mustShowFullCycle": must_show_full_cycle if must_show_full_cycle is not None else True,
         "mustBeVisibleRegions": visible_regions,
     }
+
+
+def observable_motion_regions_overlap(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    left_components = OBSERVABLE_MOTION_REGION_COMPONENTS.get(left, {left})
+    right_components = OBSERVABLE_MOTION_REGION_COMPONENTS.get(right, {right})
+    return bool(left_components.intersection(right_components))
+
+
+def normalize_observable_motion_reference_regions(
+    reference_regions: list[str],
+    *,
+    primary_regions: list[str],
+    visible_regions: list[str],
+) -> list[str]:
+    def is_independent(region: str) -> bool:
+        return not any(
+            observable_motion_regions_overlap(region, primary_region)
+            for primary_region in primary_regions
+        )
+
+    independent_references = [region for region in reference_regions if is_independent(region)]
+    if independent_references:
+        return independent_references
+    return [region for region in visible_regions if is_independent(region)][:2]
 
 
 def normalize_joint_center_motion_pattern(
@@ -549,6 +584,22 @@ def target_motion_profile_text(
 
 
 def contract_text_implies_distal_leg_vertical_raise(contract: dict[str, Any]) -> bool:
+    observable_spec = contract.get("observableMotionSpec")
+    if isinstance(observable_spec, dict):
+        motion_pattern = normalize_observable_motion_pattern(
+            observable_spec.get("motionPattern")
+        )
+        primary_regions = {
+            re.sub(r"[^a-z0-9]+", "_", str(value).strip().casefold()).strip("_")
+            for value in observable_spec.get("primaryMovingRegions", [])
+        }
+        # A distal-leg profile measures articulation relative to the lower
+        # leg. It is not appropriate for jumps and other whole-body vertical
+        # translations merely because their prose mentions feet moving up.
+        if motion_pattern in {"body_away_from_anchor", "body_toward_anchor"} or primary_regions.intersection(
+            {"torso", "hips", "pelvis", "whole_body"}
+        ):
+            return False
     distal_lower_leg_terms = {
         "ankle",
         "ankles",
