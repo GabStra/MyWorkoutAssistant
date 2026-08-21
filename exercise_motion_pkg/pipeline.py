@@ -620,17 +620,16 @@ def run_generation_pipeline(
 
     if request.motion_tuning_enabled:
         video_alignment_metadata: dict[str, object] | None = None
+        source_pose_reference_path = request.source_pose_reference_path
+        if source_pose_reference_path is None:
+            source_pose_reference_path = discover_source_pose_reference_path(paths.root)
+        source_pose_payload = (
+            load_source_pose_payload(source_pose_reference_path.expanduser().resolve())
+            if source_pose_reference_path is not None and source_pose_reference_path.is_file()
+            else None
+        )
         if video_world_alignment_should_run:
             stage_started = time.perf_counter()
-            source_pose_reference_path = request.source_pose_reference_path
-            if source_pose_reference_path is None:
-                discovered = discover_source_pose_reference_path(paths.root)
-                source_pose_reference_path = discovered
-            source_pose_payload = (
-                load_source_pose_payload(source_pose_reference_path.expanduser().resolve())
-                if source_pose_reference_path is not None and source_pose_reference_path.is_file()
-                else None
-            )
             alignment_result = align_motion_clip_to_video(
                 raw_clip,
                 video_path=input_video_path,
@@ -660,6 +659,7 @@ def run_generation_pipeline(
         stage_started = time.perf_counter()
         cleaned_clip = refine_motion_clip_structurally(
             cleaned_clip,
+            source_pose_payload=source_pose_payload,
             dominant_chain_ratio=request.dominant_chain_ratio,
             non_dominant_damping=request.non_dominant_damping,
             non_dominant_radius_scale=request.non_dominant_radius_scale,

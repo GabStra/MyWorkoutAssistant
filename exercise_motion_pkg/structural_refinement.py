@@ -3,8 +3,14 @@ from __future__ import annotations
 import math
 from dataclasses import replace
 from statistics import median
+from typing import Any
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
+from exercise_motion_pkg.kinematic_policy import (
+    DISTAL_STEP_BODY_RATIO,
+    DISTAL_STEP_SPIKE_RATIO,
+)
+from exercise_motion_pkg.pose_fidelity import source_to_motion_pose_fidelity_metrics
 
 ARM_PAIRS = (
     ("left_elbow", "right_elbow"),
@@ -71,6 +77,7 @@ NON_DOMINANT_CHAIN_RATIO = 0.65
 MAX_SUPPRESSION_CORRECTION_METERS = 0.035
 MAX_TORSO_CORRECTION_METERS = 0.025
 MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(15.0)
+MAX_PLAUSIBLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(30.0)
 SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
@@ -93,11 +100,97 @@ ROOT_VERTICAL_MOTION_JOINTS = ("pelvis", "hips", "root")
 DOMINANT_CHAIN_TOTAL_RANGE_RATIO = 0.45
 DOMINANT_CHAIN_MIN_TOTAL_RANGE_BODY_RATIO = 0.08
 DOMINANT_CHAIN_MIN_TOTAL_RANGE_METERS = 0.08
+STRUCTURAL_BONE_STABILITY_MAX_VARIATION_RATIO = 0.18
+SOURCE_FIDELITY_PROTECTED_METRICS = (
+    "p90JointErrorBodyRatio",
+    "medianLowerJointErrorBodyRatio",
+    "p90JointAngleErrorDegrees",
+)
+
+
+def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
+    return {
+        "frames": [
+            {
+                "timeSec": frame.time_sec,
+                "joints": {
+                    name: [float(point[0]), float(point[1]), float(point[2])]
+                    for name, point in frame.joints.items()
+                },
+            }
+            for frame in clip.frames
+        ]
+    }
+
+
+def _accept_source_preserving_refinement_step(
+    before: MotionClip,
+    proposed: MotionClip,
+    *,
+    source_pose_payload: dict[str, Any] | None,
+    step_name: str,
+) -> tuple[MotionClip, dict[str, object]]:
+    if proposed.frames == before.frames:
+        return before, {
+            "step": step_name,
+            "accepted": True,
+            "reason": "step_changed_no_joint_positions",
+        }
+    if not isinstance(source_pose_payload, dict):
+        return proposed, {
+            "step": step_name,
+            "accepted": True,
+            "reason": "source_pose_reference_unavailable",
+        }
+    before_metrics = source_to_motion_pose_fidelity_metrics(
+        source_pose_payload,
+        _motion_clip_pose_payload(before),
+    )
+    proposed_metrics = source_to_motion_pose_fidelity_metrics(
+        source_pose_payload,
+        _motion_clip_pose_payload(proposed),
+    )
+    if not before_metrics.get("available") or not proposed_metrics.get("available"):
+        return before, {
+            "step": step_name,
+            "accepted": False,
+            "reason": "source_fidelity_comparison_unavailable",
+            "before": before_metrics,
+            "proposed": proposed_metrics,
+        }
+    degraded_metrics: list[str] = []
+    deltas: dict[str, float] = {}
+    for metric_name in SOURCE_FIDELITY_PROTECTED_METRICS:
+        before_value = before_metrics.get(metric_name)
+        proposed_value = proposed_metrics.get(metric_name)
+        if not isinstance(before_value, (int, float)) or not isinstance(
+            proposed_value, (int, float)
+        ):
+            continue
+        delta = float(proposed_value) - float(before_value)
+        deltas[metric_name] = delta
+        if delta > 1e-6:
+            degraded_metrics.append(metric_name)
+    accepted = not degraded_metrics
+    return (proposed if accepted else before), {
+        "step": step_name,
+        "accepted": accepted,
+        "reason": (
+            "source_fidelity_preserved_or_improved"
+            if accepted
+            else "protected_source_fidelity_degraded"
+        ),
+        "degradedMetrics": degraded_metrics,
+        "metricDeltas": deltas,
+        "before": before_metrics,
+        "proposed": proposed_metrics,
+    }
 
 
 def refine_motion_clip_structurally(
     clip: MotionClip,
     *,
+    source_pose_payload: dict[str, Any] | None = None,
     dominant_chain_ratio: float = NON_DOMINANT_CHAIN_RATIO,
     non_dominant_damping: float = 1.0,
     non_dominant_radius_scale: float = 1.0,
@@ -143,7 +236,8 @@ def refine_motion_clip_structurally(
             isinstance(mode, dict) and mode.get("mode") == "same_phase_symmetric"
             for mode in bilateral_modes.values()
         )
-        clip, directional_denoising = _denoise_along_dominant_motion_axis(
+        directional_input = clip
+        directional_candidate, directional_denoising = _denoise_along_dominant_motion_axis(
             clip,
             dynamic_length_child_joints=dynamic_child_joints,
             stabilize_body_orientation=stabilize_body_orientation,
@@ -152,6 +246,13 @@ def refine_motion_clip_structurally(
             **directional_denoising,
             "noiseMetrics": noise_metrics,
         }
+        clip, directional_transaction = _accept_source_preserving_refinement_step(
+            directional_input,
+            directional_candidate,
+            source_pose_payload=source_pose_payload,
+            step_name="directional_denoising",
+        )
+        directional_denoising["transaction"] = directional_transaction
     else:
         directional_denoising = {
             "applied": False,
@@ -165,6 +266,7 @@ def refine_motion_clip_structurally(
             strongest_chain_motion=strongest_chain_motion,
             dominant_profile=dominant_profile,
             non_dominant_radius_scale=non_dominant_radius_scale,
+            source_pose_payload=source_pose_payload,
         )
     else:
         refined, refinement_metadata = _preserve_non_torso_dominant_motion(
@@ -177,7 +279,15 @@ def refine_motion_clip_structurally(
             "reason": "source_preserving_branch_skips_head_pose_reconstruction",
         }
     else:
-        refined, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
+        head_input = refined
+        head_candidate, head_metadata = _preserve_reference_head_pose(refined, reference_clip=clip)
+        refined, head_transaction = _accept_source_preserving_refinement_step(
+            head_input,
+            head_candidate,
+            source_pose_payload=source_pose_payload,
+            step_name="head_pose_preservation",
+        )
+        head_metadata["transaction"] = head_transaction
     if _has_authoritative_support_anchors(refined):
         refined, temporal_polish_metadata = _polish_motion_clip_temporally(refined)
         refined, final_bone_projection_metadata = _preserve_reference_bone_lengths(
@@ -208,6 +318,39 @@ def refine_motion_clip_structurally(
         bilateral_modes=bilateral_modes,
         dominant_profile=dominant_profile,
     )
+    refinement_changed_joints = refinement_metadata.get("applied") is not False
+    if not _has_authoritative_support_anchors(refined) and refinement_changed_joints:
+        terminal_input = refined
+        terminal_candidate, terminal_bone_projection_metadata = _preserve_reference_bone_lengths(
+            refined,
+            reference_clip=source_clip,
+        )
+        refined, terminal_transaction = _accept_source_preserving_refinement_step(
+            terminal_input,
+            terminal_candidate,
+            source_pose_payload=source_pose_payload,
+            step_name="terminal_bone_length_projection",
+        )
+        terminal_bone_projection_metadata["transaction"] = terminal_transaction
+    elif not refinement_changed_joints:
+        terminal_bone_projection_metadata = {
+            "applied": False,
+            "reason": "source_preserving_refinement_changed_no_joints",
+        }
+    else:
+        terminal_bone_projection_metadata = {
+            "applied": False,
+            "reason": "authoritative_support_solver_owns_terminal_chain_lengths",
+        }
+    source_bone_variation = _maximum_structural_bone_length_variation(source_clip)
+    refined_bone_variation = _maximum_structural_bone_length_variation(refined)
+    structural_rollback = refined_bone_variation > source_bone_variation + 1e-6
+    if structural_rollback:
+        # Refinement is not allowed to manufacture articulation by stretching
+        # the skeleton. This is an invariant, not a quality threshold: if the
+        # input has more stable bone lengths, preserve the input and let later
+        # validators judge the original reconstruction.
+        refined = source_clip
     refinement_metadata = {
         **refinement_metadata,
         "directionalDenoising": directional_denoising,
@@ -216,6 +359,17 @@ def refine_motion_clip_structurally(
         "finalBoneProjection": final_bone_projection_metadata,
         "supportAnchorRestoration": support_anchor_metadata,
         "wholeSkeletonSolver": whole_skeleton_metadata,
+        "terminalBoneProjection": terminal_bone_projection_metadata,
+        "structuralRollback": {
+            "applied": structural_rollback,
+            "reason": (
+                "refinement_increased_structural_bone_length_variation"
+                if structural_rollback
+                else "structural_bone_length_invariant_preserved"
+            ),
+            "sourceMaximumVariationRatio": source_bone_variation,
+            "refinedMaximumVariationRatio": refined_bone_variation,
+        },
     }
     metadata = dict(refined.metadata)
     metadata["structuralRefinement"] = {
@@ -246,6 +400,64 @@ def refine_motion_clip_structurally(
         **refinement_metadata,
     }
     return replace(refined, metadata=metadata)
+
+
+def _maximum_structural_bone_length_variation(clip: MotionClip) -> float:
+    maximum = 0.0
+    for parent_name, child_name in STRUCTURAL_BONES:
+        lengths = [
+            math.dist(frame.joints[parent_name], frame.joints[child_name])
+            for frame in clip.frames
+            if parent_name in frame.joints and child_name in frame.joints
+        ]
+        if not lengths:
+            continue
+        reference = median(lengths)
+        if reference <= 1e-8:
+            continue
+        maximum = max(maximum, (max(lengths) - min(lengths)) / reference)
+    return maximum
+
+
+def _source_dynamic_bone_length_child_joints(clip: MotionClip) -> set[str]:
+    articulating_children = {
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hand",
+        "right_hand",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+        "left_foot",
+        "right_foot",
+    }
+    dynamic_children: set[str] = set()
+    for parent_name, child_name in STRUCTURAL_BONES:
+        if child_name not in articulating_children:
+            continue
+        lengths = [
+            math.dist(frame.joints[parent_name], frame.joints[child_name])
+            for frame in clip.frames
+            if parent_name in frame.joints and child_name in frame.joints
+        ]
+        if not lengths:
+            continue
+        reference = median(lengths)
+        if reference <= 1e-8:
+            continue
+        # This is the same structural distinction used by the kinematic gate:
+        # stable rigid bones are projected; highly variable source segments
+        # retain their per-frame length because it may encode the source
+        # representation's articulation rather than refinement damage.
+        if (
+            (max(lengths) - min(lengths)) / reference
+            > STRUCTURAL_BONE_STABILITY_MAX_VARIATION_RATIO
+        ):
+            dynamic_children.add(child_name)
+    return dynamic_children
 
 
 def _has_authoritative_support_anchors(clip: MotionClip) -> bool:
@@ -1047,12 +1259,12 @@ def _restore_authoritative_support_anchors(
         if isinstance(support_constraint, dict)
         else None
     )
-    orientation_anchors = metadata.get("_orientationSupportAnchors")
-    raw_anchors = (
-        orientation_anchors
-        if isinstance(orientation_anchors, dict) and orientation_anchors
-        else knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
-    )
+    # Only anchors emitted by the contact solver are authoritative. The
+    # orientation stabilizer also uses support joints as per-frame rotation
+    # pivots, but their median positions are not planted-contact constraints.
+    # Treating those pivots as anchors collapses legitimate foot/hand motion
+    # and stretches the connected limb chains.
+    raw_anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
     if not isinstance(raw_anchors, dict):
         return clip, {"applied": False, "reason": "no_authoritative_support_anchors"}
 
@@ -1498,31 +1710,7 @@ def _stabilize_body_orientation_to_motion_plane(
         vertical_lifts.append(vertical_lift)
     if not corrections_degrees:
         return clip, {"applied": False, "reason": "orientation_already_stable"}
-    support_names = sorted({
-        name
-        for frame_index in range(clip.frame_count)
-        for name in _orientation_support_joint_names(clip, frame_index=frame_index)
-    })
-    transformed_support_anchors = {
-        name: [
-            median(frame.joints[name][0] for frame in frames if name in frame.joints),
-            _authoritative_support_joint_height(
-                clip,
-                joint_name=name,
-                fallback=median(
-                    frame.joints[name][1]
-                    for frame in clip.frames
-                    if name in frame.joints
-                ),
-            ),
-            median(frame.joints[name][2] for frame in frames if name in frame.joints),
-        ]
-        for name in support_names
-        if any(name in frame.joints for frame in frames)
-    }
-    updated_metadata = dict(clip.metadata)
-    updated_metadata["_orientationSupportAnchors"] = transformed_support_anchors
-    return replace(clip, frames=frames, metadata=updated_metadata), {
+    return replace(clip, frames=frames), {
         "applied": True,
         "strategy": "same_phase_bilateral_body_axis_aligned_to_dominant_motion_plane",
         "targetRightAxis": [target_right[0], target_right[1], target_right[2]],
@@ -1830,10 +2018,11 @@ def _plausible_head_offset(
     )
     off_axis = math.hypot(local[0], local[2])
     along_spine = local[1]
-    maximum_off_axis = max(max(along_spine, 0.0) * 0.85, length * 0.45)
-    if along_spine > 0.0 and off_axis <= maximum_off_axis:
+    minimum_along_spine = length * math.cos(MAX_PLAUSIBLE_HEAD_TO_TORSO_ANGLE_RADIANS)
+    maximum_off_axis = length * math.sin(MAX_PLAUSIBLE_HEAD_TO_TORSO_ANGLE_RADIANS)
+    if along_spine >= minimum_along_spine and off_axis <= maximum_off_axis:
         return reference_offset, False
-    corrected_along_spine = max(along_spine, length * 0.45)
+    corrected_along_spine = minimum_along_spine
     if off_axis <= 1e-6:
         corrected_local = (0.0, corrected_along_spine, 0.0)
     else:
@@ -1979,37 +2168,101 @@ def _refine_torso_dominant_motion_conservatively(
     strongest_chain_motion: float,
     dominant_profile: dict[str, object],
     non_dominant_radius_scale: float,
+    source_pose_payload: dict[str, Any] | None,
 ) -> tuple[MotionClip, dict[str, object]]:
-    refined, jitter_metadata = _suppress_low_magnitude_motion(
+    proposed, jitter_metadata = _suppress_low_magnitude_motion(
         clip,
         active_threshold=active_threshold,
         strongest_chain_motion=strongest_chain_motion,
         dominant_profile=dominant_profile,
     )
-    refined, spike_metadata = _suppress_temporal_spikes(refined, active_threshold=active_threshold)
-    refined, target_constraint_metadata = _constrain_to_stabilized_ik_targets(
+    refined, transaction = _accept_source_preserving_refinement_step(
+        clip,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="low_magnitude_motion_suppression",
+    )
+    jitter_metadata["transaction"] = transaction
+    before = refined
+    proposed, spike_metadata = _suppress_temporal_spikes(refined, active_threshold=active_threshold)
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="isolated_temporal_spike_suppression",
+    )
+    spike_metadata["transaction"] = transaction
+    before = refined
+    proposed, target_constraint_metadata = _constrain_to_stabilized_ik_targets(
         refined,
         stabilized_target_clip=clip,
         dominant_profile=dominant_profile,
         non_dominant_radius_scale=non_dominant_radius_scale,
     )
-    refined, distal_leg_metadata = _stabilize_torso_dominant_distal_leg_sliding(refined, reference_clip=clip)
-    refined, foot_axis_leg_metadata = _align_leg_motion_to_foot_axis(refined, reference_clip=clip)
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="stabilized_ik_target_constraint",
+    )
+    target_constraint_metadata["transaction"] = transaction
+    # Hip-relative ankle travel is genuine articulation in squats, split
+    # squats, step-ups, and many other planted-foot movements. Without an
+    # authoritative support/contact trajectory this signal cannot distinguish
+    # sliding from intended motion, so automatic structural cleanup must not
+    # rewrite the leg from that heuristic alone.
+    distal_leg_metadata: dict[str, object] = {
+        "applied": False,
+        "reason": "requires_authoritative_support_trajectory",
+    }
+    before = refined
+    proposed, foot_axis_leg_metadata = _align_leg_motion_to_foot_axis(refined, reference_clip=clip)
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="foot_axis_leg_motion_alignment",
+    )
+    foot_axis_leg_metadata["transaction"] = transaction
     bilateral_modes = _bilateral_modes_from_dominant_profile(dominant_profile)
-    refined, soft_bilateral_metadata = _apply_soft_same_phase_leg_symmetry(
+    before = refined
+    proposed, soft_bilateral_metadata = _apply_soft_same_phase_leg_symmetry(
         refined,
         bilateral_modes=bilateral_modes,
     )
-    refined, soft_arm_metadata = _apply_soft_same_phase_arm_symmetry(
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="soft_same_phase_leg_symmetry",
+    )
+    soft_bilateral_metadata["transaction"] = transaction
+    before = refined
+    proposed, soft_arm_metadata = _apply_soft_same_phase_arm_symmetry(
         refined,
         bilateral_modes=bilateral_modes,
     )
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="soft_same_phase_arm_symmetry",
+    )
+    soft_arm_metadata["transaction"] = transaction
     dynamic_bone_length_joints = _range_dominant_chain_child_joints(dominant_profile)
-    refined, length_metadata = _preserve_reference_bone_lengths(
+    before = refined
+    proposed, length_metadata = _preserve_reference_bone_lengths(
         refined,
         reference_clip=clip,
         dynamic_length_child_joints=dynamic_bone_length_joints,
     )
+    refined, transaction = _accept_source_preserving_refinement_step(
+        before,
+        proposed,
+        source_pose_payload=source_pose_payload,
+        step_name="reference_bone_length_projection",
+    )
+    length_metadata["transaction"] = transaction
     return refined, {
         "strategy": "torso_dominant_conservative_cleanup",
         "bilateralModes": bilateral_modes,
@@ -2026,7 +2279,6 @@ def _refine_torso_dominant_motion_conservatively(
             "low_magnitude_motion_suppression",
             "isolated_temporal_spike_suppression",
             "stabilized_ik_target_constraint",
-            "torso_dominant_distal_leg_sliding_stabilization",
             "foot_axis_leg_motion_alignment",
             "soft_same_phase_leg_symmetry",
             "soft_same_phase_arm_symmetry",
@@ -2814,6 +3066,8 @@ def _suppress_temporal_spikes(
                 })
         if pass_corrections == 0:
             break
+    validator_corrections = _suppress_validator_velocity_spikes(frames, clip.joint_names)
+    corrections.extend(validator_corrections)
     if not corrections:
         return clip, {
             "applied": False,
@@ -2824,9 +3078,88 @@ def _suppress_temporal_spikes(
         "applied": True,
         "threshold": spike_threshold,
         "correctionCount": len(corrections),
-        "maxDeviation": max(float(item["deviation"]) for item in corrections),
+        "maxDeviation": max(
+            (float(item["deviation"]) for item in corrections if "deviation" in item),
+            default=0.0,
+        ),
         "correctedJoints": sorted({str(item["jointName"]) for item in corrections}),
+        "validatorAlignedCorrectionCount": len(validator_corrections),
     }
+
+
+def _suppress_validator_velocity_spikes(
+    frames: list[MotionFrame],
+    joint_names: tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Repair the same root-relative discontinuities rejected downstream.
+
+    The older midpoint-deviation pass detects isolated positional outliers, but
+    the validator measures frame-to-frame distal velocity relative to the root.
+    A sustained offset can therefore fail validation without looking like a
+    midpoint outlier. Keep this detector aligned with that actual failure
+    definition and interpolate only the offending sample.
+    """
+    root_joint = next(
+        (name for name in ("pelvis", "hips", "root") if name in joint_names),
+        None,
+    )
+    if root_joint is None or len(frames) < 3:
+        return []
+    distal_joints = tuple(
+        name
+        for name in joint_names
+        if any(token in name.lower() for token in ("elbow", "wrist", "hand", "knee", "ankle", "foot"))
+    )
+    corrections: list[dict[str, object]] = []
+    for _ in range(4):
+        frame_heights = []
+        for frame in frames:
+            if frame.joints:
+                y_values = [point[1] for point in frame.joints.values()]
+                frame_heights.append(max(y_values) - min(y_values))
+        body_height = median(frame_heights) if frame_heights else 0.0
+        if body_height <= 1e-6:
+            break
+        pass_corrections = 0
+        for joint_name in distal_joints:
+            relative_points = []
+            if any(joint_name not in frame.joints or root_joint not in frame.joints for frame in frames):
+                continue
+            for frame in frames:
+                relative_points.append(_subtract(frame.joints[joint_name], frame.joints[root_joint]))
+            steps = [
+                _distance(relative_points[index], relative_points[index - 1])
+                for index in range(1, len(relative_points))
+            ]
+            positive_steps = [step for step in steps if step > 1e-7]
+            if len(positive_steps) < 2:
+                continue
+            median_step = median(positive_steps)
+            offending_indices = [
+                index
+                for index, step in enumerate(steps, start=1)
+                if step / max(median_step, 1e-7) >= DISTAL_STEP_SPIKE_RATIO
+                and step / body_height >= DISTAL_STEP_BODY_RATIO
+            ]
+            for frame_index in offending_indices:
+                if frame_index >= len(frames) - 1:
+                    continue
+                previous_relative = relative_points[frame_index - 1]
+                following_relative = relative_points[frame_index + 1]
+                repaired_relative = _average_points([previous_relative, following_relative])
+                root_point = frames[frame_index].joints[root_joint]
+                frames[frame_index].joints[joint_name] = _add(root_point, repaired_relative)
+                corrections.append(
+                    {
+                        "frameIndex": frame_index,
+                        "jointName": joint_name,
+                        "reason": "validator_root_relative_velocity_spike",
+                    }
+                )
+                pass_corrections += 1
+        if pass_corrections == 0:
+            break
+    return corrections
 
 
 def _constrain_to_stabilized_ik_targets(
