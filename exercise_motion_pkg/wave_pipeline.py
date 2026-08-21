@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
@@ -16,6 +17,8 @@ from exercise_motion_pkg.bake_and_rank import (
     build_exercise_motion_contract_resolver,
     evaluate_source_candidate_gate,
     expand_ranked_candidates_for_source_windows,
+    first_attempt_portfolio_size,
+    first_attempt_readiness_assessment,
     generate_candidate_motion,
     limit_bake_fallback_candidates,
     load_ranked_candidates_manifest,
@@ -27,8 +30,8 @@ from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
 from exercise_motion_pkg.wham_runner import WhamTrackingPreflightRejected
 
 
-STAGED_SOURCE_PORTFOLIO_SIZE = 2
-STAGED_SOURCE_VALIDATION_WORKERS = 1
+STAGED_SOURCE_PORTFOLIO_MAX_SIZE = 3
+STAGED_SOURCE_VALIDATION_MAX_WORKERS = 4
 
 
 @dataclass(frozen=True)
@@ -53,12 +56,20 @@ def _candidate_key(candidate: RankedCandidate) -> str:
     return f"{candidate.exercise_id}:{candidate.workspace_slug}"
 
 
-def _candidate_video_key(candidate: RankedCandidate) -> str | None:
+def _candidate_source_identity(candidate: RankedCandidate) -> str:
     if candidate.video_id:
         return f"video:{candidate.video_id}"
     if candidate.url:
         return f"url:{candidate.url}"
-    return None
+    return f"workspace:{candidate.workspace_slug}"
+
+
+def _session_timing_manifest(session: object) -> dict[str, Any]:
+    timing_manifest = getattr(session, "timing_manifest", None)
+    if not callable(timing_manifest):
+        return {}
+    payload = timing_manifest()
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 def _wave_candidates(request: BakeAndRankRequest) -> list[RankedCandidate]:
@@ -78,18 +89,31 @@ def _checkpoint_payload(
     item_states: dict[str, dict[str, Any]],
     started_at: float,
     latest_exercise_name: str | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "waveId": wave_id,
         "stage": stage,
         "updatedAt": _utc_now(),
         "elapsedSeconds": round(time.perf_counter() - started_at, 3),
         "items": list(item_states.values()),
     }
+    if metrics:
+        payload["metrics"] = metrics
     if latest_exercise_name:
         payload["latestExerciseName"] = latest_exercise_name
     return payload
+
+
+def effective_wave_final_output_rejection_limit(
+    configured_limit: int,
+    ready_source_count: int,
+) -> int:
+    """Preserve zero as unlimited while covering an explicitly bounded portfolio."""
+    if configured_limit <= 0:
+        return 0
+    return max(configured_limit, ready_source_count)
 
 
 def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
@@ -147,6 +171,11 @@ def run_staged_bake_wave(
     checkpoint_path = workspace / "staged_wave_checkpoint.json"
     report_path = workspace / "staged_wave_report.json"
     started_at = time.perf_counter()
+    metrics: dict[str, Any] = {
+        "sourceValidationWorkers": 0,
+        "acceleratorTransitions": [],
+        "phaseTimings": {},
+    }
     item_states: dict[str, dict[str, Any]] = {
         item.exercise_id: {
             "exerciseId": item.exercise_id,
@@ -165,23 +194,51 @@ def run_staged_bake_wave(
         if progress is not None:
             progress(message)
 
+    checkpoint_lock = threading.Lock()
+    current_stage = "initializing"
+
     def checkpoint(stage: str, latest_exercise_name: str | None = None) -> None:
-        _write_json_atomic(
-            checkpoint_path,
-            _checkpoint_payload(
-                wave_id=wave_id,
-                stage=stage,
-                item_states=item_states,
-                started_at=started_at,
-                latest_exercise_name=latest_exercise_name,
-            ),
-        )
+        nonlocal current_stage
+        current_stage = stage
+        with checkpoint_lock:
+            _write_json_atomic(
+                checkpoint_path,
+                _checkpoint_payload(
+                    wave_id=wave_id,
+                    stage=stage,
+                    item_states=item_states,
+                    started_at=started_at,
+                    latest_exercise_name=latest_exercise_name,
+                    metrics=metrics,
+                ),
+            )
+
+    heartbeat_stop = threading.Event()
+
+    def checkpoint_heartbeat() -> None:
+        while not heartbeat_stop.wait(30.0):
+            try:
+                checkpoint(current_stage)
+            except Exception:
+                # A heartbeat must never fail the owning generation wave.
+                continue
+
+    heartbeat_thread = threading.Thread(
+        target=checkpoint_heartbeat,
+        name=f"{wave_id}-checkpoint-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
 
     prepared: dict[
         str,
         tuple[StagedWaveItem, list[tuple[RankedCandidate, Path]]],
     ] = {}
     source_session = LazyLlamaCppVisionSession(items[0].request)
+    source_phase_started = time.perf_counter()
+    metrics["acceleratorTransitions"].append(
+        {"stage": "source_vlm_and_exact_validation", "at": _utc_now()}
+    )
     try:
         announce(f"Checking source videos for {len(items)} exercise(s).")
         checkpoint("source_validation")
@@ -195,41 +252,37 @@ def run_staged_bake_wave(
         ]:
             attempts: list[dict[str, Any]] = []
             selected_sources: list[tuple[RankedCandidate, Path]] = []
-            selected_video_ids: set[str] = set()
-            failed_video_keys: set[str] = set()
+            selected_source_identities: set[str] = set()
+            requested_portfolio_size: int | None = None
             resolver = build_exercise_motion_contract_resolver(
                 request=item.request,
                 caption_images=source_session.caption_images,
                 run_llama_exclusive=source_session.run_without_llama_overlap,
             )
             for candidate in _wave_candidates(item.request):
-                video_key = _candidate_video_key(candidate)
-                if candidate.video_id in selected_video_ids:
+                source_identity = _candidate_source_identity(candidate)
+                if source_identity in selected_source_identities:
                     continue
-                if video_key is not None and video_key in failed_video_keys:
-                    attempts.append(
-                        {
-                            "candidateKey": _candidate_key(candidate),
-                            "videoId": candidate.video_id,
-                            "workspaceSlug": candidate.workspace_slug,
-                            "status": "skipped_same_video",
-                            "reasons": ["same_video_already_failed"],
-                        }
-                    )
-                    continue
+                readiness = first_attempt_readiness_assessment(
+                    candidate,
+                    request=item.request,
+                )
                 attempt = {
                     "candidateKey": _candidate_key(candidate),
                     "videoId": candidate.video_id,
                     "workspaceSlug": candidate.workspace_slug,
                     "status": "pending",
+                    "firstAttemptReadiness": readiness,
                 }
                 attempts.append(attempt)
+                if not bool(readiness.get("eligible")):
+                    attempt["status"] = "rejected_first_attempt_readiness"
+                    attempt["reasons"] = readiness.get("reasons", [])
+                    continue
                 source_gate = evaluate_source_candidate_gate(candidate, request=item.request)
                 if not bool(source_gate.get("passed")):
                     attempt["status"] = "rejected_source_gate"
                     attempt["reasons"] = source_gate.get("reasons", [])
-                    if video_key is not None:
-                        failed_video_keys.add(video_key)
                     continue
                 try:
                     selected_video = prepare_candidate_input_video(
@@ -243,26 +296,45 @@ def run_staged_bake_wave(
                     if isinstance(exc, SourceCandidateRejected):
                         attempt["status"] = "rejected_source_validation"
                         attempt["error"] = f"{type(exc).__name__}: {exc}"
-                        if video_key is not None:
-                            failed_video_keys.add(video_key)
                     elif vlm_error is not None:
                         attempt["status"] = "rejected_vlm_timeout"
                         attempt["error"] = f"{type(vlm_error).__name__}: {vlm_error}"
                     else:
                         attempt["status"] = "rejected_source_validation"
                         attempt["error"] = f"{type(exc).__name__}: {exc}"
-                        if video_key is not None:
-                            failed_video_keys.add(video_key)
                     continue
                 attempt["status"] = "prepared"
                 attempt["selectedVideoPath"] = str(selected_video)
                 selected_sources.append((candidate, selected_video))
-                selected_video_ids.add(candidate.video_id)
-                if len(selected_sources) >= STAGED_SOURCE_PORTFOLIO_SIZE:
+                selected_source_identities.add(source_identity)
+                if requested_portfolio_size is None:
+                    requested_portfolio_size = max(
+                        1,
+                        min(
+                            STAGED_SOURCE_PORTFOLIO_MAX_SIZE,
+                            first_attempt_portfolio_size(readiness),
+                        ),
+                    )
+                if len(selected_sources) >= requested_portfolio_size:
                     break
+            for attempt in attempts:
+                attempt.setdefault("requestedPortfolioSize", requested_portfolio_size)
             return item, selected_sources, attempts
 
-        source_worker_count = min(STAGED_SOURCE_VALIDATION_WORKERS, len(items))
+        configured_parallelism = max(
+            1,
+            int(
+                items[0].request.llama_cpp_parallel
+                or items[0].request.review_llm_workers
+                or 1
+            ),
+        )
+        source_worker_count = min(
+            STAGED_SOURCE_VALIDATION_MAX_WORKERS,
+            configured_parallelism,
+            len(items),
+        )
+        metrics["sourceValidationWorkers"] = source_worker_count
         with ThreadPoolExecutor(max_workers=source_worker_count) as executor:
             future_items = {
                 executor.submit(prepare_item_source, item): item for item in items
@@ -291,9 +363,31 @@ def run_staged_bake_wave(
                     state["source"]["selectedCandidateKey"] = state["source"][
                         "selectedCandidateKeys"
                     ][0]
+                    selected_attempts = [
+                        attempt for attempt in attempts if attempt.get("status") == "prepared"
+                    ]
+                    state["source"]["requestedPortfolioSize"] = (
+                        selected_attempts[0].get("requestedPortfolioSize")
+                        if selected_attempts
+                        else None
+                    )
+                    state["source"]["actualPortfolioSize"] = len(selected_sources)
                     prepared[item.exercise_id] = (item, selected_sources)
                 else:
                     state["source"]["status"] = "failed"
+                    eligible_attempts = [
+                        attempt
+                        for attempt in attempts
+                        if bool(
+                            (attempt.get("firstAttemptReadiness") or {}).get("eligible")
+                        )
+                    ]
+                    state["source"]["failureReason"] = (
+                        "no_reconstruction_ready_source"
+                        if not eligible_attempts
+                        else "no_source_passed_exact_window_validation"
+                    )
+                    state["source"]["noNewWork"] = not attempts
                     state["status"] = "retry_required"
                 checkpoint("source_validation", item.exercise_name)
         for item in items:
@@ -305,7 +399,14 @@ def run_staged_bake_wave(
         # WHAM owns the GPU in the next stage, so this must release the model
         # even when the configured llama.cpp server is normally kept alive.
         source_session.close(force_stop_server=True)
+        metrics["sourceVisionSession"] = _session_timing_manifest(source_session)
+        metrics["phaseTimings"]["sourceValidationSeconds"] = round(
+            time.perf_counter() - source_phase_started,
+            3,
+        )
 
+    metrics["acceleratorTransitions"].append({"stage": "wham", "at": _utc_now()})
+    wham_phase_started = time.perf_counter()
     announce(f"Extracting motion for {len(prepared)} exercise(s).")
     checkpoint("wham_generation")
 
@@ -334,7 +435,9 @@ def run_staged_bake_wave(
         for exercise_id, (item, sources) in prepared.items()
         for candidate, selected_video_path in sources
     ]
-    wham_worker_count = min(2, max(1, len(prepared_candidates)))
+    # The warm WHAM worker owns one persistent CUDA model and consumes its job
+    # queue serially. Multiple caller threads only contend on the same lock.
+    wham_worker_count = 1
     wham_completed_count = 0
     wham_attempts: dict[str, list[dict[str, Any]]] = {
         exercise_id: [] for exercise_id in prepared
@@ -415,6 +518,11 @@ def run_staged_bake_wave(
             state["wham"]["status"] = "failed"
             state["status"] = "retry_required"
 
+    metrics["phaseTimings"]["whamGenerationSeconds"] = round(
+        time.perf_counter() - wham_phase_started,
+        3,
+    )
+
     wham_release = _stop_warm_wham_worker_before_vlm(
         [item for item, _sources in prepared.values()]
     )
@@ -424,6 +532,8 @@ def run_staged_bake_wave(
 
     announce(f"Reviewing {len(wham_ready)} generated movement(s).")
     checkpoint("final_validation")
+    metrics["acceleratorTransitions"].append({"stage": "final_vlm", "at": _utc_now()})
+    final_phase_started = time.perf_counter()
     final_session = LazyLlamaCppVisionSession(items[0].request)
     try:
         for exercise_id, (item, ready_sources) in wham_ready.items():
@@ -435,7 +545,7 @@ def run_staged_bake_wave(
                         item.request,
                         require_wham_cache=True,
                         fallback_candidates=0,
-                        max_final_output_rejections=max(
+                        max_final_output_rejections=effective_wave_final_output_rejection_limit(
                             item.request.max_final_output_rejections,
                             len(ready_sources),
                         ),
@@ -493,6 +603,17 @@ def run_staged_bake_wave(
         # source wave. A retry needs WHAM again, so release VLM first.
         retry_pending = any(state["status"] != "completed" for state in item_states.values())
         final_session.close(force_stop_server=retry_pending)
+        metrics["finalVisionSession"] = _session_timing_manifest(final_session)
+        metrics["phaseTimings"]["finalValidationSeconds"] = round(
+            time.perf_counter() - final_phase_started,
+            3,
+        )
+        try:
+            from exercise_motion_pkg.unidepth_runner import unidepth_model_cache_metrics
+
+            metrics["unidepthModelCache"] = unidepth_model_cache_metrics()
+        except Exception:
+            pass
 
     completed = [state for state in item_states.values() if state["status"] == "completed"]
     retry = [state for state in item_states.values() if state["status"] != "completed"]
@@ -501,6 +622,7 @@ def run_staged_bake_wave(
         stage="completed",
         item_states=item_states,
         started_at=started_at,
+        metrics=metrics,
     )
     report.update(
         {
@@ -510,6 +632,8 @@ def run_staged_bake_wave(
             "retryExerciseIds": [state["exerciseId"] for state in retry],
         }
     )
+    heartbeat_stop.set()
+    heartbeat_thread.join(timeout=1.0)
     _write_json_atomic(report_path, report)
     _write_json_atomic(checkpoint_path, report)
     announce(
