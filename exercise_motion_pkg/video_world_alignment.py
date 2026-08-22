@@ -41,7 +41,6 @@ FLOOR_DISTANCE_JOINTS = (
 )
 MIN_CORRESPONDENCES = 4
 MAX_ALIGNMENT_RMS_METERS = 0.35
-MAX_FLOOR_DISTANCE_RMS_METERS = 0.45
 MIN_PITCH_JOINTS = 2
 MIN_PLANE_INLIERS = 40
 PLANE_RANSAC_ITERATIONS = 128
@@ -110,6 +109,10 @@ class VideoWorldAlignmentResult:
 def video_world_alignment_enabled() -> bool:
     raw = os.environ.get(VIDEO_WORLD_ALIGNMENT_ENV_VAR, "1").strip().casefold()
     return raw not in {"0", "false", "no", "off"}
+
+
+def video_world_alignment_rms_is_acceptable(rms_error: float) -> bool:
+    return math.isfinite(rms_error) and rms_error <= MAX_ALIGNMENT_RMS_METERS
 
 
 def support_joint_names_for_mode(support_mode_hint: str | None) -> tuple[str, ...]:
@@ -287,7 +290,7 @@ def align_motion_clip_to_video(
     if solved is None:
         return _empty_alignment_result(clip, reason="floor_distance_transform_unavailable")
     rotation, translation, rms_error = solved
-    if rms_error > MAX_FLOOR_DISTANCE_RMS_METERS:
+    if not video_world_alignment_rms_is_acceptable(rms_error):
         return _empty_alignment_result(
             clip,
             reason="video_floor_distance_rms_too_high",
@@ -304,7 +307,7 @@ def align_motion_clip_to_video(
         correspondence_count=len(video_distances),
         rms_error=rms_error,
         plane=camera_plane,
-        max_rms=MAX_FLOOR_DISTANCE_RMS_METERS,
+        max_rms=MAX_ALIGNMENT_RMS_METERS,
     )
     metadata = {
         "policy": "tier2_unidepth_floor_distance_pitch",

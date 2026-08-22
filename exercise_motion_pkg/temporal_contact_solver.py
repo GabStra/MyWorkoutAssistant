@@ -744,10 +744,16 @@ def solve_temporal_contact_rigid_world_alignment(
             aligned, frame_contacts
         )
 
-    aligned, hinge_rotation_degrees = _apply_consistent_contact_hinge(
-        aligned,
-        frame_contacts,
-    )
+    # A measured video floor normal already fixes the clip's world pitch.
+    # Re-fitting pitch around the contact pair afterward can rotate a valid
+    # standing body into a seated/leaning pose merely to reduce penetration.
+    # Translation and local non-penetration below handle floor placement.
+    hinge_rotation_degrees = 0.0
+    if not uses_authoritative_floor_normal:
+        aligned, hinge_rotation_degrees = _apply_consistent_contact_hinge(
+            aligned,
+            frame_contacts,
+        )
 
     corrections: list[float | None] = []
     for frame, names in zip(aligned.frames, frame_contacts):
@@ -899,4 +905,3 @@ def solve_temporal_contact_rigid_world_alignment(
             default=0.0,
         ),
     }
-
