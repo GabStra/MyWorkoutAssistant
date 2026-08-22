@@ -230,6 +230,23 @@ def ensure_three_module_asset(cache_directory: Path | None = None) -> Path:
     return destination
 
 
+def _clip_ground_contact_mode(clip: MotionClip) -> str:
+    cleanup_metadata = (
+        clip.metadata.get("cleanup")
+        if isinstance(clip.metadata, dict)
+        and isinstance(clip.metadata.get("cleanup"), dict)
+        else {}
+    )
+    vertical_grounding = (
+        cleanup_metadata.get("verticalGrounding")
+        if isinstance(cleanup_metadata.get("verticalGrounding"), dict)
+        else {}
+    )
+    return str(
+        vertical_grounding.get("groundContactMode") or "unknown"
+    ).strip().casefold()
+
+
 def write_preview_html(
     path: Path,
     clip: MotionClip,
@@ -281,6 +298,7 @@ def write_preview_html(
         "frameCount": preview_clip.frame_count,
         "jointNames": preview_clip.joint_names,
         "rootJoint": _find_root_joint(preview_clip),
+        "groundContactMode": _clip_ground_contact_mode(clip),
         "defaultFixedRoot": bool(baked_preview_settings.get("fixedRoot", False))
         if baked_wear_payload
         else not raw_motion_review,
@@ -594,7 +612,6 @@ def build_wear_skeleton_payload(
         if len(active_frames) >= 2
         else 0.0
     )
-
     return {
         "schemaVersion": 1,
         "kind": "wearPreviewSkeleton",
@@ -610,6 +627,7 @@ def build_wear_skeleton_payload(
         "durationSec": active_duration,
         "jointNames": preview_clip.joint_names,
         "rootJoint": root_joint,
+        "groundContactMode": _clip_ground_contact_mode(clip),
         "bakedPreviewConfiguration": {
             "autoWorldAlignment": True,
             "lockGlobalRootDrift": not raw_motion_review,
@@ -4097,6 +4115,7 @@ def _build_html(
     let currentAutoAlignment = currentLoop?.autoAlignment ?? defaultAutoAlignment;
     let playbackState = buildPlaybackState(payload.frames, currentLoop);
     let renderingBakedWearPayload = false;
+    let bakedWearGroundContactMode = "unknown";
     let comparisonPlaybackState = buildPlaybackState(comparisonFrames, currentLoop);
     let rawComparisonPlaybackState = buildPlaybackState(rawComparisonFrames, currentLoop);
     let activeRootAnchor = null;
@@ -4928,6 +4947,11 @@ def _build_html(
 
     function refreshGroundPlacement() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
+        if (bakedWearGroundContactMode === "none") {{
+          bakedWearGrid.visible = false;
+          grid.visible = false;
+          return;
+        }}
         const bounds = bakedWearReviewBounds.sourceBounds;
         const height = Math.max(0.001, bounds.maxY - bounds.minY);
         const width = Math.max(0.001, bounds.maxX - bounds.minX);
@@ -7865,6 +7889,9 @@ def _build_html(
       return {{
         schemaVersion: 1,
         kind: "wearPreviewSkeleton",
+        groundContactMode: String(
+          payload.groundContactMode ?? "unknown"
+        ).trim().toLowerCase(),
         title: payload.title,
         source: {{
           fps: payload.fps,
@@ -8081,6 +8108,9 @@ def _build_html(
         throw new Error("Cannot review an empty baked Wear payload.");
       }}
       renderingBakedWearPayload = true;
+      bakedWearGroundContactMode = String(
+        exportPayload?.groundContactMode ?? "unknown"
+      ).trim().toLowerCase();
       playbackState = {{ frames, boundsFrames: frames, loopable: false }};
       bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
       fixedRoot = false;

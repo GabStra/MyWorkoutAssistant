@@ -95,6 +95,10 @@ GENERIC_CONTACT_JOINT_GROUPS = (
 )
 
 
+def ground_contact_mode_allows_floor_support(ground_contact_mode: str | None) -> bool:
+    return str(ground_contact_mode or "unknown").strip().casefold() != "none"
+
+
 def uses_knee_floor_support(support_mode: str | None) -> bool:
     return str(support_mode or "").strip().casefold() in KNEE_FLOOR_SUPPORT_MODES
 
@@ -1101,27 +1105,36 @@ def cleanup_motion_clip(
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
     support_mode = detect_support_mode(trimmed_clip, support_mode_hint=support_mode_hint)
+    floor_support_enabled = ground_contact_mode_allows_floor_support(ground_contact_mode)
     preserve_video_floor_orientation = clip_preserves_video_floor_orientation(trimmed_clip)
     preserve_horizontal_orientation = support_mode in {
         "horizontal_unspecified",
         "supine",
         "prone",
     }
-    raw_support_states = detect_support_contact_states(trimmed_clip, support_mode=support_mode)
+    raw_support_states = (
+        detect_support_contact_states(trimmed_clip, support_mode=support_mode)
+        if floor_support_enabled
+        else [{} for _ in trimmed_clip.frames]
+    )
     grounded = (
         trimmed_clip
-        if preserve_horizontal_orientation
+        if preserve_horizontal_orientation or not floor_support_enabled
         else ground_to_floor(
             trimmed_clip,
             support_states=raw_support_states,
             support_mode=support_mode,
         )
     )
-    support_states = detect_support_contact_states(grounded, support_mode=support_mode)
+    support_states = (
+        detect_support_contact_states(grounded, support_mode=support_mode)
+        if floor_support_enabled
+        else [{} for _ in grounded.frames]
+    )
     support_ground_y = estimate_support_ground_height(grounded, support_states)
     support_stabilized = (
         grounded
-        if preserve_horizontal_orientation
+        if preserve_horizontal_orientation or not floor_support_enabled
         else stabilize_global_translation_from_support_contacts(
             grounded,
             contact_states=support_states,
@@ -1149,7 +1162,13 @@ def cleanup_motion_clip(
                 "continuous" if uses_knee_floor_support(support_mode) else ground_contact_mode
             ),
         )
-    if preserve_video_floor_orientation:
+    if not floor_support_enabled:
+        support_constrained = vertically_grounded
+        support_constraint = {
+            "applied": False,
+            "reason": "ground_contact_mode_does_not_allow_floor_support",
+        }
+    elif preserve_video_floor_orientation:
         support_constrained, support_constraint = solve_contact_aware_rigid_world_alignment(
             trimmed_clip,
             ground_y=0.0,
@@ -1217,9 +1236,10 @@ def cleanup_motion_clip(
                 else "upright_support_uses_existing_grounding"
             ),
         }
-    final_support_states = detect_support_contact_states(
-        support_constrained,
-        support_mode=support_mode,
+    final_support_states = (
+        detect_support_contact_states(support_constrained, support_mode=support_mode)
+        if floor_support_enabled
+        else [{} for _ in support_constrained.frames]
     )
     final_support_ground_y = estimate_support_ground_height(
         support_constrained,

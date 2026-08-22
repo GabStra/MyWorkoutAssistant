@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from exercise_motion_pkg.cleanup import CleanupStats, cleanup_motion_clip
+from exercise_motion_pkg.cleanup import (
+    CleanupStats,
+    cleanup_motion_clip,
+    ground_contact_mode_allows_floor_support,
+)
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
@@ -628,7 +632,10 @@ def run_generation_pipeline(
             if source_pose_reference_path is not None and source_pose_reference_path.is_file()
             else None
         )
-        if video_world_alignment_should_run:
+        if (
+            video_world_alignment_should_run
+            and ground_contact_mode_allows_floor_support(request.ground_contact_mode)
+        ):
             stage_started = time.perf_counter()
             alignment_result = align_motion_clip_to_video(
                 raw_clip,
@@ -640,6 +647,15 @@ def run_generation_pipeline(
             save_motion_json(raw_motion_json_path, raw_clip)
             video_alignment_metadata = alignment_result.to_metadata()
             record_timing("videoWorldAlignmentSeconds", stage_started)
+            timings["videoWorldAlignment"] = video_alignment_metadata
+        elif video_world_alignment_should_run:
+            video_alignment_metadata = {
+                "applied": False,
+                "reason": "ground_contact_mode_does_not_allow_floor_alignment",
+                "groundContactMode": str(request.ground_contact_mode or "unknown")
+                .strip()
+                .casefold(),
+            }
             timings["videoWorldAlignment"] = video_alignment_metadata
         stage_started = time.perf_counter()
         tuning_input_clip = canonicalize_camera_motion_clip(raw_clip)
