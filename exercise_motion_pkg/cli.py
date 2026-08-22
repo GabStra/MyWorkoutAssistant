@@ -48,6 +48,8 @@ from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_TOP_K,
     DEFAULT_LLAMA_CPP_TOP_P,
     DEFAULT_LLAMA_CPP_UBATCH_SIZE,
+    DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MMPROJ,
+    DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL,
     DEFAULT_TEXT_LLAMA_CPP_MMPROJ,
     DEFAULT_TEXT_LLAMA_CPP_MODEL,
 )
@@ -527,6 +529,14 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-request-timeout-seconds", type=float, default=240.0)
     youtube_search.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
     youtube_search.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
+    youtube_search.add_argument(
+        "--exercise-contract-llama-cpp-model",
+        default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL,
+    )
+    youtube_search.add_argument(
+        "--exercise-contract-llama-cpp-mmproj",
+        default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MMPROJ,
+    )
     youtube_search.add_argument("--vision-early-stop-score", type=float, default=0.95)
     youtube_search.add_argument(
         "--exclude-youtube-candidates-json",
@@ -930,6 +940,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--text-llama-cpp-model", default=DEFAULT_TEXT_LLAMA_CPP_MODEL)
     bake_and_rank.add_argument("--text-llama-cpp-mmproj", default=DEFAULT_TEXT_LLAMA_CPP_MMPROJ)
+    bake_and_rank.add_argument(
+        "--exercise-contract-llama-cpp-model",
+        default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL,
+    )
+    bake_and_rank.add_argument(
+        "--exercise-contract-llama-cpp-mmproj",
+        default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MMPROJ,
+    )
     bake_and_rank.add_argument(
         "--artifact-retention",
         choices=("debug", "full"),

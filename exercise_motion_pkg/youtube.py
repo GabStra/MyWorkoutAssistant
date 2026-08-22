@@ -70,6 +70,7 @@ from exercise_motion_pkg.target_motion import (
     parse_contract_bool,
 )
 from exercise_motion_pkg.vlm_errors import (
+    CriticalVlmInteractionError,
     add_vlm_context,
     is_critical_vlm_interaction_error,
     vlm_error_payload,
@@ -176,6 +177,7 @@ def youtube_failure_is_rate_limited(message: str) -> bool:
             "rate limited by youtube",
             "too many requests",
             "http error 429",
+            "shared rate-limit circuit breaker",
         )
     )
 
@@ -336,7 +338,6 @@ def download_youtube_preview(
     *,
     cache_dir: Path | None = None,
 ) -> Path:
-    raise_if_youtube_rate_limit_cooldown_active()
     resolved_cookies_path: Path | None = None
     if cookies_path is not None:
         resolved_cookies_path = cookies_path.expanduser().resolve()
@@ -348,6 +349,7 @@ def download_youtube_preview(
         cached = find_cached_youtube_preview(resolved_cache_dir, cache_stem)
         if cached is not None:
             return cached
+    raise_if_youtube_rate_limit_cooldown_active()
     output_dir.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
     for attempt_index, player_client in enumerate(YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS, start=1):
@@ -895,7 +897,7 @@ class YouTubeRankingSettings:
     pose_prefilter_device: str = "cuda"
     pose_prefilter_batch_size: int = 16
     vision_candidates_per_exercise: int = 8
-    vision_frames_per_candidate: int | None = 6
+    vision_frames_per_candidate: int | None = None
     vision_chunk_seconds: float | None = None
     vision_chunk_overlap_seconds: float | None = None
     vision_max_chunks_per_candidate: int | None = None
@@ -1314,6 +1316,8 @@ def extract_workout_plan_exercises(
     raw_entries: list[tuple[str | None, str, str, bool, dict[str, Any]]] = []
 
     def motion_context(node: dict[str, Any]) -> dict[str, Any]:
+        existing_context = node.get("motionContext")
+        context = dict(existing_context) if isinstance(existing_context, dict) else {}
         equipment_id = extract_exercise_equipment_id(node)
         primary = equipment_by_id.get(equipment_id) if equipment_id else None
         accessory_ids = [
@@ -1332,7 +1336,7 @@ def extract_workout_plan_exercises(
             }
             return summary or None
 
-        context = {
+        derived_context = {
             "exerciseType": node.get("exerciseType"),
             "exerciseCategory": node.get("exerciseCategory"),
             "muscleGroups": list(node.get("muscleGroups") or []),
@@ -1344,6 +1348,9 @@ def extract_workout_plan_exercises(
                 if (summary := equipment_summary(equipment_by_id.get(accessory_id))) is not None
             ],
         }
+        for key, value in derived_context.items():
+            if value not in (None, [], {}) and key not in context:
+                context[key] = value
         return {key: value for key, value in context.items() if value not in (None, [], {})}
 
     def is_disabled(node: dict[str, Any]) -> bool:
@@ -3626,6 +3633,40 @@ def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool
 
 def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     context_json = json.dumps(exercise.motion_context, ensure_ascii=True, sort_keys=True)
+    primary_equipment = exercise.motion_context.get("primaryEquipment")
+    primary_equipment_name = (
+        str(primary_equipment.get("name") or primary_equipment.get("type") or "").strip()
+        if isinstance(primary_equipment, dict)
+        else ""
+    )
+    required_accessories = exercise.motion_context.get("requiredAccessories")
+    required_accessory_names = [
+        str(accessory.get("name") or accessory.get("type") or "").strip()
+        for accessory in required_accessories
+        if isinstance(accessory, dict)
+        and str(accessory.get("name") or accessory.get("type") or "").strip()
+    ] if isinstance(required_accessories, list) else []
+    required_accessories_line = (
+        "Required accessories that the described movement must use: "
+        + ", ".join(required_accessory_names)
+        if required_accessory_names
+        else "Required accessories: none specified"
+    )
+    required_context_names = [
+        name
+        for name in (primary_equipment_name, *required_accessory_names)
+        if name
+    ]
+    qualified_target_name = (
+        f"{exercise.name} (using {', '.join(required_context_names)})"
+        if required_context_names
+        else exercise.name
+    )
+    primary_equipment_line = (
+        f"Required primary equipment that the described movement must use exactly: {primary_equipment_name}"
+        if primary_equipment_name
+        else "Required primary equipment: none specified"
+    )
     return (
         "Describe one complete visible movement for the exact named exercise.\n"
         "Use the normal exercise definition. Do not guess mechanics from separate words in the name. "
@@ -3637,6 +3678,8 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "phase in time order through the natural finish. Choose completionMode return_to_start only when one normal "
         "execution visibly returns to the same posture. Choose distinct_end_state when one normal execution ends in a "
         "different stable posture, such as a clean, snatch, jerk, jump onto a destination, or one-way transition. "
+        "When completionMode is return_to_start, the final requiredPhases entry must explicitly describe returning to "
+        "validStartState; for an alternating left/right repetition, do not stop at the second side and omit its return. "
         "Do not add lowering, reracking, release, or reset merely to force a distinct finish back to the start.\n"
         "Make validStartState, validEndState, and every required phase exercise-specific and visibly testable. "
         "Name the relevant posture, implement position, support state, and joint/body action. Never use generic placeholders "
@@ -3664,6 +3707,16 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "advanced support guess. These constraints "
         "describe the visible body, not the unrendered implement. A lying, supine, or prone torso is horizontal, not "
         "upright merely because it is straight or aligned with a bench.\n"
+        "supportMode describes the loaded body posture, not merely whether the feet touch a surface. Do not label a "
+        "body seated beside, suspended from, leaning on, or supported by the hands as standing just because the feet "
+        "also contact the floor. If the available posture labels do not accurately describe the exercise-defining "
+        "support relationship, use any. A body inverted over hands planted on the floor is hand-supported, not hanging; "
+        "use supportMode any and groundContactMode continuous when no more accurate support label is available. "
+        "Use hanging only when the hands are above the head and the body hangs below them. When the hands support a "
+        "suspended torso from beside or below the hips, use supportMode any and handHeight below_hips. "
+        "handHeight is the visible spatial relationship, not the anatomical arm position: for an inverted body with "
+        "hands planted on the floor, use below_hips rather than above_head. Otherwise, use "
+        "below_hips for hands supporting the body from behind or beside the hips, and any when occlusion makes it uncertain.\n"
         "groundContactMode must be continuous when at least one body support normally remains on the floor, "
         "intermittent when the movement intentionally contains airborne phases, or none when the body is hanging, suspended, swimming, or otherwise not floor-supported.\n"
         "implementSupportMode describes how one rigid implement is supported during the exercise. Use hands_only when both hands define and carry the implement pose throughout, body_supported when the implement primarily rests on the hips, torso, shoulders, or back and the hands only stabilize it, mixed when support intentionally transfers between the body and both hands, external when a rack or machine owns its pose, or none when no single rigid two-hand implement is involved.\n"
@@ -3675,8 +3728,11 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "Use joint_flex_extend when the target is elbow or knee articulation and the joint center should remain mostly "
         "anchored while the distal limb rotates. Flexion closes the joint angle and extension opens it; do not describe "
         "a lowering phase as extension when it visibly closes the elbow or knee angle.\n"
-        "Equipment and accessory context is part of the exact movement identity. Use it to distinguish seated, standing, supported, machine, and other adjacent variants, but do not invent a qualifier unsupported by the context.\n"
-        f"Target exercise: {exercise.name}\n"
+        "Equipment and accessory context is part of the exact movement identity. Use it to distinguish seated, standing, supported, machine, and other adjacent variants, but do not invent a qualifier unsupported by the context. "
+        "Every item in requiredAccessories is required by this exercise definition, not optional background context. The described posture and phases must actually use each required accessory; do not choose a same-named movement variant that does not use it.\n"
+        f"Target exercise: {qualified_target_name}\n"
+        f"{primary_equipment_line}\n"
+        f"{required_accessories_line}\n"
         f"Motion context: {context_json}\n"
     )
 
@@ -3886,6 +3942,8 @@ def normalize_exercise_motion_contract(
     if not isinstance(payload, dict):
         raise ValueError("exercise motion contract payload must be a JSON object.")
     payload = unpack_nested_exercise_motion_contract_payload(payload)
+    if exercise.motion_context and not isinstance(payload.get("motionContext"), dict):
+        payload = {**payload, "motionContext": exercise.motion_context}
     structured_fields = normalized_exercise_motion_contract_fields(payload)
     structured_advisory_text = synthesize_exercise_motion_advisory_text(structured_fields)
     advisory_text = ""
@@ -4149,6 +4207,20 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         # such as rigid two-hand equipment fidelity.
         fields["motionContext"] = dict(motion_context)
     movement_type = normalize_exercise_movement_type(first_contract_value(payload, "movementType", "movement_type"))
+    primary_equipment = (
+        motion_context.get("primaryEquipment")
+        if isinstance(motion_context, dict)
+        else None
+    )
+    cardio_machine_context = bool(
+        isinstance(primary_equipment, dict)
+        and str(primary_equipment.get("type") or "").strip().casefold() == "cardio_machine"
+    )
+    if cardio_machine_context:
+        # Cardio-machine output is a representative slice of continuous
+        # locomotion. It is not a single strength repetition even when a text
+        # model describes one pedal or stride returning to its start pose.
+        movement_type = "cyclic"
     if movement_type is not None:
         fields["movementType"] = movement_type
 
@@ -4167,6 +4239,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     explicit_completion_mode = normalize_exercise_completion_mode(
         first_contract_value(payload, "completionMode", "completion_mode", "movementCompletionMode")
     )
+    if cardio_machine_context:
+        explicit_completion_mode = "representative_cycle"
 
 
     requires_return = parse_contract_bool(
@@ -4199,6 +4273,12 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         constraints = normalize_exercise_pose_constraints(first_contract_value(payload, *aliases))
         if constraints is not None:
             fields[output_key] = constraints
+
+    if ground_contact_mode == "continuous":
+        for key in ("startPoseConstraints", "endPoseConstraints"):
+            constraints = fields.get(key)
+            if isinstance(constraints, dict) and constraints.get("supportMode") == "hanging":
+                constraints["supportMode"] = "any"
 
     string_fields = {
         "validStartState": ("validStartState", "requiredStartPosture", "startState"),
@@ -4292,7 +4372,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 9
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 19
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 9
 
 
@@ -4902,6 +4982,8 @@ def rank_candidates_with_pose_prefilter(
                 except YoloDeviceUnavailableError:
                     raise
                 except Exception as exc:
+                    if youtube_failure_is_rate_limited(str(exc)):
+                        raise
                     if is_critical_vlm_interaction_error(exc):
                         add_vlm_context(
                             exc,
@@ -7810,10 +7892,13 @@ class LlamaCppVisionRanker:
         served_models = extract_llama_cpp_server_model_ids(payload)
         served = ", ".join(served_models) if served_models else "unknown model"
         expected = Path(self.settings.llama_cpp_model).name
-        raise RuntimeError(
+        raise CriticalVlmInteractionError(
             f"Existing llama.cpp server at {self.settings.llama_cpp_base_url} is serving {served}, "
-            f"but this run expects {expected}. Stop the existing server or use a different --llama-cpp-base-url."
-            )
+            f"but this run expects {expected}. Stop the existing server or use a different --llama-cpp-base-url.",
+            interaction="llama_cpp_server_configuration",
+            recoverable=False,
+            details={"servedModels": served_models, "expectedModel": expected},
+        )
 
     def _raise_if_server_runtime_mismatch(self) -> None:
         expected_parallel = max(1, self.settings.llama_cpp_parallel or self.settings.vision_llm_workers)
@@ -8684,11 +8769,15 @@ def score_prepared_vision_review(
     best_score, best_reasons, best_payload, best_chunk_index = max(chunk_results, key=lambda item: item[0])
     average_score = sum(chunk_scores) / len(chunk_scores)
     valid_chunk_count = sum(1 for score in chunk_scores if score >= 0.50)
-    # Evidence ratio should be computed against the number of *planned*
-    # chunks (the adaptive sampling budget we actually intended to review),
-    # not just the number of reviewed chunks and not blindly against
-    # prepared.chunk_count.
-    planned_chunk_count = len(chunk_indexes) or prepared.chunk_count or len(chunk_scores)
+    # A strong interval is an intentional terminal decision, so unreviewed
+    # budget slots are not missing evidence. Otherwise retain the planned
+    # denominator so an interrupted or exhausted review cannot overclaim
+    # coverage from one isolated chunk.
+    planned_chunk_count = (
+        len(chunk_scores)
+        if early_stop_reason == "strong_source_interval"
+        else len(chunk_indexes) or prepared.chunk_count or len(chunk_scores)
+    )
     valid_chunk_ratio_raw = valid_chunk_count / max(1, planned_chunk_count)
     final_score = clamp_score(
         (best_score * 0.88) + (average_score * 0.07) + (valid_chunk_ratio_raw * 0.05)

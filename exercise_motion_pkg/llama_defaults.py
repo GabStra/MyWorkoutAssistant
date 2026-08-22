@@ -6,7 +6,7 @@ DEFAULT_LLAMA_CPP_MTP_MODEL = None
 DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX = 3
 DEFAULT_TEXT_LLAMA_CPP_MODEL = DEFAULT_LLAMA_CPP_MODEL
 DEFAULT_TEXT_LLAMA_CPP_MMPROJ = None
-DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL = DEFAULT_TEXT_LLAMA_CPP_MODEL
+DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
 DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MMPROJ = DEFAULT_TEXT_LLAMA_CPP_MMPROJ
 # Motion discovery and validation are structured classification tasks. Greedy
 # decoding removes run-to-run candidate drift and avoids stochastic expansions

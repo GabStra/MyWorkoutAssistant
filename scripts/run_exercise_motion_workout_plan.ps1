@@ -35,7 +35,7 @@ param(
     [string]$DeepSeekModel = "deepseek-v4-flash",
     [int]$DeepSeekMaxQueries = 4,
     [int]$VisionCandidatesPerExercise = 12,
-    [int]$VisionFramesPerCandidate = 6,
+    [int]$VisionFramesPerCandidate = 0,
     [int]$VisionMaxChunksPerCandidate = 0,
     [int]$VisionDownloadWorkers = 8,
     [int]$VisionLlmWorkers = 4,
@@ -196,7 +196,7 @@ $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
 $script:WhamWorkerStartedOnce = $false
-$discoveryStagePolicyVersion = 2
+$discoveryStagePolicyVersion = 3
 $sourceDownloadStagePolicyVersion = 1
 
 function Get-RepoRoot {
