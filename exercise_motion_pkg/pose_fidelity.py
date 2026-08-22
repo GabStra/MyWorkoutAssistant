@@ -64,9 +64,16 @@ def source_to_motion_pose_fidelity_metrics(
         )
 
     mode_metrics = [
-        _projection_metrics(source_frames, motion_frames, horizontal_axis=axis, mirror=mirror)
+        _projection_metrics(
+            source_frames,
+            motion_frames,
+            horizontal_axis=axis,
+            mirror=mirror,
+            swap_bilateral=swap_bilateral,
+        )
         for axis in (0, 2)
         for mirror in (False, True)
+        for swap_bilateral in (False, True)
     ]
     usable = [metrics for metrics in mode_metrics if metrics.get("comparableFrameCount", 0) >= 5]
     if not usable:
@@ -97,6 +104,7 @@ def _projection_metrics(
     *,
     horizontal_axis: int,
     mirror: bool,
+    swap_bilateral: bool,
 ) -> dict[str, Any]:
     joint_errors: dict[str, list[float]] = {name: [] for name in POSE_JOINTS}
     angle_errors: dict[str, list[float]] = {name: [] for name in ANGLE_CHAINS}
@@ -109,13 +117,20 @@ def _projection_metrics(
         source_joints = source_frame["joints"]
         motion_joints = motion_frame["joints"]
         fit_names = [
-            name for name in ALIGNMENT_JOINTS if name in source_joints and name in motion_joints
+            name
+            for name in ALIGNMENT_JOINTS
+            if name in source_joints
+            and _bilateral_name(name, swap=swap_bilateral) in motion_joints
         ]
         if len(fit_names) < 3:
             continue
         source_fit = [source_joints[name] for name in fit_names]
         motion_fit = [
-            _project_motion_point(motion_joints[name], horizontal_axis=horizontal_axis, mirror=mirror)
+            _project_motion_point(
+                motion_joints[_bilateral_name(name, swap=swap_bilateral)],
+                horizontal_axis=horizontal_axis,
+                mirror=mirror,
+            )
             for name in fit_names
         ]
         transform = _similarity_transform(motion_fit, source_fit)
@@ -127,7 +142,7 @@ def _projection_metrics(
         comparable_frames += 1
         projected: dict[str, tuple[float, float]] = {}
         for name, point in motion_joints.items():
-            projected[name] = _apply_similarity(
+            projected[_bilateral_name(name, swap=swap_bilateral)] = _apply_similarity(
                 _project_motion_point(point, horizontal_axis=horizontal_axis, mirror=mirror),
                 transform,
             )
@@ -152,6 +167,7 @@ def _projection_metrics(
     return {
         "projectionHorizontalAxis": "x" if horizontal_axis == 0 else "z",
         "mirrored": mirror,
+        "bilateralAssignment": "swapped" if swap_bilateral else "identity",
         "comparableFrameCount": comparable_frames,
         "comparableFrameRatio": comparable_frames / len(source_frames) if source_frames else 0.0,
         "jointObservationCoverage": observed / expected_observations if expected_observations else 0.0,
@@ -166,6 +182,16 @@ def _projection_metrics(
             name: _median(values) for name, values in angle_errors.items()
         },
     }
+
+
+def _bilateral_name(name: str, *, swap: bool) -> str:
+    if not swap:
+        return name
+    if name.startswith("left_"):
+        return f"right_{name[5:]}"
+    if name.startswith("right_"):
+        return f"left_{name[6:]}"
+    return name
 
 
 def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any]]:
