@@ -447,7 +447,7 @@ FIRST_ATTEMPT_HIGH_RECONSTRUCTION_PRIORITY = 0.70
 KINEMATIC_CUT_STRATEGY = "kinematic_cycle"
 KINEMATIC_CUT_MAX_PROPOSALS = 2
 SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 8
-PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 2
+PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 4
 SOURCE_CUT_KINEMATIC_SUBJECT_MOTION_REJECTION_REASONS = frozenset(
     {
         "source_cut_visual_jump",
@@ -486,7 +486,7 @@ SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
 SELECTION_VALIDATION_POLICY_VERSION = 61
-FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 43
+FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 44
 RETAINED_SELECTED_REVALIDATION_VERSION = 11
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
@@ -539,6 +539,7 @@ FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS = frozenset(
 FINAL_OUTPUT_VALIDATOR_HARD_REJECT_TAGS = frozenset(
     (
         "wrong_exercise",
+        "wrong_variant",
         "broken_render",
         "broken_skeleton",
         "unreadable_subject",
@@ -552,7 +553,6 @@ FINAL_OUTPUT_VALIDATOR_HARD_REJECT_TAGS = frozenset(
 )
 FINAL_OUTPUT_VALIDATOR_WARNING_TAGS = frozenset(
     (
-        "wrong_variant",
         "partial_movement",
         "partial_movement_uncertain",
         "mostly_setup",
@@ -5210,6 +5210,16 @@ def normalize_observed_equipment_name(value: Any) -> str:
     return aliases.get(normalized, normalized)
 
 
+def equipment_names_are_motion_equivalent(expected: str, observed: str) -> bool:
+    """Match implements exactly while allowing equivalent support surfaces."""
+
+    normalized_expected = normalize_observed_equipment_name(expected)
+    normalized_observed = normalize_observed_equipment_name(observed)
+    if normalized_expected == normalized_observed:
+        return True
+    return {normalized_expected, normalized_observed} <= {"bench", "box"}
+
+
 def two_scale_required_equipment_observed(
     *observations: dict[str, Any] | None,
     equipment: str,
@@ -5227,7 +5237,7 @@ def two_scale_required_equipment_observed(
             normalize_observed_equipment_name(value)
             for value in values
         } if isinstance(values, list) else set()
-        if expected in observed:
+        if any(equipment_names_are_motion_equivalent(expected, value) for value in observed):
             return True
         narrative = " ".join(
             str(value)
@@ -5266,7 +5276,7 @@ def two_scale_identity_equipment_consistent(
         return True
     observed = two_scale_observed_named_equipment(identity)
     expected = normalize_observed_equipment_name(equipment)
-    return expected in observed
+    return any(equipment_names_are_motion_equivalent(expected, value) for value in observed)
 
 
 def two_scale_observation_fields_consistent(payload: dict[str, Any] | None) -> bool:
@@ -6225,8 +6235,8 @@ def build_final_output_validation_prompt(
         "A smooth skeleton is still invalid when it has an unmistakable whole-body reconstruction failure within the generated preview. For example, reject an implausible crouched or kneeling reconstruction for a standing target, a seated or lying reconstruction for a standing target, or clearly impossible limb geometry. "
         "When the target uses equipment that the skeleton intentionally omits, judge the body geometry needed to hold or use it. Do not require the object to be rendered, but reject clearly impossible or target-inconsistent hand, arm, shoulder, or support geometry. Multiple accessories may be present; judge only body mechanics that are actually visible in the evidence. "
         "For a target whose structured groundContactMode is none, the preview intentionally has no floor or support prop. Feet drawn near the bottom of a tightly framed image do not establish standing or floor contact. Infer a support mismatch only from contradictory body kinematics; overhead hands and a freely suspended lower body are consistent with hanging even when the bar is omitted. "
-        "Only hard-reject when the final generated preview has a clear artifact failure: wrong exercise, gross pose reconstruction error, support-mode mismatch, impossible equipment-holding body geometry, broken render, unreadable subject, severe tracking corruption, or obvious setup/cleanup/rerack/unrack inside the final artifact. "
-        "Treat borderline boundary, partial-movement, mostly-setup, static, orientation, or variant concerns as warnings unless the failure is unmistakable in the generated preview. "
+        "Hard-reject when the final generated preview has a clear identity or artifact failure: wrong exercise variant, wrong exercise, gross pose reconstruction error, support-mode mismatch, impossible equipment-holding body geometry, broken render, unreadable subject, severe tracking corruption, or obvious setup/cleanup/rerack/unrack inside the final artifact. "
+        "Treat borderline boundary, partial-movement, mostly-setup, static, or orientation concerns as warnings unless the failure is unmistakable in the generated preview. "
         "Judge whether the generated skeleton preview presents a usable body-motion sequence for the target exercise. "
         "Do not pass the result because the source is good if the generated preview is broken, unreadable, severely distorted, or inconsistent with the target exercise. "
         "The final preview intentionally omits external equipment, benches, bars, cables, wheels, machines, and props unless they are represented by body motion. "
@@ -6237,8 +6247,9 @@ def build_final_output_validation_prompt(
         "Do not invent timestamps or exact start/end frames. Return only the classification, fixed reject tags, and one short note.\n"
         f"Set approved true when the generated skeleton is usable for the target exercise with confidence at least {min_score:.2f}. "
         "Set retry true only for hard artifact failures that require another candidate/window. "
-        "Use hard reject tags only for clear artifact failures: wrong_exercise, support_mode_mismatch, gross_pose_reconstruction_error, equipment_holding_pose_invalid, broken_render, unreadable_subject, severe_tracking_corruption, obvious_setup_or_cleanup_inside_artifact. "
-        "Use warning tags for non-hard concerns: wrong_variant, partial_movement, partial_movement_uncertain, mostly_setup, too_static, orientation_bad, bad_boundary, boundary_uncertain, unclear. "
+        "Use hard reject tags only for clear identity or artifact failures: wrong_variant, wrong_exercise, support_mode_mismatch, gross_pose_reconstruction_error, equipment_holding_pose_invalid, broken_render, unreadable_subject, severe_tracking_corruption, obvious_setup_or_cleanup_inside_artifact. "
+        "Use wrong_variant when the visible mechanics include movement-changing assistance, equipment, stance, limb use, rotation, pressing, jumping, or an added phase absent from the target contract. "
+        "Use warning tags for non-hard concerns: partial_movement, partial_movement_uncertain, mostly_setup, too_static, orientation_bad, bad_boundary, boundary_uncertain, unclear. "
         "Use [] when approved is true and there are no concerns; otherwise return the most specific hard or warning tags. "
         "Keep note to one short sentence with no timestamps.\n"
         "Return JSON only with keys: {\"approved\": boolean, \"confidence\": number, \"retry\": boolean, \"supportModeMatch\": boolean|null, \"equipmentHoldingPosePlausible\": boolean|null, \"grossPoseReconstructionError\": boolean, \"reject\": [string], \"note\": string}. "
@@ -6453,8 +6464,12 @@ def reconcile_source_confirmed_contract_contradiction(
     )
     kinematics_confirmed = bool(
         isinstance(kinematics, dict)
-        and not bool(kinematics.get("severeArtifact"))
-        and (parse_optional_float(kinematics.get("kinematicPlausibilityScore")) or 0.0) >= 0.9
+        and not blocking_materialized_kinematic_reasons(
+            kinematics,
+            source_corroborated_joint_angle_step=bool(
+                kinematics.get("sourceCorroboratedJointAngleStep")
+            ),
+        )
     )
     if not source_and_output_confirmed or not kinematics_confirmed:
         return parsed
@@ -6725,10 +6740,16 @@ def materialized_output_acceptance_metrics(
         exercise_motion_contract,
         phase_metrics=source_video_phase_metrics,
     )
+    source_pose_reference = source_pose_reference_from_phase_metrics(
+        source_video_phase_metrics
+    )
+    source_reference_validated = bool(
+        isinstance(source_video_phase_metrics, dict)
+        and bool(source_video_phase_metrics.get("passed"))
+        and isinstance(source_pose_reference, dict)
+    )
     source_pose_fidelity_metrics = materialized_source_pose_fidelity_metrics(
-        source_pose_payload=source_pose_reference_from_phase_metrics(
-            source_video_phase_metrics
-        ),
+        source_pose_payload=source_pose_reference,
         output_motion_payload=export_payload,
         required=selected_input_video_path_for_review_item(item) is not None,
     )
@@ -6761,11 +6782,7 @@ def materialized_output_acceptance_metrics(
     target_motion_preservation_metrics = source_output_target_motion_preservation_metrics(
         source_metrics=source_target_motion_metrics,
         output_metrics=target_motion_metrics,
-        source_reference_validated=bool(
-            isinstance(source_video_phase_metrics, dict)
-            and bool(source_video_phase_metrics.get("required"))
-            and bool(source_video_phase_metrics.get("passed"))
-        ),
+        source_reference_validated=source_reference_validated,
         direct_joint_angle_capture_ratio=direct_joint_angle_capture_ratio,
         cross_modal_pose_fidelity_passed=bool(source_pose_fidelity_metrics.get("passed")),
     )
@@ -6831,16 +6848,23 @@ def materialized_output_acceptance_metrics(
     if severe_readability_failure:
         rejection_reasons.append("materialized_unreadable_low_motion_preview")
 
+    source_corroborated_joint_angle_step = joint_angle_step_is_source_corroborated(
+        kinematic_metrics,
+        source_reference_validated=source_reference_validated,
+        source_pose_fidelity_passed=bool(source_pose_fidelity_metrics.get("passed")),
+    )
+    kinematic_metrics["sourceCorroboratedJointAngleStep"] = (
+        source_corroborated_joint_angle_step
+    )
     if bool(kinematic_metrics.get("severeArtifact")):
-        metric_reasons = kinematic_metrics.get("artifactReasons")
-        if isinstance(metric_reasons, list):
-            rejection_reasons.extend(
-                str(reason)
-                for reason in metric_reasons
-                if str(reason) in KINEMATIC_ARTIFACT_REASON_CODES
+        rejection_reasons.extend(
+            blocking_materialized_kinematic_reasons(
+                kinematic_metrics,
+                source_corroborated_joint_angle_step=(
+                    source_corroborated_joint_angle_step
+                ),
             )
-        if not any(reason in KINEMATIC_ARTIFACT_REASON_CODES for reason in rejection_reasons):
-            rejection_reasons.append("materialized_kinematic_artifact")
+        )
     if (
         bool(item.settings_options.get("lockPlantedHands"))
         and bool(hand_lock_arm_metrics.get("severeArmDistortion"))
@@ -7700,7 +7724,30 @@ def validate_source_pose_endpoints_against_contract(
                     str(expected.get("torsoOrientation") or "any"),
                     str(observed.get("torsoOrientation") or "unknown"),
                 }
-                if (field == "handHeight" and not horizontal_posture) or (
+                primary_regions = {
+                    str(region).strip().casefold()
+                    for region in contract.get("primaryMovingRegions") or []
+                }
+                hand_height_is_motion_critical = not primary_regions or bool(
+                    primary_regions
+                    & {
+                        "arms",
+                        "arm",
+                        "shoulders",
+                        "shoulder",
+                        "elbows",
+                        "elbow",
+                        "hands",
+                        "hand",
+                        "wrists",
+                        "wrist",
+                    }
+                )
+                if (
+                    field == "handHeight"
+                    and not horizontal_posture
+                    and hand_height_is_motion_critical
+                ) or (
                     field == "stance"
                     and (
                         "split" in {expected_value, observed_value}
@@ -10040,11 +10087,15 @@ def full_repetition_phase_completeness_metrics_from_payload(
     interior_min = edge_margin <= min_index <= (sample_count - 1 - edge_margin)
     interior_max = edge_margin <= max_index <= (sample_count - 1 - edge_margin)
     endpoint_delta_ratio = abs(float(values[-1]) - float(values[0])) / max(phase_motion_range, 1e-8)
-    has_return_phase = endpoint_delta_ratio <= FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO
     has_interior_extreme = interior_min or interior_max
     finish_at_extreme = min_index >= sample_count - 1 - edge_margin or max_index >= sample_count - 1 - edge_margin
     requires_return = observable_motion_spec_requires_return(motion_contract)
     has_single_cycle, major_phase_sequence = has_exactly_one_major_repetition_cycle(values)
+    has_topological_return = bool(has_single_cycle and has_interior_extreme)
+    has_return_phase = bool(
+        endpoint_delta_ratio <= FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO
+        or has_topological_return
+    )
     # Endpoint agreement already proves that a return-to-start motion came back
     # near its initial phase. A coordinate can legitimately set a new minimum
     # on the final sampled frame because of tracking drift or axis projection;
@@ -10093,6 +10144,7 @@ def full_repetition_phase_completeness_metrics_from_payload(
         "endpointPhaseDeltaRatio": endpoint_delta_ratio,
         "maxEndpointPhaseDeltaRatio": FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO,
         "hasReturnPhase": has_return_phase,
+        "hasTopologicalReturn": has_topological_return,
         "hasInteriorExtreme": has_interior_extreme,
         "hasSingleMajorCycle": has_single_cycle,
         "majorPhaseSequence": major_phase_sequence,
@@ -11514,6 +11566,56 @@ def compute_kinematic_plausibility_metrics_from_payload(
         "jointAngleStep": angle_step,
         "boneLength": bone_length,
     }
+
+
+def joint_angle_step_is_source_corroborated(
+    kinematic_metrics: dict[str, Any],
+    *,
+    source_reference_validated: bool,
+    source_pose_fidelity_passed: bool,
+) -> bool:
+    if not source_reference_validated or not source_pose_fidelity_passed:
+        return False
+    angle_step = kinematic_metrics.get("jointAngleStep")
+    if not isinstance(angle_step, dict) or not bool(angle_step.get("severe")):
+        return False
+    output_step = parse_optional_float(angle_step.get("maxAngleStepDegrees"))
+    source_step = parse_optional_float(angle_step.get("sourceMaxAngleStepDegrees"))
+    if output_step is None or source_step is None:
+        return False
+    return bool(
+        source_step >= KINEMATIC_ANGLE_STEP_DEGREES
+        and output_step <= source_step + 1e-6
+    )
+
+
+def blocking_materialized_kinematic_reasons(
+    kinematic_metrics: dict[str, Any],
+    *,
+    source_corroborated_joint_angle_step: bool,
+) -> list[str]:
+    if not bool(kinematic_metrics.get("severeArtifact")):
+        return []
+    metric_reasons = kinematic_metrics.get("artifactReasons")
+    recognized_reasons = (
+        [
+            str(reason)
+            for reason in metric_reasons
+            if str(reason) in KINEMATIC_ARTIFACT_REASON_CODES
+        ]
+        if isinstance(metric_reasons, list)
+        else []
+    )
+    if not recognized_reasons:
+        return ["materialized_kinematic_artifact"]
+    return [
+        reason
+        for reason in recognized_reasons
+        if not (
+            reason == "joint_angle_spike_penalty"
+            and source_corroborated_joint_angle_step
+        )
+    ]
 
 
 def empty_kinematic_plausibility_metrics(*, frame_count: int = 0) -> dict[str, Any]:
@@ -18796,8 +18898,10 @@ def confirm_pre_wham_named_equipment(
         }
     prompt = (
         "Inspect the chronological exercise frames without guessing the target exercise. "
-        "List only physical exercise equipment visibly held, worn, attached, or connected to the moving performer. "
-        "Do not count equipment in the background, floor, or rack. Distinguish one barbell from separate dumbbells. "
+        "List only physical exercise equipment visibly held, worn, attached, connected to, or actively used as a "
+        "support surface by the moving performer. Count a box or bench when the performer visibly jumps onto, steps "
+        "onto, stands on, sits on, or leans against it during the movement. Do not count equipment that merely remains "
+        "unused in the background, on the floor, or in a rack. Distinguish one barbell from separate dumbbells. "
         "Trace the implement between both hands across multiple frames: a barbell has one rigid connecting shaft, "
         "which may be thin, dark, partly hidden by hands or clothing, and fitted with large round plates near the "
         "hands; dumbbells have two independent handles with no connecting shaft. Do not infer dumbbells merely from "
@@ -18820,7 +18924,10 @@ def confirm_pre_wham_named_equipment(
     )
     parsed = extract_json_object(raw)
     observed = two_scale_observed_named_equipment(parsed if isinstance(parsed, dict) else None)
-    passed = required_equipment in observed
+    passed = any(
+        equipment_names_are_motion_equivalent(required_equipment, value)
+        for value in observed
+    )
     result = {
         "schemaVersion": 1,
         "policyVersion": PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION,
@@ -18944,6 +19051,11 @@ def choose_pre_wham_source_cut_or_reject(
                 3,
             )
             ranking = replace(ranking, payload=ranking_payload)
+            ranking = preserve_parent_source_window_after_pose_only_recovery(
+                ranking,
+                source_window=source_window,
+                validating_padded_chunk=validating_padded_chunk,
+            )
     elif source_cut_ranking_has_vlm_approval(ranking):
         ranking_payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
         ranking_payload.update(
@@ -19432,6 +19544,29 @@ def coerce_source_cut_ranking_to_parent_window(
         if candidate_id:
             payload["selectedCandidateId"] = candidate_id
     return replace(ranking, payload=payload)
+
+
+def preserve_parent_source_window_after_pose_only_recovery(
+    ranking: LoopRanking,
+    *,
+    source_window: DetectionWindow,
+    validating_padded_chunk: bool,
+) -> LoopRanking:
+    """Avoid replacing a strong source chunk with a visually rejected micro-cut."""
+    if not validating_padded_chunk:
+        return ranking
+    if "source_cut_deterministic_confirmation_recovered_vlm_rejection" not in ranking.reasons:
+        return ranking
+    preserved = coerce_source_cut_ranking_to_parent_window(
+        ranking,
+        source_window=source_window,
+    )
+    return replace(
+        preserved,
+        reasons=dedupe_text(
+            [*preserved.reasons, "source_cut_parent_window_preserved_after_pose_only_recovery"]
+        ),
+    )
 
 
 def should_use_ranked_source_chunk_directly(
@@ -24053,7 +24188,18 @@ def build_source_video_pyramid_candidate_windows(
     if duration <= 0.5:
         return []
     if duration + 1e-6 < min_duration_floor_seconds:
-        return []
+        return [
+            SourceWindowCandidateSpec(
+                window=window,
+                chunking={
+                    "strategy": "full_window_below_estimated_floor",
+                    "parentStartSeconds": window.start_seconds,
+                    "parentEndSeconds": window.end_seconds,
+                    "parentDurationSeconds": round(duration, 3),
+                    "minDurationFloorSeconds": round(min_duration_floor_seconds, 3),
+                },
+            )
+        ]
     rep_min = parse_optional_float(getattr(chunk_estimate, "rep_duration_min_sec", None))
     rep_max = parse_optional_float(getattr(chunk_estimate, "rep_duration_max_sec", None))
     estimated_min = rep_min or min(duration, SOURCE_CUT_ROBUST_MIN_SECONDS)
@@ -25102,7 +25248,7 @@ def candidate_source_scene_windows(
         scene
         for scene in scene_windows
         if str(camera_metrics.get(scene.index, {}).get("classification") or "unknown")
-        in {"stable", "unknown"}
+        in {"stable", "moderate", "unknown"}
     ]
 
 
@@ -25290,7 +25436,7 @@ def merge_source_cut_camera_stability(
             if reason != "source_cut_excessive_camera_motion"
         ]
         merged["legacyCameraMotionHeuristicSuppressed"] = True
-    elif classification in {"moderate", "unstable"}:
+    elif classification == "unstable":
         rejection_reasons.append("source_scene_unstable_camera")
     merged["rejectionReasons"] = dedupe_text(rejection_reasons)
     merged["passed"] = not merged["rejectionReasons"]
@@ -31831,11 +31977,29 @@ def copy_or_download_candidate_source(
     if not ranked_candidate.url:
         raise ValueError("Candidate must provide url or videoPath.")
     if youtube_source_cache_dir is not None:
-        cached, _ = download_ranked_candidate_to_source_cache(
-            ranked_candidate,
-            cache_dir=youtube_source_cache_dir,
-            youtube_cookies=youtube_cookies,
-        )
+        try:
+            cached, _ = download_ranked_candidate_to_source_cache(
+                ranked_candidate,
+                cache_dir=youtube_source_cache_dir,
+                youtube_cookies=youtube_cookies,
+            )
+        except Exception as exc:
+            preview = (
+                find_cached_youtube_preview(youtube_preview_cache_dir, cache_stem)
+                if youtube_preview_cache_dir is not None
+                else None
+            )
+            if preview is None or not cached_youtube_source_is_usable(preview):
+                raise
+            print(
+                "[youtube] full source unavailable; using the validated cached preview "
+                f"for {ranked_candidate.video_id or ranked_candidate.title}: {truncate_text(str(exc), 180)}"
+            )
+            cached = cache_youtube_source(
+                preview,
+                youtube_source_cache_dir.expanduser().resolve(),
+                cache_stem,
+            )
         return copy_cached_source_to_destination(cached, destination_dir)
     return download_youtube(ranked_candidate.url, destination_dir, youtube_cookies)
 
