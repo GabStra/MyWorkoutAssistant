@@ -302,7 +302,21 @@ def align_motion_clip_to_video(
             },
         )
 
-    aligned_clip = apply_rigid_transform_to_clip(clip, rotation=rotation, translation=translation)
+    # The solved transform expresses the body in the original OpenCV camera
+    # frame, whose floor normal can point mostly through camera Z.  The next
+    # pipeline stage only performs the fixed OpenCV-to-preview axis flip, so
+    # leaving that pitch in the clip makes an upright athlete render lying
+    # down. Level the measured floor to OpenCV up before handing the clip back.
+    output_rotation, output_translation, camera_leveling_rotation = level_camera_floor_transform(
+        rotation=rotation,
+        translation=translation,
+        camera_plane=camera_plane,
+    )
+    aligned_clip = apply_rigid_transform_to_clip(
+        clip,
+        rotation=output_rotation,
+        translation=output_translation,
+    )
     confidence = _alignment_confidence(
         correspondence_count=len(video_distances),
         rms_error=rms_error,
@@ -321,8 +335,16 @@ def align_motion_clip_to_video(
             orientation_constraint_joint_names
         ),
         "videoFloorDistanceObservations": normalized_video_distance_observations,
-        "rotationMatrix": rotation.tolist(),
-        "translation": translation.tolist(),
+        "cameraFitRotationMatrix": rotation.tolist(),
+        "cameraFitTranslation": translation.tolist(),
+        "cameraLevelingRotationMatrix": camera_leveling_rotation.tolist(),
+        "rotationMatrix": output_rotation.tolist(),
+        "translation": output_translation.tolist(),
+        "outputGroundPlane": {
+            "space": "leveled_opencv_camera",
+            "normal": [0.0, -1.0, 0.0],
+            "offset": camera_plane.offset,
+        },
         "cameraGroundPlane": {
             "space": "camera",
             "normal": list(camera_plane.normal),
@@ -332,6 +354,40 @@ def align_motion_clip_to_video(
         "supportModeHint": support_mode_hint,
         "applied": True,
     }
+    source_uprightness = source_pose_uprightness_score(source_pose_payload)
+    raw_uprightness = motion_clip_camera_uprightness_score(clip)
+    aligned_uprightness = motion_clip_camera_uprightness_score(aligned_clip)
+    metadata["uprightnessRegressionGate"] = {
+        "sourceScore": source_uprightness,
+        "rawMotionScore": raw_uprightness,
+        "alignedMotionScore": aligned_uprightness,
+    }
+    if (
+        source_uprightness is not None
+        and source_uprightness >= 0.65
+        and raw_uprightness is not None
+        and aligned_uprightness is not None
+        and aligned_uprightness + 1e-6 < raw_uprightness
+    ):
+        metadata.update(
+            {
+                "applied": False,
+                "rejectedTransform": True,
+                "rejectionReason": "upright_source_alignment_regression",
+            }
+        )
+        return VideoWorldAlignmentResult(
+            clip=clip,
+            applied=False,
+            reason="upright_source_alignment_regression",
+            confidence=confidence,
+            camera_ground_plane=camera_plane,
+            correspondence_rms_error=rms_error,
+            frames_used=len(depth_samples),
+            sample_frame_seconds=[sample.time_seconds for sample in depth_samples],
+            model_name=depth_samples[0].model_name,
+            metadata=metadata,
+        )
     aligned_clip = replace(
         aligned_clip,
         metadata={
@@ -816,6 +872,98 @@ def rotation_between_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarr
         return rotation_around_axis(_unit(fallback) or np.array([1.0, 0.0, 0.0]), math.pi)
     skew = _skew_symmetric(axis)
     return np.eye(3) + skew + (skew @ skew) * ((1.0 - cosine) / (sine * sine))
+
+
+def level_camera_floor_transform(
+    *,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    camera_plane: PlaneEstimate,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compose a camera-fit transform with leveling to OpenCV camera up."""
+
+    camera_leveling_rotation = rotation_between_vectors(
+        np.asarray(camera_plane.normal, dtype=np.float64),
+        np.asarray((0.0, -1.0, 0.0), dtype=np.float64),
+    )
+    return (
+        camera_leveling_rotation @ rotation,
+        camera_leveling_rotation @ translation,
+        camera_leveling_rotation,
+    )
+
+
+def source_pose_uprightness_score(
+    pose_payload: dict[str, Any] | None,
+) -> float | None:
+    if not isinstance(pose_payload, dict):
+        return None
+    frames = pose_payload.get("frames")
+    if not isinstance(frames, list):
+        return None
+    scores: list[float] = []
+    for frame in frames:
+        if not isinstance(frame, dict) or not isinstance(frame.get("joints"), dict):
+            continue
+        joints = frame["joints"]
+        pelvis = _source_joint_xy(joints.get("pelvis") or joints.get("hips"))
+        left_shoulder = _source_joint_xy(joints.get("left_shoulder"))
+        right_shoulder = _source_joint_xy(joints.get("right_shoulder"))
+        if pelvis is None or left_shoulder is None or right_shoulder is None:
+            continue
+        shoulders = (
+            (left_shoulder[0] + right_shoulder[0]) * 0.5,
+            (left_shoulder[1] + right_shoulder[1]) * 0.5,
+        )
+        scores.append(_vertical_axis_share(pelvis[0] - shoulders[0], pelvis[1] - shoulders[1]))
+    return float(np.median(scores)) if scores else None
+
+
+def motion_clip_camera_uprightness_score(clip: MotionClip) -> float | None:
+    scores: list[float] = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        left_shoulder = frame.joints.get("left_shoulder")
+        right_shoulder = frame.joints.get("right_shoulder")
+        if pelvis is None or left_shoulder is None or right_shoulder is None:
+            continue
+        shoulder_center = tuple(
+            (float(left_shoulder[index]) + float(right_shoulder[index])) * 0.5
+            for index in range(3)
+        )
+        scores.append(
+            _vertical_axis_share_3d(
+                float(pelvis[0]) - shoulder_center[0],
+                float(pelvis[1]) - shoulder_center[1],
+                float(pelvis[2]) - shoulder_center[2],
+            )
+        )
+    return float(np.median(scores)) if scores else None
+
+
+def _vertical_axis_share(horizontal: float, vertical: float) -> float:
+    magnitude = math.hypot(horizontal, vertical)
+    if magnitude <= 1e-8:
+        return 0.0
+    return abs(vertical) / magnitude
+
+
+def _vertical_axis_share_3d(x: float, y: float, z: float) -> float:
+    magnitude = math.sqrt((x * x) + (y * y) + (z * z))
+    if magnitude <= 1e-8:
+        return 0.0
+    return abs(y) / magnitude
+
+
+def _source_joint_xy(value: Any) -> tuple[float, float] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return float(value[0]), float(value[1])
+    if isinstance(value, dict):
+        x = value.get("x")
+        y = value.get("y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return float(x), float(y)
+    return None
 
 
 def rotation_around_axis(axis: np.ndarray, radians: float) -> np.ndarray:
