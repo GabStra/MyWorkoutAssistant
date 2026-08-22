@@ -89,10 +89,13 @@ from exercise_motion_pkg.video_world_alignment import (
     fit_plane_ransac,
     infer_orientation_constraint_joint_names,
     infer_support_joint_names_from_floor_distances,
+    level_camera_floor_transform,
     load_source_pose_payload,
+    motion_clip_camera_uprightness_score,
     regularize_impossible_bilateral_floor_distances,
     solve_floor_distance_rigid_transform,
     solve_rigid_transform_kabsch,
+    source_pose_uprightness_score,
     support_joint_names_for_mode,
     video_world_alignment_rms_is_acceptable,
 )
@@ -7364,6 +7367,49 @@ def test_bake_source_download_does_not_promote_preview_cache_to_full_source(
     assert (source_cache / f"{cache_stem}.mp4").read_bytes() == b"full-source-video"
 
 
+def test_bake_source_download_falls_back_to_validated_cached_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://www.youtube.com/watch?v=preview-fallback"
+    cache_stem = youtube_module.youtube_preview_cache_stem(url)
+    preview_cache = tmp_path / "youtube-preview-cache"
+    source_cache = tmp_path / "youtube-source-cache"
+    preview_cache.mkdir()
+    preview = preview_cache / f"{cache_stem}.mp4"
+    preview.write_bytes(b"validated-preview-video")
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "download_youtube",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("authentication unavailable")),
+    )
+    monkeypatch.setattr(bake_and_rank_module, "cached_youtube_source_is_usable", lambda path: path.exists())
+
+    ranked_candidate = RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id="rollout",
+        exercise_name="Standing Rollout",
+        exercise_slug="standing-rollout",
+        candidate={
+            "title": "Standing Rollout",
+            "url": url,
+            "videoId": "preview-fallback",
+        },
+    )
+
+    output = bake_and_rank_module.copy_or_download_candidate_source(
+        ranked_candidate,
+        tmp_path / "candidate" / "source",
+        youtube_source_cache_dir=source_cache,
+        youtube_preview_cache_dir=preview_cache,
+    )
+
+    assert output.read_bytes() == b"validated-preview-video"
+    assert (source_cache / f"{cache_stem}.mp4").read_bytes() == b"validated-preview-video"
+
+
 def test_full_source_prefetch_filters_gate_failures_and_supports_background_slice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7833,6 +7879,73 @@ def test_floor_distance_alignment_pitches_upright_body_onto_floor() -> None:
         aligned = rotation @ np.asarray(source_joints[name]) + translation
         height = float(aligned[1])
         assert height == pytest.approx(target, abs=0.08)
+
+
+def test_video_world_alignment_levels_camera_floor_before_preview_canonicalization() -> None:
+    camera_plane = PlaneEstimate(
+        normal=(0.08, -0.03, -0.996),
+        offset=3.9,
+        rms_error=0.01,
+    )
+
+    output_rotation, output_translation, leveling_rotation = level_camera_floor_transform(
+        rotation=np.eye(3),
+        translation=np.asarray((0.2, -0.1, 2.8)),
+        camera_plane=camera_plane,
+    )
+
+    leveled_normal = leveling_rotation @ np.asarray(camera_plane.normal)
+    assert leveled_normal == pytest.approx((0.0, -1.0, 0.0), abs=1e-3)
+    assert output_rotation == pytest.approx(leveling_rotation)
+    assert output_translation == pytest.approx(
+        leveling_rotation @ np.asarray((0.2, -0.1, 2.8))
+    )
+
+
+def test_video_world_alignment_uprightness_scores_detect_orientation_regression() -> None:
+    source_pose = {
+        "frames": [
+            {
+                "joints": {
+                    "pelvis": [0.50, 0.70],
+                    "left_shoulder": [0.45, 0.30],
+                    "right_shoulder": [0.55, 0.30],
+                }
+            }
+        ]
+    }
+    upright_clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_shoulder", "right_shoulder"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (0.0, 0.5, 0.0),
+                    "left_shoulder": (-0.2, 0.0, 0.0),
+                    "right_shoulder": (0.2, 0.0, 0.0),
+                },
+            )
+        ],
+    )
+    horizontal_clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_shoulder", "right_shoulder"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={
+                    "pelvis": (0.0, 0.0, 0.5),
+                    "left_shoulder": (-0.2, 0.0, 0.0),
+                    "right_shoulder": (0.2, 0.0, 0.0),
+                },
+            )
+        ],
+    )
+
+    assert source_pose_uprightness_score(source_pose) == pytest.approx(1.0)
+    assert motion_clip_camera_uprightness_score(upright_clip) == pytest.approx(1.0)
+    assert motion_clip_camera_uprightness_score(horizontal_clip) == pytest.approx(0.0)
 
 
 def test_video_world_alignment_rejects_high_residual_transform() -> None:
@@ -10289,6 +10402,24 @@ def test_parse_deepseek_query_payload_accepts_json_object() -> None:
     ]
 
 
+def test_query_planner_prioritizes_structured_title_aliases() -> None:
+    queries = youtube_module.parse_youtube_query_planner_payload(
+        json.dumps(
+            {
+                "titleAliases": ["Spinning Bike Standing"],
+                "queries": ["out of saddle stationary cycling demo"],
+            }
+        ),
+        exercise_name="Spin Bike Standing Cycling",
+        max_queries=4,
+    )
+
+    assert queries == [
+        "Spinning Bike Standing",
+        "out of saddle stationary cycling demo",
+    ]
+
+
 def test_llama_cpp_query_planner_generates_sanitized_queries() -> None:
     class FakeClient:
         def __init__(self) -> None:
@@ -10319,9 +10450,22 @@ def test_llama_cpp_query_planner_generates_sanitized_queries() -> None:
     )
 
     queries = planner(
-        ExerciseEntry(exercise_id="pull-up", name="Pull Up", slug="pull-up"),
+        ExerciseEntry(
+            exercise_id="pull-up",
+            name="Pull Up",
+            slug="pull-up",
+            motion_context={
+                "primaryEquipment": {"name": "Pull-Up Bar"},
+                "exerciseType": "BODY_WEIGHT",
+            },
+        ),
         build_youtube_queries("Pull Up"),
         YouTubeRankingSettings(deepseek_max_queries=3),
+        motion_contract={
+            "movementType": "repetition",
+            "validStartState": "hanging from the bar",
+            "requiredPhases": ["pull upward", "lower to hang"],
+        },
     )
 
     assert queries == [
@@ -10329,6 +10473,11 @@ def test_llama_cpp_query_planner_generates_sanitized_queries() -> None:
         '"pull-up exercise demonstration" static camera',
     ]
     assert "Target exercise: Pull Up" in ranker.client.prompts[0]
+    assert "Pull-Up Bar" in ranker.client.prompts[0]
+    assert "hanging from the bar" in ranker.client.prompts[0]
+    assert "pull upward" in ranker.client.prompts[0]
+    assert "must introduce at least one established movement alias" in ranker.client.prompts[0]
+    assert "out-of-saddle" in ranker.client.prompts[0]
     assert "Do not use '-' exclusion operators" in ranker.client.prompts[0]
     assert "Return JSON only" in ranker.client.prompts[0]
 
@@ -12531,6 +12680,63 @@ def test_final_output_prompt_uses_motion_contract_not_skeleton_contract(tmp_path
     assert "blue limbs, slate torso, purple head, and orange joint markers" not in prompt
 
 
+def test_final_output_wrong_variant_is_a_hard_identity_failure(tmp_path: Path) -> None:
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Dumbbell Renegade Row",
+        candidate_title="Dumbbell Renegade Row to Rotation",
+        candidate_workspace=tmp_path / "candidate",
+        preview_html_path=tmp_path / "candidate" / "preview.html",
+        skeleton_path=tmp_path / "candidate" / "skeleton.json",
+        review_video_path=tmp_path / "candidate" / "review.webm",
+        duration_sec=2.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=2.0,
+        candidate={},
+    )
+    prompt = bake_and_rank_module.build_final_output_validation_prompt(
+        item=item,
+        ranking=LoopRanking(score=0.9, reasons=[], payload={}),
+        has_source_context=True,
+        min_score=0.9,
+    )
+    parsed = bake_and_rank_module.parse_final_output_validation_response(
+        '{"approved":false,"confidence":0.99,"retry":true,'
+        '"supportModeMatch":true,"equipmentHoldingPosePlausible":true,'
+        '"grossPoseReconstructionError":false,"reject":["wrong_variant"],'
+        '"note":"The movement adds torso rotation."}',
+        min_score=0.9,
+    )
+
+    assert "wrong_variant" in prompt
+    assert "added phase absent from the target contract" in prompt
+    assert parsed["passed"] is False
+    assert "wrong_variant" in parsed["hardRejectionReasons"]
+
+
+@pytest.mark.parametrize(
+    ("target", "candidate", "expected"),
+    [
+        ("Nordic Curl", "Nordic Curl (Eccentric)", "eccentric"),
+        ("Nordic Curl", "Nordic Curl - Partner Assisted", "partner assisted"),
+        ("Dumbbell Renegade Row", "Dumbbell Renegade Row to Rotation", "rotation"),
+        ("Standing Calf Raise", "Standing Calf Raise Exercise Demo", None),
+    ],
+)
+def test_unrequested_title_variant_terms_are_deterministic(
+    target: str,
+    candidate: str,
+    expected: str | None,
+) -> None:
+    terms = youtube_module.unrequested_title_variant_terms(target, candidate)
+    if expected is None:
+        assert terms == []
+    else:
+        assert expected in terms
+
+
 def test_two_scale_identity_requires_explicit_required_equipment() -> None:
     assert bake_and_rank_module.two_scale_identity_equipment_consistent(
         {"visibleEquipment": ["dumbbells"]},
@@ -13511,6 +13717,31 @@ def test_source_pose_endpoint_contract_accepts_hinged_below_hip_rack_pull_bounda
     assert endpoints["start"]["handHeight"] == "below_hips"
     assert endpoints["start"]["torsoOrientation"] == "hinged"
     assert validation["passed"] is True
+
+
+def test_source_pose_endpoint_contract_keeps_non_primary_hand_height_diagnostic() -> None:
+    endpoint = {
+        "supportMode": "standing",
+        "handHeight": "shoulder_chest",
+        "torsoOrientation": "upright",
+        "kneeState": "extended",
+        "stance": "shoulder_width",
+    }
+
+    validation = bake_and_rank_module.validate_source_pose_endpoints_against_contract(
+        {"available": True, "start": endpoint, "end": endpoint},
+        {
+            **pose_contract_fields(hand_height="below_hips"),
+            "primaryMovingRegions": ["hips", "knees", "feet"],
+        },
+    )
+
+    assert validation["passed"] is True
+    assert not validation["blockingMismatches"]
+    assert {
+        (mismatch["endpoint"], mismatch["field"])
+        for mismatch in validation["diagnosticOnlyMismatches"]
+    } == {("start", "handHeight"), ("end", "handHeight")}
 
 
 def test_source_pose_endpoint_summary_samples_the_boundary_not_the_last_motion_quarter() -> None:
@@ -17117,6 +17348,43 @@ def test_search_youtube_reuses_fresh_cached_results(
     assert [candidate.video_id for candidate in second] == ["cached-demo"]
 
 
+def test_search_youtube_merges_non_monotonic_cached_result_depths(tmp_path: Path) -> None:
+    youtube_module.write_youtube_search_cache(
+        tmp_path,
+        query="Standing Cycling",
+        results_per_query=20,
+        info={
+            "entries": [
+                {"id": "shallow-only", "title": "Exact standing cycle", "url": "https://youtu.be/shallow-only"},
+                {"id": "shared", "title": "Shared result", "url": "https://youtu.be/shared"},
+            ]
+        },
+    )
+    youtube_module.write_youtube_search_cache(
+        tmp_path,
+        query="Standing Cycling",
+        results_per_query=100,
+        info={
+            "entries": [
+                {"id": "shared", "title": "Shared result", "url": "https://youtu.be/shared"},
+                {"id": "deep-only", "title": "Broad result", "url": "https://youtu.be/deep-only"},
+            ]
+        },
+    )
+
+    candidates = youtube_module.search_youtube(
+        "Standing Cycling",
+        100,
+        cache_dir=tmp_path,
+    )
+
+    assert [candidate.video_id for candidate in candidates] == [
+        "shallow-only",
+        "shared",
+        "deep-only",
+    ]
+
+
 def test_search_youtube_uses_stale_cache_after_transient_403(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -18588,7 +18856,7 @@ def test_pose_prefilter_cuda_runtime_error_is_fatal() -> None:
         )
 
 
-def test_pose_prefilter_rate_limit_is_fatal() -> None:
+def test_pose_prefilter_rate_limit_is_recorded_as_candidate_failure() -> None:
     exercise = ExerciseEntry(exercise_id="pull-up", name="Pull Up", slug="pull-up")
     candidate = YouTubeCandidate(
         url="https://www.youtube.com/watch?v=pull-up",
@@ -18613,13 +18881,17 @@ def test_pose_prefilter_rate_limit_is_fatal() -> None:
             "for approximately 120 more second(s)."
         )
 
-    with pytest.raises(RuntimeError, match="shared rate-limit circuit breaker"):
-        youtube_module.rank_candidates_with_pose_prefilter(
-            exercise=exercise,
-            ranked=[candidate],
-            settings=YouTubeRankingSettings(pose_prefilter_enabled=True),
-            pose_ranker=fail_while_rate_limited,
-        )
+    reviewed = youtube_module.rank_candidates_with_pose_prefilter(
+        exercise=exercise,
+        ranked=[candidate],
+        settings=YouTubeRankingSettings(pose_prefilter_enabled=True),
+        pose_ranker=fail_while_rate_limited,
+    )
+
+    assert len(reviewed) == 1
+    assert "youtube_rate_limited" in reviewed[0].score_reasons
+    assert reviewed[0].vision_payload["posePrefilter"]["failureReason"] == "youtube_rate_limited"
+    assert "shared rate-limit circuit breaker" in reviewed[0].vision_payload["posePrefilter"]["error"]
 
 
 def test_pose_prefilter_multiple_people_hard_rejects_candidate() -> None:
@@ -20696,6 +20968,42 @@ def test_semantic_gate_rejects_model_reported_named_variant_terms() -> None:
     assert "semantic_unrequested_chest_to_bar_variant" in scored.score_reasons
 
 
+def test_semantic_gate_cannot_stochastically_pass_explicit_title_variant() -> None:
+    exercise = ExerciseEntry(exercise_id="nordic", name="Nordic Curl", slug="nordic-curl")
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=eccentric",
+        video_id="eccentric",
+        title="Nordic Curl (Eccentric)",
+        channel="Coach",
+        duration_seconds=20,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet="Nordic curl demonstration.",
+        thumbnail=None,
+        final_score=0.9,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=1.0,
+        semantic_reasons=["semantic_text_match"],
+        semantic_payload={
+            "passed": True,
+            "score": 1.0,
+            "wrongExercise": False,
+            "wrongEquipment": False,
+            "unrequestedVariantTerms": [],
+        },
+        settings=YouTubeRankingSettings(),
+    )
+
+    assert scored.status == "rejected"
+    assert scored.vision_payload is not None
+    assert scored.vision_payload["semanticGate"]["unrequestedVariantTerms"] == ["eccentric"]
+    assert "semantic_unrequested_eccentric_variant" in scored.score_reasons
+
+
 def test_semantic_gate_rejects_model_reported_unrequested_variant_terms() -> None:
     exercise = ExerciseEntry(exercise_id="row", name="Row", slug="row")
     candidate = YouTubeCandidate(
@@ -20830,7 +21138,10 @@ def test_discover_and_rank_youtube_candidates_uses_query_planner(
         settings: YouTubeRankingSettings,
     ) -> list[str]:
         assert exercise.name == "Squat"
-        assert base_queries == build_youtube_queries("Squat")
+        assert base_queries == youtube_module.build_youtube_queries_with_contract_aliases(
+            "Squat",
+            None,
+        )
         assert settings.deepseek_max_queries == 2
         return [
             'Squat side view "single camera" -shorts',
@@ -20868,7 +21179,7 @@ def test_discover_and_rank_youtube_candidates_uses_query_planner(
 
     exercise = manifest["exercises"][0]
     assert searched_queries == [
-        *build_youtube_queries("Squat"),
+        *youtube_module.build_youtube_queries_with_contract_aliases("Squat", None),
         'Squat side view "single camera"',
         "Squat execution demo full rep",
     ]
@@ -21640,6 +21951,28 @@ def test_pre_wham_target_blind_equipment_observation_accepts_exact_implement(
     assert result["passed"] is True
     assert "one rigid connecting shaft" in captured_prompt["value"]
     assert "two independent handles" in captured_prompt["value"]
+    assert "actively used as a support surface" in captured_prompt["value"]
+
+
+def test_pre_wham_target_blind_equipment_observation_accepts_equivalent_support_surface(
+    tmp_path: Path,
+) -> None:
+    frame_path = tmp_path / "sheet.jpg"
+    frame_path.write_bytes(b"image")
+
+    result = bake_and_rank_module.confirm_pre_wham_named_equipment(
+        exercise_name="Box Jump",
+        frame_paths=[frame_path],
+        caption_images=lambda **_kwargs: json.dumps(
+            {"visibleEquipment": ["bench"], "evidence": "wooden raised platform"}
+        ),
+        cache_path=tmp_path / "equipment.json",
+        request_timeout_seconds=30.0,
+    )
+
+    assert result["passed"] is True
+    assert result["requiredEquipment"] == "box"
+    assert result["visibleEquipment"] == ["bench"]
 
 
 def test_pre_wham_target_blind_equipment_observation_skips_bodyweight(
@@ -27052,6 +27385,53 @@ def test_exact_pose_confirmation_promotes_valid_candidate_after_vlm_rejection(
     assert "source_cut_deterministic_confirmation_recovered_vlm_rejection" in confirmed.reasons
 
 
+def test_pose_only_recovery_preserves_already_bounded_parent_source_window() -> None:
+    ranking = LoopRanking(
+        score=0.5,
+        model_score=0.0,
+        reasons=["source_cut_deterministic_confirmation_recovered_vlm_rejection"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "A",
+            "selected_section_start_seconds": 11.75,
+            "selected_section_end_seconds": 14.25,
+            "sourceCutCandidates": [],
+        },
+    )
+
+    preserved = bake_and_rank_module.preserve_parent_source_window_after_pose_only_recovery(
+        ranking,
+        source_window=DetectionWindow(index=0, start_seconds=4.0, end_seconds=13.0),
+        validating_padded_chunk=True,
+    )
+
+    assert preserved.payload is not None
+    assert preserved.payload["selected_section_start_seconds"] == 4.0
+    assert preserved.payload["selected_section_end_seconds"] == 13.0
+    assert "source_cut_parent_window_preserved_after_pose_only_recovery" in preserved.reasons
+
+
+def test_pose_only_recovery_does_not_expand_an_unbounded_discovery_window() -> None:
+    ranking = LoopRanking(
+        score=0.5,
+        model_score=0.0,
+        reasons=["source_cut_deterministic_confirmation_recovered_vlm_rejection"],
+        raw_response="{}",
+        payload={
+            "selected_section_start_seconds": 2.0,
+            "selected_section_end_seconds": 5.0,
+        },
+    )
+
+    unchanged = bake_and_rank_module.preserve_parent_source_window_after_pose_only_recovery(
+        ranking,
+        source_window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=30.0),
+        validating_padded_chunk=False,
+    )
+
+    assert unchanged is ranking
+
+
 def test_exact_pose_multi_cycle_validation_produces_single_cycle_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -31720,6 +32100,76 @@ def test_kinematic_plausibility_ignores_isolated_threshold_edge_spikes() -> None
     assert angle_metrics["severe"] is False
 
 
+def test_joint_angle_step_accepts_exact_validated_source_motion() -> None:
+    assert bake_and_rank_module.joint_angle_step_is_source_corroborated(
+        {
+            "jointAngleStep": {
+                "severe": True,
+                "maxAngleStepDegrees": 41.59,
+                "sourceMaxAngleStepDegrees": 41.59,
+            }
+        },
+        source_reference_validated=True,
+        source_pose_fidelity_passed=True,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("source_validated", "pose_fidelity_passed", "source_step", "output_step"),
+    [
+        (False, True, 41.59, 41.59),
+        (True, False, 41.59, 41.59),
+        (True, True, None, 41.59),
+        (True, True, 24.0, 24.0),
+        (True, True, 41.59, 42.0),
+    ],
+)
+def test_joint_angle_step_does_not_trust_uncorroborated_motion(
+    source_validated: bool,
+    pose_fidelity_passed: bool,
+    source_step: float | None,
+    output_step: float,
+) -> None:
+    assert bake_and_rank_module.joint_angle_step_is_source_corroborated(
+        {
+            "jointAngleStep": {
+                "severe": True,
+                "maxAngleStepDegrees": output_step,
+                "sourceMaxAngleStepDegrees": source_step,
+            }
+        },
+        source_reference_validated=source_validated,
+        source_pose_fidelity_passed=pose_fidelity_passed,
+    ) is False
+
+
+def test_materialized_kinematic_reasons_drop_only_corroborated_angle_step() -> None:
+    assert bake_and_rank_module.blocking_materialized_kinematic_reasons(
+        {
+            "severeArtifact": True,
+            "artifactReasons": ["joint_angle_spike_penalty"],
+        },
+        source_corroborated_joint_angle_step=True,
+    ) == []
+    assert bake_and_rank_module.blocking_materialized_kinematic_reasons(
+        {
+            "severeArtifact": True,
+            "artifactReasons": [
+                "joint_angle_spike_penalty",
+                "bone_length_instability_penalty",
+            ],
+        },
+        source_corroborated_joint_angle_step=True,
+    ) == ["bone_length_instability_penalty"]
+
+
+def test_materialized_kinematic_reasons_preserve_unknown_severe_artifact() -> None:
+    assert bake_and_rank_module.blocking_materialized_kinematic_reasons(
+        {"severeArtifact": True, "artifactReasons": ["future_artifact"]},
+        source_corroborated_joint_angle_step=False,
+    ) == ["materialized_kinematic_artifact"]
+
+
 def test_expanded_youtube_review_preserves_configured_work_caps() -> None:
     settings = youtube_module.YouTubeRankingSettings(
         semantic_gate_enabled=True,
@@ -31938,6 +32388,33 @@ def test_phase_completeness_allows_small_final_axis_drift_after_return(tmp_path:
     assert metrics["finishAtExtreme"] is True
     assert metrics["passed"] is True
     assert metrics["reason"] == "full_repetition_phase_return_detected"
+
+
+def test_phase_completeness_accepts_clean_phase_topology_despite_endpoint_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skeleton = tmp_path / "return-with-large-endpoint-drift.json"
+    write_repetition_phase_skeleton(
+        skeleton,
+        [0.00, 0.16, 0.32, 0.40, 0.32, 0.24, 0.23],
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "has_exactly_one_major_repetition_cycle",
+        lambda _values: (True, ["low", "high", "low"]),
+    )
+
+    metrics = bake_and_rank_module.full_repetition_phase_completeness_metrics_from_payload(
+        json.loads(skeleton.read_text(encoding="utf-8")),
+        exercise_name="Bench Press",
+    )
+
+    assert metrics["endpointPhaseDeltaRatio"] > metrics["maxEndpointPhaseDeltaRatio"]
+    assert metrics["majorPhaseSequence"] == ["low", "high", "low"]
+    assert metrics["hasTopologicalReturn"] is True
+    assert metrics["hasReturnPhase"] is True
+    assert metrics["passed"] is True
 
 
 def test_phase_completeness_rejects_multiple_cycles_in_one_window(tmp_path: Path) -> None:
@@ -37276,7 +37753,7 @@ def test_strong_camera_step_requires_high_transform_consensus() -> None:
     assert camera_stability_module.is_confident_strong_camera_motion_step(global_step) is True
 
 
-def test_candidate_scene_windows_exclude_moving_cameras() -> None:
+def test_candidate_scene_windows_exclude_only_unstable_cameras() -> None:
     scene_detection = {
         "status": "ok",
         "boundarySeconds": [2.0, 4.0, 6.0],
@@ -37297,6 +37774,7 @@ def test_candidate_scene_windows_exclude_moving_cameras() -> None:
 
     assert [(window.start_seconds, window.end_seconds) for window in windows] == [
         (0.0, 2.0),
+        (4.0, 6.0),
         (6.0, 8.0),
     ]
 
@@ -37326,10 +37804,10 @@ def test_background_camera_stability_overrides_whole_frame_motion_only_when_conc
     assert unknown["passed"] is False
     assert unknown["rejectionReasons"] == ["source_cut_excessive_camera_motion"]
     assert moderate["passed"] is False
-    assert "source_scene_unstable_camera" in moderate["rejectionReasons"]
+    assert moderate["rejectionReasons"] == ["source_cut_excessive_camera_motion"]
 
 
-def test_moderate_background_camera_motion_is_not_source_eligible() -> None:
+def test_moderate_background_camera_motion_remains_source_eligible() -> None:
     candidate = bake_and_rank_module.SourceCutCandidate(
         candidate_id="A",
         window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=3.0),
@@ -37340,9 +37818,9 @@ def test_moderate_background_camera_motion_is_not_source_eligible() -> None:
         ),
     )
 
-    assert candidate.visual_integrity["passed"] is False
-    assert "source_scene_unstable_camera" in candidate.visual_integrity["rejectionReasons"]
-    assert bake_and_rank_module.source_cut_candidate_eligible_for_vlm(candidate) is False
+    assert candidate.visual_integrity["passed"] is True
+    assert candidate.visual_integrity["rejectionReasons"] == []
+    assert bake_and_rank_module.source_cut_candidate_eligible_for_vlm(candidate) is True
 
 
 def test_pyscenedetect_marks_only_windows_crossing_an_internal_scene_boundary(tmp_path: Path) -> None:
@@ -39003,6 +39481,20 @@ def test_source_video_boundary_sweep_can_refine_below_estimated_rep_duration() -
         bake_and_rank_module.SOURCE_CUT_REFINEMENT_MIN_SECONDS
     )
     assert all(spec.window.start_seconds == pytest.approx(10.0) for spec in boundary_specs)
+
+
+def test_source_video_pyramid_keeps_complete_parent_below_estimated_duration_floor() -> None:
+    window = DetectionWindow(index=0, start_seconds=0.06, end_seconds=2.45)
+
+    specs = bake_and_rank_module.build_source_video_pyramid_candidate_windows(
+        window=window,
+        chunk_estimate=SimpleNamespace(rep_duration_min_sec=3.0, rep_duration_max_sec=10.0),
+        min_duration_floor_seconds=3.0,
+    )
+
+    assert len(specs) == 1
+    assert specs[0].window == window
+    assert specs[0].chunking["strategy"] == "full_window_below_estimated_floor"
 
 
 def test_source_cut_full_cycle_rejects_too_short_parent_before_vlm(
@@ -40878,6 +41370,44 @@ def test_final_output_reconciles_contract_only_rejection_when_source_and_output_
     assert reconciled["passed"] is True
     assert reconciled["hardRejectionReasons"] == []
     assert "final_output_source_confirmed_contract_contradiction_repaired" in reconciled["warningReasons"]
+
+
+def test_final_output_reconciles_source_corroborated_kinematic_spike() -> None:
+    parsed = bake_and_rank_module.parse_final_output_validation_response(
+        json.dumps(
+            {
+                "approved": False,
+                "confidence": 0.95,
+                "retry": True,
+                "supportModeMatch": True,
+                "equipmentHoldingPosePlausible": True,
+                "grossPoseReconstructionError": True,
+                "reject": ["gross_pose_reconstruction_error"],
+                "note": "The figure remains crouched throughout.",
+            }
+        ),
+        min_score=0.90,
+    )
+    confirmed = {"passed": True}
+
+    reconciled = bake_and_rank_module.reconcile_source_confirmed_contract_contradiction(
+        parsed,
+        deterministic_metrics={
+            "sourceVideoFullRepetitionPhaseCompletenessMetrics": confirmed,
+            "sourceOutputPoseFidelityMetrics": confirmed,
+            "kinematicPlausibilityMetrics": {
+                "severeArtifact": True,
+                "kinematicPlausibilityScore": 0.61,
+                "artifactReasons": ["joint_angle_spike_penalty"],
+                "sourceCorroboratedJointAngleStep": True,
+            },
+            "sourceOutputTargetMotionPreservationMetrics": confirmed,
+        },
+        has_source_context=True,
+    )
+
+    assert reconciled["passed"] is True
+    assert reconciled["hardRejectionReasons"] == []
 
 
 def test_final_output_keeps_reconstruction_rejection_when_source_fidelity_fails() -> None:
