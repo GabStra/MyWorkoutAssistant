@@ -76,6 +76,7 @@ FRONTAL_VIEW_SHOULDER_WIDTH_HIGH = 0.22
 FRONTAL_VIEW_HIP_WIDTH_LOW = 0.08
 FRONTAL_VIEW_HIP_WIDTH_HIGH = 0.15
 CLEAR_VALID_CHUNK_MIN_SCORE = 0.68
+POSE_REFINED_WINDOW_MIN_SAMPLE_COUNT = 12
 DEFAULT_YOLO_BATCH_SIZE = 16
 FRAME_LAYOUT_CUT_JUMP_THRESHOLD = 0.045
 FRAME_EDGE_CUT_JUMP_THRESHOLD = 0.035
@@ -486,6 +487,7 @@ def score_pose_samples(
     if not samples:
         return empty_pose_prefilter_result("pose_prefilter_no_samples")
     windows = build_pose_windows(samples, settings=settings)
+    window_scales_seconds = [max(0.5, settings.window_seconds)]
     scored = []
     for window_index, window in enumerate(windows):
         item = score_pose_window(window, metadata=metadata, settings=settings)
@@ -503,6 +505,56 @@ def score_pose_samples(
         for item in scored
         if float(item["score"]) >= settings.min_score and not item.get("blockingIssues")
     ]
+    if not eligible and len(samples) >= POSE_REFINED_WINDOW_MIN_SAMPLE_COUNT:
+        sorted_sample_times = sorted(sample.time_seconds for sample in samples)
+        positive_deltas = [
+            right - left
+            for left, right in zip(sorted_sample_times, sorted_sample_times[1:])
+            if right > left
+        ]
+        typical_sample_delta = median(positive_deltas) if positive_deltas else 0.0
+        min_refined_window_seconds = max(
+            0.5,
+            typical_sample_delta * POSE_REFINED_WINDOW_MIN_SAMPLE_COUNT,
+        )
+        refined_window_seconds = max(0.5, settings.window_seconds) / 2.0
+        seen_windows = {
+            (
+                int(round(float(item["startSeconds"]) * 1000)),
+                int(round(float(item["endSeconds"]) * 1000)),
+            )
+            for item in scored
+        }
+        while refined_window_seconds + 1e-6 >= min_refined_window_seconds:
+            refined_windows = build_pose_windows(
+                samples,
+                settings=settings,
+                window_seconds=refined_window_seconds,
+                overlap_seconds=refined_window_seconds / 2.0,
+            )
+            new_scored: list[dict[str, Any]] = []
+            for window in refined_windows:
+                item = score_pose_window(window, metadata=metadata, settings=settings)
+                key = (
+                    int(round(float(item["startSeconds"]) * 1000)),
+                    int(round(float(item["endSeconds"]) * 1000)),
+                )
+                if key in seen_windows or int(item.get("sampleCount", 0)) < POSE_REFINED_WINDOW_MIN_SAMPLE_COUNT:
+                    continue
+                seen_windows.add(key)
+                item["windowIndex"] = len(scored) + len(new_scored)
+                new_scored.append(recover_transient_pose_window_failures(item, min_score=settings.min_score))
+            if new_scored:
+                scored.extend(new_scored)
+                window_scales_seconds.append(refined_window_seconds)
+                eligible = [
+                    item
+                    for item in scored
+                    if float(item["score"]) >= settings.min_score and not item.get("blockingIssues")
+                ]
+                if eligible:
+                    break
+            refined_window_seconds /= 2.0
     best = max(eligible or scored, key=lambda item: float(item["score"]))
     valid_chunk_score_threshold = max(settings.min_score, CLEAR_VALID_CHUNK_MIN_SCORE)
     valid_chunks = pose_valid_chunks_from_scored_windows(
@@ -533,6 +585,7 @@ def score_pose_samples(
         "validChunks": valid_chunks,
         "validChunkCount": len(valid_chunks),
         "validChunkScoreThreshold": valid_chunk_score_threshold,
+        "windowScalesSeconds": window_scales_seconds,
         "blockingIssues": blocking_issues,
         "recoveredBlockingIssues": list(best.get("recoveredBlockingIssues", [])),
         "qualityIssues": quality_issues,
@@ -814,12 +867,19 @@ def ensure_cached_pose_model(
             pass
 
 
-def build_pose_windows(samples: list[PoseSample], *, settings: PosePrefilterSettings) -> list[list[PoseSample]]:
+def build_pose_windows(
+    samples: list[PoseSample],
+    *,
+    settings: PosePrefilterSettings,
+    window_seconds: float | None = None,
+    overlap_seconds: float | None = None,
+) -> list[list[PoseSample]]:
     if not samples:
         return []
     duration = max(sample.time_seconds for sample in samples)
-    window_seconds = max(0.5, settings.window_seconds)
-    overlap = min(max(0.0, settings.overlap_seconds), max(0.0, window_seconds - 0.1))
+    window_seconds = max(0.5, settings.window_seconds if window_seconds is None else window_seconds)
+    configured_overlap = settings.overlap_seconds if overlap_seconds is None else overlap_seconds
+    overlap = min(max(0.0, configured_overlap), max(0.0, window_seconds - 0.1))
     step = max(0.1, window_seconds - overlap)
     starts: list[float] = []
     current = 0.0
