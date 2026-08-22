@@ -127,6 +127,8 @@ LOW_RES_PROGRESSIVE_VIDEO_FORMAT = (
 
 YOUTUBE_RATE_LIMIT_COOLDOWN_SECONDS = 60 * 60
 YOUTUBE_RATE_LIMIT_MARKER_ENV = "MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH"
+_YOUTUBE_SEARCH_CACHE_INDEX_LOCK = threading.Lock()
+_YOUTUBE_SEARCH_CACHE_INDEX: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
 
 def youtube_rate_limit_marker_path() -> Path:
@@ -2165,13 +2167,18 @@ def parse_youtube_query_planner_payload(
 
         extracted = extract_json_object(raw)
         payload = extracted if isinstance(extracted, dict) else {}
-    raw_queries = payload.get("queries") if isinstance(payload, dict) else None
-    if not isinstance(raw_queries, list):
+    if not isinstance(payload, dict):
         return []
+    raw_title_aliases = payload.get("titleAliases")
+    raw_queries = payload.get("queries")
+    if not isinstance(raw_title_aliases, list):
+        raw_title_aliases = []
+    if not isinstance(raw_queries, list):
+        raw_queries = []
     return merge_youtube_queries(
         [
             normalize_generated_youtube_query(query, exercise_name=exercise_name)
-            for query in raw_queries
+            for query in [*raw_title_aliases, *raw_queries]
             if isinstance(query, str)
         ],
         limit=max(0, max_queries),
@@ -2207,11 +2214,15 @@ class LlamaCppYouTubeQueryPlanner:
         exercise: ExerciseEntry,
         base_queries: list[str],
         settings: YouTubeRankingSettings,
+        *,
+        motion_contract: dict[str, Any] | None = None,
     ) -> list[str]:
         prompt = build_youtube_query_planner_prompt(
             exercise_name=exercise.name,
             base_queries=base_queries,
             max_queries=settings.deepseek_max_queries,
+            motion_context=exercise.motion_context,
+            motion_contract=motion_contract,
         )
         caption_kwargs: dict[str, Any] = {
             "frame_paths": [],
@@ -2263,11 +2274,15 @@ class DeepSeekYouTubeQueryPlanner:
         exercise: ExerciseEntry,
         base_queries: list[str],
         settings: YouTubeRankingSettings,
+        *,
+        motion_contract: dict[str, Any] | None = None,
     ) -> list[str]:
         prompt = build_deepseek_query_planner_prompt(
             exercise_name=exercise.name,
             base_queries=base_queries,
             max_queries=settings.deepseek_max_queries,
+            motion_context=exercise.motion_context,
+            motion_contract=motion_contract,
         )
         payload = {
             "model": settings.deepseek_model,
@@ -2305,21 +2320,51 @@ def build_youtube_query_planner_prompt(
     exercise_name: str,
     base_queries: list[str],
     max_queries: int,
+    motion_context: dict[str, Any] | None = None,
+    motion_contract: dict[str, Any] | None = None,
 ) -> str:
+    planning_context = youtube_query_planning_context(
+        motion_context=motion_context,
+        motion_contract=motion_contract,
+    )
     return (
         f"Target exercise: {exercise_name}\n"
+        f"Exercise and movement context: {json.dumps(planning_context, ensure_ascii=False)}\n"
         f"Baseline queries already used: {json.dumps(base_queries)}\n"
-        f"Return up to {max(1, max_queries)} additional YouTube search queries.\n"
+        f"Return up to {max(1, max_queries)} additional YouTube searches total, split between concise title aliases "
+        "and broader queries.\n"
         "Queries should favor videos that are good WHAM inputs: a single person, the whole relevant body "
         "or implement visible, static camera, continuous normal-speed repetitions, no camera cuts, and no "
         "nearby people or obstructions.\n"
         "Do not use '-' exclusion operators or any other negative YouTube search terms.\n"
         "Prefer exact quoted exercise names and exact common aliases. Avoid broad phrases that can match "
         "music, challenges, tutorials, commentary, or general workouts.\n"
+        "Translate the requested movement into common coach, athlete, or gym terminology when the literal "
+        "database name is unlikely to be used in video titles. Preserve the required equipment, body position, "
+        "support mode, and meaningful variant qualifiers.\n"
+        "Put the shortest natural title-style names in titleAliases, replacing "
+        "database wording with common exercise and equipment synonyms where appropriate. Do not add source-quality "
+        "suffixes to that first query. Use later queries for established coaching phrases or alternate common names. "
+        "When both the equipment noun and action wording have common alternatives, cover both kinds of vocabulary "
+        "across the returned queries instead of repeating one phrase.\n"
+        "Before composing the response, identify the equipment phrase and action phrase in the target. If established "
+        "alternatives exist for both, the first titleAliases item must replace both phrases, and the exact equipment phrase must "
+        "not appear in every returned query. A query that changes only the action while retaining all database "
+        "equipment wording does not satisfy this first-query requirement.\n"
+        "Every returned query must introduce at least one established movement alias or coaching phrase that "
+        "does not appear in the target exercise name. Merely adding source-quality words such as demo, proper "
+        "form, full rep, side view, single person, static camera, continuous motion, or no cuts is not an "
+        "additional query. Return fewer queries or an empty list when no genuine terminology alternative exists.\n"
+        "Examples of terminology translation: an indoor exercise bike may be called a spinning bike or stationary "
+        "bike, while standing cycling may be called out-of-saddle cycling or a standing climb; rear-foot-elevated "
+        "split squat is commonly called a Bulgarian split squat. "
+        "Use examples only when their meaning and equipment match the target.\n"
         "If the target is a basic exercise name, generate queries for the basic/common version only. Do not add "
         "extra qualifier terms for grip, range, assistance, loading, machine/support style, angle, body position, "
         "side, limb count, tempo, or partial-only execution unless the target exercise already includes that qualifier.\n"
-        "Do not return URLs. Return JSON only: {\"queries\": [\"...\"]}."
+        "titleAliases must contain only compact names that could plausibly be a video title, without words such as "
+        "demo, form, view, full rep, tutorial, or workout. Do not return URLs. Return JSON only: "
+        "{\"titleAliases\": [\"...\"], \"queries\": [\"...\"]}."
     )
 
 
@@ -2328,12 +2373,37 @@ def build_deepseek_query_planner_prompt(
     exercise_name: str,
     base_queries: list[str],
     max_queries: int,
+    motion_context: dict[str, Any] | None = None,
+    motion_contract: dict[str, Any] | None = None,
 ) -> str:
     return build_youtube_query_planner_prompt(
         exercise_name=exercise_name,
         base_queries=base_queries,
         max_queries=max_queries,
+        motion_context=motion_context,
+        motion_contract=motion_contract,
     )
+
+
+def youtube_query_planning_context(
+    *,
+    motion_context: dict[str, Any] | None,
+    motion_contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    context = motion_context if isinstance(motion_context, dict) else {}
+    contract = motion_contract if isinstance(motion_contract, dict) else {}
+    return {
+        "primaryEquipment": context.get("primaryEquipment"),
+        "requiredAccessories": context.get("requiredAccessories"),
+        "exerciseType": context.get("exerciseType"),
+        "movementType": contract.get("movementType"),
+        "completionMode": contract.get("completionMode"),
+        "validStartState": contract.get("validStartState"),
+        "validEndState": contract.get("validEndState"),
+        "requiredPhases": contract.get("requiredPhases"),
+        "mustBeVisibleRegions": contract.get("mustBeVisibleRegions"),
+        "existingAliases": contract.get("youtubeQueryAliases"),
+    }
 
 
 def parse_deepseek_query_payload(raw: str, *, max_queries: int) -> list[str]:
@@ -2366,8 +2436,21 @@ def search_youtube(
         results_per_query=results_per_query,
         max_age_seconds=YOUTUBE_SEARCH_CACHE_FRESH_SECONDS,
     )
+    cached_variant_candidates = merge_youtube_candidate_lists(
+        *[
+            parse_yt_dlp_search_results(info)
+            for info in load_cached_youtube_search_variants(
+                cache_dir,
+                query=query,
+                max_age_seconds=YOUTUBE_SEARCH_CACHE_STALE_FALLBACK_SECONDS,
+            )
+        ]
+    )
     if fresh_cached_info is not None:
-        return parse_yt_dlp_search_results(fresh_cached_info)
+        return merge_youtube_candidate_lists(
+            cached_variant_candidates,
+            parse_yt_dlp_search_results(fresh_cached_info),
+        )
     stale_cached_info = load_cached_youtube_search_info(
         cache_dir,
         query=query,
@@ -2425,7 +2508,10 @@ def search_youtube(
             transient = youtube_search_error_is_transient(error)
             if not transient or attempt >= YOUTUBE_SEARCH_MAX_ATTEMPTS:
                 if transient and stale_cached_info is not None:
-                    return parse_yt_dlp_search_results(stale_cached_info)
+                    return merge_youtube_candidate_lists(
+                        cached_variant_candidates,
+                        parse_yt_dlp_search_results(stale_cached_info),
+                    )
                 raise YouTubeSearchError(query, error, transient=transient)
             time.sleep(youtube_search_retry_delay_seconds(attempt))
     try:
@@ -2438,7 +2524,10 @@ def search_youtube(
         results_per_query=results_per_query,
         info=info,
     )
-    return parse_yt_dlp_search_results(info)
+    return merge_youtube_candidate_lists(
+        cached_variant_candidates,
+        parse_yt_dlp_search_results(info),
+    )
 
 
 def youtube_search_retry_delay_seconds(attempt: int) -> float:
@@ -2500,6 +2589,69 @@ def load_cached_youtube_search_info(
     return info
 
 
+def load_cached_youtube_search_variants(
+    cache_dir: Path | None,
+    *,
+    query: str,
+    max_age_seconds: float,
+) -> list[dict[str, Any]]:
+    """Return every cached result depth for a query, shallow results first.
+
+    YouTube search responses are not monotonic: requesting more results can
+    omit highly relevant videos returned by a shallower request. Retaining all
+    observed depths prevents a later broad search from forgetting a source.
+    """
+    if cache_dir is None:
+        return []
+    search_cache_dir = cache_dir.expanduser().resolve() / "search-results"
+    if not search_cache_dir.is_dir():
+        return []
+    normalized_query = normalize_search_query(query)
+    cache_key = str(search_cache_dir)
+    with _YOUTUBE_SEARCH_CACHE_INDEX_LOCK:
+        index = _YOUTUBE_SEARCH_CACHE_INDEX.get(cache_key)
+        if index is None:
+            index = {}
+            for cache_path in search_cache_dir.glob("*.json"):
+                try:
+                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                    cached_query = normalize_search_query(str(cached.get("query") or ""))
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if cached_query:
+                    index.setdefault(cached_query, []).append(cached)
+            _YOUTUBE_SEARCH_CACHE_INDEX[cache_key] = index
+        cached_variants = list(index.get(normalized_query, []))
+    variants: list[tuple[int, dict[str, Any]]] = []
+    for cached in cached_variants:
+        try:
+            cached_at = float(cached.get("cachedAtEpochSeconds") or 0.0)
+            result_depth = max(1, int(cached.get("resultsPerQuery") or 1))
+            info = cached.get("info")
+        except (TypeError, ValueError):
+            continue
+        if (
+            cached.get("schemaVersion") == YOUTUBE_SEARCH_CACHE_SCHEMA_VERSION
+            and max(0.0, time.time() - cached_at) <= max(0.0, max_age_seconds)
+            and isinstance(info, dict)
+        ):
+            variants.append((result_depth, info))
+    return [info for _, info in sorted(variants, key=lambda item: item[0])]
+
+
+def merge_youtube_candidate_lists(*candidate_lists: list[YouTubeCandidate]) -> list[YouTubeCandidate]:
+    merged: list[YouTubeCandidate] = []
+    seen: set[str] = set()
+    for candidates in candidate_lists:
+        for candidate in candidates:
+            key = candidate.key()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(candidate)
+    return merged
+
+
 def write_youtube_search_cache(
     cache_dir: Path | None,
     *,
@@ -2528,6 +2680,17 @@ def write_youtube_search_cache(
         )
         temporary_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         os.replace(temporary_path, cache_path)
+        cache_key = str(cache_path.parent)
+        with _YOUTUBE_SEARCH_CACHE_INDEX_LOCK:
+            index = _YOUTUBE_SEARCH_CACHE_INDEX.get(cache_key)
+            if index is not None:
+                normalized_query = normalize_search_query(query)
+                prior = [
+                    item
+                    for item in index.get(normalized_query, [])
+                    if int(item.get("resultsPerQuery") or 1) != max(1, int(results_per_query))
+                ]
+                index[normalized_query] = [*prior, payload]
     except OSError:
         # Search caching is an optimization. A read-only or unavailable cache
         # directory must not turn a successful YouTube request into a failure.
@@ -2854,6 +3017,57 @@ MOTION_SOURCE_TITLE_CUES: tuple[tuple[str, float], ...] = (
     ("proper form", 0.10),
     ("full rep", 0.10),
 )
+
+# Explicit movement-changing qualifiers are deterministic identity evidence. The
+# semantic model still handles context, but repeated stochastic reviews must not
+# reverse an obvious qualifier that is absent from the requested exercise name.
+MOVEMENT_VARIANT_TITLE_QUALIFIERS: tuple[str, ...] = (
+    "assisted",
+    "assistance",
+    "band assisted",
+    "partner assisted",
+    "eccentric",
+    "eccentric only",
+    "negative",
+    "negatives",
+    "progression",
+    "regression",
+    "rotation",
+    "rotational",
+    "twist",
+    "partial",
+    "quarter",
+    "half rep",
+    "single arm",
+    "single leg",
+    "alternating",
+    "incline",
+    "decline",
+    "seated",
+    "standing",
+    "supported",
+    "unsupported",
+    "kneeling",
+    "on bench",
+    "with belt",
+    "swiss ball",
+    "stability ball",
+    "smith machine",
+    "close grip",
+    "wide grip",
+)
+
+
+def unrequested_title_variant_terms(exercise_name: str, candidate_title: str) -> list[str]:
+    target = f" {normalize_exercise_name(exercise_name)} "
+    title = f" {normalize_exercise_name(candidate_title)} "
+    if not target.strip() or not title.strip():
+        return []
+    return [
+        qualifier
+        for qualifier in MOVEMENT_VARIANT_TITLE_QUALIFIERS
+        if f" {qualifier} " in title and f" {qualifier} " not in target
+    ]
 
 
 def candidate_motion_source_priority_score(candidate_title: str) -> float:
@@ -3421,7 +3635,12 @@ def apply_semantic_gate_score(
     clamped_score = clamp_score(semantic_score)
     payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
     semantic_payload = dict(semantic_payload) if isinstance(semantic_payload, dict) else {}
-    model_unrequested_variants = semantic_payload_unrequested_variant_terms(semantic_payload)
+    model_unrequested_variants = dedupe_reasons(
+        [
+            *semantic_payload_unrequested_variant_terms(semantic_payload),
+            *unrequested_title_variant_terms(exercise.name, candidate.title),
+        ]
+    )
     model_variant_reasons = [
         f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
         for variant in model_unrequested_variants
@@ -4982,8 +5201,6 @@ def rank_candidates_with_pose_prefilter(
                 except YoloDeviceUnavailableError:
                     raise
                 except Exception as exc:
-                    if youtube_failure_is_rate_limited(str(exc)):
-                        raise
                     if is_critical_vlm_interaction_error(exc):
                         add_vlm_context(
                             exc,
@@ -4993,14 +5210,20 @@ def rank_candidates_with_pose_prefilter(
                             title=candidate.title,
                         )
                         raise
+                    failure_reason = (
+                        "youtube_rate_limited"
+                        if youtube_failure_is_rate_limited(str(exc))
+                        else "pose_prefilter_failed"
+                    )
                     scored_by_key[candidate.key()] = apply_pose_prefilter_score(
                         candidate,
                         pose_score=0.0,
-                        pose_reasons=["pose_prefilter_failed"],
+                        pose_reasons=[failure_reason],
                         pose_payload={
                             "enabled": True,
                             "passed": False,
                             "score": 0.0,
+                            "failureReason": failure_reason,
                             "error": str(exc),
                         },
                         settings=settings,
@@ -6717,7 +6940,15 @@ def discover_and_rank_youtube_candidates(
             }
             if query_planner is not None and not settings.single_exercise_name_query:
                 try:
-                    planned_queries = query_planner(exercise, queries, settings)
+                    if callable_accepts_keyword(query_planner, "motion_contract"):
+                        planned_queries = query_planner(
+                            exercise,
+                            queries,
+                            settings,
+                            motion_contract=exercise_motion_contract,
+                        )
+                    else:
+                        planned_queries = query_planner(exercise, queries, settings)
                     added_queries = [
                         query
                         for query in merge_youtube_queries(planned_queries, limit=settings.deepseek_max_queries)
