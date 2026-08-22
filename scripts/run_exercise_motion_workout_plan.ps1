@@ -20,6 +20,7 @@ param(
     [string]$BodyModelRoot,
     [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
+    [string]$YouTubeSourceCacheDir,
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 100,
     [double]$YouTubeSearchTimeoutSeconds = 60.0,
@@ -2897,7 +2898,7 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("MaxFinalOutputRejections")) { $MaxFinalOutputRejections = 0 }
         if (-not $PSBoundParameters.ContainsKey("NoExerciseNameRewrite")) { $NoExerciseNameRewrite = $true }
         if (-not $PSBoundParameters.ContainsKey("SemanticGateWithLlamaCpp") -and -not $PSBoundParameters.ContainsKey("SkipSemanticGate")) {
-            $SkipSemanticGate = $true
+            $SemanticGateWithLlamaCpp = $true
         }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppCtxSize")) { $LlamaCppCtxSize = 8192 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) { $LlamaCppFitCtx = 8192 }
@@ -2922,6 +2923,13 @@ switch ($SpeedProfile) {
         if (-not $PSBoundParameters.ContainsKey("LlamaCppImageMaxTokens")) { $LlamaCppImageMaxTokens = 2048 }
         if (-not $PSBoundParameters.ContainsKey("LlamaCppMtmdBatchMaxTokens")) { $LlamaCppMtmdBatchMaxTokens = 768 }
     }
+}
+if (
+    -not $PSBoundParameters.ContainsKey("UseLlamaCppQueryPlanner") -and
+    -not $PSBoundParameters.ContainsKey("SkipLlamaCppQueryPlanner") -and
+    -not $PSBoundParameters.ContainsKey("UseDeepSeekQueryPlanner")
+) {
+    $UseLlamaCppQueryPlanner = $true
 }
 if ($SkipTwoScaleSourceValidation) {
     $TwoScaleSourceValidation = $false
@@ -3044,7 +3052,7 @@ $effectiveGpuDiscoveryBakeOverlap = if ($GpuDiscoveryBakeOverlap -eq "auto") {
 $avoidGpuDiscoveryBakeOverlap = $effectiveGpuDiscoveryBakeOverlap -eq "avoid"
 $defaultDiscoveryWorkerCap = if ($posePrefilterUsesGpu) { 1 } else { 4 }
 $resolvedDiscoveryWorkers = if ($null -ne $DiscoveryWorkers) { [int]$DiscoveryWorkers } else { [Math]::Max(1, [Math]::Min($defaultDiscoveryWorkerCap, $llamaParallelSlots)) }
-$resolvedBakeWorkers = if ($null -ne $BakeWorkers) { [int]$BakeWorkers } else { 2 }
+$resolvedBakeWorkers = if ($null -ne $BakeWorkers) { [int]$BakeWorkers } else { 1 }
 if ($resolvedDiscoveryWorkers -lt 1) {
     throw "DiscoveryWorkers must be at least 1."
 }
@@ -3116,7 +3124,11 @@ $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheD
     $YouTubePreviewCacheDir
 }
 New-Item -ItemType Directory -Force -Path $sharedPreviewCachePath | Out-Null
-$sharedSourceCachePath = Join-Path $resolvedWorkspaceRoot "youtube-source-cache"
+$sharedSourceCachePath = if ([string]::IsNullOrWhiteSpace($YouTubeSourceCacheDir)) {
+    Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-source-cache"
+} else {
+    $YouTubeSourceCacheDir
+}
 New-Item -ItemType Directory -Force -Path $sharedSourceCachePath | Out-Null
 $exerciseMotionContractCachePath = Join-Path $resolvedWorkspaceRoot "exercise-motion-contract-cache"
 New-Item -ItemType Directory -Force -Path $exerciseMotionContractCachePath | Out-Null
@@ -3398,6 +3410,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--max-selected-results", "$MaxSelectedResults",
         "--candidate-workers", "$CandidateWorkers",
         "--youtube-source-cache-dir", $sourceCachePath,
+        "--youtube-preview-cache-dir", $previewCachePath,
         "--workspace", $bakeWorkspace,
         "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
