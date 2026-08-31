@@ -27,3 +27,18 @@ SMPL_JOINT_NAMES = [
     "left_hand",
     "right_hand",
 ]
+
+# Parent indices for the standard 24-joint SMPL kinematic tree. The root has
+# no parent; every other pose rotation is local to the named parent joint.
+SMPL_JOINT_PARENTS = [
+    -1,
+    0, 0, 0,
+    1, 2, 3,
+    4, 5, 6,
+    7, 8, 9,
+    9, 9, 12,
+    13, 14,
+    16, 17,
+    18, 19,
+    20, 21,
+]

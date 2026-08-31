@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
 
 
@@ -65,6 +66,16 @@ def build_wham_retarget_source_payload(
         "frameCount": frame_count,
         "poseKey": pose_key,
         "translationKey": translation_key,
+        "poseEncoding": "smpl_local_axis_angle",
+        "poseUnits": "radians",
+        "poseJointNames": list(SMPL_JOINT_NAMES),
+        "poseJointParents": list(SMPL_JOINT_PARENTS),
+        "poseLayout": {
+            "valuesPerJoint": 3,
+            "rootJoint": SMPL_JOINT_NAMES[0],
+            "rootSemantics": "global_orientation_in_selected_coordinate_space",
+            "bodyJointSemantics": "parent_relative_local_rotation",
+        },
         "frameIds": normalized_frame_ids,
         "poseAxisAngle": pose.tolist(),  # type: ignore[union-attr]
         "translations": translation.tolist(),  # type: ignore[union-attr]

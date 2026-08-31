@@ -614,11 +614,25 @@ def run_generation_pipeline(
             "motionTuning": _motion_tuning_metadata(enabled=False),
         },
     )
+    raw_smpl_pose_source = None
+    if retarget_source_path is not None and retarget_source_path.is_file():
+        try:
+            loaded_retarget_source = json.loads(
+                retarget_source_path.read_text(encoding="utf-8")
+            )
+            if isinstance(loaded_retarget_source, dict):
+                loaded_retarget_source["outputRotationDegrees"] = float(
+                    raw_clip.source.get("outputRotationDegrees") or 0.0
+                )
+                raw_smpl_pose_source = loaded_retarget_source
+        except (OSError, ValueError, TypeError):
+            raw_smpl_pose_source = None
     write_preview_html(
         raw_preview_html_path,
         raw_preview_clip,
         title=f"{request.exercise_slug}-raw",
         three_module_path=three_module_path,
+        smpl_pose_source=raw_smpl_pose_source,
     )
     record_timing("writeRawPreviewSeconds", stage_started)
 
@@ -753,6 +767,8 @@ def run_generation_pipeline(
         cleaned_clip,
         title=request.exercise_slug,
         three_module_path=three_module_path,
+        smpl_pose_source=raw_smpl_pose_source,
+        smpl_reference_clip=raw_preview_clip,
     )
     record_timing("writeCleanedPreviewSeconds", stage_started)
     wear_skeleton_json_path = paths.wear_dir / "skeleton.preview.json"

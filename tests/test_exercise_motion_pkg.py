@@ -169,6 +169,8 @@ from exercise_motion_pkg.wham_smpl_preview import (
     WhamSmplMeshSequence,
     build_baked_wham_smpl_preview_payload,
 )
+from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
+import exercise_motion_pkg.wham_retarget_source as wham_retarget_source_module
 from exercise_motion_pkg.paths import PipelinePaths
 from exercise_motion_pkg.youtube import (
     ExerciseEntry,
@@ -233,6 +235,47 @@ def pose_contract_fields(
         "startPoseConstraints": dict(constraints),
         "endPoseConstraints": dict(constraints),
     }
+
+
+def test_wham_retarget_source_describes_preserved_smpl_rotations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pose = np.zeros((2, len(SMPL_JOINT_NAMES) * 3), dtype=np.float32)
+    pose[1, 7 * 3 : 7 * 3 + 3] = [0.1, -0.2, 0.3]
+    translation = np.asarray([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
+    monkeypatch.setattr(
+        wham_retarget_source_module,
+        "load_wham_results",
+        lambda _path: {
+            4: {
+                "pose_world": pose,
+                "trans_world": translation,
+                "betas": np.zeros(10, dtype=np.float32),
+                "frame_ids": np.asarray([3, 4]),
+            }
+        },
+    )
+
+    payload = wham_retarget_source_module.build_wham_retarget_source_payload(
+        wham_results_pkl=tmp_path / "wham_output.pkl",
+        coordinate_space="world",
+    )
+
+    assert payload["poseEncoding"] == "smpl_local_axis_angle"
+    assert payload["poseUnits"] == "radians"
+    assert payload["poseJointNames"] == list(SMPL_JOINT_NAMES)
+    assert payload["poseJointParents"] == list(SMPL_JOINT_PARENTS)
+    assert payload["poseLayout"] == {
+        "valuesPerJoint": 3,
+        "rootJoint": "pelvis",
+        "rootSemantics": "global_orientation_in_selected_coordinate_space",
+        "bodyJointSemantics": "parent_relative_local_rotation",
+    }
+    assert payload["frameIds"] == [3, 4]
+    assert payload["poseAxisAngle"][1][7 * 3 : 7 * 3 + 3] == pytest.approx(
+        [0.1, -0.2, 0.3]
+    )
 
 
 def source_pose_frame(
@@ -3780,6 +3823,34 @@ def test_preview_preserves_authoritative_video_aligned_joint_positions(tmp_path:
     assert '"defaultAutoAlignment": []' in text
 
 
+def test_preview_does_not_root_center_authoritative_planted_support(tmp_path: Path) -> None:
+    source = build_fixture_clip()
+    clip = replace(
+        source,
+        metadata={
+            **source.metadata,
+            "cleanup": {
+                "supportSurfaceConstraint": {
+                    "kneeLock": {
+                        "anchors": {
+                            "left_knee": [0.0, 0.046, -0.1],
+                            "right_knee": [0.0, 0.046, 0.1],
+                        }
+                    }
+                }
+            },
+        },
+    )
+    output = tmp_path / "planted-support-preview.html"
+
+    write_preview_html(output, clip, title="planted-support")
+
+    text = output.read_text(encoding="utf-8")
+    assert '"defaultFixedRoot": false' in text
+    assert '"hasAuthoritativePlantedSupport": true' in text
+    assert "if (!currentFixedRoot || payload.hasAuthoritativePlantedSupport)" in text
+
+
 def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     clip = build_fixture_clip()
     output = tmp_path / "preview.html"
@@ -3996,6 +4067,175 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "renderingBakedWearPayload ? bakedWearCamera : perspectiveCamera" in text
     assert "playbackDirection = -1;" not in text
     assert "deltaSeconds * payload.fps * speed" in text
+
+
+def test_preview_embeds_strictly_aligned_smpl_terminal_orientations(tmp_path: Path) -> None:
+    clip = build_fixture_clip()
+    output = tmp_path / "rotation-aware-preview.html"
+    source = {
+        "fps": clip.fps,
+        "poseEncoding": "smpl_local_axis_angle",
+        "poseUnits": "radians",
+        "poseJointNames": list(SMPL_JOINT_NAMES),
+        "poseJointParents": list(SMPL_JOINT_PARENTS),
+        "frameIds": [
+            6 + int(round(frame.time_sec * clip.fps)) for frame in clip.frames
+        ],
+        "poseAxisAngle": [
+            [0.0] * (len(SMPL_JOINT_NAMES) * 3) for _frame in clip.frames
+        ],
+    }
+
+    write_preview_html(output, clip, title="rotation-aware", smpl_pose_source=source)
+
+    text = output.read_text(encoding="utf-8")
+    assert '"orientationMode": "position_reconciled_bone_twist"' in text
+    assert '"referenceFrames":' in text
+    assert '"twistSpecs":' in text
+    assert "const smplGlobalOrientations" in text
+    assert "function smplBoneCrossSectionReference" in text
+    assert "getRotationReconciliationCoverage(frameIndex = 0)" in text
+
+
+def test_preview_rejects_misaligned_smpl_terminal_orientations(tmp_path: Path) -> None:
+    clip = build_fixture_clip()
+    output = tmp_path / "misaligned-preview.html"
+    source = {
+        "fps": clip.fps,
+        "poseEncoding": "smpl_local_axis_angle",
+        "poseUnits": "radians",
+        "poseJointNames": list(SMPL_JOINT_NAMES),
+        "poseJointParents": list(SMPL_JOINT_PARENTS),
+        "frameIds": [999] * len(clip.frames),
+        "poseAxisAngle": [
+            [0.0] * (len(SMPL_JOINT_NAMES) * 3) for _frame in clip.frames
+        ],
+    }
+
+    write_preview_html(output, clip, title="misaligned", smpl_pose_source=source)
+
+    text = output.read_text(encoding="utf-8")
+    assert '"smplPoseSource": null' in text
+    assert '"orientationMode": "position_reconciled_bone_twist"' not in text
+
+
+def test_smpl_rotation_alignment_accounts_for_context_crop_and_cleanup_trim() -> None:
+    fixture = build_fixture_clip()
+    fps = fixture.fps
+    reference_frames = []
+    for index in range(6):
+        joints = dict(fixture.frames[0].joints)
+        pelvis = joints["pelvis"]
+        joints["pelvis"] = (float(index), pelvis[1], pelvis[2])
+        reference_frames.append(MotionFrame(time_sec=index / fps, joints=joints))
+    reference_clip = replace(
+        fixture,
+        frames=reference_frames,
+        metadata={
+            **fixture.metadata,
+            "inferenceContextCrop": {"retainedInputStartSeconds": 2.0 / fps},
+        },
+    )
+    cleaned_clip = replace(
+        reference_clip,
+        frames=[
+            MotionFrame(time_sec=index / fps, joints=reference_frames[index + 1].joints)
+            for index in range(3)
+        ],
+        metadata={
+            **reference_clip.metadata,
+            "cleanup": {"trimmedStartFrames": 1},
+        },
+    )
+    pose_rows = []
+    for index in range(10):
+        row = [0.0] * (len(SMPL_JOINT_NAMES) * 3)
+        row[0] = float(index)
+        pose_rows.append(row)
+    source = {
+        "fps": fps,
+        "poseEncoding": "smpl_local_axis_angle",
+        "poseUnits": "radians",
+        "poseJointNames": list(SMPL_JOINT_NAMES),
+        "poseJointParents": list(SMPL_JOINT_PARENTS),
+        "frameIds": list(range(100, 110)),
+        "poseAxisAngle": pose_rows,
+    }
+
+    aligned = preview_module._aligned_smpl_pose_source_for_preview(
+        cleaned_clip,
+        source,
+        reference_clip=reference_clip,
+    )
+
+    assert aligned is not None
+    assert aligned["frameIds"] == [103, 104, 105]
+    assert [row[0] for row in aligned["poseAxisAngle"]] == [3.0, 4.0, 5.0]
+    assert [frame["pelvis"][0] for frame in aligned["referenceFrames"]] == [1.0, 2.0, 3.0]
+
+
+def test_cleaned_preview_bone_twist_uses_raw_reference_positions() -> None:
+    fixture_clip = build_fixture_clip()
+    cleaned_frames = []
+    for frame in fixture_clip.frames:
+        joints = dict(frame.joints)
+        ankle = joints["left_ankle"]
+        joints["left_foot"] = (ankle[0], ankle[1], ankle[2] + 0.2)
+        cleaned_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    cleaned_clip = replace(
+        fixture_clip,
+        joint_names=[*fixture_clip.joint_names, "left_foot"],
+        frames=cleaned_frames,
+    )
+    raw_frames = []
+    for frame in cleaned_clip.frames:
+        raw_joints = dict(frame.joints)
+        if "left_foot" in raw_joints:
+            foot = raw_joints["left_foot"]
+            raw_joints["left_foot"] = (foot[0] + 10.0, foot[1], foot[2])
+        raw_frames.append(MotionFrame(time_sec=frame.time_sec, joints=raw_joints))
+    raw_clip = replace(cleaned_clip, frames=raw_frames)
+    source = {
+        "fps": cleaned_clip.fps,
+        "poseEncoding": "smpl_local_axis_angle",
+        "poseUnits": "radians",
+        "poseJointNames": list(SMPL_JOINT_NAMES),
+        "poseJointParents": list(SMPL_JOINT_PARENTS),
+        "frameIds": [
+            int(round(frame.time_sec * cleaned_clip.fps)) for frame in cleaned_clip.frames
+        ],
+        "poseAxisAngle": [
+            [0.0] * (len(SMPL_JOINT_NAMES) * 3) for _frame in cleaned_clip.frames
+        ],
+    }
+
+    aligned = preview_module._aligned_smpl_pose_source_for_preview(
+        cleaned_clip,
+        source,
+        reference_clip=raw_clip,
+    )
+
+    assert aligned is not None
+    assert aligned["referenceFrames"][0]["left_foot"][0] == pytest.approx(
+        cleaned_clip.frames[0].joints["left_foot"][0] + 10.0
+    )
+
+
+def test_smpl_twist_specs_cover_every_rendered_bone_and_head() -> None:
+    covered = {
+        (spec["start"], spec["end"])
+        for spec in preview_module.SMPL_RENDER_TWIST_SPECS
+    }
+    rendered = {
+        (start, end) for start, end, _radius in preview_module.CANONICAL_CAPSULES
+    }
+
+    assert rendered <= covered
+    assert ("neck", "head") in covered
+    assert all(
+        spec["rotationJoint"] in SMPL_JOINT_NAMES
+        for spec in preview_module.SMPL_RENDER_TWIST_SPECS
+    )
 
 
 def test_baked_wear_ortho_frustum_is_tighter_than_sphere_for_horizontal_body() -> None:

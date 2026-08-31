@@ -21,10 +21,12 @@ CANONICAL_CAPSULES = [
     ("left_collar", "left_shoulder", UNIFORM_CAPSULE_RADIUS),
     ("left_shoulder", "left_elbow", UNIFORM_CAPSULE_RADIUS),
     ("left_elbow", "left_wrist", UNIFORM_CAPSULE_RADIUS),
+    ("left_wrist", "left_hand", UNIFORM_CAPSULE_RADIUS),
     ("neck", "right_collar", UNIFORM_CAPSULE_RADIUS),
     ("right_collar", "right_shoulder", UNIFORM_CAPSULE_RADIUS),
     ("right_shoulder", "right_elbow", UNIFORM_CAPSULE_RADIUS),
     ("right_elbow", "right_wrist", UNIFORM_CAPSULE_RADIUS),
+    ("right_wrist", "right_hand", UNIFORM_CAPSULE_RADIUS),
     ("pelvis", "left_hip", UNIFORM_CAPSULE_RADIUS),
     ("left_hip", "left_knee", UNIFORM_CAPSULE_RADIUS),
     ("left_knee", "left_ankle", UNIFORM_CAPSULE_RADIUS),
@@ -33,6 +35,113 @@ CANONICAL_CAPSULES = [
     ("right_hip", "right_knee", UNIFORM_CAPSULE_RADIUS),
     ("right_knee", "right_ankle", UNIFORM_CAPSULE_RADIUS),
     ("right_ankle", "right_foot", UNIFORM_CAPSULE_RADIUS),
+]
+
+
+def _mirrored_twist_specs() -> list[dict[str, str]]:
+    specs: list[dict[str, str]] = []
+    for side in ("left", "right"):
+        specs.extend(
+            [
+                {
+                    "start": "neck",
+                    "end": f"{side}_collar",
+                    "rotationJoint": "neck",
+                    "referenceFrom": "spine3",
+                    "referenceTo": "neck",
+                    "localAxis": "y",
+                },
+                {
+                    "start": f"{side}_collar",
+                    "end": f"{side}_shoulder",
+                    "rotationJoint": f"{side}_collar",
+                    "referenceFrom": "spine3",
+                    "referenceTo": "neck",
+                    "localAxis": "y",
+                },
+                {
+                    "start": f"{side}_shoulder",
+                    "end": f"{side}_elbow",
+                    "rotationJoint": f"{side}_shoulder",
+                    "referenceFrom": f"{side}_elbow",
+                    "referenceTo": f"{side}_wrist",
+                    "localAxis": "y",
+                },
+                {
+                    "start": f"{side}_elbow",
+                    "end": f"{side}_wrist",
+                    "rotationJoint": f"{side}_elbow",
+                    "referenceFrom": f"{side}_elbow",
+                    "referenceTo": f"{side}_shoulder",
+                    "localAxis": "y",
+                },
+                {
+                    "start": f"{side}_wrist",
+                    "end": f"{side}_hand",
+                    "rotationJoint": f"{side}_hand",
+                    "referenceFrom": f"{side}_wrist",
+                    "referenceTo": f"{side}_elbow",
+                    "localAxis": "y",
+                },
+                {
+                    "start": "pelvis",
+                    "end": f"{side}_hip",
+                    "rotationJoint": "pelvis",
+                    "referenceFrom": "pelvis",
+                    "referenceTo": "spine1",
+                    "localAxis": "z",
+                },
+                {
+                    "start": f"{side}_hip",
+                    "end": f"{side}_knee",
+                    "rotationJoint": f"{side}_hip",
+                    "referenceFrom": f"{side}_knee",
+                    "referenceTo": f"{side}_ankle",
+                    "localAxis": "x",
+                },
+                {
+                    "start": f"{side}_knee",
+                    "end": f"{side}_ankle",
+                    "rotationJoint": f"{side}_knee",
+                    "referenceFrom": f"{side}_knee",
+                    "referenceTo": f"{side}_hip",
+                    "localAxis": "x",
+                },
+                {
+                    "start": f"{side}_ankle",
+                    "end": f"{side}_foot",
+                    "rotationJoint": f"{side}_foot",
+                    "referenceFrom": f"{side}_ankle",
+                    "referenceTo": f"{side}_knee",
+                    "localAxis": "x",
+                },
+            ]
+        )
+    return specs
+
+
+SMPL_RENDER_TWIST_SPECS = [
+    {
+        "start": "pelvis", "end": "spine1", "rotationJoint": "pelvis",
+        "referenceFrom": "left_hip", "referenceTo": "right_hip", "localAxis": "x",
+    },
+    {
+        "start": "spine1", "end": "spine2", "rotationJoint": "spine1",
+        "referenceFrom": "left_hip", "referenceTo": "right_hip", "localAxis": "x",
+    },
+    {
+        "start": "spine2", "end": "spine3", "rotationJoint": "spine2",
+        "referenceFrom": "left_shoulder", "referenceTo": "right_shoulder", "localAxis": "x",
+    },
+    {
+        "start": "spine3", "end": "neck", "rotationJoint": "spine3",
+        "referenceFrom": "left_shoulder", "referenceTo": "right_shoulder", "localAxis": "x",
+    },
+    {
+        "start": "neck", "end": "head", "rotationJoint": "head",
+        "referenceFrom": "left_shoulder", "referenceTo": "right_shoulder", "localAxis": "x",
+    },
+    *_mirrored_twist_specs(),
 ]
 PREVIEW_SKELETON_CHAINS = [
     ["left_foot", "left_ankle", "left_knee", "left_hip", "pelvis", "right_hip", "right_knee", "right_ankle", "right_foot"],
@@ -247,6 +356,19 @@ def _clip_ground_contact_mode(clip: MotionClip) -> str:
     ).strip().casefold()
 
 
+def _clip_has_authoritative_planted_support(clip: MotionClip) -> bool:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup = metadata.get("cleanup")
+    constraint = (
+        cleanup.get("supportSurfaceConstraint")
+        if isinstance(cleanup, dict)
+        else None
+    )
+    knee_lock = constraint.get("kneeLock") if isinstance(constraint, dict) else None
+    anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    return isinstance(anchors, dict) and bool(anchors)
+
+
 def write_preview_html(
     path: Path,
     clip: MotionClip,
@@ -254,6 +376,8 @@ def write_preview_html(
     title: str,
     debug_json_path: Path | None = None,
     three_module_path: Path | None = None,
+    smpl_pose_source: dict[str, object] | None = None,
+    smpl_reference_clip: MotionClip | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw_motion_review = _clip_requests_raw_motion_render(clip)
@@ -269,7 +393,13 @@ def write_preview_html(
         else {}
     )
     authoritative_world_alignment = _clip_has_authoritative_video_floor_alignment(clip)
+    authoritative_planted_support = _clip_has_authoritative_planted_support(clip)
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
+    aligned_smpl_pose_source = _aligned_smpl_pose_source_for_preview(
+        clip,
+        smpl_pose_source,
+        reference_clip=smpl_reference_clip,
+    )
     has_horizontal_torso_profile = _has_horizontal_torso_profile(preview_clip.frames)
     default_auto_alignment_rotations = (
         []
@@ -299,9 +429,12 @@ def write_preview_html(
         "jointNames": preview_clip.joint_names,
         "rootJoint": _find_root_joint(preview_clip),
         "groundContactMode": _clip_ground_contact_mode(clip),
-        "defaultFixedRoot": bool(baked_preview_settings.get("fixedRoot", False))
-        if baked_wear_payload
-        else not raw_motion_review,
+        "defaultFixedRoot": (
+            bool(baked_preview_settings.get("fixedRoot", False))
+            if baked_wear_payload
+            else not raw_motion_review
+        ) and not authoritative_planted_support,
+        "hasAuthoritativePlantedSupport": authoritative_planted_support,
         "rootTranslationToggleLabel": (
             "Show original camera-space translation"
             if preview_clip.metadata.get("upstream") == "gvhmr"
@@ -326,6 +459,7 @@ def write_preview_html(
         "detectedLoops": detected_loops,
         "capsules": _build_capsules(preview_clip),
         "wearHumanoidGeometry": _wear_humanoid_geometry(),
+        "smplPoseSource": aligned_smpl_pose_source,
         "frames": [
             {
                 "frameIndex": index,
@@ -363,6 +497,135 @@ def write_preview_html(
         three_module_url = f"./{THREE_MODULE_FILE_NAME}"
     html = _build_html(payload, three_module_url=three_module_url)
     path.write_text(html, encoding="utf-8")
+
+
+def _aligned_smpl_pose_source_for_preview(
+    clip: MotionClip,
+    source: dict[str, object] | None,
+    *,
+    reference_clip: MotionClip | None = None,
+) -> dict[str, object] | None:
+    """Return SMPL rotations only when they align exactly with reference positions."""
+    if not isinstance(source, dict) or not clip.frames:
+        return None
+    reference = reference_clip or clip
+    pose_rows = source.get("poseAxisAngle")
+    frame_ids = source.get("frameIds")
+    joint_names = source.get("poseJointNames")
+    parents = source.get("poseJointParents")
+    if source.get("poseEncoding") != "smpl_local_axis_angle" or source.get("poseUnits") != "radians":
+        return None
+    if not all(isinstance(value, list) for value in (pose_rows, frame_ids, joint_names, parents)):
+        return None
+    if len(pose_rows) != len(frame_ids):
+        return None
+    if len(joint_names) != len(parents) or not joint_names:
+        return None
+    try:
+        normalized_parents = [int(value) for value in parents]
+    except (TypeError, ValueError):
+        return None
+    if normalized_parents[0] != -1 or any(
+        parent_index < 0 or parent_index >= joint_index
+        for joint_index, parent_index in enumerate(normalized_parents[1:], start=1)
+    ):
+        return None
+    expected_width = len(joint_names) * 3
+    if any(not isinstance(row, list) or len(row) != expected_width for row in pose_rows):
+        return None
+    try:
+        source_fps = float(source.get("fps") or clip.fps)
+        normalized_frame_ids = [int(value) for value in frame_ids]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(source_fps) or source_fps <= 0.0:
+        return None
+    if len(set(normalized_frame_ids)) != len(normalized_frame_ids):
+        return None
+    first_frame_id = normalized_frame_ids[0]
+    crop_metadata = (
+        reference.metadata.get("inferenceContextCrop")
+        if isinstance(reference.metadata, dict)
+        else None
+    )
+    try:
+        source_time_offset = float(
+            crop_metadata.get("retainedInputStartSeconds", 0.0)
+            if isinstance(crop_metadata, dict)
+            else 0.0
+        )
+    except (TypeError, ValueError):
+        return None
+    cleanup_metadata = (
+        clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
+    )
+    try:
+        trimmed_start_frames = int(
+            cleanup_metadata.get("trimmedStartFrames", 0)
+            if isinstance(cleanup_metadata, dict)
+            else 0
+        )
+    except (TypeError, ValueError):
+        return None
+    if trimmed_start_frames < 0:
+        return None
+    expected_frame_ids = [
+        first_frame_id
+        + int(round(source_time_offset * source_fps))
+        + trimmed_start_frames
+        + int(round(frame.time_sec * source_fps))
+        for frame in clip.frames
+    ]
+    pose_index_by_frame_id = {
+        frame_id: index for index, frame_id in enumerate(normalized_frame_ids)
+    }
+    if any(frame_id not in pose_index_by_frame_id for frame_id in expected_frame_ids):
+        return None
+    reference_frame_by_time_index = {
+        int(round(frame.time_sec * source_fps)): frame for frame in reference.frames
+    }
+    expected_reference_time_indices = [
+        trimmed_start_frames + int(round(frame.time_sec * source_fps))
+        for frame in clip.frames
+    ]
+    if any(
+        time_index not in reference_frame_by_time_index
+        for time_index in expected_reference_time_indices
+    ):
+        return None
+    selected_pose_rows = [
+        pose_rows[pose_index_by_frame_id[frame_id]] for frame_id in expected_frame_ids
+    ]
+    selected_reference_frames = [
+        reference_frame_by_time_index[time_index]
+        for time_index in expected_reference_time_indices
+    ]
+    reference_joint_names = sorted(
+        {
+            spec[field]
+            for spec in SMPL_RENDER_TWIST_SPECS
+            for field in ("start", "end", "referenceFrom", "referenceTo")
+        }
+    )
+    return {
+        "encoding": source.get("poseEncoding"),
+        "units": source.get("poseUnits"),
+        "jointNames": joint_names,
+        "jointParents": normalized_parents,
+        "frameIds": expected_frame_ids,
+        "poseAxisAngle": selected_pose_rows,
+        "twistSpecs": SMPL_RENDER_TWIST_SPECS,
+        "referenceFrames": [
+            {
+                joint_name: frame.joints[joint_name]
+                for joint_name in reference_joint_names
+                if joint_name in frame.joints
+            }
+            for frame in selected_reference_frames
+        ],
+        "orientationMode": "position_reconciled_bone_twist",
+        "outputRotationDegrees": float(source.get("outputRotationDegrees") or 0.0),
+    }
 
 
 def _build_preview_comparison_frames(source_clip: MotionClip, preview_clip: MotionClip) -> list[dict[str, object]]:
@@ -4011,6 +4274,42 @@ def _build_html(
     import * as THREE from "three";
 
     const payload = {payload_json};
+    const smplPoseSource = payload.smplPoseSource;
+    const smplGlobalOrientations = (() => {{
+      if (
+        !smplPoseSource
+        || !Array.isArray(smplPoseSource.poseAxisAngle)
+        || !Array.isArray(smplPoseSource.jointNames)
+        || !Array.isArray(smplPoseSource.jointParents)
+      ) {{
+        return null;
+      }}
+      const outputRotation = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 0, 1),
+        Number(smplPoseSource.outputRotationDegrees || 0) * Math.PI / 180
+      );
+      return smplPoseSource.poseAxisAngle.map((poseRow) => {{
+        const orientations = [];
+        for (let jointIndex = 0; jointIndex < smplPoseSource.jointNames.length; jointIndex += 1) {{
+          const offset = jointIndex * 3;
+          const vector = new THREE.Vector3(
+            Number(poseRow[offset]) || 0,
+            Number(poseRow[offset + 1]) || 0,
+            Number(poseRow[offset + 2]) || 0
+          );
+          const angle = vector.length();
+          const local = angle > 1e-8
+            ? new THREE.Quaternion().setFromAxisAngle(vector.multiplyScalar(1 / angle), angle)
+            : new THREE.Quaternion();
+          const parentIndex = Number(smplPoseSource.jointParents[jointIndex]);
+          const global = parentIndex >= 0 && orientations[parentIndex]
+            ? orientations[parentIndex].clone().multiply(local)
+            : outputRotation.clone().multiply(local);
+          orientations.push(global.normalize());
+        }}
+        return orientations;
+      }});
+    }})();
     const wearHumanoidGeometry = payload.wearHumanoidGeometry ?? {{}};
     const wearHumanoidParityEnabled =
       wearHumanoidGeometry.style === "wear_filament_low_poly_humanoid";
@@ -4367,12 +4666,19 @@ def _build_html(
         || key === "right_ankle->right_foot";
     }}
 
+    function isFootCapsule(capsule) {{
+      const key = `${{capsule.start}}->${{capsule.end}}`;
+      return key === "left_ankle->left_foot" || key === "right_ankle->right_foot";
+    }}
+
     function isArmCapsule(capsule) {{
       const key = `${{capsule.start}}->${{capsule.end}}`;
       return key === "left_shoulder->left_elbow"
         || key === "left_elbow->left_wrist"
+        || key === "left_wrist->left_hand"
         || key === "right_shoulder->right_elbow"
-        || key === "right_elbow->right_wrist";
+        || key === "right_elbow->right_wrist"
+        || key === "right_wrist->right_hand";
     }}
 
     function limbProfileForCapsule(capsule, radius) {{
@@ -5483,7 +5789,7 @@ def _build_html(
     }}
 
     function getFrameTranslation(frame, currentFixedRoot = fixedRoot) {{
-      if (!currentFixedRoot) {{
+      if (!currentFixedRoot || payload.hasAuthoritativePlantedSupport) {{
         return [0, 0, 0];
       }}
       const rootPoint = getFrameStableRootPoint(frame);
@@ -7583,9 +7889,16 @@ def _build_html(
           }}
           joints[jointName] = [point[0], -point[1], -point[2]];
         }}
+        const boneSides = {{}};
+        for (const [boneKey, side] of Object.entries(frame.boneSides ?? {{}})) {{
+          if (Array.isArray(side) && side.length >= 3) {{
+            boneSides[boneKey] = [side[0], -side[1], -side[2]];
+          }}
+        }}
         return {{
           ...frame,
           joints,
+          boneSides,
         }};
       }});
       return {{
@@ -7770,9 +8083,24 @@ def _build_html(
           rotated.add(pivotVector);
           joints[jointName] = [rotated.x, rotated.y, rotated.z];
         }}
+        const boneSides = {{}};
+        for (const [boneKey, side] of Object.entries(frame.boneSides ?? {{}})) {{
+          if (!Array.isArray(side) || side.length < 3) {{
+            continue;
+          }}
+          const rotated = new THREE.Vector3(...side.map(Number));
+          for (const step of rotationSequence) {{
+            const axis = Array.isArray(step?.axis) && step.axis.length >= 3
+              ? new THREE.Vector3(...step.axis.map(Number)).normalize()
+              : new THREE.Vector3(0.0, 1.0, 0.0);
+            rotated.applyAxisAngle(axis, Number(step?.radians) || 0.0);
+          }}
+          boneSides[boneKey] = [rotated.x, rotated.y, rotated.z];
+        }}
         return {{
           ...frame,
           joints,
+          boneSides,
         }};
       }});
     }}
@@ -7853,6 +8181,18 @@ def _build_html(
           const transformed = toBaseWorldPoint(point, translation, true, jointName, selectedPreviewSettings.fixedRoot);
           joints[jointName] = [transformed.x, transformed.y, transformed.z];
         }}
+        const boneSides = {{}};
+        for (const spec of smplPoseSource?.twistSpecs ?? []) {{
+          const side = smplBoneCrossSectionReference(
+            frame,
+            spec.start,
+            spec.end,
+            translation
+          );
+          if (side) {{
+            boneSides[`${{spec.start}}->${{spec.end}}`] = [side.x, side.y, side.z];
+          }}
+        }}
         return {{
           frameIndex: index,
           sourceFrameIndex,
@@ -7862,6 +8202,7 @@ def _build_html(
           rootTranslationApplied: translation,
           sourceJoints: sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints ?? null,
           joints,
+          boneSides,
         }};
       }});
       const wearCoordinateNormalization = normalizeBakedWearSkeletonCoordinates(
@@ -8296,6 +8637,62 @@ def _build_html(
           availableBakeOptions: automationBakeOptions.map((option) => ({{ ...option }})),
         }};
       }},
+      getRotationReconciliationCoverage(frameIndex = 0) {{
+        const boundedIndex = Math.max(
+          0,
+          Math.min(Math.max(0, payload.frames.length - 1), Math.floor(Number(frameIndex) || 0))
+        );
+        const frame = payload.frames[boundedIndex];
+        if (!frame || !Array.isArray(smplPoseSource?.twistSpecs)) {{
+          return {{ frameIndex: boundedIndex, available: false, bones: [] }};
+        }}
+        const frameTranslation = getFrameTranslation(frame);
+        const bones = smplPoseSource.twistSpecs.map((spec) => ({{
+          start: spec.start,
+          end: spec.end,
+          rotationJoint: spec.rotationJoint,
+          reconciled: smplBoneCrossSectionReference(
+            frame,
+            spec.start,
+            spec.end,
+            frameTranslation
+          ) != null,
+        }}));
+        return {{
+          frameIndex: boundedIndex,
+          available: true,
+          reconciledCount: bones.filter((bone) => bone.reconciled).length,
+          bones,
+        }};
+      }},
+      getRenderedJointPositions(frameIndex = 0, jointNames = []) {{
+        const boundedIndex = Math.max(
+          0,
+          Math.min(Math.max(0, payload.frames.length - 1), Math.floor(Number(frameIndex) || 0))
+        );
+        const frame = payload.frames[boundedIndex];
+        const frameTranslation = getFrameTranslation(frame);
+        const requestedNames = Array.isArray(jointNames) && jointNames.length > 0
+          ? jointNames
+          : payload.jointNames;
+        const joints = {{}};
+        for (const jointName of requestedNames) {{
+          const point = frame?.joints?.[jointName];
+          if (!Array.isArray(point) || point.length < 3) {{
+            continue;
+          }}
+          const rendered = toWorldPoint(
+            point, frameTranslation, fixedRoot, true, jointName
+          );
+          joints[jointName] = [rendered.x, rendered.y, rendered.z];
+        }}
+        return {{
+          frameIndex: boundedIndex,
+          fixedRoot,
+          autoWorldAlignmentEnabled,
+          joints,
+        }};
+      }},
       configure(options = {{}}) {{
         applyAutomationSettings(options);
         return this.getPayloadSummary();
@@ -8571,6 +8968,159 @@ def _build_html(
         yDir.copy(new THREE.Vector3().crossVectors(zDir, xDir)).normalize();
         tempMatrix.makeBasis(xDir, yDir, zDir);
         return new THREE.Quaternion().setFromRotationMatrix(tempMatrix);
+      }}
+
+      function smplBoneCrossSectionReference(frame, startJointName, endJointName, frameTranslation) {{
+        const referenceFrames = smplPoseSource?.referenceFrames;
+        const twistSpecs = smplPoseSource?.twistSpecs;
+        if (!smplGlobalOrientations || !Array.isArray(referenceFrames) || !Array.isArray(twistSpecs)) {{
+          return null;
+        }}
+        const spec = twistSpecs.find(
+          (candidate) => candidate.start === startJointName && candidate.end === endJointName
+        );
+        if (!spec) {{
+          return null;
+        }}
+        const requiredJointNames = [
+          spec.start,
+          spec.end,
+          spec.referenceFrom,
+          spec.referenceTo,
+        ];
+        if (requiredJointNames.some((name) => !frame?.joints?.[name])) {{
+          return null;
+        }}
+        const jointIndex = smplPoseSource.jointNames.indexOf(spec.rotationJoint);
+        if (jointIndex < 0) {{
+          return null;
+        }}
+        const mapping = frameSourceMapping(frame, Number(frame.frameIndex) || 0);
+        const frameIndexA = Math.max(0, Math.min(smplGlobalOrientations.length - 1, mapping.sourceIndexA));
+        const frameIndexB = Math.max(0, Math.min(smplGlobalOrientations.length - 1, mapping.sourceIndexB));
+        const orientationA = smplGlobalOrientations[frameIndexA]?.[jointIndex];
+        const orientationB = smplGlobalOrientations[frameIndexB]?.[jointIndex] ?? orientationA;
+        if (!orientationA || !orientationB) {{
+          return null;
+        }}
+        const referenceFrameA = referenceFrames[frameIndexA];
+        const referenceFrameB = referenceFrames[frameIndexB] ?? referenceFrameA;
+        if (!referenceFrameA || !referenceFrameB) {{
+          return null;
+        }}
+        const alpha = Math.max(0, Math.min(1, Number(mapping.sourceAlpha) || 0));
+        const interpolateReferenceJoint = (name) => {{
+          const start = referenceFrameA[name];
+          const end = referenceFrameB[name] ?? start;
+          if (!Array.isArray(start) || start.length < 3 || !Array.isArray(end) || end.length < 3) {{
+            return null;
+          }}
+          return new THREE.Vector3(
+            Number(start[0]) * (1 - alpha) + Number(end[0]) * alpha,
+            Number(start[1]) * (1 - alpha) + Number(end[1]) * alpha,
+            Number(start[2]) * (1 - alpha) + Number(end[2]) * alpha
+          );
+        }};
+        const rawStart = interpolateReferenceJoint(spec.start);
+        const rawEnd = interpolateReferenceJoint(spec.end);
+        const rawReferenceFrom = interpolateReferenceJoint(spec.referenceFrom);
+        const rawReferenceTo = interpolateReferenceJoint(spec.referenceTo);
+        if (!rawStart || !rawEnd || !rawReferenceFrom || !rawReferenceTo) {{
+          return null;
+        }}
+        const orientation = orientationA.clone().slerp(
+          orientationB,
+          alpha
+        );
+        const projectPerpendicular = (vector, axis) => vector
+          .clone()
+          .addScaledVector(axis, -vector.dot(axis));
+        const rawAxis = rawEnd.clone().sub(rawStart).normalize();
+        const referenceCandidates = [
+          [spec.referenceFrom, spec.referenceTo],
+          ["left_shoulder", "right_shoulder"],
+          ["left_hip", "right_hip"],
+          ["pelvis", "neck"],
+        ];
+        let selectedReferenceNames = [spec.referenceFrom, spec.referenceTo];
+        let rawPositionReference = projectPerpendicular(
+          rawReferenceTo.clone().sub(rawReferenceFrom),
+          rawAxis
+        );
+        if (rawPositionReference.lengthSq() <= 1e-8) {{
+          for (const candidateNames of referenceCandidates.slice(1)) {{
+            const candidateFrom = interpolateReferenceJoint(candidateNames[0]);
+            const candidateTo = interpolateReferenceJoint(candidateNames[1]);
+            if (!candidateFrom || !candidateTo) {{
+              continue;
+            }}
+            const candidateReference = projectPerpendicular(
+              candidateTo.clone().sub(candidateFrom),
+              rawAxis
+            );
+            if (candidateReference.lengthSq() > 1e-8) {{
+              selectedReferenceNames = candidateNames;
+              rawPositionReference = candidateReference;
+              break;
+            }}
+          }}
+        }}
+        const localAxis = spec.localAxis === "y"
+          ? new THREE.Vector3(0, 1, 0)
+          : spec.localAxis === "z"
+            ? new THREE.Vector3(0, 0, 1)
+            : new THREE.Vector3(1, 0, 0);
+        const rawRotationReference = projectPerpendicular(
+          localAxis.applyQuaternion(orientation),
+          rawAxis
+        );
+        if (rawPositionReference.lengthSq() <= 1e-8 || rawRotationReference.lengthSq() <= 1e-8) {{
+          return null;
+        }}
+        rawPositionReference.normalize();
+        rawRotationReference.normalize();
+        const signedTwist = Math.atan2(
+          rawAxis.dot(new THREE.Vector3().crossVectors(rawPositionReference, rawRotationReference)),
+          rawPositionReference.dot(rawRotationReference)
+        );
+        const cleanedStart = new THREE.Vector3(...frame.joints[spec.start].map(Number));
+        const cleanedAxis = new THREE.Vector3(...frame.joints[spec.end].map(Number))
+          .sub(cleanedStart)
+          .normalize();
+        const cleanedPositionReference = projectPerpendicular(
+          new THREE.Vector3(...frame.joints[selectedReferenceNames[1]].map(Number)).sub(
+            new THREE.Vector3(...frame.joints[selectedReferenceNames[0]].map(Number))
+          ),
+          cleanedAxis
+        );
+        if (cleanedPositionReference.lengthSq() <= 1e-8) {{
+          return null;
+        }}
+        const reconciledReference = cleanedPositionReference
+          .normalize()
+          .applyAxisAngle(cleanedAxis, signedTwist);
+        const sourcePoint = frame.joints[spec.end];
+        const referencePoint = [
+          Number(sourcePoint[0]) + reconciledReference.x,
+          Number(sourcePoint[1]) + reconciledReference.y,
+          Number(sourcePoint[2]) + reconciledReference.z,
+        ];
+        const worldOrigin = toWorldPoint(
+          sourcePoint,
+          frameTranslation,
+          fixedRoot,
+          true,
+          spec.end
+        );
+        const worldReference = toWorldPoint(
+          referencePoint,
+          frameTranslation,
+          fixedRoot,
+          true,
+          spec.end
+        );
+        const direction = worldReference.sub(worldOrigin);
+        return direction.lengthSq() > 1e-8 ? direction.normalize() : null;
       }}
 
       function hideProceduralBody() {{
@@ -9170,6 +9720,18 @@ def _build_html(
       const shoulderAxis = leftShoulderJoint && rightShoulderJoint
         ? rightShoulderJoint.clone().sub(leftShoulderJoint)
         : null;
+      const pelvisTwistAxis = smplBoneCrossSectionReference(
+        frame, "pelvis", "spine1", frameTranslation
+      );
+      const abdomenTwistAxis = smplBoneCrossSectionReference(
+        frame, "spine1", "spine2", frameTranslation
+      );
+      const chestTwistAxis = smplBoneCrossSectionReference(
+        frame, "spine2", "spine3", frameTranslation
+      );
+      const upperChestTwistAxis = smplBoneCrossSectionReference(
+        frame, "spine3", "neck", frameTranslation
+      );
 
       if (pelvisJoint && leftHipJoint && rightHipJoint && spine1Joint) {{
         const hipCenter = leftHipJoint.clone().add(rightHipJoint).multiplyScalar(0.5);
@@ -9180,7 +9742,7 @@ def _build_html(
             setOrientedFrameVolume(
               pelvisMesh,
               pelvisCenter,
-              hipAxis,
+              pelvisTwistAxis || hipAxis,
               spine1Joint.clone().sub(hipCenter),
               pelvisWidth,
               pelvisHeight,
@@ -9209,7 +9771,7 @@ def _build_html(
             setOrientedFrameVolume(
               coreShellMesh,
               torsoCenter,
-              shoulderAxis,
+              chestTwistAxis || shoulderAxis,
               spineAxis,
               torsoWidth,
               torsoHeight,
@@ -9228,7 +9790,12 @@ def _build_html(
             [spine2Joint, spine3Joint ?? neckJoint],
             [spine3Joint, neckJoint],
           ].filter(([segmentStart, segmentEnd]) => segmentStart && segmentEnd && segmentStart !== segmentEnd);
-        const spineLateralAxis = shoulderAxis ?? hipAxis;
+          const spineLateralAxes = [
+            pelvisTwistAxis,
+            abdomenTwistAxis,
+            chestTwistAxis,
+            upperChestTwistAxis,
+          ];
         spineSegments.forEach((segment, index) => {{
           const [segmentStart, segmentEnd] = segment;
           const mesh = spineMeshes[index];
@@ -9236,6 +9803,7 @@ def _build_html(
             mesh.visible = false;
             return;
           }}
+          const spineLateralAxis = spineLateralAxes[index] ?? shoulderAxis ?? hipAxis;
           if (!segmentStart || !segmentEnd || !spineLateralAxis) {{
             mesh.visible = false;
             return;
@@ -9273,7 +9841,7 @@ def _build_html(
           setOrientedFrameVolume(
             abdomenMesh,
             spine1Joint.clone().lerp(spine2Joint, 0.42),
-            shoulderAxis,
+            abdomenTwistAxis || shoulderAxis,
             spine2Joint.clone().sub(spine1Joint),
             abdomenWidth,
             Math.max(0.12, abdomenHeight * 0.86),
@@ -9296,7 +9864,7 @@ def _build_html(
           setOrientedFrameVolume(
             chestMesh,
             chestCenter,
-            shoulderAxis,
+            chestTwistAxis || shoulderAxis,
             chestAxis,
             chestWidth,
             chestHeight,
@@ -9307,12 +9875,12 @@ def _build_html(
             spine3Joint ? spine3Joint.clone().lerp(neckJoint, 0.35) : chestCenter.clone().lerp(neckJoint, 0.55),
             neckJoint,
               Math.max(0.045, chestWidth * 0.11),
-              shoulderAxis
+              upperChestTwistAxis || shoulderAxis
             );
             setOrientedBar(
               clavicleMesh,
               shoulderCenter.clone().lerp(neckJoint, 0.08),
-              shoulderAxis,
+              upperChestTwistAxis || shoulderAxis,
               chestAxis,
               Math.max(0.15, shoulderSpan * 0.72),
               Math.max(0.03, chestHeight * 0.09),
@@ -9372,23 +9940,58 @@ def _build_html(
             continue;
           }}
         node.mesh.visible = true;
-        if (isLegCapsule(node.capsule) && hipAxis) {{
+        const reconciledCrossSectionReference = smplBoneCrossSectionReference(
+          frame,
+          node.capsule.start,
+          node.capsule.end,
+          frameTranslation
+        );
+        if (isFootCapsule(node.capsule)) {{
+          const shoe = wearHumanoidGeometry.shoe ?? {{}};
+          const shoeLength = fullLength * Number(shoe.lengthScale ?? 1.45);
+          const shoeStart = startVector.clone().addScaledVector(direction, -shoeLength * 0.12);
+          const shoeEnd = shoeStart.clone().addScaledVector(direction, shoeLength);
+          const soleLateralAxis = new THREE.Vector3().crossVectors(direction, sceneUp);
+          setOrientedLimbBox(
+            node.mesh,
+            shoeStart,
+            shoeEnd,
+            soleLateralAxis.lengthSq() > 1e-8
+              ? soleLateralAxis.normalize()
+              : hipAxis || sceneRight,
+            fullLength * Number(shoe.widthScale ?? 0.32) * 2.0,
+            fullLength * Number(shoe.heightScale ?? 0.28) * 2.0
+          );
+          continue;
+        }}
+        if (isLegCapsule(node.capsule) && (reconciledCrossSectionReference || hipAxis)) {{
           setOrientedLimbBox(
             node.mesh,
             startInset,
             endInset,
-            hipAxis,
+            reconciledCrossSectionReference || hipAxis,
             limbProfile.width,
             limbProfile.depth
           );
           continue;
         }}
-        if (shoulderAxis && isArmCapsule(node.capsule)) {{
+        if ((reconciledCrossSectionReference || shoulderAxis) && isArmCapsule(node.capsule)) {{
           setOrientedLimbBox(
             node.mesh,
             startInset,
             endInset,
-            shoulderAxis,
+            reconciledCrossSectionReference || shoulderAxis,
+            limbProfile.width,
+            limbProfile.depth
+          );
+          continue;
+        }}
+        if (reconciledCrossSectionReference) {{
+          setOrientedLimbBox(
+            node.mesh,
+            startInset,
+            endInset,
+            reconciledCrossSectionReference,
             limbProfile.width,
             limbProfile.depth
           );
@@ -9424,10 +10027,16 @@ def _build_html(
               headAxis.clone().normalize().multiplyScalar(Math.max(headDistance * 0.70, headScale * 0.54))
             )
           : headJoint.clone();
+        const headTwistAxis = smplBoneCrossSectionReference(
+          frame,
+          "neck",
+          "head",
+          frameTranslation
+        );
         setOrientedFrameVolume(
           headMesh,
           headCenter,
-          shoulderAxis ?? hipAxis ?? sceneRight,
+          headTwistAxis ?? shoulderAxis ?? hipAxis ?? sceneRight,
           headAxis.lengthSq() > 1e-8 ? headAxis : axisY,
           headScale * 0.86,
           headScale * 1.16,
