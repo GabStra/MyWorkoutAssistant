@@ -342,6 +342,11 @@ def refine_motion_clip_structurally(
             "applied": False,
             "reason": "authoritative_support_solver_owns_terminal_chain_lengths",
         }
+    refined, rigid_support_restoration = _restore_rigid_bilateral_support(refined)
+    refined, lateral_support_restoration = _restore_support_relative_lateral_root_trajectory(
+        refined,
+        reference_clip=source_clip,
+    )
     source_bone_variation = _maximum_structural_bone_length_variation(source_clip)
     refined_bone_variation = _maximum_structural_bone_length_variation(refined)
     structural_rollback = refined_bone_variation > source_bone_variation + 1e-6
@@ -360,6 +365,8 @@ def refine_motion_clip_structurally(
         "supportAnchorRestoration": support_anchor_metadata,
         "wholeSkeletonSolver": whole_skeleton_metadata,
         "terminalBoneProjection": terminal_bone_projection_metadata,
+        "rigidSupportRestoration": rigid_support_restoration,
+        "lateralSupportRestoration": lateral_support_restoration,
         "structuralRollback": {
             "applied": structural_rollback,
             "reason": (
@@ -400,6 +407,51 @@ def refine_motion_clip_structurally(
         **refinement_metadata,
     }
     return replace(refined, metadata=metadata)
+
+
+def _restore_support_relative_lateral_root_trajectory(
+    clip: MotionClip,
+    *,
+    reference_clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    if len(clip.frames) != len(reference_clip.frames) or not clip.frames:
+        return clip, {"applied": False, "reason": "reference_frame_count_mismatch"}
+    required = {"pelvis", "left_knee", "right_knee"}
+    if any(name not in clip.joint_names or name not in reference_clip.joint_names for name in required):
+        return clip, {"applied": False, "reason": "support_relative_root_joints_missing"}
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup = metadata.get("cleanup")
+    constraint = cleanup.get("supportSurfaceConstraint") if isinstance(cleanup, dict) else None
+    knee_lock = constraint.get("kneeLock") if isinstance(constraint, dict) else None
+    anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    if not isinstance(anchors, dict) or not anchors:
+        return clip, {"applied": False, "reason": "no_authoritative_knee_anchors"}
+    first = clip.frames[0]
+    lateral_axis = _normalize(_subtract(first.joints["right_knee"], first.joints["left_knee"]))
+    if lateral_axis is None:
+        return clip, {"applied": False, "reason": "degenerate_knee_lateral_axis"}
+    support_joints = {
+        "left_knee", "right_knee",
+        "left_ankle", "right_ankle",
+        "left_foot", "right_foot",
+    }
+    frames: list[MotionFrame] = []
+    maximum_correction = 0.0
+    for frame, reference_frame in zip(clip.frames, reference_clip.frames):
+        current_coordinate = _dot(frame.joints["pelvis"], lateral_axis)
+        reference_coordinate = _dot(reference_frame.joints["pelvis"], lateral_axis)
+        correction = _scale(lateral_axis, reference_coordinate - current_coordinate)
+        maximum_correction = max(maximum_correction, _length(correction))
+        joints = {
+            name: point if name in support_joints else _add(point, correction)
+            for name, point in frame.joints.items()
+        }
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return replace(clip, frames=frames), {
+        "applied": True,
+        "strategy": "preserve_support_relative_lateral_root_trajectory",
+        "maximumCorrection": maximum_correction,
+    }
 
 
 def _maximum_structural_bone_length_variation(clip: MotionClip) -> float:
@@ -474,7 +526,11 @@ def _has_authoritative_support_anchors(clip: MotionClip) -> bool:
         else None
     )
     anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
-    return isinstance(anchors, dict) and bool(anchors)
+    return (
+        isinstance(anchors, dict)
+        and bool(anchors)
+        and knee_lock.get("allowWholeSkeletonSolver", True) is not False
+    )
 
 
 def _solve_clip_wide_skeleton_constraints(
@@ -512,6 +568,24 @@ def _solve_clip_wide_skeleton_constraints(
         if isinstance(clip_support_constraint, dict)
         else None
     )
+    authoritative_chain_lengths = (
+        clip_knee_lock.get("referenceBoneLengths")
+        if isinstance(clip_knee_lock, dict)
+        else None
+    )
+    if isinstance(authoritative_chain_lengths, dict):
+        for side in ("left", "right"):
+            knee_name = f"{side}_knee"
+            hip_name = f"{side}_hip"
+            lengths = authoritative_chain_lengths.get(knee_name)
+            if not isinstance(lengths, dict):
+                continue
+            pelvis_to_hip = _optional_float(lengths.get("pelvisToHip"))
+            hip_to_knee = _optional_float(lengths.get("hipToKnee"))
+            if pelvis_to_hip is not None:
+                bone_lengths[("pelvis", hip_name)] = pelvis_to_hip
+            if hip_to_knee is not None:
+                bone_lengths[(hip_name, knee_name)] = hip_to_knee
     has_bilateral_knee_anchors = (
         isinstance(clip_knee_lock, dict)
         and {
@@ -1265,6 +1339,8 @@ def _restore_authoritative_support_anchors(
     # Treating those pivots as anchors collapses legitimate foot/hand motion
     # and stretches the connected limb chains.
     raw_anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
+    if isinstance(knee_lock, dict) and knee_lock.get("allowWholeSkeletonSolver", True) is False:
+        return clip, {"applied": False, "reason": "support_solver_disabled_for_local_lock"}
     if not isinstance(raw_anchors, dict):
         return clip, {"applied": False, "reason": "no_authoritative_support_anchors"}
 
@@ -2215,6 +2291,8 @@ def _refine_torso_dominant_motion_conservatively(
         "applied": False,
         "reason": "requires_authoritative_support_trajectory",
     }
+
+
     before = refined
     proposed, foot_axis_leg_metadata = _align_leg_motion_to_foot_axis(refined, reference_clip=clip)
     refined, transaction = _accept_source_preserving_refinement_step(
@@ -2287,6 +2365,126 @@ def _refine_torso_dominant_motion_conservatively(
     }
 
 
+def _restore_rigid_bilateral_support(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    cleanup = metadata.get("cleanup")
+    constraint = cleanup.get("supportSurfaceConstraint") if isinstance(cleanup, dict) else None
+    knee_lock = constraint.get("kneeLock") if isinstance(constraint, dict) else None
+    if isinstance(knee_lock, dict) and knee_lock.get("strategy") == "planted_support_joint_world_lock":
+        anchors = knee_lock.get("anchors")
+        distal_support = knee_lock.get("distalSupportVectors")
+        distal_sides = (
+            distal_support.get("sides")
+            if isinstance(distal_support, dict)
+            else None
+        )
+        if not isinstance(anchors, dict):
+            return clip, {"applied": False, "reason": "invalid_planted_support_metadata"}
+        frames: list[MotionFrame] = []
+        maximum_correction = 0.0
+        for frame in clip.frames:
+            joints = dict(frame.joints)
+            for joint_name, raw_anchor in anchors.items():
+                if joint_name not in joints or not isinstance(raw_anchor, list) or len(raw_anchor) < 3:
+                    continue
+                anchor = tuple(float(value) for value in raw_anchor[:3])
+                current = joints[joint_name]
+                correction = _subtract(anchor, current)
+                joints[joint_name] = anchor
+                side = joint_name.removesuffix("_knee")
+                side_vectors = distal_sides.get(side) if isinstance(distal_sides, dict) else None
+                knee_to_ankle = (
+                    side_vectors.get("kneeToAnkle")
+                    if isinstance(side_vectors, dict)
+                    else None
+                )
+                ankle_to_foot = (
+                    side_vectors.get("ankleToFoot")
+                    if isinstance(side_vectors, dict)
+                    else None
+                )
+                ankle_name = f"{side}_ankle"
+                foot_name = f"{side}_foot"
+                if (
+                    isinstance(knee_to_ankle, list)
+                    and len(knee_to_ankle) >= 3
+                    and isinstance(ankle_to_foot, list)
+                    and len(ankle_to_foot) >= 3
+                    and ankle_name in joints
+                    and foot_name in joints
+                ):
+                    ankle = _add(anchor, tuple(float(value) for value in knee_to_ankle[:3]))
+                    joints[ankle_name] = ankle
+                    joints[foot_name] = _add(
+                        ankle,
+                        tuple(float(value) for value in ankle_to_foot[:3]),
+                    )
+                else:
+                    for descendant_name in (ankle_name, foot_name):
+                        if descendant_name in joints:
+                            joints[descendant_name] = _add(joints[descendant_name], correction)
+                maximum_correction = max(maximum_correction, _length(correction))
+            frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+        return replace(clip, frames=frames), {
+            "applied": True,
+            "strategy": "exact_bilateral_support_anchor_restoration",
+            "supportJoints": list(anchors),
+            "maximumCorrection": maximum_correction,
+        }
+    if not isinstance(knee_lock, dict) or knee_lock.get("strategy") != "rigid_bilateral_support_midpoint_lock":
+        return clip, {"applied": False, "reason": "no_rigid_bilateral_support_lock"}
+    support_names = knee_lock.get("supportJoints")
+    raw_anchor = knee_lock.get("pairAnchor")
+    raw_direction = knee_lock.get("pairDirection")
+    if (
+        not isinstance(support_names, list)
+        or len(support_names) != 2
+        or not isinstance(raw_anchor, list)
+        or len(raw_anchor) < 3
+        or not isinstance(raw_direction, list)
+        or len(raw_direction) < 3
+    ):
+        return clip, {"applied": False, "reason": "invalid_rigid_support_metadata"}
+    left_name, right_name = (str(support_names[0]), str(support_names[1]))
+    if left_name not in clip.joint_names or right_name not in clip.joint_names:
+        return clip, {"applied": False, "reason": "rigid_support_joints_missing"}
+    anchor = tuple(float(value) for value in raw_anchor[:3])
+    target_direction = _normalize(tuple(float(value) for value in raw_direction[:3]))
+    if target_direction is None:
+        return clip, {"applied": False, "reason": "invalid_rigid_support_direction"}
+    frames: list[MotionFrame] = []
+    maximum_rotation_degrees = 0.0
+    for frame in clip.frames:
+        left = frame.joints[left_name]
+        right = frame.joints[right_name]
+        midpoint = _average_points([left, right])
+        current_direction = _normalize(_subtract(left, right))
+        if current_direction is None:
+            frames.append(frame)
+            continue
+        axis = _normalize(_cross(current_direction, target_direction))
+        angle = math.acos(max(-1.0, min(1.0, _dot(current_direction, target_direction))))
+        maximum_rotation_degrees = max(maximum_rotation_degrees, math.degrees(angle))
+        translation = _subtract(anchor, midpoint)
+        joints: dict[str, Point3] = {}
+        for name, point in frame.joints.items():
+            relative = _subtract(point, midpoint)
+            rotated = (
+                _rotate_vector_about_axis(relative, axis=axis, angle_radians=angle)
+                if axis is not None
+                else relative
+            )
+            joints[name] = _add(_add(midpoint, rotated), translation)
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return replace(clip, frames=frames), {
+        "applied": True,
+        "strategy": "rigid_bilateral_support_pose_restoration",
+        "supportJoints": [left_name, right_name],
+        "maximumRotationDegrees": maximum_rotation_degrees,
+        "preservesAllPairwiseDistances": True,
+    }
 
 
 def _stabilize_torso_dominant_distal_leg_sliding(

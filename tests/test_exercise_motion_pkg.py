@@ -40,10 +40,12 @@ from exercise_motion_pkg.cleanup import (
     lift_clip_above_support_ground,
     lock_planted_support_joints,
     micro_movement_tolerance_for_joint,
+    optimize_reachable_support_anchors,
     repair_isolated_joint_position_outliers,
     solve_contact_aware_rigid_world_alignment,
     stabilize_global_translation_from_support_contacts,
     stabilize_multi_contact_support,
+    stabilize_kneeling_distal_support_pose,
     stabilize_vertical_floor_contact,
     suppress_micro_movements,
 )
@@ -2402,44 +2404,31 @@ def test_cleanup_keeps_video_floor_aligned_body_on_the_floor() -> None:
         assert cleaned_distance == pytest.approx(source_distance)
 
     refined = refine_motion_clip_structurally(cleaned)
-    assert refined.metadata["structuralRefinement"]["supportAnchorRestoration"]["applied"] is True
-    whole_skeleton = refined.metadata["structuralRefinement"]["wholeSkeletonSolver"]
-    assert whole_skeleton["applied"] is True
-    assert whole_skeleton["maximumBoneLengthError"] < 1e-3
-    assert whole_skeleton["maximumBilateralMirrorError"] < 1e-3
-    assert whole_skeleton["maximumAxialPlaneError"] < 1e-6
-    assert abs(whole_skeleton["stableHeadToTorsoAngleDegrees"]) <= 15.0
-    expected_static_support_chain = {
-        joint_name
-        for joint_name in (
-            "left_ankle",
-            "left_foot",
-            "right_ankle",
-            "right_foot",
-        )
-        if joint_name in refined.joint_names
+    assert cleaned.metadata["cleanup"]["supportSurfaceConstraint"]["kneeLock"][
+        "strategy"
+    ] == "planted_support_joint_world_lock"
+    assert refined.metadata["structuralRefinement"]["supportAnchorRestoration"] == {
+        "applied": False,
+        "reason": "support_solver_disabled_for_local_lock",
     }
-    assert set(whole_skeleton["staticTrajectoryJoints"]) == expected_static_support_chain
+    whole_skeleton = refined.metadata["structuralRefinement"]["wholeSkeletonSolver"]
+    assert whole_skeleton == {
+        "applied": False,
+        "reason": "no_authoritative_support_anchors",
+    }
     for frame in refined.frames:
         assert support_surface_height(frame.joints["left_knee"][1]) == pytest.approx(0.0)
         assert support_surface_height(frame.joints["right_knee"][1]) == pytest.approx(0.0)
-    for side in ("left", "right"):
-        thigh_lengths = [
-            math.dist(frame.joints[f"{side}_hip"], frame.joints[f"{side}_knee"])
-            for frame in refined.frames
-        ]
-        assert max(thigh_lengths) - min(thigh_lengths) < 1e-6
-    hip_widths = [
-        math.dist(frame.joints["left_hip"], frame.joints["right_hip"])
-        for frame in refined.frames
-    ]
-    assert max(hip_widths) - min(hip_widths) < 1e-6
-    for joint_name in whole_skeleton["staticTrajectoryJoints"]:
-        reference = refined.frames[0].joints[joint_name]
-        assert all(
-            math.dist(frame.joints[joint_name], reference) < 1e-6
-            for frame in refined.frames
-        )
+        assert frame.joints["left_knee"] == pytest.approx(refined.frames[0].joints["left_knee"])
+        assert frame.joints["right_knee"] == pytest.approx(refined.frames[0].joints["right_knee"])
+    for source_frame, refined_frame in zip(clip.frames, refined.frames):
+        for first, second in (
+            ("pelvis", "left_hip"),
+            ("left_knee", "left_ankle"),
+        ):
+            assert math.dist(
+                refined_frame.joints[first], refined_frame.joints[second]
+            ) == pytest.approx(math.dist(source_frame.joints[first], source_frame.joints[second]))
 
 
 def test_contact_aware_alignment_grounds_standing_feet_rigidly() -> None:
@@ -2520,6 +2509,139 @@ def test_contact_alignment_does_not_refit_pitch_after_authoritative_floor_normal
         aligned.frames[0].joints["neck"][1] - aligned.frames[0].joints["pelvis"][1],
     )
     assert aligned_torso == pytest.approx(source_torso)
+
+
+def test_contact_alignment_uses_applied_alignment_output_plane_without_double_rotation() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (0.0, 1.0, 0.0),
+                "neck": (0.5, 1.4, 0.0),
+                "left_foot": (-0.12, 0.05, 0.0),
+                "right_foot": (0.12, 0.05, 0.0),
+            },
+        )
+        for index in range(5)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "coordinateNormalization": {"target": "canonical_y_up_world"},
+            "videoWorldAlignment": {
+                "applied": True,
+                "cameraGroundPlane": {"normal": [0.0, -0.5, -0.866]},
+                # This is Y-down because it precedes canonicalization.
+                "outputGroundPlane": {"normal": [0.0, -1.0, 0.0]},
+                "orientationConstraintJointNames": ["left_foot", "right_foot"],
+                "videoFloorDistances": {"left_foot": 0.0, "right_foot": 0.0},
+            },
+        },
+    )
+
+    aligned, metadata = solve_contact_aware_rigid_world_alignment(clip)
+
+    assert metadata["rotationDegrees"] == pytest.approx(0.0)
+    source_torso = tuple(
+        frames[0].joints["neck"][axis] - frames[0].joints["pelvis"][axis]
+        for axis in range(3)
+    )
+    aligned_torso = tuple(
+        aligned.frames[0].joints["neck"][axis]
+        - aligned.frames[0].joints["pelvis"][axis]
+        for axis in range(3)
+    )
+    assert aligned_torso == pytest.approx(source_torso)
+
+
+def test_contact_alignment_resolves_penetration_with_only_rigid_frame_motion() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (0.0, 0.50, 0.0),
+                "left_foot": (-0.12, 0.05, 0.0),
+                "right_foot": (0.12, 0.05, 0.0),
+                "left_wrist": (-0.25, -0.20, 0.3),
+            },
+        )
+        for index in range(5)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "videoWorldAlignment": {
+                "applied": True,
+                "cameraGroundPlane": {"normal": [0.0, 1.0, 0.0]},
+                "orientationConstraintJointNames": ["left_foot", "right_foot"],
+                "videoFloorDistances": {"left_foot": 0.0, "right_foot": 0.0},
+            },
+        },
+    )
+
+    aligned, metadata = solve_contact_aware_rigid_world_alignment(clip)
+
+    assert metadata["maximumNonPenetrationLift"] > 0.0
+    assert metadata["maximumLocalPenetrationCorrection"] == 0.0
+    for source, result in zip(clip.frames, aligned.frames):
+        source_distances = {
+            (left, right): math.dist(source.joints[left], source.joints[right])
+            for left in source.joints
+            for right in source.joints
+            if left < right
+        }
+        result_distances = {
+            pair: math.dist(result.joints[pair[0]], result.joints[pair[1]])
+            for pair in source_distances
+        }
+        assert result_distances == pytest.approx(source_distances)
+        assert min(
+            support_surface_height(point[1]) for point in result.joints.values()
+        ) >= -1e-8
+
+
+def test_horizontal_contact_alignment_does_not_lift_authoritative_support() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (0.0, 0.20, 0.0),
+                "left_wrist": (-0.25, 0.10, 0.3),
+                "right_shoulder": (0.20, -0.40, 0.1),
+            },
+        )
+        for index in range(5)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "videoWorldAlignment": {
+                "applied": True,
+                "outputGroundPlane": {"normal": [0.0, 1.0, 0.0]},
+                "orientationConstraintJointNames": ["left_wrist"],
+                "videoFloorDistances": {"left_wrist": 0.0},
+            },
+        },
+    )
+
+    aligned, metadata = solve_contact_aware_rigid_world_alignment(
+        clip,
+        preserve_authoritative_contacts=True,
+    )
+
+    assert metadata["authoritativeContactsPreserved"] is True
+    assert metadata["maximumNonPenetrationLift"] == 0.0
+    assert metadata["maximumSuppressedNonPenetrationLift"] > 0.30
+    assert all(
+        support_surface_height(frame.joints["left_wrist"][1]) == pytest.approx(0.0)
+        for frame in aligned.frames
+    )
 
 
 def test_contact_aware_alignment_does_not_flatten_large_rigid_grounding_translation() -> None:
@@ -2714,6 +2836,38 @@ def test_lock_planted_support_joints_pins_sliding_knees_to_floor_anchor() -> Non
     assert left_points[0][1] == pytest.approx(support_joint_height_for_surface(0.0))
     hip_travel = locked.frames[-1].joints["left_hip"][0] - locked.frames[0].joints["left_hip"][0]
     assert hip_travel == pytest.approx(0.32)
+
+
+def test_reachable_support_optimization_preserves_bilateral_knee_separation() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={"pelvis": (float(index), 0.50, 0.0)},
+        )
+        for index in range(3)
+    ]
+    clip = MotionClip(fps=30.0, joint_names=["pelvis"], frames=frames)
+    anchors = {
+        "left_knee": (-0.15, 0.046, 0.10),
+        "right_knee": (0.15, 0.046, -0.10),
+    }
+    lengths = {
+        name: {"pelvisToHip": 0.10, "hipToKnee": 0.40}
+        for name in anchors
+    }
+
+    optimized = optimize_reachable_support_anchors(
+        clip,
+        anchors=anchors,
+        reference_bone_lengths=lengths,
+    )
+
+    source_separation = math.dist(anchors["left_knee"], anchors["right_knee"])
+    solved_separation = math.dist(
+        optimized["left_knee"],
+        optimized["right_knee"],
+    )
+    assert solved_separation == pytest.approx(source_separation)
 
 
 def test_cleanup_recovers_kneeling_when_reconstruction_is_pitched_ninety_degrees() -> None:
@@ -3849,6 +4003,101 @@ def test_preview_does_not_root_center_authoritative_planted_support(tmp_path: Pa
     assert '"defaultFixedRoot": false' in text
     assert '"hasAuthoritativePlantedSupport": true' in text
     assert "if (!currentFixedRoot || payload.hasAuthoritativePlantedSupport)" in text
+
+
+def test_kneeling_distal_support_pose_keeps_shoes_flat_and_forward() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "left_knee": (0.0, 0.046, -0.1),
+                "left_ankle": (-0.4, 0.0 + index * 0.02, -0.1),
+                "left_foot": (-0.4, -0.13 + index * 0.02, -0.13),
+                "right_knee": (0.0, 0.046, 0.1),
+                "right_ankle": (-0.4, 0.0 + index * 0.02, 0.1),
+                "right_foot": (-0.4, -0.13 + index * 0.02, 0.13),
+            },
+        )
+        for index in range(3)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+    )
+
+    stabilized, metadata = stabilize_kneeling_distal_support_pose(clip)
+
+    assert metadata["applied"] is True
+    for side in ("left", "right"):
+        knee = stabilized.frames[0].joints[f"{side}_knee"]
+        ankle = stabilized.frames[0].joints[f"{side}_ankle"]
+        foot = stabilized.frames[0].joints[f"{side}_foot"]
+        assert foot[1] == pytest.approx(ankle[1])
+        assert foot[0] < ankle[0]
+        assert foot[2] == pytest.approx(ankle[2])
+        for frame in stabilized.frames[1:]:
+            assert frame.joints[f"{side}_ankle"] == pytest.approx(ankle)
+            assert frame.joints[f"{side}_foot"] == pytest.approx(foot)
+        assert math.dist(knee, ankle) > math.dist(ankle, foot)
+
+
+def test_structural_refinement_restores_support_relative_lateral_root_path() -> None:
+    metadata = {
+        "cleanup": {
+            "supportSurfaceConstraint": {
+                "kneeLock": {
+                    "anchors": {
+                        "left_knee": [0.0, 0.046, -0.1],
+                        "right_knee": [0.0, 0.046, 0.1],
+                    }
+                }
+            }
+        }
+    }
+    reference_frames = []
+    displaced_frames = []
+    for index, lateral_offset in enumerate((0.0, 0.12, -0.08)):
+        base_joints = {
+            "pelvis": (index * 0.1, 0.5, 0.0),
+            "neck": (index * 0.1 + 0.4, 0.9, 0.0),
+            "left_knee": (0.0, 0.046, -0.1),
+            "right_knee": (0.0, 0.046, 0.1),
+        }
+        reference_frames.append(MotionFrame(time_sec=index / 30.0, joints=base_joints))
+        displaced_frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    name: (
+                        point[0],
+                        point[1],
+                        point[2] + (0.0 if "knee" in name else lateral_offset),
+                    )
+                    for name, point in base_joints.items()
+                },
+            )
+        )
+    reference = MotionClip(
+        fps=30.0,
+        joint_names=list(reference_frames[0].joints),
+        frames=reference_frames,
+        metadata=metadata,
+    )
+    displaced = replace(reference, frames=displaced_frames)
+
+    restored, result = (
+        structural_refinement_module._restore_support_relative_lateral_root_trajectory(
+            displaced,
+            reference_clip=reference,
+        )
+    )
+
+    assert result["applied"] is True
+    for restored_frame, reference_frame in zip(restored.frames, reference.frames):
+        assert restored_frame.joints["pelvis"] == pytest.approx(reference_frame.joints["pelvis"])
+        assert restored_frame.joints["left_knee"] == pytest.approx(reference_frame.joints["left_knee"])
+        assert restored_frame.joints["right_knee"] == pytest.approx(reference_frame.joints["right_knee"])
 
 
 def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:

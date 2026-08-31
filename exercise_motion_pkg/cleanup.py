@@ -846,6 +846,7 @@ def solve_contact_aware_rigid_world_alignment(
     clip: MotionClip,
     *,
     ground_y: float = 0.0,
+    preserve_authoritative_contacts: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Ground arbitrary motion using only rigid whole-body transforms."""
     from exercise_motion_pkg.temporal_contact_solver import (
@@ -855,7 +856,11 @@ def solve_contact_aware_rigid_world_alignment(
     # Temporal solver encapsulates contact inference (from timestamped video
     # observations) plus the clip-wide rigid alignment and collision clamping.
     # We keep this wrapper for backwards compatibility with the existing tests.
-    return solve_temporal_contact_rigid_world_alignment(clip, ground_y=ground_y)
+    return solve_temporal_contact_rigid_world_alignment(
+        clip,
+        ground_y=ground_y,
+        preserve_authoritative_contacts=preserve_authoritative_contacts,
+    )
 
     candidate_names = _generic_contact_candidates(clip)
     if not candidate_names:
@@ -1172,6 +1177,7 @@ def cleanup_motion_clip(
         support_constrained, support_constraint = solve_contact_aware_rigid_world_alignment(
             trimmed_clip,
             ground_y=0.0,
+            preserve_authoritative_contacts=preserve_horizontal_orientation,
         )
         if support_mode == "kneeling":
             solved_ground_y = support_constraint.get("groundY")
@@ -2060,17 +2066,185 @@ def apply_kneeling_knee_lock(
     *,
     ground_y: float,
 ) -> tuple[MotionClip, dict[str, object]]:
-    locked_clip, lock_metadata = lock_planted_support_joints(
+    aligned_clip, rigid_alignment_metadata = lock_support_pair_midpoint_rigidly(
         clip,
+        left_joint_names=[*LEFT_KNEE_GROUP],
+        right_joint_names=[*RIGHT_KNEE_GROUP],
+        ground_y=ground_y,
+    )
+    locked_clip, lock_metadata = lock_planted_support_joints(
+        aligned_clip,
         [*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP],
         ground_y=ground_y,
-        preserve_chain_lengths=True,
+        preserve_chain_lengths=False,
     )
+    locked_clip, distal_support_vectors = stabilize_kneeling_distal_support_pose(
+        locked_clip
+    )
+    lock_metadata = dict(lock_metadata)
+    lock_metadata["allowWholeSkeletonSolver"] = False
+    lock_metadata["rigidPrealignment"] = rigid_alignment_metadata
+    lock_metadata["distalSupportVectors"] = distal_support_vectors
     updated = dict(support_constraint)
     updated["kneeLock"] = lock_metadata
     if lock_metadata.get("applied"):
         updated["applied"] = True
     return locked_clip, updated
+
+
+def stabilize_kneeling_distal_support_pose(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Keep supported lower legs and feet rigid relative to planted knees."""
+    side_vectors: dict[str, dict[str, list[float]]] = {}
+    for side in ("left", "right"):
+        knee_name = f"{side}_knee"
+        ankle_name = f"{side}_ankle"
+        foot_name = f"{side}_foot"
+        if any(name not in clip.joint_names for name in (knee_name, ankle_name, foot_name)):
+            continue
+        knee_to_ankle = np.asarray(
+            [
+                np.asarray(frame.joints[ankle_name]) - np.asarray(frame.joints[knee_name])
+                for frame in clip.frames
+            ],
+            dtype=np.float64,
+        )
+        ankle_to_foot = np.asarray(
+            [
+                np.asarray(frame.joints[foot_name]) - np.asarray(frame.joints[ankle_name])
+                for frame in clip.frames
+            ],
+            dtype=np.float64,
+        )
+        median_knee_to_ankle = np.median(knee_to_ankle, axis=0)
+        median_ankle_to_foot = np.median(ankle_to_foot, axis=0)
+        foot_length = float(np.linalg.norm(median_ankle_to_foot))
+        supported_foot_direction = median_knee_to_ankle.copy()
+        supported_foot_direction[1] = 0.0
+        supported_foot_direction_length = float(np.linalg.norm(supported_foot_direction))
+        if supported_foot_direction_length > 1e-8 and foot_length > 1e-8:
+            median_ankle_to_foot = (
+                supported_foot_direction / supported_foot_direction_length * foot_length
+            )
+        side_vectors[side] = {
+            "kneeToAnkle": median_knee_to_ankle.tolist(),
+            "ankleToFoot": median_ankle_to_foot.tolist(),
+        }
+    if not side_vectors:
+        return clip, {"applied": False, "reason": "distal_support_joints_missing"}
+    frames: list[MotionFrame] = []
+    for frame in clip.frames:
+        joints = dict(frame.joints)
+        for side, vectors in side_vectors.items():
+            knee_name = f"{side}_knee"
+            ankle_name = f"{side}_ankle"
+            foot_name = f"{side}_foot"
+            knee = np.asarray(joints[knee_name], dtype=np.float64)
+            ankle = knee + np.asarray(vectors["kneeToAnkle"], dtype=np.float64)
+            foot = ankle + np.asarray(vectors["ankleToFoot"], dtype=np.float64)
+            joints[ankle_name] = tuple(float(value) for value in ankle)
+            joints[foot_name] = tuple(float(value) for value in foot)
+        frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    return replace(clip, frames=frames), {"applied": True, "sides": side_vectors}
+
+
+def lock_support_pair_midpoint_rigidly(
+    clip: MotionClip,
+    *,
+    left_joint_names: list[str],
+    right_joint_names: list[str],
+    ground_y: float = 0.0,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Stabilize a planted bilateral support without deforming either chain."""
+    left_name = next((name for name in left_joint_names if name in clip.joint_names), None)
+    right_name = next((name for name in right_joint_names if name in clip.joint_names), None)
+    if left_name is None or right_name is None or not clip.frames:
+        return clip, {"applied": False, "reason": "bilateral_support_pair_missing"}
+    midpoints = [
+        (
+            (frame.joints[left_name][0] + frame.joints[right_name][0]) * 0.5,
+            (frame.joints[left_name][1] + frame.joints[right_name][1]) * 0.5,
+            (frame.joints[left_name][2] + frame.joints[right_name][2]) * 0.5,
+        )
+        for frame in clip.frames
+    ]
+    pair_vectors = [
+        np.asarray(frame.joints[left_name], dtype=np.float64)
+        - np.asarray(frame.joints[right_name], dtype=np.float64)
+        for frame in clip.frames
+    ]
+    target_pair_vector = np.median(np.asarray(pair_vectors), axis=0)
+    target_pair_length = float(np.linalg.norm(target_pair_vector))
+    if target_pair_length <= 1e-8:
+        return clip, {"applied": False, "reason": "degenerate_bilateral_support_pair"}
+    target_pair_direction = target_pair_vector / target_pair_length
+    target = (
+        statistics.median(point[0] for point in midpoints),
+        support_joint_height_for_surface(ground_y),
+        statistics.median(point[2] for point in midpoints),
+    )
+    maximum_correction = 0.0
+    maximum_rotation_degrees = 0.0
+    frames: list[MotionFrame] = []
+    for frame, midpoint, pair_vector in zip(clip.frames, midpoints, pair_vectors):
+        pair_length = float(np.linalg.norm(pair_vector))
+        current_direction = (
+            pair_vector / pair_length if pair_length > 1e-8 else target_pair_direction
+        )
+        rotation_axis_values = np.cross(current_direction, target_pair_direction)
+        rotation_axis_length = float(np.linalg.norm(rotation_axis_values))
+        alignment = float(np.clip(np.dot(current_direction, target_pair_direction), -1.0, 1.0))
+        rotation_angle = math.acos(alignment)
+        maximum_rotation_degrees = max(
+            maximum_rotation_degrees,
+            math.degrees(rotation_angle),
+        )
+        rotation_axis = (
+            tuple(float(value) for value in rotation_axis_values / rotation_axis_length)
+            if rotation_axis_length > 1e-8
+            else None
+        )
+        correction = (
+            target[0] - midpoint[0],
+            target[1] - midpoint[1],
+            target[2] - midpoint[2],
+        )
+        maximum_correction = max(maximum_correction, math.dist((0.0, 0.0, 0.0), correction))
+        frames.append(
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    name: (
+                        rotated[0] + correction[0],
+                        rotated[1] + correction[1],
+                        rotated[2] + correction[2],
+                    )
+                    for name, point in frame.joints.items()
+                    for rotated in (
+                        _rotate_point_rodigues(
+                            point,
+                            pivot=midpoint,
+                            axis=rotation_axis,
+                            angle_radians=rotation_angle,
+                        )
+                        if rotation_axis is not None
+                        else point,
+                    )
+                },
+            )
+        )
+    return replace(clip, frames=frames), {
+        "applied": True,
+        "strategy": "rigid_bilateral_support_midpoint_lock",
+        "supportJoints": [left_name, right_name],
+        "groundY": ground_y,
+        "pairAnchor": list(target),
+        "pairDirection": [float(value) for value in target_pair_direction],
+        "maximumCorrection": maximum_correction,
+        "maximumRotationDegrees": maximum_rotation_degrees,
+        "preservesAllPairwiseDistances": True,
+    }
 
 
 def lock_planted_support_joints(
@@ -2241,6 +2415,43 @@ def optimize_reachable_support_anchors(
                 anchor_x = pelvis[0] + delta_x * scale
                 anchor_z = pelvis[2] + delta_z * scale
         optimized[joint_name] = (anchor_x, anchor_y, anchor_z)
+    # Independent reach projections can converge both knees (or both hands)
+    # onto the same point when the root trajectory has no common reachable
+    # intersection. That destroys the bilateral stance and forces the later
+    # skeleton solver to stretch the limbs. Preserve the measured horizontal
+    # offset while retaining the optimized pair midpoint.
+    for left_name, right_name in (
+        ("left_knee", "right_knee"),
+        ("left_hand", "right_hand"),
+        ("left_foot", "right_foot"),
+    ):
+        source_left = anchors.get(left_name)
+        source_right = anchors.get(right_name)
+        solved_left = optimized.get(left_name)
+        solved_right = optimized.get(right_name)
+        if not all((source_left, source_right, solved_left, solved_right)):
+            continue
+        source_offset_x = source_left[0] - source_right[0]
+        source_offset_z = source_left[2] - source_right[2]
+        source_separation = math.hypot(source_offset_x, source_offset_z)
+        solved_separation = math.hypot(
+            solved_left[0] - solved_right[0],
+            solved_left[2] - solved_right[2],
+        )
+        if source_separation <= 1e-8 or solved_separation >= source_separation * 0.5:
+            continue
+        midpoint_x = (solved_left[0] + solved_right[0]) * 0.5
+        midpoint_z = (solved_left[2] + solved_right[2]) * 0.5
+        optimized[left_name] = (
+            midpoint_x + source_offset_x * 0.5,
+            solved_left[1],
+            midpoint_z + source_offset_z * 0.5,
+        )
+        optimized[right_name] = (
+            midpoint_x - source_offset_x * 0.5,
+            solved_right[1],
+            midpoint_z - source_offset_z * 0.5,
+        )
     return optimized
 
 

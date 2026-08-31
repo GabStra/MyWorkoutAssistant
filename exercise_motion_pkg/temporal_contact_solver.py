@@ -160,7 +160,16 @@ def _authoritative_world_floor_normal(clip: MotionClip) -> Point3 | None:
     alignment = metadata.get("videoWorldAlignment")
     if not isinstance(alignment, dict):
         return None
-    raw_plane = alignment.get("cameraGroundPlane")
+    # Once video alignment has been applied, joints are in its output space.
+    # Reusing the original camera-space plane would rotate the pose a second
+    # time during cleanup. Older/unapplied metadata may only provide the
+    # camera plane, so retain that as a compatibility fallback.
+    output_plane = alignment.get("outputGroundPlane")
+    raw_plane = (
+        output_plane
+        if bool(alignment.get("applied")) and isinstance(output_plane, dict)
+        else alignment.get("cameraGroundPlane")
+    )
     if not isinstance(raw_plane, dict):
         return None
     raw_normal = raw_plane.get("normal")
@@ -682,6 +691,7 @@ def solve_temporal_contact_rigid_world_alignment(
     clip: MotionClip,
     *,
     ground_y: float = 0.0,
+    preserve_authoritative_contacts: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Ground arbitrary motion using a clip-wide temporal contact-aware solver."""
     candidate_names = _generic_contact_candidates_temporal(clip)
@@ -766,123 +776,47 @@ def solve_temporal_contact_rigid_world_alignment(
     translations = _interpolate_contact_corrections(corrections)
 
     grounded_frames: list[MotionFrame] = []
-    local_penetration_corrections: list[float] = []
+    non_penetration_lifts: list[float] = []
+    suppressed_non_penetration_lifts: list[float] = []
     for index, frame in enumerate(aligned.frames):
-        translated_joints = {
+        rigidly_grounded_joints = {
             name: (point[0], point[1] + translations[index], point[2])
             for name, point in frame.joints.items()
         }
-        projected_joints: dict[str, Point3] = {}
-        for name, point in translated_joints.items():
-            correction = max(
-                0.0,
-                ground_y + NON_PENETRATION_CLEARANCE - support_surface_height(point[1]),
+        minimum_surface_height = min(
+            (
+                support_surface_height(point[1])
+                for point in rigidly_grounded_joints.values()
+            ),
+            default=ground_y,
+        )
+        requested_non_penetration_lift = max(
+            0.0,
+            ground_y + NON_PENETRATION_CLEARANCE - minimum_surface_height,
+        )
+        # For horizontal and kneeling support, the measured contact is the
+        # only reliable world-space anchor. Lifting the whole skeleton to fix
+        # a contradictory non-contact joint would immediately break that
+        # anchor and make the subject visibly float. Keep the rigid contact
+        # solution and expose the contradiction for validation instead.
+        non_penetration_lift = (
+            0.0 if preserve_authoritative_contacts else requested_non_penetration_lift
+        )
+        non_penetration_lifts.append(non_penetration_lift)
+        suppressed_non_penetration_lifts.append(
+            requested_non_penetration_lift if preserve_authoritative_contacts else 0.0
+        )
+        grounded_frames.append(
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    name: (point[0], point[1] + non_penetration_lift, point[2])
+                    for name, point in rigidly_grounded_joints.items()
+                },
             )
-            local_penetration_corrections.append(correction)
-            projected_joints[name] = (point[0], point[1] + correction, point[2])
-        grounded_frames.append(MotionFrame(time_sec=frame.time_sec, joints=projected_joints))
+        )
 
     grounded = replace(aligned, frames=grounded_frames)
-
-    max_local_correction = max(local_penetration_corrections, default=0.0)
-    if max_local_correction > 1e-8:
-        # Collision clamping can introduce small kinematic inconsistencies; preserve
-        # reference bone lengths to keep motion physically plausible.
-        reference_lengths: dict[tuple[str, str], float] = {}
-        for parent, child in STRUCTURAL_BONES:
-            if parent not in clip.joint_names or child not in clip.joint_names:
-                continue
-            lengths: list[float] = []
-            for frame in clip.frames:
-                if parent in frame.joints and child in frame.joints:
-                    p = frame.joints[parent]
-                    c = frame.joints[child]
-                    lengths.append(math.dist(p, c))
-            if lengths:
-                reference_lengths[(parent, child)] = float(statistics.median(lengths))
-
-        if reference_lengths:
-            bounded_frames: list[MotionFrame] = []
-            for frame in grounded.frames:
-                joints = dict(frame.joints)
-                for parent, child in reference_lengths:
-                    if parent not in joints or child not in joints:
-                        continue
-                    p = joints[parent]
-                    c = joints[child]
-                    dx = c[0] - p[0]
-                    dy = c[1] - p[1]
-                    dz = c[2] - p[2]
-                    current_len = math.sqrt(dx * dx + dy * dy + dz * dz)
-                    if current_len <= 1e-8:
-                        continue
-                    target_len = reference_lengths[(parent, child)]
-                    scale = target_len / current_len
-                    joints[child] = (
-                        p[0] + dx * scale,
-                        p[1] + dy * scale,
-                        p[2] + dz * scale,
-                    )
-                bounded_frames.append(
-                    MotionFrame(time_sec=frame.time_sec, joints=joints)
-                )
-            grounded = replace(grounded, frames=bounded_frames)
-
-        # Keep pose edits bounded to avoid large corrective artifacts.
-        MAX_JOINT_CORRECTION_METERS = 0.30
-        bounded_final_frames: list[MotionFrame] = []
-        for index, frame in enumerate(grounded.frames):
-            rigid_frame = aligned.frames[min(index, aligned.frame_count - 1)]
-            rigid_translation = translations[min(index, len(translations) - 1)]
-            joints: dict[str, Point3] = {}
-            for name, new_point in frame.joints.items():
-                rigid_point = rigid_frame.joints.get(name)
-                if rigid_point is None:
-                    joints[name] = new_point
-                    continue
-                rigidly_grounded_point = (
-                    rigid_point[0],
-                    rigid_point[1] + rigid_translation,
-                    rigid_point[2],
-                )
-                displacement = math.dist(rigidly_grounded_point, new_point)
-                if displacement <= MAX_JOINT_CORRECTION_METERS:
-                    joints[name] = new_point
-                else:
-                    ratio = MAX_JOINT_CORRECTION_METERS / max(displacement, 1e-8)
-                    joints[name] = (
-                        rigidly_grounded_point[0]
-                        + (new_point[0] - rigidly_grounded_point[0]) * ratio,
-                        rigidly_grounded_point[1]
-                        + (new_point[1] - rigidly_grounded_point[1]) * ratio,
-                        rigidly_grounded_point[2]
-                        + (new_point[2] - rigidly_grounded_point[2]) * ratio,
-                    )
-            bounded_final_frames.append(
-                MotionFrame(time_sec=frame.time_sec, joints=joints)
-            )
-        grounded = replace(grounded, frames=bounded_final_frames)
-
-        # Clamp again to guarantee non-penetration constraints.
-        clamped_frames: list[MotionFrame] = []
-        for frame in grounded.frames:
-            projected_joints: dict[str, Point3] = {}
-            for name, point in frame.joints.items():
-                correction = max(
-                    0.0,
-                    ground_y
-                    + NON_PENETRATION_CLEARANCE
-                    - support_surface_height(point[1]),
-                )
-                projected_joints[name] = (
-                    point[0],
-                    point[1] + correction,
-                    point[2],
-                )
-            clamped_frames.append(
-                MotionFrame(time_sec=frame.time_sec, joints=projected_joints)
-            )
-        grounded = replace(grounded, frames=clamped_frames)
 
     return grounded, {
         "applied": True,
@@ -899,9 +833,11 @@ def solve_temporal_contact_rigid_world_alignment(
         "contactHingeRotationDegrees": hinge_rotation_degrees,
         "groundY": ground_y,
         "maximumVerticalCorrection": max((abs(value) for value in translations), default=0.0),
-        "maximumNonPenetrationLift": 0.0,
-        "maximumLocalPenetrationCorrection": max(
-            local_penetration_corrections,
+        "maximumNonPenetrationLift": max(non_penetration_lifts, default=0.0),
+        "maximumSuppressedNonPenetrationLift": max(
+            suppressed_non_penetration_lifts,
             default=0.0,
         ),
+        "authoritativeContactsPreserved": preserve_authoritative_contacts,
+        "maximumLocalPenetrationCorrection": 0.0,
     }
