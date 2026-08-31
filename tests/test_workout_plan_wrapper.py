@@ -790,7 +790,7 @@ def test_workout_plan_wrapper_reuses_exact_unchanged_candidate_prefetch(tmp_path
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
-def test_workout_plan_wrapper_resumes_from_durable_discovery_and_source_downloads(tmp_path: Path) -> None:
+def test_workout_plan_wrapper_resumes_from_durable_discovery_source_downloads_and_bake(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
     wham_repo = tmp_path / "WHAM"
@@ -857,13 +857,12 @@ def test_workout_plan_wrapper_resumes_from_durable_discovery_and_source_download
     second_commands = command_log.read_text(encoding="utf-8").splitlines()
     assert second_commands.count("find-youtube-videos") == 1
     assert second_commands.count("prefetch-youtube-sources") == 1
-    assert second_commands.count("bake-and-rank") == 2
+    assert second_commands.count("bake-and-rank") == 1
     second_summary = json.loads(
         (workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8")
     )
     timings = second_summary["exercises"][0]["timings"]
-    assert timings["discoveryReused"] is True
-    assert timings["primarySourceDownloadReused"] is True
+    assert timings["bakeReused"] is True
 
     source_report = json.loads(
         (workspace / "bench" / "youtube_source_prefetch.json").read_text(encoding="utf-8")
@@ -881,8 +880,8 @@ def test_workout_plan_wrapper_resumes_from_durable_discovery_and_source_download
     assert third.returncode == 0, third.stdout + third.stderr
     third_commands = command_log.read_text(encoding="utf-8").splitlines()
     assert third_commands.count("find-youtube-videos") == 1
-    assert third_commands.count("prefetch-youtube-sources") == 2
-    assert third_commands.count("bake-and-rank") == 3
+    assert third_commands.count("prefetch-youtube-sources") == 1
+    assert third_commands.count("bake-and-rank") == 1
 
     fresh = subprocess.run(
         [*command, "-DisableStageResume"],
@@ -896,8 +895,8 @@ def test_workout_plan_wrapper_resumes_from_durable_discovery_and_source_download
     assert fresh.returncode == 0, fresh.stdout + fresh.stderr
     fresh_commands = command_log.read_text(encoding="utf-8").splitlines()
     assert fresh_commands.count("find-youtube-videos") == 2
-    assert fresh_commands.count("prefetch-youtube-sources") == 3
-    assert fresh_commands.count("bake-and-rank") == 4
+    assert fresh_commands.count("prefetch-youtube-sources") == 2
+    assert fresh_commands.count("bake-and-rank") == 2
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
@@ -1092,3 +1091,14 @@ def test_staged_fallback_retries_rotate_between_exercises() -> None:
     assert 'status = "retry_pending"' in script
     assert "$pendingLegacyBakeItems.Enqueue($retryWorkItem)" in script
     assert "individualRetryPassCount" in script
+
+
+def test_workout_plan_wrapper_preserves_bake_attempt_manifests() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Save-AttemptSelectionManifest" in script
+    assert "best_no_selection_manifest.json" in script
+    assert "Restore-BestNoSelectionManifest" in script

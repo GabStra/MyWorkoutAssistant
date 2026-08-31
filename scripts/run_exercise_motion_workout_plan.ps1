@@ -626,6 +626,7 @@ function New-TerminalExerciseSummary {
             primarySourceDownloadReused = [bool]$WorkItem.primarySourceDownloadReused
             fallbackSourceDownloadReused = [bool]$WorkItem.fallbackSourceDownloadReused
             bakeCommandSeconds = [Math]::Round([double]$WorkItem.bakeCommandSeconds, 3)
+            bakeReused = [bool]$WorkItem.bakeReused
             discoveryAttempts = [int]$WorkItem.discoveryAttemptCount
             bakeAttempts = [int]$WorkItem.bakeAttemptCount
         }
@@ -1594,6 +1595,24 @@ function Test-DiscoveryStageReady {
     }
 }
 
+function Test-BakeStageReady {
+    param([object]$WorkItem)
+
+    $selectionPath = Join-Path $WorkItem.bakeWorkspace "selection_manifest.json"
+    if (-not (Test-Path -LiteralPath $selectionPath)) {
+        return $false
+    }
+    try {
+        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+        if ($selection.PSObject.Properties.Name -contains "selectedResults") {
+            return @($selection.selectedResults).Count -gt 0
+        }
+        return $null -ne $selection.selected
+    } catch {
+        return $false
+    }
+}
+
 function Test-SourceDownloadStageReady {
     param(
         [object]$WorkItem,
@@ -1789,6 +1808,70 @@ function Start-BakeJob {
             )
         }
 
+        function Save-AttemptSelectionManifest {
+            param(
+                [string]$Workspace,
+                [int]$AttemptIndex
+            )
+            $selectionPath = Join-Path $Workspace "selection_manifest.json"
+            if (-not (Test-Path -LiteralPath $selectionPath)) {
+                return $null
+            }
+            try {
+                $snapshotDir = Join-Path $Workspace "attempt_manifests"
+                New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
+                $snapshotTimestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+                $snapshotPath = Join-Path $snapshotDir ("selection_manifest.attempt-{0:D2}.{1}.json" -f $AttemptIndex, $snapshotTimestamp)
+                Copy-Item -LiteralPath $selectionPath -Destination $snapshotPath
+                return $snapshotPath
+            } catch {
+                "[$(Get-Date -Format o)] failed to snapshot selection manifest for attempt $AttemptIndex`: $($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                return $null
+            }
+        }
+
+        function Get-SelectionManifestEvidenceScore {
+            param([string]$Path)
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return -1.0
+            }
+            try {
+                $selection = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $score = [double]@($selection.candidateResults).Count
+                $score += 1000.0 * [double]@($selection.reviewItems).Count
+                if ($selection.rejectedBest) {
+                    $score += 1000000.0
+                    $rejectedBestScore = $selection.rejectedBest.selectionScore
+                    if ($null -ne $rejectedBestScore) {
+                        $score += [double]$rejectedBestScore
+                    }
+                }
+                return $score
+            } catch {
+                return -1.0
+            }
+        }
+
+        function Preserve-BestNoSelectionManifest {
+            param([string]$SnapshotPath)
+            if ([string]::IsNullOrWhiteSpace($SnapshotPath) -or -not (Test-Path -LiteralPath $SnapshotPath)) {
+                return
+            }
+            $bestPath = Join-Path $BakeWorkspace "attempt_manifests\best_no_selection_manifest.json"
+            $snapshotScore = Get-SelectionManifestEvidenceScore -Path $SnapshotPath
+            $bestScore = Get-SelectionManifestEvidenceScore -Path $bestPath
+            if ($snapshotScore -gt $bestScore) {
+                Copy-Item -LiteralPath $SnapshotPath -Destination $bestPath -Force
+            }
+        }
+
+        function Restore-BestNoSelectionManifest {
+            $bestPath = Join-Path $BakeWorkspace "attempt_manifests\best_no_selection_manifest.json"
+            if (Test-Path -LiteralPath $bestPath) {
+                Copy-Item -LiteralPath $bestPath -Destination (Join-Path $BakeWorkspace "selection_manifest.json") -Force
+            }
+        }
+
         function Write-DiscoveryCompletionSignature {
             param([string]$Path)
 
@@ -1931,6 +2014,7 @@ function Start-BakeJob {
             }
             if ($recommendedCount -le 0) {
                 if (-not $hasTargetLimit -or $targetSuitableCount -ge $MaxTargetSuitableCount) {
+                    Restore-BestNoSelectionManifest
                     [pscustomobject]@{
                         exitCode = 0
                         stage = "discovery_no_recommended"
@@ -1965,6 +2049,10 @@ function Start-BakeJob {
             $bakeAttemptCount += 1
 
             $selectedResultCount = Get-SelectedResultCount -Workspace $BakeWorkspace
+            $attemptSelectionSnapshotPath = Save-AttemptSelectionManifest -Workspace $BakeWorkspace -AttemptIndex $attemptIndex
+            if ($selectedResultCount -eq 0) {
+                Preserve-BestNoSelectionManifest -SnapshotPath $attemptSelectionSnapshotPath
+            }
             "[$(Get-Date -Format o)] bake attempt $attemptIndex finished with exit code $bakeExitCode; selected $selectedResultCount/$MaxSelectedResults result(s), elapsed ${bakeSeconds}s" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             $attempts += [ordered]@{
                 attemptIndex = $attemptIndex
@@ -2007,6 +2095,8 @@ function Start-BakeJob {
                     continue
                 }
                 [pscustomobject]@{
+                    # A transient later attempt must not erase a useful
+                    # no-selection diagnosis produced by an earlier bake.
                     exitCode = $bakeExitCode
                     stage = "bake"
                     logPath = $LogPath
@@ -2017,6 +2107,7 @@ function Start-BakeJob {
                     bakeAttemptCount = $bakeAttemptCount
                     attempts = $attempts
                 }
+                Restore-BestNoSelectionManifest
                 return
             }
             if ($bakeExitCode -ne 0) {
@@ -2024,6 +2115,7 @@ function Start-BakeJob {
             }
 
             if ($YieldAfterUnsuccessfulBake) {
+                Restore-BestNoSelectionManifest
                 [pscustomobject]@{
                     exitCode = 0
                     stage = "bake_round_robin_yield"
@@ -2040,6 +2132,7 @@ function Start-BakeJob {
             }
 
             if ($hasTargetLimit -and $targetSuitableCount -ge $MaxTargetSuitableCount) {
+                Restore-BestNoSelectionManifest
                 [pscustomobject]@{
                     exitCode = 0
                     stage = "bake_no_selection"
@@ -2569,6 +2662,7 @@ function Complete-BakeJob {
             primarySourceDownloadReused = [bool]$workItem.primarySourceDownloadReused
             fallbackSourceDownloadReused = [bool]$workItem.fallbackSourceDownloadReused
             bakeCommandSeconds = [Math]::Round($bakeCommandSeconds, 3)
+            bakeReused = [bool]$workItem.bakeReused
             discoveryAttempts = ([int]$workItem.discoveryAttemptCount + [int](Get-ObjectProperty -Object $jobResult -Name "discoveryAttemptCount"))
             bakeAttempts = [int](Get-ObjectProperty -Object $jobResult -Name "bakeAttemptCount")
             selection = $selectionTimingSummary
@@ -3574,6 +3668,7 @@ foreach ($exercise in $exerciseList.exercises) {
         discoveryReused = $false
         primarySourceDownloadReused = $false
         fallbackSourceDownloadReused = $false
+        bakeReused = $false
         sourceDownloadSeconds = 0.0
         bakeCommandSeconds = 0.0
         discoveryAttemptCount = 0
@@ -3735,6 +3830,13 @@ foreach ($workItem in $workItems) {
     if ($existingSummary) {
         $summaryByIndex[$workItem.index] = $existingSummary
         $completedCount += 1
+        continue
+    }
+    if (-not $DisableStageResume -and (Test-BakeStageReady -WorkItem $workItem)) {
+        $workItem.bakeReused = $true
+        "[$(Get-Date -Format o)] reused completed movement bake; resuming selected-output materialization" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+        $pendingCompletionItems.Enqueue($workItem)
+        Write-Host ("Resuming {0} at selected-output materialization." -f $workItem.exerciseName)
         continue
     }
     if (-not $DisableStageResume -and (Test-DiscoveryStageReady -WorkItem $workItem)) {
