@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-YOLO_TRACK_STABILIZATION_POLICY_VERSION = 1
+YOLO_TRACK_STABILIZATION_POLICY_VERSION = 3
 _CENTER_JOINTS = ("pelvis", "hips", "left_hip", "right_hip")
 _MIN_POSE_FRAMES = 4
 _CROP_PADDING_RATIO = 0.22
-_MIN_CROP_FRAME_RATIO = 0.55
+_MIN_CROP_FRAME_RATIO = 0.35
 _MAX_CROP_FRAME_RATIO = 0.94
 _MIN_CENTER_TRAVEL_RATIO = 0.015
 _SMOOTH_WINDOW_SECONDS = 0.35
@@ -179,12 +179,13 @@ def apply_yolo_track_stabilization(
     if not capture.isOpened():
         return source_path
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    output_width, output_height = stabilized_output_size(plan)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
         str(output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps if fps > 0.0 else 30.0,
-        (plan.crop_width, plan.crop_height),
+        (output_width, output_height),
     )
     if not writer.isOpened():
         capture.release()
@@ -204,6 +205,12 @@ def apply_yolo_track_stabilization(
                 capture.release()
                 writer.release()
                 return source_path
+            if cropped.shape[1] != output_width or cropped.shape[0] != output_height:
+                cropped = cv2.resize(
+                    cropped,
+                    (output_width, output_height),
+                    interpolation=cv2.INTER_CUBIC,
+                )
             writer.write(cropped)
             frame_index += 1
     finally:
@@ -212,6 +219,22 @@ def apply_yolo_track_stabilization(
     if not output_path.exists() or output_path.stat().st_size <= 0:
         return source_path
     return output_path
+
+
+def stabilized_output_size(plan: YoloTrackStabilizationPlan) -> tuple[int, int]:
+    """Upscale a crop to the source envelope without changing its aspect ratio."""
+    scale = min(
+        plan.frame_width / float(plan.crop_width),
+        plan.frame_height / float(plan.crop_height),
+    )
+    return (
+        _even_size_without_cap(plan.crop_width * scale),
+        _even_size_without_cap(plan.crop_height * scale),
+    )
+
+
+def _even_size_without_cap(value: float) -> int:
+    return max(2, int(round(value / 2.0)) * 2)
 
 
 def _load_pose_payload(path: Path) -> dict[str, Any] | None:

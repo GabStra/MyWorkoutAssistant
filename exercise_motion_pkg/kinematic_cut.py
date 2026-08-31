@@ -1030,6 +1030,52 @@ def _distinct_end_state_proposals(
     return proposals
 
 
+def _distinct_end_state_excursion_proposals(
+    frames: Sequence[PoseFrame],
+    signal: SignalResult,
+    contract: dict[str, Any],
+    *,
+    max_proposals: int,
+) -> list[CutProposal]:
+    """Recover a one-way transition when categorical pose labels are unreliable.
+
+    A complete excursion contains the requested transition followed by a reset.
+    For a distinct-end contract, the first signal extreme is the natural finish;
+    retaining the return would contradict the contract merely because a 2-D
+    support-mode classifier could not label the endpoints.
+    """
+    cycles = detect_cycles(signal)
+    if not cycles:
+        return []
+    start_constraints = contract.get("startPoseConstraints")
+    scored: list[tuple[float, int, Cycle]] = []
+    for index, cycle in enumerate(cycles):
+        start_score = _state_score_at(frames, signal, cycle.start_seconds, start_constraints)
+        confidence = min(cycle.amplitude, 1.0) * signal.quality * (0.5 + 0.5 * start_score)
+        scored.append((confidence, index, cycle))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    proposals: list[CutProposal] = []
+    for confidence, _, cycle in scored[:max_proposals]:
+        if cycle.peak_seconds - cycle.start_seconds < DEFAULT_MIN_CYCLE_SECONDS:
+            continue
+        proposals.append(
+            CutProposal(
+                start_seconds=cycle.start_seconds,
+                end_seconds=cycle.peak_seconds,
+                policy="distinct_end_state_signal_extreme",
+                confidence=max(0.0, min(1.0, confidence)),
+                stats={
+                    "amplitudeTorsoUnits": cycle.amplitude,
+                    "durationSeconds": cycle.peak_seconds - cycle.start_seconds,
+                    "cycleCount": float(len(cycles)),
+                    "explainedVarianceRatio": signal.explained_variance_ratio,
+                    "fallbackReason": "categorical_endpoint_states_unavailable",
+                },
+            )
+        )
+    return proposals
+
+
 def _stable_hold_proposals(
     frames: Sequence[PoseFrame],
     signal: SignalResult,
@@ -1186,7 +1232,12 @@ def propose_source_cut(
     elif completion_mode == "distinct_end_state":
         proposals = _distinct_end_state_proposals(frames, signal, safe_contract, max_proposals=request_count)
         if not proposals:
-            proposals = _cycle_proposals(frames, signal, safe_contract, max_proposals=request_count)
+            proposals = _distinct_end_state_excursion_proposals(
+                frames,
+                signal,
+                safe_contract,
+                max_proposals=request_count,
+            )
     elif completion_mode == "stable_hold":
         proposals = _stable_hold_proposals(frames, signal, safe_contract, max_proposals=request_count)
     else:
