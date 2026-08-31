@@ -97,7 +97,12 @@ YOUTUBE_SEARCH_CACHE_STALE_FALLBACK_SECONDS = 7 * 24 * 60 * 60
 YOUTUBE_SEARCH_LOCK_TIMEOUT_SECONDS = 5 * 60.0
 YOUTUBE_SEARCH_LOCK_STALE_SECONDS = 3 * 60.0
 YOUTUBE_PREVIEW_FRAGMENT_WORKERS = 4
-YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS: tuple[str | None, ...] = ("android_vr", "tv", None)
+YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS: tuple[str | None, ...] = (
+    "android_vr",
+    "web_embedded",
+    "tv",
+    None,
+)
 SOURCE_REVIEW_NEAR_DUPLICATE_FRAME_DELTA = 0.005
 SOURCE_REVIEW_NEAR_DUPLICATE_PAIR_RATIO = 0.80
 SOURCE_REVIEW_MAX_STATIC_TEMPORAL_RANGE = 0.03
@@ -184,6 +189,25 @@ def youtube_failure_is_rate_limited(message: str) -> bool:
     )
 
 
+def youtube_cookie_failure_allows_anonymous_retry(message: str) -> bool:
+    normalized = str(message).casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "cookies are no longer valid",
+            "cookies have expired",
+            "invalid cookies",
+            "cookie authentication failed",
+            "account cookies are no longer valid",
+            "http error 403",
+        )
+    ) or youtube_failure_is_rate_limited(message)
+
+
+def youtube_failure_is_forbidden(message: str) -> bool:
+    return "http error 403" in str(message).casefold()
+
+
 def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
     raise_if_youtube_rate_limit_cooldown_active()
     resolved_cookies_path: Path | None = None
@@ -201,51 +225,90 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
 
     output_dir.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
+    use_cookies = resolved_cookies_path is not None
+    use_progressive_format = False
     for attempt_index, player_client in enumerate(YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS, start=1):
-        remove_incomplete_youtube_downloads(output_dir)
-        attempt_cookies = isolated_youtube_cookie_copy(
-            resolved_cookies_path,
-            output_dir=output_dir,
-            attempt_index=attempt_index,
-        )
-        options = build_youtube_download_options(
-            outtmpl=str(output_dir / "source.%(ext)s"),
-            quiet=False,
-            noprogress=False,
-            retries=1,
-            preview=False,
-            cookies_path=attempt_cookies,
-        )
-        extractor_args = youtube_player_client_extractor_args(player_client)
-        if extractor_args is not None:
-            options["extractor_args"] = extractor_args
-        attempt_label = player_client or "automatic"
-        print(f"[youtube] full download attempt {attempt_index}: client={attempt_label}", flush=True)
-        try:
+        while True:
+            remove_incomplete_youtube_downloads(output_dir)
+            attempt_cookies = isolated_youtube_cookie_copy(
+                resolved_cookies_path if use_cookies else None,
+                output_dir=output_dir,
+                attempt_index=attempt_index,
+            )
+            options = build_youtube_download_options(
+                outtmpl=str(output_dir / "source.%(ext)s"),
+                quiet=False,
+                noprogress=False,
+                retries=1,
+                preview=False,
+                cookies_path=attempt_cookies,
+                format_selector=(LOW_RES_PROGRESSIVE_VIDEO_FORMAT if use_progressive_format else None),
+            )
+            extractor_args = youtube_player_client_extractor_args(player_client)
+            if extractor_args is not None:
+                options["extractor_args"] = extractor_args
+            attempt_label = player_client or "automatic"
+            auth_label = "cookies" if attempt_cookies is not None else "anonymous"
+            print(
+                f"[youtube] full download attempt {attempt_index}: "
+                f"client={attempt_label}, auth={auth_label}",
+                flush=True,
+            )
             try:
-                with YoutubeDL(options) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    downloaded = Path(ydl.prepare_filename(info))
-                resolved_download = find_completed_youtube_download(downloaded)
-                if resolved_download is not None:
-                    return sanitize_downloaded_video(resolved_download)
-                failures.append(f"client={attempt_label}: download completed without an output file")
-            except DownloadError as exc:
-                failure_message = str(exc)
-                failures.append(f"client={attempt_label}: {truncate_text(failure_message, 300)}")
-                if youtube_failure_is_rate_limited(failure_message):
-                    record_youtube_rate_limit(message=failure_message)
-                    raise RuntimeError(
-                        "YouTube download stopped because the current session is rate-limited; "
-                        "retrying alternate player clients would only extend the cooldown."
-                    ) from exc
-                print(
-                    f"[youtube] full download attempt {attempt_index} failed; re-extracting with another client",
-                    flush=True,
-                )
-        finally:
-            if attempt_cookies is not None:
-                attempt_cookies.unlink(missing_ok=True)
+                try:
+                    with YoutubeDL(options) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        downloaded = Path(ydl.prepare_filename(info))
+                    resolved_download = find_completed_youtube_download(downloaded)
+                    if resolved_download is not None:
+                        return sanitize_downloaded_video(resolved_download)
+                    failures.append(
+                        f"client={attempt_label}, auth={auth_label}: "
+                        "download completed without an output file"
+                    )
+                except DownloadError as exc:
+                    failure_message = str(exc)
+                    failures.append(
+                        f"client={attempt_label}, auth={auth_label}: "
+                        f"{truncate_text(failure_message, 300)}"
+                    )
+                    if attempt_cookies is not None and youtube_cookie_failure_allows_anonymous_retry(
+                        failure_message
+                    ):
+                        use_cookies = False
+                        print(
+                            "[youtube] cookie-authenticated download failed; retrying public access "
+                            "without cookies",
+                            flush=True,
+                        )
+                        continue
+                    if (
+                        attempt_cookies is None
+                        and not use_progressive_format
+                        and youtube_failure_is_forbidden(failure_message)
+                    ):
+                        use_progressive_format = True
+                        print(
+                            "[youtube] video-only download was forbidden; retrying a progressive "
+                            "public stream",
+                            flush=True,
+                        )
+                        continue
+                    if youtube_failure_is_rate_limited(failure_message):
+                        record_youtube_rate_limit(message=failure_message)
+                        raise RuntimeError(
+                            "YouTube download stopped because the current session is rate-limited; "
+                            "retrying alternate player clients would only extend the cooldown."
+                        ) from exc
+                    print(
+                        f"[youtube] full download attempt {attempt_index} failed; "
+                        "re-extracting with another client",
+                        flush=True,
+                    )
+            finally:
+                if attempt_cookies is not None:
+                    attempt_cookies.unlink(missing_ok=True)
+            break
     raise RuntimeError(
         "YouTube full download failed after fresh client fallbacks: " + " | ".join(failures)
     )
@@ -298,13 +361,14 @@ def build_youtube_preview_ytdlp_command(
     output_dir: Path,
     cookies_path: Path | None = None,
     player_client: str | None = None,
+    format_selector: str = LOW_RES_VIDEO_ONLY_FORMAT,
 ) -> list[str]:
     command = [
         sys.executable,
         "-m",
         "yt_dlp",
         "--format",
-        LOW_RES_VIDEO_ONLY_FORMAT,
+        format_selector,
         "--output",
         str(output_dir / "candidate.%(ext)s"),
         "--no-playlist",
@@ -354,53 +418,86 @@ def download_youtube_preview(
     raise_if_youtube_rate_limit_cooldown_active()
     output_dir.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
+    use_cookies = resolved_cookies_path is not None
+    use_progressive_format = False
     for attempt_index, player_client in enumerate(YOUTUBE_FULL_DOWNLOAD_CLIENT_ATTEMPTS, start=1):
-        remove_incomplete_youtube_preview_downloads(output_dir)
-        attempt_cookies = isolated_youtube_cookie_copy(
-            resolved_cookies_path,
-            output_dir=output_dir,
-            attempt_index=attempt_index,
-        )
-        command = build_youtube_preview_ytdlp_command(
-            url=url,
-            output_dir=output_dir,
-            cookies_path=attempt_cookies,
-            player_client=player_client,
-        )
-        attempt_label = player_client or "automatic"
-        try:
+        while True:
+            remove_incomplete_youtube_preview_downloads(output_dir)
+            attempt_cookies = isolated_youtube_cookie_copy(
+                resolved_cookies_path if use_cookies else None,
+                output_dir=output_dir,
+                attempt_index=attempt_index,
+            )
+            command = build_youtube_preview_ytdlp_command(
+                url=url,
+                output_dir=output_dir,
+                cookies_path=attempt_cookies,
+                player_client=player_client,
+                format_selector=(
+                    LOW_RES_PROGRESSIVE_VIDEO_FORMAT
+                    if use_progressive_format
+                    else LOW_RES_VIDEO_ONLY_FORMAT
+                ),
+            )
+            attempt_label = player_client or "automatic"
+            auth_label = "cookies" if attempt_cookies is not None else "anonymous"
             try:
-                completed = subprocess.run(
-                    command,
-                    check=False,
-                    capture_output=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=90,
-                )
-            except subprocess.TimeoutExpired:
-                failures.append(f"client={attempt_label}: timed out")
-                continue
-            if completed.returncode != 0:
-                message = truncate_text(completed.stderr or completed.stdout or "yt-dlp failed", 400)
-                failures.append(f"client={attempt_label}: {message}")
-                if youtube_failure_is_rate_limited(message):
-                    record_youtube_rate_limit(message=message)
-                    raise RuntimeError(
-                        "YouTube preview download stopped because the current session is rate-limited; "
-                        "retrying alternate player clients would only extend the cooldown."
+                try:
+                    completed = subprocess.run(
+                        command,
+                        check=False,
+                        capture_output=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=90,
                     )
-                continue
-            for candidate in sorted(output_dir.glob("candidate.*")):
-                if candidate.is_file() and candidate.suffix.lower() != ".part":
-                    sanitized = sanitize_downloaded_video(candidate)
-                    if resolved_cache_dir is not None:
-                        return cache_youtube_preview(sanitized, resolved_cache_dir, cache_stem)
-                    return sanitized
-            failures.append(f"client={attempt_label}: download completed without an output file")
-        finally:
-            if attempt_cookies is not None:
-                attempt_cookies.unlink(missing_ok=True)
+                except subprocess.TimeoutExpired:
+                    failures.append(f"client={attempt_label}, auth={auth_label}: timed out")
+                    break
+                if completed.returncode != 0:
+                    message = truncate_text(completed.stderr or completed.stdout or "yt-dlp failed", 400)
+                    failures.append(f"client={attempt_label}, auth={auth_label}: {message}")
+                    if attempt_cookies is not None and youtube_cookie_failure_allows_anonymous_retry(message):
+                        use_cookies = False
+                        print(
+                            "[youtube] cookie-authenticated preview failed; retrying public access "
+                            "without cookies",
+                            flush=True,
+                        )
+                        continue
+                    if (
+                        attempt_cookies is None
+                        and not use_progressive_format
+                        and youtube_failure_is_forbidden(message)
+                    ):
+                        use_progressive_format = True
+                        print(
+                            "[youtube] video-only preview was forbidden; retrying a progressive "
+                            "public stream",
+                            flush=True,
+                        )
+                        continue
+                    if youtube_failure_is_rate_limited(message):
+                        record_youtube_rate_limit(message=message)
+                        raise RuntimeError(
+                            "YouTube preview download stopped because the current session is rate-limited; "
+                            "retrying alternate player clients would only extend the cooldown."
+                        )
+                    break
+                for candidate in sorted(output_dir.glob("candidate.*")):
+                    if candidate.is_file() and candidate.suffix.lower() != ".part":
+                        sanitized = sanitize_downloaded_video(candidate)
+                        if resolved_cache_dir is not None:
+                            return cache_youtube_preview(sanitized, resolved_cache_dir, cache_stem)
+                        return sanitized
+                failures.append(
+                    f"client={attempt_label}, auth={auth_label}: "
+                    "download completed without an output file"
+                )
+                break
+            finally:
+                if attempt_cookies is not None:
+                    attempt_cookies.unlink(missing_ok=True)
     if failures:
         raise RuntimeError(f"Preview download failed for {url}: " + " | ".join(failures))
     raise RuntimeError(f"Preview download finished but no video file was found in {output_dir}.")
@@ -586,6 +683,7 @@ def build_youtube_download_options(
     retries: int,
     cookies_path: Path | None = None,
     preview: bool = False,
+    format_selector: str | None = None,
 ) -> dict[str, Any]:
     ffmpeg_location = ffmpeg_location_for_ytdlp()
     ffmpeg_available = ffmpeg_location is not None
@@ -593,7 +691,7 @@ def build_youtube_download_options(
     if preview:
         if ffmpeg_available:
             options = {
-                "format": LOW_RES_VIDEO_ONLY_FORMAT,
+                "format": format_selector or LOW_RES_VIDEO_ONLY_FORMAT,
                 "outtmpl": outtmpl,
                 "quiet": quiet,
                 "noprogress": noprogress,
@@ -613,7 +711,7 @@ def build_youtube_download_options(
             }
     elif ffmpeg_available:
         options = {
-            "format": LOW_RES_VIDEO_ONLY_FORMAT,
+            "format": format_selector or LOW_RES_VIDEO_ONLY_FORMAT,
             "outtmpl": outtmpl,
             "quiet": quiet,
             "noprogress": noprogress,

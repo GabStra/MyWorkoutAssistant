@@ -7167,6 +7167,7 @@ def test_download_youtube_preview_uses_isolated_cookie_copy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
     cookies_path = tmp_path / "cookies.txt"
     cookies_path.write_text("NetscapeCookie", encoding="utf-8")
     download_dir = tmp_path / "download"
@@ -7203,10 +7204,11 @@ def test_download_youtube_preview_uses_isolated_cookie_copy(
     assert not Path(captured["cookie_path"]).exists()
 
 
-def test_download_youtube_preview_retries_player_clients_after_403(
+def test_download_youtube_preview_retries_progressive_format_after_403(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
     downloaded = tmp_path / "candidate.mp4"
     commands: list[list[str]] = []
 
@@ -7231,7 +7233,167 @@ def test_download_youtube_preview_retries_player_clients_after_403(
     assert result == downloaded
     assert len(commands) == 2
     assert commands[0][commands[0].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
-    assert commands[1][commands[1].index("--extractor-args") + 1] == "youtube:player_client=tv"
+    assert commands[1][commands[1].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+
+
+def test_download_youtube_preview_retries_anonymously_when_cookies_are_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
+    cookies_path = tmp_path / "cookies.txt"
+    cookies_path.write_text("NetscapeCookie", encoding="utf-8")
+    downloaded = tmp_path / "candidate.mp4"
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        commands.append(command)
+        if len(commands) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="WARNING: The provided YouTube account cookies are no longer valid.",
+            )
+        downloaded.write_bytes(b"video")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("exercise_motion_pkg.youtube.sanitize_downloaded_video", lambda path: path)
+
+    from exercise_motion_pkg.youtube import download_youtube_preview
+
+    result = download_youtube_preview(
+        "https://www.youtube.com/watch?v=test",
+        tmp_path,
+        cookies_path,
+    )
+
+    assert result == downloaded
+    assert len(commands) == 2
+    assert "--cookies" in commands[0]
+    assert "--cookies" not in commands[1]
+    assert commands[0][commands[0].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+    assert commands[1][commands[1].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+    assert cookies_path.read_text(encoding="utf-8") == "NetscapeCookie"
+
+
+def test_download_youtube_preview_retries_anonymously_after_cookie_authenticated_403(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
+    cookies_path = tmp_path / "cookies.txt"
+    cookies_path.write_text("NetscapeCookie", encoding="utf-8")
+    downloaded = tmp_path / "candidate.mp4"
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        commands.append(command)
+        if len(commands) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            )
+        downloaded.write_bytes(b"video")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("exercise_motion_pkg.youtube.sanitize_downloaded_video", lambda path: path)
+
+    from exercise_motion_pkg.youtube import download_youtube_preview
+
+    result = download_youtube_preview(
+        "https://www.youtube.com/watch?v=test",
+        tmp_path,
+        cookies_path,
+    )
+
+    assert result == downloaded
+    assert len(commands) == 2
+    assert "--cookies" in commands[0]
+    assert "--cookies" not in commands[1]
+    assert commands[0][commands[0].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+    assert commands[1][commands[1].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+
+
+def test_download_youtube_preview_uses_progressive_stream_after_anonymous_video_only_403(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
+    cookies_path = tmp_path / "cookies.txt"
+    cookies_path.write_text("NetscapeCookie", encoding="utf-8")
+    downloaded = tmp_path / "candidate.mp4"
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        commands.append(command)
+        if len(commands) < 3:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            )
+        downloaded.write_bytes(b"video")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("exercise_motion_pkg.youtube.sanitize_downloaded_video", lambda path: path)
+
+    from exercise_motion_pkg.youtube import (
+        LOW_RES_PROGRESSIVE_VIDEO_FORMAT,
+        LOW_RES_VIDEO_ONLY_FORMAT,
+        download_youtube_preview,
+    )
+
+    result = download_youtube_preview(
+        "https://www.youtube.com/watch?v=test",
+        tmp_path,
+        cookies_path,
+    )
+
+    assert result == downloaded
+    assert len(commands) == 3
+    assert commands[0][commands[0].index("--format") + 1] == LOW_RES_VIDEO_ONLY_FORMAT
+    assert commands[1][commands[1].index("--format") + 1] == LOW_RES_VIDEO_ONLY_FORMAT
+    assert commands[2][commands[2].index("--format") + 1] == LOW_RES_PROGRESSIVE_VIDEO_FORMAT
+    assert "--cookies" in commands[0]
+    assert "--cookies" not in commands[1]
+    assert "--cookies" not in commands[2]
+
+
+def test_download_youtube_preview_uses_web_embedded_after_android_vr_formats_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MWA_YOUTUBE_RATE_LIMIT_MARKER_PATH", str(tmp_path / "rate-limit.json"))
+    downloaded = tmp_path / "candidate.mp4"
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        commands.append(command)
+        if len(commands) < 3:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            )
+        downloaded.write_bytes(b"video")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("exercise_motion_pkg.youtube.sanitize_downloaded_video", lambda path: path)
+
+    from exercise_motion_pkg.youtube import download_youtube_preview
+
+    result = download_youtube_preview("https://www.youtube.com/watch?v=test", tmp_path)
+
+    assert result == downloaded
+    assert len(commands) == 3
+    assert commands[0][commands[0].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+    assert commands[1][commands[1].index("--extractor-args") + 1] == "youtube:player_client=android_vr"
+    assert commands[2][commands[2].index("--extractor-args") + 1] == "youtube:player_client=web_embedded"
 
 
 def test_download_youtube_preview_stops_immediately_when_rate_limited(
