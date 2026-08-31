@@ -9884,6 +9884,60 @@ def test_prefetch_youtube_candidates_searches_and_warms_cache_without_gpu(tmp_pa
     assert list(loaded["squat"][1]) == ["squat-demo"]
 
 
+def test_prefetch_persists_unwarmed_search_inventory_and_query_provenance(tmp_path) -> None:
+    plan_path = tmp_path / "exercise.json"
+    plan_path.write_text(
+        json.dumps({"exercises": [{"id": "hover", "name": "Spin Bike Hover"}]}),
+        encoding="utf-8",
+    )
+    next_video = 0
+    warmed: list[str] = []
+
+    def fake_search(query, _results_per_query):
+        nonlocal next_video
+        next_video += 1
+        return [
+            YouTubeCandidate(
+                url=f"https://www.youtube.com/watch?v=hover{next_video:06d}",
+                video_id=f"hover{next_video:06d}",
+                title=f"Hover route {next_video}",
+                channel="Coach",
+                duration_seconds=30,
+                view_count=100,
+                upload_date=None,
+                description_snippet=None,
+                thumbnail=None,
+            )
+        ]
+
+    out_path = tmp_path / "prefetch.json"
+    manifest = prefetch_youtube_candidate_previews(
+        workout_plan_json=plan_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            max_candidates=1,
+            pose_prefilter_enabled=False,
+            rank_with_vision=False,
+            semantic_gate_enabled=False,
+        ),
+        search_fn=fake_search,
+        preview_prefetcher=lambda candidates, _settings: warmed.extend(
+            candidate.video_id or "" for candidate in candidates
+        ),
+    )
+
+    persisted = manifest["exercises"][0]["candidates"]
+    assert len(warmed) == 1
+    assert len(persisted) > len(warmed)
+    loaded = load_youtube_candidate_prefetch(out_path, source_plan_path=plan_path)["hover"][1]
+    assert len(loaded) == len(persisted)
+    assert all(
+        candidate.vision_payload
+        and candidate.vision_payload["searchDiscovery"]["queries"]
+        for candidate in loaded.values()
+    )
+
+
 def test_candidate_prefetch_uses_cached_motion_contract_query_aliases(tmp_path: Path) -> None:
     plan_path = tmp_path / "exercise.json"
     plan_path.write_text(
@@ -11359,12 +11413,67 @@ def test_prepare_vision_review_prioritizes_pose_prefilter_valid_chunks(
     )
 
     try:
-        assert prepared.chunk_windows[:2] == [(18.0, 24.0), (6.0, 12.0)]
+        assert prepared.chunk_windows[:2] == [(17.5, 24.5), (5.5, 12.5)]
         assert [window.source for window in prepared.review_windows[:2]] == [
             "pose_prefilter",
             "pose_prefilter",
         ]
         assert youtube_module.planned_adaptive_chunk_indexes(prepared, YouTubeRankingSettings())[:2] == [0, 1]
+    finally:
+        prepared.close()
+
+
+def test_prepare_vision_review_expands_pose_anchor_to_long_exercise_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video_path = tmp_path / "preview.mp4"
+    video_path.write_bytes(b"video")
+
+    class FakeMetadata:
+        duration_seconds = 84.0
+        fps = 30.0
+        frame_count = 2520
+        width = 640
+        height = 360
+
+    monkeypatch.setattr("exercise_motion_pkg.youtube.download_youtube_preview", lambda *_, **__: video_path)
+    monkeypatch.setattr("exercise_motion_pkg.video_utils.read_basic_video_metadata", lambda _: FakeMetadata())
+    monkeypatch.setattr(
+        "exercise_motion_pkg.segment_detection.detect_motion_candidate_intervals",
+        lambda **_: [MotionInterval(start_seconds=24.0, end_seconds=32.0, score=2.0)],
+    )
+
+    prepared = prepare_vision_review(
+        ExerciseEntry(exercise_id="tgu", name="Single-Arm Dumbbell Turkish Get-Up", slug="turkish-get-up"),
+        YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=test",
+            video_id="test",
+            title="Dumbbell Turkish Get-Up",
+            channel=None,
+            duration_seconds=84,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+            vision_payload={
+                "posePrefilter": {
+                    "passed": True,
+                    "validChunks": [
+                        {"startSeconds": 25.0, "endSeconds": 33.0, "score": 0.94},
+                    ],
+                }
+            },
+        ),
+        YouTubeRankingSettings(vision_motion_scan_max_seconds=84.0),
+    )
+
+    try:
+        pose_window = prepared.review_windows[0]
+        assert pose_window.source == "pose_prefilter"
+        assert pose_window.end_seconds - pose_window.start_seconds == pytest.approx(60.0)
+        assert pose_window.start_seconds <= 25.0
+        assert pose_window.end_seconds >= 33.0
     finally:
         prepared.close()
 
@@ -12229,6 +12338,8 @@ def test_exercise_motion_contract_generation_prompt_is_structured_json_guidance(
     assert "Use exactly these keys" in prompt
     assert "completionMode" in prompt
     assert "requiresReturnToStart" in prompt
+    assert "one-way target action" in prompt
+    assert "normally followed by assistance or a non-target reset" in prompt
     assert "distinct_end_state" in prompt
     assert "final requiredPhases entry must explicitly describe returning" in prompt
     assert "do not stop at the second side and omit its return" in prompt
@@ -12570,6 +12681,106 @@ def test_revise_exercise_motion_contract_support_mode_rebuilds_advisory_text() -
     assert "kneeling" in revised["advisoryText"].casefold()
     assert revised["supportModeCorrection"]["from"] == "standing"
     assert revised["supportModeCorrection"]["to"] == "kneeling"
+
+
+def test_revise_exercise_motion_contract_completion_boundary_excludes_assisted_reset() -> None:
+    exercise = ExerciseEntry(exercise_id="nordic", name="Nordic Curl", slug="nordic-curl")
+    contract = _usable_motion_contract(
+        exercise=exercise,
+        support_mode="kneeling",
+        valid_start_state="upright kneeling with ankles anchored",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=nordic",
+        video_id="nordic",
+        title="Nordic Curl Side View",
+        channel="Coach",
+        duration_seconds=12,
+        view_count=1000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    revised = youtube_module.revise_exercise_motion_contract_completion_boundary(
+        contract,
+        {
+            "startPosture": "upright kneeling with ankles externally anchored",
+            "targetAction": "lower the straight body forward by rotating about the knees",
+            "naturalTargetEnd": "torso near the floor with shoulders, hips, and knees aligned",
+            "resetOrAssistanceAfterTarget": "push up with the hands to reset",
+            "externallyAnchoredBodyRegions": ["ankles"],
+            "bodyRegionsThatMove": ["torso", "hips"],
+        },
+        exercise,
+        candidate,
+    )
+
+    assert revised["completionMode"] == "distinct_end_state"
+    assert revised["requiresReturnToStart"] is False
+    assert revised["requiredPhases"] == [
+        "roll out until the torso is horizontal"
+    ]
+    assert revised["endPoseConstraints"]["torsoOrientation"] == "horizontal"
+    assert "push up with the hands to reset" in revised["excludedSetupOrCleanup"]
+    assert revised["completionBoundaryCorrection"]["videoId"] == "nordic"
+    assert youtube_module.exercise_motion_contract_is_usable(revised) is True
+
+
+def test_source_observed_completion_boundary_requires_clean_continuous_interval(
+    tmp_path: Path,
+) -> None:
+    frame_path = tmp_path / "sheet.jpg"
+    frame_path.write_bytes(b"image")
+    debug_path = tmp_path / "review_debug.json"
+    debug_path.write_text(
+        json.dumps({"framePaths": [str(frame_path)]}),
+        encoding="utf-8",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=nordic",
+        video_id="nordic",
+        title="Nordic Curl Side View",
+        channel="Coach",
+        duration_seconds=12,
+        view_count=1000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+        vision_payload={
+            "reviewedChunks": [
+                {"score": 0.0, "debugArtifacts": {"debugPath": str(debug_path)}}
+            ]
+        },
+    )
+
+    class FakeClient:
+        def caption_images(self, **kwargs: object) -> str:
+            return json.dumps(
+                {
+                    "exactExerciseVisible": True,
+                    "targetActionContinuous": True,
+                    "normalSpeed": True,
+                    "cleanTargetIntervalVisible": True,
+                    "naturalBoundary": "one_way_then_hand_assisted_reset",
+                    "handAssistedResetVisible": True,
+                }
+            )
+
+    class FakeRanker:
+        client = FakeClient()
+
+    evidence = youtube_module.source_observed_completion_boundary(
+        exercise=ExerciseEntry(exercise_id="nordic", name="Nordic Curl", slug="nordic-curl"),
+        candidate=candidate,
+        settings=YouTubeRankingSettings(),
+        vision_ranker=FakeRanker(),
+    )
+
+    assert evidence is not None
+    assert evidence["naturalBoundary"] == "one_way_then_hand_assisted_reset"
+    assert evidence["handAssistedResetVisible"] is True
+    assert evidence["cleanTargetIntervalVisible"] is True
 
 
 def test_discover_and_rank_corrects_standing_contract_when_vision_sees_kneeling(
@@ -13403,6 +13614,154 @@ def test_two_scale_phase_outlier_uses_deterministic_phase_and_vision_identity_ow
     )
 
 
+def test_query_planner_prompt_preserves_specialized_variant_terms() -> None:
+    prompt = youtube_module.build_youtube_query_planner_prompt(
+        exercise_name="Spin Bike Hover",
+        base_queries=['"Spin Bike Hover" exercise demo'],
+        max_queries=4,
+        motion_context={
+            "primaryEquipment": {"type": "CARDIO_MACHINE", "name": "Spin Bike"}
+        },
+        motion_contract={
+            "movementType": "cyclic",
+            "requiredPhases": ["maintain elevated hips while pedaling"],
+        },
+    )
+
+    assert "Preserve an unfamiliar or specialized variant term" in prompt
+    assert "Never invent a title alias" in prompt
+    assert "must replace both phrases" not in prompt
+
+
+def test_equipment_aliases_preserve_specialized_action_term() -> None:
+    aliases = youtube_module.equipment_preserving_youtube_query_aliases("Spin Bike Hover")
+
+    assert aliases == [
+        "Indoor Cycling Hover",
+        "Stationary Bike Hover",
+        "Spinning Bike Hover",
+    ]
+    assert youtube_module.planned_query_preserves_target_action(
+        "Spin Bike Hover", "Indoor Cycling Hover"
+    )
+    assert not youtube_module.planned_query_preserves_target_action(
+        "Spin Bike Hover", "Spin Bike Hip Lift"
+    )
+
+
+def test_semantic_review_interleaves_best_hits_from_distinct_queries() -> None:
+    def candidate(index: int, query: str | None = None) -> youtube_module.YouTubeCandidate:
+        payload = (
+            {"searchDiscovery": {"queries": [query], "bestResultRank": 1}}
+            if query is not None
+            else None
+        )
+        return youtube_module.YouTubeCandidate(
+            url=f"https://www.youtube.com/watch?v=video{index:06d}",
+            video_id=f"video{index:06d}",
+            title=f"Candidate {index}",
+            channel=None,
+            duration_seconds=30,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+            vision_payload=payload,
+        )
+
+    globally_ranked = [candidate(index) for index in range(10)]
+    query_head = candidate(10, "indoor cycling hover exercise")
+    ordered = youtube_module.prioritize_semantic_review_query_coverage(
+        [*globally_ranked, query_head]
+    )
+
+    assert ordered[0] is query_head
+    assert ordered[1] is globally_ranked[0]
+
+
+def test_candidate_review_applies_query_coverage_before_hard_cap() -> None:
+    def candidate(index: int, query: str | None = None) -> youtube_module.YouTubeCandidate:
+        return youtube_module.YouTubeCandidate(
+            url=f"https://www.youtube.com/watch?v=route{index:06d}",
+            video_id=f"route{index:06d}",
+            title=f"Candidate {index}",
+            channel=None,
+            duration_seconds=30,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+            vision_payload=(
+                {"searchDiscovery": {"queries": [query], "bestResultRank": 1}}
+                if query
+                else None
+            ),
+        )
+
+    globally_ranked = [candidate(index) for index in range(6)]
+    route_head = candidate(6, "indoor cycling hover exercise")
+    reviewed_ids: list[str] = []
+
+    def semantic_gate(_exercise, reviewed_candidate, _settings):
+        reviewed_ids.append(reviewed_candidate.video_id or "")
+        return 0.0, ["semantic_gate_rejected"], {"passed": False}
+
+    youtube_module.run_youtube_candidate_review_batches(
+        exercise=youtube_module.ExerciseEntry(
+            exercise_id="hover",
+            name="Spin Bike Hover",
+            slug="spin-bike-hover",
+        ),
+        ranked=[*globally_ranked, route_head],
+        settings=youtube_module.YouTubeRankingSettings(
+            max_candidates=2,
+            candidate_review_batch_size=2,
+            semantic_gate_enabled=True,
+            semantic_gate_candidates_per_exercise=2,
+            semantic_gate_max_candidates_per_exercise=2,
+            pose_prefilter_enabled=False,
+            rank_with_vision=False,
+        ),
+        debug_candidates_by_key={},
+        semantic_gate=semantic_gate,
+        pose_ranker=None,
+        vision_ranker=None,
+    )
+
+    assert set(reviewed_ids) == {globally_ranked[0].video_id, route_head.video_id}
+
+
+def test_search_expansion_preserves_existing_review_payload() -> None:
+    reviewed = youtube_module.YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=reviewed0001",
+        video_id="reviewed0001",
+        title="Indoor Cycling Hover",
+        channel=None,
+        duration_seconds=30,
+        view_count=None,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+        vision_payload={
+            "semanticGate": {"passed": True},
+            "searchDiscovery": {"queries": ["initial query"], "bestResultRank": 1},
+        },
+    )
+    raw_duplicate = youtube_module.replace_candidate(reviewed, vision_payload=None)
+    result = youtube_module.collect_youtube_search_candidates(
+        queries=["expanded query"],
+        settings=youtube_module.YouTubeRankingSettings(),
+        search_fn=lambda _query, _limit: [raw_duplicate],
+        existing_by_key={reviewed.key(): reviewed},
+        phase="expanded_after_no_suitable_candidate",
+    )
+
+    retained = result.by_key[reviewed.key()].vision_payload
+    assert retained is not None
+    assert retained["semanticGate"]["passed"] is True
+    assert retained["searchDiscovery"]["queries"] == ["initial query", "expanded query"]
+
+
 def test_materialized_source_video_rebuilds_missing_legacy_pose_reference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -13629,6 +13988,175 @@ def test_exercise_motion_contract_generation_falls_back_to_direct_mode() -> None
     assert contract["generationFallbackReasons"] == [
         "thinking: exercise motion contract payload must include plain guidance text."
     ]
+
+
+def test_exercise_motion_contract_generation_retries_independently_after_invalid_draft() -> None:
+    prompts: list[str] = []
+
+    class FakeClient:
+        def caption_images(self, **kwargs: object) -> str:
+            prompts.append(str(kwargs["prompt"]))
+            if len(prompts) == 1:
+                return json.dumps(
+                    {
+                        "movementType": "repetition",
+                        "groundContactMode": "continuous",
+                        "completionMode": "return_to_start",
+                        "requiresReturnToStart": True,
+                        **pose_contract_fields(),
+                        "validStartState": "standing on knees with ankles anchored",
+                        "validEndState": "standing on knees with ankles anchored",
+                        "requiredPhases": ["lower torso", "pull back upright"],
+                        "primaryMovingRegions": ["torso"],
+                        "referenceRegions": ["knees"],
+                        "primaryAxis": "horizontal",
+                        "motionPattern": "body_toward_anchor",
+                    }
+                )
+            return json.dumps(
+                {
+                    "movementType": "repetition",
+                    "groundContactMode": "continuous",
+                    "completionMode": "distinct_end_state",
+                    "requiresReturnToStart": False,
+                    **pose_contract_fields(
+                        support_mode="kneeling",
+                        torso_orientation="upright",
+                        knee_state="deep_flexion",
+                    ),
+                    "validStartState": "upright kneeling with ankles anchored",
+                    "validEndState": "torso lowered near the floor with knees anchored",
+                    "requiredPhases": ["lower the straight torso from the knees toward the floor"],
+                    "primaryMovingRegions": ["torso"],
+                    "referenceRegions": ["knees"],
+                    "primaryAxis": "horizontal",
+                    "motionPattern": "body_toward_anchor",
+                }
+            )
+
+    class FakeRanker:
+        client = FakeClient()
+
+    contract = youtube_module.generate_exercise_motion_contract_with_ranker(
+        exercise=ExerciseEntry(
+            exercise_id="nordic",
+            name="Nordic Curl",
+            slug="nordic-curl",
+        ),
+        settings=YouTubeRankingSettings(),
+        ranker=FakeRanker(),
+    )
+
+    assert len(prompts) == 2
+    assert "anatomically invalid support phrase: standing on knees" not in prompts[1]
+    assert "Previous draft" not in prompts[1]
+    assert contract["generationMode"] == "direct"
+    assert contract["completionMode"] == "distinct_end_state"
+    assert contract["requiresReturnToStart"] is False
+    assert contract["generationFallbackReasons"] == [
+        "thinking: anatomically invalid support phrase: standing on knees"
+    ]
+
+
+def test_exercise_motion_contract_quality_rejects_distinct_end_state_that_returns_to_start() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "movementType": "repetition",
+            "completionMode": "distinct_end_state",
+            "requiresReturnToStart": False,
+            **pose_contract_fields(),
+            "validStartState": "upright kneeling with ankles anchored",
+            "validEndState": "upright kneeling with ankles anchored",
+            "requiredPhases": ["lower toward the floor", "pull back to the starting posture"],
+            "primaryMovingRegions": ["torso"],
+            "referenceRegions": ["knees"],
+            "primaryAxis": "horizontal",
+            "motionPattern": "body_toward_anchor",
+        },
+        exercise=ExerciseEntry(exercise_id="nordic", name="Nordic Curl", slug="nordic-curl"),
+        source="test",
+    )
+
+    assert youtube_module.exercise_motion_contract_quality_issues(contract) == [
+        "distinct_end_state contract has identical start and end states",
+        "distinct_end_state contract includes a return-to-start phase",
+    ]
+    assert youtube_module.exercise_motion_contract_is_usable(contract) is False
+
+
+def test_transition_contract_allows_different_postures_in_ordered_phases() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "movementType": "transition_sequence",
+            "completionMode": "return_to_start",
+            "requiresReturnToStart": True,
+            **pose_contract_fields(),
+            "validStartState": "lying supine with one arm overhead",
+            "validEndState": "lying supine with one arm overhead",
+            "requiredPhases": [
+                "rise through a kneeling posture",
+                "stand upright",
+                "return through kneeling to the lying start posture",
+            ],
+            "primaryMovingRegions": ["torso", "hips", "knees"],
+            "referenceRegions": ["hands"],
+            "primaryAxis": "vertical",
+            "motionPattern": "joint_flex_extend",
+        },
+        exercise=ExerciseEntry(exercise_id="transition", name="Transition", slug="transition"),
+        source="test",
+    )
+
+    assert "posture is described as both standing and kneeling" not in (
+        youtube_module.exercise_motion_contract_quality_issues(contract)
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_issue"),
+    [
+        (
+            "supportMode: any, handHeight: below hips, torsoOrientation: horizontal, kneeState: extended",
+            "valid posture state repeats schema field labels instead of describing anatomy",
+        ),
+        (
+            "body supported by hands on floor with torso upright",
+            "floor hand support contradicts an upright torso posture",
+        ),
+        (
+            "standing upright while kneeling with ankles anchored",
+            "posture is described as both standing and kneeling",
+        ),
+        (
+            "hinge at the hips while maintaining a straight line from shoulders through hips to knees",
+            "hip hinge contradicts a straight shoulder-to-knee body line",
+        ),
+    ],
+)
+def test_exercise_motion_contract_quality_rejects_malformed_physical_posture(
+    state: str,
+    expected_issue: str,
+) -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "movementType": "repetition",
+            "completionMode": "return_to_start",
+            "requiresReturnToStart": True,
+            **pose_contract_fields(),
+            "validStartState": state,
+            "validEndState": state,
+            "requiredPhases": ["lower torso", "return upright"],
+            "primaryMovingRegions": ["torso"],
+            "referenceRegions": ["knees"],
+            "primaryAxis": "horizontal",
+            "motionPattern": "body_toward_anchor",
+        },
+        exercise=ExerciseEntry(exercise_id="test", name="Test Exercise", slug="test-exercise"),
+        source="test",
+    )
+
+    assert expected_issue in youtube_module.exercise_motion_contract_quality_issues(contract)
+    assert youtube_module.exercise_motion_contract_is_usable(contract) is False
 
 
 def test_normalize_exercise_motion_contract_uses_plain_advisory_text() -> None:
@@ -15012,7 +15540,7 @@ def test_vision_scoring_ignores_vlm_hidden_critical_moving_joints() -> None:
     assert "valid_motion_scene" in reasons
 
 
-def test_vision_scoring_caps_isolated_valid_chunk_evidence(
+def test_vision_scoring_accepts_one_independently_complete_chunk(
     tmp_path: Path,
 ) -> None:
     temp_dir = tempfile.TemporaryDirectory(dir=tmp_path)
@@ -15064,13 +15592,13 @@ def test_vision_scoring_caps_isolated_valid_chunk_evidence(
                 "movement_end_posture_visible": is_first_chunk,
                 "no_setup_or_talking_frames": is_first_chunk,
                 "single_person_chunk": True,
-                "target_match": 0.80 if is_first_chunk else 0.2,
-                "complete_movement": 0.80 if is_first_chunk else 0.2,
-                "capture_quality": 0.80 if is_first_chunk else 0.2,
-                "execution_quality": 0.80 if is_first_chunk else 0.2,
-                "source_score": 0.80 if is_first_chunk else 0.2,
+                "target_match": 1.0 if is_first_chunk else 0.2,
+                "complete_movement": 1.0 if is_first_chunk else 0.2,
+                "capture_quality": 1.0 if is_first_chunk else 0.2,
+                "execution_quality": 1.0 if is_first_chunk else 0.2,
+                "source_score": 1.0 if is_first_chunk else 0.2,
                 "blocking_issues": ["none"] if is_first_chunk else ["partial_movement"],
-                "confidence": 0.80,
+                "confidence": 1.0,
                 "reason": "test chunk",
             }
         )
@@ -15084,12 +15612,12 @@ def test_vision_scoring_caps_isolated_valid_chunk_evidence(
     finally:
         prepared.close()
 
-    assert score <= 0.49
-    assert "low_source_evidence_coverage" in reasons
+    assert score >= 0.68
+    assert "low_source_evidence_coverage" not in reasons
     assert payload is not None
     assert payload["validChunkCount"] == 1
-    assert payload["validChunkRatio"] == pytest.approx(0.2)
-    assert payload["chunkEvidenceCapApplied"] is True
+    assert payload["validChunkRatio"] == pytest.approx(1.0)
+    assert payload["chunkEvidenceCapApplied"] is False
 
 
 def test_full_timeline_vision_review_allows_isolated_valid_movement_chunk(
@@ -16921,6 +17449,145 @@ def test_discover_and_rank_youtube_candidates_logs_contract_error(
     assert contract_event["error"] == "contract timeout after 30s"
 
 
+def test_discovery_continues_after_optional_llama_contract_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "youtube_candidates.json"
+    plan_path.write_text(json.dumps({"exercises": [{"name": "Turkish Get-Up"}]}), encoding="utf-8")
+
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=tgu",
+        video_id="tgu",
+        title="Turkish Get-Up demonstration",
+        channel="Coach",
+        duration_seconds=60,
+        view_count=1000,
+        upload_date=None,
+        description_snippet="Complete Turkish get-up.",
+        thumbnail=None,
+    )
+
+    class FakeRanker:
+        def __init__(self, _settings: object) -> None:
+            pass
+
+        def close(self, **_kwargs: object) -> None:
+            pass
+
+    monkeypatch.setattr(youtube_module, "LlamaCppVisionRanker", FakeRanker)
+    monkeypatch.setattr(
+        youtube_module,
+        "generate_exercise_motion_contract_with_ranker",
+        lambda **_: (_ for _ in ()).throw(
+            CriticalVlmInteractionError(
+                "contract timed out",
+                interaction="exercise contract",
+                recoverable=True,
+                cause_type="ReadTimeout",
+            )
+        ),
+    )
+
+    manifest = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            llama_cpp_base_url="http://127.0.0.1:8090",
+            results_per_query=1,
+            max_candidates=1,
+            rank_with_vision=True,
+            vision_candidates_per_exercise=1,
+        ),
+        search_fn=lambda _query, _count: [candidate],
+        vision_ranker=lambda _exercise, _candidate, _settings: (
+            0.9,
+            ["complete_repetition_visible"],
+            {"bestChunkScore": 0.9},
+        ),
+    )
+
+    assert manifest["exercises"][0]["candidates"][0]["videoId"] == "tgu"
+    progress_events = [
+        json.loads(line)
+        for line in out_path.with_name("youtube_discovery_progress.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    contract_event = next(event for event in progress_events if event["event"] == "exercise_motion_contract_completed")
+    assert contract_event["status"] == "failed"
+    assert contract_event["source"] == "llama_cpp"
+
+
+def test_llm_generated_topology_phases_are_advisory_not_hard_rejection() -> None:
+    topology = bake_and_rank_module.movement_topology_from_contract(
+        {
+            "status": "generated",
+            "source": "llm",
+            "advisoryText": "Generated movement guidance.",
+            "movementTopology": {
+                "completionMode": "return_to_start",
+                "startState": {"label": "lying start"},
+                "phases": [
+                    {"id": "phase_01", "label": "possibly hallucinated phase"},
+                    {"id": "phase_02", "label": "return to start"},
+                ],
+                "endState": {"label": "lying start"},
+            },
+        }
+    )
+
+    assert topology is not None
+    evidence, reasons, missing = bake_and_rank_module.topology_evidence_rejection_reasons(
+        {
+            "startStateMatch": "match",
+            "endStateMatch": "match",
+            "phaseEvidence": [],
+        },
+        topology,
+    )
+
+    assert evidence["phaseEvidenceHardGate"] is False
+    assert reasons == []
+    assert missing == []
+
+
+def test_failed_bake_contract_cannot_hard_reject_matching_hold() -> None:
+    topology = bake_and_rank_module.movement_topology_from_contract(
+        {
+            "status": "failed",
+            "source": "bake_and_rank_llm",
+            "exerciseMotionContractStatus": "generation_failed",
+            "model": "test-model.gguf",
+            "advisoryText": "Rejected generated guidance retained for context.",
+            "phaseEvidenceHardGate": True,
+            "movementTopology": {
+                "completionMode": "stable_hold",
+                "startState": {"label": "supported side plank"},
+                "phases": [
+                    {"id": "phase_01", "label": "truncated generated hold..."},
+                ],
+                "endState": {"label": "supported side plank"},
+            },
+        }
+    )
+
+    assert topology is not None
+    evidence, reasons, missing = bake_and_rank_module.topology_evidence_rejection_reasons(
+        {
+            "startStateMatch": "match",
+            "endStateMatch": "match",
+            "phaseEvidence": [
+                {"phaseId": "truncated generated hold...", "position": 1.0},
+            ],
+        },
+        topology,
+    )
+
+    assert evidence["phaseEvidenceHardGate"] is False
+    assert reasons == []
+    assert missing == []
+
+
 def test_discover_youtube_candidates_rewrites_exercise_name_before_search(tmp_path: Path) -> None:
     plan_path = tmp_path / "plan.json"
     equipment_path = tmp_path / "equipment.json"
@@ -17389,8 +18056,46 @@ def test_search_youtube_raises_hard_error_for_yt_dlp_network_failure(monkeypatch
     monkeypatch.setattr(youtube_module.subprocess, "run", fake_run)
     monkeypatch.setattr(youtube_module, "InterProcessFileLock", lambda *args, **kwargs: nullcontext())
 
-    with pytest.raises(youtube_module.YouTubeSearchError, match="WinError 10013"):
+    with pytest.raises(youtube_module.YouTubeSearchError, match="WinError 10013") as error:
         youtube_module.search_youtube("Bench Press", 3)
+
+    assert error.value.transient is True
+
+
+def test_collect_youtube_search_candidates_preserves_existing_pool_on_socket_denial() -> None:
+    existing = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=existing",
+        video_id="existing",
+        title="Barbell Clean Exercise Demo",
+        channel="Coach",
+        duration_seconds=20,
+        view_count=100,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    def denied_search(query: str, _results_per_query: int) -> list[YouTubeCandidate]:
+        raise youtube_module.YouTubeSearchError(
+            query,
+            "Failed to establish a new connection: [WinError 10013] socket forbidden",
+            transient=youtube_module.youtube_search_error_is_transient(
+                "Failed to establish a new connection: [WinError 10013] socket forbidden"
+            ),
+        )
+
+    result = youtube_module.collect_youtube_search_candidates(
+        queries=["Barbell Clean strict form full rep"],
+        settings=YouTubeRankingSettings(results_per_query=3),
+        search_fn=denied_search,
+        existing_by_key={existing.key(): existing},
+        phase="expanded_after_no_suitable_candidate",
+        allow_transient_search_errors=True,
+    )
+
+    assert list(result.by_key) == [existing.key()]
+    assert result.new_candidate_count == 0
+    assert result.search_errors[0]["transient"] is True
 
 
 def test_search_youtube_uses_isolated_cookie_copy(
@@ -19481,6 +20186,34 @@ def test_apply_vision_score_uses_semantic_pose_short_demo_fallback() -> None:
     assert reviewed.vision_payload["target_identity_match"] is True
     assert reviewed.vision_payload["correct_exercise"] is True
 
+    strict_reviewed = apply_vision_score(
+        candidate,
+        0.18,
+        ["partial_movement_penalty"],
+        {
+            "bestChunkScore": 0.18,
+            "validChunkCount": 0,
+            "scoredChunkCount": 2,
+            "correct_exercise": True,
+            "usable_for_motion_extraction": False,
+        },
+        settings=YouTubeRankingSettings(
+            semantic_gate_enabled=True,
+            pose_prefilter_enabled=True,
+            min_duration_seconds=10,
+        ),
+        exercise_motion_contract={
+            "status": "failed",
+            "rejectedDrafts": [
+                {"contract": {"movementType": "transition_sequence"}}
+            ],
+        },
+    )
+
+    assert strict_reviewed.vision_score == pytest.approx(0.18)
+    assert "semantic_pose_short_demo_source_fallback" not in strict_reviewed.score_reasons
+    assert "partial_movement_penalty" in strict_reviewed.score_reasons
+
 
 def test_discover_and_rank_youtube_candidates_filters_low_semantic_score_before_pose(
     tmp_path: Path,
@@ -21208,6 +21941,164 @@ def test_semantic_gate_rejects_model_reported_unrequested_variant_terms() -> Non
     assert "semantic_unrequested_novel_angle_variant" in scored.score_reasons
 
 
+def test_semantic_gate_sends_confirmed_identity_presentation_context_to_visual_review() -> None:
+    exercise = ExerciseEntry(
+        exercise_id="hover",
+        name="Spin Bike Hover",
+        slug="spin-bike-hover",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=hoverguide1",
+        video_id="hoverguide1",
+        title="Indoor Cycle Guide for Beginners | The Hover",
+        channel="Coach",
+        duration_seconds=150,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=0.2,
+        semantic_reasons=["semantic_text_mismatch"],
+        semantic_payload={
+            "wrongExercise": False,
+            "wrongEquipment": False,
+            "matchedExercise": "Spin Bike Hover",
+            "unrequestedVariantTerms": ["guide", "beginners", "group cycle class"],
+        },
+        settings=YouTubeRankingSettings(semantic_gate_min_score=0.55),
+    )
+
+    assert scored.vision_payload is not None
+    assert scored.vision_payload["semanticGate"]["passed"] is True
+    assert scored.vision_payload["semanticGate"]["score"] == pytest.approx(0.55)
+    assert "semantic_identity_match_visual_fallback" in scored.score_reasons
+
+
+def test_semantic_gate_repairs_exact_identity_rejected_only_as_presentation_series() -> None:
+    exercise = ExerciseEntry(
+        exercise_id="jumps",
+        name="Spin Bike Jumps",
+        slug="spin-bike-jumps",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=jumpseries1",
+        video_id="jumpseries1",
+        title="Spinning workout exercises - Jumps",
+        channel="Coach",
+        duration_seconds=60,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=0.0,
+        semantic_reasons=["semantic_text_mismatch"],
+        semantic_payload={
+            "wrongExercise": True,
+            "wrongEquipment": False,
+            "matchedExercise": "Spin Bike Jumps",
+            "unrequestedVariantTerms": ["workout", "exercises", "series", "learn the moves"],
+            "reason": "Generic workout series, not a specific exercise.",
+        },
+        settings=YouTubeRankingSettings(semantic_gate_min_score=0.55),
+    )
+
+    assert scored.vision_payload is not None
+    semantic_payload = scored.vision_payload["semanticGate"]
+    assert semantic_payload["passed"] is True
+    assert semantic_payload["wrongExercise"] is False
+    assert semantic_payload["identityContradictionRepaired"] is True
+    assert semantic_payload["score"] == pytest.approx(0.55)
+    assert "semantic_identity_match_visual_fallback" in scored.score_reasons
+
+
+def test_semantic_gate_sends_omitted_single_arm_identity_to_visual_review() -> None:
+    exercise = ExerciseEntry(
+        exercise_id="single-arm-dumbbell-turkish-get-up",
+        name="Single-Arm Dumbbell Turkish Get-Up",
+        slug="single-arm-dumbbell-turkish-get-up",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=tgu",
+        video_id="tgu",
+        title="The Dumbbell Turkish Get-Up",
+        channel="Coach",
+        duration_seconds=84,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=0.0,
+        semantic_reasons=["semantic_text_mismatch", "semantic_wrong_exercise"],
+        semantic_payload={
+            "wrongExercise": True,
+            "wrongEquipment": False,
+            "matchedExercise": "Dumbbell Turkish Get-Up",
+            "unrequestedVariantTerms": ["the"],
+            "reason": "Missing single-arm qualifier",
+        },
+        settings=YouTubeRankingSettings(semantic_gate_min_score=0.55),
+    )
+
+    assert scored.vision_payload is not None
+    payload = scored.vision_payload["semanticGate"]
+    assert payload["passed"] is True
+    assert payload["wrongExercise"] is False
+    assert payload["unrequestedVariantTerms"] == []
+    assert "semantic_omitted_limb_count_visual_fallback" in scored.score_reasons
+
+
+def test_semantic_gate_keeps_wrong_equipment_blocking_omitted_limb_fallback() -> None:
+    exercise = ExerciseEntry(
+        exercise_id="single-arm-dumbbell-turkish-get-up",
+        name="Single-Arm Dumbbell Turkish Get-Up",
+        slug="single-arm-dumbbell-turkish-get-up",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=tgu-kb",
+        video_id="tgu-kb",
+        title="Kettlebell Turkish Get-Up",
+        channel="Coach",
+        duration_seconds=60,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet=None,
+        thumbnail=None,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=0.0,
+        semantic_reasons=["semantic_text_mismatch", "semantic_wrong_exercise"],
+        semantic_payload={
+            "wrongExercise": True,
+            "wrongEquipment": True,
+            "matchedExercise": "Kettlebell Turkish Get-Up",
+            "unrequestedVariantTerms": [],
+        },
+        settings=YouTubeRankingSettings(semantic_gate_min_score=0.55),
+    )
+
+    assert scored.vision_payload is not None
+    assert scored.vision_payload["semanticGate"]["passed"] is False
+    assert "semantic_omitted_limb_count_visual_fallback" not in scored.score_reasons
+
+
 def test_llama_cpp_semantic_gate_disables_reasoning_for_parallel_text_gate() -> None:
     captured: dict[str, object] = {}
 
@@ -22042,6 +22933,62 @@ def test_youtube_adaptive_high_readiness_stops_before_configured_expansion_targe
     assert batch["stoppedAfterBatch"] is True
 
 
+def test_youtube_adaptive_readiness_never_exceeds_configured_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        youtube_module,
+        "youtube_first_attempt_portfolio_target",
+        lambda ranked, settings: (2, "medium"),
+    )
+    monkeypatch.setattr(
+        youtube_module,
+        "youtube_candidate_is_suitable_after_review",
+        lambda candidate, settings: True,
+    )
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "youtube_candidates.json"
+    plan_path.write_text(
+        json.dumps({"exercises": [{"name": "Barbell Clean"}]}),
+        encoding="utf-8",
+    )
+    candidates = [
+        YouTubeCandidate(
+            url=f"https://www.youtube.com/watch?v=clean-{index}",
+            video_id=f"clean-{index}",
+            title=f"Barbell Clean {index}",
+            channel="Coach",
+            duration_seconds=20,
+            view_count=100 - index,
+            upload_date=None,
+            description_snippet="Complete clean repetition",
+            thumbnail=None,
+        )
+        for index in range(4)
+    ]
+
+    manifest = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan_path,
+        out_json=out_path,
+        settings=YouTubeRankingSettings(
+            results_per_query=4,
+            max_candidates=4,
+            candidate_review_batch_size=2,
+            candidate_review_target_suitable_count=1,
+            semantic_gate_enabled=False,
+            pose_prefilter_enabled=False,
+        ),
+        search_fn=lambda _query, _count: candidates,
+    )
+
+    batch = manifest["exercises"][0]["candidateExpansion"]["reviewBatches"][0]
+    assert batch["adaptiveTargetSuitableCandidateCount"] == 2
+    assert batch["configuredTargetSuitableCandidateCount"] == 1
+    assert batch["targetSuitableCandidateCount"] == 1
+    assert batch["stoppedAfterBatch"] is True
+
+
 @pytest.mark.parametrize(
     ("completion_mode", "expected_phrase"),
     [
@@ -22066,6 +23013,23 @@ def test_youtube_queries_include_completion_mode_specific_sources(
     )
 
     assert any(expected_phrase in query for query in queries)
+
+
+def test_transition_sequence_queries_prioritize_full_return_and_exclude_shorts() -> None:
+    queries = youtube_module.build_youtube_queries_with_contract_aliases(
+        "Turkish Get-Up",
+        {
+            "status": "generated",
+            "contractPolicyVersion": youtube_module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+            "movementType": "transition_sequence",
+            "completionMode": "return_to_start",
+            "advisoryText": "Source: lying. Complete: stand and return. Boundary: clean finish.",
+            "youtubeQueryAliases": [],
+        },
+    )
+
+    assert "complete transition sequence start to finish and return to start" in queries[0]
+    assert not any("shorts" in query.casefold() for query in queries)
 
 
 def test_pre_wham_target_blind_equipment_observation_rejects_wrong_implement(
