@@ -8,6 +8,7 @@ param(
     [string]$BodyModelRoot,
     [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
+    [string]$SourceOutcomeIndexJson = "build/exercise_motion/source_outcome_index.json",
     [string]$ExerciseMotionContractCacheDir,
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 30,
@@ -15,7 +16,7 @@ param(
     [double]$YouTubeSearchTimeoutSeconds = 60.0,
     [int]$MaxCandidates = 6,
     [int]$CandidateReviewBatchSize = 4,
-    [int]$CandidateReviewTargetSuitableCount = 1,
+    [int]$CandidateReviewTargetSuitableCount = 2,
     [Nullable[int]]$MaxCandidateReviewTargetSuitableCount = 6,
     [switch]$SingleExerciseNameQuery,
     [switch]$UseLlamaCppQueryPlanner,
@@ -60,6 +61,7 @@ param(
     [int]$FallbackCandidates = 2,
     [int]$MaxSourceWindowAttempts = 2,
     [int]$MaxFinalOutputRejections = 0,
+    [int]$MaxReconstructionCandidateAttempts = 2,
     [double]$SourceReviewTimeoutSeconds = 90.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
     [double]$CandidateTimeoutSeconds = 0.0,
@@ -827,6 +829,12 @@ if ($resolvedMaxCandidateReviewTargetSuitableCount -lt $initialTargetSuitableCou
 }
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+$resolvedSourceOutcomeIndexJson = if ([System.IO.Path]::IsPathRooted($SourceOutcomeIndexJson)) {
+    [System.IO.Path]::GetFullPath($SourceOutcomeIndexJson)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SourceOutcomeIndexJson))
+}
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOutcomeIndexJson) | Out-Null
 $exerciseWorkspace = Join-Path $resolvedWorkspaceRoot "$slug-e2e"
 $bakeWorkspace = Join-Path $exerciseWorkspace "bake-final"
 $planPath = Join-Path $exerciseWorkspace "$slug-plan.json"
@@ -868,6 +876,7 @@ $youtubeArgs = @(
     "--workout-plan-json", $planPath,
     "--out-json", $candidatesPath,
     "--youtube-preview-cache-dir", $previewCachePath,
+    "--source-outcome-index", $resolvedSourceOutcomeIndexJson,
     "--exercise-motion-contract-cache-dir", $contractCachePath,
     "--results-per-query", "$ResultsPerQuery",
     "--youtube-search-empty-retries", "$YoutubeSearchEmptyRetries",
@@ -1026,6 +1035,7 @@ $bakeArgs = @(
     "--fallback-candidates", "$FallbackCandidates",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
     "--max-final-output-rejections", "$MaxFinalOutputRejections",
+    "--max-reconstruction-candidate-attempts", "$MaxReconstructionCandidateAttempts",
     "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
     "--final-review-timeout-seconds", "$FinalReviewTimeoutSeconds",
     "--candidate-timeout-seconds", "$CandidateTimeoutSeconds",
@@ -1033,6 +1043,7 @@ $bakeArgs = @(
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--youtube-preview-cache-dir", $previewCachePath,
+    "--source-outcome-index", $resolvedSourceOutcomeIndexJson,
     "--workspace", $bakeWorkspace,
     "--wham-repo-path", $resolvedWhamRepoPath,
     "--body-model-root", $resolvedBodyModelRoot,
@@ -1209,6 +1220,7 @@ $bakeBaseArgs = [string[]]$bakeArgs
 $currentTargetSuitableCount = $initialTargetSuitableCount
 $attemptIndex = 1
 $selection = $null
+$totalReconstructionCandidateAttempts = 0
 $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $candidatesPath)
 
 try {
@@ -1229,7 +1241,9 @@ try {
         # below, so each retry asks for one additional replacement.
         $attemptMaxCandidates = [Math]::Max($MaxCandidates, $currentTargetSuitableCount)
         $attemptVisionCandidates = [Math]::Max($VisionCandidatesPerExercise, $currentTargetSuitableCount)
+        $attemptResultsPerQuery = $ResultsPerQuery + (($attemptIndex - 1) * $attemptMaxCandidates)
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $youtubeBaseArgs -Name "--candidate-review-target-suitable-count" -Value "$currentTargetSuitableCount"
+        $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--results-per-query" -Value "$attemptResultsPerQuery"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--max-candidates" -Value "$attemptMaxCandidates"
         $attemptYoutubeArgs = Set-ArgumentValue -Arguments $attemptYoutubeArgs -Name "--vision-candidates-per-exercise" -Value "$attemptVisionCandidates"
         foreach ($previousAttemptCandidateJsonPath in @($previousAttemptCandidateJsonPaths | Select-Object -Unique)) {
@@ -1248,7 +1262,7 @@ try {
         if ($reuseExistingCandidates) {
             Write-Host "Reusing existing YouTube candidates for first bake attempt: $candidatesPath"
         } else {
-            Write-Host "YouTube discovery attempt ${attemptIndex}: target suitable candidates $currentTargetSuitableCount (max $resolvedMaxCandidateReviewTargetSuitableCount)."
+            Write-Host "YouTube discovery attempt ${attemptIndex}: target suitable candidates $currentTargetSuitableCount (max $resolvedMaxCandidateReviewTargetSuitableCount), search depth $attemptResultsPerQuery."
             Invoke-PythonModule -Arguments $attemptYoutubeArgs -Stage "youtube_discovery_attempt_$attemptIndex"
 
             $recommendationCounts = Get-RecommendationCounts -CandidatesJson $candidatesPath
@@ -1283,6 +1297,19 @@ try {
 
         Write-Host "Bake attempt ${attemptIndex}: baking $($recommendationCounts.Recommended) recommended candidate(s)."
         $attemptBakeArgs = @($bakeBaseArgs)
+        if ($MaxReconstructionCandidateAttempts -gt 0) {
+            $remainingReconstructionAttempts = [Math]::Max(
+                0,
+                $MaxReconstructionCandidateAttempts - $totalReconstructionCandidateAttempts
+            )
+            if ($remainingReconstructionAttempts -le 0) {
+                throw "The primary reconstruction and its orientation-diverse fallback both failed."
+            }
+            $attemptBakeArgs = Set-ArgumentValue `
+                -Arguments $attemptBakeArgs `
+                -Name "--max-reconstruction-candidate-attempts" `
+                -Value "$remainingReconstructionAttempts"
+        }
         if ($attemptIndex -gt 1) {
             $attemptBakeArgs += "--reuse-previous-terminal-results"
         }
@@ -1291,6 +1318,13 @@ try {
             -Stage "bake_attempt_$attemptIndex"
 
         $selection = Get-SelectionManifest -SelectionPath $selectionPath
+        if (
+            $selection -and
+            $selection.timings -and
+            $selection.timings.PSObject.Properties.Name -contains "reconstructionCandidateAttemptCount"
+        ) {
+            $totalReconstructionCandidateAttempts += [int]$selection.timings.reconstructionCandidateAttemptCount
+        }
         $selectedResultCount = Get-SelectedResultCount -Selection $selection
         if ($selection -and $selection.selected -and $selectedResultCount -gt 0) {
             Assert-SelectedWearSkeletonContract -Selection $selection
@@ -1306,6 +1340,13 @@ try {
             continue
         }
         if ($selection -and "$($selection.selectionStatus)" -eq "needs_manual_review" -and $selection.manualReviewFallback) {
+            if (
+                $MaxReconstructionCandidateAttempts -gt 0 -and
+                $totalReconstructionCandidateAttempts -ge $MaxReconstructionCandidateAttempts
+            ) {
+                Write-Warning "The primary reconstruction and orientation-diverse fallback both failed automatic validation; keeping the best generated movement as a manual-review fallback."
+                break
+            }
             if ($attemptIndex -ge $resolvedMaxCandidateReviewTargetSuitableCount) {
                 Write-Warning "No candidate passed automatic validation after reaching the maximum discovery target; keeping the best generated movement as a manual-review fallback."
                 break
@@ -1319,6 +1360,13 @@ try {
         }
         if ($bakeExitCode -ne 0) {
             Write-Host "Bake-and-rank returned exit code $bakeExitCode after writing a no-selection manifest; continuing with the next YouTube review target."
+        }
+
+        if (
+            $MaxReconstructionCandidateAttempts -gt 0 -and
+            $totalReconstructionCandidateAttempts -ge $MaxReconstructionCandidateAttempts
+        ) {
+            throw "The primary reconstruction and its orientation-diverse fallback both failed automatic validation. Inspect $selectionPath."
         }
 
         Write-Host "Bake-and-rank completed without selecting a Wear skeleton at target $currentTargetSuitableCount."

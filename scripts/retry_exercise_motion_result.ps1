@@ -127,20 +127,6 @@ function Add-UniquePath {
     }
 }
 
-function Get-LatestYouTubeCookiesPath {
-    $downloads = Join-Path $env:USERPROFILE "Downloads"
-    if (-not (Test-Path -LiteralPath $downloads -PathType Container)) {
-        return ""
-    }
-    $latest = Get-ChildItem -LiteralPath $downloads -Filter "www.youtube.com_cookies*.txt" -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if ($null -eq $latest) {
-        return ""
-    }
-    return $latest.FullName
-}
-
 function Get-SummaryExerciseFilter {
     param([object]$Summary)
     $exercises = @((Get-ObjectProperty -ObjectValue $Summary -PropertyName "exercises") | Where-Object { $null -ne $_ })
@@ -225,9 +211,6 @@ if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
     $EquipmentJson = Resolve-StrictPath $EquipmentJson
 }
 
-if ([string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-    $YouTubeCookiesPath = Get-LatestYouTubeCookiesPath
-}
 if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
     $YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
 }

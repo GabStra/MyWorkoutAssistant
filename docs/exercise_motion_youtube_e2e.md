@@ -125,6 +125,15 @@ If you do not pass `-SegmentStartSeconds` and `-SegmentEndSeconds`, this script 
 
 Use this when you want to generate selected motions for every exercise in a workout plan. If you have an equipment export, pass it so exercise searches can use the equipment-qualified exercise name where available.
 
+Both the single-exercise and workout-plan wrappers maintain
+`build/exercise_motion/source_outcome_index.json` by default. Each source video is
+counted once per run, even when several windows from that video are attempted. The
+index records source-pass, reconstruction, final-acceptance, and rejection-tag
+counts for both videos and channels. Discovery uses this history only as a bounded
+ranking prior; current semantic, pose, source, and final-output gates remain
+authoritative. Override the shared location with `-SourceOutcomeIndexJson` when an
+isolated A/B run must not learn from production history.
+
 ```powershell
 pwsh ./scripts/run_exercise_motion_workout_plan.ps1 `
   -WorkoutPlanJson "C:\Users\gabri\Documents\MyWorkoutAssistant\workouts\workout_plan_2026-05-15_174946.json" `
@@ -227,6 +236,25 @@ pwsh ./scripts/run_workout_plan_motion_bake_and_rank.ps1 `
   -WorkspaceRoot "build/exercise_motion/workout-plan" `
   -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt"
 ```
+
+## Source-funnel measurement
+
+Every new `selection_manifest.json` includes `timings.sourceFunnel`, with the
+first candidate's source-pass, reconstruction, acceptance, and rejection evidence.
+Aggregate a frozen validation set without launching any model:
+
+```powershell
+python scripts/analyze_exercise_motion_source_funnel.py `
+  build/exercise_motion/source-selection-baseline `
+  --label baseline `
+  --out-json build/exercise_motion/source-selection-baseline-summary.json
+```
+
+Run the same frozen exercise/search set into a separate workspace and outcome index,
+then compare `firstCandidateSourcePassRate`, `firstCandidateAcceptanceRate`,
+`meanProcessedCandidatesPerSelection`, `acceptedOutputsPerWallHour`, and the rejection
+taxonomy. Do not promote a ranking change if manual review shows a higher false-accept
+rate, even when throughput improves.
 
 To process only one exercise from the plan:
 

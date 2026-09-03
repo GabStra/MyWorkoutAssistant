@@ -48,7 +48,7 @@ param(
     [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$YouTubeCookies,
+    [Alias("YouTubeCookies")]
     [string]$YouTubeCookiesPath,
     [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Downloads\\llama-b10424-bin-win-cuda-12.4-x64\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
@@ -245,12 +245,8 @@ if (-not [string]::IsNullOrWhiteSpace($VideoPath)) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($YouTubeUrl)) {
-    $youtubeCookiesPath = $YouTubeCookiesPath
-    if ([string]::IsNullOrWhiteSpace($youtubeCookiesPath)) {
-        $youtubeCookiesPath = $YouTubeCookies
-    }
-    if (-not [string]::IsNullOrWhiteSpace($youtubeCookiesPath)) {
-        $resolvedYouTubeCookiesPath = Resolve-StrictPath $youtubeCookiesPath
+    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
+        $resolvedYouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
         if (-not (Test-Path -LiteralPath $resolvedYouTubeCookiesPath)) {
             throw "YouTube cookies file not found: $resolvedYouTubeCookiesPath"
         }

@@ -21,6 +21,7 @@ param(
     [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
     [string]$YouTubeSourceCacheDir,
+    [string]$SourceOutcomeIndexJson = "build/exercise_motion/source_outcome_index.json",
     [string]$PythonCommand = "",
     [int]$ResultsPerQuery = 100,
     [double]$YouTubeSearchTimeoutSeconds = 60.0,
@@ -78,6 +79,7 @@ param(
     [int]$FallbackCandidates = 12,
     [int]$MaxSourceWindowAttempts = 0,
     [int]$MaxFinalOutputRejections = 0,
+    [int]$MaxReconstructionCandidateAttempts = 2,
     [double]$SourceReviewTimeoutSeconds = 180.0,
     [double]$FinalReviewTimeoutSeconds = 120.0,
     [double]$CandidateTimeoutSeconds = 0.0,
@@ -197,8 +199,8 @@ $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
 $script:WhamWorkerStartedOnce = $false
-$discoveryStagePolicyVersion = 3
-$sourceDownloadStagePolicyVersion = 1
+$discoveryStagePolicyVersion = 4
+$sourceDownloadStagePolicyVersion = 2
 
 function Get-RepoRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -3197,6 +3199,12 @@ $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+$resolvedSourceOutcomeIndexJson = if ([System.IO.Path]::IsPathRooted($SourceOutcomeIndexJson)) {
+    [System.IO.Path]::GetFullPath($SourceOutcomeIndexJson)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SourceOutcomeIndexJson))
+}
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOutcomeIndexJson) | Out-Null
 $effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and -not $NoWhamDocker
 $resolvedWhamWorkerSessionDir = $null
 $whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
@@ -3432,7 +3440,8 @@ foreach ($exercise in $exerciseList.exercises) {
     $discoveryArgs += @(
         "--workout-plan-json", $exercisePlanPath,
         "--out-json", $exerciseCandidatesPath,
-        "--youtube-preview-cache-dir", $previewCachePath
+        "--youtube-preview-cache-dir", $previewCachePath,
+        "--source-outcome-index", $resolvedSourceOutcomeIndexJson
     )
     $exerciseExcludeCandidateJsonPaths = @($resolvedExcludeYoutubeCandidatesJson)
     $exerciseExcludeCandidateJsonPaths += Get-PreviousCandidateJsonPaths `
@@ -3497,6 +3506,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--fallback-candidates", "$FallbackCandidates",
         "--max-source-window-attempts", "$MaxSourceWindowAttempts",
         "--max-final-output-rejections", "$MaxFinalOutputRejections",
+        "--max-reconstruction-candidate-attempts", "$MaxReconstructionCandidateAttempts",
         "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
         "--final-review-timeout-seconds", "$FinalReviewTimeoutSeconds",
         "--candidate-timeout-seconds", "$CandidateTimeoutSeconds",
@@ -3505,6 +3515,7 @@ foreach ($exercise in $exerciseList.exercises) {
         "--candidate-workers", "$CandidateWorkers",
         "--youtube-source-cache-dir", $sourceCachePath,
         "--youtube-preview-cache-dir", $previewCachePath,
+        "--source-outcome-index", $resolvedSourceOutcomeIndexJson,
         "--workspace", $bakeWorkspace,
         "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
@@ -4287,6 +4298,7 @@ $summary = [ordered]@{
     sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
     equipmentJsonPath = if ([string]::IsNullOrWhiteSpace($EquipmentJson)) { $null } else { $EquipmentJson }
     workspaceRoot = $resolvedWorkspaceRoot
+    sourceOutcomeIndexPath = $resolvedSourceOutcomeIndexJson
     excludeCandidatesFromWorkspaceRoots = $resolvedExcludeCandidatesFromWorkspaceRoot
     excludeYoutubeCandidateJsonPaths = $resolvedExcludeYoutubeCandidatesJson
     excludeYoutubeVideoIds = @($ExcludeYoutubeVideoId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -4300,6 +4312,7 @@ $summary = [ordered]@{
     stagedWaveSize = $StagedWaveSize
     stagedWavesEnabled = $stagedWavesEnabled
     candidateWorkers = $CandidateWorkers
+    maxReconstructionCandidateAttempts = $MaxReconstructionCandidateAttempts
     exerciseMotionContractPrefetch = $contractPrefetchSummary
     parallelism = [ordered]@{
         cpuPrefetchDuringBake = [bool]$CpuPrefetchDuringBake
