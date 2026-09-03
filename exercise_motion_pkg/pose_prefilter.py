@@ -75,6 +75,8 @@ FRONTAL_VIEW_SHOULDER_WIDTH_LOW = 0.14
 FRONTAL_VIEW_SHOULDER_WIDTH_HIGH = 0.22
 FRONTAL_VIEW_HIP_WIDTH_LOW = 0.08
 FRONTAL_VIEW_HIP_WIDTH_HIGH = 0.15
+THREE_QUARTER_FRONTAL_EVIDENCE_TARGET = 0.55
+THREE_QUARTER_FRONTAL_EVIDENCE_TOLERANCE = 0.55
 CLEAR_VALID_CHUNK_MIN_SCORE = 0.68
 POSE_REFINED_WINDOW_MIN_SAMPLE_COUNT = 12
 DEFAULT_YOLO_BATCH_SIZE = 16
@@ -609,6 +611,7 @@ def score_pose_samples(
         "activeChainVisibility": best["activeChainVisibility"],
         "bilateralActiveChainBalance": best["bilateralActiveChainBalance"],
         "reconstructionViewQuality": best["reconstructionViewQuality"],
+        "threeQuarterViewPreference": best["threeQuarterViewPreference"],
         "frontalOrBackViewEvidence": best["frontalOrBackViewEvidence"],
         "shoulderWidthBodyRatio": best["shoulderWidthBodyRatio"],
         "hipWidthBodyRatio": best["hipWidthBodyRatio"],
@@ -936,6 +939,7 @@ def score_pose_window(
             "activeChainVisibility": 0.0,
             "bilateralActiveChainBalance": 1.0,
             "reconstructionViewQuality": 0.0,
+            "threeQuarterViewPreference": 0.0,
             "frontalOrBackViewEvidence": 0.0,
             "activeJoints": [],
             "activeChains": [],
@@ -970,16 +974,16 @@ def score_pose_window(
     )
     view_quality = pose_reconstruction_view_quality(present, metadata=metadata)
     score = clamp_unit(
-        single_person_ratio * 0.15
+        single_person_ratio * 0.13
         + keypoint_coverage * 0.08
-        + joint_visibility["wholeMovementJointVisibility"] * 0.14
-        + clamp_unit(body_scale / max(settings.min_body_scale, 1e-6)) * 0.11
-        + crop_safety * 0.11
+        + joint_visibility["wholeMovementJointVisibility"] * 0.17
+        + clamp_unit(body_scale / max(settings.min_body_scale, 1e-6)) * 0.08
+        + crop_safety * 0.10
         + camera_stability * 0.08
-        + motion_strength * 0.12
-        + active_quality["activeJointVisibility"] * 0.10
-        + active_quality["activeChainVisibility"] * 0.07
-        + active_quality["bilateralActiveChainBalance"] * 0.04
+        + motion_strength * 0.09
+        + active_quality["activeJointVisibility"] * 0.12
+        + active_quality["activeChainVisibility"] * 0.09
+        + active_quality["bilateralActiveChainBalance"] * 0.06
     )
     blocking_issues: list[str] = []
     if multi_person_ratio > 0.0:
@@ -1037,6 +1041,7 @@ def score_pose_window(
         "activeChainVisibility": active_quality["activeChainVisibility"],
         "bilateralActiveChainBalance": active_quality["bilateralActiveChainBalance"],
         "reconstructionViewQuality": view_quality["reconstructionViewQuality"],
+        "threeQuarterViewPreference": view_quality["threeQuarterViewPreference"],
         "frontalOrBackViewEvidence": view_quality["frontalOrBackViewEvidence"],
         "shoulderWidthBodyRatio": view_quality["shoulderWidthBodyRatio"],
         "hipWidthBodyRatio": view_quality["hipWidthBodyRatio"],
@@ -2031,8 +2036,14 @@ def pose_reconstruction_view_quality(
         high=FRONTAL_VIEW_HIP_WIDTH_HIGH,
     )
     frontal_or_back_view_evidence = clamp_unit(shoulder_evidence * 0.55 + hip_evidence * 0.45)
+    three_quarter_view_preference = clamp_unit(
+        1.0
+        - abs(frontal_or_back_view_evidence - THREE_QUARTER_FRONTAL_EVIDENCE_TARGET)
+        / THREE_QUARTER_FRONTAL_EVIDENCE_TOLERANCE
+    )
     return {
         "reconstructionViewQuality": clamp_unit(1.0 - frontal_or_back_view_evidence),
+        "threeQuarterViewPreference": three_quarter_view_preference,
         "frontalOrBackViewEvidence": frontal_or_back_view_evidence,
         "shoulderWidthBodyRatio": shoulder_width_body_ratio,
         "hipWidthBodyRatio": hip_width_body_ratio,

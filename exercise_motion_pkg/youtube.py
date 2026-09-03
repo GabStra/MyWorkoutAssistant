@@ -61,6 +61,10 @@ from exercise_motion_pkg.pose_prefilter import (
     run_yolo_pose_prefilter,
 )
 from exercise_motion_pkg.process_lock import InterProcessFileLock
+from exercise_motion_pkg.source_outcomes import (
+    load_source_outcome_index,
+    source_outcome_prior,
+)
 from exercise_motion_pkg.target_motion import (
     TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
     normalize_observable_motion_axis,
@@ -128,6 +132,33 @@ LOW_RES_PROGRESSIVE_VIDEO_FORMAT = (
     "worst[height<=480][ext=mp4][vcodec!=none]/"
     "worst[ext=mp4][vcodec!=none]/"
     "worst[vcodec!=none]/worst"
+)
+
+RECONSTRUCTION_VIDEO_FORMAT = (
+    "bestvideo[height<=480][ext=mp4][vcodec!=none]/"
+    "bestvideo[height<=480][vcodec!=none]/"
+    "bestvideo[height<=720][ext=mp4][vcodec!=none]/"
+    "bestvideo[height<=720][vcodec!=none]/"
+    "bestvideo[ext=mp4][vcodec!=none]/bestvideo[vcodec!=none]/best"
+)
+
+RECONSTRUCTION_PROGRESSIVE_VIDEO_FORMAT = (
+    "best[height<=480][ext=mp4][vcodec!=none]/"
+    "best[height<=480][vcodec!=none]/"
+    "best[height<=720][ext=mp4][vcodec!=none]/"
+    "best[ext=mp4][vcodec!=none]/best[vcodec!=none]/best"
+)
+
+HIGH_RES_RECONSTRUCTION_VIDEO_FORMAT = (
+    "bestvideo[height<=720][ext=mp4][vcodec!=none]/"
+    "bestvideo[height<=720][vcodec!=none]/"
+    "bestvideo[ext=mp4][vcodec!=none]/bestvideo[vcodec!=none]/best"
+)
+
+HIGH_RES_RECONSTRUCTION_PROGRESSIVE_VIDEO_FORMAT = (
+    "best[height<=720][ext=mp4][vcodec!=none]/"
+    "best[height<=720][vcodec!=none]/"
+    "best[ext=mp4][vcodec!=none]/best[vcodec!=none]/best"
 )
 
 YOUTUBE_RATE_LIMIT_COOLDOWN_SECONDS = 60 * 60
@@ -208,7 +239,13 @@ def youtube_failure_is_forbidden(message: str) -> bool:
     return "http error 403" in str(message).casefold()
 
 
-def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+def download_youtube(
+    url: str,
+    output_dir: Path,
+    cookies_path: Path | None = None,
+    *,
+    prefer_high_resolution: bool = False,
+) -> Path:
     raise_if_youtube_rate_limit_cooldown_active()
     resolved_cookies_path: Path | None = None
     if cookies_path is not None:
@@ -242,7 +279,19 @@ def download_youtube(url: str, output_dir: Path, cookies_path: Path | None = Non
                 retries=1,
                 preview=False,
                 cookies_path=attempt_cookies,
-                format_selector=(LOW_RES_PROGRESSIVE_VIDEO_FORMAT if use_progressive_format else None),
+                format_selector=(
+                    (
+                        HIGH_RES_RECONSTRUCTION_PROGRESSIVE_VIDEO_FORMAT
+                        if prefer_high_resolution
+                        else RECONSTRUCTION_PROGRESSIVE_VIDEO_FORMAT
+                    )
+                    if use_progressive_format
+                    else (
+                        HIGH_RES_RECONSTRUCTION_VIDEO_FORMAT
+                        if prefer_high_resolution
+                        else RECONSTRUCTION_VIDEO_FORMAT
+                    )
+                ),
             )
             extractor_args = youtube_player_client_extractor_args(player_client)
             if extractor_args is not None:
@@ -711,7 +760,7 @@ def build_youtube_download_options(
             }
     elif ffmpeg_available:
         options = {
-            "format": format_selector or LOW_RES_VIDEO_ONLY_FORMAT,
+            "format": format_selector or RECONSTRUCTION_VIDEO_FORMAT,
             "outtmpl": outtmpl,
             "quiet": quiet,
             "noprogress": noprogress,
@@ -722,7 +771,7 @@ def build_youtube_download_options(
         }
     else:
         options = {
-            "format": LOW_RES_PROGRESSIVE_VIDEO_FORMAT,
+            "format": RECONSTRUCTION_PROGRESSIVE_VIDEO_FORMAT,
             "outtmpl": outtmpl,
             "quiet": quiet,
             "noprogress": noprogress,
@@ -956,10 +1005,11 @@ class YouTubeRankingSettings:
     youtube_search_timeout_seconds: float = DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS
     youtube_cookies: Path | None = None
     youtube_preview_cache_dir: Path | None = None
+    source_outcome_index: Path | None = None
     excluded_candidate_keys: tuple[str, ...] = ()
     max_candidates: int = 8
     candidate_review_batch_size: int | None = 12
-    candidate_review_target_suitable_count: int = 1
+    candidate_review_target_suitable_count: int = 2
     min_duration_seconds: int = 0
     max_duration_seconds: int = 120
     single_exercise_name_query: bool = False
@@ -2064,6 +2114,7 @@ def build_youtube_queries(exercise_name: str) -> list[str]:
         f"{base_term} exercise demonstration{exclusions}",
         f"{base_term} exercise demo full rep{exclusions}",
         f"{base_term} proper form{exclusions}",
+        f"{base_term} three quarter view exercise{exclusions}",
         f"{base_term} side view exercise{exclusions}",
         f"{base_term} single person exercise demo{exclusions}",
     ]
@@ -2095,10 +2146,12 @@ def build_youtube_queries_with_contract_aliases(
     base_term = quote_youtube_search_term(exercise_name)
     contract_queries = [f"{base_term} {suffix}" for suffix in mode_suffixes]
     if strict_transition_review:
-        contract_queries.insert(
-            0,
-            f"{base_term} complete transition sequence start to finish and return to start",
+        strict_sequence_suffix = (
+            "complete movement start to finish ending in the distinct end position"
+            if completion_mode == "distinct_end_state"
+            else "complete transition sequence start to finish and return to start"
         )
+        contract_queries.insert(0, f"{base_term} {strict_sequence_suffix}")
         queries = [*contract_queries, *queries]
     else:
         queries.extend(contract_queries)
@@ -2108,6 +2161,7 @@ def build_youtube_queries_with_contract_aliases(
             [
                 f"{alias_term} exercise demonstration",
                 f"{alias_term} exercise demo full rep",
+                f"{alias_term} three quarter view exercise",
                 f"{alias_term} side view exercise",
                 *[f"{alias_term} {suffix}" for suffix in mode_suffixes],
             ]
@@ -2134,6 +2188,7 @@ def build_youtube_search_expansion_queries(
             [
                 f"{alias_term} strict form full rep",
                 f"{alias_term} full range of motion exercise",
+                f"{alias_term} three quarter angle full rep",
                 f"{alias_term} continuous reps side angle",
                 f"{alias_term} full body exercise demo",
                 *[f"{alias_term} {suffix}" for suffix in mode_suffixes],
@@ -2593,7 +2648,7 @@ def search_youtube(
         return merge_youtube_candidate_lists(
             cached_variant_candidates,
             parse_yt_dlp_search_results(fresh_cached_info),
-        )
+        )[: max(1, results_per_query)]
     stale_cached_info = load_cached_youtube_search_info(
         cache_dir,
         query=query,
@@ -2654,7 +2709,7 @@ def search_youtube(
                     return merge_youtube_candidate_lists(
                         cached_variant_candidates,
                         parse_yt_dlp_search_results(stale_cached_info),
-                    )
+                    )[: max(1, results_per_query)]
                 raise YouTubeSearchError(query, error, transient=transient)
             time.sleep(youtube_search_retry_delay_seconds(attempt))
     try:
@@ -2670,7 +2725,7 @@ def search_youtube(
     return merge_youtube_candidate_lists(
         cached_variant_candidates,
         parse_yt_dlp_search_results(info),
-    )
+    )[: max(1, results_per_query)]
 
 
 def youtube_search_retry_delay_seconds(attempt: int) -> float:
@@ -3163,9 +3218,6 @@ def vision_review_priority_score(
 
 
 MOTION_SOURCE_TITLE_CUES: tuple[tuple[str, float], ...] = (
-    ("side view", 0.15),
-    ("side angle", 0.15),
-    ("profile view", 0.12),
     ("single person", 0.25),
     ("one person", 0.20),
     ("full body", 0.20),
@@ -3294,9 +3346,11 @@ def rank_youtube_review_pool(
     candidates: list[YouTubeCandidate],
     settings: YouTubeRankingSettings,
 ) -> list[YouTubeCandidate]:
+    indexed_candidates = apply_source_outcome_priors(candidates, settings)
     return sorted(
-        select_review_candidate_pool(candidates, settings),
+        select_review_candidate_pool(indexed_candidates, settings),
         key=lambda candidate: (
+            candidate_source_outcome_prior_score(candidate),
             candidate_title_identity_priority_score(exercise.name, candidate.title),
             candidate_motion_source_priority_score(candidate.title),
             vision_review_priority_score(
@@ -3308,6 +3362,46 @@ def rank_youtube_review_pool(
         ),
         reverse=True,
     )
+
+
+def candidate_source_outcome_prior_score(candidate: YouTubeCandidate) -> float:
+    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    prior = payload.get("sourceOutcomePrior") if isinstance(payload, dict) else None
+    score = coerce_float(prior.get("score")) if isinstance(prior, dict) else None
+    return max(-1.0, min(1.0, score)) if score is not None else 0.0
+
+
+def apply_source_outcome_priors(
+    candidates: Iterable[YouTubeCandidate],
+    settings: YouTubeRankingSettings,
+) -> list[YouTubeCandidate]:
+    candidates = list(candidates)
+    if settings.source_outcome_index is None:
+        return candidates
+    index = load_source_outcome_index(settings.source_outcome_index)
+    annotated: list[YouTubeCandidate] = []
+    for candidate in candidates:
+        prior = source_outcome_prior(
+            index,
+            video_id=candidate.video_id,
+            url=candidate.url,
+            channel=candidate.channel,
+        )
+        payload = dict(candidate.vision_payload) if isinstance(candidate.vision_payload, dict) else {}
+        payload["sourceOutcomePrior"] = prior
+        reasons = list(candidate.score_reasons)
+        if int(prior["sourceAttempts"]) > 0:
+            reasons.append("source_outcome_video_prior")
+        elif int(prior["channelAttempts"]) >= 3:
+            reasons.append("source_outcome_channel_prior")
+        annotated.append(
+            replace_candidate(
+                candidate,
+                score_reasons=dedupe_reasons(reasons),
+                vision_payload=payload,
+            )
+        )
+    return annotated
 
 
 
@@ -3541,6 +3635,9 @@ VISION_HARD_GATE_REASONS = {
     "movement_action_path_visible",
     "movement_end_posture_visible",
     "no_setup_or_talking_frames",
+    "contract_start_state_match",
+    "contract_end_state_match",
+    "all_required_phases_visible",
 }
 
 VISION_DETERMINISTIC_SOURCE_GATES = {
@@ -3820,6 +3917,7 @@ def apply_semantic_gate_score(
         variant
         for variant in model_unrequested_variants
         if semantic_variant_term_is_movement_changing(variant)
+        and normalize_exercise_name(variant) not in normalize_exercise_name(exercise.name)
     ]
     model_variant_reasons = [
         f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
@@ -3848,6 +3946,12 @@ def apply_semantic_gate_score(
         semantic_payload,
         blocking_model_variants,
     )
+    omitted_equipment_visual_fallback = semantic_omitted_equipment_visual_fallback_applies(
+        exercise.name,
+        candidate.title,
+        semantic_payload,
+        blocking_model_variants,
+    )
     semantic_unresolved = semantic_gate_payload_is_unresolved(semantic_payload)
     if semantic_unresolved:
         semantic_payload["unresolved"] = True
@@ -3857,7 +3961,7 @@ def apply_semantic_gate_score(
     if blocking_model_variants:
         clamped_score = min(clamped_score, 0.20)
         semantic_reasons = dedupe_reasons([*semantic_reasons, *model_variant_reasons])
-    elif exact_identity_visual_fallback or omitted_limb_count_visual_fallback:
+    elif exact_identity_visual_fallback or omitted_limb_count_visual_fallback or omitted_equipment_visual_fallback:
         clamped_score = max(clamped_score, settings.semantic_gate_min_score)
         if semantic_payload.get("wrongExercise") is True:
             semantic_payload["wrongExercise"] = False
@@ -3868,7 +3972,11 @@ def apply_semantic_gate_score(
                 (
                     "semantic_omitted_limb_count_visual_fallback"
                     if omitted_limb_count_visual_fallback
-                    else "semantic_identity_match_visual_fallback"
+                    else (
+                        "semantic_omitted_equipment_visual_fallback"
+                        if omitted_equipment_visual_fallback
+                        else "semantic_identity_match_visual_fallback"
+                    )
                 ),
             ]
         )
@@ -3967,6 +4075,27 @@ def semantic_omitted_limb_count_visual_fallback_applies(
     # token (including equipment) to be stated by the candidate.
     candidate_tokens.difference_update({"a", "an", "the"})
     return bool(target_tokens) and target_tokens.issubset(candidate_tokens)
+
+
+def semantic_omitted_equipment_visual_fallback_applies(
+    exercise_name: str,
+    candidate_title: str,
+    semantic_payload: dict[str, Any],
+    blocking_model_variants: list[str],
+) -> bool:
+    """Defer an unstated equipment prefix to vision when the base movement matches."""
+    if blocking_model_variants or semantic_payload.get("wrongEquipment") is True:
+        return False
+    target = normalize_exercise_name(exercise_name)
+    candidate_tokens = set(normalize_exercise_name(candidate_title).split())
+    for equipment_prefix in (*YOUTUBE_QUERY_EQUIPMENT_PREFIXES, *YOUTUBE_QUERY_LOAD_PREFIXES):
+        normalized_prefix = normalize_exercise_name(equipment_prefix)
+        if not target.startswith(f"{normalized_prefix} "):
+            continue
+        base_movement_tokens = set(target[len(normalized_prefix) + 1 :].split())
+        if base_movement_tokens and base_movement_tokens.issubset(candidate_tokens):
+            return True
+    return False
 
 
 def semantic_gate_score(candidate: YouTubeCandidate) -> float:
@@ -4811,7 +4940,6 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         fields["validEndState"] = fields["validStartState"]
 
     list_fields = {
-        "requiredPhases": ("requiredPhases", "phases", "completePhases"),
         "allowedExerciseTransitions": ("allowedExerciseTransitions", "allowedTransitions"),
         "excludedSetupOrCleanup": ("excludedSetupOrCleanup", "excludedSetupCleanup", "rejectSetupCleanup"),
         "commonWrongVariants": ("commonWrongVariants", "wrongVariants", "rejectIf"),
@@ -4821,6 +4949,19 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         values = cleaned_contract_string_list(first_contract_value(payload, *aliases), limit=8, item_limit=180)
         if values:
             fields[output_key] = values
+
+    required_phases = normalize_required_phase_labels(
+        first_contract_value(payload, "requiredPhases", "phases", "completePhases")
+    )
+    if requires_return is True and required_phases and not any(
+        re.search(r"\b(?:return|returns|returned|back)\b", phase.casefold())
+        for phase in required_phases
+    ):
+        # The final observable phase already ends at validStartState; label that
+        # existing phase explicitly instead of inventing an additional action.
+        required_phases[-1] = f"Return to start: {required_phases[-1]}"[:180].rstrip()
+    if required_phases:
+        fields["requiredPhases"] = required_phases
 
     primary_regions = normalize_observable_motion_regions(
         first_contract_value(payload, "primaryMovingRegions", "primaryMotionRegions"),
@@ -4888,8 +5029,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 22
-EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 9
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 23
+EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 10
 
 
 def exercise_motion_contract_cache_path(
@@ -5270,6 +5411,27 @@ def cleaned_contract_string_list(value: Any, *, limit: int, item_limit: int) -> 
     return cleaned
 
 
+def normalize_required_phase_labels(value: Any) -> list[str]:
+    """Recover concise phase labels from common small-model schema leakage."""
+    normalized: list[str] = []
+    for raw_phase in cleaned_contract_string_list(value, limit=8, item_limit=360):
+        phase = raw_phase.strip()
+        description_match = re.search(
+            r"(?:^|\b)description\s*:\s*(.+)$", phase, flags=re.IGNORECASE
+        )
+        if description_match:
+            phase = description_match.group(1).strip()
+        phase = re.sub(
+            r"^(?:phase\s*)?(?:name|label)\s*:\s*", "", phase, flags=re.IGNORECASE
+        ).strip()
+        phase = phase.rstrip(".\u2026 ")
+        if not phase or "..." in phase or "\u2026" in phase:
+            continue
+        if phase.casefold() not in {item.casefold() for item in normalized}:
+            normalized.append(phase[:180].rstrip())
+    return normalized
+
+
 GENERIC_EXERCISE_MOTION_CONTRACT_PHRASES = (
     "a stable exercise posture immediately before one complete repetition",
     "move away from the start posture through the exercise action",
@@ -5522,6 +5684,10 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
         "If the candidate contains any movement-changing qualifier that the target does not request, put each extra qualifier in "
         "unrequestedVariantTerms and set passed=false even when the title also contains the unqualified target words. "
         "Do not let one matching qualifier cancel a conflicting or additional qualifier; judge the complete candidate title as one movement identity. "
+        "An omitted target qualifier is not the same as a conflicting qualifier. When a candidate uses only the established generic "
+        "name of the base movement and does not explicitly name different equipment, loading, angle, grip, stance, limb count, body "
+        "position, or support, keep wrongExercise=false and wrongEquipment=false so the visual gate can confirm the omitted detail. "
+        "Set wrongEquipment=true only for explicitly conflicting equipment, never merely because the target equipment noun is absent. "
         "For generic weighted/loaded targets, vest/belt/plate/dumbbell/kettlebell are valid loading methods only when the base movement is unchanged. "
         "Duration is ranking context only: prefer short exact exercise clips over long tutorials when semantic confidence is similar, "
         "but do not mark wrongExercise only because a video is long or short. "
@@ -5723,9 +5889,12 @@ def reviewed_candidate_sort_key(candidate: YouTubeCandidate, settings: YouTubeRa
     semantic_score = semantic_gate_score(candidate)
     duration_preference = semantic_gate_duration_preference_score(candidate, settings)
     duration_sort_value = semantic_gate_duration_sort_value(candidate)
+    historical_prior = candidate_source_outcome_prior_score(candidate)
+    prior_adjusted_final_score = candidate.final_score + historical_prior * 0.08
     if settings.rank_with_vision:
         return (
             candidate.vision_score is not None,
+            prior_adjusted_final_score,
             candidate.final_score,
             pose_prefilter_score(candidate),
             semantic_rank,
@@ -5735,6 +5904,7 @@ def reviewed_candidate_sort_key(candidate: YouTubeCandidate, settings: YouTubeRa
         )
     if settings.pose_prefilter_enabled:
         return (
+            prior_adjusted_final_score,
             candidate.final_score,
             pose_prefilter_score(candidate),
             semantic_rank,
@@ -5746,11 +5916,13 @@ def reviewed_candidate_sort_key(candidate: YouTubeCandidate, settings: YouTubeRa
         return (
             semantic_rank,
             semantic_score,
+            historical_prior,
             duration_preference,
             duration_sort_value,
             candidate.final_score,
         )
     return (
+        prior_adjusted_final_score,
         candidate.final_score,
         pose_prefilter_score(candidate),
         semantic_score,
@@ -6519,14 +6691,11 @@ def run_youtube_candidate_review_batches(
             accumulated_ranked,
             settings,
         )
-        # Readiness may stop below the configured target, but must never raise
-        # it. The caller owns deliberate expansion across retries; exceeding
-        # its target here defeats bounded discovery and can trigger another
-        # expensive vision review after a usable source already exists.
-        target_suitable_count = min(
-            adaptive_target_suitable_count,
-            configured_target_suitable_count,
-        )
+        # The configured value is a portfolio target, not merely a ceiling.
+        # A high-readiness source can lead the portfolio, but it cannot stand
+        # in for the distinct fallback source required when reconstruction or
+        # final validation rejects that leader.
+        target_suitable_count = configured_target_suitable_count
         batch_payload = {
             "batchIndex": batch_index,
             "startIndex": start,
@@ -6605,9 +6774,9 @@ def youtube_candidate_search_should_expand(
     expanded_results_per_query: int | None,
     search_expansion_queries: list[str],
 ) -> bool:
-    """Widen search after a zero-suitable pass, including a single-name first query."""
+    """Widen search while the reviewed source portfolio is below its target."""
     return (
-        suitable_count <= 0
+        suitable_count < settings.resolved_candidate_review_target_suitable_count()
         and youtube_candidate_search_can_expand(settings)
         and (expanded_results_per_query is not None or bool(search_expansion_queries))
     )
@@ -7915,7 +8084,8 @@ def discover_and_rank_youtube_candidates(
             )
             current_review_settings = settings
             if (
-                initial_suitable_count == 0
+                initial_suitable_count
+                < settings.resolved_candidate_review_target_suitable_count()
                 and not initial_review_hard_cap_exhausted
                 and youtube_candidate_review_can_expand(settings, len(review_pool_ranked))
             ):
@@ -7924,7 +8094,7 @@ def discover_and_rank_youtube_candidates(
                     event="review_expansion_started",
                     started_at=run_started,
                     exercise=exercise,
-                    reason="no_suitable_candidate_after_initial_review",
+                    reason="insufficient_suitable_candidates_after_initial_review",
                     initialSuitableCandidateCount=initial_suitable_count,
                     reviewCandidateCount=len(review_pool_ranked),
                 )
@@ -7950,7 +8120,7 @@ def discover_and_rank_youtube_candidates(
                 candidate_expansion_payload.update(
                     {
                         "triggered": True,
-                        "reason": "no_suitable_candidate_after_initial_review",
+                        "reason": "insufficient_suitable_candidates_after_initial_review",
                         "reviewExpansionTriggered": True,
                         "expandedSuitableCandidateCount": youtube_suitable_candidate_count(
                             ranked,
@@ -8000,17 +8170,19 @@ def discover_and_rank_youtube_candidates(
                 expanded_results_per_query=expanded_results_per_query,
                 search_expansion_queries=search_expansion_queries,
             ):
-                search_expansion_results_per_query = expanded_results_per_query or settings.results_per_query
+                search_expansion_results_per_query = min(
+                    YOUTUBE_FAILURE_SEARCH_EXPANSION_MAX_RESULTS_PER_QUERY,
+                    settings.results_per_query + max(1, settings.max_candidates),
+                )
                 search_expansion_query_list = merge_youtube_queries(
-                    [
-                        *(queries if expanded_results_per_query is not None else []),
-                        *search_expansion_queries,
-                    ]
+                    [*queries[:1], *search_expansion_queries],
+                    limit=1,
                 )
                 search_expanded_settings = dataclass_replace(
                     settings,
                     results_per_query=search_expansion_results_per_query,
                 )
+                pre_expansion_candidate_keys = set(by_key)
                 expanded_search_result = collect_youtube_search_candidates(
                     queries=search_expansion_query_list,
                     settings=search_expanded_settings,
@@ -8045,7 +8217,8 @@ def discover_and_rank_youtube_candidates(
                             min_duration_seconds=settings.min_duration_seconds,
                             max_duration_seconds=settings.max_duration_seconds,
                         )
-                        for candidate in by_key.values()
+                        for key, candidate in by_key.items()
+                        if key not in pre_expansion_candidate_keys
                     ]
                     ranked = rank_youtube_review_pool(exercise, prepared_ranked, search_expanded_settings)
                     review_pool_elapsed_total += time.monotonic() - review_pool_started
@@ -8098,9 +8271,9 @@ def discover_and_rank_youtube_candidates(
                         {
                             "triggered": True,
                             "reason": candidate_expansion_payload.get("reason")
-                            or "no_suitable_candidate_after_initial_review",
+                            or "insufficient_suitable_candidates_after_initial_review",
                             "searchExpansionTriggered": True,
-                            "searchExpansionReason": "no_suitable_candidate_after_expanded_review",
+                            "searchExpansionReason": "insufficient_suitable_candidates_after_expanded_review",
                             "searchExpansionInitialResultsPerQuery": settings.results_per_query,
                             "searchExpansionResultsPerQuery": search_expansion_results_per_query,
                             "searchExpansionQueryCount": len(search_expansion_query_list),
@@ -8142,9 +8315,9 @@ def discover_and_rank_youtube_candidates(
                         {
                             "triggered": True,
                             "reason": candidate_expansion_payload.get("reason")
-                            or "no_suitable_candidate_after_initial_review",
+                            or "insufficient_suitable_candidates_after_initial_review",
                             "searchExpansionTriggered": True,
-                            "searchExpansionReason": "no_suitable_candidate_after_expanded_review",
+                            "searchExpansionReason": "insufficient_suitable_candidates_after_expanded_review",
                             "searchExpansionInitialResultsPerQuery": settings.results_per_query,
                             "searchExpansionResultsPerQuery": search_expansion_results_per_query,
                             "searchExpansionQueryCount": len(search_expansion_query_list),
@@ -8163,8 +8336,12 @@ def discover_and_rank_youtube_candidates(
                 current_review_settings,
             )
             candidate_expansion_payload["finalFirstAttemptReadyCandidateCount"] = final_suitable_count
-            if final_suitable_count <= 0:
-                candidate_expansion_payload["terminalReason"] = "no_reconstruction_ready_source"
+            if final_suitable_count < settings.resolved_candidate_review_target_suitable_count():
+                candidate_expansion_payload["terminalReason"] = (
+                    "no_reconstruction_ready_source"
+                    if final_suitable_count <= 0
+                    else "insufficient_reconstruction_ready_sources"
+                )
                 candidate_expansion_payload["noNewWork"] = bool(
                     candidate_expansion_payload.get("searchExpansionTriggered")
                     and int(candidate_expansion_payload.get("searchExpansionNewCandidateCount") or 0) <= 0
@@ -9295,41 +9472,6 @@ def apply_vision_score(
     effective_vision_score = clamp_score(vision_score)
     effective_vision_reasons = list(vision_reasons)
     effective_vision_payload = dict(vision_payload) if isinstance(vision_payload, dict) else {}
-    if semantic_pose_short_demo_fallback_applies(
-        candidate,
-        settings=settings,
-        exercise_motion_contract=exercise_motion_contract,
-    ):
-        duration_seconds = float(candidate.duration_seconds or 0.0)
-        advisory_vlm_payload = dict(effective_vision_payload)
-        effective_vision_score = max(effective_vision_score, 0.86)
-        effective_vision_reasons = dedupe_reasons(
-            [
-                "vlm_source_review_advisory",
-                "semantic_pose_short_demo_source_fallback",
-                "source_score",
-            ]
-        )
-        effective_vision_payload = {
-            "advisoryVlmSourceReview": advisory_vlm_payload,
-            "deterministicSourceFallback": {
-                "type": "semantic_pose_short_demo",
-                "score": 0.86,
-                "reason": (
-                    "Short exact-match source demo passed semantic gate and YOLO source integrity; "
-                    "VLM source review was treated as advisory."
-                ),
-            },
-            "bestChunkStartSeconds": 0.0,
-            "bestChunkEndSeconds": min(duration_seconds, 20.0),
-            "bestChunkScore": max(coerce_float(advisory_vlm_payload.get("bestChunkScore")) or 0.0, 0.86),
-            "validChunkCount": max(as_optional_int(advisory_vlm_payload.get("validChunkCount")) or 0, 1),
-            "validChunkRatio": max(coerce_float(advisory_vlm_payload.get("validChunkRatio")) or 0.0, 1.0),
-            "scoredChunkCount": max(as_optional_int(advisory_vlm_payload.get("scoredChunkCount")) or 0, 1),
-            "chunkEvidenceCapApplied": False,
-            "target_identity_match": True,
-            "correct_exercise": True,
-        }
     score_reasons = dedupe_reasons(candidate.score_reasons + effective_vision_reasons)
     if hard_reject:
         score_reasons = dedupe_reasons([*score_reasons, *candidate_pose_prefilter_hard_reject_reasons(candidate)])
@@ -9348,57 +9490,15 @@ def apply_vision_score(
         vision_payload=merged_payload or None,
     )
 
-
-def semantic_pose_short_demo_fallback_applies(
-    candidate: YouTubeCandidate,
-    *,
-    settings: YouTubeRankingSettings | None,
-    exercise_motion_contract: dict[str, Any] | None = None,
-) -> bool:
-    if settings is None:
-        return False
-    if exercise_motion_contract_requires_strict_source_review(exercise_motion_contract):
-        return False
-    duration_seconds = candidate.duration_seconds
-    if duration_seconds is None:
-        return False
-    if duration_seconds < settings.min_duration_seconds or duration_seconds > 30:
-        return False
-    if has_source_quality_demoter(candidate.score_reasons):
-        return False
-    semantic_payload = candidate_semantic_gate_payload(candidate)
-    if not semantic_payload or not bool(semantic_payload.get("passed")):
-        return False
-    payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
-    pose_payload = payload.get("posePrefilter") if isinstance(payload, dict) else None
-    if not isinstance(pose_payload, dict):
-        return False
-    if not bool(pose_payload.get("passed")) or pose_prefilter_has_hard_reject_issue(pose_payload):
-        return False
-    pose_score = coerce_float(pose_payload.get("score")) or 0.0
-    if pose_score < max(0.85, settings.pose_prefilter_min_score):
-        return False
-    integrity = pose_payload.get("sourceWindowIntegrity")
-    if isinstance(integrity, dict) and not bool(integrity.get("passed")):
-        return False
-    single_person_ratio = coerce_float(pose_payload.get("singlePersonRatio"))
-    if single_person_ratio is not None and single_person_ratio < 0.95:
-        return False
-    keypoint_coverage = coerce_float(pose_payload.get("keypointCoverage"))
-    if keypoint_coverage is not None and keypoint_coverage < 0.85:
-        return False
-    active_chain_visibility = coerce_float(pose_payload.get("activeChainVisibility"))
-    if active_chain_visibility is not None and active_chain_visibility < 0.80:
-        return False
-    return True
-
-
 def exercise_motion_contract_requires_strict_source_review(
     contract: dict[str, Any] | None,
 ) -> bool:
     """Prevent identity-only fallback for movements defined as ordered transitions."""
     if not isinstance(contract, dict):
         return False
+    completion_mode = str(contract.get("completionMode") or "").strip().lower()
+    if completion_mode == "distinct_end_state":
+        return True
     movement_type = str(contract.get("movementType") or "").strip().lower()
     if movement_type == "transition_sequence":
         return True
@@ -9408,8 +9508,12 @@ def exercise_motion_contract_requires_strict_source_review(
     return any(
         isinstance(draft, dict)
         and isinstance(draft.get("contract"), dict)
-        and str(draft["contract"].get("movementType") or "").strip().lower()
-        == "transition_sequence"
+        and (
+            str(draft["contract"].get("movementType") or "").strip().lower()
+            == "transition_sequence"
+            or str(draft["contract"].get("completionMode") or "").strip().lower()
+            == "distinct_end_state"
+        )
         for draft in rejected_drafts
     )
 
@@ -10593,6 +10697,9 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         and action_path_visible is True
         and end_posture_visible is True
         and no_setup_or_talking_frames is True
+        and explicit_gate_values.get("contract_start_state_match") is not False
+        and explicit_gate_values.get("contract_end_state_match") is not False
+        and explicit_gate_values.get("all_required_phases_visible") is not False
     )
     if complete_movement >= 0.75 and movement_phase_gates_pass:
         reasons.append("complete_movement")
@@ -10632,6 +10739,9 @@ def score_candidate_vision_payload(payload: dict[str, Any]) -> tuple[float, list
         and action_path_visible is True
         and end_posture_visible is True
         and no_setup_or_talking_frames is True
+        and explicit_gate_values.get("contract_start_state_match") is not False
+        and explicit_gate_values.get("contract_end_state_match") is not False
+        and explicit_gate_values.get("all_required_phases_visible") is not False
         and not semantic_blocking_issue_present
         and not note_conflict_reasons
     )
@@ -10733,6 +10843,9 @@ def apply_explicit_gate_caps(score: float, explicit_gate_values: dict[str, bool 
         "movement_action_path_visible": 0.34,
         "movement_end_posture_visible": 0.34,
         "no_setup_or_talking_frames": 0.34,
+        "contract_start_state_match": 0.34,
+        "contract_end_state_match": 0.34,
+        "all_required_phases_visible": 0.34,
         "normal_speed_execution": 0.49,
         "not_broken_into_steps": 0.49,
         "continuous_motion": 0.49,
@@ -10903,6 +11016,31 @@ def build_candidate_vision_prompt(
         if isinstance(exercise_motion_contract, dict)
         else None
     )
+    motion_context = (
+        exercise_motion_contract.get("motionContext")
+        if isinstance(exercise_motion_contract, dict)
+        else None
+    )
+    required_accessories = (
+        motion_context.get("requiredAccessories")
+        if isinstance(motion_context, dict)
+        else None
+    )
+    accessory_names = [
+        str(accessory.get("name") or accessory.get("type") or "").strip()
+        for accessory in required_accessories or []
+        if isinstance(accessory, dict)
+        and str(accessory.get("name") or accessory.get("type") or "").strip()
+    ]
+    required_support_note = (
+        "Required support/accessories: "
+        + ", ".join(accessory_names)
+        + ". Each must visibly perform its exercise-defining support role; background presence is insufficient. "
+        "If any required support is absent, replaced, or used in a different role, set target_identity_match false "
+        "and include wrong_variant.\n"
+        if accessory_names
+        else ""
+    )
     one_way_boundary_note = (
         "This contract ends at a distinct end state. Frames showing assistance or reset after that natural end are "
         "outside the target interval, not proof that the target action is partial. If one clean uninterrupted target "
@@ -10917,6 +11055,7 @@ def build_candidate_vision_prompt(
         f"Target exercise: {exercise_name}.\n"
         f"Video title: {candidate.title}.\n"
         f"{contract_section}"
+        f"{required_support_note}"
         f"{one_way_boundary_note}"
         "Judge only the attached frames/contact sheets from this chunk. Do not infer missing phases from other chunks.\n"
         f"{CONTACT_SHEET_READING_INSTRUCTIONS}"
@@ -10939,6 +11078,7 @@ def build_candidate_vision_prompt(
         "Set primary_effort_phase_visible true only if the chunk visibly includes the main intended action of the requested exercise, not just the return, lowering, eccentric, negative, reset, or recovery phase. If the target exercise name explicitly requests a negative/eccentric/return-only variation, judge that requested phase as the primary effort.\n"
         "Set movement_action_path_visible true only if the chunk visibly includes the main joint/body travel of the movement, not just the athlete holding the start/end position.\n"
         "Set movement_end_posture_visible true only if the chunk visibly reaches the natural end posture of that same movement or repetition. Set it false for clips that stop mid-rep or before the movement resolves.\n"
+        "Independently verify the exercise-specific contract: set contract_start_state_match and contract_end_state_match true only when the visible boundary postures match the described start and end states, and set all_required_phases_visible true only when every required phase in the guidance is visibly present in order. Do not substitute a nearby posture or infer an omitted phase. When no more-specific contract detail is supplied, apply these fields to the generic start/action/end movement definition above.\n"
         "Set no_setup_or_talking_frames false when any attached sheet is primarily setup, talking, instruction, title-card, walking into position, idle hanging/standing/lying, or reset content rather than the exercise movement. Keep it true when brief boundary postures are directly attached to the full movement.\n"
         "Prefer real camera footage of real people. Score the moving exercise subject with moving_subject_realism_score: 1.0 means a clearly real person captured by camera, 0.85 means the lowest acceptable confidence for a real camera-captured human, 0.7 means probably real but visually ambiguous and not strong enough as a source, 0.4 means mannequin-like or heavily synthetic-looking, and 0.0 means animated, CGI, rendered, game footage, motion-capture preview, skeleton-only demo, avatar, anatomy illustration, or synthetic humanoid.\n"
         "Judge realism only for the moving athlete/body performing the exercise. Animated text, timers, captions, title graphics, logos, or other overlays on top of real footage are not a subject-realism failure.\n"
@@ -10968,6 +11108,9 @@ def build_candidate_vision_prompt(
         '"movement_action_path_visible": boolean, '
         '"movement_end_posture_visible": boolean, '
         '"no_setup_or_talking_frames": boolean, '
+        '"contract_start_state_match": boolean, '
+        '"contract_end_state_match": boolean, '
+        '"all_required_phases_visible": boolean, '
         '"target_identity_match": boolean, '
         '"target_match": number, '
         '"complete_movement": number, '

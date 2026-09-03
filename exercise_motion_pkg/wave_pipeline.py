@@ -28,6 +28,7 @@ from exercise_motion_pkg.bake_and_rank import (
 )
 from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
 from exercise_motion_pkg.wham_runner import WhamTrackingPreflightRejected
+from exercise_motion_pkg.source_outcomes import update_source_outcome_index
 
 
 STAGED_SOURCE_PORTFOLIO_MAX_SIZE = 3
@@ -147,6 +148,44 @@ def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, 
         "sessionDirs": stopped_dirs,
         "elapsedSeconds": round(time.perf_counter() - started, 3),
     }
+
+
+def _record_wave_source_rejections(
+    items: list[StagedWaveItem],
+    item_states: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    updates: list[dict[str, Any]] = []
+    for item in items:
+        index_path = item.request.source_outcome_index
+        if index_path is None:
+            continue
+        candidate_by_key = {
+            _candidate_key(candidate): candidate for candidate in _wave_candidates(item.request)
+        }
+        state = item_states.get(item.exercise_id) or {}
+        source = state.get("source") if isinstance(state.get("source"), dict) else {}
+        rejected_results: list[dict[str, Any]] = []
+        for attempt in source.get("attempts") or []:
+            if not isinstance(attempt, dict) or attempt.get("status") == "prepared":
+                continue
+            candidate = candidate_by_key.get(str(attempt.get("candidateKey") or ""))
+            candidate_payload = dict(candidate.candidate) if candidate is not None else {
+                "videoId": attempt.get("videoId")
+            }
+            rejected_results.append(
+                {
+                    "candidate": candidate_payload,
+                    "status": attempt.get("status"),
+                    "sourceFailureReason": attempt.get("failureReason") or attempt.get("error"),
+                    "sourceRejectionReasons": attempt.get("reasons") or [],
+                    "reconstructionAttempted": False,
+                }
+            )
+        if rejected_results:
+            update = update_source_outcome_index(index_path, rejected_results)
+            if update is not None:
+                updates.append(update)
+    return updates
 
 
 def run_staged_bake_wave(
@@ -617,6 +656,15 @@ def run_staged_bake_wave(
 
     completed = [state for state in item_states.values() if state["status"] == "completed"]
     retry = [state for state in item_states.values() if state["status"] != "completed"]
+    try:
+        metrics["rejectedSourceOutcomeUpdates"] = _record_wave_source_rejections(
+            items,
+            item_states,
+        )
+    except Exception as exc:
+        metrics["rejectedSourceOutcomeUpdates"] = [
+            {"error": f"{type(exc).__name__}: {exc}"}
+        ]
     report = _checkpoint_payload(
         wave_id=wave_id,
         stage="completed",

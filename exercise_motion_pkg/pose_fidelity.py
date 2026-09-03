@@ -40,6 +40,8 @@ ALIGNMENT_JOINTS = (
     "left_knee",
     "right_knee",
 )
+PROJECTION_COARSE_ANGLE_STEP_DEGREES = 15.0
+PROJECTION_REFINEMENT_STEPS_DEGREES = (3.0, 0.5)
 
 
 def source_to_motion_pose_fidelity_metrics(
@@ -50,9 +52,11 @@ def source_to_motion_pose_fidelity_metrics(
 
     A similarity fit uses only the torso and proximal lower body. All limbs are
     then evaluated outside that fit, so a wrong support posture or asymmetric
-    arm reconstruction cannot optimize its own error away. Both horizontal
-    world axes and a mirrored source view are evaluated, but one projection is
-    selected for the entire clip.
+    arm reconstruction cannot optimize its own error away. Camera-horizontal
+    directions spanning the world XZ plane and a mirrored source view are
+    evaluated, but one projection is selected for the entire clip. This is
+    required for three-quarter sources: treating them as pure X or pure Z
+    injects visible sagittal motion into the model's lateral axis.
     """
     source_frames = _pose_frames(source_payload, source=True)
     motion_frames = _pose_frames(motion_payload, source=False)
@@ -63,18 +67,59 @@ def source_to_motion_pose_fidelity_metrics(
             reason="insufficient_pose_frames",
         )
 
-    mode_metrics = [
-        _projection_metrics(
-            source_frames,
-            motion_frames,
-            horizontal_axis=axis,
-            mirror=mirror,
-            swap_bilateral=swap_bilateral,
-        )
-        for axis in (0, 2)
-        for mirror in (False, True)
-        for swap_bilateral in (False, True)
+    mode_metrics: list[dict[str, Any]] = []
+    coarse_angles = [
+        float(value)
+        for value in range(0, 180, round(PROJECTION_COARSE_ANGLE_STEP_DEGREES))
     ]
+    for mirror in (False, True):
+        for swap_bilateral in (False, True):
+            branch_metrics = [
+                _projection_metrics_for_angle(
+                    source_frames,
+                    motion_frames,
+                    angle_degrees=angle_degrees,
+                    mirror=mirror,
+                    swap_bilateral=swap_bilateral,
+                )
+                for angle_degrees in coarse_angles
+            ]
+            mode_metrics.extend(branch_metrics)
+            usable_branch = [
+                metrics
+                for metrics in branch_metrics
+                if metrics.get("comparableFrameCount", 0) >= 5
+            ]
+            if not usable_branch:
+                continue
+            branch_best = min(usable_branch, key=_projection_selection_key)
+            best_angle = float(branch_best["projectionHorizontalAngleDegrees"])
+            search_radius = PROJECTION_COARSE_ANGLE_STEP_DEGREES
+            for refinement_step in PROJECTION_REFINEMENT_STEPS_DEGREES:
+                offsets = range(
+                    -round(search_radius / refinement_step),
+                    round(search_radius / refinement_step) + 1,
+                )
+                refinements = [
+                    _projection_metrics_for_angle(
+                        source_frames,
+                        motion_frames,
+                        angle_degrees=(best_angle + offset * refinement_step) % 180.0,
+                        mirror=mirror,
+                        swap_bilateral=swap_bilateral,
+                    )
+                    for offset in offsets
+                ]
+                mode_metrics.extend(refinements)
+                usable_refinements = [
+                    metrics
+                    for metrics in refinements
+                    if metrics.get("comparableFrameCount", 0) >= 5
+                ]
+                if usable_refinements:
+                    branch_best = min(usable_refinements, key=_projection_selection_key)
+                    best_angle = float(branch_best["projectionHorizontalAngleDegrees"])
+                search_radius = refinement_step
     usable = [metrics for metrics in mode_metrics if metrics.get("comparableFrameCount", 0) >= 5]
     if not usable:
         return _unavailable_metrics(
@@ -84,10 +129,7 @@ def source_to_motion_pose_fidelity_metrics(
         )
     selected = min(
         usable,
-        key=lambda metrics: (
-            _number_or_inf(metrics.get("medianJointErrorBodyRatio")),
-            _number_or_inf(metrics.get("p90JointErrorBodyRatio")),
-        ),
+        key=_projection_selection_key,
     )
     return {
         **selected,
@@ -98,11 +140,36 @@ def source_to_motion_pose_fidelity_metrics(
     }
 
 
+def _projection_metrics_for_angle(
+    source_frames: list[dict[str, Any]],
+    motion_frames: list[dict[str, Any]],
+    *,
+    angle_degrees: float,
+    mirror: bool,
+    swap_bilateral: bool,
+) -> dict[str, Any]:
+    angle_radians = math.radians(angle_degrees)
+    return _projection_metrics(
+        source_frames,
+        motion_frames,
+        horizontal_vector=(math.cos(angle_radians), math.sin(angle_radians)),
+        mirror=mirror,
+        swap_bilateral=swap_bilateral,
+    )
+
+
+def _projection_selection_key(metrics: dict[str, Any]) -> tuple[float, float]:
+    return (
+        _number_or_inf(metrics.get("medianJointErrorBodyRatio")),
+        _number_or_inf(metrics.get("p90JointErrorBodyRatio")),
+    )
+
+
 def _projection_metrics(
     source_frames: list[dict[str, Any]],
     motion_frames: list[dict[str, Any]],
     *,
-    horizontal_axis: int,
+    horizontal_vector: tuple[float, float],
     mirror: bool,
     swap_bilateral: bool,
 ) -> dict[str, Any]:
@@ -128,7 +195,7 @@ def _projection_metrics(
         motion_fit = [
             _project_motion_point(
                 motion_joints[_bilateral_name(name, swap=swap_bilateral)],
-                horizontal_axis=horizontal_axis,
+                horizontal_vector=horizontal_vector,
                 mirror=mirror,
             )
             for name in fit_names
@@ -143,7 +210,11 @@ def _projection_metrics(
         projected: dict[str, tuple[float, float]] = {}
         for name, point in motion_joints.items():
             projected[_bilateral_name(name, swap=swap_bilateral)] = _apply_similarity(
-                _project_motion_point(point, horizontal_axis=horizontal_axis, mirror=mirror),
+                _project_motion_point(
+                    point,
+                    horizontal_vector=horizontal_vector,
+                    mirror=mirror,
+                ),
                 transform,
             )
         for name in POSE_JOINTS:
@@ -165,7 +236,11 @@ def _projection_metrics(
     lower_errors = [value for name in LOWER_BODY_JOINTS for value in joint_errors[name]]
     all_angle_errors = [value for values in angle_errors.values() for value in values]
     return {
-        "projectionHorizontalAxis": "x" if horizontal_axis == 0 else "z",
+        "projectionHorizontalAxis": _projection_axis_label(horizontal_vector),
+        "projectionHorizontalVector": list(horizontal_vector),
+        "projectionHorizontalAngleDegrees": math.degrees(
+            math.atan2(horizontal_vector[1], horizontal_vector[0])
+        ),
         "mirrored": mirror,
         "bilateralAssignment": "swapped" if swap_bilateral else "identity",
         "comparableFrameCount": comparable_frames,
@@ -246,11 +321,22 @@ def _point(value: Any, *, dimensions: int) -> tuple[float, ...] | None:
 def _project_motion_point(
     point: tuple[float, ...],
     *,
-    horizontal_axis: int,
+    horizontal_axis: int | None = None,
+    horizontal_vector: tuple[float, float] | None = None,
     mirror: bool,
 ) -> tuple[float, float]:
-    horizontal = point[horizontal_axis]
+    if horizontal_vector is None:
+        horizontal_vector = (1.0, 0.0) if horizontal_axis == 0 else (0.0, 1.0)
+    horizontal = point[0] * horizontal_vector[0] + point[2] * horizontal_vector[1]
     return (-horizontal if mirror else horizontal, -point[1])
+
+
+def _projection_axis_label(horizontal_vector: tuple[float, float]) -> str:
+    if abs(horizontal_vector[1]) <= 1e-9:
+        return "x"
+    if abs(horizontal_vector[0]) <= 1e-9:
+        return "z"
+    return "xz"
 
 
 def _similarity_transform(

@@ -36,6 +36,8 @@ FLOOR_DISTANCE_JOINTS = (
     "pelvis",
     "left_wrist",
     "right_wrist",
+    "left_elbow",
+    "right_elbow",
     "left_hand",
     "right_hand",
 )
@@ -121,6 +123,20 @@ def support_joint_names_for_mode(support_mode_hint: str | None) -> tuple[str, ..
         return ("left_knee", "right_knee")
     if mode == "quadruped":
         return ("left_hand", "right_hand", "left_knee", "right_knee")
+    if mode == "horizontal":
+        # A horizontal body may be supported from either end (for example a
+        # plank versus a lying press). Let the measured floor plane select the
+        # actual contact instead of applying the upright, feet-only default.
+        return (
+            "left_wrist",
+            "right_wrist",
+            "left_hand",
+            "right_hand",
+            "left_ankle",
+            "right_ankle",
+            "left_foot",
+            "right_foot",
+        )
     return ("left_ankle", "right_ankle", "left_foot", "right_foot")
 
 
@@ -240,10 +256,26 @@ def align_motion_clip_to_video(
 
     alignment_time = depth_samples[len(depth_samples) // 2].time_seconds
     motion_frame = min(clip.frames, key=lambda frame: abs(frame.time_sec - alignment_time))
-    inferred_support_joint_names = infer_support_joint_names_from_floor_distances(
-        motion_frame.joints,
-        video_distances=video_distances,
-    )
+    inferred_support_joint_names = ()
+    support_inference_source = "video_depth_floor_distance"
+    if str(support_mode_hint or "").casefold() == "horizontal":
+        inferred_support_joint_names = infer_horizontal_support_joint_names_from_source_pose(
+            source_pose_payload,
+            available_joint_names=(motion_frame.joints.keys() & video_distances.keys()),
+        )
+        if inferred_support_joint_names:
+            support_inference_source = "source_pose_shared_image_support_plane"
+    if not inferred_support_joint_names:
+        allowed_support_joint_names = (
+            support_joint_names_for_mode(support_mode_hint)
+            if str(support_mode_hint or "").casefold() not in {"", "horizontal"}
+            else None
+        )
+        inferred_support_joint_names = infer_support_joint_names_from_floor_distances(
+            motion_frame.joints,
+            video_distances=video_distances,
+            allowed_joint_names=allowed_support_joint_names,
+        )
     if len(inferred_support_joint_names) < 2:
         return _empty_alignment_result(
             clip,
@@ -331,6 +363,7 @@ def align_motion_clip_to_video(
             name: round(value, 4) for name, value in sorted(normalized_video_distances.items())
         },
         "inferredSupportJointNames": list(inferred_support_joint_names),
+        "supportInferenceSource": support_inference_source,
         "orientationConstraintJointNames": list(
             orientation_constraint_joint_names
         ),
@@ -693,15 +726,23 @@ def infer_support_joint_names_from_floor_distances(
     source_joints: dict[str, tuple[float, float, float]],
     *,
     video_distances: dict[str, float],
+    allowed_joint_names: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
     """Infer physical contacts from measured floor proximity, not exercise type."""
+    allowed = set(allowed_joint_names) if allowed_joint_names is not None else None
     families: list[tuple[tuple[str, str], float]] = []
     for left_group, right_group in GENERIC_BILATERAL_SUPPORT_FAMILIES:
         left_available = [
-            name for name in left_group if name in source_joints and name in video_distances
+            name for name in left_group
+            if name in source_joints
+            and name in video_distances
+            and (allowed is None or name in allowed)
         ]
         right_available = [
-            name for name in right_group if name in source_joints and name in video_distances
+            name for name in right_group
+            if name in source_joints
+            and name in video_distances
+            and (allowed is None or name in allowed)
         ]
         if not left_available or not right_available:
             continue
@@ -730,10 +771,59 @@ def infer_support_joint_names_from_floor_distances(
         )
         for group in GENERIC_SUPPORT_JOINT_GROUPS
         if (available := [
-            name for name in group if name in source_joints and name in video_distances
+            name for name in group
+            if name in source_joints
+            and name in video_distances
+            and (allowed is None or name in allowed)
         ])
     ]
     return tuple(name for name, _distance in sorted(representatives, key=lambda item: item[1])[:2])
+
+
+def infer_horizontal_support_joint_names_from_source_pose(
+    pose_payload: dict[str, Any],
+    *,
+    available_joint_names: Iterable[str],
+) -> tuple[str, ...]:
+    """Find horizontal floor supports from image height before depth alignment."""
+    frames = pose_payload.get("frames")
+    if not isinstance(frames, list):
+        return ()
+    available = set(available_joint_names)
+    candidate_names = (
+        "left_wrist",
+        "right_wrist",
+        "left_elbow",
+        "right_elbow",
+        "left_ankle",
+        "right_ankle",
+        "left_knee",
+        "right_knee",
+    )
+    median_image_y: dict[str, float] = {}
+    for joint_name in candidate_names:
+        if joint_name not in available:
+            continue
+        values: list[float] = []
+        for frame in frames:
+            joints = frame.get("joints") if isinstance(frame, dict) else None
+            point = joints.get(joint_name) if isinstance(joints, dict) else None
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+            y = float(point[1])
+            if math.isfinite(y):
+                values.append(y)
+        if len(values) >= max(2, len(frames) // 3):
+            median_image_y[joint_name] = float(np.median(values))
+    if len(median_image_y) < 2:
+        return ()
+    support_plane_y = float(np.percentile(list(median_image_y.values()), 90))
+    selected = tuple(
+        name
+        for name in candidate_names
+        if name in median_image_y and support_plane_y - median_image_y[name] <= 0.10
+    )
+    return selected if len(selected) >= 2 else ()
 
 
 def regularize_impossible_bilateral_floor_distances(

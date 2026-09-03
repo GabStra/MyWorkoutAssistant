@@ -222,6 +222,18 @@ def _generic_contact_candidates_temporal(clip: MotionClip) -> list[str]:
         if isinstance(name, str) and name in clip.joint_names
     )
 
+    if (
+        isinstance(alignment, dict)
+        and alignment.get("supportInferenceSource")
+        == "source_pose_shared_image_support_plane"
+        and candidate_set
+    ):
+        distances = _video_floor_distances(clip)
+        return sorted(
+            candidate_set,
+            key=lambda name: abs(distances.get(name, float("inf"))),
+        )
+
     # Add any additional joints whose video distance track looks stable over time.
     obs = _video_floor_distance_observations(clip)
     for group in GENERIC_CONTACT_JOINT_GROUPS:
@@ -754,12 +766,13 @@ def solve_temporal_contact_rigid_world_alignment(
             aligned, frame_contacts
         )
 
-    # A measured video floor normal already fixes the clip's world pitch.
-    # Re-fitting pitch around the contact pair afterward can rotate a valid
-    # standing body into a seated/leaning pose merely to reduce penetration.
-    # Translation and local non-penetration below handle floor placement.
+    # A measured video floor normal fixes upright world pitch, so do not
+    # re-fit ordinary standing clips around their contacts. Horizontal clips
+    # explicitly preserve authoritative contacts, though; a rigid hinge about
+    # that measured support pair is the only correction that can remove body
+    # penetration without making the support float.
     hinge_rotation_degrees = 0.0
-    if not uses_authoritative_floor_normal:
+    if not uses_authoritative_floor_normal or preserve_authoritative_contacts:
         aligned, hinge_rotation_degrees = _apply_consistent_contact_hinge(
             aligned,
             frame_contacts,

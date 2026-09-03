@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -80,6 +81,43 @@ SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "main()"
 )
 SPINEPOSE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+EQUIPMENT_SUPPORTED_MODES = {"seated", "lying"}
+
+
+def support_mode_allows_video_floor_alignment(support_mode_hint: str | None) -> bool:
+    return str(support_mode_hint or "").strip().casefold() not in EQUIPMENT_SUPPORTED_MODES
+
+
+def assert_equipment_supported_orientation(
+    clip: MotionClip,
+    *,
+    support_mode_hint: str | None,
+) -> None:
+    """Reject post-processing that turns a contractually lying body upright."""
+    if str(support_mode_hint or "").strip().casefold() != "lying":
+        return
+    torso_axes = []
+    for frame in clip.frames:
+        pelvis = frame.joints.get("pelvis")
+        neck = frame.joints.get("neck")
+        if pelvis is None or neck is None:
+            continue
+        torso_axes.append(
+            (
+                abs(neck[1] - pelvis[1]),
+                ((neck[0] - pelvis[0]) ** 2 + (neck[2] - pelvis[2]) ** 2) ** 0.5,
+            )
+        )
+    if not torso_axes:
+        return
+    median_vertical = statistics.median(axis[0] for axis in torso_axes)
+    median_horizontal = statistics.median(axis[1] for axis in torso_axes)
+    if median_horizontal <= median_vertical:
+        raise ValueError(
+            "Lying support orientation was lost during motion post-processing: "
+            f"median horizontal torso span {median_horizontal:.4f} is not greater "
+            f"than vertical span {median_vertical:.4f}."
+        )
 
 
 class IncompleteWhamTrackingError(ValueError):
@@ -649,6 +687,7 @@ def run_generation_pipeline(
         if (
             video_world_alignment_should_run
             and ground_contact_mode_allows_floor_support(request.ground_contact_mode)
+            and support_mode_allows_video_floor_alignment(request.support_mode_hint)
         ):
             stage_started = time.perf_counter()
             alignment_result = align_motion_clip_to_video(
@@ -665,7 +704,13 @@ def run_generation_pipeline(
         elif video_world_alignment_should_run:
             video_alignment_metadata = {
                 "applied": False,
-                "reason": "ground_contact_mode_does_not_allow_floor_alignment",
+                "reason": (
+                    f"{str(request.support_mode_hint or '').strip().casefold()}_"
+                    "equipment_support_is_not_floor_support"
+                    if str(request.support_mode_hint or "").strip().casefold()
+                    in EQUIPMENT_SUPPORTED_MODES
+                    else "ground_contact_mode_does_not_allow_floor_alignment"
+                ),
                 "groundContactMode": str(request.ground_contact_mode or "unknown")
                 .strip()
                 .casefold(),
@@ -693,6 +738,10 @@ def run_generation_pipeline(
             dominant_chain_ratio=request.dominant_chain_ratio,
             non_dominant_damping=request.non_dominant_damping,
             non_dominant_radius_scale=request.non_dominant_radius_scale,
+        )
+        assert_equipment_supported_orientation(
+            cleaned_clip,
+            support_mode_hint=request.support_mode_hint,
         )
         record_timing("structuralRefinementSeconds", stage_started)
         ground_metadata_path = paths.cleaned_dir / "ground.metadata.json"

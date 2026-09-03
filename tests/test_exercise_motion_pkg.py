@@ -23,6 +23,7 @@ import exercise_motion_pkg.camera_stability as camera_stability_module
 import exercise_motion_pkg.ffmpeg_utils as ffmpeg_utils_module
 import exercise_motion_pkg.llama_defaults as llama_defaults_module
 import exercise_motion_pkg.preview as preview_module
+import exercise_motion_pkg.source_outcomes as source_outcomes_module
 import exercise_motion_pkg.target_motion as target_motion_module
 import exercise_motion_pkg.wham_runner as wham_runner_module
 from exercise_motion_pkg.wham_results import select_wham_subject
@@ -89,6 +90,7 @@ from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.video_world_alignment import (
     apply_rigid_transform_to_clip,
     fit_plane_ransac,
+    infer_horizontal_support_joint_names_from_source_pose,
     infer_orientation_constraint_joint_names,
     infer_support_joint_names_from_floor_distances,
     level_camera_floor_transform,
@@ -109,6 +111,7 @@ from exercise_motion_pkg.pipeline import (
     run_generation_pipeline,
 )
 import exercise_motion_pkg.pipeline as pipeline
+import exercise_motion_pkg.pose_fidelity as pose_fidelity_module
 from exercise_motion_pkg.pose_prefilter import (
     PoseDetection,
     PosePrefilterSettings,
@@ -2094,8 +2097,8 @@ def test_vertical_floor_contact_stabilization_removes_continuous_root_drift() ->
     assert metadata["maxAbsCorrection"] > 0.9
 
 
-def test_vertical_floor_contact_stabilization_preserves_intermittent_flight() -> None:
-    foot_heights = [0.0, 0.0, 0.0, 0.3, 0.5, 0.3, 0.0, 0.0, 0.0]
+def test_vertical_floor_contact_stabilization_preserves_intermittent_surface_heights() -> None:
+    foot_heights = [0.0, 0.0, 0.0, 0.3, 0.5, 0.6, 0.6, 0.6, 0.6]
     frames = [
         MotionFrame(
             time_sec=index / 30.0,
@@ -2117,8 +2120,12 @@ def test_vertical_floor_contact_stabilization_preserves_intermittent_flight() ->
 
     grounded_heights = [frame.joints["left_foot"][1] for frame in grounded.frames]
     assert grounded_heights[4] == pytest.approx(0.5)
-    assert grounded_heights[0] == pytest.approx(0.0)
-    assert metadata["correctedFrameCount"] == 6
+    assert grounded_heights == pytest.approx(foot_heights)
+    assert metadata == {
+        "applied": False,
+        "groundContactMode": "intermittent",
+        "reason": "distinct_contact_surface_heights_preserved",
+    }
 
 
 def test_vertical_floor_contact_stabilization_skips_hanging_motion() -> None:
@@ -2323,7 +2330,7 @@ def test_ground_contact_none_disables_floor_alignment_and_support_constraints() 
     cleaned, _ = cleanup_motion_clip(
         clip,
         motion_threshold=0.0,
-        padding_frames=0,
+        padding_frames=3,
         ground_contact_mode="none",
     )
 
@@ -2344,6 +2351,42 @@ def test_ground_contact_none_disables_floor_alignment_and_support_constraints() 
         "reason": "ground_contact_mode_does_not_allow_floor_support",
     }
     assert cleanup_metadata["supportProfile"]["groundContactFrames"] == 0
+
+
+def test_intermittent_upright_contact_detection_recovers_ballistic_flight_below_zero() -> None:
+    root_heights = [0.0, -0.05, -0.10, -0.05, 0.10, 0.20, 0.10, -0.05, -0.10, -0.05, 0.0]
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (index * 0.03, root_height, 0.0),
+                "neck": (index * 0.03, root_height + 0.7, 0.0),
+                # These deliberately remain below the arbitrary world origin:
+                # the legacy height predicate alone labels every frame planted.
+                "left_foot": (index * 0.03 - 0.1, -1.0, 0.0),
+                "right_foot": (index * 0.03 + 0.1, -1.0, 0.0),
+            },
+        )
+        for index, root_height in enumerate(root_heights)
+    ]
+    clip = MotionClip(fps=30.0, joint_names=list(frames[0].joints), frames=frames)
+
+    ordinary = detect_support_contact_states(clip, support_mode="upright")
+    intermittent = detect_support_contact_states(
+        clip,
+        support_mode="upright",
+        ground_contact_mode="intermittent",
+    )
+
+    assert all(state["state"] == "double_support" for state in ordinary)
+    assert intermittent[0]["state"] == "double_support"
+    assert intermittent[-1]["state"] == "double_support"
+    assert any(state["state"] == "airborne" for state in intermittent[3:8])
+    assert all(not state["contactJoints"] for state in intermittent if state["state"] == "airborne")
+    assert all(
+        state.get("contactInference") == "ballistic_root_phase"
+        for state in intermittent
+    )
 
 
 def test_cleanup_uses_hands_and_knees_for_horizontal_quadruped_pose() -> None:
@@ -2765,6 +2808,61 @@ def test_horizontal_contact_alignment_does_not_lift_authoritative_support() -> N
     )
 
 
+def test_source_pose_support_contacts_are_not_expanded_with_stationary_joints() -> None:
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "right_wrist": (0.0, 0.05, 0.0),
+                "right_elbow": (0.4, 0.05, 0.0),
+                "left_ankle": (1.0, -0.04, 0.0),
+                "pelvis": (0.5, 0.30, 0.0),
+            },
+        )
+        for index in range(5)
+    ]
+    observations = {
+        name: [
+            {"timeSeconds": index / 30.0, "distance": distance}
+            for index in range(5)
+        ]
+        for name, distance in {
+            "right_wrist": -0.02,
+            "right_elbow": 0.02,
+            "left_ankle": -0.04,
+            "pelvis": 0.30,
+        }.items()
+    }
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "videoWorldAlignment": {
+                "applied": True,
+                "outputGroundPlane": {"normal": [0.0, 1.0, 0.0]},
+                "supportInferenceSource": "source_pose_shared_image_support_plane",
+                "inferredSupportJointNames": ["right_wrist", "right_elbow"],
+                "orientationConstraintJointNames": ["right_wrist", "right_elbow"],
+                "videoFloorDistances": {
+                    "right_wrist": -0.02,
+                    "right_elbow": 0.02,
+                    "left_ankle": -0.04,
+                    "pelvis": 0.30,
+                },
+                "videoFloorDistanceObservations": observations,
+            }
+        },
+    )
+
+    _aligned, metadata = solve_contact_aware_rigid_world_alignment(
+        clip,
+        preserve_authoritative_contacts=True,
+    )
+
+    assert set(metadata["candidateJoints"]) == {"right_wrist", "right_elbow"}
+
+
 def test_materialized_cleanup_rejects_horizontal_support_collision_contradiction(
     tmp_path: Path,
 ) -> None:
@@ -3172,6 +3270,130 @@ def test_glute_bridge_support_hint_is_supine() -> None:
     ) == "supine"
 
 
+def test_seated_contract_hint_is_preserved_for_equipment_support() -> None:
+    assert bake_and_rank_module.exercise_support_mode_hint(
+        exercise_name="Spin Bike Seated Cycling",
+        exercise_motion_contract={
+            "supportMode": "seated",
+            "groundContactMode": "continuous",
+            "implementSupportMode": "external",
+        },
+    ) == "seated"
+
+
+def test_lying_contract_bypasses_distal_floor_alignment() -> None:
+    contract = {
+        "groundContactMode": "continuous",
+        "implementSupportMode": "external",
+        "startPoseConstraints": {
+            "supportMode": "lying",
+            "torsoOrientation": "horizontal",
+        },
+        "endPoseConstraints": {
+            "supportMode": "lying",
+            "torsoOrientation": "horizontal",
+        },
+    }
+
+    assert bake_and_rank_module.exercise_support_mode_hint(
+        exercise_name="Barbell Bench Press",
+        exercise_motion_contract=contract,
+    ) == "lying"
+    assert pipeline.support_mode_allows_video_floor_alignment("lying") is False
+    assert pipeline.support_mode_allows_video_floor_alignment("horizontal") is True
+
+
+def test_lying_cleanup_preserves_horizontal_torso_without_foot_grounding() -> None:
+    frames = []
+    for index, hand_height in enumerate((0.9, 0.7, 0.9, 0.7)):
+        joints = {
+            "pelvis": (0.0, 0.6, 0.0),
+            "neck": (0.7, 0.65, 0.0),
+            "left_ankle": (-0.5, 0.0, -0.2),
+            "right_ankle": (-0.5, 0.0, 0.2),
+            "left_hand": (0.6, hand_height, -0.2),
+            "right_hand": (0.6, hand_height, 0.2),
+        }
+        frames.append(MotionFrame(time_sec=index / 30.0, joints=joints))
+    clip = MotionClip(fps=30.0, joint_names=list(frames[0].joints), frames=frames)
+
+    cleaned, _ = cleanup_motion_clip(
+        clip,
+        motion_threshold=0.0,
+        padding_frames=3,
+        ground_contact_mode="continuous",
+        support_mode_hint="lying",
+    )
+
+    cleanup_metadata = cleaned.metadata["cleanup"]
+    assert detect_support_mode(clip, support_mode_hint="lying") == "lying"
+    assert cleanup_metadata["supportMode"] == "lying"
+    assert cleanup_metadata["verticalGrounding"]["reason"] == (
+        "lying_equipment_support_is_not_floor_support"
+    )
+    assert cleanup_metadata["supportSurfaceConstraint"] == {
+        "applied": False,
+        "reason": "equipment_support_is_not_floor_support",
+    }
+    pipeline.assert_equipment_supported_orientation(
+        cleaned,
+        support_mode_hint="lying",
+    )
+
+
+def test_lying_orientation_guard_rejects_upright_post_processing() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "neck"],
+        frames=[
+            MotionFrame(
+                time_sec=0.0,
+                joints={"pelvis": (0.0, 0.0, 0.0), "neck": (0.1, 0.7, 0.0)},
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Lying support orientation was lost"):
+        pipeline.assert_equipment_supported_orientation(
+            clip,
+            support_mode_hint="lying",
+        )
+
+
+def test_seated_equipment_support_does_not_ground_moving_pedals() -> None:
+    frames = []
+    for index, pedal_height in enumerate((0.20, 0.35, 0.50, 0.35)):
+        joints = {
+            "pelvis": (0.0, 1.0, 0.0),
+            "neck": (0.0, 1.6, 0.0),
+            "left_hip": (-0.15, 1.0, 0.0),
+            "right_hip": (0.15, 1.0, 0.0),
+            "left_knee": (-0.25, 0.65, 0.0),
+            "right_knee": (0.25, 0.65, 0.0),
+            "left_ankle": (-0.25, pedal_height, 0.0),
+            "right_ankle": (0.25, 0.70 - pedal_height, 0.0),
+            "left_foot": (-0.15, pedal_height, 0.0),
+            "right_foot": (0.35, 0.70 - pedal_height, 0.0),
+        }
+        frames.append(MotionFrame(time_sec=index / 30.0, joints=joints))
+    clip = MotionClip(fps=30.0, joint_names=list(frames[0].joints), frames=frames)
+
+    cleaned, _ = cleanup_motion_clip(
+        clip,
+        motion_threshold=0.0,
+        padding_frames=3,
+        ground_contact_mode="continuous",
+        support_mode_hint="seated",
+    )
+
+    assert detect_support_mode(clip, support_mode_hint="seated") == "seated"
+    assert cleaned.metadata["cleanup"]["supportMode"] == "seated"
+    assert cleaned.metadata["cleanup"]["supportSurfaceConstraint"]["applied"] is False
+    assert [
+        frame.joints["left_ankle"][1] for frame in cleaned.frames
+    ] == pytest.approx([frame.joints["left_ankle"][1] for frame in clip.frames])
+
+
 def test_kneeling_contract_hint_is_used_without_exercise_name_mapping() -> None:
     contract = {
         "startPoseConstraints": {
@@ -3192,6 +3414,65 @@ def test_kneeling_contract_hint_is_used_without_exercise_name_mapping() -> None:
         exercise_name="Ab Wheel Rollout",
         exercise_motion_contract={"groundContactMode": "continuous"},
     ) is None
+
+
+def test_standing_endpoint_contract_constrains_support_to_feet() -> None:
+    contract = {
+        "startPoseConstraints": {"supportMode": "standing"},
+        "endPoseConstraints": {"supportMode": "standing"},
+    }
+
+    assert bake_and_rank_module.exercise_support_mode_hint(
+        exercise_name="Box Jump",
+        exercise_motion_contract=contract,
+    ) == "upright"
+
+
+def test_horizontal_contract_uses_neutral_distal_support_hint() -> None:
+    contract = {
+        "startPoseConstraints": {
+            "supportMode": "any",
+            "torsoOrientation": "horizontal",
+        },
+        "endPoseConstraints": {
+            "supportMode": "any",
+            "torsoOrientation": "horizontal",
+        },
+    }
+
+    assert bake_and_rank_module.exercise_support_mode_hint(
+        exercise_name="Copenhagen Plank",
+        exercise_motion_contract=contract,
+    ) == "horizontal"
+    assert support_joint_names_for_mode("horizontal") == (
+        "left_wrist",
+        "right_wrist",
+        "left_hand",
+        "right_hand",
+        "left_ankle",
+        "right_ankle",
+        "left_foot",
+        "right_foot",
+    )
+
+
+def test_horizontal_source_pose_selects_floor_arm_not_elevated_feet() -> None:
+    joints = {
+        "right_wrist": [0.30, 0.83, 0.0],
+        "right_elbow": [0.29, 0.75, 0.0],
+        "left_wrist": [0.47, 0.23, 0.0],
+        "left_elbow": [0.37, 0.17, 0.0],
+        "left_ankle": [0.85, 0.40, 0.0],
+        "right_ankle": [0.76, 0.55, 0.0],
+        "left_knee": [0.68, 0.40, 0.0],
+        "right_knee": [0.64, 0.56, 0.0],
+    }
+    pose_payload = {"frames": [{"joints": joints} for _ in range(6)]}
+
+    assert infer_horizontal_support_joint_names_from_source_pose(
+        pose_payload,
+        available_joint_names=joints,
+    ) == ("right_wrist", "right_elbow")
 
 
 def test_preview_bake_disables_auto_world_alignment_for_kneeling_contract() -> None:
@@ -4049,6 +4330,473 @@ def test_estimate_motion_ground_plane_uses_grounded_ankles() -> None:
     assert plane.rms_error is not None
 
 
+def test_intermittent_transition_ground_plane_uses_lower_support_surface() -> None:
+    frames = []
+    for index in range(20):
+        foot_y = 0.05 if index < 10 else 0.55
+        frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    "pelvis": (0.0, 1.0 + foot_y, 0.0),
+                    "left_foot": (-0.1, foot_y, 0.0),
+                    "right_foot": (0.1, foot_y, 0.0),
+                },
+            )
+        )
+    contacts = [
+        {"contactJoints": ["left_foot", "right_foot"]}
+        if index < 4 or index >= 16
+        else {"contactJoints": []}
+        for index in range(20)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": contacts,
+            },
+        },
+    )
+
+    plane = estimate_motion_ground_plane(clip)
+
+    assert math.isclose(-plane.offset, 0.004, abs_tol=1e-9)
+
+
+def test_intermittent_travel_alignment_rotates_only_root_trajectory() -> None:
+    frames = []
+    for index in range(5):
+        root = (index * 0.1, 1.0, index * 0.1)
+        offsets = {
+            "pelvis": (0.0, 0.0, 0.0),
+            "neck": (0.0, 0.6, 0.0),
+            "left_shoulder": (-0.2, 0.5, 0.0),
+            "right_shoulder": (0.2, 0.5, 0.0),
+        }
+        frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    name: tuple(root[axis] + offset[axis] for axis in range(3))
+                    for name, offset in offsets.items()
+                },
+            )
+        )
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+            },
+        },
+    )
+
+    aligned, metadata = structural_refinement_module._align_root_travel_to_body_yaw(clip)
+
+    assert metadata["applied"] is True
+    for before, after in zip(clip.frames, aligned.frames):
+        for joint_name in clip.joint_names:
+            before_relative = tuple(
+                before.joints[joint_name][axis] - before.joints["pelvis"][axis]
+                for axis in range(3)
+            )
+            after_relative = tuple(
+                after.joints[joint_name][axis] - after.joints["pelvis"][axis]
+                for axis in range(3)
+            )
+            assert after_relative == pytest.approx(before_relative)
+    body_right = structural_refinement_module._body_local_frame(aligned.frames[0]).right
+    travel = tuple(
+        aligned.frames[-1].joints["pelvis"][axis]
+        - aligned.frames[0].joints["pelvis"][axis]
+        for axis in range(3)
+    )
+    horizontal_dot = body_right[0] * travel[0] + body_right[2] * travel[2]
+    assert horizontal_dot == pytest.approx(0.0, abs=1e-9)
+
+
+def test_distinct_contact_surface_stabilization_locks_each_episode_without_pose_deformation() -> None:
+    foot_heights = [0.046, 0.036, 0.30, 0.48, 0.556, 0.546]
+    contacts = [
+        {"contactJoints": ["right_foot"]},
+        {"contactJoints": ["right_foot"]},
+        {"contactJoints": []},
+        {"contactJoints": []},
+        {"contactJoints": ["right_foot"]},
+        {"contactJoints": ["right_foot"]},
+    ]
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (0.0, foot_y + 1.0, 0.0),
+                "right_foot": (0.1, foot_y, 0.0),
+            },
+        )
+        for index, foot_y in enumerate(foot_heights)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "right_foot"],
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": contacts,
+            },
+        },
+    )
+
+    stabilized, metadata = structural_refinement_module._stabilize_distinct_contact_surfaces(clip)
+
+    assert metadata["episodeCount"] == 2
+    for episode_indices in ((0, 1), (4, 5)):
+        surfaces = [
+            stabilized.frames[index].joints["right_foot"][1] - 0.046
+            for index in episode_indices
+        ]
+        assert surfaces[0] == pytest.approx(surfaces[1])
+    for before, after in zip(clip.frames, stabilized.frames):
+        before_offset = before.joints["pelvis"][1] - before.joints["right_foot"][1]
+        after_offset = after.joints["pelvis"][1] - after.joints["right_foot"][1]
+        assert after_offset == pytest.approx(before_offset)
+
+
+def test_distinct_surface_landing_uses_first_touchdown_height_not_episode_median() -> None:
+    foot_heights = [0.046, 0.046, 0.30, 0.546, 0.646, 0.746]
+    contact_frames = {0, 1, 3, 4, 5}
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (index * 0.1, foot_y + 1.0, 0.0),
+                "right_foot": (index * 0.1, foot_y, 0.0),
+            },
+        )
+        for index, foot_y in enumerate(foot_heights)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": [
+                    {"contactJoints": ["right_foot"] if index in contact_frames else []}
+                    for index in range(len(frames))
+                ],
+            },
+        },
+    )
+
+    stabilized, metadata = structural_refinement_module._stabilize_distinct_contact_surfaces(clip)
+
+    assert metadata["episodes"][-1]["surfaceHeight"] == pytest.approx(0.5)
+    assert stabilized.frames[3].joints["pelvis"][1] == pytest.approx(
+        clip.frames[3].joints["pelvis"][1]
+    )
+    assert [
+        stabilized.frames[index].joints["right_foot"][1]
+        for index in range(3, 6)
+    ] == pytest.approx([0.546, 0.546, 0.546])
+
+
+def test_same_phase_travel_uses_takeoff_to_landing_axis() -> None:
+    roots = [
+        (0.0, 1.0, 0.12),
+        (0.0, 1.0, 0.0),
+        (0.35, 1.3, 0.05),
+        (0.70, 1.3, -0.04),
+        (1.0, 1.0, 0.0),
+        (1.0, 1.0, 0.20),
+    ]
+    contacts = [True, True, False, False, True, True]
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": root,
+                "left_foot": (root[0], 0.0, root[2] - 0.1),
+                "right_foot": (root[0], 0.0, root[2] + 0.1),
+            },
+        )
+        for index, root in enumerate(roots)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_foot", "right_foot"],
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": [
+                    {"contactJoints": ["left_foot", "right_foot"] if contact else []}
+                    for contact in contacts
+                ],
+            },
+        },
+    )
+
+    straightened, metadata = structural_refinement_module._straighten_same_phase_bilateral_travel(
+        clip,
+        bilateral_modes={"legs": {"mode": "same_phase_symmetric"}},
+    )
+
+    assert metadata["directionSource"] == "takeoff_to_landing_support_centers"
+    assert [frame.joints["pelvis"][2] for frame in straightened.frames] == pytest.approx(
+        [0.0] * len(frames)
+    )
+
+
+def test_distinct_contact_surface_stabilization_locks_each_bilateral_foot() -> None:
+    frames = []
+    contacts = []
+    for index, slide in enumerate((-0.03, -0.01, 0.01, 0.03)):
+        frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    "pelvis": (0.0, 1.0, 0.0),
+                    "left_hip": (-0.12, 0.90, 0.0),
+                    "left_knee": (-0.16, 0.50, 0.02),
+                    "left_ankle": (-0.18 + slide, 0.09, 0.0),
+                    "left_foot": (-0.18 + slide, 0.046, 0.12),
+                    "right_hip": (0.12, 0.90, 0.0),
+                    "right_knee": (0.16, 0.50, 0.02),
+                    "right_ankle": (0.18 + slide, 0.09, 0.0),
+                    "right_foot": (0.18 + slide, 0.046, 0.12),
+                },
+            )
+        )
+        contacts.append({"contactJoints": ["left_foot", "right_foot"]})
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": contacts,
+            },
+        },
+    )
+
+    stabilized, metadata = structural_refinement_module._stabilize_distinct_contact_surfaces(clip)
+
+    assert len(metadata["bilateralFootAnchors"]) == 1
+    for foot_name in ("left_foot", "right_foot"):
+        horizontal_positions = {
+            (
+                round(frame.joints[foot_name][0], 9),
+                round(frame.joints[foot_name][2], 9),
+            )
+            for frame in stabilized.frames
+        }
+        assert len(horizontal_positions) == 1
+    pelvis_corrections = [
+        tuple(
+            after.joints["pelvis"][axis] - before.joints["pelvis"][axis]
+            for axis in range(3)
+        )
+        for before, after in zip(clip.frames, stabilized.frames)
+    ]
+    assert pelvis_corrections == pytest.approx([pelvis_corrections[0]] * len(frames))
+
+
+def test_distinct_surface_jump_keeps_airborne_feet_above_surface_transition() -> None:
+    foot_heights = [0.046, 0.046, -0.10, 0.00, 0.30, 0.646, 0.646]
+    contact_frames = {0, 1, 5, 6}
+    frames = []
+    contacts = []
+    for index, foot_height in enumerate(foot_heights):
+        travel = index * 0.08
+        # Simulate a reconstruction discontinuity when planted support ends.
+        distal_travel = travel + (0.25 if 2 <= index < 5 else 0.0)
+        joints = {
+            "pelvis": (travel, foot_height + 1.0, 0.0),
+            "left_hip": (travel - 0.12, foot_height + 0.90, 0.0),
+            "left_knee": (distal_travel - 0.14, foot_height + 0.50, 0.02),
+            "left_ankle": (distal_travel - 0.16, foot_height + 0.044, 0.0),
+            "left_foot": (distal_travel - 0.16, foot_height, 0.10),
+            "right_hip": (travel + 0.12, foot_height + 0.90, 0.0),
+            "right_knee": (distal_travel + 0.14, foot_height + 0.50, 0.02),
+            "right_ankle": (distal_travel + 0.16, foot_height + 0.044, 0.0),
+            "right_foot": (distal_travel + 0.16, foot_height, 0.10),
+        }
+        frames.append(MotionFrame(time_sec=index / 30.0, joints=joints))
+        contacts.append({
+            "contactJoints": (
+                ["left_foot", "right_foot"] if index in contact_frames else []
+            ),
+            "contactInference": "ballistic_root_phase",
+        })
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": contacts,
+            },
+        },
+    )
+
+    stabilized, metadata = structural_refinement_module._stabilize_distinct_contact_surfaces(clip)
+
+    departure_surface = support_surface_height(stabilized.frames[1].joints["left_foot"][1])
+    landing_surface = support_surface_height(stabilized.frames[5].joints["left_foot"][1])
+    for frame_index in range(2, 5):
+        blend = (frame_index - 1) / (5 - 1)
+        smooth_blend = blend * blend * (3.0 - 2.0 * blend)
+        minimum_surface = (
+            departure_surface * (1.0 - smooth_blend)
+            + landing_surface * smooth_blend
+        )
+        for foot_name in ("left_foot", "right_foot"):
+            assert support_surface_height(
+                stabilized.frames[frame_index].joints[foot_name][1]
+            ) >= minimum_surface - 1e-9
+    assert metadata["bilateralFootAnchors"][-1][
+        "maximumAirborneFootClearanceCorrection"
+    ] > 0.0
+    first_airborne_horizontal_step = abs(
+        stabilized.frames[2].joints["left_foot"][0]
+        - stabilized.frames[1].joints["left_foot"][0]
+    )
+    assert first_airborne_horizontal_step < 0.10
+    assert metadata["bilateralFootAnchors"][-1][
+        "maximumDepartureTransitionCorrection"
+    ] > 0.0
+    landing = stabilized.frames[5].joints
+    assert landing["pelvis"][0] == pytest.approx(
+        (landing["left_foot"][0] + landing["right_foot"][0]) * 0.5
+    )
+
+
+def test_distinct_surface_ascent_prunes_return_to_departure_surface_contact() -> None:
+    heights = [0.046, 0.046, 0.24, 0.040, 0.40, 0.596, 0.596]
+    contact_frames = {0, 1, 3, 5, 6}
+    frames = [
+        MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (index * 0.05, foot_y + 1.0, 0.0),
+                "right_foot": (index * 0.05, foot_y, 0.0),
+            },
+        )
+        for index, foot_y in enumerate(heights)
+    ]
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+                "footContacts": [
+                    {"contactJoints": ["right_foot"] if index in contact_frames else []}
+                    for index in range(len(frames))
+                ],
+            },
+        },
+    )
+
+    stabilized, metadata = structural_refinement_module._stabilize_distinct_contact_surfaces(clip)
+
+    assert metadata["episodeCount"] == 2
+    assert metadata["prunedPhysicallyUnorderedContactFrames"] == [3]
+    assert stabilized.metadata["cleanup"]["footContacts"][3]["contactJoints"] == []
+    assert stabilized.metadata["cleanup"]["footContacts"][3]["state"] == "flight"
+
+
+def test_terminal_stationary_foot_cluster_is_promoted_to_bilateral_landing() -> None:
+    frames = []
+    contacts = []
+    for index in range(4):
+        frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    "pelvis": (0.0, 1.0, 0.0),
+                    "left_hip": (-0.12, 0.80, 0.0),
+                    "left_knee": (-0.40, 0.52, 0.03),
+                    "left_ankle": (-0.12, 0.16, 0.0),
+                    "left_foot": (-0.12, 0.116, 0.10),
+                    "right_hip": (0.12, 0.95, 0.0),
+                    "right_knee": (0.12, 0.48, 0.03),
+                    "right_ankle": (0.12, 0.09, 0.0),
+                    "right_foot": (0.12, 0.046, 0.10),
+                },
+            )
+        )
+        contacts.append(
+            {"contactJoints": ["right_foot"]} if index >= 1 else {"contactJoints": []}
+        )
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={"cleanup": {"footContacts": contacts}},
+    )
+
+    repaired, metadata = structural_refinement_module._repair_terminal_bilateral_landing(clip)
+
+    assert metadata["applied"] is True
+    for index in range(1, 4):
+        assert set(repaired.metadata["cleanup"]["footContacts"][index]["contactJoints"]) == {
+            "left_foot",
+            "right_foot",
+        }
+        assert repaired.metadata["cleanup"]["footContacts"][index]["state"] == "double_support"
+        assert repaired.frames[index].joints["left_foot"][1] == pytest.approx(
+            repaired.frames[index].joints["right_foot"][1]
+        )
+
+
+def test_terminal_landing_promotion_does_not_convert_height_crossing_to_contact() -> None:
+    frames = []
+    contacts = []
+    for index in range(6):
+        moving_x = float(index) * 0.2 if index < 4 else 0.8
+        frames.append(MotionFrame(
+            time_sec=index / 30.0,
+            joints={
+                "pelvis": (moving_x, 1.0, 0.0),
+                "left_hip": (moving_x - 0.12, 0.85, 0.0),
+                "left_knee": (moving_x - 0.12, 0.48, 0.0),
+                "left_ankle": (moving_x - 0.12, 0.64, 0.0),
+                "left_foot": (moving_x - 0.12, 0.596, 0.1),
+                "right_hip": (moving_x + 0.12, 0.85, 0.0),
+                "right_knee": (moving_x + 0.12, 0.48, 0.0),
+                "right_ankle": (moving_x + 0.12, 0.64, 0.0),
+                "right_foot": (moving_x + 0.12, 0.596, 0.1),
+            },
+        ))
+        contacts.append(
+            {"contactJoints": ["right_foot"]} if index >= 4 else {"contactJoints": []}
+        )
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={"cleanup": {"footContacts": contacts}},
+    )
+
+    repaired, metadata = structural_refinement_module._repair_terminal_bilateral_landing(clip)
+
+    assert metadata["episodeStartFrame"] == 4
+    for index in range(4):
+        assert repaired.metadata["cleanup"]["footContacts"][index]["contactJoints"] == []
+
+
 def test_cleanup_grounds_to_lowest_foot_joint_when_available() -> None:
     clip = MotionClip(
         fps=30.0,
@@ -4191,6 +4939,124 @@ def test_preview_does_not_root_center_authoritative_planted_support(tmp_path: Pa
     assert "if (!currentFixedRoot || payload.hasAuthoritativePlantedSupport)" in text
 
 
+def test_preview_preserves_structurally_stabilized_foot_contacts(tmp_path: Path) -> None:
+    source = build_fixture_clip()
+    clip = replace(
+        source,
+        metadata={
+            **source.metadata,
+            "structuralRefinement": {
+                "contactSurfaceStabilization": {
+                    "applied": True,
+                    "episodes": [
+                        {"startFrame": 0, "endFrame": 2, "surfaceHeight": 0.0}
+                    ],
+                    "bilateralFootAnchors": [{
+                        "startFrame": 0,
+                        "endFrame": 2,
+                        "anchors": {
+                            "left_foot": [0.0, 0.0, -0.1],
+                            "right_foot": [0.0, 0.0, 0.1],
+                        },
+                    }],
+                }
+            },
+        },
+    )
+    output = tmp_path / "stabilized-foot-preview.html"
+
+    write_preview_html(output, clip, title="stabilized-feet")
+
+    text = output.read_text(encoding="utf-8")
+    assert '"hasAuthoritativePlantedSupport": true' in text
+    assert (
+        "renderingBakedWearPayload || payload.hasAuthoritativePlantedSupport"
+        in text
+    )
+
+
+def test_preview_preserves_accepted_contact_anchors_when_final_pass_needs_no_correction(
+    tmp_path: Path,
+) -> None:
+    source = build_fixture_clip()
+    clip = replace(
+        source,
+        metadata={
+            **source.metadata,
+            "structuralRefinement": {
+                "contactSurfaceStabilization": {
+                    "applied": False,
+                    "transaction": {"accepted": True},
+                    "episodes": [{"startFrame": 0, "endFrame": 2}],
+                    "bilateralFootAnchors": [{
+                        "anchors": {
+                            "left_foot": [0.0, 0.0, -0.1],
+                            "right_foot": [0.0, 0.0, 0.1],
+                        }
+                    }],
+                }
+            },
+        },
+    )
+    output = tmp_path / "accepted-contact-preview.html"
+
+    write_preview_html(output, clip, title="accepted-contact")
+
+    text = output.read_text(encoding="utf-8")
+    assert '"defaultFixedRoot": false' in text
+    assert '"hasAuthoritativePlantedSupport": true' in text
+
+
+def test_preview_does_not_recenter_authoritative_horizontal_travel(tmp_path: Path) -> None:
+    source = build_fixture_clip()
+    clip = replace(
+        source,
+        metadata={
+            **source.metadata,
+            "structuralRefinement": {
+                "travelYawAlignment": {
+                    "applied": True,
+                    "transaction": {"accepted": True},
+                },
+            },
+        },
+    )
+    output = tmp_path / "authoritative-travel-preview.html"
+
+    write_preview_html(output, clip, title="authoritative-travel")
+
+    text = output.read_text(encoding="utf-8")
+    assert '"preserveAuthoritativeHorizontalTravel": true' in text
+    assert "payload.preserveAuthoritativeHorizontalTravel" in text
+
+
+def test_preview_preserves_final_authoritative_horizontal_travel(tmp_path: Path) -> None:
+    source = build_fixture_clip()
+    clip = replace(
+        source,
+        metadata={
+            **source.metadata,
+            "structuralRefinement": {
+                "travelYawAlignment": {
+                    "applied": False,
+                    "transaction": {"accepted": True},
+                },
+                "finalTravelYawAlignment": {
+                    "applied": True,
+                    "transaction": {"accepted": True},
+                },
+            },
+        },
+    )
+    output = tmp_path / "final-authoritative-travel-preview.html"
+
+    write_preview_html(output, clip, title="final-authoritative-travel")
+
+    text = output.read_text(encoding="utf-8")
+    assert '"defaultFixedRoot": false' in text
+    assert '"preserveAuthoritativeHorizontalTravel": true' in text
+
+
 def test_kneeling_distal_support_pose_keeps_shoes_flat_and_forward() -> None:
     frames = [
         MotionFrame(
@@ -4219,9 +5085,23 @@ def test_kneeling_distal_support_pose_keeps_shoes_flat_and_forward() -> None:
         knee = stabilized.frames[0].joints[f"{side}_knee"]
         ankle = stabilized.frames[0].joints[f"{side}_ankle"]
         foot = stabilized.frames[0].joints[f"{side}_foot"]
+        median_source_vector = np.median(
+            np.asarray(
+                [
+                    np.asarray(frame.joints[f"{side}_ankle"])
+                    - np.asarray(frame.joints[f"{side}_knee"])
+                    for frame in clip.frames
+                ]
+            ),
+            axis=0,
+        )
+        source_shin_length = float(np.linalg.norm(median_source_vector))
         assert foot[1] == pytest.approx(ankle[1])
+        assert ankle[1] > knee[1]
         assert foot[0] < ankle[0]
         assert foot[2] == pytest.approx(ankle[2])
+        assert math.dist(knee, ankle) == pytest.approx(source_shin_length)
+        assert metadata["sides"][side]["belowSupportReflectionApplied"] is True
         for frame in stabilized.frames[1:]:
             assert frame.joints[f"{side}_ankle"] == pytest.approx(ankle)
             assert frame.joints[f"{side}_foot"] == pytest.approx(foot)
@@ -4888,6 +5768,39 @@ def test_preview_grid_uses_authoritative_render_ground_plane(tmp_path: Path) -> 
     assert "renderBakedWearFrame(exportPayload, frameIndex" in html
     assert "configureBakedWearPayloadForReview(exportPayload" in html
     assert "if (renderingBakedWearPayload)" in html
+
+
+def test_preview_allows_dynamic_axial_twist_only_for_forearms(tmp_path: Path) -> None:
+    html_path = tmp_path / "motion_preview.html"
+
+    write_preview_html(html_path, build_fixture_clip(), title="Stable limb twist preview")
+
+    html = html_path.read_text(encoding="utf-8")
+    assert 'startJointName === "left_elbow" && endJointName === "left_wrist"' in html
+    assert 'startJointName === "right_elbow" && endJointName === "right_wrist"' in html
+    assert "if (!dynamicAxialTwistAllowed)" in html
+    assert "reconciledCrossSectionReference" in html
+    assert "|| rotationMinimizingBoneCrossSectionReference(" in html
+
+
+def test_preview_uses_rotation_minimizing_orientation_for_all_limbs(tmp_path: Path) -> None:
+    html_path = tmp_path / "motion_preview.html"
+
+    write_preview_html(html_path, build_fixture_clip(), title="Stable shin twist preview")
+
+    html = html_path.read_text(encoding="utf-8")
+    assert "const rotationMinimizingReferenceCache = new WeakMap();" in html
+    assert "function rotationMinimizingBoneCrossSectionReference(" in html
+    assert "projectedAxis(previousReference, axis)" in html
+    assert "reference.dot(previousReference) < 0" in html
+    assert "mesh.quaternion.setFromRotationMatrix(tempMatrix);" in html
+    assert "mesh.userData.previousQuaternion = null;" in html
+    assert "let wearPreviousSides" not in html
+    assert "let wearStableSidesByFrame = null;" in html
+    assert "function wearBuildStableSidesByFrame()" in html
+    assert "previous.clone().addScaledVector(direction, -previous.dot(direction))" in html
+    assert "wearBuildHumanoid(joints, stableSides)" in html
+    assert "wearBoxRing(mesh, center, side, depth, width * .5, width * depthScale)" in html
 
 
 def test_detect_preview_loops_finds_repeating_motion_span() -> None:
@@ -6211,6 +7124,54 @@ def test_write_wear_skeleton_json_exports_baked_preview_payload(tmp_path: Path) 
     assert payload["bakedPreviewConfiguration"]["invertScene"] is False
     assert payload["bakedPreviewConfiguration"]["canonicalWorldUp"] is True
     assert len(payload["frames"]) == payload["frameCount"]
+
+
+def test_wear_skeleton_preserves_authoritative_horizontal_travel() -> None:
+    source = build_fixture_clip()
+    translated_frames = []
+    for index, frame in enumerate(source.frames):
+        horizontal_offset = index * 0.2
+        translated_frames.append(
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    name: (point[0] + horizontal_offset, point[1], point[2])
+                    for name, point in frame.joints.items()
+                },
+            )
+        )
+    clip = replace(
+        source,
+        frames=translated_frames,
+        metadata={
+            **source.metadata,
+            "structuralRefinement": {
+                "strategy": "source_preserving_structural_refinement",
+                "travelYawAlignment": {
+                    "applied": True,
+                    "transaction": {"accepted": True},
+                },
+            },
+        },
+    )
+
+    payload = build_wear_skeleton_payload(clip, title="travel-preview")
+
+    assert payload["bakedPreviewConfiguration"]["lockGlobalRootDrift"] is False
+    assert payload["bakedPreviewConfiguration"]["preserveAuthoritativeHorizontalTravel"] is True
+    rendered_start = payload["frames"][0]["joints"]["pelvis"]
+    rendered_end = payload["frames"][-1]["joints"]["pelvis"]
+    source_start = clip.frames[0].joints["pelvis"]
+    source_end = clip.frames[-1].joints["pelvis"]
+    rendered_travel = math.hypot(
+        rendered_end[0] - rendered_start[0],
+        rendered_end[2] - rendered_start[2],
+    )
+    source_travel = math.hypot(
+        source_end[0] - source_start[0],
+        source_end[2] - source_start[2],
+    )
+    assert rendered_travel == pytest.approx(source_travel)
 
 
 def test_wear_skeleton_payload_can_bake_selected_loop_and_y_drift_lock() -> None:
@@ -7697,7 +8658,12 @@ def test_prepare_input_video_trims_youtube_downloaded_source_segment(tmp_path: P
 
     captured: dict[str, float | str] = {}
 
-    def fake_download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+    def fake_download_youtube(
+        url: str,
+        output_dir: Path,
+        cookies_path: Path | None = None,
+        **_kwargs: object,
+    ) -> Path:
         captured["downloaded_from"] = url
         captured["download_output_dir"] = str(output_dir)
         captured["cookies_path"] = str(cookies_path) if cookies_path is not None else ""
@@ -7801,6 +8767,20 @@ def test_build_youtube_download_options_supports_cookies_path(tmp_path: Path) ->
     )
 
     assert options["cookiefile"] == str(cookies_path)
+
+
+def test_reconstruction_download_prefers_480p_before_higher_resolutions(tmp_path: Path) -> None:
+    options = build_youtube_download_options(
+        outtmpl=str(tmp_path / "source.%(ext)s"),
+        quiet=True,
+        noprogress=True,
+        retries=1,
+    )
+
+    selectors = options["format"].split("/")
+    assert "height<=480" in selectors[0]
+    assert any("height<=720" in selector for selector in selectors[2:])
+    assert all("height<=1080" not in selector for selector in selectors)
 
 
 def test_resolve_ffmpeg_path_falls_back_to_imageio_binary(
@@ -8169,7 +9149,12 @@ def test_bake_source_download_does_not_promote_preview_cache_to_full_source(
     cached = preview_cache / f"{cache_stem}.mp4"
     cached.write_bytes(b"cached-video")
 
-    def fake_download_youtube(url: str, output_dir: Path, cookies_path: Path | None = None) -> Path:
+    def fake_download_youtube(
+        url: str,
+        output_dir: Path,
+        cookies_path: Path | None = None,
+        **_kwargs: object,
+    ) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         downloaded = output_dir / "source.mp4"
         downloaded.write_bytes(b"full-source-video")
@@ -8345,7 +9330,7 @@ def test_download_youtube_preview_writes_sanitized_preview_to_cache(
     assert result.read_bytes() == b"sanitized"
 
 
-def test_build_youtube_download_options_prefers_low_resolution_video_only(
+def test_build_youtube_download_options_prefers_reconstruction_resolution_video_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -8360,8 +9345,8 @@ def test_build_youtube_download_options_prefers_low_resolution_video_only(
     )
 
     format_selector = options["format"]
-    assert "bestvideo[height<=360]" in format_selector
-    assert "bestvideo[height<=480]" in format_selector
+    assert "bestvideo[height<=720]" in format_selector
+    assert "bestvideo[height<=1080]" in format_selector
     assert "bestaudio" not in format_selector
     assert "acodec" not in format_selector
     assert options["ffmpeg_location"] == "ffmpeg"
@@ -8576,6 +9561,29 @@ def test_video_alignment_infers_mixed_hand_and_foot_support() -> None:
         "left_wrist",
         "right_wrist",
     }
+
+
+def test_video_alignment_upright_authority_excludes_false_shoulder_support() -> None:
+    source_joints = {
+        "left_ankle": (-0.1, 0.0, 0.0),
+        "right_ankle": (0.1, 0.0, 0.0),
+        "left_shoulder": (-0.2, 1.4, 0.0),
+        "right_shoulder": (0.2, 1.4, 0.0),
+    }
+    distances = {
+        "left_ankle": 1.0,
+        "right_ankle": 1.03,
+        "left_shoulder": 0.01,
+        "right_shoulder": 0.02,
+    }
+
+    inferred = infer_support_joint_names_from_floor_distances(
+        source_joints,
+        video_distances=distances,
+        allowed_joint_names=support_joint_names_for_mode("upright"),
+    )
+
+    assert inferred == ("left_ankle", "right_ankle")
 
 
 def test_video_alignment_replaces_impossible_bilateral_depth_outlier() -> None:
@@ -11149,13 +12157,14 @@ def test_llama_cpp_server_mtp_conflict_checks_mode_and_model() -> None:
 def test_build_youtube_queries_biases_motion_extraction_candidates() -> None:
     queries = build_youtube_queries("Bench Press")
 
-    assert queries[:8] == [
+    assert queries[:9] == [
         '"Bench Press" shorts',
         '"Bench Press" #shorts',
         '"Bench Press" full rep shorts',
         '"Bench Press" exercise demonstration',
         '"Bench Press" exercise demo full rep',
         '"Bench Press" proper form',
+        '"Bench Press" three quarter view exercise',
         '"Bench Press" side view exercise',
         '"Bench Press" single person exercise demo',
     ]
@@ -11199,7 +12208,7 @@ def test_build_youtube_queries_adds_common_movement_synonyms() -> None:
 def test_build_youtube_queries_keeps_equipment_aliases_small() -> None:
     queries = build_youtube_queries("Dumbbell Bulgarian Split Squat")
 
-    assert len(queries) == 11
+    assert len(queries) == 12
     assert any(query.startswith('"Bulgarian Split Squat" exercise demonstration') for query in queries)
     assert not any("DB " in query for query in queries)
     assert not any("Rear Foot Elevated" in query for query in queries)
@@ -11745,7 +12754,7 @@ def test_review_pool_demotes_unrequested_partial_execution_title() -> None:
     assert [candidate.video_id for candidate in ranked] == ["full", "partial"]
 
 
-def test_review_pool_prioritizes_side_view_title_over_bare_exact_title() -> None:
+def test_review_pool_does_not_prioritize_named_view_angle_over_exact_title() -> None:
     exercise = ExerciseEntry(exercise_id="EXERCISE_0", name="Ab Wheel Rollout", slug="ab-wheel-rollout")
     settings = YouTubeRankingSettings(min_duration_seconds=0, max_duration_seconds=120)
     exact_short = YouTubeCandidate(
@@ -11773,13 +12782,14 @@ def test_review_pool_prioritizes_side_view_title_over_bare_exact_title() -> None
 
     ranked = rank_youtube_review_pool(exercise, [exact_short, side_view], settings)
 
-    assert [candidate.video_id for candidate in ranked] == ["side", "exact"]
+    assert [candidate.video_id for candidate in ranked] == ["exact", "side"]
 
 
-def test_youtube_search_expansion_runs_after_zero_suitable_even_for_single_name_query() -> None:
+def test_youtube_search_expansion_runs_below_portfolio_target_even_for_single_name_query() -> None:
     settings = YouTubeRankingSettings(
         single_exercise_name_query=True,
         semantic_gate_enabled=True,
+        candidate_review_target_suitable_count=2,
     )
 
     assert youtube_module.youtube_candidate_search_should_expand(
@@ -11788,8 +12798,14 @@ def test_youtube_search_expansion_runs_after_zero_suitable_even_for_single_name_
         expanded_results_per_query=60,
         search_expansion_queries=['"Ab Wheel Rollout" continuous reps side angle'],
     )
-    assert not youtube_module.youtube_candidate_search_should_expand(
+    assert youtube_module.youtube_candidate_search_should_expand(
         suitable_count=1,
+        settings=settings,
+        expanded_results_per_query=60,
+        search_expansion_queries=['"Ab Wheel Rollout" continuous reps side angle'],
+    )
+    assert not youtube_module.youtube_candidate_search_should_expand(
+        suitable_count=2,
         settings=settings,
         expanded_results_per_query=60,
         search_expansion_queries=['"Ab Wheel Rollout" continuous reps side angle'],
@@ -12911,6 +13927,32 @@ def test_candidate_vision_prompt_requires_exact_chunk_movement_not_context() -> 
     assert "natural start or finish posture" in prompt
     assert "brief boundary postures are directly attached to the full movement" in prompt
     assert "walking into position" in prompt
+    assert "contract_start_state_match" in prompt
+    assert "contract_end_state_match" in prompt
+    assert "all_required_phases_visible" in prompt
+
+
+def test_vision_scoring_rejects_missing_contract_phase_despite_generic_completion() -> None:
+    score, reasons = score_candidate_vision_payload(
+        high_quality_vision_payload_for_test(
+            complete_repetition_visible=True,
+            movement_start_posture_visible=True,
+            primary_effort_phase_visible=True,
+            movement_action_path_visible=True,
+            movement_end_posture_visible=True,
+            no_setup_or_talking_frames=True,
+            contract_start_state_match=True,
+            contract_end_state_match=False,
+            all_required_phases_visible=False,
+            complete_movement=1.0,
+            source_score=1.0,
+        )
+    )
+
+    assert score <= 0.34
+    assert "contract_end_state_match_failed" in reasons
+    assert "all_required_phases_visible_failed" in reasons
+    assert "valid_motion_scene" not in reasons
 
 
 def test_candidate_vision_prompt_includes_generated_exercise_motion_contract() -> None:
@@ -13726,6 +14768,8 @@ def test_final_output_prompt_uses_motion_contract_not_skeleton_contract(tmp_path
     assert "skeleton-specific guidance" not in prompt
     assert "renderer-defined colors" in prompt
     assert "blue limbs, slate torso, purple head, and orange joint markers" not in prompt
+    assert "Repeated one-frame direction reversals" in prompt
+    assert "limb-local twisting is not merely a camera-orientation concern" in prompt
 
 
 def test_final_output_wrong_variant_is_a_hard_identity_failure(tmp_path: Path) -> None:
@@ -15196,7 +16240,7 @@ def test_normalize_exercise_motion_contract_unpacks_nested_advisory_json() -> No
     assert contract["requiresReturnToStart"] is True
     assert contract["completionMode"] == "return_to_start"
     assert contract["advisoryText"].startswith("Source: standing before descent")
-    assert contract["requiredPhases"] == ["descend", "ascend"]
+    assert contract["requiredPhases"] == ["descend", "Return to start: ascend"]
     assert "{" not in contract["advisoryText"]
     assert "rerack" in contract["advisoryText"]
 
@@ -15225,13 +16269,79 @@ def test_normalize_exercise_motion_contract_derives_repetition_return_and_matchi
     assert contract["validEndState"] == contract["validStartState"]
     assert contract["requiredPhases"] == [
         "lower bar to chest",
-        "press bar upward",
+        "Return to start: press bar upward",
     ]
     assert contract["movementTopology"]["endState"]["label"] == contract["movementTopology"]["startState"]["label"]
     assert contract["movementTopology"]["phases"][0]["label"] == "lower bar to chest"
     assert contract["contractPolicyVersion"] == youtube_module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
     assert "bar resting on the chest" not in contract["advisoryText"]
     assert youtube_module.exercise_motion_contract_has_specific_topology(contract) is True
+
+
+def test_normalize_exercise_motion_contract_repairs_schema_leaking_phase_labels() -> None:
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "movementType": "repetition",
+            "completionMode": "return_to_start",
+            **pose_contract_fields(
+                support_mode="lying",
+                hand_height="shoulder_chest",
+                torso_orientation="horizontal",
+                knee_state="flexed",
+                stance="shoulder_width",
+            ),
+            "validStartState": "bar locked out above the chest",
+            "validEndState": "bar locked out above the chest",
+            "requiredPhases": [
+                "phase Name: lowering description: Lower the bar under control",
+                "phase Name: press description: Press the bar to lockout",
+            ],
+            "primaryMovingRegions": ["upper_limb"],
+            "referenceRegions": ["torso"],
+            "primaryAxis": "vertical",
+            "motionPattern": "joint_travel",
+            "mustBeVisibleRegions": ["upper_limb", "torso"],
+        },
+        exercise=ExerciseEntry(
+            exercise_id="bench",
+            name="Barbell Bench Press",
+            slug="barbell-bench-press",
+        ),
+        source="test",
+    )
+
+    assert contract["requiredPhases"] == [
+        "Lower the bar under control",
+        "Return to start: Press the bar to lockout",
+    ]
+    assert youtube_module.exercise_motion_contract_quality_issues(contract) == []
+
+
+def test_candidate_vision_prompt_requires_accessory_support_role() -> None:
+    prompt = build_candidate_vision_prompt(
+        "Copenhagen Plank",
+        YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=test",
+            video_id="test",
+            title="Copenhagen Plank demo",
+            channel=None,
+            duration_seconds=20,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+        ),
+        {
+            "exerciseName": "Copenhagen Plank",
+            "advisoryText": "Hold a side plank with the upper leg supported.",
+            "motionContext": {
+                "requiredAccessories": [{"name": "flat bench"}],
+            },
+        },
+    )
+
+    assert "Required support/accessories: flat bench" in prompt
+    assert "background presence is insufficient" in prompt
 
 
 def test_source_pose_endpoint_contract_rejects_overhead_split_when_front_rack_start_is_required() -> None:
@@ -15286,6 +16396,33 @@ def test_source_pose_endpoint_contract_accepts_hinged_below_hip_rack_pull_bounda
     assert endpoints["start"]["handHeight"] == "below_hips"
     assert endpoints["start"]["torsoOrientation"] == "hinged"
     assert validation["passed"] is True
+
+
+def test_source_pose_endpoint_contract_rejects_airborne_start_as_standing() -> None:
+    frames = [source_pose_frame(wrists_y=0.70) for _ in range(12)]
+    # The first boundary samples translate upward together, as during flight;
+    # leg extension alone must not be mistaken for grounded standing support.
+    for index, frame in enumerate(frames[:3]):
+        offset = -0.09 * index
+        for point in frame["joints"].values():
+            point[1] += offset
+
+    endpoints = bake_and_rank_module.source_pose_endpoint_feature_summary({"frames": frames})
+    validation = bake_and_rank_module.validate_source_pose_endpoints_against_contract(
+        endpoints,
+        {
+            **pose_contract_fields(),
+            "primaryMovingRegions": ["hips", "knees", "feet"],
+        },
+    )
+
+    assert endpoints["start"]["supportMode"] == "airborne"
+    assert endpoints["start"]["supportMotion"]["commonBodyTranslation"] is True
+    assert validation["passed"] is False
+    assert ("start", "supportMode") in {
+        (mismatch["endpoint"], mismatch["field"])
+        for mismatch in validation["blockingMismatches"]
+    }
 
 
 def test_source_pose_endpoint_contract_keeps_non_primary_hand_height_diagnostic() -> None:
@@ -17116,7 +18253,7 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
         "excludedCandidateCount": 0,
         "excludedCandidateKeyCount": 0,
         "candidateReviewBatchSize": 12,
-        "candidateReviewTargetSuitableCount": 1,
+            "candidateReviewTargetSuitableCount": 2,
         "discoveryProgressJsonlPath": str(out_path.with_name("youtube_discovery_progress.jsonl")),
         "queryPlanningEnabled": False,
         "queryPlannerBackend": None,
@@ -17162,8 +18299,12 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
     assert saved["ranking"]["timing"]["posePrefilterElapsedSeconds"] >= 0.0
     assert saved["ranking"]["timing"]["visionScoringElapsedSeconds"] >= 0.0
     assert len(saved["exercises"]) == 2
-    assert len(calls) == len(build_youtube_queries("Squat")) + len(build_youtube_queries("Push Up"))
-    assert saved["exercises"][0]["queries"] == build_youtube_queries("Squat")
+    assert len(calls) > len(build_youtube_queries("Squat")) + len(build_youtube_queries("Push Up"))
+    assert all(
+        exercise["candidateExpansion"]["searchExpansionTriggered"] is True
+        for exercise in saved["exercises"]
+    )
+    assert set(build_youtube_queries("Squat")).issubset(saved["exercises"][0]["queries"])
     assert saved["exercises"][0]["queryPlanning"] == {
         "enabled": False,
         "backend": None,
@@ -17172,7 +18313,7 @@ def test_discover_and_rank_youtube_candidates_writes_manifest_with_mocked_search
     }
     first_candidate = saved["exercises"][0]["candidates"][0]
     assert first_candidate["visionScore"] == 0.9
-    assert first_candidate["visionPayload"] == {"full_body_visible": True}
+    assert first_candidate["visionPayload"]["full_body_visible"] is True
     assert first_candidate["status"] == "recommended"
     assert "full_body_visible" in first_candidate["scoreReasons"]
 
@@ -18579,6 +19720,7 @@ def test_discover_youtube_candidates_rewrites_exercise_name_before_search(tmp_pa
             results_per_query=5,
             youtube_search_empty_retries=0,
             max_candidates=3,
+            candidate_review_target_suitable_count=1,
         ),
         search_fn=fake_search,
         exercise_name_rewriter=fake_rewriter,
@@ -18589,8 +19731,8 @@ def test_discover_youtube_candidates_rewrites_exercise_name_before_search(tmp_pa
     assert exercise["sourceExerciseName"] == "Calves"
     assert exercise["equipmentQualifiedExerciseName"] == "Barbell Calves"
     assert exercise["exerciseNameRewrite"]["applied"] is True
-    assert exercise["queries"] == build_youtube_queries("Barbell Calf Raise")
-    assert calls == build_youtube_queries("Barbell Calf Raise")
+    assert set(build_youtube_queries("Barbell Calf Raise")).issubset(exercise["queries"])
+    assert calls == exercise["queries"]
 
 
 def test_discover_youtube_candidates_excludes_previous_processed_manifest(tmp_path: Path) -> None:
@@ -21051,7 +22193,7 @@ def test_pose_prefilter_front_or_back_view_does_not_reject_candidate_before_visi
     assert youtube_module.youtube_candidate_is_suitable_after_review(kept, settings) is True
 
 
-def test_apply_vision_score_uses_semantic_pose_short_demo_fallback() -> None:
+def test_apply_vision_score_does_not_override_visual_rejection_for_short_demo() -> None:
     candidate = YouTubeCandidate(
         url="https://www.youtube.com/watch?v=short-demo",
         video_id="short-demo",
@@ -21104,20 +22246,15 @@ def test_apply_vision_score_uses_semantic_pose_short_demo_fallback() -> None:
         ),
     )
 
-    assert reviewed.status == "recommended"
-    assert reviewed.vision_score == pytest.approx(0.86)
-    assert reviewed.final_score >= 0.68
-    assert "semantic_pose_short_demo_source_fallback" in reviewed.score_reasons
-    assert "partial_movement_penalty" not in reviewed.score_reasons
+    assert reviewed.status == "rejected"
+    assert reviewed.vision_score == pytest.approx(0.18)
+    assert reviewed.final_score < 0.68
+    assert "semantic_pose_short_demo_source_fallback" not in reviewed.score_reasons
+    assert "partial_movement_penalty" in reviewed.score_reasons
     assert reviewed.vision_payload is not None
-    assert reviewed.vision_payload["advisoryVlmSourceReview"]["bestChunkScore"] == pytest.approx(0.18)
-    assert reviewed.vision_payload["deterministicSourceFallback"]["type"] == "semantic_pose_short_demo"
-    assert reviewed.vision_payload["bestChunkStartSeconds"] == pytest.approx(0.0)
-    assert reviewed.vision_payload["bestChunkEndSeconds"] == pytest.approx(20.0)
-    assert reviewed.vision_payload["bestChunkScore"] == pytest.approx(0.86)
-    assert reviewed.vision_payload["validChunkCount"] == 1
-    assert reviewed.vision_payload["chunkEvidenceCapApplied"] is False
-    assert reviewed.vision_payload["target_identity_match"] is True
+    assert "deterministicSourceFallback" not in reviewed.vision_payload
+    assert reviewed.vision_payload["bestChunkScore"] == pytest.approx(0.18)
+    assert reviewed.vision_payload["validChunkCount"] == 0
     assert reviewed.vision_payload["correct_exercise"] is True
 
     strict_reviewed = apply_vision_score(
@@ -21147,6 +22284,29 @@ def test_apply_vision_score_uses_semantic_pose_short_demo_fallback() -> None:
     assert strict_reviewed.vision_score == pytest.approx(0.18)
     assert "semantic_pose_short_demo_source_fallback" not in strict_reviewed.score_reasons
     assert "partial_movement_penalty" in strict_reviewed.score_reasons
+
+    distinct_end_reviewed = apply_vision_score(
+        candidate,
+        0.18,
+        ["partial_movement_penalty"],
+        {
+            "bestChunkScore": 0.18,
+            "validChunkCount": 0,
+            "scoredChunkCount": 2,
+            "correct_exercise": True,
+            "usable_for_motion_extraction": False,
+        },
+        settings=YouTubeRankingSettings(
+            semantic_gate_enabled=True,
+            pose_prefilter_enabled=True,
+            min_duration_seconds=10,
+        ),
+        exercise_motion_contract={"completionMode": "distinct_end_state"},
+    )
+
+    assert distinct_end_reviewed.vision_score == pytest.approx(0.18)
+    assert "semantic_pose_short_demo_source_fallback" not in distinct_end_reviewed.score_reasons
+    assert "partial_movement_penalty" in distinct_end_reviewed.score_reasons
 
 
 def test_discover_and_rank_youtube_candidates_filters_low_semantic_score_before_pose(
@@ -21325,6 +22485,7 @@ def test_youtube_duration_rejects_do_not_consume_semantic_review(
         settings=YouTubeRankingSettings(
             results_per_query=5,
             max_candidates=3,
+            candidate_review_target_suitable_count=1,
             max_duration_seconds=120,
             semantic_gate_enabled=True,
             semantic_gate_candidates_per_exercise=2,
@@ -21333,7 +22494,7 @@ def test_youtube_duration_rejects_do_not_consume_semantic_review(
         semantic_gate=fake_semantic_gate,
     )
 
-    assert semantic_reviewed == ["short", "long"]
+    assert set(semantic_reviewed) == {"short", "long"}
     assert [candidate["videoId"] for candidate in manifest["exercises"][0]["candidates"]] == ["short", "long"]
     debug_by_id = {
         candidate["videoId"]: candidate
@@ -21984,6 +23145,7 @@ def test_discover_and_rank_youtube_candidates_uses_semantic_order_before_expansi
         settings=YouTubeRankingSettings(
             results_per_query=8,
             max_candidates=3,
+            candidate_review_target_suitable_count=1,
             semantic_gate_enabled=True,
             semantic_gate_candidates_per_exercise=2,
             pose_prefilter_enabled=True,
@@ -22144,11 +23306,11 @@ def test_discover_and_rank_youtube_candidates_searches_more_when_expanded_pool_h
     assert expansion["searchExpansionTriggered"] is True
     assert expansion["searchExpansionNewCandidateCount"] == 1
     assert expansion["searchExpansionInitialResultsPerQuery"] == 3
-    assert expansion["searchExpansionResultsPerQuery"] == 13
+    assert expansion["searchExpansionResultsPerQuery"] == 6
     assert expansion["searchExpandedSuitableCandidateCount"] == 1
     assert any(
-        attempt["phase"] == "expanded_after_no_suitable_candidate"
-        and attempt["resultsPerQuery"] == 13
+            attempt["phase"] == "expanded_after_no_suitable_candidate"
+            and attempt["resultsPerQuery"] == 6
         and attempt["newCandidateCount"] == 1
         for attempt in exercise_payload["searchAttempts"]
     )
@@ -22273,7 +23435,7 @@ def test_discover_and_rank_youtube_candidates_expands_search_after_single_name_q
     assert expansion["searchExpansionTriggered"] is True
     assert exercise_payload["candidates"][0]["videoId"] == "usable-side"
     assert any(results_per_query > 3 for _query, results_per_query in search_calls)
-    assert any("side angle" in query or "side view" in query for query, _results in search_calls)
+    assert any(query == '"Cable Abs Crunch"' and results == 6 for query, results in search_calls)
 
 
 def test_discover_and_rank_youtube_candidates_expands_with_contract_alias_queries_when_depth_is_capped(
@@ -23582,7 +24744,7 @@ def test_pre_wham_priority_orders_by_yolo_trackability_not_side_view() -> None:
     )
 
 
-def test_pre_wham_priority_uses_reconstruction_quality_only_as_trackability_tiebreaker() -> None:
+def test_pre_wham_priority_does_not_reward_view_angle_as_trackability_tiebreaker() -> None:
     def candidate(video_id: str, view_quality: float) -> RankedCandidate:
         return RankedCandidate(
             exercise_index=0,
@@ -23612,7 +24774,49 @@ def test_pre_wham_priority_uses_reconstruction_quality_only_as_trackability_tieb
         [candidate("first", 0.20), candidate("second", 0.99)]
     )
 
-    assert [item.video_id for item in prioritized] == ["second", "first"]
+    assert [item.video_id for item in prioritized] == ["first", "second"]
+
+
+def test_pre_wham_priority_places_orientation_diverse_candidate_second() -> None:
+    def candidate(video_id: str, view_evidence: float, observability: float) -> RankedCandidate:
+        return RankedCandidate(
+            exercise_index=0,
+            candidate_rank=0,
+            exercise_id="row",
+            exercise_name="Row",
+            exercise_slug="row",
+            candidate={
+                "videoId": video_id,
+                "title": video_id,
+                "visionPayload": {
+                    "posePrefilter": {
+                        "singlePersonRatio": observability,
+                        "keypointCoverage": observability,
+                        "wholeMovementJointVisibility": observability,
+                        "cropSafety": observability,
+                        "cameraStability": observability,
+                        "bodyScaleRatio": observability,
+                        "activeJointVisibility": observability,
+                        "activeChainVisibility": observability,
+                        "bilateralActiveChainBalance": observability,
+                        "motionStrength": observability,
+                        "frontalOrBackViewEvidence": view_evidence,
+                    }
+                },
+            },
+        )
+
+    prioritized = bake_and_rank_module.prioritize_ranked_candidates_for_reconstruction(
+        [
+            candidate("best", 0.50, 1.0),
+            candidate("similar", 0.55, 0.95),
+            candidate("different", 0.05, 0.90),
+        ]
+    )
+
+    assert [item.video_id for item in prioritized] == ["best", "different", "similar"]
+    assert prioritized[1].candidate["preWhamOrientationDiverseFallback"] is True
+    assert prioritized[1].candidate["preWhamOrientationDiversityFromPrimary"] == pytest.approx(0.45)
 
 
 def test_pre_wham_priority_does_not_let_view_quality_displace_better_tracking() -> None:
@@ -23659,6 +24863,250 @@ def test_pre_wham_priority_keeps_original_order_without_pose_metrics() -> None:
     assert [item.video_id for item in prioritized] == ["a", "b", "c"]
 
 
+def test_source_outcome_index_persists_video_and_channel_history(tmp_path: Path) -> None:
+    index_path = tmp_path / "source-outcomes.json"
+    source_outcomes_module.update_source_outcome_index(
+        index_path,
+        [
+            {
+                "candidate": {"videoId": "accepted", "channel": "Good Coach"},
+                "status": "ready_for_selection",
+                "reconstructionAttempted": True,
+                "finalSelectionStatus": "selected",
+            },
+            {
+                "candidate": {"videoId": "rejected", "channel": "Other"},
+                "status": "source_rejected",
+                "sourceFailureReason": "cropped_body",
+            },
+        ],
+    )
+
+    index = source_outcomes_module.load_source_outcome_index(index_path)
+    accepted = source_outcomes_module.source_outcome_prior(
+        index, video_id="accepted", channel="Good Coach"
+    )
+    rejected = source_outcomes_module.source_outcome_prior(
+        index, video_id="rejected", channel="Other"
+    )
+
+    assert accepted["score"] > rejected["score"]
+    assert index["sources"]["video:accepted"]["accepts"] == 1
+    assert index["sources"]["video:rejected"]["rejectionCounts"]["status:source_rejected"] == 1
+    assert index["sources"]["video:rejected"]["rejectionCounts"]["cropped_body"] == 1
+
+
+def test_legacy_materialized_acceptance_counts_as_source_success() -> None:
+    assert source_outcomes_module.candidate_result_is_accepted(
+        {"finalSelectionStatus": "accepted_after_materialized_review"}
+    )
+
+
+def test_source_rejection_taxonomy_ignores_embedded_discovery_advisories() -> None:
+    tags = source_outcomes_module.rejection_tags_from_candidate_result(
+        {
+            "status": "skipped_pre_wham_source_validation",
+            "candidate": {
+                "scoreReasons": ["wrong_exercise", "setup_or_talking"],
+                "visionPayload": {"blocking_issues": ["wrong_exercise"]},
+            },
+            "failures": {
+                "reason": "pre_wham_source_validation_rejected",
+                "reasonTags": ["source_candidate_scorecard_no_passing_candidate"],
+            },
+        }
+    )
+
+    assert "status:skipped_pre_wham_source_validation" in tags
+    assert "source_candidate_scorecard_no_passing_candidate" in tags
+    assert "wrong_exercise" not in tags
+
+
+def test_source_rejection_taxonomy_ignores_positive_reason_lists() -> None:
+    tags = source_outcomes_module.rejection_tags_from_candidate_result(
+        {
+            "status": "ready_for_selection",
+            "reasons": ["strong_geometry_hints", "exact_pre_wham_return_cycle_validated"],
+            "finalOutputRejectionReasons": ["gross_pose_reconstruction_error"],
+        }
+    )
+
+    assert tags == ["gross_pose_reconstruction_error"]
+
+
+def test_source_outcome_prior_changes_review_order_without_bypassing_gates(tmp_path: Path) -> None:
+    index_path = tmp_path / "source-outcomes.json"
+    source_outcomes_module.update_source_outcome_index(
+        index_path,
+        [
+            {
+                "candidate": {"videoId": "known-good", "channel": "Coach"},
+                "status": "ready_for_selection",
+                "reconstructionAttempted": True,
+                "finalSelectionStatus": "selected",
+            }
+        ],
+    )
+    settings = youtube_module.YouTubeRankingSettings(source_outcome_index=index_path)
+    exercise = youtube_module.ExerciseEntry("row", "Row", "row")
+    candidates = [
+        youtube_module.YouTubeCandidate("u1", "unknown", "Row", "Other", 20, 10, None, None, None),
+        youtube_module.YouTubeCandidate("u2", "known-good", "Row", "Coach", 20, 10, None, None, None),
+    ]
+
+    ranked = youtube_module.rank_youtube_review_pool(exercise, candidates, settings)
+
+    assert [candidate.video_id for candidate in ranked] == ["known-good", "unknown"]
+    assert ranked[0].vision_payload["sourceOutcomePrior"]["sourceAttempts"] == 1
+
+
+def test_adaptive_retry_prefers_trackable_source_after_tracking_failure() -> None:
+    def candidate(video_id: str, quality: float) -> RankedCandidate:
+        return RankedCandidate(
+            0,
+            0,
+            "row",
+            "Row",
+            "row",
+            {
+                "videoId": video_id,
+                "title": video_id,
+                "visionPayload": {
+                    "posePrefilter": {
+                        "singlePersonRatio": quality,
+                        "keypointCoverage": quality,
+                        "wholeMovementJointVisibility": quality,
+                        "activeJointVisibility": quality,
+                        "activeChainVisibility": quality,
+                        "bilateralActiveChainBalance": quality,
+                        "motionStrength": quality,
+                        "cropSafety": quality,
+                        "cameraStability": quality,
+                        "bodyScaleRatio": quality,
+                    }
+                },
+            },
+        )
+
+    reordered = bake_and_rank_module.reprioritize_candidates_after_failure(
+        [candidate("weak", 0.4), candidate("clean", 0.95)],
+        failed_candidate=candidate("failed", 0.5),
+        failed_result={"status": "failed", "trackingFailure": "severe_tracking_corruption"},
+    )
+
+    assert [item.video_id for item in reordered] == ["clean", "weak"]
+    assert reordered[0].candidate["adaptiveRetryPriority"]["trackabilityTargeted"] is True
+
+
+def test_adaptive_retry_uses_distinct_source_after_reconstruction_failure() -> None:
+    def candidate(video_id: str, window_start: float, quality: float) -> RankedCandidate:
+        return RankedCandidate(
+            0,
+            0,
+            "row",
+            "Row",
+            "row",
+            {
+                "videoId": video_id,
+                "title": f"{video_id}-{window_start}",
+                "sourceWindowHint": {
+                    "startSeconds": window_start,
+                    "endSeconds": window_start + 4.0,
+                },
+                "visionPayload": {
+                    "posePrefilter": {
+                        "singlePersonRatio": quality,
+                        "keypointCoverage": quality,
+                        "wholeMovementJointVisibility": quality,
+                    }
+                },
+            },
+        )
+
+    reordered = bake_and_rank_module.reprioritize_candidates_after_failure(
+        [candidate("same-video", 8.0, 0.99), candidate("other-video", 0.0, 0.5)],
+        failed_candidate=candidate("same-video", 0.0, 0.8),
+        failed_result={
+            "status": "ready_for_selection",
+            "reconstructionAttempted": True,
+            "finalSelectionStatus": "rejected",
+            "finalOutputRejectionReasons": ["severe_tracking_corruption"],
+        },
+    )
+
+    assert [item.video_id for item in reordered] == ["other-video"]
+    assert (
+        reordered[0].candidate["adaptiveRetryPriority"][
+            "distinctSourceAfterReconstructionFailure"
+        ]
+        is True
+    )
+
+
+def test_adaptive_retry_drops_other_windows_from_reconstructed_source() -> None:
+    failed = RankedCandidate(
+        0,
+        0,
+        "row",
+        "Row",
+        "row",
+        {"videoId": "same-video", "title": "first window"},
+    )
+    same_source_window = replace(
+        failed,
+        candidate={
+            "videoId": "same-video",
+            "title": "second window",
+            "sourceWindowHint": {"startSeconds": 5.0, "endSeconds": 10.0},
+        },
+    )
+
+    reordered = bake_and_rank_module.reprioritize_candidates_after_failure(
+        [same_source_window],
+        failed_candidate=failed,
+        failed_result={"reconstructionAttempted": True},
+    )
+
+    assert reordered == []
+
+
+def test_parent_source_window_fallback_rejects_reconstruction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = RankedCandidate(
+        0,
+        0,
+        "bench",
+        "Bench Press",
+        "bench-press",
+        {
+            "videoId": "video",
+            "sourceWindowHint": {"startSeconds": 0.0, "endSeconds": 10.0},
+        },
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "materialized_rejection_reason_tags",
+        lambda _rejected: ["gross_pose_reconstruction_error"],
+    )
+    request = bake_and_rank_module.BakeAndRankRequest(
+        candidates_json=Path("candidates.json"),
+        workspace=Path("workspace"),
+        wham_repo_path=None,
+        body_model_root=None,
+    )
+
+    should_queue, reason = bake_and_rank_module.should_queue_parent_source_window_fallback(
+        candidate,
+        {"preWhamSourceCut": {"status": "selected"}},
+        None,
+        request=request,
+    )
+
+    assert should_queue is False
+    assert reason is None
+
+
 def _first_attempt_readiness_candidate(
     *,
     completion_mode: str,
@@ -23690,6 +25138,9 @@ def _first_attempt_readiness_candidate(
         "primary_effort_phase_visible": True,
         "movement_action_path_visible": True,
         "movement_end_posture_visible": True,
+        "contract_start_state_match": True,
+        "contract_end_state_match": True,
+        "all_required_phases_visible": True,
         "posePrefilter": pose_metrics,
     }
     if complete is not None:
@@ -23759,6 +25210,46 @@ def test_first_attempt_readiness_rejects_known_partial_closed_cycle() -> None:
     assert "known_incomplete_completion_mode_evidence" in assessment["reasons"]
 
 
+def test_first_attempt_readiness_rejects_distinct_end_state_missing_required_phase() -> None:
+    candidate = _first_attempt_readiness_candidate(completion_mode="distinct_end_state")
+    candidate.candidate["visionPayload"].update(
+        {
+            "contract_start_state_match": True,
+            "contract_end_state_match": False,
+            "all_required_phases_visible": False,
+        }
+    )
+
+    assessment = bake_and_rank_module.first_attempt_readiness_assessment(candidate)
+
+    assert assessment["eligible"] is False
+    assert assessment["completionState"] == "partial"
+    assert "distinct_state_transition_incomplete" in assessment["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("body_scale_ratio", "expected"),
+    [(0.18, True), (0.279, True), (0.28, False), (0.60, False), (None, False)],
+)
+def test_reconstruction_resolution_promotion_uses_subject_scale(
+    body_scale_ratio: float | None,
+    expected: bool,
+) -> None:
+    pose_payload: dict[str, object] = {}
+    if body_scale_ratio is not None:
+        pose_payload["bodyScaleRatio"] = body_scale_ratio
+    candidate = RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id="movement",
+        exercise_name="Movement",
+        exercise_slug="movement",
+        candidate={"visionPayload": {"posePrefilter": pose_payload}},
+    )
+
+    assert bake_and_rank_module.ranked_candidate_prefers_high_resolution_source(candidate) is expected
+
+
 def test_first_attempt_readiness_downgrades_weak_view_without_rejecting_source() -> None:
     candidate = _first_attempt_readiness_candidate(completion_mode="return_to_start")
     candidate.candidate["visionPayload"]["posePrefilter"]["reconstructionViewQuality"] = 0.0
@@ -23811,7 +25302,7 @@ def test_youtube_first_attempt_portfolio_target_is_adaptive(
     assert best_tier == tier
 
 
-def test_youtube_adaptive_high_readiness_stops_before_configured_expansion_target(
+def test_youtube_high_readiness_still_fills_configured_portfolio_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -23863,8 +25354,8 @@ def test_youtube_adaptive_high_readiness_stops_before_configured_expansion_targe
     batch = manifest["exercises"][0]["candidateExpansion"]["reviewBatches"][0]
     assert batch["configuredTargetSuitableCandidateCount"] == 3
     assert batch["adaptiveTargetSuitableCandidateCount"] == 1
-    assert batch["targetSuitableCandidateCount"] == 1
-    assert batch["stoppedAfterBatch"] is True
+    assert batch["targetSuitableCandidateCount"] == 3
+    assert batch["stoppedAfterBatch"] is False
 
 
 def test_youtube_adaptive_readiness_never_exceeds_configured_target(
@@ -23963,6 +25454,24 @@ def test_transition_sequence_queries_prioritize_full_return_and_exclude_shorts()
     )
 
     assert "complete transition sequence start to finish and return to start" in queries[0]
+    assert not any("shorts" in query.casefold() for query in queries)
+
+
+def test_distinct_end_state_queries_require_the_new_end_state_without_a_return() -> None:
+    queries = youtube_module.build_youtube_queries_with_contract_aliases(
+        "Box Jump",
+        {
+            "status": "generated",
+            "contractPolicyVersion": youtube_module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+            "movementType": "repetition",
+            "completionMode": "distinct_end_state",
+            "advisoryText": "Source: floor. Complete: land on box. Boundary: stop on box.",
+            "youtubeQueryAliases": [],
+        },
+    )
+
+    assert "ending in the distinct end position" in queries[0]
+    assert "return to start" not in queries[0]
     assert not any("shorts" in query.casefold() for query in queries)
 
 
@@ -25146,6 +26655,142 @@ def test_bake_and_rank_source_window_expansion_can_be_limited_to_best_window(tmp
     assert expanded[0].candidate.get("sourceWindowAttemptIndex") is None
 
 
+def test_incremental_selection_limits_wham_to_primary_and_one_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json",
+        workspace=tmp_path / "build",
+        wham_repo_path=None,
+        body_model_root=None,
+        fallback_candidates=2,
+        max_reconstruction_candidate_attempts=2,
+    )
+    candidates = [
+        RankedCandidate(
+            exercise_index=0,
+            candidate_rank=index,
+            exercise_id="row",
+            exercise_name="Row",
+            exercise_slug="row",
+            candidate={"videoId": video_id, "title": video_id},
+        )
+        for index, video_id in enumerate(("primary", "diverse", "unused"))
+    ]
+    processed: list[str] = []
+
+    def reject_after_reconstruction(
+        ranked_candidate: RankedCandidate,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        processed.append(ranked_candidate.video_id)
+        return {
+            "status": "rejected_raw_wham_validation",
+            "reconstructionAttempted": True,
+            "candidate": ranked_candidate.candidate,
+        }
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "process_ranked_candidate",
+        reject_after_reconstruction,
+    )
+
+    result = bake_and_rank_module.process_ranked_candidates_until_final_selection(
+        candidates,
+        request=request,
+        preview_baker=lambda *_args, **_kwargs: [],
+        effective_ranker=None,
+        support_dominance_classifier=None,
+    )
+
+    timings = result[-1]
+    assert processed == ["primary", "diverse"]
+    assert timings["reconstructionCandidateAttemptCount"] == 2
+    assert timings["stopReason"] == "reconstruction_candidate_budget_exhausted"
+
+
+def test_incremental_selection_does_not_charge_pre_wham_source_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json",
+        workspace=tmp_path / "build",
+        wham_repo_path=None,
+        body_model_root=None,
+        fallback_candidates=2,
+        max_reconstruction_candidate_attempts=2,
+    )
+    candidates = [
+        RankedCandidate(
+            exercise_index=0,
+            candidate_rank=index,
+            exercise_id="row",
+            exercise_name="Row",
+            exercise_slug="row",
+            candidate={"videoId": video_id, "title": video_id},
+        )
+        for index, video_id in enumerate(("pre-wham-reject", "primary", "fallback"))
+    ]
+    processed: list[str] = []
+
+    def process_candidate(
+        ranked_candidate: RankedCandidate,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        processed.append(ranked_candidate.video_id)
+        attempted = ranked_candidate.video_id != "pre-wham-reject"
+        return {
+            "status": (
+                "rejected_raw_wham_validation"
+                if attempted
+                else "skipped_pre_wham_source_validation"
+            ),
+            "reconstructionAttempted": attempted,
+            "candidate": ranked_candidate.candidate,
+        }
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "process_ranked_candidate",
+        process_candidate,
+    )
+
+    result = bake_and_rank_module.process_ranked_candidates_until_final_selection(
+        candidates,
+        request=request,
+        preview_baker=lambda *_args, **_kwargs: [],
+        effective_ranker=None,
+        support_dominance_classifier=None,
+    )
+
+    timings = result[-1]
+    assert processed == ["pre-wham-reject", "primary", "fallback"]
+    assert timings["reconstructionCandidateAttemptCount"] == 2
+    # The queue ends exactly on the budget, so there is no next candidate at
+    # which to emit a budget stop reason.
+    assert "stopReason" not in timings
+
+
+def test_gross_reconstruction_failure_is_not_exposed_as_manual_fallback() -> None:
+    rejected = (
+        None,
+        LoopRanking(
+            score=0.49,
+            reasons=["gross pose"],
+            payload={
+                "materializedHardRejectionReasons": [
+                    "gross_pose_reconstruction_error",
+                ],
+            },
+        ),
+    )
+
+    assert bake_and_rank_module.manual_review_fallback_is_safe(rejected) is False
+
+
 def test_source_window_expansion_keeps_complete_reviewed_chunk_below_duration_estimate(
     tmp_path: Path,
 ) -> None:
@@ -25695,10 +27340,21 @@ def test_launch_chromium_browser_falls_back_to_system_executable(tmp_path: Path)
 
     assert browser == {"browser": str(fallback_executable)}
     assert playwright.chromium.calls == [
-        {"headless": True, "args": ["--allow-file-access-from-files"]},
         {
             "headless": True,
-            "args": ["--allow-file-access-from-files"],
+            "args": [
+                "--allow-file-access-from-files",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ],
+        },
+        {
+            "headless": True,
+            "args": [
+                "--allow-file-access-from-files",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ],
             "executable_path": str(fallback_executable),
         },
     ]
@@ -25723,7 +27379,11 @@ def test_launch_chromium_browser_allows_local_preview_module_imports() -> None:
 
     assert playwright.chromium.launch_options == {
         "headless": True,
-        "args": ["--allow-file-access-from-files"],
+        "args": [
+            "--allow-file-access-from-files",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+        ],
     }
 
 
@@ -27015,6 +28675,49 @@ def test_source_gate_keeps_front_or_back_view_as_diagnostic() -> None:
     assert source_gate["reconstructionViewQuality"] == pytest.approx(0.019)
 
 
+def test_source_gate_rejects_depth_ambiguous_lying_support_view() -> None:
+    candidate = RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id="bench-press",
+        exercise_name="Barbell Bench Press",
+        exercise_slug="barbell-bench-press",
+        candidate={
+            "videoId": "foreshortened-bench",
+            "status": "recommended",
+            "exerciseMotionContract": {
+                "startPoseConstraints": {
+                    "supportMode": "lying",
+                    "torsoOrientation": "horizontal",
+                },
+                "endPoseConstraints": {
+                    "supportMode": "lying",
+                    "torsoOrientation": "horizontal",
+                },
+            },
+            "visionPayload": {
+                "bestChunkScore": 1.0,
+                "validChunkCount": 1,
+                "validChunkRatio": 1.0,
+                "scoredChunkCount": 1,
+                "target_identity_match": True,
+                "posePrefilter": {
+                    "enabled": True,
+                    "passed": True,
+                    "score": 0.96,
+                    "blockingIssues": [],
+                    "reconstructionViewQuality": 0.254,
+                },
+            },
+        },
+    )
+
+    source_gate = bake_and_rank_module.evaluate_source_candidate_gate(candidate)
+
+    assert source_gate["passed"] is False
+    assert "pose_lying_support_depth_ambiguity" in source_gate["reasons"]
+
+
 def test_source_gate_does_not_skip_oblique_or_front_reconstruction_views() -> None:
     candidate = RankedCandidate(
         exercise_index=0,
@@ -27121,6 +28824,31 @@ def test_pose_reconstruction_view_quality_is_orientation_independent_for_horizon
 
     assert metrics["shoulderWidthBodyRatio"] == pytest.approx(0.08)
     assert metrics["reconstructionViewQuality"] == pytest.approx(1.0)
+
+
+def test_pose_reconstruction_view_prefers_three_quarter_over_pure_side_or_front() -> None:
+    def preference(shoulder_width: float, hip_width: float) -> float:
+        detection = PoseDetection(
+            keypoints={
+                "left_shoulder": (100.0, 100.0, 0.95),
+                "right_shoulder": (100.0 + shoulder_width, 100.0, 0.95),
+                "left_hip": (110.0, 180.0, 0.95),
+                "right_hip": (110.0 + hip_width, 180.0, 0.95),
+            },
+            bbox=(0.0, 0.0, 200.0, 200.0),
+            confidence=0.95,
+        )
+        return pose_prefilter_module.pose_reconstruction_view_quality(
+            [detection],
+            metadata=BasicVideoMetadata(fps=30.0, frame_count=60, width=640, height=480),
+        )["threeQuarterViewPreference"]
+
+    side = preference(10.0, 8.0)
+    three_quarter = preference(36.0, 23.0)
+    front = preference(50.0, 35.0)
+
+    assert three_quarter > side
+    assert three_quarter > front
 
 
 def test_source_gate_rejects_cached_candidate_with_incomplete_full_body_framing() -> None:
@@ -29450,7 +31178,7 @@ def test_source_cut_confirmation_recovers_missing_selected_candidate_id(
     assert [candidate["candidateId"] for candidate in candidates] == ["B"]
 
 
-def test_source_cut_confirmation_uses_phase_valid_candidates_when_model_omits_choice(
+def test_source_cut_confirmation_requires_semantic_scorecards_when_model_omits_choice(
     tmp_path: Path,
 ) -> None:
     candidate_a = source_cut_confirmation_test_candidate(
@@ -29488,10 +31216,10 @@ def test_source_cut_confirmation_uses_phase_valid_candidates_when_model_omits_ch
         ranking
     )
 
-    assert [candidate["candidateId"] for candidate in candidates] == ["A", "B"]
+    assert candidates == []
 
 
-def test_source_cut_confirmation_keeps_phase_valid_alternatives_rejected_by_model(
+def test_source_cut_confirmation_excludes_phase_valid_alternatives_rejected_by_model(
     tmp_path: Path,
 ) -> None:
     candidates = [
@@ -29535,13 +31263,44 @@ def test_source_cut_confirmation_keeps_phase_valid_alternatives_rejected_by_mode
         bake_and_rank_module.source_cut_deterministic_confirmation_candidates(ranking)
     )
 
-    assert [candidate["candidateId"] for candidate in confirmation_candidates] == [
-        "A",
-        "D",
-    ]
+    assert [candidate["candidateId"] for candidate in confirmation_candidates] == ["A"]
 
 
-def test_source_cut_confirmation_recovers_from_explicit_all_candidate_rejection(
+def test_source_cut_confirmation_can_repair_with_unreviewed_boundary_expansion(
+    tmp_path: Path,
+) -> None:
+    selected = source_cut_confirmation_test_candidate(
+        tmp_path, "A", start_seconds=2.0, end_seconds=5.0
+    )
+    earlier_boundary = source_cut_confirmation_test_candidate(
+        tmp_path, "B", start_seconds=1.0, end_seconds=5.0
+    )
+    unrelated = source_cut_confirmation_test_candidate(
+        tmp_path, "C", start_seconds=6.0, end_seconds=9.0
+    )
+    ranking = LoopRanking(
+        score=0.95,
+        model_score=0.95,
+        reasons=["source_candidate_scorecard_passed"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "A",
+            "selectedScorecard": {"id": "A", "passed": True, "score": 0.95},
+            "sourceCutScorecardCandidates": [
+                {"id": "A", "passed": True, "score": 0.95},
+            ],
+            "sourceCutCandidates": [selected, earlier_boundary, unrelated],
+        },
+    )
+
+    candidates = bake_and_rank_module.source_cut_deterministic_confirmation_candidates(
+        ranking
+    )
+
+    assert [candidate["candidateId"] for candidate in candidates] == ["A", "B"]
+
+
+def test_source_cut_confirmation_stops_after_explicit_all_candidate_rejection(
     tmp_path: Path,
 ) -> None:
     candidate = source_cut_confirmation_test_candidate(
@@ -29567,10 +31326,10 @@ def test_source_cut_confirmation_recovers_from_explicit_all_candidate_rejection(
         ranking
     )
 
-    assert [candidate["candidateId"] for candidate in candidates] == ["A"]
+    assert candidates == []
 
 
-def test_exact_pose_confirmation_promotes_valid_candidate_after_vlm_rejection(
+def test_exact_pose_confirmation_cannot_promote_candidate_after_vlm_rejection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -29594,6 +31353,7 @@ def test_exact_pose_confirmation_promotes_valid_candidate_after_vlm_rejection(
     )
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"source-video")
+    validation_calls: list[str] = []
 
     def fake_trim_video(**kwargs: object) -> Path:
         output_path = Path(kwargs["output_path"])
@@ -29610,7 +31370,7 @@ def test_exact_pose_confirmation_promotes_valid_candidate_after_vlm_rejection(
     monkeypatch.setattr(
         bake_and_rank_module,
         "validate_exact_pre_wham_source_video",
-        lambda **_kwargs: {
+        lambda **_kwargs: validation_calls.append("called") or {
             "required": True,
             "passed": True,
             "reason": "source_pose_full_repetition_phase_return_detected",
@@ -29626,12 +31386,15 @@ def test_exact_pose_confirmation_promotes_valid_candidate_after_vlm_rejection(
         output_dir=tmp_path / "deterministic_confirmation",
     )
 
-    assert confirmed.score == bake_and_rank_module.SOURCE_CUT_MIN_SELECTED_SCORE
+    assert confirmed.score == 0.0
     assert confirmed.model_score == 0.0
     assert confirmed.payload is not None
-    assert confirmed.payload["selectedCandidateId"] == "A"
-    assert confirmed.payload["sourceCutDeterministicConfirmationPassed"] is True
-    assert "source_cut_deterministic_confirmation_recovered_vlm_rejection" in confirmed.reasons
+    assert "selectedCandidateId" not in confirmed.payload
+    assert confirmed.payload["sourceCutDeterministicConfirmationPassed"] is False
+    assert confirmed.payload["sourceCutDeterministicConfirmationAttempts"] == []
+    assert validation_calls == []
+    assert "source_cut_deterministic_confirmation_failed" in confirmed.reasons
+    assert "source_cut_deterministic_confirmation_recovered_vlm_rejection" not in confirmed.reasons
 
 
 def test_pose_only_recovery_preserves_already_bounded_parent_source_window() -> None:
@@ -31115,6 +32878,24 @@ def test_source_cut_vlm_requests_have_a_bounded_timeout() -> None:
     ] == pytest.approx(37.0)
 
 
+def test_source_cut_vlm_response_budget_scales_with_contract_phases() -> None:
+    contract = {
+        "movementTopology": {
+            "phases": [
+                {"id": "phase_01"},
+                {"id": "phase_02"},
+                {"id": "phase_03"},
+                {"id": "phase_04"},
+            ]
+        }
+    }
+
+    assert bake_and_rank_module.source_cut_vlm_caption_kwargs()["max_tokens"] == 256
+    assert bake_and_rank_module.source_cut_vlm_caption_kwargs(
+        exercise_motion_contract=contract
+    )["max_tokens"] == 512
+
+
 def test_selected_section_review_video_is_not_time_stretched_by_default() -> None:
     assert bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS == 1
     assert repeated_review_frame_data_urls(
@@ -31949,6 +33730,39 @@ def test_deterministic_scene_orientation_hint_keeps_upright_render_orientation()
     assert hint["reason"] == "head_lower_body_order_not_strongly_inverted"
 
 
+def test_wear_export_canonicalizes_strongly_inverted_upright_coordinates() -> None:
+    payload = make_scene_orientation_payload(inverted=True)
+    frames = payload["frames"]
+    assert isinstance(frames, list)
+
+    normalized, metadata = preview_module._normalize_wear_skeleton_export_coordinates(
+        frames,
+        remove_scene_inversion=False,
+    )
+
+    assert normalized[0]["joints"]["head"][1] > normalized[0]["joints"]["left_foot"][1]
+    assert metadata["sceneInversionRemoved"] is True
+    assert metadata["reason"] == "corrected_anatomically_inverted_wear_coordinates"
+
+
+def test_wear_export_does_not_guess_orientation_for_horizontal_body() -> None:
+    payload = make_horizontal_inverted_scene_orientation_payload()
+    frames = payload["frames"]
+    assert isinstance(frames, list)
+    for frame in frames:
+        joints = frame["joints"]
+        for point in joints.values():
+            point[1] = 0.0
+
+    normalized, metadata = preview_module._normalize_wear_skeleton_export_coordinates(
+        frames,
+        remove_scene_inversion=False,
+    )
+
+    assert normalized == frames
+    assert metadata["sceneInversionRemoved"] is False
+
+
 def test_deterministic_scene_orientation_hint_cannot_invert_canonical_motion() -> None:
     base_options = bake_and_rank_module.build_preview_bake_base_options(motion_tuning_enabled=True)
     hint = bake_and_rank_module.deterministic_scene_orientation_hint_from_payload(
@@ -32159,8 +33973,11 @@ def test_raw_wham_gate_defers_unstable_overhead_hands_to_lock_aware_final_gate(t
         exercise_motion_contract={"requiredEquipment": ["barbell"]},
     )
 
-    assert rigid_equipment_gate["passed"] is True
+    assert rigid_equipment_gate["passed"] is False
     assert rigid_equipment_gate["rigidPairedHandsRequired"] is True
+    assert "raw_wham_rigid_two_hand_spacing_instability" in rigid_equipment_gate[
+        "rejectionReasons"
+    ]
     assert "raw_wham_rigid_two_hand_equipment_distortion" not in rigid_equipment_gate[
         "rejectionReasons"
     ]
@@ -32172,6 +33989,20 @@ def test_rigid_paired_hand_requirement_respects_implement_support_mode() -> None
             "implementSupportMode": "hands_only",
             "requiredEquipment": ["barbell"],
         },
+        exercise_name="Barbell Bench Press",
+    ) is True
+
+
+def test_transient_bar_to_chest_contact_does_not_disable_rigid_hand_constraint() -> None:
+    contract = {
+        "validStartState": "Lying on a bench with hands holding the barbell above the chest.",
+        "validEndState": "Lying on a bench with hands holding the barbell above the chest.",
+        "advisoryText": "Lower until the bar touches the chest, then press upward.",
+    }
+
+    assert bake_and_rank_module.exercise_motion_contract_implement_support_mode(contract) is None
+    assert bake_and_rank_module.exercise_motion_contract_requires_rigid_paired_hands(
+        contract,
         exercise_name="Barbell Bench Press",
     ) is True
     assert bake_and_rank_module.exercise_motion_contract_requires_rigid_paired_hands(
@@ -32407,6 +34238,221 @@ def test_structural_refinement_transaction_rejects_source_fidelity_regression() 
     assert transaction["degradedMetrics"]
 
 
+def test_source_guided_hinge_correction_matches_angle_and_preserves_bone_length() -> None:
+    parent = (0.0, 1.0, 0.0)
+    hinge = (0.0, 0.0, 0.0)
+    child = (1.0, 0.0, 0.0)
+
+    corrected = structural_refinement_module._child_point_for_target_hinge_angle(
+        parent=parent,
+        hinge=hinge,
+        child=child,
+        target_angle_degrees=135.0,
+    )
+
+    assert corrected is not None
+    assert math.dist(hinge, corrected) == pytest.approx(math.dist(hinge, child))
+    assert structural_refinement_module._point_angle_degrees(
+        parent,
+        hinge,
+        corrected,
+    ) == pytest.approx(135.0)
+
+
+def test_projected_endpoint_ik_preserves_bone_length_and_hidden_depth_branch() -> None:
+    hinge = (0.0, 0.0, 0.0)
+    child = (0.6, -0.6, 0.529150262)
+
+    corrected = structural_refinement_module._point_for_projected_endpoint_with_fixed_length(
+        hinge=hinge,
+        child=child,
+        desired_projection=(0.0, -1.0),
+        horizontal_axis=0,
+        mirror=False,
+    )
+
+    assert corrected is not None
+    assert math.dist(hinge, corrected) == pytest.approx(math.dist(hinge, child))
+    assert corrected[0] == pytest.approx(0.0)
+    assert corrected[2] == pytest.approx(child[2])
+
+
+def test_projected_endpoint_ik_supports_three_quarter_camera_axis() -> None:
+    hinge = (0.0, 0.0, 0.0)
+    child = (0.6, -0.6, 0.529150262)
+    inverse_sqrt_two = 1.0 / math.sqrt(2.0)
+    camera_axis = (inverse_sqrt_two, inverse_sqrt_two)
+    hidden_axis = (-inverse_sqrt_two, inverse_sqrt_two)
+    original_hidden_depth = child[0] * hidden_axis[0] + child[2] * hidden_axis[1]
+
+    corrected = structural_refinement_module._point_for_projected_endpoint_with_fixed_length(
+        hinge=hinge,
+        child=child,
+        desired_projection=(0.0, -1.0),
+        horizontal_vector=camera_axis,
+        mirror=False,
+    )
+
+    assert corrected is not None
+    assert math.dist(hinge, corrected) == pytest.approx(math.dist(hinge, child))
+    assert corrected[0] * camera_axis[0] + corrected[2] * camera_axis[1] == pytest.approx(0.0)
+    assert corrected[0] * hidden_axis[0] + corrected[2] * hidden_axis[1] == pytest.approx(
+        original_hidden_depth
+    )
+
+
+def test_arm_temporal_continuity_reduces_coherent_distal_chain_jump() -> None:
+    frames = []
+    for index in range(9):
+        wrist_x = -0.10 if index == 4 else 0.40
+        joints = {
+            "pelvis": (0.0, 0.0, 0.0),
+            "left_shoulder": (0.0, 0.6, 0.0),
+            "left_elbow": (0.2, 0.4, 0.0),
+            "left_wrist": (wrist_x, 0.2, 0.0),
+            "left_hand": (wrist_x + 0.08, 0.16, 0.0),
+        }
+        frames.append(MotionFrame(time_sec=index / 30.0, joints=joints))
+    clip = MotionClip(fps=30.0, joint_names=list(frames[0].joints), frames=frames)
+
+    repaired, metadata = structural_refinement_module._stabilize_arm_temporal_continuity(clip)
+
+    before_offsets = [
+        tuple(
+            frame.joints["left_wrist"][axis] - frame.joints["left_shoulder"][axis]
+            for axis in range(3)
+        )
+        for frame in clip.frames
+    ]
+    after_offsets = [
+        tuple(
+            frame.joints["left_wrist"][axis] - frame.joints["left_shoulder"][axis]
+            for axis in range(3)
+        )
+        for frame in repaired.frames
+    ]
+    before_peak = max(math.dist(left, right) for left, right in zip(before_offsets, before_offsets[1:]))
+    after_peak = max(math.dist(left, right) for left, right in zip(after_offsets, after_offsets[1:]))
+    assert metadata["applied"] is True
+    assert after_peak < before_peak
+    assert all(
+        math.dist(frame.joints["left_wrist"], frame.joints["left_hand"])
+        == pytest.approx(math.dist(source.joints["left_wrist"], source.joints["left_hand"]))
+        for source, frame in zip(clip.frames, repaired.frames)
+    )
+
+
+def test_source_guided_vertical_trajectory_preserves_higher_landing_surface() -> None:
+    pelvis_heights = [1.0, 1.2, 1.1]
+    frames = [
+        MotionFrame(
+            time_sec=float(index),
+            joints={
+                "pelvis": (0.0, pelvis_heights[index], 0.0),
+                "head": (0.0, pelvis_heights[index] + 1.0, 0.0),
+                "left_foot": (0.0, 0.0, 0.0),
+                "right_foot": (0.2, 0.0, 0.0),
+            },
+        )
+        for index in range(3)
+    ]
+    clip = MotionClip(
+        fps=1.0,
+        joint_names=list(frames[0].joints),
+        frames=frames,
+        metadata={
+            "cleanup": {
+                "verticalGrounding": {"groundContactMode": "intermittent"},
+            },
+        },
+    )
+    source_pose = {
+        "frames": [
+            {
+                "sourceTimeSec": float(index),
+                "joints": {
+                    "pelvis": [0.5, 0.6 - index * 0.1],
+                    "head": [0.5, 0.2 - index * 0.1],
+                    "left_ankle": [0.45, 0.9 - index * 0.1],
+                    "right_ankle": [0.55, 0.9 - index * 0.1],
+                },
+            }
+            for index in range(3)
+        ]
+    }
+
+    corrected, metadata = (
+        structural_refinement_module._align_intermittent_vertical_trajectory_to_source_pose(
+            clip,
+            source_pose_payload=source_pose,
+        )
+    )
+
+    assert metadata["applied"] is True
+    assert corrected.frames[-1].joints["pelvis"][1] > corrected.frames[0].joints["pelvis"][1]
+    for before, after in zip(clip.frames, corrected.frames):
+        assert math.dist(after.joints["pelvis"], after.joints["head"]) == pytest.approx(
+            math.dist(before.joints["pelvis"], before.joints["head"])
+        )
+    before_acceleration = (
+        clip.frames[2].joints["pelvis"][1]
+        - 2.0 * clip.frames[1].joints["pelvis"][1]
+        + clip.frames[0].joints["pelvis"][1]
+    )
+    after_acceleration = (
+        corrected.frames[2].joints["pelvis"][1]
+        - 2.0 * corrected.frames[1].joints["pelvis"][1]
+        + corrected.frames[0].joints["pelvis"][1]
+    )
+    assert after_acceleration == pytest.approx(before_acceleration)
+
+
+def test_source_joint_interpolation_avoids_nearest_sample_plateaus() -> None:
+    source_frames = [
+        {
+            "normalizedTime": 0.0,
+            "joints": {"left_ankle": [0.0, 0.0, 0.0]},
+        },
+        {
+            "normalizedTime": 1.0,
+            "joints": {"left_ankle": [1.0, 2.0, 0.0]},
+        },
+    ]
+
+    joints = structural_refinement_module._interpolated_source_joints(
+        source_frames,
+        0.25,
+    )
+
+    assert joints["left_ankle"] == pytest.approx([0.25, 0.5, 0.0])
+
+
+def test_source_guidance_preserves_body_local_bilateral_width() -> None:
+    reference = {
+        "pelvis": (0.0, 1.0, 0.0),
+        "neck": (0.0, 1.6, 0.0),
+        "left_hip": (-0.15, 1.0, 0.0),
+        "right_hip": (0.15, 1.0, 0.0),
+        "left_ankle": (-0.25, 0.1, 0.0),
+        "right_ankle": (0.25, 0.1, 0.0),
+    }
+    corrected = {
+        **reference,
+        "left_ankle": (-0.05, 0.2, 0.1),
+        "right_ankle": (0.05, 0.4, -0.1),
+    }
+
+    structural_refinement_module._restore_body_local_bilateral_widths(
+        corrected,
+        reference_joints=reference,
+        pairs=(("left_ankle", "right_ankle"),),
+    )
+
+    assert corrected["right_ankle"][0] - corrected["left_ankle"][0] == pytest.approx(0.5)
+    assert corrected["left_ankle"][1] == pytest.approx(0.2)
+    assert corrected["right_ankle"][1] == pytest.approx(0.4)
+
+
 def test_raw_wham_gate_defers_source_matching_temporal_spikes_to_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -32503,6 +34549,32 @@ def test_materialized_source_pose_fidelity_accepts_matching_retained_output() ->
     assert metrics["rejectionReasons"] == []
 
 
+def test_pose_fidelity_estimates_continuous_camera_yaw() -> None:
+    source_pose = source_pose_reference_for_raw_wham_gate()
+    motion = raw_motion_from_source_pose(source_pose)
+    yaw_degrees = 37.0
+    yaw = math.radians(yaw_degrees)
+    for frame in motion["frames"]:
+        for point in frame["joints"].values():
+            original_x = point[0]
+            point[0] = original_x * math.cos(yaw)
+            point[2] = original_x * math.sin(yaw)
+
+    metrics = pose_fidelity_module.source_to_motion_pose_fidelity_metrics(
+        source_pose,
+        motion,
+    )
+
+    assert metrics["available"] is True
+    estimated = metrics["projectionHorizontalVector"]
+    # The camera axis can be sign-inverted together with the mirror flag.
+    alignment = abs(
+        estimated[0] * math.cos(yaw) + estimated[1] * math.sin(yaw)
+    )
+    assert alignment >= math.cos(math.radians(0.6))
+    assert metrics["medianJointErrorBodyRatio"] == pytest.approx(0.0, abs=1e-8)
+
+
 def test_materialized_source_pose_fidelity_accepts_global_bilateral_label_swap() -> None:
     source_pose = source_pose_reference_for_raw_wham_gate()
     output = raw_motion_from_source_pose(source_pose)
@@ -32523,7 +34595,7 @@ def test_materialized_source_pose_fidelity_accepts_global_bilateral_label_swap()
 
     assert metrics["passed"] is True
     assert metrics["bilateralAssignment"] == "swapped"
-    assert metrics["evaluatedProjectionCount"] == 8
+    assert metrics["evaluatedProjectionCount"] > 8
 
 
 def test_materialized_source_pose_fidelity_rejects_wrong_retained_orientation() -> None:
@@ -34419,6 +36491,34 @@ def test_kinematic_plausibility_accepts_coordinated_bilateral_fast_motion() -> N
     assert metrics["severe"] is False
 
 
+def test_kinematic_plausibility_rejects_extreme_coordinated_bilateral_snap() -> None:
+    root_points = [[0.0, 0.0, 0.0] for _ in range(7)]
+    left_foot = [
+        [0.00, 0.0, 0.0],
+        [0.01, 0.0, 0.0],
+        [0.02, 0.0, 0.0],
+        [0.03, 0.0, 0.0],
+        [0.23, 0.0, 0.0],
+        [0.23, 0.0, 0.0],
+        [0.24, 0.0, 0.0],
+    ]
+    right_foot = [[point[0], -0.1, 0.0] for point in left_foot]
+
+    metrics = bake_and_rank_module.compute_distal_step_spike_metrics(
+        {
+            "pelvis": root_points,
+            "left_foot": left_foot,
+            "right_foot": right_foot,
+        },
+        root_joint="pelvis",
+        body_height=1.0,
+    )
+
+    assert metrics["coordinatedCounterpartMotion"] is True
+    assert metrics["maxSeverity"] >= metrics["isolatedSpikeSevereMultiplier"]
+    assert metrics["severe"] is True
+
+
 def test_kinematic_plausibility_accepts_unilateral_foot_motion_coordinated_with_ankle() -> None:
     root_points = [[0.0, 0.0, 0.0] for _ in range(6)]
     right_foot = [
@@ -34533,18 +36633,32 @@ def test_kinematic_plausibility_ignores_isolated_threshold_edge_spikes() -> None
     assert angle_metrics["severe"] is False
 
 
-def test_joint_angle_step_accepts_exact_validated_source_motion() -> None:
-    assert bake_and_rank_module.joint_angle_step_is_source_corroborated(
+def test_kinematic_metrics_do_not_treat_processed_source_joints_as_independent_evidence() -> None:
+    frames = []
+    for index, ankle_x in enumerate((1.0, 1.0, 0.2)):
+        joints = {
+            "pelvis": [0.0, 0.0, 0.0],
+            "left_hip": [0.0, 0.0, 0.0],
+            "left_knee": [1.0, 0.0, 0.0],
+            "left_ankle": [ankle_x, 1.0, 0.0],
+        }
+        frames.append({"joints": joints, "sourceJoints": dict(joints), "index": index})
+
+    metrics = bake_and_rank_module.compute_kinematic_plausibility_metrics_from_payload(
         {
-            "jointAngleStep": {
-                "severe": True,
-                "maxAngleStepDegrees": 41.59,
-                "sourceMaxAngleStepDegrees": 41.59,
-            }
-        },
+            "jointNames": ["pelvis", "left_hip", "left_knee", "left_ankle"],
+            "rootJoint": "pelvis",
+            "frames": frames,
+        }
+    )
+
+    assert metrics["jointAngleStep"]["severe"] is True
+    assert metrics["jointAngleStep"]["sourceMaxAngleStepDegrees"] is None
+    assert bake_and_rank_module.joint_angle_step_is_source_corroborated(
+        metrics,
         source_reference_validated=True,
         source_pose_fidelity_passed=True,
-    ) is True
+    ) is False
 
 
 @pytest.mark.parametrize(
@@ -42104,6 +44218,18 @@ def test_source_video_boundary_sweep_can_refine_below_estimated_rep_duration() -
     )
     assert all(spec.window.start_seconds == pytest.approx(10.0) for spec in boundary_specs)
 
+    start_boundary_specs = [
+        spec
+        for spec in specs
+        if spec.chunking.get("strategy") == "progressive_end_anchored_start_boundary_sweep"
+    ]
+    assert start_boundary_specs
+    assert min(
+        spec.window.end_seconds - spec.window.start_seconds
+        for spec in start_boundary_specs
+    ) == pytest.approx(bake_and_rank_module.SOURCE_CUT_REFINEMENT_MIN_SECONDS)
+    assert all(spec.window.end_seconds == pytest.approx(18.0) for spec in start_boundary_specs)
+
 
 def test_source_video_pyramid_keeps_complete_parent_below_estimated_duration_floor() -> None:
     window = DetectionWindow(index=0, start_seconds=0.06, end_seconds=2.45)
@@ -43959,7 +46085,7 @@ def test_final_output_reconciles_ground_claim_for_prop_omitting_hanging_render(
     assert "final_output_omitted_support_context_repaired" in reconciled["warningReasons"]
 
 
-def test_final_output_reconciles_contract_only_rejection_when_source_and_output_are_confirmed() -> None:
+def test_final_output_does_not_override_visual_rejection_when_source_and_output_are_confirmed() -> None:
     parsed = bake_and_rank_module.parse_final_output_validation_response(
         json.dumps(
             {
@@ -43989,12 +46115,49 @@ def test_final_output_reconciles_contract_only_rejection_when_source_and_output_
         has_source_context=True,
     )
 
+    assert reconciled["passed"] is False
+    assert "support_mode_mismatch" in reconciled["hardRejectionReasons"]
+    assert "gross_pose_reconstruction_error" in reconciled["hardRejectionReasons"]
+
+
+def test_final_output_reconciles_structured_fields_only_when_reviewer_approved() -> None:
+    parsed = bake_and_rank_module.parse_final_output_validation_response(
+        json.dumps(
+            {
+                "approved": True,
+                "confidence": 0.95,
+                "retry": False,
+                "supportModeMatch": False,
+                "equipmentHoldingPosePlausible": True,
+                "grossPoseReconstructionError": False,
+                "reject": ["support_mode_mismatch"],
+                "note": "The preview is usable and matches the source movement.",
+            }
+        ),
+        min_score=0.90,
+    )
+    confirmed = {"passed": True}
+
+    reconciled = bake_and_rank_module.reconcile_source_confirmed_contract_contradiction(
+        parsed,
+        deterministic_metrics={
+            "sourceVideoFullRepetitionPhaseCompletenessMetrics": confirmed,
+            "sourceOutputPoseFidelityMetrics": confirmed,
+            "kinematicPlausibilityMetrics": {
+                "severeArtifact": False,
+                "kinematicPlausibilityScore": 1.0,
+            },
+            "sourceOutputTargetMotionPreservationMetrics": confirmed,
+        },
+        has_source_context=True,
+    )
+
     assert reconciled["passed"] is True
     assert reconciled["hardRejectionReasons"] == []
     assert "final_output_source_confirmed_contract_contradiction_repaired" in reconciled["warningReasons"]
 
 
-def test_final_output_reconciles_source_corroborated_kinematic_spike() -> None:
+def test_final_output_does_not_override_visual_rejection_for_source_corroborated_kinematic_spike() -> None:
     parsed = bake_and_rank_module.parse_final_output_validation_response(
         json.dumps(
             {
@@ -44028,8 +46191,8 @@ def test_final_output_reconciles_source_corroborated_kinematic_spike() -> None:
         has_source_context=True,
     )
 
-    assert reconciled["passed"] is True
-    assert reconciled["hardRejectionReasons"] == []
+    assert reconciled["passed"] is False
+    assert "gross_pose_reconstruction_error" in reconciled["hardRejectionReasons"]
 
 
 def test_final_output_keeps_reconstruction_rejection_when_source_fidelity_fails() -> None:
@@ -44736,6 +46899,34 @@ def test_source_pose_foot_support_evidence_separates_stationary_support_from_mov
     assert {contact["jointName"] for contact in evidence["contacts"]} == {"right_ankle"}
     assert evidence["contacts"][0]["startRatio"] == pytest.approx(0.0)
     assert evidence["contacts"][0]["endRatio"] == pytest.approx(1.0)
+
+
+def test_source_pose_foot_support_evidence_does_not_treat_elevated_stationary_feet_as_grounded() -> None:
+    frames = [
+        {
+            "sourceTimeSec": index / 8,
+            "joints": {
+                "nose": [0.5, 0.1, 0.0],
+                "pelvis": [0.5, 0.5, 0.0],
+                "left_ankle": [0.35, 0.40, 0.0],
+                "right_ankle": [0.65, 0.55, 0.0],
+                "left_knee": [0.40, 0.42, 0.0],
+                "right_knee": [0.60, 0.56, 0.0],
+                "left_wrist": [0.30, 0.82, 0.0],
+                "right_wrist": [0.70, 0.83, 0.0],
+            },
+        }
+        for index in range(20)
+    ]
+
+    evidence = bake_and_rank_module.source_pose_stationary_foot_support_evidence(
+        {"frames": frames}
+    )
+
+    assert evidence["sharedSupportPlaneY"] == pytest.approx(0.83)
+    assert evidence["feet"]["left"]["continuousSupport"] is False
+    assert evidence["feet"]["right"]["continuousSupport"] is False
+    assert evidence["contacts"] == []
 
 
 def test_source_pose_foot_support_evidence_does_not_infer_support_across_sparse_observations() -> None:

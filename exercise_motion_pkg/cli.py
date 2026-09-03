@@ -12,6 +12,7 @@ from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_EXERCISE_TIMEOUT_SECONDS,
     DEFAULT_FINAL_REVIEW_TIMEOUT_SECONDS,
     DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS,
+    DEFAULT_MAX_RECONSTRUCTION_CANDIDATE_ATTEMPTS,
     DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS,
     DEFAULT_MAX_REVIEW_WINDOWS,
     DEFAULT_REVIEW_FRAMES,
@@ -348,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument(
         "--candidate-review-target-suitable-count",
         type=int,
-        default=1,
+        default=2,
         help="Stop batched YouTube candidate review once this many suitable reviewed candidates are found.",
     )
     youtube_search.add_argument(
@@ -532,6 +533,11 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument(
         "--exercise-contract-llama-cpp-model",
         default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL,
+    )
+    youtube_search.add_argument(
+        "--source-outcome-index",
+        type=Path,
+        help="Persistent source/channel acceptance history used as a bounded ranking prior.",
     )
     youtube_search.add_argument(
         "--exercise-contract-llama-cpp-mmproj",
@@ -943,6 +949,21 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--exercise-contract-llama-cpp-model",
         default=DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL,
+    )
+    bake_and_rank.add_argument(
+        "--source-outcome-index",
+        type=Path,
+        help="Persistent source/channel outcome index updated after this bake attempt.",
+    )
+    bake_and_rank.add_argument(
+        "--max-reconstruction-candidate-attempts",
+        type=int,
+        default=DEFAULT_MAX_RECONSTRUCTION_CANDIDATE_ATTEMPTS,
+        help=(
+            "Maximum candidates allowed to cross into WHAM reconstruction. "
+            "The default 2 means one primary plus one orientation-diverse fallback; "
+            "use 0 to disable the cap."
+        ),
     )
     bake_and_rank.add_argument(
         "--exercise-contract-llama-cpp-mmproj",

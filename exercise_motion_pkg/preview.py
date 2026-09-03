@@ -4,6 +4,7 @@ import json
 import math
 import os
 import shutil
+import statistics
 import threading
 import urllib.request
 from pathlib import Path
@@ -366,7 +367,69 @@ def _clip_has_authoritative_planted_support(clip: MotionClip) -> bool:
     )
     knee_lock = constraint.get("kneeLock") if isinstance(constraint, dict) else None
     anchors = knee_lock.get("anchors") if isinstance(knee_lock, dict) else None
-    return isinstance(anchors, dict) and bool(anchors)
+    if isinstance(anchors, dict) and bool(anchors):
+        return True
+
+    refinement = metadata.get("structuralRefinement")
+    contact_stabilization = (
+        refinement.get("contactSurfaceStabilization")
+        if isinstance(refinement, dict)
+        else None
+    )
+    if not isinstance(contact_stabilization, dict):
+        return False
+    episodes = contact_stabilization.get("episodes")
+    bilateral_anchors = contact_stabilization.get("bilateralFootAnchors")
+    transaction = contact_stabilization.get("transaction")
+    accepted = (
+        isinstance(transaction, dict) and transaction.get("accepted") is True
+    )
+    has_authoritative_anchors = (
+        isinstance(episodes, list)
+        and bool(episodes)
+        and isinstance(bilateral_anchors, (dict, list))
+        and bool(bilateral_anchors)
+    )
+    if has_authoritative_anchors and (
+        contact_stabilization.get("applied") is True or accepted
+    ):
+        return True
+
+    initial_pass = contact_stabilization.get("initialPass")
+    if not isinstance(initial_pass, dict):
+        return False
+    initial_transaction = initial_pass.get("transaction")
+    return (
+        initial_pass.get("applied") is True
+        and isinstance(initial_pass.get("episodes"), list)
+        and bool(initial_pass.get("episodes"))
+        and isinstance(initial_pass.get("bilateralFootAnchors"), (dict, list))
+        and bool(initial_pass.get("bilateralFootAnchors"))
+        and isinstance(initial_transaction, dict)
+        and initial_transaction.get("accepted") is True
+    )
+
+
+def _clip_has_authoritative_horizontal_travel(clip: MotionClip) -> bool:
+    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
+    refinement = metadata.get("structuralRefinement")
+    if not isinstance(refinement, dict):
+        return False
+    for field_name in ("finalTravelYawAlignment", "travelYawAlignment"):
+        travel_alignment = refinement.get(field_name)
+        transaction = (
+            travel_alignment.get("transaction")
+            if isinstance(travel_alignment, dict)
+            else None
+        )
+        if (
+            isinstance(travel_alignment, dict)
+            and travel_alignment.get("applied") is True
+            and isinstance(transaction, dict)
+            and transaction.get("accepted") is True
+        ):
+            return True
+    return False
 
 
 def write_preview_html(
@@ -394,6 +457,7 @@ def write_preview_html(
     )
     authoritative_world_alignment = _clip_has_authoritative_video_floor_alignment(clip)
     authoritative_planted_support = _clip_has_authoritative_planted_support(clip)
+    preserve_horizontal_travel = _clip_has_authoritative_horizontal_travel(clip)
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
     aligned_smpl_pose_source = _aligned_smpl_pose_source_for_preview(
         clip,
@@ -422,6 +486,14 @@ def write_preview_html(
     ground_payload = (
         (preview_clip.metadata.get("ground") if isinstance(preview_clip.metadata, dict) else None) or {}
     )
+    preview_elevated_support_surfaces = _authoritative_baked_elevated_support_surfaces(
+        preview_clip,
+        [
+            {"joints": {name: list(point) for name, point in frame.joints.items()}}
+            for frame in preview_clip.frames
+        ],
+        active_start_frame=0,
+    )
     payload = {
         "title": title,
         "fps": preview_clip.fps,
@@ -433,8 +505,9 @@ def write_preview_html(
             bool(baked_preview_settings.get("fixedRoot", False))
             if baked_wear_payload
             else not raw_motion_review
-        ) and not authoritative_planted_support,
+        ) and not authoritative_planted_support and not preserve_horizontal_travel,
         "hasAuthoritativePlantedSupport": authoritative_planted_support,
+        "preserveAuthoritativeHorizontalTravel": preserve_horizontal_travel,
         "rootTranslationToggleLabel": (
             "Show original camera-space translation"
             if preview_clip.metadata.get("upstream") == "gvhmr"
@@ -470,6 +543,7 @@ def write_preview_html(
             for index, frame in enumerate(preview_clip.frames)
         ],
         "ground": ground_payload,
+        "elevatedSupportSurfaces": preview_elevated_support_surfaces,
         "groundVisualClearance": 0.0,
         "spineposeMotionFusion": (
             clip.metadata.get("spineposeMotionFusion")
@@ -817,6 +891,8 @@ def build_wear_skeleton_payload(
     lock_y_drift: bool = False,
 ) -> dict[str, object]:
     raw_motion_review = _clip_requests_raw_motion_render(clip)
+    preserve_horizontal_travel = _clip_has_authoritative_horizontal_travel(clip)
+    lock_root_translation = not raw_motion_review and not preserve_horizontal_travel
     preview_clip = _center_preview_clip_for_render(_prepare_preview_clip(clip))
     detected_loops = _detect_preview_loops(preview_clip)
     resolved_loop_index = (
@@ -857,7 +933,7 @@ def build_wear_skeleton_payload(
         active_root_anchor=active_root_anchor,
         auto_alignment=auto_alignment,
         lock_y_drift=lock_y_drift,
-        lock_root_translation=not raw_motion_review,
+        lock_root_translation=lock_root_translation,
     )
     bounds = _compute_transformed_joint_bounds(transformed_frames)
     scene_origin = _bounds_center(bounds)
@@ -868,6 +944,22 @@ def build_wear_skeleton_payload(
     )
     centered_frames, baked_sagittal_plane_alignment = _align_baked_sagittal_plane_to_grid_axis(
         centered_frames,
+    )
+    if preserve_horizontal_travel:
+        centered_frames, travel_roll_leveling = _level_baked_travel_roll(
+            centered_frames,
+            baked_sagittal_plane_alignment,
+        )
+        baked_sagittal_plane_alignment["travelRollLeveling"] = travel_roll_leveling
+    render_floor_y = _authoritative_baked_render_floor_y(
+        clip,
+        centered_frames,
+        active_start_frame=active_start_frame,
+    )
+    elevated_support_surfaces = _authoritative_baked_elevated_support_surfaces(
+        clip,
+        centered_frames,
+        active_start_frame=active_start_frame,
     )
     centered_bounds = _compute_transformed_joint_bounds(centered_frames)
     active_duration = (
@@ -891,9 +983,12 @@ def build_wear_skeleton_payload(
         "jointNames": preview_clip.joint_names,
         "rootJoint": root_joint,
         "groundContactMode": _clip_ground_contact_mode(clip),
+        "renderFloorY": render_floor_y,
+        "elevatedSupportSurfaces": elevated_support_surfaces,
         "bakedPreviewConfiguration": {
             "autoWorldAlignment": True,
-            "lockGlobalRootDrift": not raw_motion_review,
+            "lockGlobalRootDrift": lock_root_translation,
+            "preserveAuthoritativeHorizontalTravel": preserve_horizontal_travel,
             "lockYDrift": lock_y_drift,
             "invertScene": False,
             "canonicalWorldUp": True,
@@ -1136,7 +1231,8 @@ def _normalize_wear_skeleton_export_coordinates(
     *,
     remove_scene_inversion: bool,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    if not remove_scene_inversion:
+    anatomy_requires_correction = _wear_skeleton_requires_world_up_correction(frames)
+    if not remove_scene_inversion and not anatomy_requires_correction:
         return frames, {
             "canonicalWorldUp": True,
             "sceneInversionRemoved": False,
@@ -1165,8 +1261,42 @@ def _normalize_wear_skeleton_export_coordinates(
         "canonicalWorldUp": True,
         "sceneInversionRemoved": True,
         "transform": "rotate_x_pi",
-        "reason": "removed_display_scene_inversion_from_wear_coordinates",
+        "reason": (
+            "corrected_anatomically_inverted_wear_coordinates"
+            if anatomy_requires_correction and not remove_scene_inversion
+            else "removed_display_scene_inversion_from_wear_coordinates"
+        ),
     }
+
+
+def _wear_skeleton_requires_world_up_correction(
+    frames: list[dict[str, object]],
+) -> bool:
+    """Detect a strongly inverted upright body without guessing on horizontal poses."""
+    normalized_head_to_feet: list[float] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            continue
+        head = joints.get("head")
+        feet = [joints.get("left_foot"), joints.get("right_foot")]
+        valid_feet = [point for point in feet if _is_serialized_point(point)]
+        if not _is_serialized_point(head) or not valid_feet:
+            continue
+        frame_points = [point for point in joints.values() if _is_serialized_point(point)]
+        if not frame_points:
+            continue
+        height = max(float(point[1]) for point in frame_points) - min(
+            float(point[1]) for point in frame_points
+        )
+        if height <= 1e-6:
+            continue
+        feet_y = sum(float(point[1]) for point in valid_feet) / len(valid_feet)
+        normalized_head_to_feet.append((float(head[1]) - feet_y) / height)
+    return bool(
+        normalized_head_to_feet
+        and statistics.median(normalized_head_to_feet) < -0.25
+    )
 
 
 def _align_baked_sagittal_plane_to_grid_axis(
@@ -1232,6 +1362,153 @@ def _align_baked_sagittal_plane_to_grid_axis(
         rotated_frame["joints"] = rotated_joints
         rotated_frames.append(rotated_frame)
     return rotated_frames, alignment
+
+
+def _level_baked_travel_roll(
+    frames: list[dict[str, object]],
+    sagittal_alignment: dict[str, object],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    raw_vertical = sagittal_alignment.get("verticalNormalComponentIgnored")
+    if not isinstance(raw_vertical, (int, float)) or not math.isfinite(raw_vertical):
+        return frames, {"applied": False, "reason": "torso_roll_unavailable"}
+    vertical = max(-1.0, min(1.0, float(raw_vertical)))
+    horizontal = math.sqrt(max(0.0, 1.0 - vertical * vertical))
+    roll_radians = math.atan2(vertical, horizontal)
+    if abs(math.degrees(roll_radians)) < BAKED_SAGITTAL_PLANE_ALIGNMENT_MIN_DEGREES:
+        return frames, {"applied": False, "reason": "already_level"}
+    pivot = _bounds_center(_compute_transformed_joint_bounds(frames))
+    rotated_frames: list[dict[str, object]] = []
+    for frame in frames:
+        joints = frame.get("joints")
+        rotated_joints: dict[str, list[float]] = {}
+        if isinstance(joints, dict):
+            for joint_name, point in joints.items():
+                if not _is_serialized_point(point):
+                    continue
+                centered = (
+                    float(point[0]) - pivot[0],
+                    float(point[1]) - pivot[1],
+                    float(point[2]) - pivot[2],
+                )
+                rotated = _rotate_point(centered, axis=(1.0, 0.0, 0.0), angle=roll_radians)
+                rotated_joints[joint_name] = [
+                    rotated[0] + pivot[0],
+                    rotated[1] + pivot[1],
+                    rotated[2] + pivot[2],
+                ]
+        rotated_frame = dict(frame)
+        rotated_frame["joints"] = rotated_joints
+        rotated_frames.append(rotated_frame)
+    return rotated_frames, {
+        "applied": True,
+        "strategy": "rigid_median_torso_roll_leveling",
+        "rollRadians": roll_radians,
+        "rollDegrees": math.degrees(roll_radians),
+        "pivot": _point_to_list(pivot),
+    }
+
+
+def _authoritative_baked_render_floor_y(
+    clip: MotionClip,
+    frames: list[dict[str, object]],
+    *,
+    active_start_frame: int,
+) -> float | None:
+    cleanup = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
+    contacts = cleanup.get("footContacts") if isinstance(cleanup, dict) else None
+    if not isinstance(contacts, list) or not frames:
+        return None
+    episodes: list[list[float]] = []
+    active: list[float] = []
+    for local_index, frame in enumerate(frames):
+        source_index = active_start_frame + local_index
+        state = contacts[source_index] if source_index < len(contacts) else None
+        joint_names = state.get("contactJoints") if isinstance(state, dict) else None
+        joints = frame.get("joints")
+        heights = [
+            float(joints[name][1]) - UNIFORM_CAPSULE_RADIUS
+            for name in joint_names or []
+            if isinstance(joints, dict) and name in joints and _is_serialized_point(joints[name])
+        ]
+        if heights:
+            active.append(min(heights))
+        elif active:
+            episodes.append(active)
+            active = []
+    if active:
+        episodes.append(active)
+    if not episodes:
+        return None
+    root_joint = _find_root_joint(clip)
+    first_joints = frames[0].get("joints")
+    last_joints = frames[-1].get("joints")
+    ends_higher = (
+        root_joint is not None
+        and isinstance(first_joints, dict)
+        and isinstance(last_joints, dict)
+        and _is_serialized_point(first_joints.get(root_joint))
+        and _is_serialized_point(last_joints.get(root_joint))
+        and float(last_joints[root_joint][1]) > float(first_joints[root_joint][1])
+    )
+    episode = episodes[0] if ends_higher else episodes[-1]
+    return float(_median(episode))
+
+
+def _authoritative_baked_elevated_support_surfaces(
+    clip: MotionClip,
+    frames: list[dict[str, object]],
+    *,
+    active_start_frame: int,
+) -> list[dict[str, object]]:
+    cleanup = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
+    contacts = cleanup.get("footContacts") if isinstance(cleanup, dict) else None
+    if not isinstance(contacts, list) or not frames:
+        return []
+    episodes: list[list[tuple[float, float, float]]] = []
+    active: list[tuple[float, float, float]] = []
+    for local_index, frame in enumerate(frames):
+        source_index = active_start_frame + local_index
+        state = contacts[source_index] if source_index < len(contacts) else None
+        names = state.get("contactJoints") if isinstance(state, dict) else None
+        joints = frame.get("joints")
+        samples = [
+            (
+                float(joints[name][0]),
+                float(joints[name][1]) - UNIFORM_CAPSULE_RADIUS,
+                float(joints[name][2]),
+            )
+            for name in names or []
+            if isinstance(joints, dict) and name in joints and _is_serialized_point(joints[name])
+        ]
+        if samples:
+            active.extend(samples)
+        elif active:
+            episodes.append(active)
+            active = []
+    if active:
+        episodes.append(active)
+    if len(episodes) < 2:
+        return []
+    base_height = _median([sample[1] for sample in episodes[0]])
+    bounds = _compute_transformed_joint_bounds(frames)
+    body_height = max(0.001, bounds["maxY"] - bounds["minY"])
+    surfaces: list[dict[str, object]] = []
+    for episode in episodes[1:]:
+        height = _median([sample[1] for sample in episode])
+        if height <= base_height + UNIFORM_CAPSULE_RADIUS:
+            continue
+        surfaces.append({
+            "center": [
+                _median([sample[0] for sample in episode]),
+                height,
+                _median([sample[2] for sample in episode]),
+            ],
+            "topY": height,
+            "size": body_height * 0.45,
+            "thickness": body_height * 0.035,
+            "source": "terminal_contact_episode",
+        })
+    return surfaces[-1:]
 
 
 def _sagittal_plane_alignment_base_payload(
@@ -3179,7 +3456,7 @@ def _frame_joint_center(frame: MotionFrame) -> tuple[float, float, float]:
 
 def _smooth_preview_frames_once(frames: list[MotionFrame]) -> list[MotionFrame]:
     smoothed = list(frames)
-    weights = (1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 1.0)
+    weights_by_distance = (4.0, 3.0, 2.0, 1.0)
     radius = 3
     for index, current_frame in enumerate(frames):
         start = max(0, index - radius)
@@ -3196,7 +3473,7 @@ def _smooth_preview_frames_once(frames: list[MotionFrame]) -> list[MotionFrame]:
                     continue
                 absolute_index = start + window_index
                 distance = abs(absolute_index - index)
-                weight = weights[min(distance, radius)]
+                weight = weights_by_distance[min(distance, radius)]
                 weighted_points.append((weight, point))
             if len(weighted_points) < 3:
                 joints[joint_name] = current_frame.joints[joint_name]
@@ -4643,6 +4920,37 @@ def _build_html(
     const sceneRight = new THREE.Vector3(1, 0, 0);
     const sceneForward = new THREE.Vector3(0, 0, 1);
     let bakedWearReviewBounds = null;
+    let bakedWearRenderFloorY = null;
+    let bakedWearElevatedSurfaceMeshes = [];
+
+    function refreshBakedWearElevatedSurfaces(exportPayload) {{
+      for (const mesh of bakedWearElevatedSurfaceMeshes) {{
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }}
+      bakedWearElevatedSurfaceMeshes = [];
+      const surfaces = Array.isArray(exportPayload?.elevatedSupportSurfaces)
+        ? exportPayload.elevatedSupportSurfaces
+        : [];
+      for (const surface of surfaces) {{
+        const center = surface?.center;
+        const size = Number(surface?.size);
+        const thickness = Number(surface?.thickness);
+        const topY = Number(surface?.topY);
+        if (!Array.isArray(center) || center.length < 3 || !Number.isFinite(size)
+            || !Number.isFinite(thickness) || !Number.isFinite(topY)) {{
+          continue;
+        }}
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(size, thickness, size),
+          new THREE.MeshLambertMaterial({{ color: 0x173f46, flatShading: true }})
+        );
+        mesh.position.set(Number(center[0]), topY - thickness * 0.5, Number(center[2]));
+        scene.add(mesh);
+        bakedWearElevatedSurfaceMeshes.push(mesh);
+      }}
+    }}
 
     function isTorsoCapsule(capsule) {{
       const key = `${{capsule.start}}->${{capsule.end}}`;
@@ -4679,6 +4987,11 @@ def _build_html(
         || key === "right_shoulder->right_elbow"
         || key === "right_elbow->right_wrist"
         || key === "right_wrist->right_hand";
+    }}
+
+    function isForearmCapsule(capsule) {{
+      const key = `${{capsule.start}}->${{capsule.end}}`;
+      return key === "left_elbow->left_wrist" || key === "right_elbow->right_wrist";
     }}
 
     function limbProfileForCapsule(capsule, radius) {{
@@ -5263,9 +5576,12 @@ def _build_html(
         const width = Math.max(0.001, bounds.maxX - bounds.minX);
         const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
         const floorSize = Math.max(width, depth) * 1.24;
+        const floorY = Number.isFinite(bakedWearRenderFloorY)
+          ? bakedWearRenderFloorY
+          : bounds.minY - height * 0.014;
         bakedWearGrid.position.set(
           (bounds.minX + bounds.maxX) * 0.5,
-          bounds.minY - height * 0.014,
+          floorY,
           (bounds.minZ + bounds.maxZ) * 0.5
         );
         bakedWearGrid.quaternion.identity();
@@ -5937,7 +6253,13 @@ def _build_html(
     }}
 
     function verticalMovementCorrectionForFrame(frame, frameTranslation, jointName, includeSupportJoints = false) {{
-      if (manualModelRotationOverridesAutoOrientation() || !autoWorldAlignmentEnabled || !activeVerticalMovementAnchor || !frame) {{
+      if (
+        payload.preserveAuthoritativeHorizontalTravel
+        || manualModelRotationOverridesAutoOrientation()
+        || !autoWorldAlignmentEnabled
+        || !activeVerticalMovementAnchor
+        || !frame
+      ) {{
         return null;
       }}
       if (lockPlantedHands) {{
@@ -6575,6 +6897,16 @@ def _build_html(
       return ["left_wrist", "right_wrist", "left_hand", "right_hand"].filter((jointName) => payload.jointNames.includes(jointName));
     }}
 
+    function availableGenericSupportJoints() {{
+      const contacts = Array.isArray(sourceFootSupportEvidence?.supportContacts)
+        ? sourceFootSupportEvidence.supportContacts
+        : [];
+      return [...new Set(contacts
+        .filter((contact) => contact?.continuousSupport)
+        .map((contact) => String(contact.jointName || ""))
+        .filter((jointName) => payload.jointNames.includes(jointName)))];
+    }}
+
     function isFootLockTarget(target) {{
       return lockPlantedFeet
         && typeof target?.jointName === "string"
@@ -6593,18 +6925,14 @@ def _build_html(
       const weightedTranslation = new THREE.Vector3();
       let totalWeight = 0;
       const continuousSupportTargets = activeTargets.filter((target) =>
-        isFootLockTarget(target)
-        && String(target.jointName).endsWith("_ankle")
-        && target.sourceConfirmedContinuousSupport
+        target.sourceConfirmedContinuousSupport
       );
       const bodyTranslationTargets = continuousSupportTargets.length > 0
         ? continuousSupportTargets
         : activeTargets;
       for (const target of bodyTranslationTargets) {{
         if (
-          !isFootLockTarget(target)
-          || !String(target.jointName).endsWith("_ankle")
-          || !basePositions.has(target.jointName)
+          !basePositions.has(target.jointName)
         ) {{
           continue;
         }}
@@ -6662,7 +6990,15 @@ def _build_html(
         ? "left"
         : (String(jointName).startsWith("right_") ? "right" : null);
       const evidence = side ? sourceFootSupportEvidence?.feet?.[side] : null;
-      return Boolean(evidence?.continuousSupport);
+      if (evidence?.continuousSupport) {{
+        return true;
+      }}
+      const contacts = Array.isArray(sourceFootSupportEvidence?.supportContacts)
+        ? sourceFootSupportEvidence.supportContacts
+        : [];
+      return contacts.some((contact) =>
+        contact?.continuousSupport && String(contact.jointName || "") === String(jointName)
+      );
     }}
 
     function buildLockTargetsForJoint(frames, jointName, targetsByFrameKey) {{
@@ -6675,8 +7011,7 @@ def _build_html(
         return;
       }}
       const isHandJoint = jointName.includes("hand") || jointName.includes("wrist");
-      const sourceConfirmedContinuousSupport = !isHandJoint
-        && sourceConfirmsContinuousFootSupport(jointName);
+      const sourceConfirmedContinuousSupport = sourceConfirmsContinuousFootSupport(jointName);
       const contactSpeedMetersPerSecond = isHandJoint ? 0.25 : 0.32;
       const edgeSpeeds = samples.slice(0, -1).map((sample, index) => {{
         const next = samples[index + 1];
@@ -6805,12 +7140,13 @@ def _build_html(
       }}
       footLockCorrectionsKey = key;
       footLockCorrections = new Map();
-      if (!lockPlantedFeet && !lockPlantedHands) {{
+      if (!lockPlantedFeet && !lockPlantedHands && availableGenericSupportJoints().length === 0) {{
         return footLockCorrections;
       }}
       const frames = playbackState.frames ?? [];
       const lockJoints = [
         ...(lockPlantedFeet ? availableFootJoints() : []),
+        ...availableGenericSupportJoints(),
       ];
       if (frames.length === 0 || lockJoints.length === 0) {{
         return footLockCorrections;
@@ -6852,7 +7188,7 @@ def _build_html(
     }}
 
     function getFootLockTargets(frame) {{
-      if ((!lockPlantedFeet && !lockPlantedHands) || !frame) {{
+      if ((!lockPlantedFeet && !lockPlantedHands && availableGenericSupportJoints().length === 0) || !frame) {{
         return null;
       }}
       return computeFootLockCorrections().get(frameFootLockKey(frame)) ?? null;
@@ -6969,7 +7305,7 @@ def _build_html(
     }}
 
     function computeLockedJointPositions(frame, frameTranslation) {{
-      if ((!lockPlantedFeet && !lockPlantedHands) || !frame) {{
+      if ((!lockPlantedFeet && !lockPlantedHands && availableGenericSupportJoints().length === 0) || !frame) {{
         lockedJointFrameKey = null;
         lockedJointPositions = new Map();
         return lockedJointPositions;
@@ -7871,7 +8207,28 @@ def _build_html(
     }}
 
     function normalizeBakedWearSkeletonCoordinates(frames, removeSceneInversion) {{
-      if (!removeSceneInversion) {{
+      const normalizedHeadFootOrder = frames.flatMap((frame) => {{
+        const joints = frame.joints ?? {{}};
+        const head = joints.head;
+        const feet = [joints.left_foot, joints.right_foot].filter(
+          (point) => Array.isArray(point) && point.length >= 3
+        );
+        if (!Array.isArray(head) || head.length < 3 || feet.length === 0) return [];
+        const ys = Object.values(joints)
+          .filter((point) => Array.isArray(point) && point.length >= 3)
+          .map((point) => Number(point[1]))
+          .filter(Number.isFinite);
+        if (ys.length === 0) return [];
+        const height = Math.max(...ys) - Math.min(...ys);
+        if (!(height > 1e-6)) return [];
+        const feetY = feet.reduce((sum, point) => sum + Number(point[1]), 0) / feet.length;
+        return [(Number(head[1]) - feetY) / height];
+      }}).sort((a, b) => a - b);
+      const medianOrder = normalizedHeadFootOrder.length === 0
+        ? 0
+        : normalizedHeadFootOrder[Math.floor(normalizedHeadFootOrder.length / 2)];
+      const anatomyRequiresCorrection = medianOrder < -0.25;
+      if (!removeSceneInversion && !anatomyRequiresCorrection) {{
         return {{
           frames,
           metadata: {{
@@ -7907,7 +8264,9 @@ def _build_html(
           canonicalWorldUp: true,
           sceneInversionRemoved: true,
           transform: "rotate_x_pi",
-          reason: "removed_display_scene_inversion_from_wear_coordinates",
+          reason: anatomyRequiresCorrection && !removeSceneInversion
+            ? "corrected_anatomically_inverted_wear_coordinates"
+            : "removed_display_scene_inversion_from_wear_coordinates",
         }},
       }};
     }}
@@ -8454,6 +8813,10 @@ def _build_html(
       ).trim().toLowerCase();
       playbackState = {{ frames, boundsFrames: frames, loopable: false }};
       bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
+      const exportedRenderFloorY = Number(exportPayload?.renderFloorY);
+      bakedWearRenderFloorY = Number.isFinite(exportedRenderFloorY)
+        ? exportedRenderFloorY
+        : null;
       fixedRoot = false;
       lockYRoot = false;
       lockPlantedFeet = false;
@@ -8721,6 +9084,41 @@ def _build_html(
         selectCustomTimeRange(startSeconds, endSeconds);
         return this.exportWearSkeleton(options);
       }},
+      inspectLimbOrientations(frameIndex, options = {{}}) {{
+        applyAutomationSettings(options);
+        const boundedFrameIndex = Math.max(
+          0,
+          Math.min(playbackState.frames.length - 1, Math.trunc(Number(frameIndex) || 0))
+        );
+        frameCursor = boundedFrameIndex;
+        const frame = getInterpolatedFrame();
+        updateSceneForFrame(frame);
+        return limbNodes.map((node) => {{
+          const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(node.mesh.quaternion);
+          const localY = new THREE.Vector3(0, 1, 0).applyQuaternion(node.mesh.quaternion);
+          const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(node.mesh.quaternion);
+          return {{
+            start: node.capsule.start,
+            end: node.capsule.end,
+            localX: [localX.x, localX.y, localX.z],
+            localY: [localY.x, localY.y, localY.z],
+            localZ: [localZ.x, localZ.y, localZ.z],
+            quaternion: node.mesh.quaternion.toArray(),
+          }};
+        }});
+      }},
+      inspectWearExactLimbOrientations(frameIndex, options = {{}}) {{
+        applyAutomationSettings(options);
+        paused = true;
+        refreshPauseLabel();
+        const boundedFrameIndex = Math.max(
+          0,
+          Math.min(playbackState.frames.length - 1, Math.trunc(Number(frameIndex) || 0))
+        );
+        frameCursor = boundedFrameIndex;
+        updateSceneForFrame(getInterpolatedFrame());
+        return inspectWearExactLimbOrientations();
+      }},
       async renderFrame(frameIndex, options = {{}}) {{
         applyAutomationSettings(options);
         return await renderDeterministicFrame(frameIndex);
@@ -8844,7 +9242,9 @@ def _build_html(
         tempMidpoint.copy(start).add(end).multiplyScalar(0.5);
         mesh.visible = true;
         mesh.position.copy(tempMidpoint);
-        applyStableMeshOrientation(mesh, xDir, yDir, zDir);
+        tempMatrix.makeBasis(xDir, yDir, zDir);
+        mesh.quaternion.setFromRotationMatrix(tempMatrix);
+        mesh.userData.previousQuaternion = null;
         mesh.scale.set(Math.max(0.001, radius), Math.max(0.001, length), Math.max(0.001, radius));
       }}
 
@@ -8970,7 +9370,128 @@ def _build_html(
         return new THREE.Quaternion().setFromRotationMatrix(tempMatrix);
       }}
 
+      const rotationMinimizingReferenceCache = new WeakMap();
+
+      function initialLimbCrossSectionReference(frame, startJointName, axis) {{
+        const joints = frame?.joints ?? {{}};
+        const bodyReferenceNames = startJointName.includes("shoulder")
+          || startJointName.includes("elbow")
+          || startJointName.includes("wrist")
+          ? ["left_shoulder", "right_shoulder"]
+          : ["left_hip", "right_hip"];
+        const from = joints[bodyReferenceNames[0]];
+        const to = joints[bodyReferenceNames[1]];
+        if (Array.isArray(from) && Array.isArray(to)) {{
+          const bodyReference = new THREE.Vector3(...to.map(Number)).sub(
+            new THREE.Vector3(...from.map(Number))
+          );
+          const projectedBodyReference = projectedAxis(bodyReference, axis);
+          if (projectedBodyReference) {{
+            return projectedBodyReference;
+          }}
+        }}
+        const fallbackAxes = [
+          new THREE.Vector3(1, 0, 0),
+          new THREE.Vector3(0, 1, 0),
+          new THREE.Vector3(0, 0, 1),
+        ].sort((left, right) => Math.abs(left.dot(axis)) - Math.abs(right.dot(axis)));
+        for (const fallbackAxis of fallbackAxes) {{
+          const projectedFallback = projectedAxis(fallbackAxis, axis);
+          if (projectedFallback) {{
+            return projectedFallback;
+          }}
+        }}
+        return null;
+      }}
+
+      function rotationMinimizingBoneCrossSectionReference(
+        frame,
+        startJointName,
+        endJointName,
+        frameTranslation
+      ) {{
+        const activeFrames = playbackState.frames;
+        if (!Array.isArray(activeFrames) || activeFrames.length === 0) {{
+          return null;
+        }}
+        const targetIndex = activeFrames.indexOf(frame);
+        if (targetIndex < 0) {{
+          return null;
+        }}
+        let frameCache = rotationMinimizingReferenceCache.get(activeFrames);
+        if (!frameCache) {{
+          frameCache = new Map();
+          rotationMinimizingReferenceCache.set(activeFrames, frameCache);
+        }}
+        const cacheKey = `${{startJointName}}->${{endJointName}}`;
+        let references = frameCache.get(cacheKey);
+        if (!references) {{
+          references = [];
+          frameCache.set(cacheKey, references);
+        }}
+        for (let index = references.length; index <= targetIndex; index += 1) {{
+          const candidateFrame = activeFrames[index];
+          const start = candidateFrame?.joints?.[startJointName];
+          const end = candidateFrame?.joints?.[endJointName];
+          if (!Array.isArray(start) || !Array.isArray(end)) {{
+            references.push(index > 0 ? references[index - 1]?.clone() ?? null : null);
+            continue;
+          }}
+          const axis = new THREE.Vector3(...end.map(Number)).sub(
+            new THREE.Vector3(...start.map(Number))
+          );
+          if (axis.lengthSq() <= 1e-8) {{
+            references.push(index > 0 ? references[index - 1]?.clone() ?? null : null);
+            continue;
+          }}
+          axis.normalize();
+          const previousReference = index > 0 ? references[index - 1] : null;
+          let reference = previousReference
+            ? projectedAxis(previousReference, axis)
+            : initialLimbCrossSectionReference(candidateFrame, startJointName, axis);
+          if (!reference) {{
+            reference = initialLimbCrossSectionReference(candidateFrame, startJointName, axis);
+          }}
+          if (reference && previousReference && reference.dot(previousReference) < 0) {{
+            reference.multiplyScalar(-1);
+          }}
+          references.push(reference?.clone() ?? null);
+        }}
+        const sourceReference = references[targetIndex];
+        const sourcePoint = frame.joints[endJointName];
+        if (!sourceReference || !Array.isArray(sourcePoint)) {{
+          return null;
+        }}
+        const referencePoint = [
+          Number(sourcePoint[0]) + sourceReference.x,
+          Number(sourcePoint[1]) + sourceReference.y,
+          Number(sourcePoint[2]) + sourceReference.z,
+        ];
+        const worldOrigin = toWorldPoint(
+          sourcePoint,
+          frameTranslation,
+          fixedRoot,
+          true,
+          endJointName
+        );
+        const worldReference = toWorldPoint(
+          referencePoint,
+          frameTranslation,
+          fixedRoot,
+          true,
+          endJointName
+        ).sub(worldOrigin);
+        return worldReference.lengthSq() > 1e-8 ? worldReference.normalize() : null;
+      }}
+
       function smplBoneCrossSectionReference(frame, startJointName, endJointName, frameTranslation) {{
+        const dynamicAxialTwistAllowed = (
+          (startJointName === "left_elbow" && endJointName === "left_wrist")
+          || (startJointName === "right_elbow" && endJointName === "right_wrist")
+        );
+        if (!dynamicAxialTwistAllowed) {{
+          return null;
+        }}
         const referenceFrames = smplPoseSource?.referenceFrames;
         const twistSpecs = smplPoseSource?.twistSpecs;
         if (!smplGlobalOrientations || !Array.isArray(referenceFrames) || !Array.isArray(twistSpecs)) {{
@@ -9534,7 +10055,10 @@ def _build_html(
     }}
 
     function applyPreviewMotionTuning(frame) {{
-      if (renderingBakedWearPayload) {{
+      // Final support stabilization owns the displayed joint positions. Blending
+      // the raw source back in here would reintroduce the foot sliding that the
+      // structural pass explicitly removed.
+      if (renderingBakedWearPayload || payload.hasAuthoritativePlantedSupport) {{
         return frame;
       }}
       const sourceFrame = getInterpolatedSourceMotionFrame(frame);
@@ -9946,6 +10470,13 @@ def _build_html(
           node.capsule.end,
           frameTranslation
         );
+        const rotationMinimizingCrossSectionReference = reconciledCrossSectionReference
+          || rotationMinimizingBoneCrossSectionReference(
+            frame,
+            node.capsule.start,
+            node.capsule.end,
+            frameTranslation
+          );
         if (isFootCapsule(node.capsule)) {{
           const shoe = wearHumanoidGeometry.shoe ?? {{}};
           const shoeLength = fullLength * Number(shoe.lengthScale ?? 1.45);
@@ -9964,34 +10495,34 @@ def _build_html(
           );
           continue;
         }}
-        if (isLegCapsule(node.capsule) && (reconciledCrossSectionReference || hipAxis)) {{
+        if (isLegCapsule(node.capsule) && (rotationMinimizingCrossSectionReference || hipAxis)) {{
           setOrientedLimbBox(
             node.mesh,
             startInset,
             endInset,
-            reconciledCrossSectionReference || hipAxis,
+            rotationMinimizingCrossSectionReference || hipAxis,
             limbProfile.width,
             limbProfile.depth
           );
           continue;
         }}
-        if ((reconciledCrossSectionReference || shoulderAxis) && isArmCapsule(node.capsule)) {{
+        if ((rotationMinimizingCrossSectionReference || shoulderAxis) && isArmCapsule(node.capsule)) {{
           setOrientedLimbBox(
             node.mesh,
             startInset,
             endInset,
-            reconciledCrossSectionReference || shoulderAxis,
+            rotationMinimizingCrossSectionReference || shoulderAxis,
             limbProfile.width,
             limbProfile.depth
           );
           continue;
         }}
-        if (reconciledCrossSectionReference) {{
+        if (rotationMinimizingCrossSectionReference) {{
           setOrientedLimbBox(
             node.mesh,
             startInset,
             endInset,
-            reconciledCrossSectionReference,
+            rotationMinimizingCrossSectionReference,
             limbProfile.width,
             limbProfile.depth
           );
@@ -10017,7 +10548,7 @@ def _build_html(
         const torsoHeadAxis = neckSourceJoint && upperSpineJoint
           ? neckSourceJoint.clone().sub(upperSpineJoint)
           : measuredHeadAxis;
-        const headAxis = torsoHeadAxis.lengthSq() > 1e-8 ? torsoHeadAxis : measuredHeadAxis;
+        const headAxis = measuredHeadAxis.lengthSq() > 1e-8 ? measuredHeadAxis : torsoHeadAxis;
         const headDistance = neckSourceJoint ? headJoint.distanceTo(neckSourceJoint) : 0.135;
         const headScale = neckSourceJoint
             ? Math.max(0.115, Math.min(0.165, headDistance * 0.68))

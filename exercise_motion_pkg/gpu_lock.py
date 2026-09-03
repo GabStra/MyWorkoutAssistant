@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import ctypes
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
 GPU_LOCK_PATH_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_PATH"
 GPU_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_TIMEOUT_SECONDS"
 DEFAULT_GPU_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
+LEGACY_GPU_LOCK_GRACE_SECONDS = 60.0
 _LOCAL_GPU_LOCK_RELEASED = threading.Condition()
 _LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
 
@@ -37,6 +39,7 @@ class GlobalGpuLock:
                 self._handle = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 payload = {
                     "pid": os.getpid(),
+                    "processIdentity": process_identity(os.getpid()),
                     "threadId": threading.get_ident(),
                     "stage": self.stage,
                     "createdAt": time.time(),
@@ -130,7 +133,49 @@ def gpu_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
     pid = payload.get("pid") if isinstance(payload, dict) else None
     if isinstance(pid, int) and pid > 0 and not process_is_running(pid):
         return True
+    expected_identity = payload.get("processIdentity") if isinstance(payload, dict) else None
+    if isinstance(pid, int) and isinstance(expected_identity, int):
+        active_identity = process_identity(pid)
+        if active_identity is None or active_identity != expected_identity:
+            return True
+    elif isinstance(pid, int) and lock_age_seconds(lock_path) > LEGACY_GPU_LOCK_GRACE_SECONDS:
+        # Locks created before process identities were recorded cannot distinguish
+        # their owner from an unrelated process that later reused the same PID.
+        return True
     return lock_age_seconds(lock_path) > timeout_seconds
+
+
+def process_identity(pid: int) -> int | None:
+    """Return an OS process-start identity so recycled PIDs do not retain locks."""
+    if os.name == "nt":
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if not handle:
+            return None
+        try:
+            creation = ctypes.c_ulonglong()
+            exit_time = ctypes.c_ulonglong()
+            kernel = ctypes.c_ulonglong()
+            user = ctypes.c_ulonglong()
+            if not ctypes.windll.kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
+                return None
+            return int(creation.value)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21])
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 def lock_age_seconds(lock_path: Path) -> float:

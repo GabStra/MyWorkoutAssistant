@@ -29,7 +29,10 @@
       "left_knee", "right_knee",
       "left_ankle", "right_ankle",
     ]);
-    let wearPreviousSides = new Map();
+    let wearCurrentSides = new Map();
+    let wearLastDirections = new Map();
+    let wearStableSidesByFrame = null;
+    let wearStableBodyAxesByFrame = null;
 
     function wearUnit(vector, fallback) {
       return vector.lengthSq() > 1e-8 ? vector.normalize() : fallback.clone();
@@ -38,11 +41,14 @@
     function wearAxes(joints) {
       const hipSide = joints.left_hip && joints.right_hip
         ? joints.right_hip.clone().sub(joints.left_hip)
-        : new THREE.Vector3(1, 0, 0);
+        : null;
       const shoulderSide = joints.left_shoulder && joints.right_shoulder
         ? joints.right_shoulder.clone().sub(joints.left_shoulder)
-        : hipSide.clone();
-      const side = wearUnit(hipSide.add(shoulderSide), new THREE.Vector3(1, 0, 0));
+        : null;
+      const side = wearUnit(
+        hipSide ?? shoulderSide ?? new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(1, 0, 0)
+      );
       const up = joints.pelvis && joints.neck
         ? wearUnit(joints.neck.clone().sub(joints.pelvis), new THREE.Vector3(0, 1, 0))
         : new THREE.Vector3(0, 1, 0);
@@ -105,29 +111,108 @@
       };
     }
 
-    function wearLimbSides(joints, axes) {
+    function wearLimbSides(joints, axes, preferredSides = null) {
       const current = new Map();
+      const directions = new Map();
       for (const [startName, endName] of wearLimbs) {
         if (!joints[startName] || !joints[endName]) continue;
         const direction = joints[endName].clone().sub(joints[startName]);
         if (direction.lengthSq() <= 1e-8) continue;
         direction.normalize();
         const key = `${startName}->${endName}`;
-        const previous = wearPreviousSides.get(key);
-        let side;
-        if (previous) {
-          const transported = previous.clone().addScaledVector(direction, -previous.dot(direction));
-          side = transported.lengthSq() > 1e-8
+        directions.set(key, direction.clone());
+        const preferred = preferredSides?.get(key);
+        const projected = preferred
+          ? preferred.clone().addScaledVector(direction, -preferred.dot(direction))
+          : null;
+        current.set(
+          key,
+          projected && projected.lengthSq() > 1e-8
+            ? projected.normalize()
+            : wearStableSide(direction, axes)
+        );
+      }
+      wearCurrentSides = current;
+      wearLastDirections = directions;
+      return current;
+    }
+
+    function wearBuildStableSidesByFrame() {
+      let previousSides = new Map();
+      return (playbackState.frames ?? []).map((frame) => {
+        const joints = {};
+        const frameTranslation = getFrameTranslation(frame);
+        for (const [name, point] of Object.entries(frame.joints)) {
+          joints[name] = toWorldPoint(point, frameTranslation, fixedRoot, true, name);
+        }
+        const axes = wearAxes(joints);
+        const currentSides = new Map();
+        for (const [startName, endName] of wearLimbs) {
+          if (!joints[startName] || !joints[endName]) continue;
+          const direction = joints[endName].clone().sub(joints[startName]);
+          if (direction.lengthSq() <= 1e-8) continue;
+          direction.normalize();
+          const key = `${startName}->${endName}`;
+          const previous = previousSides.get(key);
+          const transported = previous
+            ? previous.clone().addScaledVector(direction, -previous.dot(direction))
+            : null;
+          let side = transported && transported.lengthSq() > 1e-8
             ? transported.normalize()
             : wearStableSide(direction, axes);
-          if (side.dot(previous) < 0) side.multiplyScalar(-1);
-        } else {
-          side = wearStableSide(direction, axes);
+          if (previous && side.dot(previous) < 0) side.multiplyScalar(-1);
+          currentSides.set(key, side);
         }
-        current.set(key, side);
-      }
-      wearPreviousSides = current;
-      return current;
+        previousSides = currentSides;
+        return currentSides;
+      });
+    }
+
+    function wearBuildStableBodyAxesByFrame() {
+      const rawAxes = (playbackState.frames ?? []).map((frame) => {
+        const joints = {};
+        const frameTranslation = getFrameTranslation(frame);
+        for (const [name, point] of Object.entries(frame.joints)) {
+          joints[name] = toWorldPoint(point, frameTranslation, fixedRoot, true, name);
+        }
+        return wearAxes(joints);
+      });
+      const radius = 3;
+      return rawAxes.map((centerAxes, frameIndex) => {
+        const side = new THREE.Vector3();
+        const up = new THREE.Vector3();
+        for (
+          let sampleIndex = Math.max(0, frameIndex - radius);
+          sampleIndex <= Math.min(rawAxes.length - 1, frameIndex + radius);
+          sampleIndex += 1
+        ) {
+          const weight = radius + 1 - Math.abs(sampleIndex - frameIndex);
+          const sample = rawAxes[sampleIndex];
+          side.addScaledVector(
+            sample.side,
+            sample.side.dot(centerAxes.side) < 0 ? -weight : weight
+          );
+          up.addScaledVector(sample.up, sample.up.dot(centerAxes.up) < 0 ? -weight : weight);
+        }
+        const stableUp = wearUnit(up, centerAxes.up);
+        const stableSide = wearUnit(
+          side.addScaledVector(stableUp, -side.dot(stableUp)),
+          centerAxes.side
+        );
+        return {
+          side: stableSide,
+          up: stableUp,
+          forward: wearUnit(stableSide.clone().cross(stableUp), centerAxes.forward),
+        };
+      });
+    }
+
+    function inspectWearExactLimbOrientations() {
+      return [...wearCurrentSides.entries()].map(([key, side]) => ({
+        key,
+        side: side.toArray(),
+        direction: wearLastDirections.get(key)?.toArray() ?? null,
+      }));
     }
 
     function wearMeshData() {
@@ -277,21 +362,17 @@
         : wearStableSide(direction, axes);
       const side = wearUnit(projected, wearStableSide(direction, axes));
       const depth = wearUnit(side.clone().cross(direction), axes.forward);
-      const lower = wearBoxRing(
-        mesh, safeStart, side, depth, startWidth * .5, startWidth * depthScale
-      );
-      const upper = wearBoxRing(
-        mesh, safeEnd, side, depth, endWidth * .5, endWidth * depthScale
-      );
+      const limbRing = (center, width) =>
+        wearBoxRing(mesh, center, side, depth, width * .5, width * depthScale);
+      const lower = limbRing(safeStart, startWidth);
+      const upper = limbRing(safeEnd, endWidth);
       if (muscleBulgeScale > 1) {
         const position = Math.max(.2, Math.min(.8, muscleBulgePosition));
         const center = safeStart.clone().lerp(safeEnd, position);
         const interpolatedWidth = startWidth + (endWidth - startWidth) * position;
         const bulgeWidth = Math.max(startWidth, endWidth, interpolatedWidth)
           * muscleBulgeScale;
-        const middle = wearBoxRing(
-          mesh, center, side, depth, bulgeWidth * .5, bulgeWidth * depthScale
-        );
+        const middle = limbRing(center, bulgeWidth);
         wearStrip(mesh, lower, middle, fill);
         wearStrip(mesh, middle, upper, fill);
       } else {
@@ -345,7 +426,7 @@
       return true;
     }
 
-    function wearBuildHumanoid(joints) {
+    function wearBuildHumanoid(joints, preferredLimbSides = null, preferredBodyAxes = null) {
       const required = [
         "pelvis", "neck", "head", "left_hip", "right_hip",
         "left_shoulder", "right_shoulder",
@@ -354,8 +435,8 @@
       const primary = "primary";
       const joint = "joint";
       const mesh = wearMeshData();
-      const axes = wearAxes(joints);
-      const limbSides = wearLimbSides(joints, axes);
+      const axes = preferredBodyAxes ?? wearAxes(joints);
+      const limbSides = wearLimbSides(joints, axes, preferredLimbSides);
       const hipCenter = joints.left_hip.clone().lerp(joints.right_hip, .5);
       if (!wearStableBodyProportions) {
         wearStableBodyProportions = {
@@ -667,7 +748,16 @@
       for (const [name, point] of Object.entries(frame.joints)) {
         joints[name] = toWorldPoint(point, frameTranslation, fixedRoot, true, name);
       }
-      const generated = wearBuildHumanoid(joints);
+      if (!wearStableSidesByFrame) {
+        wearStableSidesByFrame = wearBuildStableSidesByFrame();
+      }
+      if (!wearStableBodyAxesByFrame) {
+        wearStableBodyAxesByFrame = wearBuildStableBodyAxesByFrame();
+      }
+      const resolvedFrameIndex = frame.frameIndex ?? 0;
+      const stableSides = wearStableSidesByFrame[resolvedFrameIndex] ?? null;
+      const stableBodyAxes = wearStableBodyAxesByFrame[resolvedFrameIndex] ?? null;
+      const generated = wearBuildHumanoid(joints, stableSides, stableBodyAxes);
       if (!generated) {
         wearExactMesh.visible = false;
         return;

@@ -1110,15 +1110,27 @@ def cleanup_motion_clip(
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
     support_mode = detect_support_mode(trimmed_clip, support_mode_hint=support_mode_hint)
-    floor_support_enabled = ground_contact_mode_allows_floor_support(ground_contact_mode)
+    # Seated and lying athletes can have continuous equipment contact while
+    # their distal joints are not the body's primary support plane. Treating
+    # pedals or bench-press feet as floor anchors can rotate the reconstruction
+    # toward a standing pose.
+    floor_support_enabled = (
+        ground_contact_mode_allows_floor_support(ground_contact_mode)
+        and support_mode not in {"seated", "lying"}
+    )
     preserve_video_floor_orientation = clip_preserves_video_floor_orientation(trimmed_clip)
     preserve_horizontal_orientation = support_mode in {
         "horizontal_unspecified",
         "supine",
         "prone",
+        "lying",
     }
     raw_support_states = (
-        detect_support_contact_states(trimmed_clip, support_mode=support_mode)
+        detect_support_contact_states(
+            trimmed_clip,
+            support_mode=support_mode,
+            ground_contact_mode=ground_contact_mode,
+        )
         if floor_support_enabled
         else [{} for _ in trimmed_clip.frames]
     )
@@ -1131,29 +1143,58 @@ def cleanup_motion_clip(
             support_mode=support_mode,
         )
     )
+    # `ground_to_floor` is one clip-wide translation, so it cannot change
+    # contact timing. Re-detecting here used an absolute-zero height test in
+    # the translated coordinate space and silently erased elevated contacts
+    # (for example, landing on a box). Preserve the states inferred in the
+    # original motion space instead.
     support_states = (
-        detect_support_contact_states(grounded, support_mode=support_mode)
+        raw_support_states
         if floor_support_enabled
         else [{} for _ in grounded.frames]
     )
     support_ground_y = estimate_support_ground_height(grounded, support_states)
+    intermittent_support = (
+        str(ground_contact_mode or "unknown").strip().casefold() == "intermittent"
+    )
     support_stabilized = (
         grounded
-        if preserve_horizontal_orientation or not floor_support_enabled
+        if preserve_horizontal_orientation or not floor_support_enabled or intermittent_support
         else stabilize_global_translation_from_support_contacts(
             grounded,
             contact_states=support_states,
             support_ground_y=support_ground_y,
         )
     )
-    smoothed = smooth_root_translation(
-        support_stabilized,
-        root_joint=root_joint,
-        min_cutoff=one_euro_min_cutoff,
-        beta=one_euro_beta,
-        derivative_cutoff=one_euro_derivative_cutoff,
+    # Distinct-surface motion needs the measured root path intact. Its contact
+    # solver locks each planted episode and interpolates the rigid body path
+    # through flight; filtering here first shortens that path and creates two
+    # competing owners for the same translation.
+    smoothed = (
+        support_stabilized
+        if intermittent_support
+        else smooth_root_translation(
+            support_stabilized,
+            root_joint=root_joint,
+            min_cutoff=one_euro_min_cutoff,
+            beta=one_euro_beta,
+            derivative_cutoff=one_euro_derivative_cutoff,
+        )
     )
-    if preserve_horizontal_orientation:
+    if not floor_support_enabled:
+        vertically_grounded = smoothed
+        vertical_grounding = {
+            "applied": False,
+            "groundContactMode": str(ground_contact_mode or "unknown").strip().casefold(),
+            "reason": (
+                "seated_equipment_support_is_not_floor_support"
+                if support_mode == "seated"
+                else "lying_equipment_support_is_not_floor_support"
+                if support_mode == "lying"
+                else "ground_contact_mode_does_not_allow_grounding"
+            ),
+        }
+    elif preserve_horizontal_orientation:
         vertically_grounded = smoothed
         vertical_grounding = {
             "applied": False,
@@ -1171,7 +1212,11 @@ def cleanup_motion_clip(
         support_constrained = vertically_grounded
         support_constraint = {
             "applied": False,
-            "reason": "ground_contact_mode_does_not_allow_floor_support",
+            "reason": (
+                "equipment_support_is_not_floor_support"
+                if support_mode in {"seated", "lying"}
+                else "ground_contact_mode_does_not_allow_floor_support"
+            ),
         }
     elif preserve_video_floor_orientation:
         support_constrained, support_constraint = solve_contact_aware_rigid_world_alignment(
@@ -1222,15 +1267,15 @@ def cleanup_motion_clip(
                 support_constrained,
                 [*LEFT_KNEE_GROUP, *RIGHT_KNEE_GROUP],
             )
-            support_constrained, support_constraint = apply_kneeling_knee_lock(
-                support_constrained,
-                support_constraint,
-                ground_y=support_ground_y,
-            )
             support_constrained = _strong_torso_to_floor_reorientation_for_kneeling(
                 support_constrained,
                 ground_y=support_ground_y,
                 sagittal_pitch_degrees=support_constraint.get("sagittalPitchDegrees") if isinstance(support_constraint, dict) else None,
+            )
+            support_constrained, support_constraint = apply_kneeling_knee_lock(
+                support_constrained,
+                support_constraint,
+                ground_y=support_ground_y,
             )
     else:
         support_constrained = vertically_grounded
@@ -1243,9 +1288,13 @@ def cleanup_motion_clip(
             ),
         }
     final_support_states = (
-        detect_support_contact_states(support_constrained, support_mode=support_mode)
-        if floor_support_enabled
-        else [{} for _ in support_constrained.frames]
+        support_states
+        if floor_support_enabled and intermittent_support
+        else (
+            detect_support_contact_states(support_constrained, support_mode=support_mode)
+            if floor_support_enabled
+            else [{} for _ in support_constrained.frames]
+        )
     )
     final_support_ground_y = estimate_support_ground_height(
         support_constrained,
@@ -1275,7 +1324,11 @@ def cleanup_motion_clip(
         "oneEuroDerivativeCutoff": one_euro_derivative_cutoff,
         "motionThreshold": motion_threshold,
         "paddingFrames": padding_frames,
-        "smoothingMethod": "support_stabilization_plus_one_euro_root_translation_xz",
+        "smoothingMethod": (
+            "distinct_surface_solver_owns_contact_and_root_translation"
+            if intermittent_support
+            else "support_stabilization_plus_one_euro_root_translation_xz"
+        ),
         "trimmedStartFrames": start_trim,
         "trimmedEndFrames": end_trim,
         "rootJoint": root_joint,
@@ -1323,20 +1376,21 @@ def stabilize_vertical_floor_contact(
                 else "ground_contact_mode_does_not_allow_grounding"
             ),
         }
+    if normalized_mode == "intermittent":
+        # Intermittent support can resume on a different surface (box jump,
+        # step-up/down, stairs). Without an observed surface identity, mapping
+        # every contact phase to one floor destroys the movement's elevation.
+        return clip, {
+            "applied": False,
+            "groundContactMode": normalized_mode,
+            "reason": "distinct_contact_surface_heights_preserved",
+        }
 
     lower_envelope = [min(point[1] for point in frame.joints.values()) for frame in clip.frames]
     floor_height = percentile(lower_envelope, 0.10)
     smoothed_envelope = rolling_median(lower_envelope, window=median_window)
-    if normalized_mode == "continuous":
-        corrected_mask = [True] * clip.frame_count
-        corrections = [height - floor_height for height in smoothed_envelope]
-    else:
-        contact_tolerance = max(0.06, median_motion_body_height(clip) * 0.05)
-        corrected_mask = [height <= floor_height + contact_tolerance for height in smoothed_envelope]
-        corrections = [
-            height - floor_height if corrected else 0.0
-            for height, corrected in zip(smoothed_envelope, corrected_mask)
-        ]
+    corrected_mask = [True] * clip.frame_count
+    corrections = [height - floor_height for height in smoothed_envelope]
     if not any(corrected_mask):
         return clip, {
             "applied": False,
@@ -2119,6 +2173,10 @@ def stabilize_kneeling_distal_support_pose(
         )
         median_knee_to_ankle = np.median(knee_to_ankle, axis=0)
         median_ankle_to_foot = np.median(ankle_to_foot, axis=0)
+        shin_length = float(np.linalg.norm(median_knee_to_ankle))
+        reflected_below_support = bool(median_knee_to_ankle[1] < 0.0)
+        if reflected_below_support and shin_length > 1e-8:
+            median_knee_to_ankle[1] = abs(median_knee_to_ankle[1])
         foot_length = float(np.linalg.norm(median_ankle_to_foot))
         supported_foot_direction = median_knee_to_ankle.copy()
         supported_foot_direction[1] = 0.0
@@ -2130,6 +2188,7 @@ def stabilize_kneeling_distal_support_pose(
         side_vectors[side] = {
             "kneeToAnkle": median_knee_to_ankle.tolist(),
             "ankleToFoot": median_ankle_to_foot.tolist(),
+            "belowSupportReflectionApplied": reflected_below_support,
         }
     if not side_vectors:
         return clip, {"applied": False, "reason": "distal_support_joints_missing"}
@@ -2809,7 +2868,15 @@ def detect_support_mode(
     support_mode_hint: str | None = None,
 ) -> str:
     normalized_hint = str(support_mode_hint or "").strip().casefold()
-    if normalized_hint in {"upright", "quadruped", "supine", "prone", "kneeling"}:
+    if normalized_hint in {
+        "upright",
+        "quadruped",
+        "supine",
+        "prone",
+        "kneeling",
+        "seated",
+        "lying",
+    }:
         return normalized_hint
     torso_samples: list[tuple[float, float]] = []
     for frame in clip.frames:
@@ -2846,6 +2913,7 @@ def detect_support_contact_states(
     clip: MotionClip,
     *,
     support_mode: str | None = None,
+    ground_contact_mode: str = "unknown",
 ) -> list[dict[str, object]]:
     support_mode = support_mode or detect_support_mode(clip)
     states: list[dict[str, object]] = []
@@ -2984,7 +3052,99 @@ def detect_support_contact_states(
         previous_right = right_contact
         previous_left_hand = left_hand_contact
         previous_right_hand = right_hand_contact
+    if (
+        str(ground_contact_mode or "unknown").strip().casefold() == "intermittent"
+        and support_mode == "upright"
+    ):
+        return _repair_ballistic_upright_contact_states(clip, states)
     return states
+
+
+def _repair_ballistic_upright_contact_states(
+    clip: MotionClip,
+    states: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Recover takeoff and landing when absolute-height contact tests saturate.
+
+    Monocular reconstruction has no authoritative world-floor origin. After a
+    camera-basis conversion, every foot can therefore lie below zero and pass
+    an absolute-height contact test, including during flight. A real ballistic
+    interval has a coordinate-independent root signature: crouch valley,
+    airborne apex, then landing valley. Use that temporal signature only when
+    the ordinary detector found no foot-contact gap.
+    """
+    if clip.frame_count < 7 or not states:
+        return states
+    if any(
+        not bool(state.get("leftInContact"))
+        and not bool(state.get("rightInContact"))
+        for state in states
+    ):
+        return states
+    root_joint = find_first_joint(clip, DEFAULT_ROOT_JOINTS)
+    root_heights = rolling_median(
+        [frame.joints[root_joint][1] for frame in clip.frames],
+        window=3,
+    )
+    slopes = [right - left for left, right in zip(root_heights, root_heights[1:])]
+    valleys = [
+        index
+        for index in range(1, len(root_heights) - 1)
+        if slopes[index - 1] <= 0.0 < slopes[index]
+    ]
+    peaks = [
+        index
+        for index in range(1, len(root_heights) - 1)
+        if slopes[index - 1] >= 0.0 > slopes[index]
+    ]
+    body_height = median_motion_body_height(clip)
+    minimum_ballistic_prominence = max(UNIFORM_CAPSULE_RADIUS, body_height * 0.08)
+    candidates: list[tuple[float, int, int, int]] = []
+    for peak in peaks:
+        preceding = [valley for valley in valleys if valley < peak]
+        following = [valley for valley in valleys if valley > peak]
+        if not preceding or not following:
+            continue
+        takeoff = preceding[-1]
+        landing = following[0]
+        prominence = min(
+            root_heights[peak] - root_heights[takeoff],
+            root_heights[peak] - root_heights[landing],
+        )
+        if prominence >= minimum_ballistic_prominence:
+            candidates.append((prominence, takeoff, peak, landing))
+    if not candidates:
+        return states
+    _prominence, takeoff, _peak, landing = max(candidates)
+    if landing <= takeoff + 1:
+        return states
+
+    repaired: list[dict[str, object]] = []
+    for frame_index, state in enumerate(states):
+        updated = dict(state)
+        in_flight = takeoff < frame_index < landing
+        left_joint = updated.get("leftFootJoint")
+        right_joint = updated.get("rightFootJoint")
+        left_contact = not in_flight and isinstance(left_joint, str)
+        right_contact = not in_flight and isinstance(right_joint, str)
+        contact_joints = [
+            joint
+            for joint, active in ((left_joint, left_contact), (right_joint, right_contact))
+            if isinstance(joint, str) and active
+        ]
+        updated.update({
+            "leftInContact": left_contact,
+            "rightInContact": right_contact,
+            "leftHandInContact": False,
+            "rightHandInContact": False,
+            "supportJoint": contact_joints[0] if contact_joints else None,
+            "supportFoot": contact_joints[0] if contact_joints else None,
+            "state": "double_support" if contact_joints else "airborne",
+            "contactJoints": contact_joints,
+            "contactInference": "ballistic_root_phase",
+        })
+        repaired.append(updated)
+    return repaired
 
 
 def iter_contact_joint_names(state: dict[str, object]) -> list[str]:

@@ -140,7 +140,40 @@ def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
     support_heights = _collect_support_heights(clip)
     if support_heights:
         measured_ground_y = _median(support_heights)
-        if support_ground_y is not None and abs(support_ground_y - measured_ground_y) <= 0.05:
+        vertical_grounding = (
+            cleanup_metadata.get("verticalGrounding")
+            if isinstance(cleanup_metadata, dict)
+            else None
+        )
+        intermittent_support = (
+            isinstance(vertical_grounding, dict)
+            and str(vertical_grounding.get("groundContactMode") or "").casefold()
+            == "intermittent"
+        )
+        if intermittent_support:
+            contact_episode_heights = _contact_episode_support_heights(clip)
+            # Contact phases can belong to a floor and an elevated box/step.
+            # Use the planted episode at the lower endpoint: the initial one
+            # for an ascent and the final one for a descent. A numerically low
+            # outlier episode can otherwise make a valid landing hover.
+            if contact_episode_heights:
+                root_name = next(
+                    (name for name in ("pelvis", "hips", "root") if name in clip.joint_names),
+                    None,
+                )
+                ends_higher = (
+                    root_name is not None
+                    and clip.frames[-1].joints[root_name][1]
+                    > clip.frames[0].joints[root_name][1]
+                )
+                ground_y = (
+                    contact_episode_heights[0]
+                    if ends_higher
+                    else contact_episode_heights[-1]
+                )
+            else:
+                ground_y = percentile(support_heights, 0.10)
+        elif support_ground_y is not None and abs(support_ground_y - measured_ground_y) <= 0.05:
             ground_y = support_ground_y
         else:
             ground_y = measured_ground_y
@@ -269,6 +302,35 @@ def _collect_support_heights(clip: MotionClip) -> list[float]:
         support = min(supports, key=lambda point: point[1])
         support_heights.append(support_surface_height(support[1]))
     return support_heights
+
+
+def _contact_episode_support_heights(clip: MotionClip) -> list[float]:
+    cleanup = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
+    contacts = cleanup.get("footContacts") if isinstance(cleanup, dict) else None
+    if not isinstance(contacts, list):
+        return []
+    episodes: list[list[float]] = []
+    active: list[float] = []
+    for frame_index, state in enumerate(contacts):
+        if frame_index >= clip.frame_count or not isinstance(state, dict):
+            break
+        joint_names = state.get("contactJoints")
+        if not isinstance(joint_names, list) or not joint_names:
+            if active:
+                episodes.append(active)
+                active = []
+            continue
+        frame = clip.frames[frame_index]
+        frame_heights = [
+            support_surface_height(frame.joints[name][1])
+            for name in joint_names
+            if isinstance(name, str) and name in frame.joints
+        ]
+        if frame_heights:
+            active.append(min(frame_heights))
+    if active:
+        episodes.append(active)
+    return [_median(episode) for episode in episodes if episode]
 
 
 def _collect_support_joint_center_heights(clip: MotionClip) -> list[float]:

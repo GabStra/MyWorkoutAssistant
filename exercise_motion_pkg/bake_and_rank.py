@@ -110,6 +110,11 @@ from exercise_motion_pkg.segment_detection import (
     iter_detection_windows,
     save_detection_result,
 )
+from exercise_motion_pkg.source_outcomes import (
+    candidate_result_is_accepted,
+    rejection_tags_from_candidate_result,
+    update_source_outcome_index,
+)
 from exercise_motion_pkg.target_motion import (
     DISTAL_LEG_VERTICAL_RAISE_PROFILE_KEY,
     TARGET_MOTION_MATERIALIZED_REJECTION_REASON,
@@ -188,7 +193,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 # sheets. Rendering every 30 FPS source frame through Playwright made this
 # diagnostic export as expensive as WHAM itself, so keep a smooth 12 FPS review
 # stream and retain both endpoints instead.
-DEFAULT_DENSE_REVIEW_VIDEO_FPS = 12.0
+DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
 SELECTED_SECTION_BAKE_CACHE_VERSION = 15
@@ -211,6 +216,7 @@ DEFAULT_MIN_SELECTED_SCORE = 0.55
 DEFAULT_FALLBACK_CANDIDATES = 12
 DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS = 0
 DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS = 0
+DEFAULT_MAX_RECONSTRUCTION_CANDIDATE_ATTEMPTS = 2
 DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS = 180.0
 DEFAULT_FINAL_REVIEW_TIMEOUT_SECONDS = 120.0
 DEFAULT_CANDIDATE_TIMEOUT_SECONDS = 0.0
@@ -416,7 +422,7 @@ SOURCE_GATE_MAX_DIRECT_CHUNK_SECONDS = 20.0
 SOURCE_GATE_MIN_VALID_CHUNK_RATIO = 0.25
 SOURCE_GATE_MIN_VALID_CHUNK_COUNT = 2
 SOURCE_GATE_MIN_SCORED_CHUNKS_FOR_COVERAGE = 3
-SOURCE_GATE_MIN_RECONSTRUCTION_VIEW_QUALITY = 0.40  # diagnostic only; not a skip gate
+SOURCE_GATE_MIN_RECONSTRUCTION_VIEW_QUALITY = 0.40
 BAKED_MOTION_MIN_STRENGTH_SCORE = 0.15
 BAKED_MOTION_MIN_PRIMARY_RANGE_RATIO = 0.06
 SOURCE_CUT_REFINEMENT_MIN_SECONDS = 0.75
@@ -471,7 +477,8 @@ CUT_CANDIDATE_VLM_TEMPERATURE = 0.0
 CUT_CANDIDATE_VLM_TOP_P = 1.0
 CUT_CANDIDATE_VLM_DISABLE_REASONING = True
 CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS
-SOURCE_CUT_CANDIDATE_VLM_MAX_TOKENS = 256
+SOURCE_CUT_CANDIDATE_VLM_BASE_MAX_TOKENS = 256
+SOURCE_CUT_CANDIDATE_VLM_TOKENS_PER_PHASE = 64
 SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING = True
 SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS
 SOURCE_CUT_MAX_VLM_WORKERS = 6
@@ -487,8 +494,8 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 63
-FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 44
+SELECTION_VALIDATION_POLICY_VERSION = 64
+FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 46
 RETAINED_SELECTED_REVALIDATION_VERSION = 11
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
@@ -641,6 +648,15 @@ PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS = frozenset(
         TARGET_MOTION_MATERIALIZED_REJECTION_REASON,
     )
 )
+PARENT_SOURCE_WINDOW_FALLBACK_NON_RECOVERABLE_REASONS = frozenset(
+    (
+        "broken_render",
+        "equipment_holding_pose_invalid",
+        "gross_pose_reconstruction_error",
+        "severe_tracking_corruption",
+        "support_mode_mismatch",
+    )
+)
 PRE_WHAM_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS = frozenset(
     (
         "source_candidate_choice_invalid_response",
@@ -696,7 +712,7 @@ FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO = 0.55
 FULL_REPETITION_PHASE_COMPLETENESS_EDGE_MARGIN_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MIN_FRAMES = 5
-EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 21
+EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 22
 SOURCE_ENDPOINT_RETURN_HAND_HEIGHT_DELTA_RATIO_MAX = 0.20
 SOURCE_ENDPOINT_RETURN_ROOT_HORIZONTAL_DISPLACEMENT_RATIO_MAX = 0.065
 RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
@@ -855,7 +871,15 @@ def launch_chromium_browser(
         "headless": True,
         # Generated previews import the adjacent Three.js module from a file:// URL.
         # Chromium otherwise blocks that module for an opaque local-file origin.
-        "args": ["--allow-file-access-from-files"],
+        # Keep the small review renderer off CUDA as well.  WHAM and the VLM can
+        # occupy most of the GPU while review capture starts; sharing that device
+        # made Chromium occasionally return an entirely blank WebGL canvas even
+        # though the same cached preview rendered correctly after CUDA was freed.
+        "args": [
+            "--allow-file-access-from-files",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+        ],
     }
     try:
         return playwright.chromium.launch(**launch_options)
@@ -1873,17 +1897,36 @@ def expand_ranked_candidates_for_source_windows(
 
 
 def reconstruction_priority_score(ranked_candidate: RankedCandidate) -> float | None:
-    """Estimate WHAM input quality from pose evidence already computed at discovery."""
+    """Estimate reconstruction observability without preferring a named view.
+
+    Angle is deliberately absent. A side, frontal, or oblique source wins only
+    when its required moving chains are more completely and stably observable.
+    """
     return _weighted_pose_prefilter_score(
         ranked_candidate,
         (
-            ("reconstructionViewQuality", 0.35),
-            ("bilateralActiveChainBalance", 0.20),
-            ("cropSafety", 0.15),
-            ("cameraStability", 0.15),
-            ("bodyScaleRatio", 0.15),
+            ("singlePersonRatio", 0.14),
+            ("keypointCoverage", 0.12),
+            ("wholeMovementJointVisibility", 0.16),
+            ("activeJointVisibility", 0.12),
+            ("activeChainVisibility", 0.12),
+            ("bilateralActiveChainBalance", 0.08),
+            ("motionStrength", 0.08),
+            ("cropSafety", 0.07),
+            ("cameraStability", 0.07),
+            ("bodyScaleRatio", 0.04),
         ),
     )
+
+
+def candidate_requires_depth_observable_lying_support(
+    candidate: RankedCandidate,
+) -> bool:
+    contract = source_window_motion_contract_from_candidate(candidate.candidate)
+    return exercise_support_mode_hint(
+        exercise_name=candidate.exercise_name,
+        exercise_motion_contract=contract,
+    ) in {"lying", "supine", "prone"}
 
 
 def yolo_trackability_score(ranked_candidate: RankedCandidate) -> float | None:
@@ -1932,12 +1975,13 @@ def _weighted_pose_prefilter_score(
 def prioritize_ranked_candidates_for_reconstruction(
     candidates: list[RankedCandidate],
 ) -> list[RankedCandidate]:
-    """Prefer YOLO-trackable sources among recommended clips; keep fallbacks last.
+    """Choose the observable first source, then an orientation-diverse fallback.
 
-    ``reconstructionViewQuality`` (side vs front) is not a validity gate: some
-    movements are best observed frontally. It is only a tie-breaker after the
-    detector-derived trackability score, so equally trackable sources prefer the
-    less depth-ambiguous reconstruction without displacing a cleaner track.
+    No camera angle receives an intrinsic quality bonus. The first candidate is
+    selected from trackability and moving-chain observability. Within each
+    semantic eligibility group, the next candidate maximizes measured view
+    diversity from that first source so a failed monocular interpretation is
+    not retried from effectively the same projection.
     """
     decorated: list[tuple[bool, int, float, float, int, RankedCandidate]] = []
     for original_index, ranked_candidate in enumerate(candidates):
@@ -1951,29 +1995,173 @@ def prioritize_ranked_candidates_for_reconstruction(
         candidate["firstAttemptReadiness"] = readiness
         prioritized_candidate = replace(ranked_candidate, candidate=candidate)
         is_fallback = parse_optional_bool(candidate.get("bakeFallbackCandidate")) is True
-        sort_trackability = (
-            -(trackability_score)
-            if trackability_score is not None
-            else 1.0
-        )
         sort_reconstruction = (
             -reconstruction_score
             if reconstruction_score is not None
+            else 1.0
+        )
+        sort_trackability = (
+            -trackability_score
+            if trackability_score is not None
             else 1.0
         )
         decorated.append(
             (
                 is_fallback,
                 first_attempt_readiness_sort_rank(readiness),
-                sort_trackability,
                 sort_reconstruction,
+                sort_trackability,
                 original_index,
                 prioritized_candidate,
             )
         )
 
     decorated.sort(key=lambda entry: (entry[0], entry[1], entry[2], entry[3], entry[4]))
-    return [entry[5] for entry in decorated]
+    prioritized = [entry[5] for entry in decorated]
+    return prioritize_orientation_diverse_fallback(prioritized)
+
+
+def candidate_view_orientation_evidence(candidate: RankedCandidate) -> float | None:
+    vision_payload = candidate.candidate.get("visionPayload")
+    pose_payload = (
+        vision_payload.get("posePrefilter")
+        if isinstance(vision_payload, dict)
+        else None
+    )
+    if not isinstance(pose_payload, dict):
+        return None
+    value = parse_optional_float(pose_payload.get("frontalOrBackViewEvidence"))
+    return max(0.0, min(1.0, value)) if value is not None else None
+
+
+def prioritize_orientation_diverse_fallback(
+    candidates: list[RankedCandidate],
+) -> list[RankedCandidate]:
+    """Move one measurably different eligible view directly behind the leader."""
+    if len(candidates) < 2:
+        return candidates
+    leader = candidates[0]
+    leader_view = candidate_view_orientation_evidence(leader)
+    if leader_view is None:
+        return candidates
+    remaining = candidates[1:]
+    leader_is_fallback = parse_optional_bool(
+        leader.candidate.get("bakeFallbackCandidate")
+    ) is True
+    same_semantic_group = [
+        (index, candidate)
+        for index, candidate in enumerate(remaining)
+        if (
+            parse_optional_bool(candidate.candidate.get("bakeFallbackCandidate")) is True
+        ) == leader_is_fallback
+    ]
+    eligible = same_semantic_group or list(enumerate(remaining))
+    diverse_candidates = [
+        (abs(view - leader_view), index, candidate)
+        for index, candidate in eligible
+        if (view := candidate_view_orientation_evidence(candidate)) is not None
+    ]
+    if not diverse_candidates:
+        return candidates
+    distance, diverse_index, diverse = max(
+        diverse_candidates,
+        key=lambda item: (item[0], -item[1]),
+    )
+    diverse_payload = copy.deepcopy(diverse.candidate)
+    diverse_payload["preWhamOrientationDiversityFromPrimary"] = distance
+    diverse_payload["preWhamOrientationDiverseFallback"] = True
+    diverse = replace(diverse, candidate=diverse_payload)
+    return [
+        leader,
+        diverse,
+        *(candidate for index, candidate in enumerate(remaining) if index != diverse_index),
+    ]
+
+
+def reprioritize_candidates_after_failure(
+    candidates: list[RankedCandidate],
+    *,
+    failed_candidate: RankedCandidate,
+    failed_result: dict[str, Any],
+) -> list[RankedCandidate]:
+    """Choose the next source using the failure evidence from the previous one."""
+    reconstruction_failed = failed_result.get("reconstructionAttempted") is True
+    failed_source_family = ranked_candidate_source_family_key(failed_candidate)
+    if reconstruction_failed and failed_source_family is not None:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                ranked_candidate_source_family_key(candidate) != failed_source_family
+                or parse_optional_bool(
+                    candidate.candidate.get("sourceWindowParentFallback")
+                )
+                is True
+            )
+        ]
+    if not candidates:
+        return candidates
+    tags = " ".join(rejection_tags_from_candidate_result(failed_result)).casefold()
+    failed_view = candidate_view_orientation_evidence(failed_candidate)
+    needs_trackability = any(
+        marker in tags
+        for marker in ("track", "occlu", "crop", "render", "pose_reconstruction", "joint")
+    )
+    needs_completion = any(
+        marker in tags
+        for marker in ("boundary", "incomplete", "phase", "start_posture", "end_posture")
+    )
+    needs_semantic_match = any(
+        marker in tags for marker in ("wrong_exercise", "wrong_variant", "equipment", "identity")
+    )
+    def retry_score(candidate: RankedCandidate) -> tuple[int, float, float, float, int]:
+        readiness = first_attempt_readiness_assessment(candidate)
+        reconstruction = reconstruction_priority_score(candidate) or 0.0
+        trackability = yolo_trackability_score(candidate) or 0.0
+        completion = 1.0 if readiness.get("completionState") == "complete" else 0.0
+        semantic = parse_optional_float(candidate.candidate.get("finalScore")) or 0.0
+        view = candidate_view_orientation_evidence(candidate)
+        diversity = (
+            abs(view - failed_view)
+            if view is not None and failed_view is not None
+            else 0.0
+        )
+        targeted = (
+            (max(reconstruction, trackability) if needs_trackability else 0.0)
+            + (completion if needs_completion else 0.0)
+            + (semantic if needs_semantic_match else 0.0)
+        )
+        distinct_source = int(
+            reconstruction_failed
+            and failed_source_family is not None
+            and ranked_candidate_source_family_key(candidate) != failed_source_family
+        )
+        return (
+            distinct_source,
+            targeted,
+            diversity,
+            reconstruction,
+            -candidate.candidate_rank,
+        )
+
+    ordered = sorted(candidates, key=retry_score, reverse=True)
+    result: list[RankedCandidate] = []
+    for retry_rank, candidate in enumerate(ordered, start=1):
+        payload = copy.deepcopy(candidate.candidate)
+        payload["adaptiveRetryPriority"] = {
+            "rank": retry_rank,
+            "failureTags": rejection_tags_from_candidate_result(failed_result),
+            "trackabilityTargeted": needs_trackability,
+            "completionTargeted": needs_completion,
+            "semanticMatchTargeted": needs_semantic_match,
+            "distinctSourceAfterReconstructionFailure": (
+                reconstruction_failed
+                and failed_source_family is not None
+                and ranked_candidate_source_family_key(candidate) != failed_source_family
+            ),
+        }
+        result.append(replace(candidate, candidate=payload))
+    return result
 
 
 def review_item_attempt_key(item: ReviewItem) -> str:
@@ -2182,6 +2370,8 @@ class BakeAndRankRequest:
     fallback_candidates: int = DEFAULT_FALLBACK_CANDIDATES
     max_source_window_attempts: int = DEFAULT_MAX_SOURCE_WINDOW_ATTEMPTS
     max_final_output_rejections: int = DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS
+    max_reconstruction_candidate_attempts: int = DEFAULT_MAX_RECONSTRUCTION_CANDIDATE_ATTEMPTS
+    source_outcome_index: Path | None = None
     max_selected_results: int = 1
     candidate_workers: int = 1
     wham_python_command: str = "python"
@@ -2749,6 +2939,15 @@ def evaluate_source_candidate_gate(
             ):
                 # Same compatibility protection for older compact payloads.
                 reasons.append("pose_incomplete_full_body_framing")
+            reconstruction_view_quality = parse_optional_float(
+                pose_payload.get("reconstructionViewQuality")
+            )
+            if (
+                candidate_requires_depth_observable_lying_support(candidate)
+                and reconstruction_view_quality is not None
+                and reconstruction_view_quality < SOURCE_GATE_MIN_RECONSTRUCTION_VIEW_QUALITY
+            ):
+                reasons.append("pose_lying_support_depth_ambiguity")
         if deterministic_source_fallback is None:
             for field in (
                 "correct_exercise",
@@ -2837,8 +3036,20 @@ def _candidate_completion_evidence(
     )
     end_visible = parse_optional_bool(payload.get("movement_end_posture_visible"))
     continuous = parse_optional_bool(payload.get("continuous_motion"))
+    contract_start_match = parse_optional_bool(payload.get("contract_start_state_match"))
+    contract_end_match = parse_optional_bool(payload.get("contract_end_state_match"))
+    all_required_phases_visible = parse_optional_bool(payload.get("all_required_phases_visible"))
     all_boundaries_visible = all(value is True for value in (start_visible, action_visible, end_visible))
-    any_known_missing = any(value is False for value in (start_visible, action_visible, end_visible))
+    contract_evidence = (
+        contract_start_match,
+        contract_end_match,
+        all_required_phases_visible,
+    )
+    contract_confirmed = all(value is True for value in contract_evidence)
+    any_known_missing = any(
+        value is False
+        for value in (start_visible, action_visible, end_visible, *contract_evidence)
+    )
 
     if completion_mode in {"active_travel", "stable_hold"}:
         if continuous is True and action_visible is not False:
@@ -2848,7 +3059,7 @@ def _candidate_completion_evidence(
         return "uncertain", [f"{completion_mode}_evidence_uncertain"]
 
     if completion_mode == "distinct_end_state":
-        if all_boundaries_visible:
+        if all_boundaries_visible and contract_confirmed:
             return "complete", ["distinct_start_action_finish_observed"]
         if any_known_missing:
             return "partial", ["distinct_state_transition_incomplete"]
@@ -6364,6 +6575,7 @@ def build_final_output_validation_prompt(
         "Final validation does not re-select the source window and does not own precise start or end timing. "
         "The source video and generated preview can use different fixed camera viewpoints and framing. Do not compare their projected poses, movement direction, or posture directly, and do not reject the preview because those views look different. Use the source as authoritative context for the visible exercise posture and phase sequence; the generated contract is advisory and may contain an incorrect posture label. Judge the generated preview from body-segment relationships changing over time within the preview itself, and do not call a source-matching posture a reconstruction error merely because it conflicts with an advisory contract field. "
         "A smooth skeleton is still invalid when it has an unmistakable whole-body reconstruction failure within the generated preview. For example, reject an implausible crouched or kneeling reconstruction for a standing target, a seated or lying reconstruction for a standing target, or clearly impossible limb geometry. "
+        "Inspect the sequence temporally, not just as isolated plausible poses. Repeated one-frame direction reversals, snapping joints, visible shaking, or limbs that twist and untwist without belonging to the exercise are severe tracking corruption. Persistent anatomically impossible left/right twisting or asymmetry is a gross pose reconstruction error. A fixed whole-model viewing direction can be an orientation warning, but limb-local twisting is not merely a camera-orientation concern. "
         "When the target uses equipment that the skeleton intentionally omits, judge the body geometry needed to hold or use it. Do not require the object to be rendered, but reject clearly impossible or target-inconsistent hand, arm, shoulder, or support geometry. Multiple accessories may be present; judge only body mechanics that are actually visible in the evidence. "
         "For a target whose structured groundContactMode is none, the preview intentionally has no floor or support prop. Feet drawn near the bottom of a tightly framed image do not establish standing or floor contact. Infer a support mismatch only from contradictory body kinematics; overhead hands and a freely suspended lower body are consistent with hanging even when the bar is omitted. "
         "Hard-reject when the final generated preview has a clear identity or artifact failure: wrong exercise variant, wrong exercise, gross pose reconstruction error, support-mode mismatch, impossible equipment-holding body geometry, broken render, unreadable subject, severe tracking corruption, or obvious setup/cleanup/rerack/unrack inside the final artifact. "
@@ -6570,8 +6782,16 @@ def reconcile_source_confirmed_contract_contradiction(
     deterministic_metrics: dict[str, Any] | None,
     has_source_context: bool,
 ) -> dict[str, Any]:
-    """Repair a visual rejection whose only evidence is a stale contract label."""
+    """Repair inconsistent fields on an approval, never reverse a visual rejection.
+
+    The deterministic source/output comparisons establish preservation, not
+    exercise identity or visual plausibility.  They therefore cannot overrule
+    an explicit final-review rejection.  Reconciliation is only safe when the
+    reviewer approved the preview and emitted contradictory structured fields.
+    """
     if not has_source_context or not isinstance(deterministic_metrics, dict):
+        return parsed
+    if parsed.get("approved") is not True or parsed.get("retry") is True:
         return parsed
     reject_tags = set(payload_string_list(parsed.get("reject")))
     contract_contradiction_tags = {
@@ -7778,6 +7998,18 @@ def source_pose_endpoint_features(frames: list[dict[str, Any]]) -> dict[str, Any
     else:
         stance_ratio = None
 
+    boundary_support_motion = source_pose_endpoint_support_motion(
+        frames,
+        body_span=body_span,
+    )
+    support_mode = "standing" if ankles and lower_y > hip[1] + body_span * 0.20 else "unknown"
+    if boundary_support_motion.get("commonBodyTranslation") is True:
+        # A plausible upright silhouette does not prove foot support.  When the
+        # ankles and pelvis translate together by a material fraction of body
+        # height, the boundary is airborne (or otherwise unsupported), not a
+        # standing endpoint.  This catches cuts beginning during takeoff/flight
+        # without relying on a visible floor or exercise-specific timing.
+        support_mode = "airborne"
     return {
         "available": True,
         "sampleCount": len(frames),
@@ -7785,10 +8017,58 @@ def source_pose_endpoint_features(frames: list[dict[str, Any]]) -> dict[str, Any
         "torsoOrientation": torso_orientation,
         "kneeState": knee_state,
         "stance": stance,
-        "supportMode": "standing" if ankles and lower_y > hip[1] + body_span * 0.20 else "unknown",
+        "supportMode": support_mode,
+        "supportMotion": boundary_support_motion,
         "bodySpan": round(body_span, 6),
         "stanceToShoulderWidthRatio": round(stance_ratio, 4) if stance_ratio is not None else None,
         "medianJointPositions": {name: point for name, point in joints.items() if point is not None},
+    }
+
+
+def source_pose_endpoint_support_motion(
+    frames: list[dict[str, Any]],
+    *,
+    body_span: float,
+) -> dict[str, Any]:
+    """Distinguish a supported boundary from whole-body flight in 2D pose."""
+
+    if len(frames) < 2 or body_span <= 1e-6:
+        return {"available": False, "reason": "insufficient_boundary_motion_samples"}
+
+    def joint_center_y(frame: dict[str, Any], names: tuple[str, ...]) -> float | None:
+        joints = frame.get("joints")
+        if not isinstance(joints, dict):
+            return None
+        values = [
+            float(point[1])
+            for name in names
+            if is_point3(point := joints.get(name))
+        ]
+        return statistics.median(values) if values else None
+
+    first = frames[0]
+    last = frames[-1]
+    first_ankle_y = joint_center_y(first, ("left_ankle", "right_ankle"))
+    last_ankle_y = joint_center_y(last, ("left_ankle", "right_ankle"))
+    first_pelvis_y = joint_center_y(first, ("pelvis", "left_hip", "right_hip"))
+    last_pelvis_y = joint_center_y(last, ("pelvis", "left_hip", "right_hip"))
+    if None in (first_ankle_y, last_ankle_y, first_pelvis_y, last_pelvis_y):
+        return {"available": False, "reason": "boundary_support_joints_missing"}
+
+    ankle_delta_ratio = (last_ankle_y - first_ankle_y) / body_span
+    pelvis_delta_ratio = (last_pelvis_y - first_pelvis_y) / body_span
+    same_direction = ankle_delta_ratio * pelvis_delta_ratio > 0.0
+    common_body_translation = bool(
+        same_direction
+        and abs(ankle_delta_ratio) >= 0.16
+        and abs(pelvis_delta_ratio) >= 0.12
+        and abs(ankle_delta_ratio - pelvis_delta_ratio) <= 0.16
+    )
+    return {
+        "available": True,
+        "ankleVerticalDeltaBodyRatio": round(ankle_delta_ratio, 6),
+        "pelvisVerticalDeltaBodyRatio": round(pelvis_delta_ratio, 6),
+        "commonBodyTranslation": common_body_translation,
     }
 
 
@@ -8075,6 +8355,10 @@ def validate_source_pose_endpoints_against_contract(
                     and not horizontal_posture
                     and hand_height_is_motion_critical
                 ) or (
+                    field == "supportMode"
+                    and observed_value == "airborne"
+                    and expected_value in {"standing", "kneeling", "seated", "lying"}
+                ) or (
                     field == "stance"
                     and (
                         "split" in {expected_value, observed_value}
@@ -8200,8 +8484,9 @@ def source_pose_phase_completeness_metrics(
         exercise_name=exercise_name,
         ranking_payload=ranking_payload,
     )
-    source_foot_support_evidence = source_pose_stationary_foot_support_evidence(
-        source_pose_payload
+    source_foot_support_evidence = source_pose_stationary_support_evidence(
+        source_pose_payload,
+        exercise_motion_contract=target_motion_contract_from_ranking_payload(ranking_payload),
     )
     source_pose_endpoints = source_pose_endpoint_feature_summary(source_pose_payload)
     result = {
@@ -8448,6 +8733,7 @@ def evaluate_raw_wham_motion_gate(
     *,
     source_pose_reference_path: Path | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
+    exercise_name: str | None = None,
 ) -> dict[str, Any]:
     """Reject structurally broken WHAM output before cleanup variants can mask it."""
     try:
@@ -8487,8 +8773,24 @@ def evaluate_raw_wham_motion_gate(
 
     rejection_reasons: list[str] = []
     rigid_paired_hands_required = exercise_motion_contract_requires_rigid_paired_hands(
-        exercise_motion_contract
+        exercise_motion_contract,
+        exercise_name=exercise_name,
     )
+    raw_hand_spacing_ratio = parse_optional_float(
+        paired_hands_metrics.get("handSpacingInstabilityRatio")
+    )
+    raw_hand_spacing_threshold = parse_optional_float(
+        paired_hands_metrics.get("spacingInstabilityThreshold")
+    )
+    if (
+        rigid_paired_hands_required
+        and raw_hand_spacing_ratio is not None
+        and raw_hand_spacing_threshold is not None
+        and raw_hand_spacing_ratio > raw_hand_spacing_threshold
+    ):
+        # A monocular source cannot independently verify hidden depth, but a
+        # rigid two-hand implement supplies an absolute 3-D invariant.
+        rejection_reasons.append("raw_wham_rigid_two_hand_spacing_instability")
     if paired_hands_distortion_is_blocking(
         paired_hands_metrics,
         lock_planted_hands=False,
@@ -8627,18 +8929,25 @@ def exercise_motion_contract_implement_support_mode(
     # Preserve correct behavior for retained policy-v6 contracts.  This is a
     # semantic relationship rather than an exercise-name allowlist: any rigid
     # implement explicitly resting on the body is not owned by hand spacing.
-    state_text = " ".join(
-        str(exercise_motion_contract.get(key) or "")
-        for key in ("validStartState", "validEndState", "advisoryText")
-    ).casefold()
+    state_texts = [
+        text.casefold()
+        for key in ("validStartState", "validEndState")
+        if (text := str(exercise_motion_contract.get(key) or "").strip())
+    ]
+    if not state_texts:
+        state_texts = [str(exercise_motion_contract.get("advisoryText") or "").casefold()]
     rigid_implement = r"(?:barbell|ez[ -]?bar|trap[ -]?bar|bar)"
     body_region = r"(?:hips?|pelvis|shoulders?|upper[ -]?back|back|torso|chest)"
     body_supported_patterns = (
         rf"{rigid_implement}.{{0,48}}(?:rests?|resting|supported|positioned|lies|lying).{{0,24}}(?:on|across|over|against).{{0,20}}{body_region}",
-        rf"{rigid_implement}.{{0,32}}(?:on|across|over).{{0,20}}{body_region}",
+        rf"{rigid_implement}.{{0,32}}(?:on|across|against).{{0,20}}{body_region}",
         r"\b(?:front|back) rack(?:ed)?\b",
     )
-    if any(re.search(pattern, state_text) for pattern in body_supported_patterns):
+    if any(
+        re.search(pattern, state_text)
+        for pattern in body_supported_patterns
+        for state_text in state_texts
+    ):
         return "body_supported"
     return None
 
@@ -11538,10 +11847,10 @@ def paired_hands_distortion_is_blocking(
     spacing_threshold = parse_optional_float(metrics.get("spacingInstabilityThreshold"))
     if spacing_threshold is None:
         spacing_threshold = PAIRED_HANDS_MAX_SPACING_INSTABILITY_RATIO
-    same_phase_correlation = parse_optional_float(metrics.get("samePhaseCorrelation"))
     source_spacing_ratio = parse_optional_float(
         metrics.get("sourceHandSpacingInstabilityRatio")
     )
+    same_phase_correlation = parse_optional_float(metrics.get("samePhaseCorrelation"))
     source_same_phase_correlation = parse_optional_float(
         metrics.get("sourceSamePhaseCorrelation")
     )
@@ -11559,12 +11868,7 @@ def paired_hands_distortion_is_blocking(
     ):
         # Hands holding one rigid implement may translate or rotate together,
         # but their separation cannot drift while the two endpoints move out of
-        # phase. Requiring both signals avoids inflating close-grip movements,
-        # where a small absolute spacing change has a large relative ratio.
-        # A rigid-equipment concern is blocking only when the generated output
-        # is demonstrably worse than the same measurements in its source. If
-        # the source baseline is unavailable, the caller routes the concern to
-        # manual review instead of applying a universal cutoff as a veto.
+        # phase. Requiring both signals avoids inflating close-grip movements.
         return bool(
             source_spacing_ratio is not None
             and source_same_phase_correlation is not None
@@ -11876,37 +12180,19 @@ def compute_kinematic_plausibility_metrics_from_payload(
 
     distal_step = compute_distal_step_spike_metrics(joint_tracks, root_joint=root_joint, body_height=body_height)
     angle_step = compute_joint_angle_step_metrics(joint_tracks)
-    source_frames = [
-        {"joints": frame.get("sourceJoints")}
-        for frame in frames
-        if isinstance(frame.get("sourceJoints"), dict)
-    ]
-    source_angle_step = None
-    if len(source_frames) == len(frames):
-        source_joint_tracks, _ = skeleton_joint_tracks_and_body_height(
-            source_frames,
-            joint_names,
-        )
-        source_angle_step = compute_joint_angle_step_metrics(source_joint_tracks)
     output_angle_step = float(angle_step.get("maxAngleStepDegrees") or 0.0)
-    source_max_angle_step = float(
-        source_angle_step.get("maxAngleStepDegrees") or 0.0
-    ) if isinstance(source_angle_step, dict) else None
-    angle_step_source_amplification = bool(
-        source_max_angle_step is not None
-        and output_angle_step > source_max_angle_step * 2.0
-        and output_angle_step > source_max_angle_step + 5.0
-    )
-    angle_step["sourceMaxAngleStepDegrees"] = source_max_angle_step
-    angle_step["sourceAmplification"] = angle_step_source_amplification
+    # Exported sourceJoints are the processed MotionClip before preview-space
+    # transforms, not an independent observation of the source video.  Using
+    # them to corroborate a discontinuity is circular: an upstream snap is
+    # present in both fields and was consequently waived by final validation.
+    angle_step["sourceMaxAngleStepDegrees"] = None
+    angle_step["sourceAmplification"] = False
     bone_length = compute_bone_length_instability_metrics(joint_tracks, body_height=body_height)
     reasons: list[str] = []
     if distal_step["severe"]:
         reasons.append("limb_velocity_spike_penalty")
     if angle_step["severe"]:
         reasons.append("joint_angle_spike_penalty")
-    if angle_step_source_amplification:
-        reasons.append("joint_angle_step_source_amplification")
     if bone_length["severe"]:
         reasons.append("bone_length_instability_penalty")
 
@@ -12126,7 +12412,7 @@ def compute_distal_step_spike_metrics(
                 max_frame_index = index
                 max_step_coordinated_counterpart_motion = coordinated_counterpart_motion
     severe = (
-        max_uncoordinated_severity >= KINEMATIC_ISOLATED_SPIKE_SEVERE_MULTIPLIER
+        max_severity >= KINEMATIC_ISOLATED_SPIKE_SEVERE_MULTIPLIER
         or max_consecutive_threshold_exceedance_count >= KINEMATIC_PERSISTENT_SPIKE_MIN_COUNT
     )
     score = clamp_unit(1.0 / max(max_uncoordinated_severity, 1.0))
@@ -13670,6 +13956,7 @@ def run_bake_and_rank_pipeline(
         "fallbackCandidates": request.fallback_candidates,
         "maxSourceWindowAttempts": request.max_source_window_attempts,
         "maxFinalOutputRejections": max_final_output_rejections_for_request(request),
+        "maxReconstructionCandidateAttempts": request.max_reconstruction_candidate_attempts,
         "maxSelectedResults": max_selected_results_for_request(request),
         "readyCandidateTarget": ready_candidate_target_for_request(request),
         "rankPreviewVariants": request.rank_preview_variants,
@@ -13885,6 +14172,46 @@ def run_bake_and_rank_pipeline(
             1 for item in candidate_results if item.get("status") == "ready_for_selection"
         )
         pipeline_timings["reviewItemCount"] = len(review_items)
+        first_candidate_result = candidate_results[0] if candidate_results else None
+        first_candidate_accepted = bool(
+            isinstance(first_candidate_result, dict)
+            and candidate_result_is_accepted(first_candidate_result)
+        )
+        pipeline_timings["sourceFunnel"] = {
+            "discoveredCandidateCount": discovered_candidate_count,
+            "prioritizedCandidateCount": len(candidates),
+            "processedCandidateCount": len(candidate_results),
+            "sourcePassedCandidateCount": sum(
+                1
+                for result in candidate_results
+                if result.get("reconstructionAttempted") is True
+                or result.get("status") == "ready_for_selection"
+            ),
+            "reconstructionAttemptCount": sum(
+                1 for result in candidate_results if result.get("reconstructionAttempted") is True
+            ),
+            "acceptedCandidateCount": sum(
+                1
+                for result in candidate_results
+                if candidate_result_is_accepted(result)
+            ),
+            "firstCandidate": (
+                {
+                    "videoId": (first_candidate_result.get("candidate") or {}).get("videoId"),
+                    "channel": (first_candidate_result.get("candidate") or {}).get("channel"),
+                    "status": first_candidate_result.get("status"),
+                    "sourcePassed": (
+                        first_candidate_result.get("reconstructionAttempted") is True
+                        or first_candidate_result.get("status") == "ready_for_selection"
+                    ),
+                    "reconstructionAttempted": first_candidate_result.get("reconstructionAttempted") is True,
+                    "accepted": first_candidate_accepted,
+                    "rejectionTags": rejection_tags_from_candidate_result(first_candidate_result),
+                }
+                if isinstance(first_candidate_result, dict)
+                else None
+            ),
+        }
     finally:
         if vision_session is not None and owns_vision_session:
             vision_session.close()
@@ -13915,6 +14242,17 @@ def run_bake_and_rank_pipeline(
     pipeline_timings["totalSeconds"] = elapsed_seconds(pipeline_started)
     selection_manifest["timings"] = pipeline_timings
     attach_selected_preview_paths_to_manifest(selection_manifest, selected_preview_paths)
+    try:
+        source_outcome_update = update_source_outcome_index(
+            request.source_outcome_index,
+            candidate_results,
+        )
+    except Exception as exc:  # Historical ranking must never invalidate a completed bake.
+        source_outcome_update = {
+            "path": str(request.source_outcome_index) if request.source_outcome_index else None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    pipeline_timings["sourceOutcomeIndexUpdate"] = source_outcome_update
     selection_path = request.workspace / "selection_manifest.json"
     selection_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
     retention_started = time.perf_counter()
@@ -14237,6 +14575,11 @@ def should_queue_parent_source_window_fallback(
     if parse_optional_bool(ranked_candidate.candidate.get("sourceWindowParentFallback")) is True:
         return False, None
     rejection_reasons = materialized_rejection_reason_tags(rejected)
+    if any(
+        reason in PARENT_SOURCE_WINDOW_FALLBACK_NON_RECOVERABLE_REASONS
+        for reason in rejection_reasons
+    ):
+        return False, None
     used_pre_wham_child = candidate_result_used_pre_wham_child_source_cut(result)
     for reason in rejection_reasons:
         if reason not in PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS:
@@ -16042,6 +16385,7 @@ def process_ranked_candidates_until_final_selection(
     allow_parent_source_window_fallback = int(request.fallback_candidates) > 0
     max_final_output_rejections = max_final_output_rejections_for_request(request)
     final_output_rejection_count = 0
+    reconstruction_candidate_attempt_count = 0
     blocked_source_families: dict[str, dict[str, Any]] = {}
     source_family_failure_attempts: dict[str, dict[str, set[str]]] = {}
     timings = {
@@ -16053,10 +16397,13 @@ def process_ranked_candidates_until_final_selection(
         "candidateAttemptBudget": candidate_attempt_budget,
         "maxFinalOutputRejections": max_final_output_rejections,
         "finalOutputRejectionCount": 0,
+        "maxReconstructionCandidateAttempts": request.max_reconstruction_candidate_attempts,
+        "reconstructionCandidateAttemptCount": 0,
         "blockedSourceFamilyCount": 0,
         "blockedSourceFamilies": [],
         "sourceFamilyConvergencePolicy": "two_independent_windows_same_failure_stage",
         "duplicateInitialCandidateCount": 0,
+        "adaptiveRetryReorderCount": 0,
         "candidateTimeoutSeconds": request.candidate_timeout_seconds,
         "exerciseTimeoutSeconds": request.exercise_timeout_seconds,
     }
@@ -16124,6 +16471,18 @@ def process_ranked_candidates_until_final_selection(
 
     candidate_queue_index = 0
     while candidate_queue_index < len(candidate_queue):
+        if (
+            int(request.max_reconstruction_candidate_attempts or 0) > 0
+            and reconstruction_candidate_attempt_count
+            >= int(request.max_reconstruction_candidate_attempts)
+        ):
+            timings["stopReason"] = "reconstruction_candidate_budget_exhausted"
+            timings["stopMessage"] = (
+                "Stopped after the primary reconstruction and its single "
+                "orientation-diverse fallback failed."
+            )
+            bake_and_rank_progress(str(timings["stopMessage"]))
+            break
         if exercise_deadline is not None and time.perf_counter() >= exercise_deadline:
             timings["stopReason"] = "exercise_timeout"
             timings["stopMessage"] = (
@@ -16255,6 +16614,11 @@ def process_ranked_candidates_until_final_selection(
         )
         set_caption_candidate_deadline(deadline_callbacks, candidate_deadline)
         result = process_ranked_candidate(ranked_candidate, **process_kwargs)
+        if result.get("reconstructionAttempted") is True:
+            reconstruction_candidate_attempt_count += 1
+            timings["reconstructionCandidateAttemptCount"] = (
+                reconstruction_candidate_attempt_count
+            )
         result.setdefault("exerciseIndex", ranked_candidate.exercise_index)
         result.setdefault("candidateRank", ranked_candidate.candidate_rank)
         result.setdefault("exerciseId", ranked_candidate.exercise_id)
@@ -16356,6 +16720,15 @@ def process_ranked_candidates_until_final_selection(
                 f"{processed_new_candidate_count}: {ranked_candidate_progress_label(ranked_candidate)} "
                 f"status={result.get('status')} review_items=0 total_seconds={total_seconds}"
             )
+            candidate_queue[candidate_queue_index:] = reprioritize_candidates_after_failure(
+                candidate_queue[candidate_queue_index:],
+                failed_candidate=ranked_candidate,
+                failed_result=result,
+            )
+            if candidate_queue_index < len(candidate_queue):
+                timings["adaptiveRetryReorderCount"] = int(
+                    timings["adaptiveRetryReorderCount"]
+                ) + 1
             continue
 
         if effective_ranker is None:
@@ -16534,6 +16907,15 @@ def process_ranked_candidates_until_final_selection(
             f"rejected_after_materialized_review rejections={final_output_rejection_count}/"
             f"{max_final_output_rejections or 'disabled'}"
         )
+        candidate_queue[candidate_queue_index:] = reprioritize_candidates_after_failure(
+            candidate_queue[candidate_queue_index:],
+            failed_candidate=ranked_candidate,
+            failed_result=result,
+        )
+        if candidate_queue_index < len(candidate_queue):
+            timings["adaptiveRetryReorderCount"] = int(
+                timings["adaptiveRetryReorderCount"]
+            ) + 1
         if (
             max_final_output_rejections > 0
             and final_output_rejection_count >= max_final_output_rejections
@@ -16558,6 +16940,7 @@ def process_ranked_candidates_until_final_selection(
         "exercise_timeout",
         "candidate_budget_exhausted",
         "max_final_output_rejections",
+        "reconstruction_candidate_budget_exhausted",
     }:
         timings["terminalOutcome"] = "budget_exhausted"
     elif candidate_queue_index >= len(candidate_queue):
@@ -16930,6 +17313,10 @@ def process_ranked_candidate(
         if prepared_video_path is not None:
             generate_kwargs["prepared_video_path"] = prepared_video_path
         generate_result = generate_candidate_motion(ranked_candidate, **generate_kwargs)
+        # `generate_candidate_motion` owns the final exact-source validation and
+        # raises SourceCandidateRejected before WHAM starts. Count the attempt
+        # only after that boundary returns successfully.
+        result_payload["reconstructionAttempted"] = True
         record_timing_seconds(result_payload, "generationSeconds", stage_started)
         result_payload.update(generation_to_manifest(generate_result))
         if generate_result.timings is not None:
@@ -16956,6 +17343,7 @@ def process_ranked_candidate(
                 source_pose_reference_path if source_pose_reference_path.exists() else None
             ),
             exercise_motion_contract=preview_exercise_motion_contract,
+            exercise_name=ranked_candidate.exercise_name,
         )
         if raw_gate_source_path == generate_result.cleaned_motion_json_path:
             # Some unit tests stub `generate_candidate_motion` without writing
@@ -16972,6 +17360,7 @@ def process_ranked_candidate(
                     source_pose_reference_path if source_pose_reference_path.exists() else None
                 ),
                 exercise_motion_contract=preview_exercise_motion_contract,
+                exercise_name=ranked_candidate.exercise_name,
             )
             raw_wham_gate["cleanedRecovery"] = {
                 "attempted": True,
@@ -17283,11 +17672,38 @@ def exercise_support_mode_hint(
     contract_hint = str(
         (exercise_motion_contract or {}).get("supportMode") or ""
     ).strip().casefold()
-    if contract_hint in {"upright", "quadruped", "supine", "prone", "kneeling"}:
+    if contract_hint in {
+        "upright",
+        "quadruped",
+        "supine",
+        "prone",
+        "kneeling",
+        "seated",
+        "lying",
+    }:
         return contract_hint
     pose_support_mode = contract_pose_support_mode(exercise_motion_contract)
-    if pose_support_mode == "kneeling":
-        return "kneeling"
+    if pose_support_mode in {
+        "quadruped",
+        "supine",
+        "prone",
+        "kneeling",
+        "seated",
+        "lying",
+    }:
+        return pose_support_mode
+    if pose_support_mode in {"standing", "upright"}:
+        return "upright"
+
+    contract = exercise_motion_contract or {}
+    torso_orientations = {
+        str(constraints.get("torsoOrientation") or "").strip().casefold()
+        for key in ("startPoseConstraints", "endPoseConstraints")
+        if isinstance((constraints := contract.get(key)), dict)
+        and str(constraints.get("torsoOrientation") or "").strip()
+    }
+    if torso_orientations == {"horizontal"}:
+        return "horizontal"
 
     normalized_name = " ".join(normalize_identity_terms(exercise_name))
     if "glute bridge" in normalized_name:
@@ -18600,6 +19016,35 @@ def source_cut_confirmation_window_overlap_ratio(
     return intersection / max(union, 1e-6)
 
 
+def source_cut_is_boundary_expansion(
+    candidate: dict[str, Any],
+    selected: dict[str, Any],
+    *,
+    tolerance_seconds: float = 0.05,
+) -> bool:
+    """Return whether a cut only expands one boundary of the selected cut."""
+
+    candidate_start = parse_optional_float(candidate.get("startSeconds"))
+    candidate_end = parse_optional_float(candidate.get("endSeconds"))
+    selected_start = parse_optional_float(selected.get("startSeconds"))
+    selected_end = parse_optional_float(selected.get("endSeconds"))
+    if None in {candidate_start, candidate_end, selected_start, selected_end}:
+        return False
+    contains_selected = (
+        candidate_start <= selected_start + tolerance_seconds
+        and candidate_end >= selected_end - tolerance_seconds
+    )
+    shares_one_boundary = (
+        abs(candidate_start - selected_start) <= tolerance_seconds
+        or abs(candidate_end - selected_end) <= tolerance_seconds
+    )
+    materially_wider = (
+        candidate_start < selected_start - tolerance_seconds
+        or candidate_end > selected_end + tolerance_seconds
+    )
+    return contains_selected and shares_one_boundary and materially_wider
+
+
 def source_cut_deterministic_confirmation_candidates(
     ranking: LoopRanking,
     *,
@@ -18636,12 +19081,18 @@ def source_cut_deterministic_confirmation_candidates(
             ).get("passed")
         )
     ]
+    if selected is not None and scorecards:
+        selected_scorecard = scorecards.get(selected_id)
+        if not isinstance(selected_scorecard, dict) or not bool(
+            selected_scorecard.get("passed")
+        ):
+            selected = None
     if selected is None:
-        # The model scorecard is useful for ordering, but it is not the final
-        # authority for repetition completeness. Exact pose confirmation below
-        # must still be able to recover a deterministically eligible window
-        # when the model omits a choice or rejects every proposed window.
-        selected = next(iter(passed_candidates or all_candidates), None)
+        # Deterministic pose can confirm an approved semantic window, but it
+        # cannot recover a window explicitly rejected for the wrong movement,
+        # missing phases, or bad boundaries. Pose magnitude alone does not
+        # establish exercise identity.
+        selected = next(iter(passed_candidates), None)
         if selected is None:
             return []
         selected_id = normalize_source_cut_candidate_id(selected.get("candidateId"))
@@ -18657,25 +19108,12 @@ def source_cut_deterministic_confirmation_candidates(
         if candidate_id == selected_id:
             continue
         scorecard = scorecards.get(candidate_id)
-        phase_metrics = (
-            candidate.get("motionCoverage", {}).get(
-                "candidateFullRepetitionPhaseCompletenessMetrics"
-            )
-            if isinstance(candidate.get("motionCoverage"), dict)
-            else None
-        )
-        deterministic_complete = (
-            source_window_completeness_state(
-                {"candidateFullRepetitionPhaseCompletenessMetrics": phase_metrics}
-            )
-            == "complete"
-        )
-        if (
-            scorecards
-            and (not isinstance(scorecard, dict) or not bool(scorecard.get("passed")))
-            and not deterministic_complete
-        ):
-            continue
+        if scorecards:
+            if isinstance(scorecard, dict):
+                if not bool(scorecard.get("passed")):
+                    continue
+            elif not source_cut_is_boundary_expansion(candidate, selected):
+                continue
         window_key = (
             round(float(candidate.get("startSeconds") or 0.0), 3),
             round(float(candidate.get("endSeconds") or 0.0), 3),
@@ -18694,7 +19132,10 @@ def source_cut_deterministic_confirmation_candidates(
                 ).get("passed")
             )
             else 1,
-            source_cut_confirmation_window_overlap_ratio(selected, candidate),
+            # Boundary repair should make the smallest evidence-preserving
+            # expansion first.  Trying the least-overlapping superset can add
+            # an earlier/later repetition or reset sequence.
+            -source_cut_confirmation_window_overlap_ratio(selected, candidate),
             max(
                 0.0,
                 float(candidate.get("endSeconds") or 0.0)
@@ -20385,19 +20826,79 @@ def bake_preview_loops_with_playwright(
                     variant_id == "adaptive-baseline"
                     and isinstance(source_foot_support_evidence, dict)
                 ):
-                    corrected_payload, correction_metrics = (
-                        apply_source_contact_sequence_correction(
+                    fused_support_evidence, reconstructed_contact_inference = (
+                        fuse_reconstructed_support_evidence(
                             export_payload,
                             source_foot_support_evidence,
                         )
                     )
+                    if bool(reconstructed_contact_inference.get("applied")):
+                        inferred_joint_names = {
+                            str(item.get("jointName") or "")
+                            for item in reconstructed_contact_inference.get("inferredContacts", [])
+                            if isinstance(item, dict)
+                        }
+                        corrected_options = {
+                            **options,
+                            "lockPlantedFeet": any(
+                                "foot" in name or "ankle" in name
+                                for name in inferred_joint_names
+                            ),
+                            "lockPlantedHands": any(
+                                "hand" in name or "wrist" in name
+                                for name in inferred_joint_names
+                            ),
+                            "contactSequenceCorrection": True,
+                            "sourceFootSupportEvidence": fused_support_evidence,
+                        }
+                        corrected_payload = page.evaluate(
+                            """({ loopIndex, options }) => window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
+                            {
+                                "loopIndex": eligible_loop.loop_index,
+                                "options": corrected_options,
+                            },
+                        )
+                        loop_closure = close_contact_corrected_loop(
+                            [
+                                frame
+                                for frame in corrected_payload.get("frames", [])
+                                if isinstance(frame, dict)
+                            ]
+                        )
+                        correction_metrics = {
+                            "applied": True,
+                            "reason": "source_stationarity_plus_reconstructed_3d_leg_ik",
+                            "reconstructedContactInference": reconstructed_contact_inference,
+                            "posePreservation": "per_leg_two_bone_ik_with_rigid_body_compromise",
+                            "loopClosure": loop_closure,
+                        }
+                    else:
+                        corrected_payload, correction_metrics = (
+                            apply_source_contact_sequence_correction(
+                                export_payload,
+                                source_foot_support_evidence,
+                            )
+                        )
                     if bool(correction_metrics.get("applied")):
+                        baseline_loop_seam = payload_loop_seam_joint_rms(export_payload)
+                        corrected_loop_seam = payload_loop_seam_joint_rms(corrected_payload)
+                        preserves_loop_continuity = (
+                            baseline_loop_seam is None
+                            or corrected_loop_seam is None
+                            or corrected_loop_seam <= baseline_loop_seam
+                        )
+                        correction_metrics["baselineLoopSeamJointRms"] = baseline_loop_seam
+                        correction_metrics["correctedLoopSeamJointRms"] = corrected_loop_seam
+                        correction_metrics["preservesLoopContinuity"] = preserves_loop_continuity
                         corrected_variant_id = "adaptive-contact-sequence-correction"
                         corrected_label = f"{artifact_base_label}.contact-sequence-correction"
                         corrected_options = {
                             **options,
-                            "lockPlantedFeet": False,
+                            "lockPlantedFeet": bool(
+                                reconstructed_contact_inference.get("applied")
+                            ),
                             "contactSequenceCorrection": True,
+                            "sourceFootSupportEvidence": fused_support_evidence,
                         }
                         corrected_skeleton_path = (
                             wear_dir / f"skeleton.baked.{corrected_label}.json"
@@ -20426,7 +20927,17 @@ def bake_preview_loops_with_playwright(
                                 ),
                             )
                         )
-                        if bool(corrected_video_quality.get("passed", False)):
+                        if (
+                            bool(corrected_video_quality.get("passed", False))
+                            and preserves_loop_continuity
+                        ):
+                            if bool(reconstructed_contact_inference.get("applied")):
+                                artifacts[:] = [
+                                    artifact
+                                    for artifact in artifacts
+                                    if artifact.loop_index != eligible_loop.loop_index
+                                    or bool(artifact.settings_options.get("contactSequenceCorrection"))
+                                ]
                             artifacts.append(
                                 BakedLoopArtifact(
                                     loop_index=eligible_loop.loop_index,
@@ -20447,6 +20958,33 @@ def bake_preview_loops_with_playwright(
     if staged_preview_temp is not None:
         staged_preview_temp.cleanup()
     return artifacts
+
+
+def payload_loop_seam_joint_rms(export_payload: dict[str, Any]) -> float | None:
+    frames = export_payload.get("frames")
+    if not isinstance(frames, list) or len(frames) < 2:
+        return None
+    first_joints = frames[0].get("joints") if isinstance(frames[0], dict) else None
+    last_joints = frames[-1].get("joints") if isinstance(frames[-1], dict) else None
+    if not isinstance(first_joints, dict) or not isinstance(last_joints, dict):
+        return None
+    squared_displacements: list[float] = []
+    for joint_name in first_joints.keys() & last_joints.keys():
+        first = first_joints[joint_name]
+        last = last_joints[joint_name]
+        if not (
+            isinstance(first, list)
+            and isinstance(last, list)
+            and len(first) >= 3
+            and len(last) >= 3
+        ):
+            continue
+        squared_displacements.append(
+            sum((float(last[axis]) - float(first[axis])) ** 2 for axis in range(3))
+        )
+    if not squared_displacements:
+        return None
+    return math.sqrt(sum(squared_displacements) / len(squared_displacements))
 
 
 def stage_preview_for_browser_if_needed(
@@ -21723,8 +22261,13 @@ def source_contact_intervals_from_evidence(
         return []
     intervals: list[dict[str, Any]] = []
     contacts = source_support_evidence.get("contacts")
-    if isinstance(contacts, list):
-        for contact in contacts:
+    generic_contacts = source_support_evidence.get("supportContacts")
+    contact_records = (
+        (contacts if isinstance(contacts, list) else [])
+        + (generic_contacts if isinstance(generic_contacts, list) else [])
+    )
+    if contact_records:
+        for contact in contact_records:
             if not isinstance(contact, dict):
                 continue
             joint_name = str(contact.get("jointName") or "").strip()
@@ -21884,8 +22427,14 @@ def apply_source_contact_sequence_correction(
             "contactIntervals": [],
         }
     frames = [frame for frame in frames_value if isinstance(frame, dict)]
+    fused_support_evidence, reconstructed_contact_inference = (
+        fuse_reconstructed_support_evidence(
+            export_payload,
+            source_support_evidence,
+        )
+    )
     intervals = source_contact_intervals_from_evidence(
-        source_support_evidence,
+        fused_support_evidence,
         frame_count=len(frames),
     )
     if len(frames) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT or not intervals:
@@ -22014,6 +22563,12 @@ def apply_source_contact_sequence_correction(
                 )
             frame["rootTranslationApplied"] = updated_root_translation
 
+    loop_closure = (
+        close_contact_corrected_loop(frames)
+        if has_full_clip_contact
+        else {"applied": False, "reason": "intermittent_contact_preserves_travel"}
+    )
+
     baseline_weighted_squared_error = 0.0
     corrected_weighted_squared_error = 0.0
     weighted_error_sample_count = 0.0
@@ -22110,9 +22665,227 @@ def apply_source_contact_sequence_correction(
         "correctedRmsContactError": corrected_rms_contact_error,
         "translationTrack": translations,
         "posePreservation": "per_frame_rigid_translation",
+        "reconstructedContactInference": reconstructed_contact_inference,
+        "loopClosure": loop_closure,
     }
     corrected_payload["sourceContactSequenceCorrection"] = metrics
     return corrected_payload, metrics
+
+
+def fuse_reconstructed_support_evidence(
+    export_payload: dict[str, Any],
+    source_support_evidence: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Bridge sparse visual contacts using compatible reconstructed 3D tracks.
+
+    ``supportContacts`` is the generic representation. The legacy ``feet``
+    mapping is adapted into it so existing evidence remains compatible.
+    """
+    if not isinstance(source_support_evidence, dict):
+        return source_support_evidence, {"applied": False, "reason": "source_evidence_unavailable"}
+    frames = export_payload.get("frames")
+    source_feet = source_support_evidence.get("feet")
+    if not isinstance(frames, list) or not isinstance(source_feet, dict) or len(frames) < 3:
+        return source_support_evidence, {"applied": False, "reason": "reconstructed_trajectory_unavailable"}
+
+    fused = copy.deepcopy(source_support_evidence)
+    fused_feet = fused.get("feet")
+    assert isinstance(fused_feet, dict)
+    body_spans = [body_span_for_frame(frame) for frame in frames if isinstance(frame, dict)]
+    positive_body_spans = [span for span in body_spans if span > 1e-6]
+    body_span = statistics.median(positive_body_spans) if positive_body_spans else 0.0
+    if body_span <= 1e-6:
+        return source_support_evidence, {"applied": False, "reason": "invalid_reconstructed_body_span"}
+
+    stationary_range_limit = float(
+        source_support_evidence.get(
+            "chunkCenterRangeRatioThreshold",
+            SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD,
+        )
+    )
+    endpoint_limit = float(
+        source_support_evidence.get(
+            "endpointDisplacementRatioThreshold",
+            SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD,
+        )
+    )
+    plane_limit = float(
+        source_support_evidence.get(
+            "contactGroundHeightRatioThreshold",
+            SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD,
+        )
+    )
+    inferred: list[dict[str, Any]] = []
+    generic_contacts = fused.setdefault("supportContacts", [])
+    if not isinstance(generic_contacts, list):
+        generic_contacts = []
+        fused["supportContacts"] = generic_contacts
+    source_generic_contacts = list(generic_contacts)
+    for side in ("left", "right"):
+        foot_evidence = fused_feet.get(side)
+        if not isinstance(foot_evidence, dict) or bool(foot_evidence.get("continuousSupport")):
+            continue
+        source_stationary = bool(
+            isinstance(foot_evidence.get("chunkCenterRangeRatio"), (int, float))
+            and float(foot_evidence["chunkCenterRangeRatio"]) <= stationary_range_limit
+            and isinstance(foot_evidence.get("endpointDisplacementRatio"), (int, float))
+            and float(foot_evidence["endpointDisplacementRatio"]) <= endpoint_limit
+        )
+        joint_name = f"{side}_foot"
+        points = [
+            point3_to_float_list(frame["joints"][joint_name])
+            for frame in frames
+            if isinstance(frame, dict)
+            and isinstance(frame.get("joints"), dict)
+            and is_point3(frame["joints"].get(joint_name))
+        ]
+        if not source_stationary or len(points) != len(frames):
+            continue
+        chunk_size = max(3, math.ceil(len(points) / 5))
+        chunk_centers = [
+            [statistics.median(point[axis] for point in chunk) for axis in range(3)]
+            for start in range(0, len(points), chunk_size)
+            if len(chunk := points[start : start + chunk_size]) >= 3
+        ]
+        if len(chunk_centers) < 2:
+            continue
+        center_ranges = [
+            max(point[axis] for point in chunk_centers)
+            - min(point[axis] for point in chunk_centers)
+            for axis in range(3)
+        ]
+        reconstructed_range_ratio = math.sqrt(
+            sum(value * value for value in center_ranges)
+        ) / body_span
+        reconstructed_endpoint_ratio = math.dist(
+            chunk_centers[0], chunk_centers[-1]
+        ) / body_span
+        reconstructed_plane_range_ratio = (
+            max(point[1] for point in points) - min(point[1] for point in points)
+        ) / body_span
+        compatible = bool(
+            reconstructed_range_ratio <= stationary_range_limit
+            and reconstructed_endpoint_ratio <= endpoint_limit
+            and reconstructed_plane_range_ratio <= plane_limit
+        )
+        if not compatible:
+            continue
+        foot_evidence["continuousSupport"] = True
+        foot_evidence["jointName"] = f"{side}_ankle"
+        foot_evidence["continuousSupportSource"] = (
+            "source_stationarity_plus_reconstructed_3d_trajectory"
+        )
+        foot_evidence["reconstructed3dSupport"] = {
+            "jointName": joint_name,
+            "chunkCenterRangeRatio": reconstructed_range_ratio,
+            "endpointDisplacementRatio": reconstructed_endpoint_ratio,
+            "supportPlaneRangeRatio": reconstructed_plane_range_ratio,
+        }
+        inferred.append({"side": side, **foot_evidence["reconstructed3dSupport"]})
+        generic_contacts.append(
+            {
+                "jointName": joint_name,
+                "kinematicOwner": f"{side}_leg",
+                "surfaceKind": "support_plane",
+                "continuousSupport": True,
+                "startRatio": 0.0,
+                "endRatio": 1.0,
+                "confidence": 1.0,
+                "inferenceSource": "source_stationarity_plus_reconstructed_3d_trajectory",
+                "reconstructed3dSupport": foot_evidence["reconstructed3dSupport"],
+            }
+        )
+    for contact in source_generic_contacts:
+        if not isinstance(contact, dict) or not bool(contact.get("sourceStationarySupportCandidate")):
+            continue
+        joint_name = str(contact.get("jointName") or "")
+        points = [
+            point3_to_float_list(frame["joints"][joint_name])
+            for frame in frames
+            if isinstance(frame, dict)
+            and isinstance(frame.get("joints"), dict)
+            and is_point3(frame["joints"].get(joint_name))
+        ]
+        if not joint_name or len(points) != len(frames):
+            continue
+        chunk_size = max(3, math.ceil(len(points) / 5))
+        chunk_centers = [
+            [statistics.median(point[axis] for point in chunk) for axis in range(3)]
+            for start in range(0, len(points), chunk_size)
+            if len(chunk := points[start : start + chunk_size]) >= 3
+        ]
+        if len(chunk_centers) < 2:
+            continue
+        axis_ranges = [
+            max(point[axis] for point in chunk_centers)
+            - min(point[axis] for point in chunk_centers)
+            for axis in range(3)
+        ]
+        reconstructed_range_ratio = math.sqrt(sum(value * value for value in axis_ranges)) / body_span
+        reconstructed_endpoint_ratio = math.dist(chunk_centers[0], chunk_centers[-1]) / body_span
+        if (
+            reconstructed_range_ratio > stationary_range_limit
+            or reconstructed_endpoint_ratio > endpoint_limit
+        ):
+            continue
+        contact["continuousSupport"] = True
+        contact["inferenceSource"] = "source_semantics_plus_stationarity_plus_reconstructed_3d"
+        contact["reconstructed3dSupport"] = {
+            "jointName": joint_name,
+            "chunkCenterRangeRatio": reconstructed_range_ratio,
+            "endpointDisplacementRatio": reconstructed_endpoint_ratio,
+        }
+        inferred.append({
+            "jointName": joint_name,
+            "supportKind": str(contact.get("supportKind") or "contact"),
+            **contact["reconstructed3dSupport"],
+        })
+    return fused, {
+        "applied": bool(inferred),
+        "reason": "source_stationarity_fused_with_reconstructed_3d" if inferred else "no_compatible_contact_gaps",
+        "inferredContacts": inferred,
+    }
+
+
+def close_contact_corrected_loop(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    """Make a corrected repetition periodic without introducing a seam snap."""
+    if len(frames) < 2:
+        return {"applied": False, "reason": "insufficient_frames"}
+    first_joints = frames[0].get("joints")
+    last_joints = frames[-1].get("joints")
+    if not isinstance(first_joints, dict) or not isinstance(last_joints, dict):
+        return {"applied": False, "reason": "joints_unavailable"}
+    corrected_joint_names: list[str] = []
+    maximum_endpoint_correction = 0.0
+    last_index = len(frames) - 1
+    for joint_name in first_joints.keys() & last_joints.keys():
+        first = first_joints[joint_name]
+        last = last_joints[joint_name]
+        if not is_point3(first) or not is_point3(last):
+            continue
+        endpoint_delta = [float(last[axis]) - float(first[axis]) for axis in range(3)]
+        maximum_endpoint_correction = max(
+            maximum_endpoint_correction,
+            math.sqrt(sum(value * value for value in endpoint_delta)),
+        )
+        for frame_index, frame in enumerate(frames):
+            joints = frame.get("joints")
+            point = joints.get(joint_name) if isinstance(joints, dict) else None
+            if not is_point3(point):
+                continue
+            ratio = frame_index / last_index
+            blend = ratio * ratio * (3.0 - 2.0 * ratio)
+            updated = list(point)
+            for axis in range(3):
+                updated[axis] = float(updated[axis]) - endpoint_delta[axis] * blend
+            joints[joint_name] = updated
+        corrected_joint_names.append(joint_name)
+    return {
+        "applied": bool(corrected_joint_names),
+        "strategy": "smooth_periodic_endpoint_closure",
+        "correctedJointCount": len(corrected_joint_names),
+        "maximumEndpointCorrection": maximum_endpoint_correction,
+    }
 
 
 def body_span_for_frame(frame: dict[str, Any]) -> float:
@@ -24940,6 +25713,19 @@ def build_source_video_pyramid_candidate_windows(
                 min_allowed_duration=boundary_floor,
                 boundary_anchor="start",
             )
+            append_window(
+                window.end_seconds - candidate_duration,
+                window.end_seconds,
+                level_index=sweep_level_index + 1,
+                level_duration=candidate_duration,
+                level_ratio=candidate_duration / duration if duration > 0.0 else 1.0,
+                stride_seconds=0.0,
+                position_index=position_index,
+                position_count=len(deduped_sweep_durations),
+                strategy="progressive_end_anchored_start_boundary_sweep",
+                min_allowed_duration=boundary_floor,
+                boundary_anchor="end",
+            )
 
     return [
         SourceWindowCandidateSpec(
@@ -26699,6 +27485,7 @@ def source_pose_temporal_foot_contacts(
     *,
     joint_name: str,
     body_span: float,
+    shared_ground_y: float,
 ) -> list[dict[str, Any]]:
     """Detect stance intervals without treating the whole clip as one contact.
 
@@ -26718,7 +27505,6 @@ def source_pose_temporal_foot_contacts(
     observed_y = sorted(point[1] for point in points if point is not None)
     if len(observed_y) < SOURCE_POSE_CONTACT_MIN_SAMPLE_COUNT:
         return []
-    ground_y = observed_y[round((len(observed_y) - 1) * 0.80)]
     stationary: list[bool] = []
     local_ranges: list[float | None] = []
     for index, point in enumerate(points):
@@ -26738,7 +27524,7 @@ def source_pose_temporal_foot_contacts(
         x_range = max(sample[0] for sample in window) - min(sample[0] for sample in window)
         y_range = max(sample[1] for sample in window) - min(sample[1] for sample in window)
         local_range_ratio = math.hypot(x_range, y_range) / body_span
-        near_ground = point[1] >= ground_y - body_span * SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD
+        near_ground = point[1] >= shared_ground_y - body_span * SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD
         stationary.append(
             near_ground
             and local_range_ratio <= SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
@@ -26787,8 +27573,10 @@ def source_pose_temporal_foot_contacts(
     return intervals
 
 
-def source_pose_stationary_foot_support_evidence(
+def source_pose_stationary_support_evidence(
     source_pose_payload: dict[str, Any],
+    *,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Identify continuously stationary feet from the exact source pixels.
 
@@ -26842,6 +27630,62 @@ def source_pose_stationary_foot_support_evidence(
             "feet": {},
         }
 
+    # Image Y grows downward. Estimate one physical support plane from all
+    # distal support candidates instead of deriving a separate "ground" from
+    # each ankle. The latter made a stationary elevated foot (bench, box,
+    # hanging strap) declare its own height to be the floor.
+    support_candidate_y: list[float] = []
+    for candidate_name in (
+        "left_ankle",
+        "right_ankle",
+        "left_knee",
+        "right_knee",
+        "left_wrist",
+        "right_wrist",
+    ):
+        candidate_points = [
+            [float(point[0]), float(point[1])]
+            for frame in frames
+            if isinstance(frame, dict)
+            for joints in [frame.get("joints")]
+            if isinstance(joints, dict)
+            for point in [joints.get(candidate_name)]
+            if is_point3(point)
+        ]
+        if len(candidate_points) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+            continue
+        chunk_size = max(3, math.ceil(len(candidate_points) / 5))
+        centers = [
+            [
+                statistics.median(point[0] for point in chunk),
+                statistics.median(point[1] for point in chunk),
+            ]
+            for start in range(0, len(candidate_points), chunk_size)
+            if len(chunk := candidate_points[start : start + chunk_size]) >= 3
+        ]
+        if len(centers) < 2:
+            continue
+        center_range = math.hypot(
+            max(point[0] for point in centers) - min(point[0] for point in centers),
+            max(point[1] for point in centers) - min(point[1] for point in centers),
+        ) / body_span
+        endpoint_range = math.dist(centers[0], centers[-1]) / body_span
+        if (
+            center_range <= SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD
+            and endpoint_range <= SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD
+        ):
+            support_candidate_y.extend(point[1] for point in candidate_points)
+    if not support_candidate_y:
+        return {
+            "source": "exact_selected_source_video_yolo_pose",
+            "reason": "source_pose_support_plane_unavailable",
+            "feet": {},
+        }
+    support_candidate_y.sort()
+    shared_ground_y = support_candidate_y[
+        round((len(support_candidate_y) - 1) * 0.90)
+    ]
+
     foot_evidence: dict[str, Any] = {}
     temporal_contacts: list[dict[str, Any]] = []
     for side in ("left", "right"):
@@ -26881,6 +27725,7 @@ def source_pose_stationary_foot_support_evidence(
                 frames,
                 joint_name=joint_name,
                 body_span=body_span,
+                shared_ground_y=shared_ground_y,
             )
             if temporal_resolution_sufficient
             else []
@@ -26953,6 +27798,66 @@ def source_pose_stationary_foot_support_evidence(
             ),
             "contactIntervals": contact_intervals,
         }
+    support_contacts: list[dict[str, Any]] = []
+    contract_text = " ".join(
+        str(exercise_motion_contract.get(key) or "")
+        for key in ("validStartState", "validEndState", "advisoryText")
+    ).casefold() if isinstance(exercise_motion_contract, dict) else ""
+    start_constraints = (
+        exercise_motion_contract.get("startPoseConstraints")
+        if isinstance(exercise_motion_contract, dict)
+        else None
+    )
+    torso_orientation = (
+        str(start_constraints.get("torsoOrientation") or "").casefold()
+        if isinstance(start_constraints, dict)
+        else ""
+    )
+    has_external_body_support = bool(
+        any(token in contract_text for token in (" on a ", " on the ", "against ", "supported by "))
+        and torso_orientation in {"horizontal", "inclined", "declined"}
+    )
+    if has_external_body_support:
+        for joint_name in ("left_shoulder", "right_shoulder", "left_hip", "right_hip"):
+            points = [
+                [float(point[0]), float(point[1])]
+                for frame in frames
+                if isinstance(frame, dict)
+                for joints in [frame.get("joints")]
+                if isinstance(joints, dict)
+                for point in [joints.get(joint_name)]
+                if is_point3(point)
+            ]
+            if len(points) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+                continue
+            chunk_size = max(3, math.ceil(len(points) / 5))
+            centers = [
+                [statistics.median(p[axis] for p in chunk) for axis in range(2)]
+                for start in range(0, len(points), chunk_size)
+                if len(chunk := points[start : start + chunk_size]) >= 3
+            ]
+            if len(centers) < 2:
+                continue
+            center_range_ratio = math.hypot(
+                max(p[0] for p in centers) - min(p[0] for p in centers),
+                max(p[1] for p in centers) - min(p[1] for p in centers),
+            ) / body_span
+            endpoint_ratio = math.dist(centers[0], centers[-1]) / body_span
+            if (
+                center_range_ratio <= SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD
+                and endpoint_ratio <= SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD
+            ):
+                support_contacts.append({
+                    "jointName": joint_name,
+                    "supportKind": "external_surface",
+                    "surfaceKind": "contract_inferred_support_surface",
+                    "sourceStationarySupportCandidate": True,
+                    "startRatio": 0.0,
+                    "endRatio": 1.0,
+                    "confidence": 1.0,
+                    "sourceChunkCenterRangeRatio": center_range_ratio,
+                    "sourceEndpointDisplacementRatio": endpoint_ratio,
+                })
     return {
         "source": "exact_selected_source_video_yolo_pose",
         "reason": (
@@ -26961,6 +27866,7 @@ def source_pose_stationary_foot_support_evidence(
             else "insufficient_source_pose_temporal_resolution_for_support"
         ),
         "bodySpan": body_span,
+        "sharedSupportPlaneY": shared_ground_y,
         "temporalResolutionSufficient": temporal_resolution_sufficient,
         "maxObservationGapSeconds": max_observation_gap_seconds,
         "maxSupportedObservationGapSeconds": SOURCE_POSE_SUPPORT_MAX_OBSERVATION_GAP_SECONDS,
@@ -26969,8 +27875,21 @@ def source_pose_stationary_foot_support_evidence(
         "localContactRangeRatioThreshold": SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD,
         "contactGroundHeightRatioThreshold": SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD,
         "contacts": temporal_contacts,
+        "supportContacts": support_contacts,
         "feet": foot_evidence,
     }
+
+
+def source_pose_stationary_foot_support_evidence(
+    source_pose_payload: dict[str, Any],
+    *,
+    exercise_motion_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Backward-compatible adapter for callers using the legacy foot name."""
+    return source_pose_stationary_support_evidence(
+        source_pose_payload,
+        exercise_motion_contract=exercise_motion_contract,
+    )
 
 
 def source_pose_dominant_root_relative_axis_track(
@@ -28796,9 +29715,24 @@ def cut_candidate_vlm_caption_kwargs(
 
 def source_cut_vlm_caption_kwargs(
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    topology = (
+        exercise_motion_contract.get("movementTopology")
+        if isinstance(exercise_motion_contract, dict)
+        else None
+    )
+    phases = topology.get("phases") if isinstance(topology, dict) else None
+    phase_count = len(phases) if isinstance(phases, list) else 0
+    # The response schema emits one structured evidence object per contract
+    # phase. Size the completion budget from that schema instead of truncating
+    # every exercise at the same token count.
+    max_tokens = (
+        SOURCE_CUT_CANDIDATE_VLM_BASE_MAX_TOKENS
+        + SOURCE_CUT_CANDIDATE_VLM_TOKENS_PER_PHASE * phase_count
+    )
     kwargs = cut_candidate_vlm_caption_kwargs(
-        max_tokens=SOURCE_CUT_CANDIDATE_VLM_MAX_TOKENS,
+        max_tokens=max_tokens,
         request_timeout_seconds=request_timeout_seconds,
     )
     kwargs["disable_reasoning"] = SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING
@@ -31496,7 +32430,10 @@ def rank_source_video_cut_candidates_with_caption_images(
         )
     source_scorecard_has_contract = exercise_motion_contract_for_prompt(exercise_motion_contract) is not None
     effective_source_cut_vlm_workers = min(max(1, int(max_vlm_workers)), SOURCE_CUT_MAX_VLM_WORKERS)
-    source_cut_caption_kwargs = source_cut_vlm_caption_kwargs(request_timeout_seconds)
+    source_cut_caption_kwargs = source_cut_vlm_caption_kwargs(
+        request_timeout_seconds,
+        exercise_motion_contract,
+    )
 
     def parse_source_candidate_with_boundary_validation(
         raw: str,
@@ -32237,7 +33174,7 @@ def build_selection_manifest(
     rejected_best: SelectedArtifact | None = None,
 ) -> dict[str, Any]:
     manifest_selected_results = selected_results if selected_results is not None else ([selected] if selected is not None else [])
-    manual_review_fallback = None if rejected_best is None else {
+    manual_review_fallback = None if not manual_review_fallback_is_safe(rejected_best) else {
         **selected_to_manifest(*rejected_best),
         "selectionStatus": "needs_manual_review",
         "rejectionReason": "automatic_acceptance_gate_failed",
@@ -32288,6 +33225,27 @@ def build_selection_manifest(
             "rejectionReason": "best_score_below_minimum",
         },
     }
+
+
+UNSAFE_MANUAL_REVIEW_FALLBACK_REASONS = {
+    "broken_render",
+    "gross_pose_reconstruction_error",
+    "severe_tracking_corruption",
+    "support_mode_mismatch",
+    "wrong_exercise",
+    "wrong_variant",
+}
+
+
+def manual_review_fallback_is_safe(rejected_best: SelectedArtifact | None) -> bool:
+    """Keep ambiguous/low-score output reviewable, but never expose known corruption."""
+    if rejected_best is None:
+        return False
+    _item, ranking = rejected_best
+    if ranking is None or not isinstance(ranking.payload, dict):
+        return True
+    reasons = set(payload_string_list(ranking.payload.get("materializedHardRejectionReasons")))
+    return not bool(reasons.intersection(UNSAFE_MANUAL_REVIEW_FALLBACK_REASONS))
 
 
 def selected_artifacts_to_manifest(selected_results: list[SelectedArtifact]) -> list[dict[str, Any]]:
@@ -32570,6 +33528,18 @@ def youtube_source_cache_stem(ranked_candidate: RankedCandidate) -> str:
     return f"{safe_identity}-{digest}" if safe_identity else f"source-{digest}"
 
 
+def ranked_candidate_prefers_high_resolution_source(ranked_candidate: RankedCandidate) -> bool:
+    """Use 720p only when discovery shows the subject is small in the frame."""
+    vision_payload = ranked_candidate.candidate.get("visionPayload")
+    if not isinstance(vision_payload, dict):
+        return False
+    pose_payload = vision_payload.get("posePrefilter")
+    if not isinstance(pose_payload, dict):
+        return False
+    body_scale_ratio = parse_optional_float(pose_payload.get("bodyScaleRatio"))
+    return body_scale_ratio is not None and body_scale_ratio < 0.28
+
+
 def cached_youtube_source_is_usable(video_path: Path) -> bool:
     if not video_path.exists() or video_path.stat().st_size <= 0:
         return False
@@ -32692,7 +33662,14 @@ def download_ranked_candidate_to_source_cache(
         if not ranked_candidate.url:
             raise ValueError("Candidate must provide url or videoPath.")
         with tempfile.TemporaryDirectory(prefix="exercise-motion-youtube-source-download-") as temp_dir:
-            downloaded = download_youtube(ranked_candidate.url, Path(temp_dir), youtube_cookies)
+            downloaded = download_youtube(
+                ranked_candidate.url,
+                Path(temp_dir),
+                youtube_cookies,
+                prefer_high_resolution=ranked_candidate_prefers_high_resolution_source(
+                    ranked_candidate
+                ),
+            )
             cached = cache_youtube_source(downloaded, resolved_cache_dir, cache_stem)
         return cached, "downloaded"
     finally:
@@ -32756,7 +33733,12 @@ def copy_or_download_candidate_source(
                 cache_stem,
             )
         return copy_cached_source_to_destination(cached, destination_dir)
-    return download_youtube(ranked_candidate.url, destination_dir, youtube_cookies)
+    return download_youtube(
+        ranked_candidate.url,
+        destination_dir,
+        youtube_cookies,
+        prefer_high_resolution=ranked_candidate_prefers_high_resolution_source(ranked_candidate),
+    )
 
 
 def prefetch_ranked_youtube_sources(
