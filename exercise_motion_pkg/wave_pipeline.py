@@ -83,6 +83,60 @@ def _wave_candidates(request: BakeAndRankRequest) -> list[RankedCandidate]:
     return expand_ranked_candidates_for_source_windows(candidates, request=request)
 
 
+def _wave_candidates_for_item(item: StagedWaveItem) -> list[RankedCandidate]:
+    candidates = _wave_candidates(item.request)
+    normalized_name = item.exercise_name.strip().casefold()
+    return [
+        candidate
+        for candidate in candidates
+        if candidate.exercise_id == item.exercise_id
+        or (
+            bool(normalized_name)
+            and candidate.exercise_name.strip().casefold() == normalized_name
+        )
+    ]
+
+
+def _previous_selected_candidate_keys(
+    workspace: Path,
+    *,
+    exercise_id: str,
+) -> list[str]:
+    """Recover the last prepared source order without trusting its validation."""
+    for artifact_name in ("staged_wave_checkpoint.json", "staged_wave_report.json"):
+        try:
+            payload = json.loads((workspace / artifact_name).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict) or item.get("exerciseId") != exercise_id:
+                continue
+            source = item.get("source")
+            if not isinstance(source, dict):
+                continue
+            keys = source.get("selectedCandidateKeys")
+            if isinstance(keys, list):
+                return [str(key) for key in keys if str(key)]
+            key = source.get("selectedCandidateKey")
+            if key:
+                return [str(key)]
+    return []
+
+
+def _prioritize_previously_prepared_sources(
+    candidates: list[RankedCandidate],
+    *,
+    preferred_keys: list[str],
+) -> list[RankedCandidate]:
+    if not preferred_keys:
+        return candidates
+    priority = {key: index for index, key in enumerate(preferred_keys)}
+    return sorted(
+        candidates,
+        key=lambda candidate: priority.get(_candidate_key(candidate), len(priority)),
+    )
+
+
 def _checkpoint_payload(
     *,
     wave_id: str,
@@ -160,7 +214,8 @@ def _record_wave_source_rejections(
         if index_path is None:
             continue
         candidate_by_key = {
-            _candidate_key(candidate): candidate for candidate in _wave_candidates(item.request)
+            _candidate_key(candidate): candidate
+            for candidate in _wave_candidates_for_item(item)
         }
         state = item_states.get(item.exercise_id) or {}
         source = state.get("source") if isinstance(state.get("source"), dict) else {}
@@ -206,9 +261,29 @@ def run_staged_bake_wave(
 
     if not items:
         raise ValueError("A staged wave must contain at least one exercise.")
+    # A staged wave deliberately releases the pose/VLM runtime before WHAM and
+    # may start a different runtime for final review.  Capture the exact source
+    # pose while the source-validation runtime is authoritative; otherwise the
+    # final materialized-output gate has no source reference and can only fail
+    # as an infrastructure error.  Keep this invariant in the staged API rather
+    # than relying on every caller to remember the CLI flag.
+    items = [
+        replace(
+            item,
+            request=replace(item.request, pre_wham_source_validation=True),
+        )
+        for item in items
+    ]
     workspace = workspace.expanduser().resolve()
     checkpoint_path = workspace / "staged_wave_checkpoint.json"
     report_path = workspace / "staged_wave_report.json"
+    previous_selected_candidate_keys = {
+        item.exercise_id: _previous_selected_candidate_keys(
+            workspace,
+            exercise_id=item.exercise_id,
+        )
+        for item in items
+    }
     started_at = time.perf_counter()
     metrics: dict[str, Any] = {
         "sourceValidationWorkers": 0,
@@ -298,7 +373,11 @@ def run_staged_bake_wave(
                 caption_images=source_session.caption_images,
                 run_llama_exclusive=source_session.run_without_llama_overlap,
             )
-            for candidate in _wave_candidates(item.request):
+            candidates = _prioritize_previously_prepared_sources(
+                _wave_candidates_for_item(item),
+                preferred_keys=previous_selected_candidate_keys.get(item.exercise_id, []),
+            )
+            for candidate in candidates:
                 source_identity = _candidate_source_identity(candidate)
                 if source_identity in selected_source_identities:
                     continue
