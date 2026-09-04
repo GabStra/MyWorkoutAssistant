@@ -191,6 +191,8 @@ class GenerateRequest:
     motion_tuning_enabled: bool = True
     ground_contact_mode: str = "unknown"
     support_mode_hint: str | None = None
+    rigid_paired_hands_required: bool = False
+    horizontal_torso_required: bool = False
     export_wham_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
@@ -684,6 +686,55 @@ def run_generation_pipeline(
             if source_pose_reference_path is not None and source_pose_reference_path.is_file()
             else None
         )
+        movement_instance = (
+            source_pose_payload.get("authoritativeMovementInstance")
+            if isinstance(source_pose_payload, dict)
+            else None
+        )
+        movement_end_ratio = (
+            float(movement_instance.get("endRatio"))
+            if isinstance(movement_instance, dict)
+            and movement_instance.get("trimmed") is True
+            and isinstance(movement_instance.get("endRatio"), (int, float))
+            else None
+        )
+        if movement_end_ratio is not None and 0.0 < movement_end_ratio < 1.0:
+            end_frame = max(
+                1,
+                min(
+                    raw_clip.frame_count - 1,
+                    round(movement_end_ratio * (raw_clip.frame_count - 1)),
+                ),
+            )
+            selected_frames = list(raw_clip.frames[: end_frame + 1])
+            start_time = selected_frames[0].time_sec
+            raw_clip = replace(
+                raw_clip,
+                frames=[
+                    MotionFrame(
+                        time_sec=frame.time_sec - start_time,
+                        joints=frame.joints,
+                    )
+                    for frame in selected_frames
+                ],
+                metadata={
+                    **raw_clip.metadata,
+                    "authoritativeMovementInstance": movement_instance,
+                },
+            )
+            source_frames = source_pose_payload.get("frames")
+            if isinstance(source_frames, list) and len(source_frames) >= 2:
+                source_end_frame = max(
+                    1,
+                    min(
+                        len(source_frames) - 1,
+                        round(movement_end_ratio * (len(source_frames) - 1)),
+                    ),
+                )
+                source_pose_payload = {
+                    **source_pose_payload,
+                    "frames": source_frames[: source_end_frame + 1],
+                }
         if (
             video_world_alignment_should_run
             and ground_contact_mode_allows_floor_support(request.ground_contact_mode)
@@ -735,6 +786,8 @@ def run_generation_pipeline(
         cleaned_clip = refine_motion_clip_structurally(
             cleaned_clip,
             source_pose_payload=source_pose_payload,
+            rigid_paired_hands_required=request.rigid_paired_hands_required,
+            horizontal_torso_required=request.horizontal_torso_required,
             dominant_chain_ratio=request.dominant_chain_ratio,
             non_dominant_damping=request.non_dominant_damping,
             non_dominant_radius_scale=request.non_dominant_radius_scale,

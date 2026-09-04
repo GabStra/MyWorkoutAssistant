@@ -36821,7 +36821,7 @@ def test_rigid_paired_equipment_rejects_spacing_drift_but_not_phase_only_differe
     ) is False
 
 
-def test_locked_hands_still_reject_unstable_spacing_or_lost_source_motion() -> None:
+def test_locked_hands_reject_unstable_spacing_without_penalizing_removed_support_travel() -> None:
     unstable_spacing = {
         "severePairedHandsDistortion": True,
         "handSpacingInstabilityRatio": 0.25,
@@ -36842,7 +36842,7 @@ def test_locked_hands_still_reject_unstable_spacing_or_lost_source_motion() -> N
     assert bake_and_rank_module.paired_hands_distortion_is_blocking(
         lost_source_motion,
         lock_planted_hands=True,
-    ) is True
+    ) is False
     assert bake_and_rank_module.paired_hands_distortion_is_blocking(
         lost_source_motion,
         lock_planted_hands=False,

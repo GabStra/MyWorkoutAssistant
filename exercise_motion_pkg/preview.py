@@ -4923,14 +4923,14 @@ def _build_html(
     let bakedWearRenderFloorY = null;
     let bakedWearElevatedSurfaceMeshes = [];
 
-    function refreshBakedWearElevatedSurfaces(exportPayload) {{
+    function refreshBakedWearElevatedSurfaces(exportPayload, visible = false) {{
       for (const mesh of bakedWearElevatedSurfaceMeshes) {{
         scene.remove(mesh);
         mesh.geometry.dispose();
         mesh.material.dispose();
       }}
       bakedWearElevatedSurfaceMeshes = [];
-      const surfaces = Array.isArray(exportPayload?.elevatedSupportSurfaces)
+      const surfaces = visible && Array.isArray(exportPayload?.elevatedSupportSurfaces)
         ? exportPayload.elevatedSupportSurfaces
         : [];
       for (const surface of surfaces) {{
@@ -4944,8 +4944,15 @@ def _build_html(
         }}
         const mesh = new THREE.Mesh(
           new THREE.BoxGeometry(size, thickness, size),
-          new THREE.MeshLambertMaterial({{ color: 0x173f46, flatShading: true }})
+          new THREE.MeshLambertMaterial({{
+            color: 0x173f46,
+            flatShading: true,
+            transparent: true,
+            opacity: 0.32,
+            depthWrite: false,
+          }})
         );
+        mesh.renderOrder = -1;
         mesh.position.set(Number(center[0]), topY - thickness * 0.5, Number(center[2]));
         scene.add(mesh);
         bakedWearElevatedSurfaceMeshes.push(mesh);
@@ -5566,11 +5573,6 @@ def _build_html(
 
     function refreshGroundPlacement() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
-        if (bakedWearGroundContactMode === "none") {{
-          bakedWearGrid.visible = false;
-          grid.visible = false;
-          return;
-        }}
         const bounds = bakedWearReviewBounds.sourceBounds;
         const height = Math.max(0.001, bounds.maxY - bounds.minY);
         const width = Math.max(0.001, bounds.maxX - bounds.minX);
@@ -5578,6 +5580,8 @@ def _build_html(
         const floorSize = Math.max(width, depth) * 1.24;
         const floorY = Number.isFinite(bakedWearRenderFloorY)
           ? bakedWearRenderFloorY
+          : bakedWearGroundContactMode === "none"
+          ? bounds.minY - {UNIFORM_CAPSULE_RADIUS} - height * 0.04
           : bounds.minY - height * 0.014;
         bakedWearGrid.position.set(
           (bounds.minX + bounds.maxX) * 0.5,
@@ -6833,7 +6837,14 @@ def _build_html(
     }}
 
     function computeFrameShoulderLevelingTransform(frame, frameTranslation) {{
-      if (manualModelRotationOverridesAutoOrientation() || lockPlantedHands || !autoWorldAlignmentEnabled || !frame) {{
+      if (
+        manualModelRotationOverridesAutoOrientation()
+        || lockPlantedFeet
+        || lockPlantedHands
+        || availableGenericSupportJoints().length > 0
+        || !autoWorldAlignmentEnabled
+        || !frame
+      ) {{
         return null;
       }}
       const cacheKey = `${{frameFootLockKey(frame)}}|${{frameTranslation?.join(",") ?? ""}}|${{autoWorldAlignmentEnabled}}|${{sceneInverted}}|${{manualModelRotationCacheKey()}}`;
@@ -6889,6 +6900,9 @@ def _build_html(
     }}
 
     function availableFootJoints() {{
+      if (String(payload.groundContactMode ?? "unknown").trim().toLowerCase() === "none") {{
+        return [];
+      }}
       return ["left_ankle", "left_foot", "right_ankle", "right_foot"]
         .filter((jointName) => payload.jointNames.includes(jointName));
     }}
@@ -6902,13 +6916,14 @@ def _build_html(
         ? sourceFootSupportEvidence.supportContacts
         : [];
       return [...new Set(contacts
-        .filter((contact) => contact?.continuousSupport)
+        .filter((contact) => contact?.continuousSupport || contact?.sourceStationarySupportCandidate)
         .map((contact) => String(contact.jointName || ""))
         .filter((jointName) => payload.jointNames.includes(jointName)))];
     }}
 
     function isFootLockTarget(target) {{
       return lockPlantedFeet
+        && String(payload.groundContactMode ?? "unknown").trim().toLowerCase() !== "none"
         && typeof target?.jointName === "string"
         && (
           target.jointName === "left_ankle"
@@ -6919,16 +6934,40 @@ def _build_html(
     }}
 
     function computeLockedFootBodyTranslation(activeTargets, basePositions) {{
-      if (!lockPlantedFeet || !Array.isArray(activeTargets) || activeTargets.length === 0) {{
+      if (
+        (!lockPlantedFeet && availableGenericSupportJoints().length === 0)
+        || !Array.isArray(activeTargets)
+        || activeTargets.length === 0
+      ) {{
         return null;
       }}
       const weightedTranslation = new THREE.Vector3();
       let totalWeight = 0;
-      const continuousSupportTargets = activeTargets.filter((target) =>
+      const sourceConfirmedTargets = activeTargets.filter((target) =>
+        target.sourceConfirmedContinuousSupport || target.sourceConfirmedContact
+      );
+      const proximalSupportTargets = sourceConfirmedTargets.filter((target) =>
+        !/(?:foot|ankle|hand|wrist)$/.test(String(target.jointName || ""))
+      );
+      const allContinuousSupportTargets = sourceConfirmedTargets.filter((target) =>
         target.sourceConfirmedContinuousSupport
       );
-      const bodyTranslationTargets = continuousSupportTargets.length > 0
+      const continuousSupportTargets = allContinuousSupportTargets.filter((target) => {{
+        const jointName = String(target.jointName || "");
+        const footMatch = /^(left|right)_foot$/.exec(jointName);
+        if (!footMatch) {{
+          return true;
+        }}
+        return !allContinuousSupportTargets.some(
+          (candidate) => String(candidate.jointName || "") === `${{footMatch[1]}}_ankle`
+        );
+      }});
+      const bodyTranslationTargets = proximalSupportTargets.length > 0
+        ? proximalSupportTargets
+        : continuousSupportTargets.length > 0
         ? continuousSupportTargets
+        : sourceConfirmedTargets.length > 0
+        ? sourceConfirmedTargets
         : activeTargets;
       for (const target of bodyTranslationTargets) {{
         if (
@@ -7001,6 +7040,45 @@ def _build_html(
       );
     }}
 
+    function sourceConfirmedContactFrameIndexes(jointName, frameCount) {{
+      if (!sourceFootSupportEvidence || typeof sourceFootSupportEvidence !== "object" || frameCount <= 0) {{
+        return new Set();
+      }}
+      const requestedSide = String(jointName).startsWith("left_")
+        ? "left"
+        : (String(jointName).startsWith("right_") ? "right" : null);
+      const records = [
+        ...(Array.isArray(sourceFootSupportEvidence.contacts) ? sourceFootSupportEvidence.contacts : []),
+        ...(Array.isArray(sourceFootSupportEvidence.supportContacts) ? sourceFootSupportEvidence.supportContacts : []),
+      ];
+      const indexes = new Set();
+      for (const contact of records) {{
+        const contactName = String(contact?.jointName || "");
+        const contactSide = contactName.startsWith("left_")
+          ? "left"
+          : (contactName.startsWith("right_") ? "right" : null);
+        const exactMatch = contactName === String(jointName);
+        const sameFootChain = requestedSide != null
+          && requestedSide === contactSide
+          && /_(?:ankle|foot)$/.test(contactName)
+          && /_(?:ankle|foot)$/.test(String(jointName));
+        if (!exactMatch && !sameFootChain) {{
+          continue;
+        }}
+        const startRatio = Number(contact?.startRatio);
+        const endRatio = Number(contact?.endRatio);
+        if (!Number.isFinite(startRatio) || !Number.isFinite(endRatio)) {{
+          continue;
+        }}
+        const startIndex = Math.max(0, Math.min(frameCount - 1, Math.round(startRatio * (frameCount - 1))));
+        const endIndex = Math.max(startIndex, Math.min(frameCount - 1, Math.round(endRatio * (frameCount - 1))));
+        for (let index = startIndex; index <= endIndex; index += 1) {{
+          indexes.add(index);
+        }}
+      }}
+      return indexes;
+    }}
+
     function buildLockTargetsForJoint(frames, jointName, targetsByFrameKey) {{
       const samples = frames.map((frame, index) => {{
         const point = lockSampleForFrame(frame, jointName);
@@ -7012,6 +7090,10 @@ def _build_html(
       }}
       const isHandJoint = jointName.includes("hand") || jointName.includes("wrist");
       const sourceConfirmedContinuousSupport = sourceConfirmsContinuousFootSupport(jointName);
+      const sourceConfirmedContactIndexes = sourceConfirmedContactFrameIndexes(
+        jointName,
+        samples.length
+      );
       const contactSpeedMetersPerSecond = isHandJoint ? 0.25 : 0.32;
       const edgeSpeeds = samples.slice(0, -1).map((sample, index) => {{
         const next = samples[index + 1];
@@ -7027,6 +7109,9 @@ def _build_html(
       const plantedSamples = sourceConfirmedContinuousSupport ? validSamples : samples.filter((sample, index) => {{
         if (!sample) {{
           return false;
+        }}
+        if (sourceConfirmedContactIndexes.has(index)) {{
+          return true;
         }}
         const localSpeeds = edgeSpeeds
           .slice(Math.max(0, index - 2), Math.min(edgeSpeeds.length, index + 2))
@@ -7128,6 +7213,7 @@ def _build_html(
             anchorZ: anchorPoint.z,
             weight: Math.min(startWeight, endWeight),
             sourceConfirmedContinuousSupport,
+            sourceConfirmedContact: sourceConfirmedContactIndexes.has(sample.index),
           }});
         }}
       }}
@@ -7184,6 +7270,70 @@ def _build_html(
       const sharedY = medianValue(handTargets.map((target) => Number(target.anchorY)).filter((value) => Number.isFinite(value)));
       for (const target of handTargets) {{
         target.anchorY = sharedY;
+      }}
+      const frames = playbackState.boundsFrames ?? playbackState.frames ?? [];
+      const lateralSamples = [];
+      let lateralReference = null;
+      for (const frame of frames) {{
+        const leftShoulder = lockSampleForFrame(frame, "left_shoulder");
+        const rightShoulder = lockSampleForFrame(frame, "right_shoulder");
+        if (!leftShoulder || !rightShoulder) {{
+          continue;
+        }}
+        const lateral = rightShoulder.clone().sub(leftShoulder);
+        if (lateral.lengthSq() <= 1e-10) {{
+          continue;
+        }}
+        lateral.normalize();
+        if (!lateralReference) {{
+          lateralReference = lateral.clone();
+        }} else if (lateral.dot(lateralReference) < 0) {{
+          lateral.negate();
+        }}
+        lateralSamples.push(lateral);
+      }}
+      if (lateralSamples.length < 3) {{
+        return;
+      }}
+      const stableLateral = new THREE.Vector3(
+        medianValue(lateralSamples.map((axis) => axis.x)),
+        medianValue(lateralSamples.map((axis) => axis.y)),
+        medianValue(lateralSamples.map((axis) => axis.z))
+      );
+      if (stableLateral.lengthSq() <= 1e-10) {{
+        return;
+      }}
+      stableLateral.normalize();
+      for (const endpoint of ["wrist", "hand"]) {{
+        const leftTargets = handTargets.filter((target) => target.jointName === `left_${{endpoint}}`);
+        const rightTargets = handTargets.filter((target) => target.jointName === `right_${{endpoint}}`);
+        if (leftTargets.length === 0 || rightTargets.length === 0) {{
+          continue;
+        }}
+        const leftAnchor = new THREE.Vector3(
+          medianValue(leftTargets.map((target) => target.anchorX)),
+          sharedY,
+          medianValue(leftTargets.map((target) => target.anchorZ))
+        );
+        const rightAnchor = new THREE.Vector3(
+          medianValue(rightTargets.map((target) => target.anchorX)),
+          sharedY,
+          medianValue(rightTargets.map((target) => target.anchorZ))
+        );
+        const center = leftAnchor.clone().add(rightAnchor).multiplyScalar(0.5);
+        const halfSpacing = leftAnchor.distanceTo(rightAnchor) * 0.5;
+        const symmetricLeft = center.clone().addScaledVector(stableLateral, -halfSpacing);
+        const symmetricRight = center.clone().addScaledVector(stableLateral, halfSpacing);
+        for (const target of leftTargets) {{
+          target.anchorX = symmetricLeft.x;
+          target.anchorY = symmetricLeft.y;
+          target.anchorZ = symmetricLeft.z;
+        }}
+        for (const target of rightTargets) {{
+          target.anchorX = symmetricRight.x;
+          target.anchorY = symmetricRight.y;
+          target.anchorZ = symmetricRight.z;
+        }}
       }}
     }}
 
@@ -7358,6 +7508,10 @@ def _build_html(
           lockedJointPositions.set(jointName, translatedPoint.clone());
         }}
       }}
+      const hasProximalBodyTranslationOwner = activeTargets.some((target) =>
+        (target.sourceConfirmedContinuousSupport || target.sourceConfirmedContact)
+        && !/(?:foot|ankle|hand|wrist)$/.test(String(target.jointName || ""))
+      );
       const stablePoleVectors = computeStableLegPoleVectors();
       for (const side of ["left", "right"]) {{
         const ankleName = `${{side}}_ankle`;
@@ -7365,6 +7519,14 @@ def _build_html(
         const target = activeTargets.find((candidate) => candidate.jointName === ankleName);
         const footTarget = activeTargets.find((candidate) => candidate.jointName === footName);
         if (!target) {{
+          continue;
+        }}
+        if (target.sourceConfirmedContinuousSupport && !hasProximalBodyTranslationOwner) {{
+          // The rigid-body pass already satisfies the continuous support.
+          // Re-solving this leg changes its articulated endpoint pose and can
+          // create a loop seam without improving the planted contact. When a
+          // proximal support owns the rigid translation, however, the distal
+          // support still needs local IK to satisfy both contacts together.
           continue;
         }}
         const chain = [`${{side}}_hip`, `${{side}}_knee`, ankleName];
@@ -7382,18 +7544,11 @@ def _build_html(
           .sub(originalAnkle)
           .multiplyScalar(targetWeight);
         const maxLocalCorrection = 0.025;
-        if (target.sourceConfirmedContinuousSupport) {{
-          const horizontalCorrection = new THREE.Vector3(
-            ankleCorrection.x,
-            0,
-            ankleCorrection.z
-          );
-          if (horizontalCorrection.length() > maxLocalCorrection) {{
-            horizontalCorrection.setLength(maxLocalCorrection);
-          }}
-          ankleCorrection.x = horizontalCorrection.x;
-          ankleCorrection.z = horizontalCorrection.z;
-        }} else if (ankleCorrection.length() > maxLocalCorrection) {{
+        // Source-confirmed contacts already passed source-space stationarity.
+        // Only heuristic speed-derived contacts use the conservative cap.
+        if (!target.sourceConfirmedContinuousSupport
+            && !target.sourceConfirmedContact
+            && ankleCorrection.length() > maxLocalCorrection) {{
           ankleCorrection.setLength(maxLocalCorrection);
         }}
         const blendedTarget = originalAnkle.clone().add(ankleCorrection);
@@ -7402,7 +7557,7 @@ def _build_html(
           blendedTarget,
           stablePoleVectors.get(side) ?? null,
           null,
-          0.0
+          Number.POSITIVE_INFINITY
         );
         chain.forEach((jointName, index) => {{
           lockedJointPositions.set(jointName, solved[index]);
@@ -7431,6 +7586,10 @@ def _build_html(
           }}
         }}
       }}
+      const pairedArmPoleVectors = computePairedSupportedArmPoleVectors(
+        activeTargets,
+        basePositions
+      );
       for (const side of ["left", "right"]) {{
         const shoulderName = `${{side}}_shoulder`;
         const elbowName = `${{side}}_elbow`;
@@ -7455,7 +7614,11 @@ def _build_html(
           const blendedTarget = originalWrist.clone().lerp(targetPoint, targetWeight);
           const solved = solveLegIkChain(
             [shoulderName, elbowName, wristName].map((jointName) => basePositions.get(jointName).clone()),
-            blendedTarget
+            blendedTarget,
+            pairedArmPoleVectors.get(side) ?? null,
+            null,
+            Number.POSITIVE_INFINITY,
+            pairedArmPoleVectors.has(side)
           );
           [shoulderName, elbowName, wristName].forEach((jointName, index) => {{
             lockedJointPositions.set(jointName, solved[index]);
@@ -7476,12 +7639,50 @@ def _build_html(
       return lockedJointPositions;
     }}
 
+    function computePairedSupportedArmPoleVectors(activeTargets, basePositions) {{
+      const result = new Map();
+      const supportedSides = ["left", "right"].filter((side) =>
+        activeTargets.some((target) =>
+          (target.jointName === `${{side}}_wrist` || target.jointName === `${{side}}_hand`)
+          && (target.sourceConfirmedContinuousSupport || target.sourceConfirmedContact)
+        )
+      );
+      const required = [
+        "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+      ];
+      if (supportedSides.length !== 2 || required.some((name) => !basePositions.has(name))) {{
+        return result;
+      }}
+      const leftShoulder = basePositions.get("left_shoulder");
+      const rightShoulder = basePositions.get("right_shoulder");
+      const planePoint = leftShoulder.clone().add(rightShoulder).multiplyScalar(0.5);
+      const planeNormal = rightShoulder.clone().sub(leftShoulder);
+      if (planeNormal.lengthSq() <= 1e-10) {{
+        return result;
+      }}
+      planeNormal.normalize();
+      const mirrorAcrossBodyPlane = (point) => point.clone().sub(
+        planeNormal.clone().multiplyScalar(
+          2 * point.clone().sub(planePoint).dot(planeNormal)
+        )
+      );
+      const symmetricLeftElbow = basePositions.get("left_elbow")
+        .clone()
+        .add(mirrorAcrossBodyPlane(basePositions.get("right_elbow")))
+        .multiplyScalar(0.5);
+      const symmetricRightElbow = mirrorAcrossBodyPlane(symmetricLeftElbow);
+      result.set("left", symmetricLeftElbow.clone().sub(leftShoulder));
+      result.set("right", symmetricRightElbow.clone().sub(rightShoulder));
+      return result;
+    }}
+
     function solveLegIkChain(
       points,
       target,
       stablePoleVector = null,
       kneeLateralConstraint = null,
-      maximumExtensionDelta = Number.POSITIVE_INFINITY
+      maximumExtensionDelta = Number.POSITIVE_INFINITY,
+      preferStablePoleVector = false
     ) {{
       if (points.length < 3) {{
         return points.map((point) => point.clone());
@@ -7522,11 +7723,15 @@ def _build_html(
       const sourceBendDirection = sourceKneeOffset
         .clone()
         .sub(originalAxis.clone().multiplyScalar(sourceKneeOffset.dot(originalAxis)));
-      const preferredBendDirection = sourceBendDirection.lengthSq() > 1e-8
-        ? sourceBendDirection.clone()
-        : stablePoleVector instanceof THREE.Vector3 && stablePoleVector.lengthSq() > 1e-8
-          ? stablePoleVector.clone()
-          : sourceBendDirection.clone();
+      const hasStablePole = stablePoleVector instanceof THREE.Vector3
+        && stablePoleVector.lengthSq() > 1e-8;
+      const preferredBendDirection = preferStablePoleVector && hasStablePole
+        ? stablePoleVector.clone()
+        : sourceBendDirection.lengthSq() > 1e-8
+          ? sourceBendDirection.clone()
+          : hasStablePole
+            ? stablePoleVector.clone()
+            : sourceBendDirection.clone();
       let bendDirection = preferredBendDirection
         .clone()
         .sub(targetAxis.clone().multiplyScalar(preferredBendDirection.dot(targetAxis)));
@@ -8172,7 +8377,12 @@ def _build_html(
       const width = Math.max(0.001, maxX - minX);
       const depth = Math.max(0.001, maxZ - minZ);
       const horizontalPadding = Math.max(width, depth) * 0.28;
-      const bottomPadding = height * 0.04;
+      const groundContactMode = String(
+        exportPayload?.groundContactMode ?? "unknown"
+      ).trim().toLowerCase();
+      const bottomPadding = groundContactMode === "none"
+        ? {UNIFORM_CAPSULE_RADIUS} + height * 0.08
+        : height * 0.04;
       const topPadding = height * 0.20;
       const stable = {{
         minX: minX - horizontalPadding,
@@ -8564,13 +8774,54 @@ def _build_html(
           boneSides,
         }};
       }});
+      let elevatedSupportSurfaces = (
+        Array.isArray(payload.elevatedSupportSurfaces)
+          ? payload.elevatedSupportSurfaces
+          : []
+      ).map((surface) => {{
+        const sourceCenter = Array.isArray(surface?.center) && surface.center.length >= 3
+          ? surface.center.map(Number)
+          : [0.0, Number(surface?.topY) || 0.0, 0.0];
+        const transformedCenter = toBaseWorldPoint(
+          sourceCenter,
+          [0.0, 0.0, 0.0],
+          true,
+          null,
+          false
+        );
+        return {{
+          ...surface,
+          center: [transformedCenter.x, transformedCenter.y, transformedCenter.z],
+          topY: transformedCenter.y,
+        }};
+      }});
       const wearCoordinateNormalization = normalizeBakedWearSkeletonCoordinates(
         frames,
         selectedPreviewSettings.sceneInverted
       );
       frames = wearCoordinateNormalization.frames;
+      if (wearCoordinateNormalization.metadata?.transform === "rotate_x_pi") {{
+        elevatedSupportSurfaces = elevatedSupportSurfaces.map((surface) => ({{
+          ...surface,
+          center: [surface.center[0], -surface.center[1], -surface.center[2]],
+          topY: -surface.center[1],
+        }}));
+      }}
       const bakedSagittalPlaneAlignment = alignBakedSagittalPlaneToGridAxis(frames);
       frames = bakedSagittalPlaneAlignment.frames;
+      if (bakedSagittalPlaneAlignment.alignment?.applied && elevatedSupportSurfaces.length > 0) {{
+        const surfaceFrames = elevatedSupportSurfaces.map((surface) => ({{
+          joints: {{ support_surface_center: surface.center }},
+        }}));
+        const alignedSurfaceFrames = rotateBakedWearFramesToSagittalPlane(
+          surfaceFrames,
+          bakedSagittalPlaneAlignment.alignment
+        );
+        elevatedSupportSurfaces = elevatedSupportSurfaces.map((surface, index) => {{
+          const center = alignedSurfaceFrames[index].joints.support_surface_center;
+          return {{ ...surface, center, topY: center[1] }};
+        }});
+      }}
       const bakedSagittalYawDegrees = bakedSagittalPlaneAlignment.alignment?.applied
         ? Number(bakedSagittalPlaneAlignment.alignment.yawDegrees) || 0.0
         : 0.0;
@@ -8592,6 +8843,7 @@ def _build_html(
         groundContactMode: String(
           payload.groundContactMode ?? "unknown"
         ).trim().toLowerCase(),
+        elevatedSupportSurfaces,
         title: payload.title,
         source: {{
           fps: payload.fps,
@@ -8817,6 +9069,14 @@ def _build_html(
       bakedWearRenderFloorY = Number.isFinite(exportedRenderFloorY)
         ? exportedRenderFloorY
         : null;
+      // Support surfaces remain part of the motion/contact payload, but they
+      // are diagnostic geometry rather than part of the Wear character. Keep
+      // them hidden in ordinary review/export renders unless explicitly
+      // requested by a debugging caller.
+      refreshBakedWearElevatedSurfaces(
+        exportPayload,
+        Boolean(options.showElevatedSupportSurfaces)
+      );
       fixedRoot = false;
       lockYRoot = false;
       lockPlantedFeet = false;
