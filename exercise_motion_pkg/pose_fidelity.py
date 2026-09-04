@@ -140,6 +140,56 @@ def source_to_motion_pose_fidelity_metrics(
     }
 
 
+def source_to_motion_pose_fidelity_metrics_for_projection(
+    source_payload: dict[str, Any],
+    motion_payload: dict[str, Any],
+    *,
+    projection_reference: dict[str, Any],
+) -> dict[str, Any]:
+    """Evaluate a motion with an already selected camera projection branch.
+
+    Refinement transactions compare two versions of the same reconstructed
+    clip.  Re-selecting yaw, mirroring, or bilateral assignment independently
+    for each version changes the measuring coordinate system and can reject an
+    improvement for an apparent error created only by that branch change.
+    """
+    source_frames = _pose_frames(source_payload, source=True)
+    motion_frames = _pose_frames(motion_payload, source=False)
+    horizontal_vector = projection_reference.get("projectionHorizontalVector")
+    if (
+        len(source_frames) < 5
+        or len(motion_frames) < 5
+        or not isinstance(horizontal_vector, (list, tuple))
+        or len(horizontal_vector) < 2
+    ):
+        return _unavailable_metrics(
+            source_frame_count=len(source_frames),
+            motion_frame_count=len(motion_frames),
+            reason="fixed_projection_reference_unavailable",
+        )
+    selected = _projection_metrics(
+        source_frames,
+        motion_frames,
+        horizontal_vector=(float(horizontal_vector[0]), float(horizontal_vector[1])),
+        mirror=projection_reference.get("mirrored") is True,
+        swap_bilateral=projection_reference.get("bilateralAssignment") == "swapped",
+    )
+    if selected.get("comparableFrameCount", 0) < 5:
+        return _unavailable_metrics(
+            source_frame_count=len(source_frames),
+            motion_frame_count=len(motion_frames),
+            reason="fixed_projection_alignment_unavailable",
+        )
+    return {
+        **selected,
+        "available": True,
+        "sourceFrameCount": len(source_frames),
+        "motionFrameCount": len(motion_frames),
+        "evaluatedProjectionCount": 1,
+        "projectionSelection": "fixed_reference",
+    }
+
+
 def _projection_metrics_for_angle(
     source_frames: list[dict[str, Any]],
     motion_frames: list[dict[str, Any]],
@@ -179,6 +229,33 @@ def _projection_metrics(
     expected_observations = len(source_frames) * len(POSE_JOINTS)
     observed = 0
 
+    transform = _global_similarity_transform(
+        source_frames,
+        motion_frames,
+        horizontal_vector=horizontal_vector,
+        mirror=mirror,
+        swap_bilateral=swap_bilateral,
+    )
+    if transform is None:
+        return {
+            "projectionHorizontalAxis": _projection_axis_label(horizontal_vector),
+            "projectionHorizontalVector": list(horizontal_vector),
+            "projectionHorizontalAngleDegrees": math.degrees(
+                math.atan2(horizontal_vector[1], horizontal_vector[0])
+            ),
+            "mirrored": mirror,
+            "bilateralAssignment": "swapped" if swap_bilateral else "identity",
+            "comparableFrameCount": 0,
+            "comparableFrameRatio": 0.0,
+            "jointObservationCoverage": 0.0,
+            "medianJointErrorBodyRatio": None,
+            "p90JointErrorBodyRatio": None,
+            "medianLowerJointErrorBodyRatio": None,
+            "p90JointAngleErrorDegrees": None,
+            "perJointMedianErrorBodyRatio": {},
+            "perAngleMedianErrorDegrees": {},
+        }
+
     for source_frame in source_frames:
         motion_frame = _nearest_normalized_frame(motion_frames, source_frame["normalizedTime"])
         source_joints = source_frame["joints"]
@@ -190,18 +267,6 @@ def _projection_metrics(
             and _bilateral_name(name, swap=swap_bilateral) in motion_joints
         ]
         if len(fit_names) < 3:
-            continue
-        source_fit = [source_joints[name] for name in fit_names]
-        motion_fit = [
-            _project_motion_point(
-                motion_joints[_bilateral_name(name, swap=swap_bilateral)],
-                horizontal_vector=horizontal_vector,
-                mirror=mirror,
-            )
-            for name in fit_names
-        ]
-        transform = _similarity_transform(motion_fit, source_fit)
-        if transform is None:
             continue
         body_span = _body_span(source_joints.values())
         if body_span <= 1e-9:
@@ -257,6 +322,48 @@ def _projection_metrics(
             name: _median(values) for name, values in angle_errors.items()
         },
     }
+
+
+def _global_similarity_transform(
+    source_frames: list[dict[str, Any]],
+    motion_frames: list[dict[str, Any]],
+    *,
+    horizontal_vector: tuple[float, float],
+    mirror: bool,
+    swap_bilateral: bool,
+) -> tuple[float, float, float, float, float, float] | None:
+    """Fit one fixed camera transform for the whole clip.
+
+    A per-frame similarity fit can rotate an incorrect pose into the source
+    independently at every timestamp, hiding reversed torso lean, missing root
+    travel, and support-posture errors. Camera projection and framing are fixed
+    properties of a source interval, so their transform must be fixed too.
+    """
+
+    source_fit: list[tuple[float, float]] = []
+    motion_fit: list[tuple[float, float]] = []
+    for source_frame in source_frames:
+        motion_frame = _nearest_normalized_frame(
+            motion_frames,
+            float(source_frame["normalizedTime"]),
+        )
+        source_joints = source_frame["joints"]
+        motion_joints = motion_frame["joints"]
+        for name in ALIGNMENT_JOINTS:
+            motion_name = _bilateral_name(name, swap=swap_bilateral)
+            if name not in source_joints or motion_name not in motion_joints:
+                continue
+            source_fit.append(source_joints[name])
+            motion_fit.append(
+                _project_motion_point(
+                    motion_joints[motion_name],
+                    horizontal_vector=horizontal_vector,
+                    mirror=mirror,
+                )
+            )
+    if len(source_fit) < 3:
+        return None
+    return _similarity_transform(motion_fit, source_fit)
 
 
 def _bilateral_name(name: str, *, swap: bool) -> str:
@@ -362,19 +469,22 @@ def _similarity_transform(
     denominator = sum(x * x + y * y for x, y in source_zero)
     if denominator <= 1e-12:
         return None
-    scale_cos = sum(
+    # Projection already searches camera yaw in the world XZ plane and flips
+    # world Y into image Y.  Allowing another free image-plane rotation here
+    # mixes gravity with the horizontal axis: an incorrect crouch can be
+    # rotated toward an upright source, and a correct vertical jump can be
+    # scored as horizontal drift.  Fit scale and framing only so world up
+    # remains source-image up. Camera-roll normalization, when needed, belongs
+    # in source preprocessing where it can be measured from the image.
+    scale = sum(
         source_x * target_x + source_y * target_y
         for (source_x, source_y), (target_x, target_y) in zip(source_zero, target_zero)
     ) / denominator
-    scale_sin = sum(
-        source_x * target_y - source_y * target_x
-        for (source_x, source_y), (target_x, target_y) in zip(source_zero, target_zero)
-    ) / denominator
-    if not math.isfinite(scale_cos) or not math.isfinite(scale_sin):
+    if not math.isfinite(scale) or scale <= 1e-12:
         return None
     return (
-        scale_cos,
-        scale_sin,
+        scale,
+        0.0,
         source_center[0],
         source_center[1],
         target_center[0],
