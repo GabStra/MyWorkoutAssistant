@@ -27245,7 +27245,7 @@ def test_explicit_candidate_attempt_cap_reports_budget_exhaustion(
     assert timings["terminalOutcome"] == "budget_exhausted"
 
 
-def test_repeated_window_specific_wham_failures_converge_for_source_family(
+def test_repeated_window_specific_wham_failures_try_all_sibling_windows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -27299,18 +27299,16 @@ def test_repeated_window_specific_wham_failures_converge_for_source_family(
 
     candidate_results = result[0]
     timings = result[-1]
-    assert len(processed) == 2
+    assert len(processed) == 3
     assert len(candidate_results) == 3
-    assert [item["status"] for item in candidate_results[:2]] == [
+    assert [item["status"] for item in candidate_results] == [
+        "rejected_incomplete_wham_tracking",
         "rejected_incomplete_wham_tracking",
         "rejected_incomplete_wham_tracking",
     ]
-    assert candidate_results[2]["status"] == "skipped_blocked_source_family"
-    assert timings["blockedSourceFamilyCount"] == 1
-    assert timings["skippedBlockedSourceFamilyCount"] == 1
-    assert timings["blockedSourceFamilies"][0]["failureStage"] == "motion_extraction"
-    assert timings["blockedSourceFamilies"][0]["independentFailedWindowCount"] == 2
-    assert timings["terminalOutcome"] == "evidence_exhausted"
+    assert timings["blockedSourceFamilyCount"] == 0
+    assert timings["skippedBlockedSourceFamilyCount"] == 0
+    assert timings["terminalOutcome"] == "reconstruction_tracking_failed"
 
 
 def test_launch_chromium_browser_falls_back_to_system_executable(tmp_path: Path) -> None:

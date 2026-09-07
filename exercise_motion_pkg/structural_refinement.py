@@ -117,6 +117,25 @@ TEMPORAL_POLISH_FIDELITY_TOLERANCES = {
     "p90JointAngleErrorDegrees": 0.5,
 }
 SOURCE_FIDELITY_MAX_RELATIVE_METRIC_REGRESSION = 0.10
+SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES = 1.0
+SOURCE_PRESERVED_ARTICULATION_CHAINS = (
+    (
+        "left_elbow", "left_shoulder", "left_elbow", "left_wrist",
+        ("left_wrist", "left_hand"),
+    ),
+    (
+        "right_elbow", "right_shoulder", "right_elbow", "right_wrist",
+        ("right_wrist", "right_hand"),
+    ),
+    (
+        "left_knee", "left_hip", "left_knee", "left_ankle",
+        ("left_ankle", "left_foot"),
+    ),
+    (
+        "right_knee", "right_hip", "right_knee", "right_ankle",
+        ("right_ankle", "right_foot"),
+    ),
+)
 
 
 def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
@@ -134,6 +153,201 @@ def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
     }
 
 
+def _point_angle_degrees_3d(
+    first: Point3,
+    middle: Point3,
+    last: Point3,
+) -> float | None:
+    left = _subtract(first, middle)
+    right = _subtract(last, middle)
+    denominator = _length(left) * _length(right)
+    if denominator <= 1e-9:
+        return None
+    cosine = max(-1.0, min(1.0, _dot(left, right) / denominator))
+    return math.degrees(math.acos(cosine))
+
+
+def constrain_to_source_articulation_envelope(
+    source: MotionClip,
+    proposed: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Keep cleanup from inventing articulation absent from the 3D source.
+
+    Monocular 2D evidence can improve where a limb appears in the camera plane,
+    but it cannot resolve the hidden-depth branch reliably.  Preserve the 3D
+    reconstruction's observed hinge envelope and constrain only proposals that
+    leave it; the remaining correction is retained.
+    """
+    constrained_frames = [
+        MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints))
+        for frame in proposed.frames
+    ]
+    constrained_samples = 0
+    prevented_branch_flips = 0
+    maximum_excess_degrees = 0.0
+    constrained_joints: set[str] = set()
+    envelopes: dict[str, dict[str, float]] = {}
+    for name, parent, hinge, child, descendants in SOURCE_PRESERVED_ARTICULATION_CHAINS:
+        source_angles = [
+            angle
+            for frame in source.frames
+            if all(joint_name in frame.joints for joint_name in (parent, hinge, child))
+            for angle in (
+                _point_angle_degrees_3d(
+                    frame.joints[parent], frame.joints[hinge], frame.joints[child]
+                ),
+            )
+            if angle is not None
+        ]
+        if not source_angles:
+            continue
+        minimum = min(source_angles) - SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES
+        maximum = max(source_angles) + SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES
+        envelopes[name] = {"minimumDegrees": minimum, "maximumDegrees": maximum}
+        for source_frame, frame in zip(source.frames, constrained_frames):
+            joints = frame.joints
+            if any(
+                joint_name not in joints or joint_name not in source_frame.joints
+                for joint_name in (parent, hinge, child)
+            ):
+                continue
+            source_body_frame = _body_local_frame(source_frame)
+            proposed_body_frame = _body_local_frame(frame)
+            if source_body_frame is not None and proposed_body_frame is not None:
+                source_parent = _normalize(
+                    _subtract(source_frame.joints[parent], source_frame.joints[hinge])
+                )
+                source_child = _normalize(
+                    _subtract(source_frame.joints[child], source_frame.joints[hinge])
+                )
+                proposed_parent = _normalize(_subtract(joints[parent], joints[hinge]))
+                proposed_child = _normalize(_subtract(joints[child], joints[hinge]))
+                if all(
+                    direction is not None
+                    for direction in (
+                        source_parent,
+                        source_child,
+                        proposed_parent,
+                        proposed_child,
+                    )
+                ):
+                    source_bend = _normalize(
+                        _subtract(
+                            source_child,
+                            _scale(source_parent, _dot(source_child, source_parent)),
+                        )
+                    )
+                    proposed_bend = _normalize(
+                        _subtract(
+                            proposed_child,
+                            _scale(proposed_parent, _dot(proposed_child, proposed_parent)),
+                        )
+                    )
+                    if source_bend is not None and proposed_bend is not None:
+                        source_local_bend = (
+                            _dot(source_bend, source_body_frame.right),
+                            _dot(source_bend, source_body_frame.up),
+                            _dot(source_bend, source_body_frame.forward),
+                        )
+                        proposed_local_bend = (
+                            _dot(proposed_bend, proposed_body_frame.right),
+                            _dot(proposed_bend, proposed_body_frame.up),
+                            _dot(proposed_bend, proposed_body_frame.forward),
+                        )
+                        # Crossing the opposite hemisphere is a discrete IK
+                        # branch change, not ordinary articulation. Preserve
+                        # the reconstructed branch instead of allowing a
+                        # post-process solver to turn a knee or elbow backward.
+                        if _dot(source_local_bend, proposed_local_bend) < 0.0:
+                            child_length = _length(_subtract(joints[child], joints[hinge]))
+                            source_child_local = (
+                                _dot(source_child, source_body_frame.right),
+                                _dot(source_child, source_body_frame.up),
+                                _dot(source_child, source_body_frame.forward),
+                            )
+                            restored_direction = _normalize(
+                                _add(
+                                    _add(
+                                        _scale(proposed_body_frame.right, source_child_local[0]),
+                                        _scale(proposed_body_frame.up, source_child_local[1]),
+                                    ),
+                                    _scale(proposed_body_frame.forward, source_child_local[2]),
+                                )
+                            )
+                            if restored_direction is not None and child_length > 1e-8:
+                                restored_child = _add(
+                                    joints[hinge],
+                                    _scale(restored_direction, child_length),
+                                )
+                                delta = _subtract(restored_child, joints[child])
+                                for descendant in descendants:
+                                    if descendant in joints:
+                                        joints[descendant] = _add(joints[descendant], delta)
+                                prevented_branch_flips += 1
+                                constrained_samples += 1
+                                constrained_joints.add(name)
+            angle = _point_angle_degrees_3d(
+                joints[parent], joints[hinge], joints[child]
+            )
+            if (
+                angle is None
+                or minimum - 1e-7 <= angle <= maximum + 1e-7
+            ):
+                continue
+            target_angle = min(max(angle, minimum), maximum)
+            target_child = _child_point_for_target_hinge_angle(
+                parent=joints[parent],
+                hinge=joints[hinge],
+                child=joints[child],
+                target_angle_degrees=target_angle,
+            )
+            if target_child is None:
+                continue
+            delta = _subtract(target_child, joints[child])
+            for descendant in descendants:
+                if descendant in joints:
+                    joints[descendant] = _add(joints[descendant], delta)
+            constrained_samples += 1
+            constrained_joints.add(name)
+            maximum_excess_degrees = max(maximum_excess_degrees, abs(angle - target_angle))
+    return replace(proposed, frames=constrained_frames), {
+        "applied": constrained_samples > 0,
+        "strategy": "source_3d_articulation_envelope_constraint",
+        "constrainedSampleCount": constrained_samples,
+        "preventedHingeBranchFlipCount": prevented_branch_flips,
+        "constrainedJoints": sorted(constrained_joints),
+        "maximumPreventedExcessDegrees": maximum_excess_degrees,
+        "toleranceDegrees": SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES,
+        "sourceEnvelopes": envelopes,
+    }
+
+
+def stabilize_distal_foot_heading(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Remove direction noise without changing anatomical heading or foot size."""
+    from .foot_kinematics import stabilize_rigid_feet
+
+    return stabilize_rigid_feet(clip)
+
+
+def suppress_post_ik_anatomical_spikes(
+    clip: MotionClip,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Repair isolated distal-chain discontinuities introduced after IK."""
+    return _suppress_temporal_spikes(clip, active_threshold=0.018)
+
+
+def stabilize_forefoot_ground_contacts(
+    clip: MotionClip,
+    support_evidence: dict[str, Any] | None,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Solve rigid feet with ankle limits relative to each lower leg."""
+    from .foot_kinematics import solve_rigid_foot_contacts
+
+    return solve_rigid_foot_contacts(clip, support_evidence)
+
+
 def _accept_source_preserving_refinement_step(
     before: MotionClip,
     proposed: MotionClip,
@@ -148,11 +362,16 @@ def _accept_source_preserving_refinement_step(
             "accepted": True,
             "reason": "step_changed_no_joint_positions",
         }
+    proposed, articulation_constraint = constrain_to_source_articulation_envelope(
+        before,
+        proposed,
+    )
     if not isinstance(source_pose_payload, dict):
         return proposed, {
             "step": step_name,
             "accepted": True,
             "reason": "source_pose_reference_unavailable",
+            "articulationConstraint": articulation_constraint,
         }
     before_metrics = source_to_motion_pose_fidelity_metrics(
         source_pose_payload,
@@ -170,6 +389,7 @@ def _accept_source_preserving_refinement_step(
             "reason": "source_fidelity_comparison_unavailable",
             "before": before_metrics,
             "proposed": proposed_metrics,
+            "articulationConstraint": articulation_constraint,
         }
     degraded_metrics: list[str] = []
     deltas: dict[str, float] = {}
@@ -247,6 +467,7 @@ def _accept_source_preserving_refinement_step(
         "before": before_metrics,
         "proposed": proposed_metrics,
         "temporalNoiseTradeoff": temporal_noise_tradeoff,
+        "articulationConstraint": articulation_constraint,
     }
 
 
@@ -262,6 +483,7 @@ def refine_motion_clip_structurally(
 ) -> MotionClip:
     if clip.frame_count < 3:
         return clip
+    articulation_reference_clip = clip
     clip, source_contact_timing_metadata = _align_terminal_contact_to_source_pose(
         clip,
         source_pose_payload=source_pose_payload,
@@ -652,6 +874,11 @@ def refine_motion_clip_structurally(
         step_name="final_head_pose_preservation",
     )
     head_metadata["transaction"] = head_transaction
+    refined, final_articulation_constraint = constrain_to_source_articulation_envelope(
+        articulation_reference_clip,
+        refined,
+    )
+    refined, foot_heading_metadata = stabilize_distal_foot_heading(refined)
     refinement_metadata = {
         **refinement_metadata,
         "travelYawAlignment": travel_yaw_metadata,
@@ -674,6 +901,8 @@ def refine_motion_clip_structurally(
         "limbTemporalContinuity": limb_temporal_continuity,
         "directionalDenoising": directional_denoising,
         "headPosePreservation": head_metadata,
+        "finalArticulationConstraint": final_articulation_constraint,
+        "distalFootHeading": foot_heading_metadata,
         "temporalPolish": temporal_polish_metadata,
         "finalBoneProjection": final_bone_projection_metadata,
         "supportAnchorRestoration": support_anchor_metadata,
@@ -7022,12 +7251,15 @@ def _body_local_frame(frame: MotionFrame) -> BodyFrame | None:
     spine_axis = _normalize(_subtract(spine_top, origin))
     if spine_axis is None:
         return None
-    forward_axis = _normalize(_cross(right_axis, spine_axis))
+    # Match the SMPL/preview directed anatomical basis. Using right x up here
+    # produces the same sagittal plane but reverses the meaning of forward,
+    # causing source-guided limb travel to be solved on the opposite branch.
+    forward_axis = _normalize(_cross(spine_axis, right_axis))
     if forward_axis is None:
-        forward_axis = _normalize(_cross(right_axis, (0.0, 1.0, 0.0)))
+        forward_axis = _normalize(_cross((0.0, 1.0, 0.0), right_axis))
     if forward_axis is None:
         return None
-    up_axis = _normalize(_cross(forward_axis, right_axis))
+    up_axis = _normalize(_cross(right_axis, forward_axis))
     if up_axis is None:
         return None
     return BodyFrame(origin=origin, right=right_axis, up=up_axis, forward=forward_axis)
