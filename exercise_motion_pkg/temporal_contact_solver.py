@@ -148,7 +148,9 @@ def _video_floor_distance_observations(
                 continue
             t = item.get("timeSeconds")
             d = item.get("distance")
-            if isinstance(t, (int, float)) and isinstance(d, (int, float)):
+            if (isinstance(t, (int, float)) and isinstance(d, (int, float))
+                    and math.isfinite(float(t)) and math.isfinite(float(d))
+                    and float(d) >= -CONTACT_ALIGNMENT_DISTANCE_TOLERANCE):
                 per_joint.append((float(t), float(d)))
         if per_joint:
             normalized[joint_name] = per_joint
@@ -352,6 +354,11 @@ def _generic_contact_frame_joints(
     if not floor_bands:
         return [[] for _frame in clip.frames]
 
+    depth_observations = _video_floor_distance_observations(clip)
+    depth_surface_bands = {
+        name: percentile([distance for _, distance in observations], 0.15)
+        for name, observations in depth_observations.items() if len(observations) >= 3
+    }
     contacts: list[list[str]] = []
     previous_contacts: set[str] = set()
     for frame_index, frame in enumerate(clip.frames):
@@ -365,6 +372,15 @@ def _generic_contact_frame_joints(
             vertical_speed = _vertical_frame_speed(
                 clip, frame_index=frame_index, joint_name=name
             )
+            # Depth confirms separation from the observed support band, which
+            # may be a bench rather than the floor. Sparse samples must not be
+            # extrapolated into contact timing between measurements.
+            observations = depth_observations.get(name, [])
+            if observations and name in depth_surface_bands:
+                observed_time, distance = min(observations, key=lambda item: abs(item[0] - frame.time_sec))
+                if (abs(observed_time - frame.time_sec) <= 1.0 / max(clip.fps, 1.0)
+                        and distance > depth_surface_bands[name] + CONTACT_ALIGNMENT_DISTANCE_TOLERANCE + release_margin):
+                    continue
             if (
                 height <= floor_bands[name] + CONTACT_ALIGNMENT_DISTANCE_TOLERANCE + release_margin
                 and abs(vertical_speed) <= CONTACT_ALIGNMENT_VERTICAL_SPEED_TOLERANCE
