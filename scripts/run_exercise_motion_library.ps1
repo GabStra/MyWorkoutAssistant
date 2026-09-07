@@ -17,11 +17,14 @@ param(
 
     [int]$PrefetchWorkers = 2,
 
-    [int]$PrefetchQueueDepth = 6,
+    [int]$PrefetchQueueDepth = 40,
 
-    [int]$StagedWaveSize = 8,
+    [int]$StagedWaveSize = 32,
 
     [switch]$DisableStagedWaves,
+
+    [ValidateRange(1, 10)]
+    [int]$PassRestartAttempts = 3,
 
     [string]$PythonCommand = "",
 
@@ -40,7 +43,7 @@ trap {
         Write-MotionInterruptReceived
         exit 130
     }
-    throw
+    throw $_
 }
 
 $SelectionValidationPolicyVersion = 47
@@ -191,14 +194,27 @@ function Invoke-MovementPass {
     }
     $runnerArguments += $RemainingArguments
 
-    & pwsh @runnerArguments
-    $passExitCode = $LASTEXITCODE
-    Exit-IfMotionRunInterrupted -ExitCode $passExitCode
-    if ($passExitCode -ne 0) {
-        throw "Exercise-library movement pass failed with exit code $passExitCode"
-    }
-    if (-not (Test-Path -LiteralPath $summaryPath)) {
-        throw "Movement pass did not create its summary: $summaryPath"
+    for ($restartAttempt = 1; $restartAttempt -le $PassRestartAttempts; $restartAttempt += 1) {
+        & pwsh @runnerArguments
+        $passExitCode = $LASTEXITCODE
+        Exit-IfMotionRunInterrupted -ExitCode $passExitCode
+        if ($passExitCode -eq 0 -and (Test-Path -LiteralPath $summaryPath)) {
+            return
+        }
+
+        $failure = if ($passExitCode -ne 0) {
+            "failed with exit code $passExitCode"
+        } else {
+            "finished without creating its summary: $summaryPath"
+        }
+        if ($restartAttempt -ge $PassRestartAttempts) {
+            throw "Exercise-library movement pass $failure after $PassRestartAttempts automatic attempt(s)."
+        }
+        Write-Warning ((
+                "Exercise-library movement pass {0}; restarting from its persisted checkpoint " +
+                "(attempt {1}/{2})."
+            ) -f $failure, ($restartAttempt + 1), $PassRestartAttempts)
+        Start-Sleep -Seconds 5
     }
 }
 

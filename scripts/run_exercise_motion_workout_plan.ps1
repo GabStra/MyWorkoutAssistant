@@ -18,7 +18,6 @@ param(
     [string[]]$ExcludeYoutubeUrl = @(),
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
-    [string]$YouTubeCookiesPath,
     [string]$YouTubePreviewCacheDir,
     [string]$YouTubeSourceCacheDir,
     [string]$SourceOutcomeIndexJson = "build/exercise_motion/source_outcome_index.json",
@@ -191,7 +190,7 @@ trap {
         Write-MotionInterruptReceived
         exit 130
     }
-    throw
+    throw $_
 }
 
 $script:LastProgressDetailByLogPath = @{}
@@ -199,7 +198,7 @@ $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
 $script:WhamWorkerStartedOnce = $false
-$discoveryStagePolicyVersion = 4
+$discoveryStagePolicyVersion = 5
 $sourceDownloadStagePolicyVersion = 2
 
 function Get-RepoRoot {
@@ -1014,6 +1013,14 @@ function Start-WhamWarmWorker {
     foreach ($child in @("jobs", "running", "results", "job_logs")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
     }
+    # A terminated wrapper can leave queue markers behind after the process that
+    # was waiting for their result has gone away. Never make a replacement worker
+    # spend GPU time on those orphaned requests; the resumed bake submits a fresh
+    # job and reuses any completed reconstruction artifacts normally.
+    foreach ($queueDirectory in @("jobs", "running")) {
+        Get-ChildItem -LiteralPath (Join-Path $SessionDir $queueDirectory) -Filter "*.json" -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
     foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop", "stopped.json")) {
         $path = Join-Path $SessionDir $staleFile
         if (Test-Path -LiteralPath $path) {
@@ -1152,6 +1159,11 @@ function Get-ExistingSelectedSummary {
     $wearSkeletonFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_wear_skeleton.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)
     if ($wearSkeletonFiles.Count -eq 0) {
         return $null
+    }
+    foreach ($wearSkeletonFile in $wearSkeletonFiles) {
+        if (-not (Test-ArticulationConstrainedSkeleton -Path $wearSkeletonFile.FullName)) {
+            return $null
+        }
     }
 
     $previewFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_selected_preview.webm" -File -ErrorAction SilentlyContinue | Sort-Object Name)
@@ -1579,19 +1591,56 @@ function Test-DiscoveryStageReady {
         if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
             return $false
         }
-        if ([int]$signature.policyVersion -ne $discoveryStagePolicyVersion) {
-            return $false
-        }
-        if ("$($signature.argumentsSha256)".ToLowerInvariant() -ne $WorkItem.discoveryArgumentsSha256) {
-            return $false
-        }
         if ("$($signature.exercisePlanSha256)".ToLowerInvariant() -ne $WorkItem.exercisePlanSha256) {
             return $false
         }
         if ("$($signature.equipmentSha256)".ToLowerInvariant() -ne $WorkItem.equipmentSha256) {
             return $false
         }
+        $previousSelectionPath = Join-Path $WorkItem.bakeWorkspace "selection_manifest.json"
+        $hasPreviousSelection = $false
+        if (Test-Path -LiteralPath $previousSelectionPath) {
+            $previousSelection = Get-Content -LiteralPath $previousSelectionPath -Raw | ConvertFrom-Json
+            $hasPreviousSelection = (
+                $null -ne $previousSelection.selected -or
+                @($previousSelection.selectedResults).Count -gt 0
+            )
+        }
+        if (
+            [int]$signature.policyVersion -ne $discoveryStagePolicyVersion -or
+            "$($signature.argumentsSha256)".ToLowerInvariant() -ne $WorkItem.discoveryArgumentsSha256
+        ) {
+            # A previously accepted reconstruction is authoritative evidence
+            # that this candidate set contains a usable source. Downstream
+            # cleanup, IK, rendering, or validation policy changes must not
+            # force another network/VLM discovery pass for that same exercise.
+            if (-not $hasPreviousSelection) {
+                return $false
+            }
+        }
         return @($payload.exercises).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+function Test-ArticulationConstrainedSkeleton {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $constraint = $payload.postBakeArticulationConstraint
+        $footHeadingConstraint = $payload.postBakeFootHeadingConstraint
+        return (
+            $null -ne $constraint -and
+            "$($constraint.strategy)" -eq "source_3d_articulation_envelope_constraint" -and
+            $null -ne $footHeadingConstraint -and
+            "$($footHeadingConstraint.strategy)" -eq "knee_flexion_aligned_foot_heading" -and
+            [double]$footHeadingConstraint.maximumFootPitchDegrees -eq 55.0
+        )
     } catch {
         return $false
     }
@@ -1606,10 +1655,29 @@ function Test-BakeStageReady {
     }
     try {
         $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
-        if ($selection.PSObject.Properties.Name -contains "selectedResults") {
-            return @($selection.selectedResults).Count -gt 0
+        $selectedResults = if (
+            $selection.PSObject.Properties.Name -contains "selectedResults" -and
+            @($selection.selectedResults).Count -gt 0
+        ) {
+            @($selection.selectedResults)
+        } elseif ($null -ne $selection.selected) {
+            @($selection.selected)
+        } else {
+            @()
         }
-        return $null -ne $selection.selected
+        if ($selectedResults.Count -eq 0) {
+            return $false
+        }
+        foreach ($selectedResult in $selectedResults) {
+            $skeletonPath = "$($selectedResult.selectedWearSkeletonPath)"
+            if ([string]::IsNullOrWhiteSpace($skeletonPath)) {
+                $skeletonPath = "$($selectedResult.skeletonPath)"
+            }
+            if (-not (Test-ArticulationConstrainedSkeleton -Path $skeletonPath)) {
+                return $false
+            }
+        }
+        return $true
     } catch {
         return $false
     }
@@ -1751,6 +1819,24 @@ function Start-BakeJob {
             }
         }
 
+        function Get-DiscoveryTerminalReason {
+            param([string]$Path)
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return "candidate_evidence_exhausted"
+            }
+            try {
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                foreach ($exercise in @($payload.exercises)) {
+                    $reason = "$($exercise.candidateExpansion.terminalReason)".Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($reason)) {
+                        return $reason
+                    }
+                }
+            } catch {
+            }
+            return "candidate_evidence_exhausted"
+        }
+
         function Get-SelectedResultCount {
             param([string]$Workspace)
             $selectionPath = Join-Path $Workspace "selection_manifest.json"
@@ -1806,7 +1892,22 @@ function Start-BakeJob {
             return @(
                 Get-ChildItem -LiteralPath $snapshotDir -Filter "youtube_candidates.attempt-*.json" -File |
                     Sort-Object FullName |
-                    ForEach-Object { $_.FullName }
+                    ForEach-Object {
+                        try {
+                            $snapshot = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                            $signature = $snapshot.wrapperDiscoverySignature
+                            if (
+                                $signature -and
+                                [int]$signature.policyVersion -eq $DiscoveryStagePolicyVersion
+                            ) {
+                                $_.FullName
+                            }
+                        } catch {
+                            # Unversioned or malformed snapshots must not
+                            # permanently exclude candidates under a newer
+                            # source-selection policy.
+                        }
+                    }
             )
         }
 
@@ -2026,7 +2127,7 @@ function Start-BakeJob {
                         discoveryAttemptCount = $discoveryAttemptCount
                         bakeAttemptCount = $bakeAttemptCount
                         noNewWork = $true
-                        terminalReason = "no_reconstruction_ready_source"
+                        terminalReason = Get-DiscoveryTerminalReason -Path $CandidatesPath
                         attempts = $attempts
                     }
                     return
@@ -2310,9 +2411,15 @@ function Complete-BakeJob {
         @()
     }
     if ($status -eq "completed" -and $selectedOptions.Count -eq 0) {
-        if ($jobResult -and "$($jobResult.terminalReason)" -eq "no_reconstruction_ready_source") {
+        if ($jobResult -and -not [string]::IsNullOrWhiteSpace("$($jobResult.terminalReason)")) {
             $status = "no_selection"
-            $errorMessage = "No unseen reconstruction-ready source was found after bounded discovery expansion."
+            $errorMessage = switch ("$($jobResult.terminalReason)") {
+                "semantic_candidates_exhausted" { "The reviewed source pool contained no semantically compatible candidate." }
+                "source_pool_exhausted_after_pose_rejection" { "Semantically compatible candidates were found, but none passed reconstruction pose/visibility checks." }
+                "source_pool_exhausted_after_source_review" { "Pose-compatible candidates were found, but no reviewed interval contained a clean complete movement." }
+                "insufficient_reconstruction_ready_sources" { "The reviewed source pool did not contain enough reconstruction-ready movements." }
+                default { "No reconstruction-ready source remained after progressive source review." }
+            }
         } elseif ($manualReviewFallback) {
             $status = "needs_manual_review"
             $errorMessage = "No candidate passed automatic validation; the best generated movement is available for manual review."
@@ -3061,6 +3168,7 @@ if ($DeferAfterFirstAttempt) {
     $MaxCandidateReviewTargetSuitableCount = 1
     $FallbackCandidates = 0
     $MaxFinalOutputRejections = 0
+    $MaxReconstructionCandidateAttempts = 1
     $CandidateWorkers = 1
 }
 if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
@@ -3085,9 +3193,6 @@ if (-not $PSBoundParameters.ContainsKey("VisionDownloadWorkers")) {
 $resolvedWorkoutPlanJson = Resolve-StrictPath $WorkoutPlanJson
 if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
     $EquipmentJson = Resolve-StrictPath $EquipmentJson
-}
-if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-    $YouTubeCookiesPath = Resolve-StrictPath $YouTubeCookiesPath
 }
 $recoveredExclusions = Add-UnboundExclusionArguments `
     -WorkspaceRoots $ExcludeCandidatesFromWorkspaceRoot `
@@ -3346,9 +3451,6 @@ if ($KeepLlamaCppServer) {
 if ($VisionFramesPerCandidate -gt 0) {
     $youtubeBaseArgs += @("--vision-frames-per-candidate", "$VisionFramesPerCandidate")
 }
-if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-    $youtubeBaseArgs += @("--youtube-cookies", $YouTubeCookiesPath)
-}
 if ($PosePrefilter -or -not $SkipPosePrefilter) {
     $youtubeBaseArgs += @(
         "--pose-prefilter",
@@ -3480,9 +3582,6 @@ foreach ($exercise in $exerciseList.exercises) {
         "--workers", "1",
         "--out-json", $sourceDownloadReportPath
     )
-    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-        $primarySourceDownloadArgs += @("--youtube-cookies", $YouTubeCookiesPath)
-    }
     $fallbackSourceDownloadArgs = @(
         "-m", "exercise_motion_pkg.cli",
         "prefetch-youtube-sources",
@@ -3493,9 +3592,6 @@ foreach ($exercise in $exerciseList.exercises) {
         "--workers", "1",
         "--out-json", $fallbackSourceDownloadReportPath
     )
-    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-        $fallbackSourceDownloadArgs += @("--youtube-cookies", $YouTubeCookiesPath)
-    }
     $primarySourceDownloadArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $primarySourceDownloadArgs
     $fallbackSourceDownloadArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $fallbackSourceDownloadArgs
 
@@ -3638,10 +3734,6 @@ foreach ($exercise in $exerciseList.exercises) {
     if ($SkipPreWhamSourceValidation) {
         $bakeArgs += "--skip-pre-wham-source-validation"
     }
-    if (-not [string]::IsNullOrWhiteSpace($YouTubeCookiesPath)) {
-        $bakeArgs += @("--youtube-cookies", $YouTubeCookiesPath)
-    }
-
     $workItems += [pscustomobject]@{
         index = $exerciseIndex
         exerciseId = $exerciseId
@@ -3932,7 +4024,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             if ($null -ne $warmWhamWorkerInstance) {
                 $workerRunning = (& docker inspect -f "{{.State.Running}}" $warmWhamWorkerInstance.containerName 2>$null)
                 if ($LASTEXITCODE -ne 0 -or "$workerRunning".Trim().ToLowerInvariant() -ne "true") {
-                    Write-Warning "Motion extractor exited unexpectedly; it will be restarted before the next bake."
+                    if ($bakeRunningJobs.Count -gt 0) {
+                        Write-Host "Motion extractor stopped for the expected GPU model handoff; it will be restarted before the next extraction."
+                    } else {
+                        Write-Warning "Motion extractor exited while idle; it will be restarted before the next extraction."
+                    }
                     $warmWhamWorkerInstance = $null
                 }
             }

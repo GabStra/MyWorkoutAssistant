@@ -426,12 +426,20 @@ def run_staged_bake_wave(
                 selected_sources.append((candidate, selected_video))
                 selected_source_identities.add(source_identity)
                 if requested_portfolio_size is None:
-                    requested_portfolio_size = max(
-                        1,
-                        min(
-                            STAGED_SOURCE_PORTFOLIO_MAX_SIZE,
-                            first_attempt_portfolio_size(readiness),
-                        ),
+                    first_pass_single_source = (
+                        item.request.fallback_candidates <= 0
+                        and item.request.max_final_output_rejections <= 0
+                    )
+                    requested_portfolio_size = (
+                        1
+                        if first_pass_single_source
+                        else max(
+                            1,
+                            min(
+                                STAGED_SOURCE_PORTFOLIO_MAX_SIZE,
+                                first_attempt_portfolio_size(readiness),
+                            ),
+                        )
                     )
                 if len(selected_sources) >= requested_portfolio_size:
                     break
