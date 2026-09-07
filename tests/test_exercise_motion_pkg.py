@@ -23959,6 +23959,45 @@ def test_semantic_gate_rejects_model_reported_named_variant_terms() -> None:
     assert "semantic_unrequested_chest_to_bar_variant" in scored.score_reasons
 
 
+def test_semantic_gate_accepts_default_standing_posture_for_unqualified_target() -> None:
+    exercise = ExerciseEntry(
+        exercise_id="barbell-curl",
+        name="Barbell Biceps Curl",
+        slug="barbell-biceps-curl",
+    )
+    candidate = YouTubeCandidate(
+        url="https://www.youtube.com/watch?v=standing-curl",
+        video_id="standing-curl",
+        title="Standing Straight Bar Curl",
+        channel="Coach",
+        duration_seconds=30,
+        view_count=1_000,
+        upload_date=None,
+        description_snippet="Standard barbell curl.",
+        thumbnail=None,
+        final_score=0.9,
+    )
+
+    scored = apply_semantic_gate_score(
+        candidate,
+        exercise=exercise,
+        semantic_score=0.9,
+        semantic_reasons=["semantic_text_match"],
+        semantic_payload={
+            "passed": False,
+            "score": 0.2,
+            "wrongExercise": False,
+            "wrongEquipment": False,
+            "unrequestedVariantTerms": ["standing"],
+            "matchedExercise": "Barbell Biceps Curl",
+        },
+        settings=YouTubeRankingSettings(),
+    )
+
+    assert scored.status == "recommended"
+    assert scored.vision_payload["semanticGate"]["unrequestedVariantTerms"] == []
+
+
 def test_semantic_gate_cannot_stochastically_pass_explicit_title_variant() -> None:
     exercise = ExerciseEntry(exercise_id="nordic", name="Nordic Curl", slug="nordic-curl")
     candidate = YouTubeCandidate(
@@ -36715,7 +36754,7 @@ def test_materialized_kinematic_reasons_preserve_unknown_severe_artifact() -> No
     ) == ["materialized_kinematic_artifact"]
 
 
-def test_expanded_youtube_review_preserves_configured_work_caps() -> None:
+def test_expanded_youtube_review_progressively_exposes_remaining_pool() -> None:
     settings = youtube_module.YouTubeRankingSettings(
         semantic_gate_enabled=True,
         semantic_gate_candidates_per_exercise=24,
@@ -36728,10 +36767,10 @@ def test_expanded_youtube_review_preserves_configured_work_caps() -> None:
 
     expanded = youtube_module.expanded_youtube_candidate_review_settings(settings, available_count=179)
 
-    assert expanded.resolved_semantic_gate_max_candidates_per_exercise() == 24
-    assert expanded.resolved_pose_prefilter_candidates_per_exercise() == 4
-    assert expanded.vision_candidates_per_exercise == 6
-    assert youtube_module.youtube_candidate_review_hard_cap(expanded) == 24
+    assert expanded.resolved_semantic_gate_max_candidates_per_exercise() == 179
+    assert expanded.resolved_pose_prefilter_candidates_per_exercise() == 179
+    assert expanded.vision_candidates_per_exercise == 179
+    assert youtube_module.youtube_candidate_review_hard_cap(expanded) == 179
 
 
 def test_hand_lock_arm_distortion_metrics_detect_stable_wrong_arm_pose(tmp_path: Path) -> None:

@@ -3284,6 +3284,20 @@ SEMANTIC_PRESENTATION_CONTEXT_TERMS = {
     "workout",
 }
 
+# An unqualified exercise name denotes its conventional form. Text models
+# sometimes repeat that conventional posture as though it were an added
+# variant (for example, "standing" for a plain barbell curl). These terms are
+# compatible only when the target itself does not request a different posture.
+SEMANTIC_DEFAULT_POSTURE_TERMS = {"standing"}
+SEMANTIC_EXPLICIT_POSTURE_TERMS = {
+    "seated",
+    "lying",
+    "supine",
+    "prone",
+    "kneeling",
+    "hanging",
+}
+
 
 def unrequested_title_variant_terms(exercise_name: str, candidate_title: str) -> list[str]:
     target = f" {normalize_exercise_name(exercise_name)} "
@@ -3913,11 +3927,13 @@ def apply_semantic_gate_score(
             *unrequested_title_variant_terms(exercise.name, candidate.title),
         ]
     )
+    target_name = normalize_exercise_name(exercise.name)
     model_unrequested_variants = [
         variant
         for variant in model_unrequested_variants
         if semantic_variant_term_is_movement_changing(variant)
-        and normalize_exercise_name(variant) not in normalize_exercise_name(exercise.name)
+        and normalize_exercise_name(variant) not in target_name
+        and not semantic_default_posture_is_compatible(target_name, variant)
     ]
     model_variant_reasons = [
         f"semantic_unrequested_{slugify(variant).replace('-', '_')}_variant"
@@ -4047,6 +4063,14 @@ def semantic_variant_term_is_movement_changing(term: str) -> bool:
     if without_load in {"", "dumbbell", "kettlebell", "barbell", "plate"}:
         return False
     return True
+
+
+def semantic_default_posture_is_compatible(target_name: str, term: str) -> bool:
+    normalized_term = normalize_exercise_name(term)
+    if normalized_term not in SEMANTIC_DEFAULT_POSTURE_TERMS:
+        return False
+    target_tokens = set(normalize_exercise_name(target_name).split())
+    return not target_tokens.intersection(SEMANTIC_EXPLICIT_POSTURE_TERMS)
 
 
 def semantic_omitted_limb_count_visual_fallback_applies(
@@ -5683,6 +5707,8 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
         "equipment, angle, grip, stance, limb count, body position, tempo, pause, support style, or a progression that combines variants. "
         "If the candidate contains any movement-changing qualifier that the target does not request, put each extra qualifier in "
         "unrequestedVariantTerms and set passed=false even when the title also contains the unqualified target words. "
+        "Do not treat a conventional/default posture repeated by a candidate as an added variant: in particular, standing is compatible "
+        "with an unqualified target whose normal form is standing. It conflicts only when the target requests another posture. "
         "Do not let one matching qualifier cancel a conflicting or additional qualifier; judge the complete candidate title as one movement identity. "
         "An omitted target qualifier is not the same as a conflicting qualifier. When a candidate uses only the established generic "
         "name of the base movement and does not explicitly name different equipment, loading, angle, grip, stance, limb count, body "
@@ -6654,14 +6680,21 @@ def run_youtube_candidate_review_batches(
 
     batch_size = settings.resolved_candidate_review_batch_size()
     configured_target_suitable_count = settings.resolved_candidate_review_target_suitable_count()
-    reviewed_by_key: dict[str, YouTubeCandidate] = {}
     debug_by_key = dict(debug_candidates_by_key)
+    reviewed_by_key: dict[str, YouTubeCandidate] = {
+        key: candidate
+        for key, candidate in debug_by_key.items()
+        if candidate_has_debug_review_payload(candidate)
+    }
     review_batches: list[dict[str, Any]] = []
     semantic_elapsed = 0.0
     pose_elapsed = 0.0
     vision_elapsed = 0.0
 
-    bounded_ranked = prioritize_semantic_review_query_coverage(ranked)[
+    pending_ranked = [
+        candidate for candidate in ranked if candidate.key() not in reviewed_by_key
+    ]
+    bounded_ranked = prioritize_semantic_review_query_coverage(pending_ranked)[
         : youtube_candidate_review_hard_cap(settings)
     ]
     for batch_index, start in enumerate(range(0, len(bounded_ranked), batch_size), start=1):
@@ -6788,17 +6821,14 @@ def expanded_youtube_candidate_review_settings(
 ) -> YouTubeRankingSettings:
     changes: dict[str, Any] = {}
     if settings.semantic_gate_enabled:
-        changes["semantic_gate_max_candidates_per_exercise"] = min(
-            available_count,
-            settings.resolved_semantic_gate_max_candidates_per_exercise(),
-        )
+        # The batch runner stops as soon as the suitable-source target is met,
+        # so making the remaining ranked pool available is progressive rather
+        # than an eager review of every search result.
+        changes["semantic_gate_max_candidates_per_exercise"] = available_count
     if settings.pose_prefilter_enabled:
-        changes["pose_prefilter_candidates_per_exercise"] = min(
-            available_count,
-            settings.resolved_pose_prefilter_candidates_per_exercise(),
-        )
+        changes["pose_prefilter_candidates_per_exercise"] = available_count
     if settings.rank_with_vision:
-        changes["vision_candidates_per_exercise"] = min(available_count, settings.vision_candidates_per_exercise)
+        changes["vision_candidates_per_exercise"] = available_count
     return dataclass_replace(settings, **changes)
 
 
@@ -8086,7 +8116,6 @@ def discover_and_rank_youtube_candidates(
             if (
                 initial_suitable_count
                 < settings.resolved_candidate_review_target_suitable_count()
-                and not initial_review_hard_cap_exhausted
                 and youtube_candidate_review_can_expand(settings, len(review_pool_ranked))
             ):
                 append_youtube_discovery_progress(
@@ -8337,11 +8366,30 @@ def discover_and_rank_youtube_candidates(
             )
             candidate_expansion_payload["finalFirstAttemptReadyCandidateCount"] = final_suitable_count
             if final_suitable_count < settings.resolved_candidate_review_target_suitable_count():
-                candidate_expansion_payload["terminalReason"] = (
-                    "no_reconstruction_ready_source"
-                    if final_suitable_count <= 0
-                    else "insufficient_reconstruction_ready_sources"
+                reviewed_candidates = list(debug_candidates_by_key.values())
+                semantic_pass_count = sum(
+                    1 for candidate in reviewed_candidates if candidate_semantic_gate_passed(candidate)
                 )
+                pose_reviewed_candidates = [
+                    candidate
+                    for candidate in reviewed_candidates
+                    if isinstance(candidate.vision_payload, dict)
+                    and isinstance(candidate.vision_payload.get("posePrefilter"), dict)
+                ]
+                pose_pass_count = sum(
+                    1
+                    for candidate in pose_reviewed_candidates
+                    if bool(candidate.vision_payload["posePrefilter"].get("passed"))
+                )
+                if final_suitable_count > 0:
+                    terminal_reason = "insufficient_reconstruction_ready_sources"
+                elif settings.semantic_gate_enabled and semantic_pass_count <= 0:
+                    terminal_reason = "semantic_candidates_exhausted"
+                elif settings.pose_prefilter_enabled and pose_reviewed_candidates and pose_pass_count <= 0:
+                    terminal_reason = "source_pool_exhausted_after_pose_rejection"
+                else:
+                    terminal_reason = "source_pool_exhausted_after_source_review"
+                candidate_expansion_payload["terminalReason"] = terminal_reason
                 candidate_expansion_payload["noNewWork"] = bool(
                     candidate_expansion_payload.get("searchExpansionTriggered")
                     and int(candidate_expansion_payload.get("searchExpansionNewCandidateCount") or 0) <= 0

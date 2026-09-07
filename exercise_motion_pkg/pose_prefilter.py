@@ -1006,7 +1006,14 @@ def score_pose_window(
         blocking_issues.append("cropped_body")
     if camera_stability < 0.35 or not source_window_integrity["cameraContinuityPassed"]:
         blocking_issues.append("camera_or_track_instability")
-    if motion_strength < 0.20:
+    # Whole-body motion is only a fallback signal. When the generated motion
+    # contract identifies observable target regions and those regions move
+    # enough relative to their references, small isolation movements must not
+    # be rejected merely because the rest of the body correctly stays still.
+    contract_target_motion_passed = bool(target_motion.get("required")) and bool(
+        target_motion.get("passed")
+    )
+    if motion_strength < 0.20 and not contract_target_motion_passed:
         blocking_issues.append("weak_body_joint_motion")
     if active_quality["activeJointVisibility"] < 0.72:
         blocking_issues.append("low_active_joint_visibility")
