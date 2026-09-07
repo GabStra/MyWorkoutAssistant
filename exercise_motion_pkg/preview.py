@@ -5582,7 +5582,7 @@ def _build_html(
           ? bakedWearRenderFloorY
           : bakedWearGroundContactMode === "none"
           ? bounds.minY - {UNIFORM_CAPSULE_RADIUS} - height * 0.04
-          : bounds.minY - height * 0.014;
+          : bounds.minY;
         bakedWearGrid.position.set(
           (bounds.minX + bounds.maxX) * 0.5,
           floorY,
@@ -6571,7 +6571,7 @@ def _build_html(
       }} else {{
         bodyUp.normalize();
       }}
-      const forward = new THREE.Vector3().crossVectors(lateral, bodyUp);
+      const forward = new THREE.Vector3().crossVectors(bodyUp, lateral);
       if (forward.lengthSq() <= 1e-8) {{
         forward.copy(axisZ);
       }} else {{
@@ -7053,12 +7053,16 @@ def _build_html(
       ];
       const indexes = new Set();
       for (const contact of records) {{
+        if (contact?.contactState === "heel_only" || contact?.allowSliding === true
+            || ["sliding", "rolling", "moving", "unknown"].includes(String(contact?.contactMotion || "").toLowerCase())) {{
+          continue;
+        }}
         const contactName = String(contact?.jointName || "");
         const contactSide = contactName.startsWith("left_")
           ? "left"
           : (contactName.startsWith("right_") ? "right" : null);
         const exactMatch = contactName === String(jointName);
-        const sameFootChain = requestedSide != null
+        const sameFootChain = !contact?.verticalOnly && requestedSide != null
           && requestedSide === contactSide
           && /_(?:ankle|foot)$/.test(contactName)
           && /_(?:ankle|foot)$/.test(String(jointName));
@@ -7073,6 +7077,25 @@ def _build_html(
         const startIndex = Math.max(0, Math.min(frameCount - 1, Math.round(startRatio * (frameCount - 1))));
         const endIndex = Math.max(startIndex, Math.min(frameCount - 1, Math.round(endRatio * (frameCount - 1))));
         for (let index = startIndex; index <= endIndex; index += 1) {{
+          indexes.add(index);
+        }}
+      }}
+      return indexes;
+    }}
+
+    function sourceConfirmedVerticalContactFrameIndexes(jointName, frameCount) {{
+      const indexes = new Set();
+      const records = [
+        ...(Array.isArray(sourceFootSupportEvidence?.contacts) ? sourceFootSupportEvidence.contacts : []),
+        ...(Array.isArray(sourceFootSupportEvidence?.supportContacts) ? sourceFootSupportEvidence.supportContacts : []),
+      ];
+      for (const contact of records) {{
+        if (contact?.contactState === "heel_only" || !contact?.verticalOnly || String(contact.jointName || "") !== String(jointName)) {{
+          continue;
+        }}
+        const start = Math.max(0, Math.min(frameCount - 1, Math.round(Number(contact.startRatio) * (frameCount - 1))));
+        const end = Math.max(start, Math.min(frameCount - 1, Math.round(Number(contact.endRatio) * (frameCount - 1))));
+        for (let index = start; index <= end; index += 1) {{
           indexes.add(index);
         }}
       }}
@@ -7094,6 +7117,16 @@ def _build_html(
         jointName,
         samples.length
       );
+      const verticalContactIndexes = sourceConfirmedVerticalContactFrameIndexes(
+        jointName,
+        samples.length
+      );
+      const groundSamples = frames.flatMap((frame) => ["left_foot", "right_foot"]
+        .map((name) => footSampleForFrame(frame, name))
+        .filter((point) => point != null));
+      const supportPlaneY = groundSamples.length > 0
+        ? Math.min(...groundSamples.map((point) => point.y))
+        : null;
       const contactSpeedMetersPerSecond = isHandJoint ? 0.25 : 0.32;
       const edgeSpeeds = samples.slice(0, -1).map((sample, index) => {{
         const next = samples[index + 1];
@@ -7113,6 +7146,9 @@ def _build_html(
         if (sourceConfirmedContactIndexes.has(index)) {{
           return true;
         }}
+        if (sourceFootSupportEvidence?.footPatchEvidence?.available && /_(?:ankle|foot)$/.test(jointName)) {{
+          return false;
+        }}
         const localSpeeds = edgeSpeeds
           .slice(Math.max(0, index - 2), Math.min(edgeSpeeds.length, index + 2))
           .filter((speed) => Number.isFinite(speed));
@@ -7131,9 +7167,11 @@ def _build_html(
         - Math.min(...validSamples.map((sample) => sample.point.z));
       const fullRangeRatio = Math.hypot(xRange, yRange, zRange)
         / Math.max(estimateAlignmentSkeletonScale(frames), 1e-6);
+      const observedFootPatches = sourceFootSupportEvidence?.footPatchEvidence?.available
+        && /_(?:ankle|foot)$/.test(jointName);
       const continuousSupport = sourceConfirmedContinuousSupport
-        || plantedSamples.length / validSamples.length >= 0.8
-        || fullRangeRatio <= 0.10;
+        || (!observedFootPatches && (plantedSamples.length / validSamples.length >= 0.8
+        || fullRangeRatio <= 0.10));
       if (continuousSupport) {{
         for (const sample of validSamples) {{
           plantedIndexes.add(sample.index);
@@ -7143,7 +7181,7 @@ def _build_html(
       for (let index = 1; index < sortedPlantedIndexes.length; index += 1) {{
         const previous = sortedPlantedIndexes[index - 1];
         const next = sortedPlantedIndexes[index];
-        if (next - previous <= 5) {{
+        if (!observedFootPatches && next - previous <= 5) {{
           for (let fillIndex = previous + 1; fillIndex < next; fillIndex += 1) {{
             if (samples[fillIndex]) {{
               plantedIndexes.add(fillIndex);
@@ -7151,7 +7189,7 @@ def _build_html(
           }}
         }}
       }}
-      if (sortedPlantedIndexes.length > 0 && sortedPlantedIndexes[0] <= 4) {{
+      if (!observedFootPatches && sortedPlantedIndexes.length > 0 && sortedPlantedIndexes[0] <= 4) {{
         for (let index = 0; index < sortedPlantedIndexes[0]; index += 1) {{
           if (samples[index]) {{
             plantedIndexes.add(index);
@@ -7159,7 +7197,7 @@ def _build_html(
         }}
       }}
       const lastPlantedIndex = sortedPlantedIndexes[sortedPlantedIndexes.length - 1];
-      if (Number.isInteger(lastPlantedIndex) && samples.length - 1 - lastPlantedIndex <= 4) {{
+      if (!observedFootPatches && Number.isInteger(lastPlantedIndex) && samples.length - 1 - lastPlantedIndex <= 4) {{
         for (let index = lastPlantedIndex + 1; index < samples.length; index += 1) {{
           if (samples[index]) {{
             plantedIndexes.add(index);
@@ -7208,12 +7246,15 @@ def _build_html(
           }}
           targets.push({{
             jointName,
-            anchorX: anchorPoint.x,
-            anchorY: anchorPoint.y,
-            anchorZ: anchorPoint.z,
+            anchorX: verticalContactIndexes.has(sample.index) ? sample.point.x : anchorPoint.x,
+            anchorY: verticalContactIndexes.has(sample.index) && Number.isFinite(supportPlaneY)
+              ? supportPlaneY
+              : anchorPoint.y,
+            anchorZ: verticalContactIndexes.has(sample.index) ? sample.point.z : anchorPoint.z,
             weight: Math.min(startWeight, endWeight),
             sourceConfirmedContinuousSupport,
             sourceConfirmedContact: sourceConfirmedContactIndexes.has(sample.index),
+            verticalOnlyContact: verticalContactIndexes.has(sample.index),
           }});
         }}
       }}
@@ -7394,8 +7435,8 @@ def _build_html(
       stableBodyLateral = stableBodyLateral ?? sceneRight.clone();
       const stableBodyUp = axisY.clone();
       const stableBodyForward = new THREE.Vector3().crossVectors(
-        stableBodyLateral,
-        stableBodyUp
+        stableBodyUp,
+        stableBodyLateral
       ).normalize();
       for (const side of ["left", "right"]) {{
         const poleComponents = [];
@@ -7513,11 +7554,39 @@ def _build_html(
         && !/(?:foot|ankle|hand|wrist)$/.test(String(target.jointName || ""))
       );
       const stablePoleVectors = computeStableLegPoleVectors();
+      const anatomicallyConstrainedFootVector = (vector, tibiaToKnee) => {{
+        const length = vector.length();
+        if (length <= 1e-8) {{
+          return vector.clone();
+        }}
+        const vertical = vector.dot(axisY);
+        const horizontal = tibiaToKnee.clone().addScaledVector(
+          axisY,
+          -tibiaToKnee.dot(axisY)
+        );
+        if (horizontal.lengthSq() <= 1e-10) {{
+          horizontal.copy(sceneForward);
+        }}
+        horizontal.normalize();
+        const maximumPitchRadians = 55 * Math.PI / 180;
+        const constrainedVertical = Math.max(
+          -length * Math.sin(maximumPitchRadians),
+          Math.min(length * Math.sin(maximumPitchRadians), vertical)
+        );
+        const constrainedHorizontal = Math.sqrt(Math.max(
+          0,
+          length * length - constrainedVertical * constrainedVertical
+        ));
+        return horizontal
+          .multiplyScalar(constrainedHorizontal)
+          .addScaledVector(axisY, constrainedVertical);
+      }};
       for (const side of ["left", "right"]) {{
         const ankleName = `${{side}}_ankle`;
         const footName = `${{side}}_foot`;
-        const target = activeTargets.find((candidate) => candidate.jointName === ankleName);
+        const ankleTarget = activeTargets.find((candidate) => candidate.jointName === ankleName);
         const footTarget = activeTargets.find((candidate) => candidate.jointName === footName);
+        const target = ankleTarget ?? footTarget;
         if (!target) {{
           continue;
         }}
@@ -7540,7 +7609,33 @@ def _build_html(
         const originalAnkle = basePositions.get(ankleName);
         const originalHip = basePositions.get(`${{side}}_hip`);
         const originalKnee = basePositions.get(`${{side}}_knee`);
-        const ankleCorrection = new THREE.Vector3(target.anchorX, target.anchorY, target.anchorZ)
+        let desiredAnkle = ankleTarget
+          ? new THREE.Vector3(ankleTarget.anchorX, ankleTarget.anchorY, ankleTarget.anchorZ)
+          : originalAnkle.clone();
+        let plantedFootDirection = null;
+        if (footTarget && basePositions.has(footName)) {{
+          const originalFootDirection = basePositions.get(footName).clone().sub(originalAnkle);
+          const anchoredDirection = ankleTarget
+            ? new THREE.Vector3(
+                footTarget.anchorX - ankleTarget.anchorX,
+                footTarget.anchorY - ankleTarget.anchorY,
+                footTarget.anchorZ - ankleTarget.anchorZ
+              )
+            : originalFootDirection;
+          if (anchoredDirection.lengthSq() > 1e-10) {{
+            plantedFootDirection = anatomicallyConstrainedFootVector(
+              anchoredDirection,
+              originalKnee.clone().sub(originalAnkle)
+            );
+            plantedFootDirection.setLength(originalFootDirection.length());
+            desiredAnkle = new THREE.Vector3(
+              footTarget.anchorX,
+              footTarget.anchorY,
+              footTarget.anchorZ
+            ).sub(plantedFootDirection);
+          }}
+        }}
+        const ankleCorrection = desiredAnkle
           .sub(originalAnkle)
           .multiplyScalar(targetWeight);
         const maxLocalCorrection = 0.025;
@@ -7567,12 +7662,7 @@ def _build_html(
           const originalFoot = basePositions.get(footName);
           const ankleToFoot = originalFoot.clone().sub(originalAnkle);
           if (footTarget && ankleToFoot.lengthSq() > 1e-10) {{
-            const plantedFootDirection = new THREE.Vector3(
-              footTarget.anchorX - target.anchorX,
-              footTarget.anchorY - target.anchorY,
-              footTarget.anchorZ - target.anchorZ
-            );
-            if (plantedFootDirection.lengthSq() > 1e-10) {{
+            if (plantedFootDirection && plantedFootDirection.lengthSq() > 1e-10) {{
               plantedFootDirection.setLength(ankleToFoot.length());
               lockedJointPositions.set(
                 footName,

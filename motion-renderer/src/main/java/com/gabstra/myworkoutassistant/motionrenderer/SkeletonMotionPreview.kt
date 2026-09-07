@@ -1619,8 +1619,7 @@ private fun buildFloorMesh(
         colors += color.alpha
     }
 
-    val height = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
-    val floorY = bounds.minY - (height * 0.014f)
+    val floorY = bounds.minY
     val width = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
     val depth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
     val floorSize = max(width, depth) * 1.24f
@@ -1803,7 +1802,7 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
     val skeletonHeight = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
     val skeletonWidth = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
     val skeletonDepth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
-    val floorY = bounds.minY - skeletonHeight * 0.014f
+    val floorY = bounds.minY
     val floorSize = max(skeletonWidth, skeletonDepth) * 1.24f
     val halfFloorSize = floorSize * 0.5f
     val floorLineHalfWidth = floorSize * 0.0046f
@@ -2153,6 +2152,7 @@ private fun buildSingleLowPolyMesh(
         fill = palette.headFill,
     )
 
+    val coordinatedLegSides = coordinateLegSides(resolvedJoints, stableLimbSides)
     SkeletonLimbs.forEach { limb ->
         val start = resolvedJoints.getValue(limb.startName)
         val end = resolvedJoints.getValue(limb.endName)
@@ -2175,7 +2175,8 @@ private fun buildSingleLowPolyMesh(
             fill = palette.limbFill,
             startInset = jointCapClearance(limb.startName, startWidth),
             endInset = jointCapClearance(limb.endName, endWidth),
-            preferredSide = stableLimbSides[LimbKey(limb.startName, limb.endName)],
+            preferredSide = coordinatedLegSides[LimbKey(limb.startName, limb.endName)]
+                ?: stableLimbSides[LimbKey(limb.startName, limb.endName)],
             muscleBulgeScale = limb.profile.muscleBulgeScale,
             muscleBulgePosition = limb.profile.muscleBulgePosition,
         )
@@ -2216,11 +2217,11 @@ private fun buildSingleLowPolyMesh(
     addHand("right_wrist", "right_hand", "right_elbow")
     addShoeBlockFromNames(
         mesh, resolvedJoints, "left_ankle", "left_foot", bodyAxes, footScale, palette,
-        exportedBoneSide("left_ankle", "left_foot"),
+        coordinatedLegSides[LimbKey("left_ankle", "left_foot")],
     )
     addShoeBlockFromNames(
         mesh, resolvedJoints, "right_ankle", "right_foot", bodyAxes, footScale, palette,
-        exportedBoneSide("right_ankle", "right_foot"),
+        coordinatedLegSides[LimbKey("right_ankle", "right_foot")],
     )
     addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
         segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),
@@ -2330,7 +2331,7 @@ private fun jointCapClearance(
         when (jointName) {
             "left_hip", "right_hip" -> limbWidth * 0.12f
             "left_shoulder", "right_shoulder" -> limbWidth * 0.12f
-            "left_ankle", "right_ankle" -> limbWidth * 0.65f
+            "left_ankle", "right_ankle" -> limbWidth * 1.10f
             else -> limbWidth * 0.08f
         }
     } else {
@@ -2360,7 +2361,8 @@ private fun addShoeBlockFromNames(
     } else {
         stableForward
     }
-    val defaultShoeUp = (worldUp - footForward * worldUp.dot(footForward)).normalizedOr(bodyAxes.up)
+    val shinUp = joints[ankleName.replace("_ankle", "_knee")]?.minus(ankle) ?: worldUp
+    val defaultShoeUp = (shinUp - footForward * shinUp.dot(footForward)).normalizedOr(bodyAxes.up)
     val fallbackSide = bodyAxes.side.projectOntoPlane(footForward).normalizedOr(bodyAxes.side)
     // Box-ring winding expects side x up to point opposite the extrusion.
     val defaultFootSide = footForward.cross(defaultShoeUp).normalizedOr(fallbackSide)
@@ -2370,7 +2372,7 @@ private fun addShoeBlockFromNames(
         ?.normalizedOr(defaultFootSide)
         ?: defaultFootSide
     val shoeUp = if (preferredSide != null) {
-        footForward.cross(footSide).normalizedOr(defaultShoeUp)
+        footSide.cross(footForward).normalizedOr(defaultShoeUp)
     } else {
         defaultShoeUp
     }
@@ -2379,7 +2381,8 @@ private fun addShoeBlockFromNames(
     } else {
         footScale * 0.60f
     }
-    val length = max(shoeScale * 1.45f, footScale * 0.58f)
+    // Keep a short heel behind the ankle without moving the toe contact point.
+    val length = shoeScale * 1.15f
     val halfWidth = max(shoeScale * 0.32f, footScale * 0.18f)
     val height = max(shoeScale * 0.28f, footScale * 0.15f)
     val fill = palette.limbFill
@@ -2393,7 +2396,8 @@ private fun addShoeBlockFromNames(
     val rings = profile.map { point ->
         addMeshBoxRing(
             mesh = mesh,
-            center = ankle + footForward * (length * (point[0] - 0.12f)) + shoeUp * (height * point[1]),
+            // The distal ring's bottom is the exported toe contact point.
+            center = foot + footForward * (length * (point[0] - 1.0f)) + shoeUp * (height * (point[1] + 0.60f)),
             side = footSide,
             depth = shoeUp,
             halfWidth = halfWidth * point[2],
@@ -2414,7 +2418,7 @@ private fun ankleCapCenter(
     val shin = ankle - knee
     val shinLength = shin.length()
     if (shinLength <= 0.0001f) return ankle
-    val clearance = min(lowerLegEndWidth * 0.65f, shinLength * 0.10f)
+    val clearance = min(jointCapClearance("left_ankle", lowerLegEndWidth), shinLength * 0.15f)
     return ankle - shin * (clearance * 0.5f / shinLength)
 }
 
@@ -2556,7 +2560,7 @@ private fun addMeshSegment(
     }
     val length = max(rawLength, 0.001f)
     val resolvedEnd = if (rawLength > 0.0001f) end else start + direction * length
-    val maxInset = length * 0.10f
+    val maxInset = length * 0.15f
     val safeStart = start + direction * min(startInset, maxInset)
     val safeEnd = resolvedEnd - direction * min(endInset, maxInset)
     val safeSpan = safeEnd - safeStart
@@ -2852,6 +2856,43 @@ private fun allowsDynamicAxialTwist(startName: String, endName: String): Boolean
     (startName == "left_elbow" && endName == "left_wrist") ||
         (startName == "right_elbow" && endName == "right_wrist")
 
+private fun coordinateLegSides(
+    joints: Map<String, WearSkeletonVec3>,
+    referenceSides: Map<LimbKey, WearSkeletonVec3>,
+): Map<LimbKey, WearSkeletonVec3> = buildMap {
+    for (leg in listOf("left", "right")) {
+        val hip = joints["${leg}_hip"] ?: continue
+        val knee = joints["${leg}_knee"] ?: continue
+        val ankle = joints["${leg}_ankle"] ?: continue
+        val toe = joints["${leg}_foot"] ?: continue
+        val thighVector = knee - hip
+        val shinVector = ankle - knee
+        val footVector = toe - ankle
+        if (minOf(thighVector.length(), shinVector.length(), footVector.length()) < 0.0001f) continue
+        val thigh = thighVector * (1f / thighVector.length())
+        val shin = shinVector * (1f / shinVector.length())
+        val foot = footVector * (1f / footVector.length())
+        val thighKey = LimbKey("${leg}_hip", "${leg}_knee")
+        val shinKey = LimbKey("${leg}_knee", "${leg}_ankle")
+        val footKey = LimbKey("${leg}_ankle", "${leg}_foot")
+        val ankleSide = foot.cross(shin * -1f)
+        val kneeSide = thigh.cross(shin)
+        // Resolve the transverse axis once for the entire knee hinge. The
+        // ankle plane supplies its direction when the knee is straight.
+        val reference = ankleSide.takeIf { it.length() > 0.0001f }
+            ?.let { it * (1f / it.length()) }
+            ?: referenceSides[shinKey]
+        var side = kneeSide.takeIf { it.length() > 0.0001f }
+            ?.let { it * (1f / it.length()) }
+            ?: reference
+            ?: continue
+        if (reference != null && side.dot(reference) < 0f) side = side * -1f
+        put(thighKey, side)
+        put(shinKey, side)
+        put(footKey, side.projectOntoPlane(foot).normalizedOr(reference ?: side))
+    }
+}
+
 private fun buildStableLimbSides(
     frames: List<WearSkeletonFrame>,
 ): List<Map<LimbKey, WearSkeletonVec3>> {
@@ -2887,8 +2928,9 @@ private fun buildStableLimbSides(
                 put(key, resolvedSide)
             }
         }
-        previousSides = currentSides
-        currentSides
+        val coordinatedSides = currentSides + coordinateLegSides(frame.joints, previousSides)
+        previousSides = coordinatedSides
+        coordinatedSides
     }
 }
 
