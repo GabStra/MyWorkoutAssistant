@@ -432,6 +432,25 @@ def _clip_has_authoritative_horizontal_travel(clip: MotionClip) -> bool:
     return False
 
 
+def preview_runtime_signature() -> str:
+    """Invalidate retained review pages when their embedded runtime changes."""
+    import hashlib
+    digest = hashlib.sha256()
+    for name in ("preview.py", "wear_exact_mesh.js", "temporal_quality.py"):
+        digest.update(Path(__file__).with_name(name).read_bytes())
+    return digest.hexdigest()
+
+
+def write_baked_preview_html(path: Path, payload: dict[str, object], *, three_module_path: Path | None = None) -> None:
+    """Show the retained final artifact with today's renderer, without rebaking it."""
+    frames = [MotionFrame(time_sec=float(frame["timeSec"]), joints=frame["joints"])
+              for frame in payload["frames"]]
+    clip = MotionClip(fps=float(payload["fps"]), joint_names=list(payload["jointNames"]),
+                      frames=frames, metadata={"bakedWearPayload": payload})
+    write_preview_html(path, clip, title=str(payload.get("title") or "Selected movement"),
+                       three_module_path=three_module_path)
+
+
 def write_preview_html(
     path: Path,
     clip: MotionClip,
@@ -446,12 +465,12 @@ def write_preview_html(
     raw_motion_review = _clip_requests_raw_motion_render(clip)
     baked_wear_payload = _baked_wear_payload_metadata(clip)
     baked_preview_settings = (
-        baked_wear_payload.get("selectedPreviewSettings")
+        (baked_wear_payload.get("selectedPreviewSettings") or {})
         if isinstance(baked_wear_payload, dict)
         else {}
     )
     baked_wear_display = (
-        baked_wear_payload.get("wearDisplay")
+        (baked_wear_payload.get("wearDisplay") or {})
         if isinstance(baked_wear_payload, dict)
         else {}
     )
@@ -495,6 +514,8 @@ def write_preview_html(
         active_start_frame=0,
     )
     payload = {
+        "previewRuntimeSignature": preview_runtime_signature(),
+        "bakedWearPayload": baked_wear_payload if baked_wear_payload and baked_wear_payload.get("frames") else None,
         "title": title,
         "fps": preview_clip.fps,
         "frameCount": preview_clip.frame_count,
@@ -525,7 +546,7 @@ def write_preview_html(
         if baked_wear_payload
         else 15.0,
         "horizontalTorsoProfile": has_horizontal_torso_profile,
-        "previewMaxRenderFps": min(30.0, max(12.0, float(preview_clip.fps))),
+        "previewMaxRenderFps": 60.0,
         "motionTuningEnabled": not raw_motion_review,
         "rawWhamPassthrough": raw_motion_review,
         "loopable": bool(detected_loops),
@@ -559,6 +580,9 @@ def write_preview_html(
         ),
     }
     three_module_url = THREE_MODULE_DOWNLOAD_URL
+    if baked_wear_payload and baked_wear_payload.get("frames"):
+        payload["frames"] = baked_wear_payload["frames"]
+        payload["loopable"] = bool(baked_wear_payload.get("loop", {}).get("enabled"))
     if three_module_path is not None:
         resolved_three_module_path = three_module_path.expanduser().resolve()
         if not resolved_three_module_path.is_file():
@@ -4638,7 +4662,9 @@ def _build_html(
     let paused = false;
     let frameCursor = 0;
     let playbackDirection = 1;
-    const previewMaxRenderFps = Math.max(12, Math.min(30, Number(payload.previewMaxRenderFps) || Number(payload.fps) || 30));
+    // Source sampling rate controls playback time, not display refresh. Joint
+    // interpolation supplies the intermediate poses on faster displays.
+    const previewMaxRenderFps = Math.max(12, Math.min(60, Number(payload.previewMaxRenderFps) || 60));
     const previewMinRenderIntervalMs = 1000 / previewMaxRenderFps;
     let lastTimestamp = null;
     let lastDrawTimestamp = null;
@@ -5289,7 +5315,7 @@ def _build_html(
           material?.color?.setHex(primaryFill);
         }}
         grid.visible = false;
-        bakedWearGrid.visible = renderingBakedWearPayload;
+        bakedWearGrid.visible = shouldShowBakedWearGrid();
         refreshMergedBoundsHelper();
         return;
       }}
@@ -5305,7 +5331,7 @@ def _build_html(
       rimLight.color.setHex(vlmReviewStyle ? 0x35526f : 0x2df0ff);
       rimLight.intensity = vlmReviewStyle ? 0.55 : 1.35;
       grid.visible = !renderingBakedWearPayload && !vlmReviewStyle;
-      bakedWearGrid.visible = renderingBakedWearPayload;
+      bakedWearGrid.visible = shouldShowBakedWearGrid();
 
       if (vlmReviewStyle) {{
         setLitMaterial(limbMaterial, 0x2563eb, 0x000000, 0.0, 0.74, 0.0);
@@ -5571,6 +5597,22 @@ def _build_html(
       return [worldCenter.x, worldCenter.y, worldCenter.z];
     }}
 
+    function shouldShowBakedWearGrid() {{
+      return renderingBakedWearPayload && !vlmReviewStyle && bakedWearGroundContactMode !== "none";
+    }}
+
+    function bakedWearFloorCenter() {{
+      // The body owns the floor anchor; reaching limbs only affect framing.
+      const roots = (playbackState.frames ?? []).map(frame =>
+        getFrameRootPoint(frame, "pelvis")).filter(Boolean);
+      if (!roots.length) return bakedWearReviewBounds.center;
+      const median = values => {{
+        values.sort((a, b) => a - b);
+        return (values[Math.floor((values.length - 1) / 2)] + values[Math.floor(values.length / 2)]) / 2;
+      }};
+      return {{ x: median(roots.map(point => point.x)), z: median(roots.map(point => point.z)) }};
+    }}
+
     function refreshGroundPlacement() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
         const bounds = bakedWearReviewBounds.sourceBounds;
@@ -5583,14 +5625,15 @@ def _build_html(
           : bakedWearGroundContactMode === "none"
           ? bounds.minY - {UNIFORM_CAPSULE_RADIUS} - height * 0.04
           : bounds.minY;
+        const floorCenter = bakedWearFloorCenter();
         bakedWearGrid.position.set(
-          (bounds.minX + bounds.maxX) * 0.5,
+          floorCenter.x,
           floorY,
-          (bounds.minZ + bounds.maxZ) * 0.5
+          floorCenter.z
         );
         bakedWearGrid.quaternion.identity();
         bakedWearGrid.scale.set(floorSize, 1.0, floorSize);
-        bakedWearGrid.visible = true;
+        bakedWearGrid.visible = shouldShowBakedWearGrid();
         grid.visible = false;
         return;
       }}
@@ -5670,6 +5713,8 @@ def _build_html(
     }}
 
     function invalidateSceneBoundsCache() {{
+      wearStableSidesByFrame = null;
+      wearStableBodyAxesByFrame = null;
       cachedSceneBoundsKey = null;
       cachedSceneBounds = null;
       previewSagittalPlaneAlignmentKey = null;
@@ -6916,7 +6961,8 @@ def _build_html(
         ? sourceFootSupportEvidence.supportContacts
         : [];
       return [...new Set(contacts
-        .filter((contact) => contact?.continuousSupport || contact?.sourceStationarySupportCandidate)
+        .filter((contact) => contact?.surfaceKind !== "contract_inferred_support_surface"
+          && (contact?.continuousSupport || contact?.sourceStationarySupportCandidate))
         .map((contact) => String(contact.jointName || ""))
         .filter((jointName) => payload.jointNames.includes(jointName)))];
     }}
@@ -8452,7 +8498,7 @@ def _build_html(
 
     function stableWearReviewBounds(exportPayload, frames) {{
       const fallback = computeBakedWearBounds(frames);
-      const exported = exportPayload?.bounds ?? {{}};
+      const exported = fallback; // Joint corrections can invalidate saved bounds.
       const finiteOrFallback = (name) => {{
         const value = Number(exported[name]);
         return Number.isFinite(value) ? value : Number(fallback[name]);
@@ -8484,9 +8530,9 @@ def _build_html(
         sourceBounds: {{ minX, maxX, minY, maxY, minZ, maxZ }},
       }};
       stable.center = new THREE.Vector3(
-        (stable.minX + stable.maxX) * 0.5,
-        (stable.minY + stable.maxY) * 0.5,
-        (stable.minZ + stable.maxZ) * 0.5
+        (minX + maxX) * 0.5,
+        (minY + maxY) * 0.5,
+        (minZ + maxZ) * 0.5
       );
       const halfWidth = Math.max(0.001, (stable.maxX - stable.minX) * 0.5);
       const halfHeight = Math.max(0.001, (stable.maxY - stable.minY) * 0.5);
@@ -8927,9 +8973,16 @@ def _build_html(
       const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
       const durationSec = sourceDurationSec / exportPlaybackSpeed;
       const bakedBounds = computeBakedWearBounds(frames);
+      refreshGroundPlacement();
+      const floorPoint = grid.position.clone().applyQuaternion(sceneRotationQuaternion.clone().invert());
+      const hasAuthoritativeFloor = payload.ground?.renderGroundPlane?.offset != null;
+      const renderFloorY = hasAuthoritativeFloor
+        ? floorPoint.y * (wearCoordinateNormalization.metadata?.transform === "rotate_x_pi" ? -1 : 1)
+        : null;
       return {{
         schemaVersion: 1,
         kind: "wearPreviewSkeleton",
+        renderFloorY,
         groundContactMode: String(
           payload.groundContactMode ?? "unknown"
         ).trim().toLowerCase(),
@@ -9153,9 +9206,10 @@ def _build_html(
       bakedWearGroundContactMode = String(
         exportPayload?.groundContactMode ?? "unknown"
       ).trim().toLowerCase();
-      playbackState = {{ frames, boundsFrames: frames, loopable: false }};
+      playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true, fixedRig: exportPayload.fixedRig ?? null }};
       bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
-      const exportedRenderFloorY = Number(exportPayload?.renderFloorY);
+      const exportedRenderFloorY = exportPayload?.renderFloorY == null
+        ? Number.NaN : Number(exportPayload.renderFloorY);
       bakedWearRenderFloorY = Number.isFinite(exportedRenderFloorY)
         ? exportedRenderFloorY
         : null;
@@ -9188,7 +9242,9 @@ def _build_html(
       }}
       showBoundsHelper = Boolean(options.showBoundsHelper);
       const wearDisplay = exportPayload.wearDisplay ?? {{}};
-      yaw = (Number(wearDisplay.viewYawDegrees) || 0.0) * Math.PI / 180.0;
+      const reviewYaw = Number(options.cameraYawDegrees);
+      yaw = (options.cameraYawDegrees != null && Number.isFinite(reviewYaw)
+        ? reviewYaw : (Number(wearDisplay.viewYawDegrees) || 0.0)) * Math.PI / 180.0;
       pitch = Math.max(
         -1.2,
         Math.min(1.2, (Number(wearDisplay.viewPitchDegrees) || 0.0) * Math.PI / 180.0)
@@ -9196,14 +9252,16 @@ def _build_html(
       cameraTouched = true;
       const layoutNode = document.querySelector(".layout");
       const panelNode = document.querySelector(".panel");
-      if (layoutNode) {{
+      if (layoutNode && !options.interactive) {{
         layoutNode.style.gridTemplateColumns = "1fr";
       }}
-      if (panelNode) {{
+      if (panelNode && !options.interactive) {{
         panelNode.style.display = "none";
       }}
-      viewport.style.width = "100vw";
-      viewport.style.height = "100vh";
+      if (!options.interactive) {{
+        viewport.style.width = "100vw";
+        viewport.style.height = "100vh";
+      }}
       resize();
       invalidateSceneBoundsCache();
       applySceneReframe();
@@ -9433,6 +9491,34 @@ def _build_html(
       bakeTimeRange(startSeconds, endSeconds, options = {{}}) {{
         selectCustomTimeRange(startSeconds, endSeconds);
         return this.exportWearSkeleton(options);
+      }},
+      inspectFixedRigFrame(cursor) {{
+        const rig = playbackState.fixedRig;
+        if (!rig) return null;
+        const requested = Number(cursor) || 0;
+        const value = playbackState.loopable
+          ? ((requested % rig.coordinates.length) + rig.coordinates.length) % rig.coordinates.length
+          : Math.max(0, Math.min(rig.coordinates.length - 1, requested));
+        const first = Math.floor(value);
+        const last = playbackState.loopable ? (first + 1) % rig.coordinates.length : Math.min(first + 1, rig.coordinates.length - 1);
+        return interpolateFixedRig(rig, first, last, value - first);
+      }},
+      inspectRenderedWearOrientations(frameIndex) {{
+        paused = true;
+        const requested = Number(frameIndex) || 0;
+        frameCursor = playbackState.loopable
+          ? ((requested % playbackState.frames.length) + playbackState.frames.length) % playbackState.frames.length
+          : Math.max(0, Math.min(playbackState.frames.length - 1, requested));
+        const frame = getInterpolatedFrame();
+        updateSceneForFrame(frame);
+        const translation = getFrameTranslation(frame);
+        updateWearExactMesh(frame, translation);
+        return {{
+          floorCenter: bakedWearGrid.position.toArray(),
+          joints: Object.fromEntries(Object.entries(frame.joints).map(([name, point]) =>
+            [name, toWorldPoint(point, translation, fixedRoot, true, name).toArray()])),
+          boneSides: Object.fromEntries([...wearCurrentSides].map(([key, side]) => [key, side.toArray()])),
+        }};
       }},
       inspectLimbOrientations(frameIndex, options = {{}}) {{
         applyAutomationSettings(options);
@@ -9764,7 +9850,8 @@ def _build_html(
         if (!Array.isArray(activeFrames) || activeFrames.length === 0) {{
           return null;
         }}
-        const targetIndex = activeFrames.indexOf(frame);
+        const targetIndex = Number.isInteger(frame.playbackIndex)
+          ? frame.playbackIndex : activeFrames.indexOf(frame);
         if (targetIndex < 0) {{
           return null;
         }}
@@ -9807,7 +9894,13 @@ def _build_html(
           }}
           references.push(reference?.clone() ?? null);
         }}
-        const sourceReference = references[targetIndex];
+        let sourceReference = references[targetIndex]?.clone();
+        if (sourceReference) {{
+          const baseJoints = activeFrames[targetIndex].joints;
+          const oldAxis = new THREE.Vector3(...baseJoints[endJointName]).sub(new THREE.Vector3(...baseJoints[startJointName])).normalize();
+          const newAxis = new THREE.Vector3(...frame.joints[endJointName]).sub(new THREE.Vector3(...frame.joints[startJointName])).normalize();
+          sourceReference.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(oldAxis, newAxis));
+        }}
         const sourcePoint = frame.joints[endJointName];
         if (!sourceReference || !Array.isArray(sourcePoint)) {{
           return null;
@@ -9856,8 +9949,7 @@ def _build_html(
         const requiredJointNames = [
           spec.start,
           spec.end,
-          spec.referenceFrom,
-          spec.referenceTo,
+          "pelvis", "neck", "left_shoulder", "right_shoulder",
         ];
         if (requiredJointNames.some((name) => !frame?.joints?.[name])) {{
           return null;
@@ -9894,9 +9986,7 @@ def _build_html(
         }};
         const rawStart = interpolateReferenceJoint(spec.start);
         const rawEnd = interpolateReferenceJoint(spec.end);
-        const rawReferenceFrom = interpolateReferenceJoint(spec.referenceFrom);
-        const rawReferenceTo = interpolateReferenceJoint(spec.referenceTo);
-        if (!rawStart || !rawEnd || !rawReferenceFrom || !rawReferenceTo) {{
+        if (!rawStart || !rawEnd) {{
           return null;
         }}
         const orientation = orientationA.clone().slerp(
@@ -9907,35 +9997,6 @@ def _build_html(
           .clone()
           .addScaledVector(axis, -vector.dot(axis));
         const rawAxis = rawEnd.clone().sub(rawStart).normalize();
-        const referenceCandidates = [
-          [spec.referenceFrom, spec.referenceTo],
-          ["left_shoulder", "right_shoulder"],
-          ["left_hip", "right_hip"],
-          ["pelvis", "neck"],
-        ];
-        let selectedReferenceNames = [spec.referenceFrom, spec.referenceTo];
-        let rawPositionReference = projectPerpendicular(
-          rawReferenceTo.clone().sub(rawReferenceFrom),
-          rawAxis
-        );
-        if (rawPositionReference.lengthSq() <= 1e-8) {{
-          for (const candidateNames of referenceCandidates.slice(1)) {{
-            const candidateFrom = interpolateReferenceJoint(candidateNames[0]);
-            const candidateTo = interpolateReferenceJoint(candidateNames[1]);
-            if (!candidateFrom || !candidateTo) {{
-              continue;
-            }}
-            const candidateReference = projectPerpendicular(
-              candidateTo.clone().sub(candidateFrom),
-              rawAxis
-            );
-            if (candidateReference.lengthSq() > 1e-8) {{
-              selectedReferenceNames = candidateNames;
-              rawPositionReference = candidateReference;
-              break;
-            }}
-          }}
-        }}
         const localAxis = spec.localAxis === "y"
           ? new THREE.Vector3(0, 1, 0)
           : spec.localAxis === "z"
@@ -9945,31 +10006,32 @@ def _build_html(
           localAxis.applyQuaternion(orientation),
           rawAxis
         );
-        if (rawPositionReference.lengthSq() <= 1e-8 || rawRotationReference.lengthSq() <= 1e-8) {{
-          return null;
-        }}
-        rawPositionReference.normalize();
-        rawRotationReference.normalize();
-        const signedTwist = Math.atan2(
-          rawAxis.dot(new THREE.Vector3().crossVectors(rawPositionReference, rawRotationReference)),
-          rawPositionReference.dot(rawRotationReference)
-        );
-        const cleanedStart = new THREE.Vector3(...frame.joints[spec.start].map(Number));
-        const cleanedAxis = new THREE.Vector3(...frame.joints[spec.end].map(Number))
-          .sub(cleanedStart)
-          .normalize();
-        const cleanedPositionReference = projectPerpendicular(
-          new THREE.Vector3(...frame.joints[selectedReferenceNames[1]].map(Number)).sub(
-            new THREE.Vector3(...frame.joints[selectedReferenceNames[0]].map(Number))
-          ),
-          cleanedAxis
-        );
-        if (cleanedPositionReference.lengthSq() <= 1e-8) {{
-          return null;
-        }}
-        const reconciledReference = cleanedPositionReference
-          .normalize()
-          .applyAxisAngle(cleanedAxis, signedTwist);
+        if (rawRotationReference.lengthSq() <= 1e-8) return null;
+        // Map the body frame first, then minimally align the bone. Projecting
+        // an elbow/shoulder reference onto a nearly parallel forearm created
+        // arbitrary axial flips even when the SMPL rotation was continuous.
+        const bodyQuaternion = (joint) => {{
+          const left = joint("left_shoulder"), right = joint("right_shoulder");
+          const pelvis = joint("pelvis"), neck = joint("neck");
+          if (!left || !right || !pelvis || !neck) return null;
+          const up = neck.clone().sub(pelvis).normalize();
+          const side = projectPerpendicular(right.clone().sub(left), up);
+          if (side.lengthSq() <= 1e-8) return null;
+          side.normalize();
+          const forward = new THREE.Vector3().crossVectors(side, up).normalize();
+          return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, up, forward));
+        }};
+        const rawBody = bodyQuaternion(interpolateReferenceJoint);
+        const cleanedBody = bodyQuaternion((name) => frame.joints[name]
+          ? new THREE.Vector3(...frame.joints[name]) : null);
+        if (!rawBody || !cleanedBody) return null;
+        const bodyRotation = cleanedBody.multiply(rawBody.invert());
+        const cleanedAxis = new THREE.Vector3(...frame.joints[spec.end])
+          .sub(new THREE.Vector3(...frame.joints[spec.start])).normalize();
+        const mappedAxis = rawAxis.clone().applyQuaternion(bodyRotation);
+        const reconciledReference = rawRotationReference.normalize()
+          .applyQuaternion(bodyRotation)
+          .applyQuaternion(new THREE.Quaternion().setFromUnitVectors(mappedAxis, cleanedAxis));
         const sourcePoint = frame.joints[spec.end];
         const referencePoint = [
           Number(sourcePoint[0]) + reconciledReference.x,
@@ -10204,6 +10266,26 @@ def _build_html(
       return Math.max(0.7, fitHeightDistance, fitWidthDistance);
     }}
 
+    const bakedMeshFitCache = new WeakMap();
+    const bakedMeshProjectionCache = new WeakMap();
+    function bakedMeshFitPoints(frames) {{
+      if (bakedMeshFitCache.has(frames)) return bakedMeshFitCache.get(frames);
+      const points = [];
+      frames.forEach((frame, index) => {{
+        const joints = Object.fromEntries(Object.entries(frame.joints ?? {{}})
+          .map(([name, point]) => [name, new THREE.Vector3(...point)]));
+        const sides = new Map(wearStableSidesByFrame?.[index] ?? []);
+        for (const side of ["left", "right"]) {{
+          const key = `${{side}}_elbow->${{side}}_wrist`;
+          if (frame.boneSides?.[key]) sides.set(key, new THREE.Vector3(...frame.boneSides[key]));
+        }}
+        const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index]);
+        points.push(...(mesh?.vertices ?? Object.values(joints)));
+      }});
+      bakedMeshFitCache.set(frames, points);
+      return points;
+    }}
+
     function fitBakedWearOrthographicFrustum(bounds, camera, aspect, margin = 1.12) {{
       // Fit the ortho window to joints projected onto the camera plane, not the
       // world bounding sphere. A sphere or world AABB around a long thin pose
@@ -10219,21 +10301,24 @@ def _build_html(
         camUp.normalize();
       }}
       const center = bounds.center;
+      // Fit once per configured scene. Orbiting must not change model scale.
+      // A new review configuration creates new bounds and receives a fresh fit.
+      const cachedFit = bakedMeshProjectionCache.get(bounds);
       let maxRight = 0.001;
       let maxUp = 0.001;
       let sampled = false;
-      for (const frame of playbackState.frames ?? []) {{
-        for (const point of Object.values(frame.joints ?? {{}})) {{
-          if (!Array.isArray(point) || point.length < 3) {{
-            continue;
-          }}
+      for (const point of cachedFit ? [] : bakedMeshFitPoints(playbackState.frames ?? [])) {{
           sampled = true;
-          const offsetX = Number(point[0]) - center.x;
-          const offsetY = Number(point[1]) - center.y;
-          const offsetZ = Number(point[2]) - center.z;
+          const offsetX = point.x - center.x;
+          const offsetY = point.y - center.y;
+          const offsetZ = point.z - center.z;
           maxRight = Math.max(maxRight, Math.abs(offsetX * right.x + offsetY * right.y + offsetZ * right.z));
           maxUp = Math.max(maxUp, Math.abs(offsetX * camUp.x + offsetY * camUp.y + offsetZ * camUp.z));
-        }}
+      }}
+      if (cachedFit) {{
+        maxRight = cachedFit.maxRight;
+        maxUp = cachedFit.maxUp;
+        sampled = true;
       }}
       if (!sampled) {{
         const corners = [
@@ -10252,20 +10337,21 @@ def _build_html(
           maxUp = Math.max(maxUp, Math.abs(offset.dot(camUp)));
         }}
       }}
+      if (!cachedFit) {{
+        bakedMeshProjectionCache.set(bounds, {{ maxRight, maxUp }});
+      }}
       let halfWidth = maxRight * margin;
       let halfHeight = maxUp * margin;
       const safeAspect = Math.max(0.001, aspect);
-      if (safeAspect >= 1.0) {{
-        halfWidth = Math.max(halfWidth, halfHeight * safeAspect);
-      }} else {{
-        halfHeight = Math.max(halfHeight, halfWidth / safeAspect);
-      }}
+      halfHeight = Math.max(halfHeight, halfWidth / safeAspect);
+      halfWidth = halfHeight * safeAspect;
       camera.left = -halfWidth;
       camera.right = halfWidth;
       camera.bottom = -halfHeight;
       camera.top = halfHeight;
       camera.near = 0.01;
       camera.far = Math.max(1.0, bounds.radius * 9.0);
+      camera.zoom = Math.max(120, zoom) / 240;
       camera.updateProjectionMatrix();
     }}
 
@@ -10298,6 +10384,30 @@ def _build_html(
       perspectiveCamera.lookAt(cameraTarget);
     }}
 
+    function interpolateFixedRig(rig, first, last, alpha) {{
+      const a = rig.coordinates[first], b = rig.coordinates[last];
+      if (!a || !b) return null;
+      const slots = new Map(rig.rotationJointNames.map((name, i) => [name, 3 + i * 3]));
+      const rotations = [], positions = [], joints = {{}};
+      const quaternion = (values, slot) => {{
+        const axis = new THREE.Vector3(...values.slice(slot, slot + 3));
+        const angle = axis.length();
+        return angle < 1e-12 ? new THREE.Quaternion() : new THREE.Quaternion().setFromAxisAngle(axis.multiplyScalar(1 / angle), angle);
+      }};
+      // Serialized order is parent-first, independent of external joint order.
+      for (const index of rig.order) {{
+        const name = rig.jointNames[index], parent = rig.parents[index];
+        const slot = slots.get(name);
+        const local = slot == null ? new THREE.Quaternion() : quaternion(a, slot).slerp(quaternion(b, slot), alpha);
+        rotations[index] = parent < 0 ? local : rotations[parent].clone().multiply(local);
+        positions[index] = parent < 0
+          ? new THREE.Vector3(...a.slice(0, 3)).lerp(new THREE.Vector3(...b.slice(0, 3)), alpha)
+          : new THREE.Vector3(...rig.offsets[index]).applyQuaternion(rotations[index]).add(positions[parent]);
+        joints[name] = positions[index].toArray();
+      }}
+      return joints;
+    }}
+
     function getInterpolatedFrame() {{
       const frames = playbackState.frames;
       if (frames.length === 0) {{
@@ -10314,10 +10424,11 @@ def _build_html(
       const current = frames[baseIndex];
       const next = frames[nextIndex];
       if (!next || alpha <= 1e-6) {{
-        return applyPreviewMotionTuning(current);
+        return {{ ...applyPreviewMotionTuning(current), playbackIndex: baseIndex }};
       }}
-      const joints = {{}};
-      for (const jointName of payload.jointNames) {{
+      const fixedJoints = playbackState.fixedRig ? interpolateFixedRig(playbackState.fixedRig, baseIndex, nextIndex, alpha) : null;
+      const joints = fixedJoints ?? {{}};
+      for (const jointName of fixedJoints ? [] : payload.jointNames) {{
         const start = current.joints[jointName];
         const end = next.joints[jointName];
         if (!start && !end) {{
@@ -10338,11 +10449,32 @@ def _build_html(
         ];
       }}
       return applyPreviewMotionTuning({{
+        playbackIndex: baseIndex,
+        playbackNextIndex: nextIndex,
+        playbackAlpha: alpha,
         frameIndex: current.frameIndex ?? baseIndex,
         ...interpolateFrameSourceMapping(current, next, baseIndex, nextIndex, alpha),
         timeSec: current.timeSec * (1 - alpha) + next.timeSec * alpha,
         joints,
+        boneSides: interpolateBoneSides(current, next, joints, alpha),
       }});
+    }}
+
+    function interpolateBoneSides(current, next, joints, alpha) {{
+      const result = {{}};
+      for (const [key, value] of Object.entries(current.boneSides ?? {{}})) {{
+        const [start, end] = key.split("->");
+        if (!joints[start] || !joints[end] || !next.boneSides?.[key]) continue;
+        const axis = new THREE.Vector3(...joints[end]).sub(new THREE.Vector3(...joints[start])).normalize();
+        const transport = (frame, side) => {{
+          const old = new THREE.Vector3(...frame.joints[end]).sub(new THREE.Vector3(...frame.joints[start])).normalize();
+          return new THREE.Vector3(...side).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(old, axis)).normalize();
+        }};
+        const a = transport(current, value), b = transport(next, next.boneSides[key]);
+        const angle = Math.atan2(axis.dot(new THREE.Vector3().crossVectors(a, b)), a.dot(b));
+        result[key] = a.applyAxisAngle(axis, angle * alpha).toArray();
+      }}
+      return result;
     }}
 
     function interpolateFrameSourceMapping(current, next, baseIndex, nextIndex, alpha) {{
@@ -10946,6 +11078,15 @@ def _build_html(
       forceNextDraw = true;
     }}
 
+    function previewDrawSchedule(timestamp, previousTimestamp, intervalMs) {{
+      if (previousTimestamp == null) return {{ due: true, clock: timestamp }};
+      // Keep the deadline phase. Resetting it to each RAF timestamp discards
+      // the remainder and turns a 30 FPS cap into uneven 20-30 FPS playback.
+      // RAF timestamps are rounded; allow half a millisecond at the boundary.
+      const steps = Math.max(0, Math.floor((timestamp - previousTimestamp + 0.5) / intervalMs));
+      return {{ due: steps > 0, clock: previousTimestamp + steps * intervalMs }};
+    }}
+
     function animate(timestamp) {{
       if (lastTimestamp == null) {{
         lastTimestamp = timestamp;
@@ -10955,22 +11096,25 @@ def _build_html(
       const cursorAdvanced = !paused && playbackState.frames.length > 0;
       if (cursorAdvanced) {{
         frameCursor += deltaSeconds * payload.fps * speed;
-        if (playbackState.frames.length > 0) {{
+        if (!playbackState.loopable && frameCursor >= playbackState.frames.length - 1) {{
+          frameCursor = playbackState.frames.length - 1;
+          paused = true;
+          forceNextDraw = true;
+          refreshPauseLabel();
+        }} else if (playbackState.frames.length > 0) {{
           while (frameCursor >= playbackState.frames.length) {{
             frameCursor -= playbackState.frames.length;
           }}
         }}
       }}
-      const timeSinceLastDraw = lastDrawTimestamp == null
-        ? Number.POSITIVE_INFINITY
-        : timestamp - lastDrawTimestamp;
+      const drawSchedule = previewDrawSchedule(timestamp, lastDrawTimestamp, previewMinRenderIntervalMs);
       const shouldDraw = forceNextDraw
         || dragging
         || lastDrawTimestamp == null
-        || (cursorAdvanced && timeSinceLastDraw >= previewMinRenderIntervalMs);
+        || (cursorAdvanced && drawSchedule.due);
       if (shouldDraw) {{
         draw();
-        lastDrawTimestamp = timestamp;
+        lastDrawTimestamp = drawSchedule.clock;
         forceNextDraw = false;
       }}
       requestAnimationFrame(animate);
@@ -11004,12 +11148,20 @@ def _build_html(
       requestPreviewRedraw();
     }});
     function refreshPauseLabel() {{
-      pauseToggleButton.textContent = paused ? "Resume" : "Pause";
+      const ended = !playbackState.loopable && frameCursor >= playbackState.frames.length - 1;
+      pauseToggleButton.textContent = paused ? (ended ? "Replay" : "Resume") : "Pause";
     }}
-    pauseToggleButton.addEventListener("click", () => {{
+    function togglePlayback() {{
+      if (paused && !playbackState.loopable && frameCursor >= playbackState.frames.length - 1) {{
+        frameCursor = 0;
+      }}
       paused = !paused;
+      lastTimestamp = null;
       refreshPauseLabel();
       requestPreviewRedraw();
+    }}
+    pauseToggleButton.addEventListener("click", () => {{
+      togglePlayback();
     }});
     fixedRootInput.addEventListener("change", () => {{
       fixedRoot = fixedRootInput.checked;
@@ -11124,9 +11276,7 @@ def _build_html(
         return;
       }}
       event.preventDefault();
-      paused = !paused;
-      refreshPauseLabel();
-      requestPreviewRedraw();
+      togglePlayback();
     }});
     window.addEventListener("resize", resize);
     refreshPauseLabel();
@@ -11135,6 +11285,9 @@ def _build_html(
     activeVerticalMovementAnchor = computeActiveVerticalMovementAnchor(playbackState.boundsFrames);
     syncPreviewTuningControls();
     applyUrlPreviewParameters();
+    if (payload.bakedWearPayload) {{
+      configureBakedWearPayloadForReview(payload.bakedWearPayload, {{ interactive: true }});
+    }}
     frameCursor = findFrameCursorClosestToBoundsCenter();
     refreshSceneFrame();
     resize();

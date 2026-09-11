@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
-from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
+from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject, validate_wham_frame_rate
 
 
 def export_wham_retarget_source(
@@ -13,11 +13,13 @@ def export_wham_retarget_source(
     output_json: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
+    fps: float = 30.0,
 ) -> Path:
     payload = build_wham_retarget_source_payload(
         wham_results_pkl=wham_results_pkl,
         coordinate_space=coordinate_space,
         subject_id=subject_id,
+        fps=fps,
     )
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -29,7 +31,9 @@ def build_wham_retarget_source_payload(
     wham_results_pkl: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
+    fps: float = 30.0,
 ) -> dict[str, object]:
+    fps = validate_wham_frame_rate(fps)
     raw_results = load_wham_results(wham_results_pkl)
     resolved_subject_id, payload = select_wham_subject(raw_results, subject_id=subject_id)
     pose_key, translation_key = resolve_wham_coordinate_keys(coordinate_space)
@@ -61,7 +65,7 @@ def build_wham_retarget_source_payload(
         "resultsPath": str(wham_results_pkl),
         "coordinateSpace": coordinate_space,
         "bodyModel": "smpl",
-        "fps": 30.0,
+        "fps": fps,
         "subjectId": str(resolved_subject_id),
         "frameCount": frame_count,
         "poseKey": pose_key,

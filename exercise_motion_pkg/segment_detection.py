@@ -17,6 +17,7 @@ import httpx
 from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
+from exercise_motion_pkg.contact_sheet_crop import CONTACT_SHEET_CROP_POLICY_VERSION, persistent_border_crop
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
@@ -1162,6 +1163,7 @@ def extract_window_frames(
     contact_sheet_frames_per_sheet: int = 8,
     contact_sheet_jpeg_quality: int = 90,
     contact_sheet_sequence_labels: bool = False,
+    contact_sheet_crop_empty_borders: bool = False,
     output_dir: Path,
 ) -> list[Path]:
     try:
@@ -1213,6 +1215,7 @@ def extract_window_frames(
             frames_per_sheet=contact_sheet_frames_per_sheet,
             jpeg_quality=contact_sheet_jpeg_quality,
             sequence_labels=contact_sheet_sequence_labels,
+            crop_empty_borders=contact_sheet_crop_empty_borders,
         )
         if contact_sheet_paths:
             return contact_sheet_paths
@@ -1277,8 +1280,18 @@ def build_frame_contact_sheets(
     frames_per_sheet: int,
     jpeg_quality: int,
     sequence_labels: bool = False,
+    crop_empty_borders: bool = False,
 ) -> list[Path]:
     frames_per_sheet = max(1, frames_per_sheet)
+    crop_box = persistent_border_crop(frame_paths) if crop_empty_borders else None
+    if crop_empty_borders:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "contact_sheet_crop.json").write_text(
+            json.dumps({"policyVersion": CONTACT_SHEET_CROP_POLICY_VERSION,
+                        "cropBox": crop_box, "applied": crop_box is not None,
+                        "framePaths": [str(path) for path in frame_paths]}, indent=2),
+            encoding="utf-8",
+        )
     contact_sheets: list[Path] = []
     for sheet_index, start_index in enumerate(range(0, len(frame_paths), frames_per_sheet), start=1):
         sheet_frame_paths = frame_paths[start_index : start_index + frames_per_sheet]
@@ -1293,6 +1306,7 @@ def build_frame_contact_sheets(
             sequence_labels=sequence_labels,
             sequence_label_offset=start_index,
             sequence_label_total=len(frame_paths),
+            crop_box=crop_box,
         )
         if sheet_path is not None:
             contact_sheets.append(sheet_path)
@@ -1310,6 +1324,7 @@ def build_frame_contact_sheet(
     sequence_labels: bool = False,
     sequence_label_offset: int = 0,
     sequence_label_total: int | None = None,
+    crop_box: tuple[int, int, int, int] | None = None,
 ) -> Path | None:
     try:
         import cv2
@@ -1327,6 +1342,11 @@ def build_frame_contact_sheet(
         frame = cv2.imread(str(frame_path))
         if frame is None:
             continue
+        if crop_box is not None:
+            left, top, right, bottom = crop_box
+            if not (0 <= left < right <= frame.shape[1] and 0 <= top < bottom <= frame.shape[0]):
+                raise ValueError("Contact-sheet crop does not fit every frame")
+            frame = frame[top:bottom, left:right]
         scale = tile_width / float(frame.shape[1])
         target_height = max(1, int(round(frame.shape[0] * scale)))
         resized = cv2.resize(frame, (tile_width, target_height), interpolation=cv2.INTER_AREA)
@@ -1471,9 +1491,16 @@ class LlamaCppVisionClient:
         self.client = httpx.Client(timeout=self.request_timeout_seconds)
         self._client_generation = 0
         self._recovery_lock = threading.Lock()
+        self._request_condition = threading.Condition()
+        self._active_http_requests = 0
+        self._recovery_in_progress = False
+        self._closed = False
         self._retired_clients: list[httpx.Client] = []
 
     def close(self) -> None:
+        with self._request_condition:
+            self._closed = True
+            self._request_condition.notify_all()
         clients = [self.client, *self._retired_clients]
         self._retired_clients = []
         closed_client_ids: set[int] = set()
@@ -1616,14 +1643,14 @@ class LlamaCppVisionClient:
             attempt_started = time.monotonic()
             attempt_client_generation = self._client_generation
             try:
-                response = self.client.post(f"{self.base_url}/v1/chat/completions", **request_kwargs)
+                response = self._post_chat_completion(**request_kwargs)
                 if response.status_code >= 400:
                     fallback_payload = dict(payload)
                     fallback_payload.pop("response_format", None)
                     fallback_payload.pop("reasoning_format", None)
                     fallback_payload.pop("chat_template_kwargs", None)
                     fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
-                    response = self.client.post(f"{self.base_url}/v1/chat/completions", **fallback_request_kwargs)
+                    response = self._post_chat_completion(**fallback_request_kwargs)
                 if response.status_code >= 400:
                     body = response.text.strip()
                     if len(body) > 1200:
@@ -1639,6 +1666,8 @@ class LlamaCppVisionClient:
                 data = response.json()
                 return strip_empty_llama_cpp_thought_prefix(data["choices"][0]["message"]["content"])
             except Exception as exc:
+                if self._closed:
+                    raise RuntimeError("VLM client was closed; request cancelled.") from exc
                 critical = wrap_vlm_infrastructure_error(
                     exc,
                     interaction=interaction,
@@ -1684,7 +1713,40 @@ class LlamaCppVisionClient:
             raise last_error
         raise RuntimeError("llama-cpp vision request failed without a response.")
 
-    def _recover_after_vlm_failure(
+    def _post_chat_completion(self, **kwargs):
+        with self._request_condition:
+            while self._recovery_in_progress and not self._closed:
+                self._request_condition.wait()
+            if self._closed:
+                raise RuntimeError("VLM client was closed; request cancelled.")
+            self._active_http_requests += 1
+            client = self.client
+        try:
+            return client.post(f"{self.base_url}/v1/chat/completions", **kwargs)
+        finally:
+            with self._request_condition:
+                self._active_http_requests -= 1
+                self._request_condition.notify_all()
+
+    def _recover_after_vlm_failure(self, error: CriticalVlmInteractionError, *, failed_client_generation: int) -> dict[str, object]:
+        # Do not restart an owned server underneath peer requests. Deferring
+        # recovery still leaves the caller's existing retry budget bounded.
+        with self._request_condition:
+            while self._recovery_in_progress and not self._closed:
+                self._request_condition.wait()
+            if self._closed:
+                return {"completed": False, "cancelled": True}
+            if self._active_http_requests:
+                return {"completed": False, "deferredForActiveRequests": self._active_http_requests}
+            self._recovery_in_progress = True
+        try:
+            return self._recover_after_vlm_failure_when_idle(error, failed_client_generation=failed_client_generation)
+        finally:
+            with self._request_condition:
+                self._recovery_in_progress = False
+                self._request_condition.notify_all()
+
+    def _recover_after_vlm_failure_when_idle(
         self,
         error: CriticalVlmInteractionError,
         *,
@@ -1757,23 +1819,10 @@ class LlamaCppVisionClient:
         while time.monotonic() < deadline:
             try:
                 models = self.client.get(f"{self.base_url}/v1/models", timeout=5.0)
-                if models.status_code < 500:
-                    payload = {
-                        "model": self.model,
-                        "messages": [{"role": "user", "content": "Reply with OK."}],
-                        "temperature": 0,
-                        "max_tokens": 1,
-                        "reasoning_format": "none",
-                        "chat_template_kwargs": {"enable_thinking": False},
-                    }
-                    ready = self.client.post(
-                        f"{self.base_url}/v1/chat/completions",
-                        json=payload,
-                        timeout=min(10.0, self.request_timeout_seconds),
-                    )
-                    if ready.status_code < 500:
-                        return
-                    last_error = f"status={ready.status_code}"
+                if models.status_code == 200:
+                    # Inference probes queue behind real work and can timeout
+                    # on a healthy busy server. Readiness needs no generation.
+                    return
                 else:
                     last_error = f"models_status={models.status_code}"
             except Exception as exc:

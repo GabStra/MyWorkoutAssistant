@@ -19,7 +19,7 @@ from exercise_motion_pkg.preview import (
     _prepare_preview_clip,
     _serialize_bounds,
 )
-from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
+from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject, validate_wham_frame_rate
 
 
 SPINE_MESH_WARP_CHAIN = ("pelvis", "spine1", "spine2", "spine3", "neck")
@@ -45,7 +45,9 @@ def load_wham_smpl_mesh_sequence(
     body_model_root: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
+    fps: float = 30.0,
 ) -> WhamSmplMeshSequence:
+    fps = validate_wham_frame_rate(fps)
     ensure_legacy_smpl_runtime_compat()
     try:
         import torch  # type: ignore
@@ -92,7 +94,7 @@ def load_wham_smpl_mesh_sequence(
         )
 
     return WhamSmplMeshSequence(
-        fps=30.0,
+        fps=fps,
         subject_id=str(resolved_subject_id),
         coordinate_space=coordinate_space,
         frame_ids=_normalize_frame_ids(frame_ids, frame_count=frame_count),

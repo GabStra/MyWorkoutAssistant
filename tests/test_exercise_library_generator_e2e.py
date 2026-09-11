@@ -689,6 +689,7 @@ def test_candidate_semantics_are_derived_from_structured_modes() -> None:
             "name": "Movement A",
             "executionMode": "REPETITIONS",
             "resistanceMode": "BODY_WEIGHT_PLUS_LOAD",
+            "bodyWeightPercentage": 85.0,
         },
         equipment,
     )
@@ -703,7 +704,7 @@ def test_candidate_semantics_are_derived_from_structured_modes() -> None:
 
     assert (pull_up["exerciseType"], pull_up["bodyWeightPercentage"]) == (
         "BODY_WEIGHT",
-        100.0,
+        85.0,
     )
     assert carry["exerciseType"] == "COUNTUP"
     assert plank["exerciseType"] == "COUNTDOWN"

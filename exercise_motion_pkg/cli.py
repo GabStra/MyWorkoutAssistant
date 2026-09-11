@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from exercise_motion_pkg.runtime_bootstrap import initialize_cli_runtime
+
+initialize_cli_runtime()
+
 import argparse
 from dataclasses import fields, replace
 import json
@@ -340,6 +344,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for cached low-resolution YouTube previews shared by YOLO and VLM ranking.",
     )
     youtube_search.add_argument("--max-candidates", type=int, default=8)
+    youtube_search.add_argument("--discovery-candidate-budget", type=int, default=0,
+                                help="New candidates per discovery turn, across all expansions; 0 disables the limit.")
+    youtube_search.add_argument("--discovery-time-budget-seconds", type=float, default=0.0,
+                                help="Review time per turn, checked between batches; 0 disables the limit.")
     youtube_search.add_argument(
         "--candidate-review-batch-size",
         type=int,
@@ -1808,8 +1816,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    from exercise_motion_pkg.storage import is_storage_failure, INSUFFICIENT_STORAGE_EXIT_CODE
     try:
         main()
+    except OSError as exc:
+        if not is_storage_failure(exc):
+            raise
+        print(str(exc), flush=True)
+        raise SystemExit(INSUFFICIENT_STORAGE_EXIT_CODE) from None
     except KeyboardInterrupt:
         print("Interrupted. Completed checkpoints were preserved and owned processes were stopped.", flush=True)
         raise SystemExit(130) from None

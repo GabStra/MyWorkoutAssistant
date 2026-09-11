@@ -20,6 +20,49 @@ _LOCAL_GPU_LOCK_RELEASED = threading.Condition()
 _LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
 
 
+def _windows_file_handle(path: Path, *, create: bool) -> int:
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_file = kernel.CreateFileW
+    open_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                          wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    open_file.restype = wintypes.HANDLE
+    # OS-owned deletion removes the lease even on process death. Readers must
+    # share DELETE access, so inspecting metadata cannot prevent release.
+    handle = open_file(str(path), 0x40010000 if create else 0x80000000,
+                       7, None, 1 if create else 3, 0x04000080 if create else 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return handle
+
+
+def open_lock_lease(path: Path) -> int:
+    if os.name != "nt":
+        return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    import msvcrt
+    return msvcrt.open_osfhandle(_windows_file_handle(path, create=True), os.O_WRONLY)
+
+
+def read_lock_text(path: Path) -> str:
+    if os.name != "nt":
+        return path.read_text(encoding="utf-8")
+    import msvcrt
+    descriptor = msvcrt.open_osfhandle(_windows_file_handle(path, create=False), os.O_RDONLY)
+    with os.fdopen(descriptor, "r", encoding="utf-8") as reader:
+        return reader.read()
+
+
+def lock_open_is_contention(error: OSError) -> bool:
+    # DELETE_PENDING is reported as access denied until the last reader closes.
+    return isinstance(error, FileExistsError) or getattr(error, "winerror", None) in {5, 32, 80, 183}
+
+
+def close_lock_lease(handle: int, path: Path) -> None:
+    os.close(handle)
+    if os.name != "nt":
+        path.unlink(missing_ok=True)
+
+
 class GlobalGpuLock:
     def __init__(self, *, stage: str, enabled: bool = True) -> None:
         self.stage = stage
@@ -36,7 +79,7 @@ class GlobalGpuLock:
         started = time.perf_counter()
         while True:
             try:
-                self._handle = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                self._handle = open_lock_lease(self.path)
                 payload = {
                     "pid": os.getpid(),
                     "processIdentity": process_identity(os.getpid()),
@@ -47,7 +90,13 @@ class GlobalGpuLock:
                 os.write(self._handle, json.dumps(payload).encode("utf-8"))
                 self.wait_seconds = time.perf_counter() - started
                 return self.wait_seconds
-            except FileExistsError:
+            except OSError as error:
+                if self._handle is not None:
+                    handle, self._handle = self._handle, None
+                    close_lock_lease(handle, self.path)
+                    raise
+                if not lock_open_is_contention(error):
+                    raise
                 active_payload = lock_payload(self.path)
                 if (
                     isinstance(active_payload, dict)
@@ -82,19 +131,20 @@ class GlobalGpuLock:
                         )
                 else:
                     time.sleep(2.0)
+            except BaseException:
+                if self._handle is not None:
+                    handle, self._handle = self._handle, None
+                    close_lock_lease(handle, self.path)
+                raise
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        if self._handle is not None:
-            os.close(self._handle)
-            self._handle = None
-        if self.enabled:
-            try:
-                self.path.unlink()
-            except FileNotFoundError:
-                pass
-            finally:
-                with _LOCAL_GPU_LOCK_RELEASED:
-                    _LOCAL_GPU_LOCK_RELEASED.notify_all()
+        try:
+            if self._handle is not None:
+                handle, self._handle = self._handle, None
+                close_lock_lease(handle, self.path)
+        finally:
+            with _LOCAL_GPU_LOCK_RELEASED:
+                _LOCAL_GPU_LOCK_RELEASED.notify_all()
 
 
 def gpu_stage_lock(*, stage: str, enabled: bool = True) -> GlobalGpuLock:
@@ -127,7 +177,7 @@ def gpu_lock_timeout_seconds() -> float:
 
 def gpu_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
     try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        payload = json.loads(read_lock_text(lock_path))
     except (OSError, json.JSONDecodeError):
         return lock_age_seconds(lock_path) > timeout_seconds
     pid = payload.get("pid") if isinstance(payload, dict) else None
@@ -211,7 +261,7 @@ def process_is_running(pid: int) -> bool:
 def lock_payload(path: Path | None = None) -> dict[str, Any] | None:
     lock_path = path or gpu_lock_path()
     try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        payload = json.loads(read_lock_text(lock_path))
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None

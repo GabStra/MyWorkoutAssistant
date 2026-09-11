@@ -174,6 +174,10 @@ def update_source_outcome_index(
     resolved_path = path.expanduser().resolve()
     observations: dict[str, dict[str, Any]] = {}
     for result in candidate_results:
+        # An unresolved observation or contract is not evidence against a source.
+        # Other, resolved windows from that same video still update its history.
+        if result.get("status") in {"needs_source_review", "needs_motion_processing"}:
+            continue
         candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else {}
         identity = source_identity(candidate.get("videoId"), candidate.get("url"))
         if identity is None:

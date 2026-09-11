@@ -38,6 +38,7 @@ from workout_generator_pkg.json_patching import (
 
 
 EXERCISE_TYPES = {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP"}
+CandidateKey = tuple[str, str, str | None, tuple[str, ...]]
 EXERCISE_CATEGORIES = {"HEAVY_COMPOUND", "MODERATE_COMPOUND", "ISOLATION"}
 EXECUTION_MODES = {"REPETITIONS", "TARGET_DURATION", "OPEN_DURATION"}
 RESISTANCE_MODES = {"BODY_WEIGHT", "EXTERNAL_LOAD", "BODY_WEIGHT_PLUS_LOAD"}
@@ -176,7 +177,7 @@ CONTENT_AUTHORITY_PATCH_PATHS = {
     "/secondaryMuscleGroups",
     "/exerciseCategory",
 }
-CONTENT_AUTHORITY_VERSION = 9
+CONTENT_AUTHORITY_VERSION = 10
 CONTENT_AUTHORITY_BATCH_SIZE = 3
 CONTENT_AUTHORITY_CHECKS = {
     "movementIdentity",
@@ -1534,6 +1535,20 @@ def _derive_exercise_category(candidate: dict[str, Any]) -> str | None:
     return "MODERATE_COMPOUND"
 
 
+def _body_weight_percentage_issue(definition: dict[str, Any]) -> str | None:
+    percentage = definition.get("bodyWeightPercentage")
+    if definition.get("exerciseType") == "BODY_WEIGHT":
+        if (
+            not isinstance(percentage, (int, float))
+            or isinstance(percentage, bool)
+            or not 1 < percentage <= 100
+        ):
+            return "BODY_WEIGHT requires a movement-specific bodyWeightPercentage in (1, 100]"
+    elif percentage is not None:
+        return "non-BODY_WEIGHT bodyWeightPercentage must be null"
+    return None
+
+
 def _normalize_candidate_semantics(
     candidate: dict[str, Any],
     equipment: dict[str, Any],
@@ -1597,21 +1612,19 @@ def _normalize_and_filter_candidates(
     retained = list(retained_by_fingerprint.values())
     name_counts = Counter(item["name"].strip().casefold() for item in retained)
     equipment_items = _equipment_by_id(equipment)
-    accessory_items = {
-        item["id"]: item
-        for item in equipment.get("accessoryEquipments", [])
-        if isinstance(item, dict) and item.get("id")
-    }
+    accessory_items = _all_equipment_items(equipment)
     for candidate in retained:
         if name_counts[candidate["name"].strip().casefold()] > 1:
             equipment_item = equipment_items.get(candidate.get("equipmentId"), {})
             equipment_name = _canonical_equipment_name(equipment_item) if equipment_item else None
             accessory_names = [
                 accessory_items[item_id].get("name", item_id)
-                for item_id in candidate.get("requiredAccessoryEquipmentIds", [])
+                for item_id in sorted(candidate.get("requiredAccessoryEquipmentIds", []))
                 if item_id in accessory_items
             ]
-            descriptor = equipment_name or ", ".join(accessory_names)
+            descriptor = ", ".join(
+                ([equipment_name] if equipment_name else []) + accessory_names
+            )
             if descriptor:
                 candidate["name"] = f"{candidate['name']} ({descriptor})"
     return (
@@ -1632,6 +1645,9 @@ def _validate_final_definition_semantics(
             + ", ".join(duplicate_names[:10])
         )
     for definition in definitions:
+        percentage_issue = _body_weight_percentage_issue(definition)
+        if percentage_issue:
+            raise ValueError(f"{definition['name']}: {percentage_issue}")
         expected = _normalize_candidate_semantics(definition, equipment)
         if definition["exerciseType"] != expected["exerciseType"]:
             raise ValueError(
@@ -1767,7 +1783,7 @@ def _validate_candidate(
             [{"path": json_path, "code": "INVALID_SCHEMA", "message": error.message}],
             candidate=candidate,
         ) from error
-        candidate = _normalize_candidate_semantics(candidate, equipment)
+    candidate = _normalize_candidate_semantics(candidate, equipment)
     primary_ids, accessory_ids = _equipment_ids(equipment)
     name = candidate.get("name")
     exercise_type = candidate.get("exerciseType")
@@ -1892,22 +1908,12 @@ def _validate_candidate(
                 f"{name}: {item.get('name', item['id'])} requires quantity "
                 f"{expected_quantity}, got {usage['quantity']}",
             )
-    if exercise_type == "BODY_WEIGHT":
-        if (
-            not isinstance(body_weight_percentage, (int, float))
-            or isinstance(body_weight_percentage, bool)
-            or not 1 < body_weight_percentage <= 100
-        ):
-            add(
-                "/bodyWeightPercentage",
-                "BODY_WEIGHT_PERCENTAGE",
-                f"{name}: BODY_WEIGHT requires movement-specific percentage semantics in (1, 100]",
-            )
-    elif body_weight_percentage is not None:
+    percentage_issue = _body_weight_percentage_issue(candidate)
+    if percentage_issue:
         add(
             "/bodyWeightPercentage",
-            "NON_BODY_WEIGHT_PERCENTAGE",
-            f"{name}: non-BODY_WEIGHT bodyWeightPercentage must be null",
+            "BODY_WEIGHT_PERCENTAGE",
+            f"{name}: {percentage_issue}",
         )
     if errors:
         raise InventoryCandidateError(str(errors[0]["message"]), errors, candidate=candidate)
@@ -1943,11 +1949,12 @@ def _validate_candidate(
     }
 
 
-def _candidate_key(candidate: dict[str, Any]) -> tuple[str, str, str | None]:
+def _candidate_key(candidate: dict[str, Any]) -> CandidateKey:
     return (
         candidate["name"].strip().casefold(),
         candidate["exerciseType"],
         candidate.get("equipmentId"),
+        tuple(sorted(candidate.get("requiredAccessoryEquipmentIds", []))),
     )
 
 
@@ -2356,6 +2363,9 @@ def _validate_definition(
     equipment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw_definition = _unwrap_definition_object(raw_definition)
+    percentage_issue = _body_weight_percentage_issue(candidate)
+    if percentage_issue:
+        raise DefinitionValidationError(percentage_issue, {"/bodyWeightPercentage"})
 
     definition = {
         field: copy.deepcopy(candidate.get(field))
@@ -3943,6 +3953,29 @@ def _library_payload(
     return payload
 
 
+def _require_review_retention(
+    payload: dict[str, Any],
+    source_definitions: list[dict[str, Any]],
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
+    retained_count = len(payload["exerciseDefinitions"])
+    source_count = len(source_definitions)
+    if retained_count and retained_count >= source_count * (1 - MAX_SEMANTIC_DISCARD_FRACTION):
+        return
+    failed = copy.deepcopy(payload)
+    failed["reviewStatus"] = "FAILED"
+    failed["sourceExerciseDefinitions"] = copy.deepcopy(source_definitions)
+    failed["exerciseDefinitions"] = copy.deepcopy(source_definitions)
+    if progress_callback is not None:
+        progress_callback(failed)
+    raise ValueError(
+        f"Review retained {retained_count}/{source_count} definitions, below the "
+        f"{int((1 - MAX_SEMANTIC_DISCARD_FRACTION) * 100)}% safety limit "
+        "(at least one definition is required). Source definitions were preserved "
+        "when a checkpoint callback was supplied."
+    )
+
+
 def _serialize_review_progress(
     definitions: list[dict[str, Any]],
     completed_results: dict[int, tuple[list[dict[str, Any]], list[str]]],
@@ -4038,7 +4071,7 @@ def generate_exercise_library(
     else:
         inventory_scopes = [(None, None, False)]
 
-    candidate_by_key: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+    candidate_by_key: dict[CandidateKey, dict[str, Any]] = {}
     generation_failures: list[str] = []
     print(
         f"Stage 1/3: Enumerating exercises in {len(inventory_scopes)} bounded batch(es) "
@@ -4052,7 +4085,7 @@ def generate_exercise_library(
         allowed_equipment_ids: set[str] | None,
         require_any_accessory: bool,
         show_loading: bool,
-    ) -> tuple[dict[tuple[str, str, str | None], dict[str, Any]], list[str]]:
+    ) -> tuple[dict[CandidateKey, dict[str, Any]], list[str]]:
         scope_failures: list[str] = []
         try:
             scoped_candidates = _call_inventory(
@@ -4127,8 +4160,11 @@ def generate_exercise_library(
     for _, (scoped_by_key, scope_failures) in sorted(scope_results):
         candidate_by_key.update(scoped_by_key)
         generation_failures.extend(scope_failures)
-        for failure in scope_failures:
-            print(f"Warning: {failure}. Keeping available results.", flush=True)
+    if generation_failures:
+        raise ValueError(
+            "Inventory incomplete; no library will be emitted. "
+            + "; ".join(generation_failures)
+        )
     candidates, semantic_filters = _normalize_and_filter_candidates(
         list(candidate_by_key.values()),
         equipment,
@@ -4198,6 +4234,18 @@ def generate_exercise_library(
     if not definitions:
         details = "\n".join(f"- {error}" for error in generation_failures[:10])
         raise ValueError(f"No valid exercise definitions were generated:\n{details}")
+    source_definitions = copy.deepcopy(definitions)
+
+    def save_review_state(payload: dict[str, Any]) -> None:
+        if review_checkpoint_callback is not None:
+            snapshot = copy.deepcopy(payload)
+            snapshot["sourceExerciseDefinitions"] = copy.deepcopy(source_definitions)
+            snapshot["generationFailures"] = list(generation_failures)
+            review_checkpoint_callback(snapshot)
+
+    save_review_state(
+        _library_payload(definitions, equipment, generation_failures, [], review_status="PENDING")
+    )
     print("Stage 3/3: Reviewing muscle semantics and physical feasibility.", flush=True)
     muscle_review_payload = review_library_muscle_semantics(
         client,
@@ -4212,6 +4260,9 @@ def generate_exercise_library(
         max_workers=max_workers,
     )
     definitions = muscle_review_payload["exerciseDefinitions"]
+    save_review_state(
+        _library_payload(definitions, equipment, generation_failures, [], review_status="PENDING")
+    )
     feasibility_payload = review_library_feasibility(
         client,
         {
@@ -4223,16 +4274,18 @@ def generate_exercise_library(
         },
         review_call=reasoner_call,
         max_workers=max_workers,
+        progress_callback=save_review_state,
     )
     definitions = feasibility_payload["exerciseDefinitions"]
-    semantic_discards: list[str] = []
+    semantic_discards = list(feasibility_payload.get("semanticDiscards", []))
+    _require_review_retention(feasibility_payload, source_definitions, save_review_state)
     if review_checkpoint_callback is not None:
-        review_checkpoint_callback(
+        save_review_state(
             _library_payload(
                 definitions,
                 equipment,
                 generation_failures,
-                [],
+                semantic_discards,
                 review_status="PENDING",
             )
         )
@@ -4265,7 +4318,7 @@ def generate_exercise_library(
             snapshot["reviewProgress"] = _serialize_review_progress(
                 unreviewed_definitions, completed_review_batches
             )
-            review_checkpoint_callback(snapshot)
+            save_review_state(snapshot)
 
         definitions, semantic_discards = _run_semantic_review(
             client,
@@ -4300,7 +4353,7 @@ def generate_exercise_library(
             completed_snapshot["sourceExerciseDefinitions"] = copy.deepcopy(
                 unreviewed_definitions
             )
-            review_checkpoint_callback(completed_snapshot)
+            save_review_state(completed_snapshot)
         if suspicious_rejection_rate:
             raise ValueError(
                 f"Independent semantic review rejected {original_definition_count - len(definitions)}/"
@@ -4330,7 +4383,7 @@ def generate_exercise_library(
                 "keptDefinitions": copy.deepcopy(kept_definitions),
                 "discards": list(current_discards),
             }
-            review_checkpoint_callback(snapshot)
+            save_review_state(snapshot)
 
         definitions, semantic_discards = _run_deterministic_definition_validation(
             client,
@@ -4340,6 +4393,12 @@ def generate_exercise_library(
             chat_call,
             progress_callback=save_generated_deterministic_progress,
         )
+        _require_review_retention(
+            _library_payload(definitions, equipment, generation_failures, semantic_discards),
+            source_definitions,
+            save_review_state,
+        )
+        _validate_final_definition_semantics(definitions, equipment)
         if review_checkpoint_callback is not None:
             completed_snapshot = _library_payload(
                 definitions,
@@ -4349,7 +4408,7 @@ def generate_exercise_library(
                 review_status="COMPLETE",
             )
             completed_snapshot["contentAuthorityVersion"] = CONTENT_AUTHORITY_VERSION
-            review_checkpoint_callback(completed_snapshot)
+            save_review_state(completed_snapshot)
     definition_ids = [definition["id"] for definition in definitions]
     if len(definition_ids) != len(set(definition_ids)):
         raise ValueError("Generated exercise definitions contain duplicate IDs")
@@ -6270,6 +6329,9 @@ def _structured_definition_errors(
         add("/name", "INVALID_NAME", "name must be a non-empty string")
     if definition.get("exerciseType") not in EXERCISE_TYPES:
         add(None, "INVALID_EXERCISE_TYPE", "exerciseType is outside the closed enum")
+    percentage_issue = _body_weight_percentage_issue(definition)
+    if percentage_issue:
+        add("/bodyWeightPercentage", "BODY_WEIGHT_PERCENTAGE", percentage_issue)
     primary_ids, _accessory_ids = _equipment_ids(equipment)
     equipment_id = definition.get("equipmentId")
     if equipment_id is not None and equipment_id not in primary_ids:
@@ -7033,6 +7095,7 @@ def review_library_deterministic_validation(
         discards,
         review_status="COMPLETE",
     )
+    _require_review_retention(payload, definitions, progress_callback)
     payload["contentAuthorityVersion"] = CONTENT_AUTHORITY_VERSION
     return payload
 
@@ -7290,6 +7353,14 @@ def _review_feasibility_batch(
                     raise ValueError(f"{reference} has invalid missingCapabilities")
                 if set(missing) - EQUIPMENT_CAPABILITY_CATALOG:
                     raise ValueError(f"{reference} used unknown capabilities")
+                actually_available = _capabilities_for_equipment_ids(
+                    equipment, _linked_equipment_ids(definition)
+                )
+                if set(missing) & actually_available:
+                    raise ValueError(
+                        f"{reference} marked available capabilities as missing: "
+                        f"{sorted(set(missing) & actually_available)}"
+                    )
                 if not isinstance(reason, str) or not reason.strip():
                     raise ValueError(f"{reference} needs a reason")
                 if decision == "KEEP" and missing:
@@ -7380,6 +7451,7 @@ def review_library_feasibility(
     *,
     review_call: Callable[..., str | None] = json_call_reasoner_only_with_loading,
     max_workers: int = 2,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     definitions = checkpoint.get("exerciseDefinitions")
     equipments = checkpoint.get("equipments")
@@ -7413,7 +7485,9 @@ def review_library_feasibility(
         f"{len(definitions) - len(kept)} definition(s).",
         flush=True,
     )
-    return _library_payload(kept, equipment, [], discards)
+    payload = _library_payload(kept, equipment, [], discards)
+    _require_review_retention(payload, definitions, progress_callback)
+    return payload
 
 
 def _save_library_atomic(payload: dict[str, Any], destination: Path) -> Path:

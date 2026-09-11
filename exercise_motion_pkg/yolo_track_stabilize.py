@@ -30,6 +30,21 @@ class YoloTrackStabilizationPlan:
 
 
 def load_workspace_yolo_pose_track(candidate_workspace: Path) -> dict[str, Any] | None:
+    from .stage_cache import file_identity
+
+    selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    expected_sha = file_identity(selected_video).get("sha256")
+
+    def load_matching_track(path: Path) -> dict[str, Any] | None:
+        if expected_sha:
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            if not isinstance(record, dict) or record.get("sourceVideoSha256") != expected_sha:
+                return None
+        return _load_pose_payload(path)
+
     selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
     try:
         selection = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -39,9 +54,13 @@ def load_workspace_yolo_pose_track(candidate_workspace: Path) -> dict[str, Any] 
     if isinstance(validation, dict):
         reference_path_value = validation.get("sourcePoseReferencePath")
         if isinstance(reference_path_value, str) and reference_path_value.strip():
-            loaded = _load_pose_payload(Path(reference_path_value))
+            loaded = load_matching_track(Path(reference_path_value))
             if loaded is not None:
                 return loaded
+    canonical = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
+    loaded = load_matching_track(canonical)
+    if loaded is not None:
+        return loaded
     confirmation_root = (
         candidate_workspace
         / "segment_detection"
@@ -51,11 +70,10 @@ def load_workspace_yolo_pose_track(candidate_workspace: Path) -> dict[str, Any] 
     if confirmation_root.exists():
         matches = sorted(confirmation_root.glob("*/exact_source_pose_reference.json"))
         for match in matches:
-            loaded = _load_pose_payload(match)
+            loaded = load_matching_track(match)
             if loaded is not None:
                 return loaded
-    fallback = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
-    return _load_pose_payload(fallback)
+    return None
 
 
 def plan_yolo_track_stabilization(

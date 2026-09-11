@@ -6,7 +6,7 @@ import math
 from exercise_motion_pkg.legacy_smpl_compat import ensure_legacy_smpl_runtime_compat
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES
-from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject
+from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject, validate_wham_frame_rate
 
 
 def convert_wham_results_to_motion_clip(
@@ -16,7 +16,9 @@ def convert_wham_results_to_motion_clip(
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
     output_rotation_degrees: float = 0.0,
+    fps: float = 30.0,
 ) -> MotionClip:
+    fps = validate_wham_frame_rate(fps)
     ensure_legacy_smpl_runtime_compat()
     try:
         import torch  # type: ignore
@@ -80,7 +82,6 @@ def convert_wham_results_to_motion_clip(
             for joint_row in joints
         ]
     normalized_frame_ids = _normalize_frame_ids(frame_ids, frame_count=frame_count)
-    fps = 30.0
     frames: list[MotionFrame] = []
     for index, joint_row in enumerate(joints):
         frame_joints = {
@@ -115,6 +116,7 @@ def convert_wham_results_to_motion_clip(
                 "coordinateSpace": coordinate_space,
                 "subjectId": str(resolved_subject_id),
                 "frameIds": normalized_frame_ids,
+                "sourceFps": fps,
             },
         },
     )
@@ -128,6 +130,7 @@ def normalize_wham_output(
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
     output_rotation_degrees: float = 0.0,
+    fps: float = 30.0,
 ) -> Path:
     from exercise_motion_pkg.motion_io import save_motion_json
 
@@ -137,6 +140,7 @@ def normalize_wham_output(
         coordinate_space=coordinate_space,
         subject_id=subject_id,
         output_rotation_degrees=output_rotation_degrees,
+        fps=fps,
     )
     save_motion_json(output_json, clip)
     return output_json

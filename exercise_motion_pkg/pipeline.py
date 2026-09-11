@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, fields, replace
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -21,6 +21,7 @@ from exercise_motion_pkg.cleanup import (
     ground_contact_mode_allows_floor_support,
 )
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.models import MotionClip, MotionFrame
@@ -325,20 +326,12 @@ def write_local_wham_cache_manifest(
 def reusable_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path | None:
     if not request.reuse_wham_cache:
         return None
-    local = default_wham_results_pkl(
-        PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham",
-        input_video_path,
-    )
-    if (
-        local.is_file()
-        and local.stat().st_size > 0
-        and local_wham_cache_matches_input(
-            request,
-            input_video_path=input_video_path,
-            results_pkl=local,
-        )
-    ):
-        return local
+    output_root = PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham"
+    for root in (output_root / wham_content_cache_key(request, input_video_path), output_root):
+        local = default_wham_results_pkl(root, input_video_path)
+        if (local.is_file() and local.stat().st_size > 0
+                and local_wham_cache_matches_input(request, input_video_path=input_video_path, results_pkl=local)):
+            return local
     shared = global_wham_results_pkl(request, input_video_path)
     if shared.is_file() and shared.stat().st_size > 0:
         return shared
@@ -406,6 +399,54 @@ def run_generation_pipeline(
     request: GenerateRequest,
     *,
     run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+    run_processing_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+    raw_motion_validator: Callable[[Path], None] | None = None,
+) -> GenerateResult:
+    """Reuse finished processing independently of later rendering/review policy."""
+    checkpoint = request.workspace / request.exercise_slug / "generation_checkpoint.json"
+    settings = asdict(request)
+    for name in ("require_wham_cache", "reuse_wham_cache", "wham_tracking_preflight",
+                 "wham_timeout_seconds", "wham_worker_timeout_seconds"):
+        settings.pop(name, None)
+    inputs = [value for value in settings.values() if isinstance(value, Path) and value.is_file()]
+    inputs.extend(Path(__file__).with_name(name) for name in (
+        "pipeline.py", "cleanup.py", "structural_refinement.py", "video_world_alignment.py",
+        "preview.py", "wham_convert.py", "wham_retarget_source.py", "ground.py", "models.py",
+        "spinepose_wham_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
+        "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
+    ))
+    key = cache_key(settings, inputs)
+    with stage_lock(checkpoint):
+        cached = load_stage(checkpoint, key) if request.reuse_wham_cache else None
+        if cached is not None:
+            path_fields = {field.name for field in fields(GenerateResult)
+                           if "Path" in str(field.type)}
+            values = {name: Path(value) if name in path_fields and value is not None else value
+                      for name, value in cached.items()}
+            values["cleanup_stats"] = CleanupStats(**values["cleanup_stats"])
+            result = GenerateResult(**values)
+            if raw_motion_validator is not None:
+                raw_motion_validator(result.raw_motion_json_path)
+            return replace(result, timings={"generationCheckpoint": "reused", "totalSeconds": 0.0},
+                           wham_cache_status="reused_processed")
+        def generate() -> GenerateResult:
+            from .storage import require_storage_reserve
+            require_storage_reserve(request.workspace)
+            return _run_generation_pipeline_uncached(
+                request, run_wham_exclusive=run_wham_exclusive, raw_motion_validator=raw_motion_validator,
+            )
+        result = run_processing_exclusive(generate) if run_processing_exclusive is not None else generate()
+        outputs = [getattr(result, field.name) for field in fields(result)
+                   if isinstance(getattr(result, field.name), Path)]
+        save_stage(checkpoint, key, asdict(result), outputs)
+        return result
+
+
+def _run_generation_pipeline_uncached(
+    request: GenerateRequest,
+    *,
+    run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+    raw_motion_validator: Callable[[Path], None] | None = None,
 ) -> GenerateResult:
     pipeline_started = time.perf_counter()
     timings: dict[str, Any] = {}
@@ -454,16 +495,23 @@ def run_generation_pipeline(
         wham_output_dir = paths.raw_dir / "wham"
         wham_output_dir.mkdir(parents=True, exist_ok=True)
         reusable_results_pkl = reusable_wham_results_pkl(request, input_video_path)
+        # WHAM also caches detections/features under its output directory.
+        # Isolate a fresh run by input content so those cannot survive a changed
+        # source window merely because the MP4 basename stayed the same.
+        if reusable_results_pkl is None and request.wham_results_pkl is None:
+            wham_output_dir = wham_output_dir / wham_content_cache_key(request, input_video_path)
         wham_source = resolve_wham_results_source(
             explicit_results_pkl=request.wham_results_pkl or reusable_results_pkl,
             wham_output_dir=wham_output_dir,
             input_video_path=input_video_path,
-            reuse_wham_cache=request.reuse_wham_cache,
+            reuse_wham_cache=False,
         )
         wham_results_pkl = wham_source.path
         if reusable_results_pkl is not None and request.wham_results_pkl is None:
-            local_cached = default_wham_results_pkl(wham_output_dir, input_video_path)
-            wham_cache_status = "reused_local" if reusable_results_pkl == local_cached else "reused_global"
+            wham_cache_status = (
+                "reused_local" if reusable_results_pkl.resolve().is_relative_to((paths.raw_dir / "wham").resolve())
+                else "reused_global"
+            )
         else:
             wham_cache_status = wham_source.cache_status
         if wham_source.should_run_wham and request.require_wham_cache:
@@ -560,12 +608,16 @@ def run_generation_pipeline(
                 "armCounterRotation": stats.arm_counter_rotation,
             }
         stage_started = time.perf_counter()
+        # WHAM frame_ids refer to decoded input frames. Their timestamps must
+        # use that video's rate before trimming inference-only context.
+        wham_source_fps = read_basic_video_metadata(input_video_path).fps
         normalize_wham_output(
             wham_results_pkl=wham_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
             coordinate_space=WHAM_COORDINATE_SPACE,
             output_rotation_degrees=request.wham_output_rotation_degrees,
+            fps=wham_source_fps,
         )
         record_timing("normalizeWhamOutputSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -573,6 +625,7 @@ def run_generation_pipeline(
             wham_results_pkl=wham_results_pkl,
             output_json=paths.retarget_dir / "wham.retarget_source.json",
             coordinate_space=WHAM_COORDINATE_SPACE,
+            fps=wham_source_fps,
         )
         record_timing("exportWhamRetargetSourceSeconds", stage_started)
         if request.export_wham_smpl_preview:
@@ -581,6 +634,7 @@ def run_generation_pipeline(
                 wham_results_pkl=wham_results_pkl,
                 body_model_root=request.body_model_root.expanduser().resolve(),
                 coordinate_space=WHAM_COORDINATE_SPACE,
+                fps=wham_source_fps,
             )
             record_timing("loadWhamSmplMeshSeconds", stage_started)
         else:
@@ -645,6 +699,10 @@ def run_generation_pipeline(
         )
         save_motion_json(raw_motion_json_path, raw_clip)
         record_timing("cropInferenceContextSeconds", stage_started)
+    if raw_motion_validator is not None:
+        stage_started = time.perf_counter()
+        raw_motion_validator(raw_motion_json_path)
+        record_timing("earlyRawMotionGateSeconds", stage_started)
     raw_preview_html_path = paths.preview_dir / "motion_preview.raw.html"
     stage_started = time.perf_counter()
     raw_preview_clip = replace(
@@ -686,55 +744,9 @@ def run_generation_pipeline(
             if source_pose_reference_path is not None and source_pose_reference_path.is_file()
             else None
         )
-        movement_instance = (
-            source_pose_payload.get("authoritativeMovementInstance")
-            if isinstance(source_pose_payload, dict)
-            else None
-        )
-        movement_end_ratio = (
-            float(movement_instance.get("endRatio"))
-            if isinstance(movement_instance, dict)
-            and movement_instance.get("trimmed") is True
-            and isinstance(movement_instance.get("endRatio"), (int, float))
-            else None
-        )
-        if movement_end_ratio is not None and 0.0 < movement_end_ratio < 1.0:
-            end_frame = max(
-                1,
-                min(
-                    raw_clip.frame_count - 1,
-                    round(movement_end_ratio * (raw_clip.frame_count - 1)),
-                ),
-            )
-            selected_frames = list(raw_clip.frames[: end_frame + 1])
-            start_time = selected_frames[0].time_sec
-            raw_clip = replace(
-                raw_clip,
-                frames=[
-                    MotionFrame(
-                        time_sec=frame.time_sec - start_time,
-                        joints=frame.joints,
-                    )
-                    for frame in selected_frames
-                ],
-                metadata={
-                    **raw_clip.metadata,
-                    "authoritativeMovementInstance": movement_instance,
-                },
-            )
-            source_frames = source_pose_payload.get("frames")
-            if isinstance(source_frames, list) and len(source_frames) >= 2:
-                source_end_frame = max(
-                    1,
-                    min(
-                        len(source_frames) - 1,
-                        round(movement_end_ratio * (len(source_frames) - 1)),
-                    ),
-                )
-                source_pose_payload = {
-                    **source_pose_payload,
-                    "frames": source_frames[: source_end_frame + 1],
-                }
+        # Keep the validated source timeline intact during reconstruction and
+        # cleanup. Candidate review owns the single movement-instance cut;
+        # cropping here as well rebases motion before source-video selection.
         if (
             video_world_alignment_should_run
             and ground_contact_mode_allows_floor_support(request.ground_contact_mode)
@@ -780,6 +792,9 @@ def run_generation_pipeline(
             padding_frames=request.padding_frames,
             ground_contact_mode=request.ground_contact_mode,
             support_mode_hint=request.support_mode_hint,
+            # Source-reviewed timing belongs to the source selection stage.
+            # Static trimming here would invalidate every downstream time map.
+            preserve_temporal_extent=isinstance(source_pose_payload, dict),
         )
         record_timing("cleanupMotionSeconds", stage_started)
         stage_started = time.perf_counter()

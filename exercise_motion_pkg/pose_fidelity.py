@@ -225,6 +225,8 @@ def _projection_metrics(
 ) -> dict[str, Any]:
     joint_errors: dict[str, list[float]] = {name: [] for name in POSE_JOINTS}
     angle_errors: dict[str, list[float]] = {name: [] for name in ANGLE_CHAINS}
+    angle_samples: dict[str, list[tuple[float, float]]] = {name: [] for name in ANGLE_CHAINS}
+    output_unobservable = {name: 0 for name in ANGLE_CHAINS}
     comparable_frames = 0
     expected_observations = len(source_frames) * len(POSE_JOINTS)
     observed = 0
@@ -296,6 +298,14 @@ def _projection_metrics(
             motion_angle = _angle_degrees(*(projected[joint] for joint in chain))
             if source_angle is not None and motion_angle is not None:
                 angle_errors[name].append(abs(source_angle - motion_angle))
+                # Near end-on segments make a projected angle ill-conditioned.
+                if all(math.dist(source_joints[a], source_joints[b]) > body_span * .07
+                       for a, b in zip(chain, chain[1:])):
+                    if all(math.dist(projected[a], projected[b]) > body_span * .07
+                           for a, b in zip(chain, chain[1:])):
+                        angle_samples[name].append((source_angle, motion_angle))
+                    else:
+                        output_unobservable[name] += 1
 
     all_joint_errors = [value for values in joint_errors.values() for value in values]
     lower_errors = [value for name in LOWER_BODY_JOINTS for value in joint_errors[name]]
@@ -321,7 +331,28 @@ def _projection_metrics(
         "perAngleMedianErrorDegrees": {
             name: _median(values) for name, values in angle_errors.items()
         },
+        "perAngleEndpointMetrics": {
+            name: {**_endpoint_angle_metrics(values),
+                   "outputForeshortenedSampleCount": output_unobservable[name],
+                   "comparisonUnresolved": len(values) < 6 and len(values) + output_unobservable[name] >= 6}
+            for name, values in angle_samples.items()
+        },
     }
+
+
+def _endpoint_angle_metrics(samples: list[tuple[float, float]]) -> dict[str, Any]:
+    """Check each visible limb at its own extrema, without a bilateral average."""
+    if len(samples) < 6:
+        return {"available": False, "mismatch": False}
+    angles = [sample[0] for sample in samples]
+    extrema = (min(angles), max(angles))
+    errors = []
+    for extreme in extrema:
+        phase = [abs(source - output) for source, output in samples if abs(source - extreme) <= 8]
+        if len(phase) >= 3:
+            errors.append(statistics.median(phase))
+    return {"available": bool(errors), "maxEndpointMedianErrorDegrees": max(errors, default=0),
+            "mismatch": any(error > 30 for error in errors)}
 
 
 def _global_similarity_transform(

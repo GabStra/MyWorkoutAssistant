@@ -11,6 +11,13 @@ MAX_TRACK_STITCH_POSE_RMS_RADIANS = 0.60
 TRACK_STITCH_POSE_BLEND_FRAMES = 12
 
 
+def validate_wham_frame_rate(fps: float) -> float:
+    value = float(fps)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("WHAM source frame rate must be finite and positive.")
+    return value
+
+
 def load_wham_results(wham_results_pkl: Path) -> dict[object, dict[str, object]]:
     try:
         import joblib  # type: ignore

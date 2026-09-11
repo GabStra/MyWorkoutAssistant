@@ -15,11 +15,24 @@ param(
 
     [switch]$SkipExistingSelectionRevalidation,
 
-    [int]$PrefetchWorkers = 2,
+    [int]$PrefetchWorkers = 4,
 
     [int]$PrefetchQueueDepth = 40,
 
-    [int]$StagedWaveSize = 32,
+    [int]$StagedWaveSize = 8,
+
+    [ValidateRange(1, 100000)]
+    [int]$FirstPassCandidateBudget = 24,
+    [ValidateRange(1, 86400)]
+    [int]$FirstPassReviewSeconds = 300,
+    [ValidateRange(1, 100000)]
+    [int]$DeferredCandidateBudget = 96,
+    [ValidateRange(1, 86400)]
+    [int]$DeferredReviewSeconds = 900,
+    [ValidateRange(1, 86400)]
+    [int]$StagedWaveMaxWaitSeconds = 300,
+    [ValidateRange(0, 10000)]
+    [int]$MaxDeferredRounds = 0,
 
     [switch]$DisableStagedWaves,
 
@@ -34,6 +47,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
+. (Join-Path $PSScriptRoot "motion_library_logging.ps1")
 Register-MotionInterruptHandler -Silent
 trap {
     if (
@@ -46,8 +60,9 @@ trap {
     throw $_
 }
 
-$SelectionValidationPolicyVersion = 47
-$RetainedSelectedRevalidationVersion = 3
+. (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
+$SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
+$RetainedSelectedRevalidationVersion = 12
 
 if (-not $DisableStagedWaves -and $StagedWaveSize -lt 1) {
     throw "StagedWaveSize must be at least 1 when staged waves are enabled."
@@ -83,7 +98,7 @@ if (-not $PSBoundParameters.ContainsKey("PythonCommand")) {
         throw "The automatically selected exercise-motion Python cannot see CUDA: $PythonCommand"
     }
 }
-Write-Host "Exercise-motion Python: $PythonCommand"
+Write-Verbose "Exercise-motion Python: $PythonCommand"
 
 if ([string]::IsNullOrWhiteSpace($OutputJson)) {
     $libraryFile = Get-Item -LiteralPath $resolvedLibraryJson
@@ -98,6 +113,27 @@ $summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summa
 $firstPassSummaryPath = Join-Path $resolvedWorkspaceRoot "exercise_library_first_pass_summary.json"
 $deferredPassSummaryPath = Join-Path $resolvedWorkspaceRoot "exercise_library_deferred_pass_summary.json"
 $statePath = Join-Path $resolvedWorkspaceRoot "exercise_library_run_state.json"
+$runStartedAt = Get-Date
+$logDirectory = Join-Path $resolvedWorkspaceRoot "logs"
+New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+$diagnosticLogPath = Join-Path $logDirectory ("library-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+$showDetailedOutput = $VerbosePreference -eq 'Continue'
+Write-MotionLibraryMessage -NewBlock "Movement generation"
+Write-MotionLibraryMessage ("Mode: {0} | Reuse valid cached exercise contracts" -f $(if ($Fresh) { 'regenerate movements' } else { 'resume available work' }))
+Write-MotionLibraryMessage "Library: $resolvedLibraryJson"
+Write-MotionLibraryMessage "Output: $OutputJson"
+Write-MotionLibraryMessage "Detailed log: $diagnosticLogPath"
+$resumeArguments = @('-ExerciseLibraryJson', $resolvedLibraryJson, '-WorkspaceRoot', $resolvedWorkspaceRoot, '-OutputJson', $OutputJson)
+foreach ($parameter in $PSBoundParameters.GetEnumerator()) {
+    if ($parameter.Key -in @('Fresh', 'ExerciseLibraryJson', 'WorkspaceRoot', 'OutputJson', 'RemainingArguments', 'Verbose')) { continue }
+    if ($parameter.Value -is [System.Management.Automation.SwitchParameter]) {
+        if ($parameter.Value.IsPresent) { $resumeArguments += "-$($parameter.Key)" }
+    } else { $resumeArguments += @("-$($parameter.Key)", "$($parameter.Value)") }
+}
+$resumeArguments += $RemainingArguments
+$resumeCommand = "pwsh ./scripts/run_exercise_motion_library.ps1 " + (($resumeArguments | ForEach-Object { "'" + ("$_".Replace("'", "''")) + "'" }) -join ' ')
+Write-MotionLibraryMessage "Resume after an interruption: $resumeCommand"
+
 
 $equipmentSignature = if ([string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) {
     "library-embedded"
@@ -114,6 +150,9 @@ $runSignatureSource = @(
     "$PrefetchWorkers",
     "$PrefetchQueueDepth",
     "$StagedWaveSize",
+    "discovery-turns-v1",
+    "$FirstPassCandidateBudget", "$FirstPassReviewSeconds",
+    "$DeferredCandidateBudget", "$DeferredReviewSeconds", "$StagedWaveMaxWaitSeconds",
     "$(-not $DisableStagedWaves)",
     $PythonCommand,
     ($RemainingArguments -join "`u{001f}")
@@ -171,12 +210,15 @@ function Invoke-MovementPass {
     if ($ReuseSelected) {
         $runnerArguments += "-ReuseExistingSelected"
     }
-    if ($Fresh) {
-        $runnerArguments += "-DisableStageResume"
-    }
-    if ($FirstPass) {
-        $runnerArguments += "-DeferAfterFirstAttempt"
-    }
+    # Reuse selected movements, but unresolved discovery must advance on each turn.
+    # Per-batch review checkpoints are independent of whole-stage resume.
+    if ($Fresh -or -not $FirstPass) { $runnerArguments += "-DisableStageResume" }
+    $runnerArguments += "-DeferAfterFirstAttempt"
+    $candidateBudget = if ($FirstPass) { $FirstPassCandidateBudget } else { $DeferredCandidateBudget }
+    $reviewSeconds = if ($FirstPass) { $FirstPassReviewSeconds } else { $DeferredReviewSeconds }
+    $runnerArguments += @('-DiscoveryCandidateBudget', "$candidateBudget",
+        '-DiscoveryTimeBudgetSeconds', "$reviewSeconds", '-StagedWaveMaxWaitSeconds', "$StagedWaveMaxWaitSeconds")
+    Write-MotionLibraryMessage "Discovery turn: up to $candidateBudget new candidates or $reviewSeconds seconds of review; finish the active batch before yielding."
     if (-not $DisableCpuPrefetch) {
         $runnerArguments += @(
             "-CpuPrefetchDuringBake",
@@ -195,9 +237,12 @@ function Invoke-MovementPass {
     $runnerArguments += $RemainingArguments
 
     for ($restartAttempt = 1; $restartAttempt -le $PassRestartAttempts; $restartAttempt += 1) {
-        & pwsh @runnerArguments
-        $passExitCode = $LASTEXITCODE
+        $passExitCode = Invoke-MotionLibraryLoggedCommand -Command pwsh -Arguments $runnerArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
         Exit-IfMotionRunInterrupted -ExitCode $passExitCode
+        if ($passExitCode -eq 75) {
+            Write-MotionLibraryMessage "Movement generation stopped: insufficient storage. Free space and resume; automatic retries are suspended."
+            exit 75
+        }
         if ($passExitCode -eq 0 -and (Test-Path -LiteralPath $summaryPath)) {
             return
         }
@@ -210,8 +255,8 @@ function Invoke-MovementPass {
         if ($restartAttempt -ge $PassRestartAttempts) {
             throw "Exercise-library movement pass $failure after $PassRestartAttempts automatic attempt(s)."
         }
-        Write-Warning ((
-                "Exercise-library movement pass {0}; restarting from its persisted checkpoint " +
+        Write-MotionLibraryMessage -NewBlock ((
+                "WARNING: Exercise-library movement pass {0}; restarting from its persisted checkpoint " +
                 "(attempt {1}/{2})."
             ) -f $failure, ($restartAttempt + 1), $PassRestartAttempts)
         Start-Sleep -Seconds 5
@@ -231,6 +276,13 @@ function Test-ExistingSelectionRevalidationNeeded {
             $markerPath = Join-Path $selectionFile.Directory.FullName "revalidation.json"
             if (Test-Path -LiteralPath $markerPath) {
                 $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+                if (@($marker.reasons) -contains 'final_output_validation_no_frames') {
+                    return $true
+                }
+                if (($marker.PSObject.Properties.Name -contains 'selectedManifestSha256') -and
+                    $marker.selectedManifestSha256 -ne (Get-FileHash -LiteralPath $selectionFile.FullName -Algorithm SHA256).Hash) {
+                    return $true
+                }
                 $bakeManifestPath = Join-Path $selectionFile.Directory.Parent.FullName "bake\selection_manifest.json"
                 $retainedFallbackCurrent = (
                     (Test-Path -LiteralPath $bakeManifestPath) -or
@@ -265,7 +317,7 @@ function Invoke-ExistingSelectionRevalidation {
         return
     }
     $reportPath = Join-Path $resolvedWorkspaceRoot "exercise_library_revalidation_report.json"
-    Write-Host "Revalidating existing selected movements under the current quality policy."
+    Write-MotionLibraryMessage "Revalidating existing selected movements under the current quality policy."
     $revalidateArguments = @(
         "-m", "exercise_motion_pkg.cli", "revalidate-library-workspace",
         "--workspace-root", $resolvedWorkspaceRoot,
@@ -275,8 +327,7 @@ function Invoke-ExistingSelectionRevalidation {
     if (-not [string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) {
         $revalidateArguments += @("--equipment-json", $resolvedEquipmentJson)
     }
-    & $PythonCommand @revalidateArguments
-    $revalidateExitCode = $LASTEXITCODE
+    $revalidateExitCode = Invoke-MotionLibraryLoggedCommand -Command $PythonCommand -Arguments $revalidateArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
     Exit-IfMotionRunInterrupted -ExitCode $revalidateExitCode
     if ($revalidateExitCode -ne 0) {
         throw "Existing selection revalidation failed with exit code $revalidateExitCode"
@@ -287,15 +338,15 @@ function Invoke-ExistingSelectionRevalidation {
 function Write-MovementPackage {
     param([string]$MotionSummaryJson)
 
-    & pwsh -NoProfile -File $packageBuilder `
-        -WorkoutPlanPackageJson $resolvedLibraryJson `
-        -MotionSummaryJson $MotionSummaryJson `
-        -OutputJson $OutputJson `
-        -StrictIdMatch `
-        -AllowEmpty
-    if ($LASTEXITCODE -ne 0) {
-        throw "Exercise-library movement package creation failed with exit code $LASTEXITCODE"
+    $packageArguments = @('-NoProfile', '-File', $packageBuilder,
+        '-WorkoutPlanPackageJson', $resolvedLibraryJson, '-MotionSummaryJson', $MotionSummaryJson,
+        '-OutputJson', $OutputJson, '-StrictIdMatch', '-AllowEmpty')
+    $packageExitCode = Invoke-MotionLibraryLoggedCommand -Command pwsh -Arguments $packageArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
+    Exit-IfMotionRunInterrupted -ExitCode $packageExitCode
+    if ($packageExitCode -ne 0) {
+        throw "Movement package creation failed with exit code $packageExitCode. Details: $diagnosticLogPath"
     }
+
 }
 
 $skipFirstPass = $false
@@ -320,7 +371,7 @@ if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
 }
 
 if (-not $skipFirstPass) {
-    Write-Host "Exercise library phase 1/2: one quality-validated candidate per unresolved definition."
+    Write-MotionLibraryMessage -NewBlock "Pass 1/2: try one candidate for each exercise; revisit unresolved exercises in pass 2."
     Write-RunState -Phase "first_pass_started"
     Invoke-MovementPass -FirstPass -ReuseSelected:(-not $Fresh)
     Copy-Item -Force -LiteralPath $summaryPath -Destination $firstPassSummaryPath
@@ -335,15 +386,60 @@ if (-not $skipFirstPass) {
     Write-RunState -Phase "first_pass_completed" -SummaryJson $firstPassSummaryPath
     Write-MovementPackage -MotionSummaryJson $firstPassSummaryPath
 } else {
-    Write-Host "Exercise library phase 1/2 already completed for these inputs; resuming deferred work."
+    Write-MotionLibraryMessage "Exercise library phase 1/2 already completed for these inputs; resuming deferred work."
 }
 
-Write-Host "Exercise library phase 2/2: deeper retry for definitions still without a selected movement."
-Write-RunState -Phase "deferred_pass_started" -SummaryJson $firstPassSummaryPath
-Invoke-MovementPass -ReuseSelected
-Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath
-Write-MovementPackage -MotionSummaryJson $deferredPassSummaryPath
-Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath
+function Get-DiscoveryReviewCount {
+    $count = 0
+    foreach ($directory in Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory) {
+        foreach ($file in Get-ChildItem -LiteralPath $directory.FullName -Filter 'discovery_review_*.json' -File) {
+            try {
+                $checkpoint = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+                $count += @($checkpoint.reviewed.PSObject.Properties).Count
+            } catch { Write-Verbose "Cannot read discovery checkpoint $($file.FullName)." }
+        }
+    }
+    return $count
+}
+function Get-SourceTurnResumeSignature {
+    $entries = foreach ($directory in Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory) {
+        $cursorPath = Join-Path $directory.FullName 'bake/source_turn_resume.json'
+        if (Test-Path -LiteralPath $cursorPath) {
+            "$($directory.Name):$((Get-FileHash -LiteralPath $cursorPath -Algorithm SHA256).Hash)"
+        }
+    }
+    return (($entries | Sort-Object) -join '|')
+}
 
-Write-Host "Exercise library with available movements: $OutputJson"
-Write-Host "Resumable run state: $statePath"
+$round = 0
+while ($true) {
+    $round += 1
+    $beforeReviewCount = Get-DiscoveryReviewCount
+    $beforeSourceTurnSignature = Get-SourceTurnResumeSignature
+    Write-MotionLibraryMessage -NewBlock "Pass 2 - round $round`: larger discovery turns for unresolved exercises; reuse movements already saved."
+    Write-RunState -Phase "deferred_pass_started" -SummaryJson $firstPassSummaryPath
+    Invoke-MovementPass -ReuseSelected
+    Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath
+    Write-MovementPackage -MotionSummaryJson $deferredPassSummaryPath
+    Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath
+    $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-Json
+    $unresolved = @($roundSummary.exercises | Where-Object status -ne 'completed').Count
+    $newReviews = (Get-DiscoveryReviewCount) - $beforeReviewCount
+    $pendingSourceTurns = @(Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory | Where-Object {
+        Test-Path -LiteralPath (Join-Path $_.FullName 'bake/source_turn_resume.json')
+    }).Count
+    Write-MotionLibraryMessage -NewBlock "Round $round finished: $newReviews new candidate reviews | $unresolved unresolved exercises."
+    if ($unresolved -eq 0) { break }
+    $sourceTurnsAdvanced = $beforeSourceTurnSignature -ne (Get-SourceTurnResumeSignature)
+    if ($newReviews -le 0 -and ($pendingSourceTurns -eq 0 -or -not $sourceTurnsAdvanced)) {
+        Write-MotionLibraryMessage 'Stopping automatic rounds: no new candidate reviews completed. Unresolved exercises remain available for resume; check their logs for search or runtime failures.'
+        break
+    }
+    if ($MaxDeferredRounds -gt 0 -and $round -ge $MaxDeferredRounds) { break }
+}
+
+Write-MotionLibraryMessage -NewBlock "Exercise library with available movements: $OutputJson"
+Write-MotionLibraryOutcomeSummary -SummaryPath $deferredPassSummaryPath
+Write-MotionLibraryMessage ("Elapsed: {0:hh\:mm\:ss}" -f ((Get-Date) - $runStartedAt))
+Write-MotionLibraryMessage "Detailed log: $diagnosticLogPath"
+Write-MotionLibraryMessage "Resume unresolved work: $resumeCommand"

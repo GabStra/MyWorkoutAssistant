@@ -1,0 +1,82 @@
+"""Bounded independent review questions with reusable, conclusive answers."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from pathlib import Path
+import threading
+from typing import Any, Callable
+
+from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
+
+_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="source-review-question")
+_metrics_lock = threading.Lock()
+_metrics = {"cacheHits": 0, "questionsAsked": 0}
+
+
+def question_cache_metrics() -> dict[str, int]:
+    with _metrics_lock:
+        return dict(_metrics)
+
+
+def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Path],
+                    max_tokens: int, operation: Callable[[], tuple[str, Any]],
+                    reusable: Callable[[Any], bool]) -> tuple[str, Any]:
+    key = cache_key({"prompt": prompt, "maxTokens": max_tokens}, frames)
+    checkpoint = directory / name / key / "checkpoint.json"
+    with stage_lock(checkpoint):
+        cached = load_stage(checkpoint, key)
+        if cached is not None and reusable(cached.get("parsed")):
+            with _metrics_lock:
+                _metrics["cacheHits"] += 1
+            return cached["raw"], cached["parsed"]
+        with _metrics_lock:
+            _metrics["questionsAsked"] += 1
+        raw, parsed = operation()
+        if reusable(parsed):
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path = checkpoint.with_name("prompt.txt")
+            prompt_path.write_text(prompt, encoding="utf-8")
+            save_stage(checkpoint, key, {"raw": raw, "parsed": parsed}, [prompt_path, *frames])
+        return raw, parsed
+
+
+def run_questions(jobs: dict[str, Callable[[], Any]], caption_images: Callable[..., str]) -> dict[str, Any]:
+    owner = getattr(caption_images, "__self__", None)
+    if getattr(owner, "_max_active_calls", 1) <= 1:
+        return {name: operation() for name, operation in jobs.items()}
+    deadlines = getattr(owner, "_candidate_deadlines", None)
+    deadline = getattr(deadlines, "value", None)
+
+    def invoke(operation: Callable[[], Any]) -> Any:
+        # Session deadlines are thread-local; preserve the candidate's budget
+        # when its independent questions move to shared review workers.
+        previous = getattr(deadlines, "value", None)
+        if deadlines is not None:
+            deadlines.value = deadline
+        try:
+            return operation()
+        finally:
+            if deadlines is not None:
+                deadlines.value = previous
+
+    futures = {name: _executor.submit(invoke, operation) for name, operation in jobs.items()}
+    try:
+        answers = {}
+        for name, future in futures.items():
+            while True:
+                try:
+                    answers[name] = future.result(timeout=0.2)
+                    break
+                except TimeoutError:
+                    if future.done():
+                        raise
+        return answers
+    except BaseException as exc:
+        for future in futures.values():
+            future.cancel()
+        # Running calls keep their owning session's request deadline. Do not
+        # start a second review wave while those calls still own its artifacts.
+        if isinstance(exc, Exception):
+            for future in futures.values():
+                if not future.cancelled():
+                    while not future.done():
+                        threading.Event().wait(0.05)
+        raise

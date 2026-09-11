@@ -409,18 +409,31 @@ def align_motion_clip_to_video(
                 "rejectionReason": "upright_source_alignment_regression",
             }
         )
-        return VideoWorldAlignmentResult(
-            clip=clip,
-            applied=False,
-            reason="upright_source_alignment_regression",
-            confidence=confidence,
-            camera_ground_plane=camera_plane,
-            correspondence_rms_error=rms_error,
-            frames_used=len(depth_samples),
-            sample_frame_seconds=[sample.time_seconds for sample in depth_samples],
-            model_name=depth_samples[0].model_name,
-            metadata=metadata,
-        )
+        floor_only = floor_only_alignment_fallback(clip, camera_leveling_rotation)
+        if floor_only is None or camera_plane.rms_error > PLANE_RANSAC_THRESHOLD_METERS:
+            return VideoWorldAlignmentResult(
+                clip=clip,
+                applied=False,
+                reason="upright_source_alignment_regression",
+                confidence=confidence,
+                camera_ground_plane=camera_plane,
+                correspondence_rms_error=rms_error,
+                frames_used=len(depth_samples),
+                sample_frame_seconds=[sample.time_seconds for sample in depth_samples],
+                model_name=depth_samples[0].model_name,
+                metadata=metadata,
+            )
+        aligned_clip = floor_only
+        metadata.update({
+            "applied": True,
+            "rejectedTransform": False,
+            "rejectedBodyFit": True,
+            "policy": "measured_floor_leveling_without_body_fit",
+            "rotationMatrix": camera_leveling_rotation.tolist(),
+            "translation": [0.0, 0.0, 0.0],
+            "floorOnlyUprightnessScore": motion_clip_camera_uprightness_score(floor_only),
+        })
+        metadata.pop("rejectionReason", None)
     aligned_clip = replace(
         aligned_clip,
         metadata={
@@ -431,7 +444,8 @@ def align_motion_clip_to_video(
     return VideoWorldAlignmentResult(
         clip=aligned_clip,
         applied=True,
-        reason="video_floor_distance_pitch_applied",
+        reason=("measured_floor_leveling_applied" if metadata.get("rejectedBodyFit")
+                else "video_floor_distance_pitch_applied"),
         confidence=confidence,
         camera_ground_plane=camera_plane,
         correspondence_rms_error=rms_error,
@@ -440,6 +454,20 @@ def align_motion_clip_to_video(
         model_name=depth_samples[0].model_name,
         metadata=metadata,
     )
+
+
+def floor_only_alignment_fallback(clip: MotionClip, rotation: np.ndarray) -> MotionClip | None:
+    """Retain measured gravity when the independently fitted body pose fails.
+
+    This rotates the whole clip once; it never straightens individual poses or
+    forces a leaning torso to become vertical.
+    """
+    leveled = apply_rigid_transform_to_clip(clip, rotation=rotation, translation=np.zeros(3))
+    before = motion_clip_camera_uprightness_score(clip)
+    after = motion_clip_camera_uprightness_score(leveled)
+    if before is None or after is None or after + 1e-6 < before:
+        return None
+    return leveled
 
 
 def estimate_camera_floor_plane(

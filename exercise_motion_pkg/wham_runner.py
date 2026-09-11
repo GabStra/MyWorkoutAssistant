@@ -11,7 +11,8 @@ from typing import Any
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import (gpu_stage_lock, open_lock_lease, close_lock_lease,
+                                        read_lock_text, lock_open_is_contention)
 
 
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
@@ -255,6 +256,32 @@ def run_wham_locally(
     )
 
 
+def ensure_warm_worker_ready(session_dir: Path, *, timeout_seconds: float) -> None:
+    """Ask the supervising wrapper to start WHAM only on a cache miss."""
+    ready_path = session_dir / "ready.json"
+    try:
+        if ready_path.exists() and not any((session_dir / name).exists() for name in ("stop", "stopped.json")):
+            assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
+            return
+    except RuntimeError:
+        pass
+    if os.environ.get("EXERCISE_MOTION_WHAM_LAZY_START") != "1":
+        raise RuntimeError(f"Warm WHAM worker is not ready: {ready_path}")
+    request_path = session_dir / "start_requested.json"
+    request_path.write_text(json.dumps({"requestedBy": os.getpid()}), encoding="utf-8")
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while time.monotonic() < deadline:
+            # The supervisor removes the request only after successful startup.
+            if not request_path.exists() and ready_path.exists():
+                assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
+                return
+            time.sleep(0.25)
+        raise TimeoutError("Timed out waiting for supervised WHAM worker startup")
+    finally:
+        request_path.unlink(missing_ok=True)
+
+
 def run_wham_with_warm_worker(
     *,
     input_video: Path,
@@ -283,10 +310,7 @@ def run_wham_with_warm_worker(
     job_logs_dir = session_dir / "job_logs"
     for path in (jobs_dir, results_dir, job_logs_dir):
         path.mkdir(parents=True, exist_ok=True)
-    ready_path = session_dir / "ready.json"
-    if not ready_path.exists():
-        raise RuntimeError(f"Warm WHAM worker is not ready: {ready_path}")
-    assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
+    ensure_warm_worker_ready(session_dir, timeout_seconds=timeout)
 
     job_id = uuid.uuid4().hex
     container_input_video = path_inside_worker_mount(input_video, mount_root=mount_root)
@@ -526,14 +550,20 @@ def wham_docker_run_lock(*, enabled: bool):
     lock_handle: int | None = None
     while True:
         try:
-            lock_handle = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            lock_handle = open_lock_lease(lock_path)
             payload = {
                 "pid": os.getpid(),
                 "createdAt": time.time(),
             }
             os.write(lock_handle, json.dumps(payload).encode("utf-8"))
             break
-        except FileExistsError:
+        except OSError as error:
+            if lock_handle is not None:
+                close_lock_lease(lock_handle, lock_path)
+                lock_handle = None
+                raise
+            if not lock_open_is_contention(error):
+                raise
             if wham_docker_lock_is_stale(lock_path, timeout_seconds=timeout_seconds):
                 try:
                     lock_path.unlink()
@@ -544,15 +574,16 @@ def wham_docker_run_lock(*, enabled: bool):
             if elapsed >= timeout_seconds:
                 raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}")
             time.sleep(2.0)
+        except BaseException:
+            if lock_handle is not None:
+                close_lock_lease(lock_handle, lock_path)
+                lock_handle = None
+            raise
     try:
         yield time.perf_counter() - started
     finally:
         if lock_handle is not None:
-            os.close(lock_handle)
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+            close_lock_lease(lock_handle, lock_path)
 
 
 def wham_docker_lock_path() -> Path:
@@ -574,7 +605,7 @@ def wham_docker_lock_timeout_seconds() -> float:
 
 def wham_docker_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
     try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        payload = json.loads(read_lock_text(lock_path))
     except (OSError, json.JSONDecodeError):
         return lock_age_seconds(lock_path) > timeout_seconds
     pid = payload.get("pid") if isinstance(payload, dict) else None

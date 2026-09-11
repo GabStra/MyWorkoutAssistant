@@ -15,7 +15,9 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 1
+POLICY_VERSION = 2
+# Classification changes reuse the exact same expensive landmark observations.
+OBSERVATION_CACHE_VERSION = 1
 LANDMARKS = {"left_hip": 23, "right_hip": 24, "left_knee": 25, "right_knee": 26,
              "left_ankle": 27, "right_ankle": 28, "left_heel": 29, "right_heel": 30,
              "left_toe": 31, "right_toe": 32}
@@ -62,7 +64,7 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
     if configured_model:
         model_file = Path(configured_model)
         model_key = "." + hashlib.sha256(model_file.read_bytes()).hexdigest()[:16]
-    cache = cache_dir / f"{digest}{model_key}.v{POLICY_VERSION}.json"
+    cache = cache_dir / f"{digest}{model_key}.v{OBSERVATION_CACHE_VERSION}.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
     try:
@@ -254,10 +256,45 @@ def classify_foot_contacts(
                     "minimumLiftRatio": lift_ratio,
                 })
             start = end
+        assign_stationary_anchor_groups(result["contacts"], side=side, valid=valid,
+                                        toe_points=toe_points, foot_sizes=foot_sizes, states=states)
         result["feet"][side] = {"states": states, "validObservationCount": int(valid.sum()),
                                 "imagePitchReference": references[0], "worldPitchReference": references[1],
                                 "pitchTolerances": tolerances}
     return result
+
+
+def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_sizes, states):
+    """Retain a toe anchor across a pitch-uncertain but visibly stationary gap.
+
+    Contact classification can change from full sole to toe-only without the
+    toe changing its location. Unknown contact frames remain unconstrained;
+    only the observed episodes share an anchor when the entire gap supplies
+    reliable stationary toe observations. Missing observations never bridge.
+    """
+    previous = None
+    count = len(valid)
+    for number, contact in enumerate(contacts):
+        if contact.get('jointName') != f'{side}_foot':
+            continue
+        if contact.get('contactMotion') != 'stationary' or contact.get('contactState') not in {'full_sole', 'toe_only'}:
+            previous = None
+            continue
+        start, end = contact_frame_bounds(contact, count)
+        group = f'{side}:toe:{number}'
+        if previous is not None:
+            previous_contact, previous_end = previous
+            indexes = slice(previous_end, start + 1)
+            visible = bool(np.all(valid[indexes]))
+            compatible = all(state in {'unknown', 'full_sole', 'toe_only'} for state in states[indexes])
+            if visible and compatible:
+                points = toe_points[indexes]
+                spread = float(np.linalg.norm(np.ptp(points, axis=0)))
+                tolerance = max(.005, float(np.median(foot_sizes[indexes])) * .15)
+                if spread <= tolerance:
+                    group = previous_contact['anchorGroupId']
+        contact['anchorGroupId'] = group
+        previous = contact, end
 
 
 def add_observed_foot_contacts(

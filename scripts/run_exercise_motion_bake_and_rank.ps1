@@ -90,8 +90,8 @@ param(
     [bool]$LlamaCppDisableReasoning = $false,
     [Nullable[int]]$LlamaCppReasoningBudget = 64,
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
-    [Nullable[int]]$LlamaCppCtxSize = 8192,
-    [Nullable[int]]$LlamaCppBatchSize = 256,
+    [Nullable[int]]$LlamaCppCtxSize = 49152,
+    [Nullable[int]]$LlamaCppBatchSize = 1024,
     [Nullable[int]]$LlamaCppUBatchSize = 512,
     [ValidateSet("on", "off", "auto")]
     [string]$LlamaCppFlashAttn = "on",
@@ -99,12 +99,12 @@ param(
     [string]$LlamaCppCacheTypeK = "q8_0",
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 1,
+    [Nullable[int]]$LlamaCppParallel = 6,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
     [string]$LlamaCppFit = "on",
-    [Nullable[int]]$LlamaCppFitCtx = 8192,
+    [Nullable[int]]$LlamaCppFitCtx = 49152,
     [Nullable[int]]$LlamaCppFitTarget = 2048,
     [bool]$LlamaCppMmap = $true,
     [bool]$LlamaCppMlock = $false,

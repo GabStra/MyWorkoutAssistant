@@ -649,6 +649,14 @@ def contract_text_implies_distal_leg_vertical_raise(contract: dict[str, Any]) ->
 
 
 def contract_text_implies_hinged_upper_limb_pull(contract: dict[str, Any]) -> bool:
+    # A hinge in one phase does not make the entire movement a sustained row.
+    # Check positive requested phases only: rejectIf may mention upright variants.
+    phases = " ".join(str(value) for value in contract.get("requiredPhases", [])).casefold()
+    if re.search(
+        r"\b(upright|standing|stand\s+up|extend\s+the\s+hips|hip\s+extension)\b",
+        phases,
+    ):
+        return False
     text = target_motion_profile_text(None, contract=contract)
     motion_text = target_motion_profile_text(
         None,

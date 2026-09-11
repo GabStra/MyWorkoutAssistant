@@ -6,6 +6,7 @@ from statistics import median
 from typing import Any
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
+from exercise_motion_pkg.bilateral_evidence import source_arm_symmetry_evidence
 from exercise_motion_pkg.kinematic_policy import (
     DISTAL_STEP_BODY_RATIO,
     DISTAL_STEP_SPIKE_RATIO,
@@ -46,12 +47,12 @@ STRUCTURAL_BONES = (
     ("spine2", "spine3"),
     ("spine3", "neck"),
     ("neck", "head"),
-    ("neck", "left_collar"),
+    ("spine3", "left_collar"),
     ("left_collar", "left_shoulder"),
     ("left_shoulder", "left_elbow"),
     ("left_elbow", "left_wrist"),
     ("left_wrist", "left_hand"),
-    ("neck", "right_collar"),
+    ("spine3", "right_collar"),
     ("right_collar", "right_shoulder"),
     ("right_shoulder", "right_elbow"),
     ("right_elbow", "right_wrist"),
@@ -140,6 +141,8 @@ SOURCE_PRESERVED_ARTICULATION_CHAINS = (
 
 def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
     return {
+        "fps": clip.fps,
+        "jointNames": list(clip.joint_names),
         "frames": [
             {
                 "timeSec": frame.time_sec,
@@ -167,9 +170,82 @@ def _point_angle_degrees_3d(
     return math.degrees(math.acos(cosine))
 
 
+def _rotate_hinge_descendants(joints, *, parent, hinge, child, descendants, target_child):
+    """Move a hinge's child by rotating its complete distal chain rigidly."""
+    origin = joints[hinge]
+    before = _normalize(_subtract(joints[child], origin))
+    after = _normalize(_subtract(target_child, origin))
+    if before is None or after is None:
+        return
+    cross = _cross(before, after)
+    sine = _length(cross)
+    cosine = max(-1., min(1., _dot(before, after)))
+    if sine > 1e-9:
+        axis = _scale(cross, 1 / sine)
+    elif cosine < 0:
+        proximal = _subtract(joints[parent], origin)
+        axis = _normalize(_subtract(proximal, _scale(before, _dot(proximal, before))))
+        if axis is None:
+            basis = min(((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), key=lambda v: abs(_dot(v, before)))
+            axis = _normalize(_cross(before, basis))
+    else:
+        return
+    angle = math.atan2(sine, cosine)
+    for name in descendants:
+        if name in joints:
+            joints[name] = _add(origin, _rotate_vector_about_axis(
+                _subtract(joints[name], origin), axis=axis, angle_radians=angle))
+    joints[child] = target_child
+
+
+def _transport_hinge_bend(bend, source_parent, proposed_parent):
+    """Compare bend direction after transporting it with the parent bone."""
+    cross = _cross(source_parent, proposed_parent)
+    sine = _length(cross)
+    cosine = max(-1., min(1., _dot(source_parent, proposed_parent)))
+    if sine > 1e-9:
+        return _rotate_vector_about_axis(bend, axis=_scale(cross, 1 / sine),
+                                         angle_radians=math.atan2(sine, cosine))
+    # For an antipodal parent, the known bend is a valid rotation axis and
+    # stays unchanged. A parallel parent likewise needs no transport.
+    return bend
+
+
+def _local_hinge_bend(frame, parent, hinge, child):
+    body = _body_local_frame(frame)
+    if body is None or any(name not in frame.joints for name in (parent, hinge, child)):
+        return None
+    parent_axis = _normalize(_subtract(frame.joints[parent], frame.joints[hinge]))
+    child_axis = _normalize(_subtract(frame.joints[child], frame.joints[hinge]))
+    if parent_axis is None or child_axis is None:
+        return None
+    bend = _normalize(_subtract(child_axis, _scale(parent_axis, _dot(child_axis, parent_axis))))
+    if bend is None:
+        return None
+    axes = (body.right, body.up, body.forward)
+    return tuple(_dot(parent_axis, axis) for axis in axes), tuple(_dot(bend, axis) for axis in axes)
+
+
+def _source_branch_is_temporally_supported(track, index, radius):
+    if index < radius or index + radius >= len(track):
+        return True
+    current, left, right = track[index], track[index - radius], track[index + radius]
+    if current is None or left is None or right is None:
+        return True
+    parent, bend = current
+    left_bend = _transport_hinge_bend(left[1], left[0], parent)
+    right_bend = _transport_hinge_bend(right[1], right[0], parent)
+    # Only discount an isolated source branch when the observations on both
+    # sides agree and the current branch is in their opposite hemisphere.
+    # Compare after parent transport so a real leg swing is not a branch flip.
+    return not (_dot(left_bend, right_bend) > 0 and _dot(bend, _add(left_bend, right_bend)) < 0)
+
+
 def constrain_to_source_articulation_envelope(
     source: MotionClip,
     proposed: MotionClip,
+    *,
+    phase_tolerance_degrees: float | None = None,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Keep cleanup from inventing articulation absent from the 3D source.
 
@@ -178,12 +254,16 @@ def constrain_to_source_articulation_envelope(
     reconstruction's observed hinge envelope and constrain only proposals that
     leave it; the remaining correction is retained.
     """
+    from .contact_constraints import ANGLE_NUMERICAL_TOLERANCE_RADIANS
+
+    numerical_tolerance_degrees = math.degrees(ANGLE_NUMERICAL_TOLERANCE_RADIANS)
     constrained_frames = [
         MotionFrame(time_sec=frame.time_sec, joints=dict(frame.joints))
         for frame in proposed.frames
     ]
     constrained_samples = 0
     prevented_branch_flips = 0
+    ignored_unstable_source_branches = 0
     maximum_excess_degrees = 0.0
     constrained_joints: set[str] = set()
     envelopes: dict[str, dict[str, float]] = {}
@@ -204,7 +284,8 @@ def constrain_to_source_articulation_envelope(
         minimum = min(source_angles) - SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES
         maximum = max(source_angles) + SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES
         envelopes[name] = {"minimumDegrees": minimum, "maximumDegrees": maximum}
-        for source_frame, frame in zip(source.frames, constrained_frames):
+        source_bend_track = [_local_hinge_bend(frame, parent, hinge, child) for frame in source.frames]
+        for frame_index, (source_frame, frame) in enumerate(zip(source.frames, constrained_frames)):
             joints = frame.joints
             if any(
                 joint_name not in joints or joint_name not in source_frame.joints
@@ -243,7 +324,18 @@ def constrain_to_source_articulation_envelope(
                             _scale(proposed_parent, _dot(proposed_child, proposed_parent)),
                         )
                     )
-                    if source_bend is not None and proposed_bend is not None:
+                    branch_supported = _source_branch_is_temporally_supported(
+                        source_bend_track, frame_index, max(1, round(source.fps * .10)))
+                    if not branch_supported:
+                        ignored_unstable_source_branches += 1
+                    # Near extension, tiny positional errors can reverse the
+                    # normalized bend vector. It cannot establish an IK branch.
+                    # Angle-envelope checks below still apply in these poses.
+                    minimum_branch_bend = math.sin(math.radians(15.0))
+                    source_branch_reliable = _length(_cross(source_parent, source_child)) > minimum_branch_bend
+                    proposed_branch_reliable = _length(_cross(proposed_parent, proposed_child)) > minimum_branch_bend
+                    if (source_bend is not None and proposed_bend is not None and branch_supported
+                            and source_branch_reliable and proposed_branch_reliable):
                         source_local_bend = (
                             _dot(source_bend, source_body_frame.right),
                             _dot(source_bend, source_body_frame.up),
@@ -254,47 +346,70 @@ def constrain_to_source_articulation_envelope(
                             _dot(proposed_bend, proposed_body_frame.up),
                             _dot(proposed_bend, proposed_body_frame.forward),
                         )
+                        source_local_bend = _transport_hinge_bend(
+                            source_local_bend,
+                            tuple(_dot(source_parent, axis) for axis in
+                                  (source_body_frame.right, source_body_frame.up, source_body_frame.forward)),
+                            tuple(_dot(proposed_parent, axis) for axis in
+                                  (proposed_body_frame.right, proposed_body_frame.up, proposed_body_frame.forward)),
+                        )
                         # Crossing the opposite hemisphere is a discrete IK
                         # branch change, not ordinary articulation. Preserve
                         # the reconstructed branch instead of allowing a
                         # post-process solver to turn a knee or elbow backward.
                         if _dot(source_local_bend, proposed_local_bend) < 0.0:
                             child_length = _length(_subtract(joints[child], joints[hinge]))
-                            source_child_local = (
-                                _dot(source_child, source_body_frame.right),
-                                _dot(source_child, source_body_frame.up),
-                                _dot(source_child, source_body_frame.forward),
-                            )
-                            restored_direction = _normalize(
+                            reference_bend = _normalize(
                                 _add(
                                     _add(
-                                        _scale(proposed_body_frame.right, source_child_local[0]),
-                                        _scale(proposed_body_frame.up, source_child_local[1]),
+                                        _scale(proposed_body_frame.right, source_local_bend[0]),
+                                        _scale(proposed_body_frame.up, source_local_bend[1]),
                                     ),
-                                    _scale(proposed_body_frame.forward, source_child_local[2]),
+                                    _scale(proposed_body_frame.forward, source_local_bend[2]),
                                 )
+                            )
+                            # Restore the hinge branch about the CURRENT
+                            # parent axis. Copying the source's absolute child
+                            # direction changes flexion when the parent moved,
+                            # and can turn a bent knee into a straight leg.
+                            restored_bend = (
+                                _normalize(_subtract(reference_bend, _scale(proposed_parent,
+                                    _dot(reference_bend, proposed_parent))))
+                                if reference_bend is not None else None
+                            )
+                            cosine = max(-1., min(1., _dot(proposed_parent, proposed_child)))
+                            restored_direction = (
+                                _add(_scale(proposed_parent, cosine),
+                                     _scale(restored_bend, math.sqrt(max(0., 1 - cosine * cosine))))
+                                if restored_bend is not None else None
                             )
                             if restored_direction is not None and child_length > 1e-8:
                                 restored_child = _add(
                                     joints[hinge],
                                     _scale(restored_direction, child_length),
                                 )
-                                delta = _subtract(restored_child, joints[child])
-                                for descendant in descendants:
-                                    if descendant in joints:
-                                        joints[descendant] = _add(joints[descendant], delta)
+                                _rotate_hinge_descendants(joints, parent=parent, hinge=hinge, child=child,
+                                                          descendants=descendants, target_child=restored_child)
                                 prevented_branch_flips += 1
                                 constrained_samples += 1
                                 constrained_joints.add(name)
             angle = _point_angle_degrees_3d(
                 joints[parent], joints[hinge], joints[child]
             )
+            frame_minimum, frame_maximum = minimum, maximum
+            if phase_tolerance_degrees is not None:
+                source_angle = _point_angle_degrees_3d(
+                    source_frame.joints[parent], source_frame.joints[hinge], source_frame.joints[child]
+                )
+                if source_angle is not None:
+                    frame_minimum = max(minimum, source_angle - phase_tolerance_degrees)
+                    frame_maximum = min(maximum, source_angle + phase_tolerance_degrees)
             if (
                 angle is None
-                or minimum - 1e-7 <= angle <= maximum + 1e-7
+                or frame_minimum - numerical_tolerance_degrees <= angle <= frame_maximum + numerical_tolerance_degrees
             ):
                 continue
-            target_angle = min(max(angle, minimum), maximum)
+            target_angle = min(max(angle, frame_minimum), frame_maximum)
             target_child = _child_point_for_target_hinge_angle(
                 parent=joints[parent],
                 hinge=joints[hinge],
@@ -303,10 +418,8 @@ def constrain_to_source_articulation_envelope(
             )
             if target_child is None:
                 continue
-            delta = _subtract(target_child, joints[child])
-            for descendant in descendants:
-                if descendant in joints:
-                    joints[descendant] = _add(joints[descendant], delta)
+            _rotate_hinge_descendants(joints, parent=parent, hinge=hinge, child=child,
+                                      descendants=descendants, target_child=target_child)
             constrained_samples += 1
             constrained_joints.add(name)
             maximum_excess_degrees = max(maximum_excess_degrees, abs(angle - target_angle))
@@ -315,10 +428,13 @@ def constrain_to_source_articulation_envelope(
         "strategy": "source_3d_articulation_envelope_constraint",
         "constrainedSampleCount": constrained_samples,
         "preventedHingeBranchFlipCount": prevented_branch_flips,
+        "ignoredUnstableSourceBranchCount": ignored_unstable_source_branches,
         "constrainedJoints": sorted(constrained_joints),
         "maximumPreventedExcessDegrees": maximum_excess_degrees,
         "toleranceDegrees": SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES,
         "sourceEnvelopes": envelopes,
+        "phaseToleranceDegrees": phase_tolerance_degrees,
+        "numericalToleranceDegrees": numerical_tolerance_degrees,
     }
 
 
@@ -335,7 +451,16 @@ def suppress_post_ik_anatomical_spikes(
     clip: MotionClip,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Repair isolated distal-chain discontinuities introduced after IK."""
-    return _suppress_temporal_spikes(clip, active_threshold=0.018)
+    # Independent XYZ averaging changes bone lengths and can introduce a new
+    # hinge discontinuity when the following articulation pass restores them.
+    # Use the same rigid-chain rotational fitting as terminal refinement.
+    core_candidate, core_metadata = _stabilize_core_temporal_continuity(clip)
+    repaired, limb_metadata = _stabilize_arm_temporal_continuity(core_candidate)
+    return repaired, {
+        **limb_metadata,
+        "applied": core_metadata.get("applied", False) or limb_metadata.get("applied", False),
+        "coreTemporalContinuity": core_metadata,
+    }
 
 
 def stabilize_forefoot_ground_contacts(
@@ -344,8 +469,25 @@ def stabilize_forefoot_ground_contacts(
 ) -> tuple[MotionClip, dict[str, object]]:
     """Solve rigid feet with ankle limits relative to each lower leg."""
     from .foot_kinematics import solve_rigid_foot_contacts
+    from .contact_constraints import InfeasibleContactCorrection
+    from .whole_body_repair import repair_whole_body, stationary_full_sole_proposal
 
-    return solve_rigid_foot_contacts(clip, support_evidence)
+    try:
+        direct_proposal = stationary_full_sole_proposal(clip, support_evidence)
+        proposal, contact_report = (direct_proposal if direct_proposal is not None
+                                    else solve_rigid_foot_contacts(clip, support_evidence))
+        if not contact_report.get("applied"):
+            return proposal, contact_report
+        result, physical_report = repair_whole_body(clip, proposal, support_evidence)
+        if not physical_report.get("applied"):
+            return clip, {"applied": False, "reason": "physical_contact_repair_rejected",
+                          "requiresReconstruction": True, "wholeBodyRepair": physical_report,
+                          "contactProposal": contact_report}
+        return result, {**contact_report, "wholeBodyRepair": physical_report}
+    except InfeasibleContactCorrection as exc:
+        # An infeasible proposal is not a failure of the entire candidate.
+        # The unchanged clip must still pass the downstream support gates.
+        return clip, {"applied": False, "reason": "infeasible_contact_correction", "detail": str(exc)}
 
 
 def _accept_source_preserving_refinement_step(
@@ -355,6 +497,8 @@ def _accept_source_preserving_refinement_step(
     source_pose_payload: dict[str, Any] | None,
     step_name: str,
     allow_temporal_noise_tradeoff: bool = False,
+    source_guided_articulation: bool = False,
+    preserve_rigid_constraints: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     if proposed.frames == before.frames:
         return before, {
@@ -362,16 +506,27 @@ def _accept_source_preserving_refinement_step(
             "accepted": True,
             "reason": "step_changed_no_joint_positions",
         }
-    proposed, articulation_constraint = constrain_to_source_articulation_envelope(
-        before,
-        proposed,
-    )
+    if preserve_rigid_constraints:
+        # Evaluate the complete rigid proposal or reject it. Moving individual
+        # descendants before validation would break its shared endpoints.
+        articulation_constraint = {"applied": False, "reason": "rigid_proposal_requires_atomic_validation"}
+    elif source_guided_articulation and isinstance(source_pose_payload, dict):
+        # Independent source evidence may correct the reconstruction itself.
+        # Clamping that proposal to the erroneous input before evaluating it
+        # prevents the fidelity comparison from ever seeing the actual repair.
+        articulation_constraint = {"applied": False, "reason": "source_guided_proposal_requires_fidelity_validation"}
+    else:
+        proposed, articulation_constraint = constrain_to_source_articulation_envelope(before, proposed)
     if not isinstance(source_pose_payload, dict):
-        return proposed, {
+        from .articulation_trajectory import temporal_quality_comparison
+        temporal_quality = temporal_quality_comparison(before, proposed)
+        return (proposed if temporal_quality["passed"] else before), {
             "step": step_name,
-            "accepted": True,
-            "reason": "source_pose_reference_unavailable",
+            "accepted": temporal_quality["passed"],
+            "reason": ("source_pose_reference_unavailable" if temporal_quality["passed"]
+                       else "temporal_quality_degraded"),
             "articulationConstraint": articulation_constraint,
+            "temporalQuality": temporal_quality,
         }
     before_metrics = source_to_motion_pose_fidelity_metrics(
         source_pose_payload,
@@ -448,6 +603,9 @@ def _accept_source_preserving_refinement_step(
             "beforeNoise": before_noise,
             "proposedNoise": proposed_noise,
         }
+    from .articulation_trajectory import temporal_quality_comparison
+    temporal_quality = temporal_quality_comparison(before, proposed)
+    accepted = accepted and temporal_quality["passed"]
     return (proposed if accepted else before), {
         "step": step_name,
         "accepted": accepted,
@@ -458,7 +616,8 @@ def _accept_source_preserving_refinement_step(
                 else "source_fidelity_preserved_or_improved"
             )
             if accepted
-            else "protected_source_fidelity_degraded"
+            else ("temporal_quality_degraded" if not temporal_quality["passed"]
+                  else "protected_source_fidelity_degraded")
         ),
         "degradedMetrics": degraded_metrics,
         "metricDeltas": deltas,
@@ -468,6 +627,7 @@ def _accept_source_preserving_refinement_step(
         "proposed": proposed_metrics,
         "temporalNoiseTradeoff": temporal_noise_tradeoff,
         "articulationConstraint": articulation_constraint,
+        "temporalQuality": temporal_quality,
     }
 
 
@@ -483,7 +643,6 @@ def refine_motion_clip_structurally(
 ) -> MotionClip:
     if clip.frame_count < 3:
         return clip
-    articulation_reference_clip = clip
     clip, source_contact_timing_metadata = _align_terminal_contact_to_source_pose(
         clip,
         source_pose_payload=source_pose_payload,
@@ -519,6 +678,7 @@ def refine_motion_clip_structurally(
         torso_candidate,
         source_pose_payload=source_pose_payload,
         step_name="source_guided_torso_axis",
+        source_guided_articulation=True,
     )
     source_torso_metadata["transaction"] = source_torso_transaction
     source_guided_candidate, source_guided_metadata = _align_hinge_articulation_to_source_pose(
@@ -530,6 +690,7 @@ def refine_motion_clip_structurally(
         source_guided_candidate,
         source_pose_payload=source_pose_payload,
         step_name="source_guided_hinge_articulation",
+        source_guided_articulation=True,
     )
     source_guided_metadata["transaction"] = source_guided_transaction
     source_guided_arm_steps: list[dict[str, object]] = []
@@ -544,10 +705,12 @@ def refine_motion_clip_structurally(
             arm_candidate,
             source_pose_payload=source_pose_payload,
             step_name=f"source_guided_{arm_chain[0]}_articulation",
+            source_guided_articulation=True,
         )
         arm_metadata["transaction"] = arm_transaction
         source_guided_arm_steps.append(arm_metadata)
     source_clip = clip
+    articulation_reference_clip = clip
 
     chain_motion = _chain_motion_summary(clip)
     chain_range = _chain_range_summary(clip)
@@ -565,6 +728,19 @@ def refine_motion_clip_structurally(
     )
     dominant_groups = set(dominant_profile.get("dominantGroups", []))
     bilateral_modes = _dominant_bilateral_motion_modes(clip, dominant_groups)
+    source_arm_symmetry = source_arm_symmetry_evidence(source_pose_payload)
+    symmetric_rigid_hold = rigid_paired_hands_required and source_arm_symmetry["accepted"]
+    if symmetric_rigid_hold:
+        # A held implement need not produce correlated arm-motion signals.
+        bilateral_modes["arms"] = {
+            **bilateral_modes.get("arms", {}),
+            "mode": "same_phase_symmetric", "samePhase": True,
+            "symmetryStrength": 1.0,
+            "motionDrivenPoseSymmetryAcceptance": {
+                "accepted": True, "reason": "source_confirmed_rigid_bilateral_pose",
+                "sourceEvidence": source_arm_symmetry,
+            },
+        }
     if bilateral_modes:
         dominant_profile = {
             **dominant_profile,
@@ -794,7 +970,12 @@ def refine_motion_clip_structurally(
     contact_surface_metadata["transaction"] = final_contact_surface_transaction
     contact_surface_metadata["initialPass"] = initial_contact_surface_metadata
     refined, core_temporal_continuity = _stabilize_core_temporal_continuity(refined)
-    refined, limb_temporal_continuity = _stabilize_arm_temporal_continuity(refined)
+    limb_candidate, limb_temporal_continuity = _stabilize_arm_temporal_continuity(refined)
+    refined, limb_transaction = _accept_source_preserving_refinement_step(
+        refined, limb_candidate, source_pose_payload=source_pose_payload,
+        step_name="terminal_limb_rotation_smoothing",
+    )
+    limb_temporal_continuity["transaction"] = limb_transaction
     final_arm_symmetry_candidate, final_arm_symmetry_metadata = _apply_soft_same_phase_arm_symmetry(
         refined,
         bilateral_modes=bilateral_modes,
@@ -823,13 +1004,12 @@ def refine_motion_clip_structurally(
             "sourcePoseGateOverridden": True,
         }
     final_arm_symmetry_metadata["transaction"] = final_arm_symmetry_transaction
-    if rigid_paired_hands_required:
-        refined, rigid_paired_hands_metadata = _stabilize_rigid_paired_hand_spacing(refined)
-    else:
-        rigid_paired_hands_metadata = {
-            "applied": False,
-            "reason": "rigid_paired_hands_not_required",
-        }
+    # Unconstrained cleanup must respect the accepted source-guided pose.
+    # Apply this before equipment constraints: moving individual descendants
+    # afterwards would break the shared hand endpoints and supported torso.
+    refined, final_articulation_constraint = constrain_to_source_articulation_envelope(
+        articulation_reference_clip, refined,
+    )
     terminal_arm_symmetry_candidate, terminal_arm_symmetry_metadata = _apply_soft_same_phase_arm_symmetry(
         refined,
         bilateral_modes=bilateral_modes,
@@ -841,22 +1021,46 @@ def refine_motion_clip_structurally(
     ):
         refined = terminal_arm_symmetry_candidate
         terminal_arm_symmetry_metadata["transaction"] = {
-            "step": "post_rigid_same_phase_arm_symmetry",
+            "step": "pre_equipment_same_phase_arm_symmetry",
             "accepted": True,
             "reason": "terminal_bilateral_3d_symmetry_invariant",
         }
     else:
         terminal_arm_symmetry_metadata["transaction"] = {
-            "step": "post_rigid_same_phase_arm_symmetry",
+            "step": "pre_equipment_same_phase_arm_symmetry",
             "accepted": True,
             "reason": "step_changed_no_joint_positions",
         }
     if horizontal_torso_required:
-        refined, horizontal_torso_metadata = _align_upper_body_to_horizontal_support(refined)
+        refined, horizontal_torso_metadata = _align_upper_body_to_horizontal_support(
+            refined, level_shoulders=rigid_paired_hands_required,
+        )
     else:
         horizontal_torso_metadata = {
             "applied": False,
             "reason": "horizontal_torso_not_required",
+        }
+    if rigid_paired_hands_required:
+        rigid_hand_candidate, rigid_paired_hands_metadata = _stabilize_rigid_paired_hand_spacing(
+            refined, supported_bilateral=horizontal_torso_required or symmetric_rigid_hold,
+        )
+        if isinstance(source_pose_payload, dict):
+            refined, rigid_hand_transaction = _accept_source_preserving_refinement_step(
+                refined,
+                rigid_hand_candidate,
+                source_pose_payload=source_pose_payload,
+                step_name="rigid_paired_hand_spacing",
+                preserve_rigid_constraints=True,
+            )
+            rigid_paired_hands_metadata["transaction"] = rigid_hand_transaction
+            if not rigid_hand_transaction["accepted"]:
+                rigid_paired_hands_metadata["applied"] = False
+        else:
+            refined = rigid_hand_candidate
+    else:
+        rigid_paired_hands_metadata = {
+            "applied": False,
+            "reason": "rigid_paired_hands_not_required",
         }
     # Head posture must be solved after every core/bone/contact operation;
     # otherwise a later terminal projection can restore the noisy reference
@@ -874,11 +1078,8 @@ def refine_motion_clip_structurally(
         step_name="final_head_pose_preservation",
     )
     head_metadata["transaction"] = head_transaction
-    refined, final_articulation_constraint = constrain_to_source_articulation_envelope(
-        articulation_reference_clip,
-        refined,
-    )
     refined, foot_heading_metadata = stabilize_distal_foot_heading(refined)
+    refined, final_invariant = enforce_final_structural_invariant(source_clip, refined)
     refinement_metadata = {
         **refinement_metadata,
         "travelYawAlignment": travel_yaw_metadata,
@@ -903,6 +1104,7 @@ def refine_motion_clip_structurally(
         "headPosePreservation": head_metadata,
         "finalArticulationConstraint": final_articulation_constraint,
         "distalFootHeading": foot_heading_metadata,
+        "finalInvariant": final_invariant,
         "temporalPolish": temporal_polish_metadata,
         "finalBoneProjection": final_bone_projection_metadata,
         "supportAnchorRestoration": support_anchor_metadata,
@@ -1025,9 +1227,13 @@ def _align_torso_axis_to_source_pose(
         if pelvis is None or shoulder_midpoint is None or source_pelvis is None or source_shoulders is None:
             corrected_frames.append(frame)
             continue
-        desired_projection = _inverse_similarity_point(
-            (float(source_shoulders[0]), float(source_shoulders[1])),
-            transform,
+        desired_projection = _source_relative_endpoint_projection(
+            source_parent=source_pelvis,
+            source_child=source_shoulders,
+            parent=pelvis,
+            transform=transform,
+            horizontal_vector=horizontal_vector,
+            mirror=mirror,
         )
         target_shoulder_midpoint = _point_for_projected_endpoint_with_fixed_length(
             hinge=pelvis,
@@ -1073,6 +1279,89 @@ def _align_torso_axis_to_source_pose(
     }
 
 
+def _fixed_endpoint_bend(
+    root: Point3, end: Point3, preferred_mid: Point3, *, upper: float, lower: float,
+) -> Point3 | None:
+    """Solve a hinge without moving its endpoint or changing either bone."""
+    delta = _subtract(end, root)
+    distance = _length(delta)
+    if distance < 1e-9 or distance > upper + lower + 1e-9 or distance < abs(upper - lower) - 1e-9:
+        return None
+    axis = _scale(delta, 1.0 / distance)
+    along = (upper * upper - lower * lower + distance * distance) / (2.0 * distance)
+    center = _add(root, _scale(axis, along))
+    height = math.sqrt(max(0., upper * upper - along * along))
+    if height < 1e-9:
+        return center
+    preference = _subtract(preferred_mid, center)
+    bend = _normalize(_subtract(preference, _scale(axis, _dot(preference, axis))))
+    return _add(center, _scale(bend, height)) if bend is not None else None
+
+
+def _project_core_targets_with_fixed_endpoints(
+    frame: MotionFrame, targets: dict[str, Point3], *, preserve_shoulders: bool = False,
+) -> tuple[dict[str, Point3], float]:
+    """Project core edits onto rigid bones and reattach limbs to unchanged endpoints.
+
+    Reduce an unreachable correction, instead of stretching a limb or dragging
+    its planted foot/held implement. Every attempt starts from the input frame.
+    """
+    limb_roots = {f"{side}_{part}" for side in ("left", "right") for part in ("shoulder", "hip")}
+    limb_children = {f"{side}_{part}" for side in ("left", "right")
+                     for part in ("elbow", "wrist", "hand", "knee", "ankle", "foot")}
+    if preserve_shoulders:
+        limb_children.update(f"{side}_{part}" for side in ("left", "right") for part in ("collar", "shoulder"))
+    for scale in (1., .5, .25, .125, .0625, .03125):
+        joints = dict(frame.joints)
+        if "pelvis" in joints and "pelvis" in targets:
+            joints["pelvis"] = _lerp_point(joints["pelvis"], targets["pelvis"], scale)
+        for parent, child in STRUCTURAL_BONES:
+            if child in limb_children or parent not in joints or child not in joints:
+                continue
+            desired = _lerp_point(frame.joints[child], targets.get(child, frame.joints[child]), scale)
+            direction = _normalize(_subtract(desired, joints[parent]))
+            length = _distance(frame.joints[parent], frame.joints[child])
+            if direction is not None:
+                joints[child] = _add(joints[parent], _scale(direction, length))
+        feasible = True
+        if preserve_shoulders:
+            for side in ("left", "right"):
+                collar, shoulder = f"{side}_collar", f"{side}_shoulder"
+                if any(name not in joints for name in ("spine3", collar, shoulder)):
+                    continue
+                solved = _fixed_endpoint_bend(
+                    joints["spine3"], frame.joints[shoulder], frame.joints[collar],
+                    upper=_distance(frame.joints["spine3"], frame.joints[collar]),
+                    lower=_distance(frame.joints[collar], frame.joints[shoulder]),
+                )
+                if solved is None:
+                    feasible = False
+                    break
+                joints[collar] = solved
+            if not feasible:
+                continue
+        for root in limb_roots:
+            side, suffix = root.split("_", 1)
+            mid, end = (f"{side}_elbow", f"{side}_wrist") if suffix == "shoulder" else (f"{side}_knee", f"{side}_ankle")
+            if any(name not in joints for name in (root, mid, end)):
+                continue
+            solved = _fixed_endpoint_bend(
+                joints[root], frame.joints[end], frame.joints[mid],
+                upper=_distance(frame.joints[root], frame.joints[mid]),
+                lower=_distance(frame.joints[mid], frame.joints[end]),
+            )
+            if solved is None:
+                feasible = False
+                break
+            joints[mid] = solved
+        if feasible and all(
+            abs(_distance(joints[parent], joints[child]) - _distance(frame.joints[parent], frame.joints[child])) < 1e-8
+            for parent, child in STRUCTURAL_BONES if parent in joints and child in joints
+        ):
+            return joints, scale
+    return dict(frame.joints), 0.
+
+
 def _align_core_for_same_phase_bilateral_travel(
     clip: MotionClip,
     *,
@@ -1092,39 +1381,6 @@ def _align_core_for_same_phase_bilateral_travel(
         for frame in clip.frames
         if "left_collar" in frame.joints and "right_collar" in frame.joints
     ) if all(name in clip.joint_names for name in ("left_collar", "right_collar")) else None
-    shoulder_to_collar_local_offsets: list[Point3] = []
-    for frame in clip.frames:
-        required = ("left_shoulder", "right_shoulder", "left_collar", "right_collar")
-        if any(name not in frame.joints for name in required):
-            continue
-        body_frame = _body_local_frame(frame)
-        if body_frame is None:
-            continue
-        shoulder_midpoint = _scale(
-            _add(frame.joints["left_shoulder"], frame.joints["right_shoulder"]),
-            0.5,
-        )
-        collar_midpoint = _scale(
-            _add(frame.joints["left_collar"], frame.joints["right_collar"]),
-            0.5,
-        )
-        offset = _subtract(shoulder_midpoint, collar_midpoint)
-        shoulder_to_collar_local_offsets.append((
-            _dot(offset, body_frame.right),
-            _dot(offset, body_frame.up),
-            _dot(offset, body_frame.forward),
-        ))
-    stable_shoulder_to_collar_offset = (
-        tuple(median(offset[axis] for offset in shoulder_to_collar_local_offsets) for axis in range(3))
-        if shoulder_to_collar_local_offsets
-        else None
-    )
-    if stable_shoulder_to_collar_offset is not None:
-        stable_shoulder_to_collar_offset = (
-            0.0,
-            stable_shoulder_to_collar_offset[1],
-            0.0,
-        )
     frames: list[MotionFrame] = []
     maximum_correction = 0.0
     for frame in clip.frames:
@@ -1162,26 +1418,8 @@ def _align_core_for_same_phase_bilateral_travel(
                     if hip_direction is not None:
                         horizontal_direction = hip_direction
                         pair_length = shoulder_width
-                if stable_shoulder_to_collar_offset is not None:
-                    body_frame = _body_local_frame(frame)
-                    left_collar = joints.get("left_collar")
-                    right_collar = joints.get("right_collar")
-                    if body_frame is not None and left_collar is not None and right_collar is not None:
-                        collar_midpoint = _scale(_add(left_collar, right_collar), 0.5)
-                        midpoint = _add(
-                            collar_midpoint,
-                            _add(
-                                _scale(body_frame.right, stable_shoulder_to_collar_offset[0]),
-                                _add(
-                                    _scale(body_frame.up, stable_shoulder_to_collar_offset[1]),
-                                    _scale(body_frame.forward, stable_shoulder_to_collar_offset[2]),
-                                ),
-                            ),
-                        )
-                waist = joints.get("spine1")
-                neck = joints.get("neck")
-                if waist is not None and neck is not None:
-                    midpoint = _add(waist, _scale(_subtract(neck, waist), 0.80))
+                # Preserve the observed shoulder midpoint. Symmetry constrains
+                # bilateral orientation, not shoulder elevation relative to the spine.
             if horizontal_direction is None or pair_length <= 1e-9:
                 continue
             half_vector = _scale(horizontal_direction, pair_length * 0.5)
@@ -1214,36 +1452,22 @@ def _align_core_for_same_phase_bilateral_travel(
                     target = _subtract(point, _scale(lateral_axis, lateral_offset))
                     maximum_correction = max(maximum_correction, _distance(point, target))
                     joints[name] = target
-        if all(name in joints for name in ("left_shoulder", "right_shoulder", "spine1", "neck")):
-            shoulder_midpoint = _scale(
-                _add(joints["left_shoulder"], joints["right_shoulder"]),
-                0.5,
-            )
-            chest_top = _add(
-                joints["spine1"],
-                _scale(_subtract(joints["neck"], joints["spine1"]), 0.80),
-            )
-            attachment_correction = _subtract(chest_top, shoulder_midpoint)
-            maximum_correction = max(maximum_correction, _length(attachment_correction))
-            for side in ("left", "right"):
-                for name in (
-                    f"{side}_shoulder",
-                    f"{side}_elbow",
-                    f"{side}_wrist",
-                    f"{side}_hand",
-                ):
-                    if name in joints:
-                        joints[name] = _add(joints[name], attachment_correction)
+        # Leg symmetry is not evidence for changing the arms. Keep the shoulder
+        # anchors too, avoiding near-extension elbow snaps from torso leveling.
+        joints, _ = _project_core_targets_with_fixed_endpoints(frame, joints, preserve_shoulders=True)
         frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+    maximum_correction = max((_distance(before.joints[name], after.joints[name])
+                              for before, after in zip(clip.frames, frames)
+                              for name in before.joints), default=0.)
     return replace(clip, frames=frames), {
         "applied": maximum_correction > 1e-9,
-        "strategy": "torso_chest_top_attached_shoulder_alignment_and_core_pair_leveling",
+        "strategy": "core_pair_leveling_with_rigid_bones_and_fixed_limb_endpoints",
         "pairs": [list(pair) for pair in pairs],
         "axialChain": ["pelvis", "spine1", "spine2", "spine3", "neck", "head"],
         "maximumCorrection": maximum_correction,
         "shoulderWidth": shoulder_width,
         "collarWidth": collar_width,
-        "stableShoulderToCollarLocalOffset": stable_shoulder_to_collar_offset,
+        "limbEndpointsPreserved": True,
     }
 
 
@@ -2764,6 +2988,7 @@ def _stabilize_core_temporal_continuity(
         for joint_name, track in tracks.items()
     }
     proposed_frames: list[MotionFrame] = []
+    projected_scales: list[float] = []
     for frame_index, frame in enumerate(clip.frames):
         joints = dict(frame.joints)
         for joint_name in core_joint_names:
@@ -2772,20 +2997,48 @@ def _stabilize_core_temporal_continuity(
                 smoothed_tracks[joint_name][frame_index],
                 1.0,
             )
+        # Smooth the core as a connected skeleton. Re-solve attached limbs to
+        # unchanged wrists/ankles instead of leaving stretched bones behind.
+        joints, scale = _project_core_targets_with_fixed_endpoints(frame, joints)
+        projected_scales.append(scale)
         proposed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
 
     jerk_before = trajectory_jerk(list(clip.frames))
     jerk_proposed = trajectory_jerk(proposed_frames)
-    accepted = jerk_proposed < jerk_before
+    # Hip/shoulder smoothing also changes the roots of attached limbs. A
+    # smoother torso is not an improvement if stationary descendants make
+    # those bones stretch. Preserve each frame's incoming bone lengths.
+    changed_bones: dict[str, float] = {}
+    for parent, child in STRUCTURAL_BONES:
+        if parent not in clip.joint_names or child not in clip.joint_names:
+            continue
+        maximum_relative_change = max(
+            abs(_distance(after.joints[parent], after.joints[child])
+                - _distance(before.joints[parent], before.joints[child]))
+            / max(_distance(before.joints[parent], before.joints[child]), 1e-9)
+            for before, after in zip(clip.frames, proposed_frames)
+        )
+        if maximum_relative_change > 1e-6:
+            changed_bones[f"{parent}:{child}"] = maximum_relative_change
+    from .articulation_trajectory import temporal_quality_comparison
+    temporal_quality = temporal_quality_comparison(clip, replace(clip, frames=proposed_frames))
+    accepted = jerk_proposed < jerk_before and not changed_bones and temporal_quality["passed"]
     refined = replace(clip, frames=proposed_frames) if accepted else clip
     return refined, {
         "applied": accepted,
-        "strategy": "terminal_zero_phase_core_trajectory_reconstruction",
+        "strategy": "zero_phase_core_smoothing_with_rigid_bones_and_fixed_endpoints",
         "windowSeconds": smoothing_radius / clip.fps,
         "smoothingStrength": 1.0,
         "jerkBefore": jerk_before,
         "jerkProposed": jerk_proposed,
-        "reason": "lower_core_jerk" if accepted else "core_jerk_not_improved",
+        "reason": (
+            "core_smoothing_changes_bone_lengths" if changed_bones
+            else "temporal_quality_degraded" if not temporal_quality["passed"]
+            else "lower_core_jerk" if accepted else "core_jerk_not_improved"
+        ),
+        "temporalQuality": temporal_quality,
+        "reducedCorrectionFrameCount": sum(scale < 1. for scale in projected_scales),
+        "proposedBoneLengthChanges": changed_bones,
         "jointNames": list(core_joint_names),
     }
 
@@ -2793,6 +3046,16 @@ def _stabilize_core_temporal_continuity(
 def _stabilize_arm_temporal_continuity(
     clip: MotionClip,
 ) -> tuple[MotionClip, dict[str, object]]:
+    from .limb_bend_repair import repair_limb_bend_bursts
+
+    burst_candidate, burst_repair = repair_limb_bend_bursts(clip)
+    if burst_repair["applied"]:
+        from .articulation_trajectory import temporal_quality_comparison
+        comparison = temporal_quality_comparison(clip, burst_candidate)
+        burst_repair["temporalQuality"] = comparison
+        burst_repair["applied"] = comparison["passed"]
+        if comparison["passed"]:
+            clip = burst_candidate
     def chain_jerk(
         candidate_frames: list[MotionFrame],
         joint_names: tuple[str, ...],
@@ -2839,103 +3102,26 @@ def _stabilize_arm_temporal_continuity(
             for left, right in zip(offsets, offsets[1:])
         ]
         peak_step = max(offset_steps, default=0.0)
-        smoothed_offsets = _zero_phase_smooth_points(
-            offsets,
-            radius=smoothing_radius,
-        )
-        smoothing_residuals = [
-            _distance(source, smoothed)
-            for source, smoothed in zip(offsets, smoothed_offsets)
-        ]
-        ordered_residuals = sorted(smoothing_residuals)
-        p90_residual = (
-            ordered_residuals[min(len(ordered_residuals) - 1, int(0.9 * (len(ordered_residuals) - 1)))]
-            if ordered_residuals
-            else 0.0
-        )
-        smoothing_strength = 1.0
+        from .articulation_trajectory import fit_chain_rotations, temporal_quality_comparison
+        chain_names = (root_name, middle_name, end_name, tip_name)
+        if set(chain_names[1:]).intersection(_locked_support_anchor_names(clip)):
+            continue
         source_chain_frames = frames
-        upper_len = _median_bone_length(clip, root_name, middle_name)
-        lower_len = _median_bone_length(clip, middle_name, end_name)
-        tip_offsets = [
-            _subtract(frame.joints[tip_name], frame.joints[end_name])
-            for frame in frames
-        ]
-        smoothed_tip_offsets = _zero_phase_smooth_points(
-            tip_offsets,
-            radius=smoothing_radius,
-        )
-        bend_directions: list[Point3] = []
-        previous_bend: Point3 | None = None
-        for frame in frames:
-            chain_axis = _normalize(_subtract(frame.joints[end_name], frame.joints[root_name]))
-            root_to_middle = _subtract(frame.joints[middle_name], frame.joints[root_name])
-            bend = (
-                _subtract(root_to_middle, _scale(chain_axis, _dot(root_to_middle, chain_axis)))
-                if chain_axis is not None
-                else root_to_middle
-            )
-            bend = _normalize(bend) or previous_bend or (0.0, 0.0, 1.0)
-            if previous_bend is not None and _dot(bend, previous_bend) < 0.0:
-                bend = _scale(bend, -1.0)
-            bend_directions.append(bend)
-            previous_bend = bend
-        bend_directions = [
-            _normalize(direction) or bend_directions[index]
-            for index, direction in enumerate(
-                _zero_phase_smooth_points(bend_directions, radius=smoothing_radius)
-            )
-        ]
-        side_maximum = 0.0
-        repaired_frames: list[MotionFrame] = []
-        for frame, target_offset, target_tip_offset, bend_direction in zip(
-            frames,
-            smoothed_offsets,
-            smoothed_tip_offsets,
-            bend_directions,
-        ):
-            joints = dict(frame.joints)
-            chain_root = joints[root_name]
-            current_endpoint = joints[end_name]
-            smoothed_endpoint = _add(chain_root, target_offset)
-            target_endpoint = _lerp_point(
-                current_endpoint,
-                smoothed_endpoint,
-                smoothing_strength,
-            )
-            tip_offset = _subtract(joints[tip_name], current_endpoint)
-            body_frame = _body_local_frame(frame)
-            solved_middle, solved_endpoint = _solve_two_bone(
-                root=chain_root,
-                current_mid=joints[middle_name],
-                target_end=target_endpoint,
-                upper_len=upper_len,
-                lower_len=lower_len,
-                preferred_bend_direction=bend_direction,
-                fallback_axis=(
-                    body_frame.forward
-                    if body_frame is not None
-                    else (0.0, 0.0, 1.0)
-                ),
-            )
-            solved_tip = _add(
-                solved_endpoint,
-                _lerp_point(tip_offset, target_tip_offset, smoothing_strength),
-            )
-            correction = max(
-                _distance(joints[middle_name], solved_middle),
-                _distance(current_endpoint, solved_endpoint),
-                _distance(joints[tip_name], solved_tip),
-            )
-            side_maximum = max(side_maximum, correction)
-            joints[middle_name] = solved_middle
-            joints[end_name] = solved_endpoint
-            joints[tip_name] = solved_tip
-            repaired_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+        source_chain = replace(clip, frames=source_chain_frames)
+        repaired = fit_chain_rotations(source_chain, chain_names)
+        repaired_frames = list(repaired.frames)
+        corrections = [max(_distance(before.joints[name], after.joints[name])
+                           for name in chain_names[1:])
+                       for before, after in zip(source_chain_frames, repaired_frames)]
+        side_maximum = max(corrections, default=0.0)
+        ordered_residuals = sorted(corrections)
+        p90_residual = ordered_residuals[int(.9 * (len(ordered_residuals) - 1))]
+        smoothing_strength = 1.0
+        temporal_quality = temporal_quality_comparison(source_chain, repaired)
         chain_names = (root_name, middle_name, end_name, tip_name)
         before_jerk = chain_jerk(source_chain_frames, chain_names)
         proposed_jerk = chain_jerk(repaired_frames, chain_names)
-        accepted = proposed_jerk < before_jerk
+        accepted = proposed_jerk < before_jerk and temporal_quality["passed"]
         if accepted:
             frames = repaired_frames
             maximum_correction = max(maximum_correction, side_maximum)
@@ -2948,12 +3134,15 @@ def _stabilize_arm_temporal_continuity(
             "smoothingStrength": smoothing_strength,
             "jerkBefore": before_jerk,
             "jerkProposed": proposed_jerk,
-            "reason": "lower_chain_jerk" if accepted else "chain_jerk_not_improved",
+            "reason": ("lower_chain_jerk" if accepted else
+                       "temporal_quality_degraded" if not temporal_quality["passed"] else "chain_jerk_not_improved"),
+            "temporalQuality": temporal_quality,
             "maximumCorrection": side_maximum,
         })
     return replace(clip, frames=frames), {
-        "applied": any(bool(item.get("applied")) for item in side_payloads),
-        "strategy": "root_relative_zero_phase_endpoint_smoothing_with_two_bone_ik",
+        "applied": burst_repair["applied"] or any(bool(item.get("applied")) for item in side_payloads),
+        "bendBurstRepair": burst_repair,
+        "strategy": "body_local_rotation_smoothing_with_rigid_bones",
         "windowSeconds": smoothing_radius / clip.fps,
         "maximumCorrection": maximum_correction,
         "sides": side_payloads,
@@ -3140,6 +3329,9 @@ def _align_hinge_articulation_to_source_pose(
             continue
         transform = global_transform
         for name, parent, hinge, child, descendants in chains:
+            if set((hinge, child, *descendants)).intersection(locked_support_joints):
+                continue
+            source_parent = pose_fidelity._bilateral_name(parent, swap=swap_bilateral)
             source_hinge = pose_fidelity._bilateral_name(hinge, swap=swap_bilateral)
             source_child = pose_fidelity._bilateral_name(child, swap=swap_bilateral)
             if (
@@ -3148,12 +3340,15 @@ def _align_hinge_articulation_to_source_pose(
                 or child not in joints
                 or source_hinge not in source_joints
                 or source_child not in source_joints
+                or source_parent not in source_joints
             ):
                 continue
             if hinge not in locked_support_joints:
-                desired_hinge_projection = _inverse_similarity_point(
-                    tuple(source_joints[source_hinge][:2]),
-                    transform,
+                desired_hinge_projection = _source_relative_endpoint_projection(
+                    source_parent=source_joints[source_parent],
+                    source_child=source_joints[source_hinge],
+                    parent=joints[parent], transform=transform,
+                    horizontal_vector=horizontal_vector, mirror=mirror,
                 )
                 proposed_hinge = _point_for_projected_endpoint_with_fixed_length(
                     hinge=joints[parent],
@@ -3165,15 +3360,17 @@ def _align_hinge_articulation_to_source_pose(
                 if proposed_hinge is not None:
                     hinge_delta = _subtract(proposed_hinge, joints[hinge])
                     if _length(hinge_delta) > 1e-8:
-                        joints[hinge] = proposed_hinge
-                        for descendant in descendants:
-                            if descendant in joints:
-                                joints[descendant] = _add(joints[descendant], hinge_delta)
+                        _rotate_hinge_descendants(
+                            joints, parent=parent, hinge=parent, child=hinge,
+                            descendants=(hinge, *descendants), target_child=proposed_hinge,
+                        )
                         corrections.append(_length(hinge_delta))
                         corrected_chains.add(name)
-            desired_projection = _inverse_similarity_point(
-                tuple(source_joints[source_child][:2]),
-                transform,
+            desired_projection = _source_relative_endpoint_projection(
+                source_parent=source_joints[source_hinge],
+                source_child=source_joints[source_child],
+                parent=joints[hinge], transform=transform,
+                horizontal_vector=horizontal_vector, mirror=mirror,
             )
             proposed_child = _point_for_projected_endpoint_with_fixed_length(
                 hinge=joints[hinge],
@@ -3187,35 +3384,30 @@ def _align_hinge_articulation_to_source_pose(
             delta = _subtract(proposed_child, joints[child])
             if _length(delta) <= 1e-8:
                 continue
-            for descendant in descendants:
-                if descendant in joints:
-                    joints[descendant] = _add(joints[descendant], delta)
+            _rotate_hinge_descendants(
+                joints, parent=parent, hinge=hinge, child=child,
+                descendants=descendants, target_child=proposed_child,
+            )
             corrections.append(_length(delta))
             corrected_chains.add(name)
-        bilateral_pairs: tuple[tuple[str, str], ...] = ()
-        if any(chain[0].endswith("knee") for chain in chains):
-            bilateral_pairs = (
-                ("left_knee", "right_knee"),
-                ("left_ankle", "right_ankle"),
-                ("left_foot", "right_foot"),
-            )
-        elif any(chain[0].endswith("elbow") for chain in chains):
-            bilateral_pairs = (
-                ("left_elbow", "right_elbow"),
-                ("left_wrist", "right_wrist"),
-                ("left_hand", "right_hand"),
-            )
-        _restore_body_local_bilateral_widths(
-            joints,
-            reference_joints=frame.joints,
-            pairs=bilateral_pairs,
-        )
+        # Endpoint solves use the reconstructed depth branch. Rotate distal
+        # chains rigidly rather than altering their articulation by translation.
+        # Restoring body-local widths afterwards moves both sides (including
+        # an arm outside `chains`) and destroys those solved constraints.
         corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
     if not corrections:
         return clip, {"applied": False, "reason": "source_hinge_angles_already_matched"}
-    return replace(clip, frames=corrected_frames), {
+    from .articulation_trajectory import fit_chain_rotations
+    proposed = replace(clip, frames=corrected_frames)
+    fitted = clip
+    for _, parent, hinge, child, descendants in chains:
+        chain = tuple(dict.fromkeys((parent, hinge, child, *descendants)))
+        if set(chain[1:]).intersection(locked_support_joints):
+            continue
+        fitted = fit_chain_rotations(fitted, chain, proposal=proposed)
+    return fitted, {
         "applied": True,
-        "strategy": "source_projected_endpoint_ik_with_fixed_bone_length",
+        "strategy": "temporally_fitted_source_rotation_correction_with_fixed_bone_length",
         "correctedChains": sorted(corrected_chains),
         "correctedFrameJointCount": len(corrections),
         "averageCorrection": sum(corrections) / len(corrections),
@@ -3223,42 +3415,17 @@ def _align_hinge_articulation_to_source_pose(
     }
 
 
-def _restore_body_local_bilateral_widths(
-    joints: dict[str, Point3],
-    *,
-    reference_joints: dict[str, Point3],
-    pairs: tuple[tuple[str, str], ...],
-) -> None:
-    if not pairs:
-        return
-    reference_frame = MotionFrame(time_sec=0.0, joints=reference_joints)
-    body_frame = _body_local_frame(reference_frame)
-    if body_frame is None:
-        return
-    lateral_axis = body_frame.right
-    for left_name, right_name in pairs:
-        if any(
-            name not in joints or name not in reference_joints
-            for name in (left_name, right_name)
-        ):
-            continue
-        reference_width = _dot(
-            _subtract(reference_joints[right_name], reference_joints[left_name]),
-            lateral_axis,
-        )
-        corrected_width = _dot(
-            _subtract(joints[right_name], joints[left_name]),
-            lateral_axis,
-        )
-        half_correction = (reference_width - corrected_width) * 0.5
-        joints[left_name] = _add(
-            joints[left_name],
-            _scale(lateral_axis, -half_correction),
-        )
-        joints[right_name] = _add(
-            joints[right_name],
-            _scale(lateral_axis, half_correction),
-        )
+def _source_relative_endpoint_projection(
+    *, source_parent, source_child, parent: Point3, transform,
+    horizontal_vector: tuple[float, float], mirror: bool,
+) -> tuple[float, float]:
+    """Fit articulation independently of residual global translation error."""
+    start = _inverse_similarity_point(tuple(source_parent[:2]), transform)
+    end = _inverse_similarity_point(tuple(source_child[:2]), transform)
+    horizontal = parent[0] * horizontal_vector[0] + parent[2] * horizontal_vector[1]
+    if mirror:
+        horizontal = -horizontal
+    return horizontal + end[0] - start[0], -parent[1] + end[1] - start[1]
 
 
 def _inverse_similarity_point(
@@ -3540,6 +3707,27 @@ def _restore_support_relative_lateral_root_trajectory(
         "applied": True,
         "strategy": "preserve_support_relative_lateral_root_trajectory",
         "maximumCorrection": maximum_correction,
+    }
+
+
+def enforce_final_structural_invariant(
+    reference: MotionClip, proposed: MotionClip,
+) -> tuple[MotionClip, dict[str, Any]]:
+    """Final transaction boundary, including late contact and equipment edits."""
+    topology_valid = len(reference.frames) == len(proposed.frames) and all(
+        before.time_sec == after.time_sec and before.joints.keys() == after.joints.keys()
+        and all(math.isfinite(coordinate) for point in after.joints.values() for coordinate in point)
+        for before, after in zip(reference.frames, proposed.frames)
+    )
+    baseline = _maximum_structural_bone_length_variation(reference)
+    candidate = _maximum_structural_bone_length_variation(proposed) if topology_valid else None
+    accepted = topology_valid and candidate <= baseline + 1e-6
+    return (proposed if accepted else reference), {
+        "accepted": accepted, "rolledBack": not accepted,
+        "reason": "structural_invariant_preserved" if accepted else "final_structural_invariant_failed",
+        "topologyValid": topology_valid,
+        "sourceMaximumVariationRatio": baseline,
+        "proposedMaximumVariationRatio": candidate,
     }
 
 
@@ -5131,6 +5319,7 @@ def _reconstruct_denoised_skeleton(
 
 def _align_upper_body_to_horizontal_support(
     clip: MotionClip,
+    *, level_shoulders: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Flatten a contract-required horizontal torso without moving lower-body contacts."""
     required = {"pelvis", "neck", "left_shoulder", "right_shoulder"}
@@ -5192,6 +5381,25 @@ def _align_upper_body_to_horizontal_support(
             target = _add(hip_center, rotated)
             maximum_correction = max(maximum_correction, _distance(point, target))
             joints[joint_name] = target
+        if level_shoulders:
+            # A supported bilateral press needs a level shoulder line as well
+            # as a horizontal torso axis. Pitch-only alignment leaves camera
+            # roll in the reconstruction and gives the arms different reaches.
+            center = _scale(_add(joints["left_shoulder"], joints["right_shoulder"]), 0.5)
+            lateral = _subtract(joints["right_shoulder"], joints["left_shoulder"])
+            lateral = _normalize(_subtract(lateral, _scale(target_torso_axis, _dot(lateral, target_torso_axis))))
+            target_lateral = _normalize(_cross(target_torso_axis, (0.0, 1.0, 0.0)))
+            if lateral is not None and target_lateral is not None:
+                if _dot(lateral, target_lateral) < 0:
+                    target_lateral = _scale(target_lateral, -1)
+                roll = math.atan2(_dot(target_torso_axis, _cross(lateral, target_lateral)),
+                                  _dot(lateral, target_lateral))
+                for name in upper_body_joints:
+                    if name in joints:
+                        point = joints[name]
+                        joints[name] = _add(center, _rotate_vector_about_axis(
+                            _subtract(point, center), axis=target_torso_axis, angle_radians=roll))
+                        maximum_correction = max(maximum_correction, _distance(point, joints[name]))
         frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
     refined = replace(clip, frames=frames)
     resulting_axes = [
@@ -5207,6 +5415,7 @@ def _align_upper_body_to_horizontal_support(
         "maximumCorrection": maximum_correction,
         "medianAbsoluteTorsoVerticalComponentAfter": median(vertical_components) if vertical_components else None,
         "lowerBodyContactsPreserved": True,
+        "shoulderPlaneLeveled": level_shoulders,
     }
 
 
@@ -6430,21 +6639,34 @@ def _apply_soft_same_phase_pair_symmetry(
                     _distance(frame.joints[parent_pair[side]], frame.joints[child_pair[side]])
                     for side in range(2)
                 ]
-                target_lengths = (
-                    [sum(source_lengths) * 0.5] * 2
-                    if exact_motion_evidence
-                    else source_lengths
-                )
-                for side in range(2):
-                    parent_name = parent_pair[side]
-                    child_name = child_pair[side]
-                    direction = _normalize(_subtract(joints[child_name], joints[parent_name]))
-                    if direction is not None and target_lengths[side] > 1e-9:
-                        joints[child_name] = _add(
-                            joints[parent_name],
-                            _scale(direction, target_lengths[side]),
+                # Coordinate unit directions, not absolute endpoints: differing
+                # limb lengths must not reintroduce different joint angles.
+                directions = [
+                    _normalize(_subtract(frame.joints[child_pair[side]], frame.joints[parent_pair[side]]))
+                    for side in range(2)
+                ]
+                if any(direction is None for direction in directions):
+                    parent_pair = child_pair
+                    continue
+                left, right = directions
+                mirrored_right = _subtract(right, _scale(body_frame.right, 2 * _dot(right, body_frame.right)))
+                shared_left = _normalize(_add(left, mirrored_right))
+                if shared_left is None:
+                    parent_pair = child_pair
+                    continue
+                shared_right = _subtract(shared_left, _scale(body_frame.right, 2 * _dot(shared_left, body_frame.right)))
+                for side, shared in enumerate((shared_left, shared_right)):
+                    direction = _normalize(_add(_scale(directions[side], 1 - blend), _scale(shared, blend)))
+                    if direction is not None:
+                        joints[child_pair[side]] = _add(
+                            joints[parent_pair[side]], _scale(direction, source_lengths[side]),
                         )
                 parent_pair = child_pair
+            # The directional chain solve can amplify a distal correction.
+            # Retain the original frame when it exceeds the authorized bound.
+            if any(_distance(frame.joints[name], joints[name]) > max_correction + 1e-9
+                   for pair in pairs for name in pair):
+                joints = dict(frame.joints)
         elif group_name == "legs" and exact_motion_evidence:
             parent_pair = anchor_joints
             for child_pair in pairs:
@@ -7087,6 +7309,7 @@ def _symmetric_pair_targets(
 
 def _stabilize_rigid_paired_hand_spacing(
     clip: MotionClip,
+    *, supported_bilateral: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Preserve the fixed endpoint transform implied by a rigid two-hand implement."""
     required = {
@@ -7107,12 +7330,15 @@ def _stabilize_rigid_paired_hand_spacing(
         for frame in clip.frames
     ]
     median_axis = _median_point(hand_axes)
-    # A rigid implement shared by both hands cannot roll independently between
-    # them. Use its robust clip-wide lateral direction and remove the monocular
-    # reconstruction's vertical disagreement between the two endpoints.
-    target_axis = _normalize((median_axis[0], 0.0, median_axis[2]))
-    if target_axis is None:
-        target_axis = _normalize(median_axis)
+    body_frames = [_body_local_frame(frame) for frame in clip.frames]
+    local_axes = [(_dot(axis, body.right), _dot(axis, body.up), _dot(axis, body.forward))
+                  for axis, body in zip(hand_axes, body_frames) if body is not None]
+    local_axis = _normalize(_median_point(local_axes)) if len(local_axes) == len(clip.frames) else None
+    # Keep the shared implement orientation in the moving body frame. A fixed
+    # world-space axis incorrectly turns a legitimate body turn into arm twist.
+    target_axis = _normalize(median_axis)
+    if target_axis is None and local_axis is not None:
+        target_axis = _normalize(hand_axes[0])
     if target_axis is None:
         return clip, {"applied": False, "reason": "paired_hand_axis_degenerate"}
     spacing_range_before = max(spacing) - min(spacing)
@@ -7133,7 +7359,51 @@ def _stabilize_rigid_paired_hand_spacing(
         left_hand = joints["left_hand"]
         right_hand = joints["right_hand"]
         midpoint = _scale(_add(left_hand, right_hand), 0.5)
-        half_axis = _scale(target_axis, target_spacing * 0.5)
+        frame_axis = target_axis
+        if local_axis is not None and body_frame is not None:
+            frame_axis = _add(_add(_scale(body_frame.right, local_axis[0]),
+                                  _scale(body_frame.up, local_axis[1])),
+                              _scale(body_frame.forward, local_axis[2]))
+        if supported_bilateral:
+            shoulder_delta = _subtract(joints["right_shoulder"], joints["left_shoulder"])
+            # Use the actual shoulder plane. Flattening this axis to world Y
+            # gives unequal reaches when the torso is rolled, and one arm
+            # straightens while the other bends despite symmetric targets.
+            frame_axis = _normalize(shoulder_delta) or target_axis
+            shoulder_center = _scale(_add(joints["left_shoulder"], joints["right_shoulder"]), 0.5)
+            lateral_error = _dot(_subtract(midpoint, shoulder_center), frame_axis)
+            midpoint = _subtract(midpoint, _scale(frame_axis, lateral_error))
+        half_axis = _scale(frame_axis, target_spacing * 0.5)
+        # Move the shared implement into the intersection of both arms' reach
+        # spheres. Independent reach clamping separates the two hand targets.
+        reaches = {}
+        for side in ("left", "right"):
+            upper = _distance(joints[f"{side}_shoulder"], joints[f"{side}_elbow"])
+            lower = _distance(joints[f"{side}_elbow"], joints[f"{side}_hand"])
+            reaches[side] = (abs(upper - lower) + 2e-5, upper + lower - 2e-5)
+        for _ in range(100):
+            maximum_reach_error = 0.0
+            for side, sign in (("left", -1), ("right", 1)):
+                target = _add(midpoint, _scale(half_axis, sign))
+                delta = _subtract(target, joints[f"{side}_shoulder"])
+                low, high = reaches[side]
+                if supported_bilateral:
+                    lateral = _dot(delta, frame_axis)
+                    if abs(lateral) >= high:
+                        raise ValueError("Rigid hand spacing exceeds supported bilateral arm reach")
+                    delta = _subtract(delta, _scale(frame_axis, lateral))
+                    low = math.sqrt(max(0.0, low * low - lateral * lateral))
+                    high = math.sqrt(high * high - lateral * lateral)
+                distance = _length(delta)
+                reachable_distance = min(max(distance, low), high)
+                error = distance - reachable_distance
+                maximum_reach_error = max(maximum_reach_error, abs(error))
+                if distance > 1e-9:
+                    midpoint = _subtract(midpoint, _scale(delta, error / distance))
+            if maximum_reach_error < 1e-8:
+                break
+        else:
+            raise ValueError("Rigid paired hand targets have no common reachable position")
         targets = {
             "left": _subtract(midpoint, half_axis),
             "right": _add(midpoint, half_axis),
@@ -7143,19 +7413,30 @@ def _stabilize_rigid_paired_hand_spacing(
             elbow_name = f"{side}_elbow"
             wrist_name = f"{side}_wrist"
             hand_name = f"{side}_hand"
-            wrist_to_hand = _subtract(joints[hand_name], joints[wrist_name])
-            target_wrist = _subtract(targets[side], wrist_to_hand)
             preferred_elbow = symmetric_elbow_targets.get(elbow_name, joints[elbow_name])
-            solved_elbow, solved_wrist = _solve_two_bone(
+            solved_elbow, solved_hand = _solve_two_bone(
                 root=joints[shoulder_name],
                 current_mid=joints[elbow_name],
-                target_end=target_wrist,
+                target_end=targets[side],
                 upper_len=_distance(joints[shoulder_name], joints[elbow_name]),
-                lower_len=_distance(joints[elbow_name], joints[wrist_name]),
+                lower_len=_distance(joints[elbow_name], joints[hand_name]),
                 fallback_axis=(0.0, 1.0, 0.0),
                 preferred_bend_direction=_subtract(preferred_elbow, joints[shoulder_name]),
             )
-            solved_hand = _add(solved_wrist, wrist_to_hand)
+            # Rotate the entire forearm/hand triangle rigidly. Keeping the old
+            # world-space wrist offset after IK twists the wrist and changes
+            # the effective reach differently for the two arms.
+            old_axis = _normalize(_subtract(joints[hand_name], joints[elbow_name]))
+            new_axis = _normalize(_subtract(solved_hand, solved_elbow))
+            wrist_offset = _subtract(joints[wrist_name], joints[elbow_name])
+            if old_axis is not None and new_axis is not None:
+                turn_axis = _normalize(_cross(old_axis, new_axis))
+                cosine = max(-1.0, min(1.0, _dot(old_axis, new_axis)))
+                if turn_axis is None and cosine < 0:
+                    turn_axis = _normalize(_cross(old_axis, (1.0, 0.0, 0.0))) or _normalize(_cross(old_axis, (0.0, 1.0, 0.0)))
+                if turn_axis is not None:
+                    wrist_offset = _rotate_vector_about_axis(wrist_offset, axis=turn_axis, angle_radians=math.acos(cosine))
+            solved_wrist = _add(solved_elbow, wrist_offset)
             maximum_correction = max(
                 maximum_correction,
                 _distance(joints[hand_name], solved_hand),
@@ -7174,9 +7455,11 @@ def _stabilize_rigid_paired_hand_spacing(
         "strategy": "rigid_paired_endpoint_transform_with_two_bone_arm_ik",
         "targetSpacing": target_spacing,
         "targetAxis": list(target_axis),
+        "axisReference": "moving_body_frame" if local_axis is not None else "world_frame_fallback",
         "spacingRangeBefore": spacing_range_before,
         "spacingRangeAfter": max(corrected_spacing) - min(corrected_spacing),
         "maximumCorrection": maximum_correction,
+        "supportedBilateralShoulderReference": supported_bilateral,
     }
 
 
@@ -7216,7 +7499,9 @@ def _solve_two_bone(
     if _length(bend_direction) <= 1e-6:
         bend_direction = _cross(direction, fallback_axis)
     if _length(bend_direction) <= 1e-6:
-        bend_direction = _cross(direction, (0.0, 1.0, 0.0))
+        basis = min(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                    key=lambda axis: abs(_dot(direction, axis)))
+        bend_direction = _cross(direction, basis)
     bend_direction = _normalize(bend_direction)
     solved_mid = _add(
         _add(root, _scale(direction, projection_length)),

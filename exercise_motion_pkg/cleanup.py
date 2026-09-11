@@ -295,7 +295,11 @@ def _authoritative_world_floor_normal(clip: MotionClip) -> Point3 | None:
     alignment = metadata.get("videoWorldAlignment")
     if not isinstance(alignment, dict):
         return None
-    raw_plane = alignment.get("cameraGroundPlane")
+    if alignment.get("applied") is not True:
+        return None
+    # The camera normal belongs to the input coordinates. Once leveling has
+    # been applied, using it again would rotate the skeleton a second time.
+    raw_plane = alignment.get("outputGroundPlane")
     if not isinstance(raw_plane, dict):
         return None
     raw_normal = raw_plane.get("normal")
@@ -1100,13 +1104,17 @@ def cleanup_motion_clip(
     padding_frames: int = 3,
     ground_contact_mode: str = "unknown",
     support_mode_hint: str | None = None,
+    preserve_temporal_extent: bool = False,
 ) -> tuple[MotionClip, CleanupStats]:
     repaired_clip, repaired_joint_outliers = repair_isolated_joint_position_outliers(clip)
-    trimmed_clip, start_trim, end_trim = trim_static_edges(
-        repaired_clip,
-        motion_threshold=motion_threshold,
-        padding_frames=padding_frames,
-    )
+    if preserve_temporal_extent:
+        trimmed_clip, start_trim, end_trim = repaired_clip, 0, 0
+    else:
+        trimmed_clip, start_trim, end_trim = trim_static_edges(
+            repaired_clip,
+            motion_threshold=motion_threshold,
+            padding_frames=padding_frames,
+        )
     root_joint = find_first_joint(trimmed_clip, DEFAULT_ROOT_JOINTS)
     avg_root_before = average_joint_axis(trimmed_clip, root_joint, axis=1)
     support_mode = detect_support_mode(trimmed_clip, support_mode_hint=support_mode_hint)

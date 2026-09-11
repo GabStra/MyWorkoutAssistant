@@ -17,6 +17,7 @@ def make_review_item(tmp_path: Path, exercise_name: str = "Dumbbell Shrug") -> b
         "groundContactMode": "continuous",
         "completionMode": "return_to_start",
         "requiresReturnToStart": True,
+        "requiredPhases": ["perform the outward phase", "return to the starting posture"],
         "observableMotionSpec": {
             "schemaVersion": 1,
             "primaryMovingRegions": ["hands"],
@@ -53,6 +54,9 @@ def make_review_item(tmp_path: Path, exercise_name: str = "Dumbbell Shrug") -> b
             "endState": {"id": "end_state", "label": "exercise-specific start posture"},
         },
     }
+    if "Lying" in exercise_name:
+        for endpoint in ("startPoseConstraints", "endPoseConstraints"):
+            contract[endpoint]["supportMode"] = "lying"
     return bake_and_rank.ReviewItem(
         exercise_index=0,
         candidate_rank=0,
@@ -158,7 +162,7 @@ def test_two_scale_source_gate_accepts_when_all_independent_gates_pass(
     )
     responses = iter(
         [
-            {"verdict": "match", "observedAction": "press", "evidence": "visible"},
+            {"verdict": "match", "visibleEquipment": ["dumbbell"], "observedAction": "press", "evidence": "visible"},
             {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
             {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged", "evidence": "visible"},
             {
@@ -174,6 +178,8 @@ def test_two_scale_source_gate_accepts_when_all_independent_gates_pass(
             {
                 "visibleEquipment": ["dumbbell"],
                 "orderedPhases": ["weights lower", "weights press upward"],
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
                 "evidence": "dumbbells move above the torso",
             },
             topology_response(),
@@ -214,7 +220,7 @@ def test_two_scale_source_gate_rejects_vlm_approval_that_contradicts_pose_endpoi
 
     responses = iter(
         [
-            {"verdict": "match", "observedAction": "jerk", "evidence": "visible"},
+            {"verdict": "match", "observedAction": "curl", "evidence": "visible"},
             {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
             {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged", "evidence": "visible"},
             {"visibleEquipment": ["barbell"], "startState": "start", "orderedPhases": ["phase", "return"], "endState": "end", "startStateVisible": True, "actionPhaseVisible": True, "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True, "evidence": "complete"},
@@ -235,11 +241,11 @@ def test_two_scale_source_gate_rejects_vlm_approval_that_contradicts_pose_endpoi
     )
     endpoint_features = {
         "available": True,
-        "start": {"available": True, "supportMode": "standing", "handHeight": "above_head", "torsoOrientation": "upright", "kneeState": "flexed", "stance": "split"},
+        "start": {"available": True, "supportMode": "kneeling", "handHeight": "hip", "torsoOrientation": "upright", "kneeState": "flexed", "stance": "shoulder_width"},
         "end": {"available": True, "supportMode": "standing", "handHeight": "hip", "torsoOrientation": "upright", "kneeState": "extended", "stance": "shoulder_width"},
     }
     result = bake_and_rank.validate_two_scale_source_with_caption_images(
-        make_review_item(tmp_path, "Barbell Split Jerk"),
+        make_review_item(tmp_path, "Barbell Standing Curl"),
         uniform_sheet_paths=[uniform_sheet],
         output_dir=tmp_path / "validation",
         caption_images=lambda **_kwargs: json.dumps(next(responses)),
@@ -470,6 +476,7 @@ def test_two_scale_source_gate_accepts_corroborated_target_aware_equipment(
             {
                 "verdict": "match",
                 "observedAction": "barbell lying triceps extension",
+                "visibleEquipment": ["barbell"],
                 "evidence": "elbows extend while the bar moves above the face",
             },
             {
@@ -500,6 +507,8 @@ def test_two_scale_source_gate_accepts_corroborated_target_aware_equipment(
             {
                 "visibleEquipment": ["dumbbells"],
                 "orderedPhases": ["elbows flex", "elbows extend"],
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
                 "evidence": "the low-resolution sheet makes the implement ends ambiguous",
             },
             topology_response(equipment_match="match", complete=True),
@@ -574,6 +583,8 @@ def test_two_scale_endpoint_gate_uses_deterministic_return_cycle_when_identity_i
                 "visibleEquipment": ["barbell"],
                 "orderedPhases": ["hips rise", "hips lower"],
                 "evidence": "complete return cycle",
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
             },
             topology_response(),
             {

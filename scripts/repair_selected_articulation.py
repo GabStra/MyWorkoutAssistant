@@ -17,6 +17,7 @@ from exercise_motion_pkg.bake_and_rank import (
     write_validated_review_video_from_data_urls,
 )
 from exercise_motion_pkg.models import MotionClip, MotionFrame
+from exercise_motion_pkg.acceptance import invalidate_retained_acceptance
 from exercise_motion_pkg.foot_contact_observation import add_observed_foot_contacts, observe_foot_landmarks
 from exercise_motion_pkg.structural_refinement import (
     constrain_to_source_articulation_envelope,
@@ -103,7 +104,9 @@ def repair_manifest(manifest_path: Path, *, render: bool) -> dict[str, Any] | No
         return None
 
     backup_path = skeleton_path.with_suffix(skeleton_path.suffix + ".pre-articulation-fix")
-    skeleton = load_json(backup_path if backup_path.exists() else skeleton_path)
+    # A backup is for explicit restoration, not the input to later repairs.
+    # Reusing it here silently undoes corrections made since the first repair.
+    skeleton = load_json(skeleton_path)
     raw = load_json(raw_path)
     refreshed_support_evidence = None
     source_pose_reference_path = workspace / "segment_detection" / "exact_source_pose_reference.json"
@@ -158,6 +161,8 @@ def repair_manifest(manifest_path: Path, *, render: bool) -> dict[str, Any] | No
         not metadata.get("applied")
         and not orientation_metadata.get("applied")
         and not foot_heading_metadata.get("applied")
+        and not spike_metadata.get("applied")
+        and not forefoot_contact_metadata.get("applied")
     ):
         return None
 
@@ -215,7 +220,7 @@ def repair_manifest(manifest_path: Path, *, render: bool) -> dict[str, Any] | No
 
     if manifest_path.parent.name == "selected":
         promoted_skeletons = sorted(manifest_path.parent.glob("*_wear_skeleton.json"))
-        if len(promoted_skeletons) == 1:
+        if len(promoted_skeletons) == 1 and promoted_skeletons[0].resolve() != skeleton_path.resolve():
             shutil.copy2(skeleton_path, promoted_skeletons[0])
         if render:
             promoted_previews = sorted(manifest_path.parent.glob("*_selected_preview.webm"))
@@ -226,6 +231,8 @@ def repair_manifest(manifest_path: Path, *, render: bool) -> dict[str, Any] | No
 
     if refreshed_support_evidence is not None:
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if manifest_path.parent.name == "selected":
+        invalidate_retained_acceptance(manifest_path.parent, "articulation_repair_requires_revalidation")
 
     return {
         "exercise": selected.get("exerciseName"),

@@ -153,6 +153,9 @@ def main() -> None:
                         checkpoint,
                         review_call=json_call_reasoner_only_with_loading,
                         max_workers=args.max_workers,
+                        progress_callback=lambda payload: _save_library_atomic(
+                            payload, checkpoint_path
+                        ),
                     )
                     completed = True
                 elif args.muscle_semantics_only:

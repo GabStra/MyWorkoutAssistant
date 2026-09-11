@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import sys
 import threading
 import time
 from typing import Any, Iterable
@@ -331,15 +332,21 @@ def torch_cuda_available() -> bool:
 
 def release_yolo_pose_cuda_memory() -> None:
     """Return transient YOLO allocations before the following GPU stage starts."""
+    # Exclusive GPU work may run in a long-lived worker, whose thread-local
+    # model references survive the operation. Drop them before emptying CUDA.
+    cache = getattr(_YOLO_MODEL_THREAD_LOCAL, "models", None)
+    if isinstance(cache, dict):
+        cache.clear()
     # YOLO models live in worker-thread-local caches while a pose review pool is
     # active. Once that pool has joined, collect those models and explicitly
     # return PyTorch's process-wide CUDA cache. Otherwise llama.cpp starts with
     # several gigabytes unavailable and either partially offloads or runs with
     # almost no VRAM safety margin.
     gc.collect()
-    try:
-        import torch
-    except Exception:
+    # A process that never loaded Torch cannot own its CUDA allocations.
+    # Avoid initializing Torch merely to perform cleanup.
+    torch = sys.modules.get("torch")
+    if torch is None:
         return
     try:
         if not torch.cuda.is_available():

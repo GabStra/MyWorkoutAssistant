@@ -24,14 +24,14 @@ param(
     [string]$LlamaCppReasoningBudgetMessage = "Now stop thinking and return the JSON object.",
     [int]$LlamaCppImageMinTokens = 1024,
     [int]$LlamaCppImageMaxTokens = 2048,
-    [int]$LlamaCppCtxSize = 8192,
-    [int]$LlamaCppBatchSize = 256,
+    [int]$LlamaCppCtxSize = 49152,
+    [int]$LlamaCppBatchSize = 1024,
     [int]$LlamaCppUBatchSize = 512,
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
     [string]$LlamaCppFit = "on",
-    [int]$LlamaCppFitCtx = 8192,
+    [int]$LlamaCppFitCtx = 49152,
     [int]$LlamaCppFitTarget = 2048,
     [bool]$LlamaCppMmap = $true,
     [bool]$LlamaCppMlock = $false,
@@ -53,8 +53,8 @@ param(
     [double]$ConfidenceThreshold = 0.45,
     [double]$MinSegmentSeconds = 2.0,
     [double]$MaxSegmentSeconds = 20.0,
-    [int]$ClassificationWorkers = 3,
-    [int]$LlamaCppServerParallel = 1,
+    [int]$ClassificationWorkers = 6,
+    [int]$LlamaCppServerParallel = 6,
     [int]$HealthTimeoutSeconds = 180
 )
 
