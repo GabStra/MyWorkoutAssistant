@@ -1996,15 +1996,19 @@ private fun buildSingleLowPolyMesh(
         up = shoulderUp,
         forward = shoulderSide.cross(shoulderUp).normalizedOr(bodyAxes.forward),
     )
-    val shoulderRadius = (
-        stableSegmentLength("left_shoulder", "left_elbow") +
-            stableSegmentLength("right_shoulder", "right_elbow")
-        ) * 0.5f * 0.30f * 0.48f * 1.10f
-    // Keep chest depth through the shoulder rim; its side walls overlap both caps.
-    val upperChestCenter = shoulderCenter - shoulderUp * (shoulderRadius * 0.55f)
-    val shoulderSocketTop = shoulderCenter + shoulderUp * (shoulderRadius * 0.55f)
+    // Fit each cap inside the upper arm's narrower (depth) dimension.
+    fun shoulderCapRadius(side: String): Float =
+        stableSegmentLength("${side}_shoulder", "${side}_elbow") * 0.30f * 0.40f
+    // Keep the torso socket height independent of the visible joint cap size.
+    val shoulderRadius = (stableSegmentLength("left_shoulder", "left_elbow") +
+        stableSegmentLength("right_shoulder", "right_elbow")) * 0.5f * 0.30f * 0.44f
+    // Enclose the inner shoulder cap up to its upper hemisphere, as limb
+    // segments enclose their joint caps. This is the start of the neck taper.
+    val upperChestCenter = shoulderCenter + shoulderUp * (shoulderRadius * 0.35f)
+    // Leave room for the traps even when the reconstructed neck is short.
+    val neckRise = max((neck - shoulderCenter).dot(shoulderUp), 0f)
     val chestCenter = waistCenter.lerp(neck, 0.45f)
-    val upperTransitionCenter = neck - shoulderUp * (shoulderWidth * 0.06f)
+    val upperTransitionCenter = neck - shoulderUp * min(shoulderWidth * 0.06f, neckRise * 0.20f)
     val pelvisUp = (waistCenter - hipCenter).normalizedOr(torsoUp)
     val measuredPelvisSide = (rightHip - leftHip)
         .projectOntoPlane(pelvisUp)
@@ -2054,30 +2058,20 @@ private fun buildSingleLowPolyMesh(
             center = chestCenter,
             side = chestAxes.side,
             depth = chestAxes.forward,
-            halfWidth = shoulderWidth * 0.40f,
+            halfWidth = shoulderWidth * 0.37f,
             frontDepth = shoulderWidth * 0.18f,
             backDepth = shoulderWidth * 0.24f,
-            cornerBevel = 0.18f,
+            cornerBevel = 0.38f,
         ),
         addMeshDirectionalRing(
             mesh = mesh,
             center = upperChestCenter,
             side = upperChestAxes.side,
             depth = upperChestAxes.forward,
-            halfWidth = max(measuredShoulderWidth * 0.5f - shoulderRadius * 0.25f, 0.001f),
+            halfWidth = max(measuredShoulderWidth * 0.5f - shoulderRadius * 0.35f, 0.001f),
             frontDepth = shoulderWidth * 0.18f,
             backDepth = shoulderWidth * 0.24f,
-            cornerBevel = 0.18f,
-        ),
-        addMeshDirectionalRing(
-            mesh = mesh,
-            center = shoulderSocketTop,
-            side = upperChestAxes.side,
-            depth = upperChestAxes.forward,
-            halfWidth = max(measuredShoulderWidth * 0.5f - shoulderRadius * 0.25f, 0.001f),
-            frontDepth = shoulderWidth * 0.18f,
-            backDepth = shoulderWidth * 0.24f,
-            cornerBevel = 0.18f,
+            cornerBevel = 0.38f,
         ),
     )
     // Blend corresponding surface vertices toward the socket, with an upright
@@ -2101,9 +2095,20 @@ private fun buildSingleLowPolyMesh(
         halfWidth = shoulderWidth * 0.14f,
         frontDepth = shoulderWidth * 0.105f,
         backDepth = shoulderWidth * 0.09f,
+        cornerBevel = 0.18f,
     )
-    // One uninterrupted trapezius surface, sharing vertices with chest and collar.
-    addMeshStrip(mesh, chestRings.last(), upperTransitionRing, palette.coreFill)
+    // Continue the upper chest directly into the neck. A second full-width
+    // shoulder rim would create a flat shelf beneath the trapezius surface.
+    val shoulderRing = chestRings.last()
+    val trapeziusRing = shoulderRing.zip(upperTransitionRing).map { (lowerIndex, upperIndex) ->
+        val lower = mesh.vertices[lowerIndex]
+        val upper = mesh.vertices[upperIndex]
+        val rise = max((upper - lower).dot(shoulderUp), 0f)
+        val control = lower.lerp(upper, 0.5f) + shoulderUp * (rise * 0.25f)
+        addMeshVertex(mesh, lower.lerp(control, 0.5f).lerp(control.lerp(upper, 0.5f), 0.5f))
+    }
+    addMeshStrip(mesh, shoulderRing, trapeziusRing, palette.coreFill)
+    addMeshStrip(mesh, trapeziusRing, upperTransitionRing, palette.coreFill)
     val neckMidLerp = 0.55f
     val neckConnector = addNeckConnector(
         mesh = mesh,
@@ -2175,7 +2180,7 @@ private fun buildSingleLowPolyMesh(
     addJointCap(mesh, rightHip, bodyAxes, segmentScaledWidth("right_hip", "right_knee", 0.27f) * 0.48f, palette.jointFill)
     for (side in listOf("left", "right")) {
         val shoulder = resolvedJoints.getValue("${side}_shoulder")
-        addJointCap(mesh, shoulder, upperChestAxes, shoulderRadius, palette.jointFill)
+        addJointCap(mesh, shoulder, upperChestAxes, shoulderCapRadius(side), palette.jointFill)
     }
     addHeadVolume(
         mesh = mesh,
@@ -2252,11 +2257,13 @@ private fun buildSingleLowPolyMesh(
     addHand("right_wrist", "right_hand", "right_elbow")
     val leftFootSurface = addShoeBlockFromNames(
         mesh, resolvedJoints, "left_ankle", "left_foot", bodyAxes, footScale, palette,
-        coordinatedLegSides[LimbKey("left_ankle", "left_foot")],
+        boneSides[LimbKey("left_ankle", "left_foot")]
+            ?: coordinatedLegSides[LimbKey("left_ankle", "left_foot")],
     )
     val rightFootSurface = addShoeBlockFromNames(
         mesh, resolvedJoints, "right_ankle", "right_foot", bodyAxes, footScale, palette,
-        coordinatedLegSides[LimbKey("right_ankle", "right_foot")],
+        boneSides[LimbKey("right_ankle", "right_foot")]
+            ?: coordinatedLegSides[LimbKey("right_ankle", "right_foot")],
     )
     addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
         segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),

@@ -7,10 +7,10 @@ def test_end_on_output_limb_is_unresolved_not_a_confident_angle_mismatch():
               "left_hip": (0., 1.), "right_hip": (1., 1.),
               "left_knee": (0., 2.), "right_knee": (1., 2.),
               "left_elbow": (-.5, 0.), "left_wrist": (-1., 0.)}
-    source = [{"normalizedTime": i / 9, "joints": joints} for i in range(10)]
+    source = [{"time": i / 9, "joints": joints} for i in range(10)]
     output_joints = {name: (x, -y, 0.) for name, (x, y) in joints.items()}
     output_joints["left_elbow"] = (-.01, -.01, .5)
-    output = [{"normalizedTime": i / 9, "joints": output_joints} for i in range(10)]
+    output = [{"time": i / 9, "joints": output_joints} for i in range(10)]
     metrics = fidelity._projection_metrics(source, output, horizontal_vector=(1., 0.), mirror=False, swap_bilateral=False)
     elbow = metrics["perAngleEndpointMetrics"]["left_elbow"]
     assert elbow["comparisonUnresolved"]
@@ -24,7 +24,7 @@ def test_visible_persistent_angle_error_still_fails():
 
 def test_unresolved_projection_cannot_silently_approve_required_fidelity(monkeypatch):
     monkeypatch.setattr(bake, "source_pose_comparison_payload_for_materialized_output", lambda _: ({}, {}))
-    monkeypatch.setattr(bake, "source_to_motion_pose_fidelity_metrics", lambda *args: {
+    monkeypatch.setattr(fidelity, "registered_camera_pose_fidelity_metrics", lambda *args: {
         "available": True, "comparableFrameRatio": 1.,
         "perAngleEndpointMetrics": {"left_elbow": {"mismatch": False, "comparisonUnresolved": True}},
     })

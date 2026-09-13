@@ -51,6 +51,50 @@ def contact_frame_bounds(contact: dict[str, Any], count: int) -> tuple[int, int]
     return max(0, min(count - 1, start)), max(0, min(count - 1, end))
 
 
+def is_observed_ground_contact(contact, evidence):
+    """Use explicit surface identity before the legacy shared-ground evidence."""
+    surface = str(contact.get('surfaceKind') or '').lower()
+    if surface:
+        return surface in {'ground', 'floor', 'ground_plane'}
+    return (contact.get('supportKind') == 'observed_foot_patch'
+            and (evidence or {}).get('sharedSupportPlaneY') is not None)
+
+
+def observed_ground_contact_mask(evidence, names, count):
+    """Only observed stationary toe/sole contacts own a floor-height anchor."""
+    result = np.zeros((count, len(names)), dtype=bool)
+    support = (evidence or {}).get('bodySupport') or {}
+    calibrated = set(support.get('stationaryJoints', [])) if (
+        support.get('required') and support.get('status') == 'confirmed') else set()
+    for contact in motion_support_contacts(evidence):
+        name = str(contact.get('jointName') or '')
+        if (name not in names or name in calibrated or not name.endswith('_foot')
+                or contact.get('contactState') == 'heel_only'
+                or not is_stationary_contact(contact)
+                or not is_observed_ground_contact(contact, evidence)):
+            continue
+        start, end = contact_frame_bounds(contact, count)
+        result[start:end+1, names.index(name)] = True
+    return result
+
+
+def stationary_contact_anchor_ids(evidence, names, count):
+    """Transport observed anchor identity without adding contact frames."""
+    result = np.full((count, len(names)), None, dtype=object)
+    for contact in motion_support_contacts(evidence):
+        if not is_stationary_contact(contact):
+            continue
+        name = contact.get('jointName', '')
+        identities = {name: contact.get('anchorGroupId')}
+        if contact.get('contactState') == 'full_sole' and name.endswith('_foot'):
+            identities[name.replace('_foot', '_ankle')] = contact.get('ankleAnchorGroupId')
+        start, end = contact_frame_bounds(contact, count)
+        for joint, group in identities.items():
+            if joint in names and group is not None:
+                result[start:end+1, names.index(joint)] = str(group)
+    return result
+
+
 def stationary_target_track(
     points: np.ndarray, mask: np.ndarray, *, fps: float | None = None, anchor_ids=None,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
@@ -73,6 +117,10 @@ def stationary_target_track(
                 np.linalg.norm(points[start:stop] - anchor, axis=1)
             )),
         })
+    if fps is None and anchor_ids is not None:
+        for group in {value for value in anchor_ids[mask] if value is not None}:
+            shared = mask & (anchor_ids == group)
+            targets[shared] = np.median(points[shared], axis=0)
     if fps is not None and len(points) >= 3 and episodes:
         from scipy.sparse import csr_matrix, diags, eye
         from scipy.sparse.linalg import spsolve
@@ -94,12 +142,12 @@ def stationary_target_track(
         # stationary contact exactly rather than smoothing a planted foot.
         anchors = spsolve((mapping.T @ system @ mapping).tocsc(), mapping.T @ targets)
         targets = np.asarray(mapping @ anchors)
-        for episode in episodes:
-            start, stop = episode["startFrame"], episode["endFrame"] + 1
-            anchor = targets[start]
-            episode["anchor"] = anchor.tolist()
-            episode["baselineMaxDistanceFromAnchor"] = float(np.max(
-                np.linalg.norm(points[start:stop] - anchor, axis=1)))
+    for episode in episodes:
+        start, stop = episode["startFrame"], episode["endFrame"] + 1
+        anchor = targets[start]
+        episode["anchor"] = anchor.tolist()
+        episode["baselineMaxDistanceFromAnchor"] = float(np.max(
+            np.linalg.norm(points[start:stop] - anchor, axis=1)))
     return targets, episodes
 
 

@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +8,64 @@ import pytest
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg.cleanup import cleanup_motion_clip
 from exercise_motion_pkg.models import MotionClip, MotionFrame
+
+
+def test_source_overview_preserves_dense_integrity_evidence(tmp_path, monkeypatch):
+    samples = [tmp_path / f"frame_{index:03d}.jpg" for index in range(24)]
+    candidate = bake.SourceCutCandidate(
+        candidate_id="A", window=bake.DetectionWindow(index=0, start_seconds=2., end_seconds=8.),
+        frame_paths=[tmp_path / f"sheet_{index}.jpg" for index in range(3)],
+        sample_frame_paths=samples, visual_integrity={"passed": False},
+    )
+    captured = {}
+    def build_sheet(**kwargs):
+        captured.update(kwargs)
+        return kwargs["output_path"]
+    monkeypatch.setattr(bake, "build_frame_contact_sheet", build_sheet)
+    monkeypatch.setattr(bake, "persistent_border_crop", lambda paths: None)
+    overview = bake.source_cut_review_overview(candidate, tmp_path)
+    assert len(overview.frame_paths) == 1
+    assert len(captured["frame_paths"]) == 8
+    assert captured["frame_paths"][0] == samples[0]
+    assert captured["frame_paths"][-1] == samples[-1]
+    assert captured["timestamps"] == sorted(captured["timestamps"])
+    assert overview.sample_frame_paths == samples
+    assert overview.visual_integrity == {"passed": False}
+    assert len(candidate.frame_paths) == 3
+
+
+@pytest.mark.parametrize('sample_interval', [.1, 1.])
+def test_complete_source_context_can_recover_outside_partial_discovery_hint(tmp_path, sample_interval):
+    contract = {'completionMode': 'return_to_start', 'observableMotionSpec': {
+        'primaryMovingRegions': ['hands'], 'referenceRegions': ['hips'],
+        'primaryAxis': 'vertical', 'motionPattern': 'joint_flex_extend',
+        'requiresReturnToStart': True, 'mustShowFullCycle': True,
+        'oneWayPartialIsInvalid': True, 'mustBeVisibleRegions': ['hands', 'hips']}}
+    samples = []
+    for index in range(round(12/sample_interval)+1):
+        time = index*sample_interval
+        joints = {}
+        for side, x in [('left', .4), ('right', .6)]:
+            for name, y in [('shoulder', .3), ('hip', .55), ('knee', .75), ('ankle', .95),
+                            ('elbow', .35), ('wrist', .3+.2*math.cos(time*math.pi/4))]:
+                joints[f'{side}_{name}'] = [x, y, 1.]
+        samples.append({'timeSeconds': time, 'keypoints': joints})
+    candidate = bake.RankedCandidate(exercise_index=0, candidate_rank=0, exercise_id='movement',
+        exercise_name='Unspecified exercise', exercise_slug='movement', candidate={
+            'videoId': 'retained-source', 'durationSeconds': 12,
+            'exerciseMotionContract': contract, 'visionPayload': {
+                'bestChunkStartSeconds': 9., 'bestChunkEndSeconds': 11.5, 'bestChunkScore': .95,
+                'posePrefilter': {'dominantPoseSamples': samples, 'sampleFps': 1/sample_interval}}})
+    variants = bake.observed_complete_source_window_variants(candidate)
+    if sample_interval > .5:
+        assert not variants  # Sparse observations cannot establish a continuous rep.
+    else:
+        assert variants and variants[0].hint.start_seconds < 1.
+        assert variants[0].hint.end_seconds > 7.
+        request = bake.BakeAndRankRequest(candidates_json=tmp_path/'candidates.json',
+            workspace=tmp_path/'workspace', wham_repo_path=None, body_model_root=None,
+            segment_max_seconds=0.)
+        assert bake.collect_source_window_variants(candidate, request=request)[0].source == 'observed_complete_source_cycle'
 
 
 @pytest.fixture
@@ -25,25 +84,11 @@ def detect_instance(tmp_path, source):
     )
 
 
-def test_thruster_does_not_reuse_the_incomplete_two_thirds_cut(tmp_path, recorded_sources):
-    result = detect_instance(tmp_path, recorded_sources["barbell-thruster"])
-    assert result["endRatio"] > 2 / 3
-    assert result["boundaryValidation"]["passed"] is True
-
-
-def test_bench_press_shorter_interval_has_independent_phase_confirmation(tmp_path, recorded_sources):
-    result = detect_instance(tmp_path, recorded_sources["barbell-bench-press"])
-    assert result["trimmed"] is True
-    assert result["boundaryValidation"]["passed"] is True
-    assert result["endRatio"] == pytest.approx(0.52)
-
-
-def test_failed_boundary_confirmation_preserves_the_approved_interval(tmp_path, recorded_sources, monkeypatch):
-    monkeypatch.setattr(bake, "full_repetition_phase_completeness_metrics_from_source_pose_payload",
-                        lambda *args, **kwargs: {"required": True, "passed": False})
-    result = detect_instance(tmp_path, recorded_sources["barbell-bench-press"])
+@pytest.mark.parametrize("source", ["barbell-thruster", "barbell-bench-press"])
+def test_cyclic_source_retains_endpoint_samples_for_3d_loop_selection(tmp_path, recorded_sources, source):
+    result = detect_instance(tmp_path, recorded_sources[source])
     assert result["trimmed"] is False
-    assert result["reason"] == "proposed_interval_not_confirmed_complete"
+    assert result["reason"] == "cyclic_boundaries_owned_by_observed_3d_cycle_selection"
 
 
 def test_materialized_source_reference_is_not_cut_twice(recorded_sources):

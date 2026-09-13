@@ -97,6 +97,19 @@ def finalize_with_bounded_review_retry(operation: Callable[[], dict[str, Any]]) 
     for attempt in range(2):
         manifest = operation()
         manifest["reviewAttemptCount"] = attempt + 1
+        # The candidate reviewer owns its independent second opinion. Do not
+        # multiply that budget at the outer pipeline layer (which can also
+        # rebake the same motion). Missing evidence without a completed review
+        # remains eligible for the existing single recovery attempt below.
+        review_entries = [manifest.get("rejectedBest"), manifest.get("manualReviewFallback")]
+        for entry in review_entries:
+            if not isinstance(entry, dict):
+                continue
+            review = ((entry.get("ranking") or {}).get("payload") or {}).get("finalOutputValidation") or {}
+            bounded = review.get("boundedReview") or {}
+            if review.get("failureOwner") == "review" and bounded.get("additionalReviewCount", 0) >= 1:
+                manifest["reviewRetrySkippedReason"] = "candidate_review_budget_exhausted"
+                return manifest
         state = {"finalValidation": {
             "status": "selected" if manifest.get("selected") else "no_selection",
             **final_processing_diagnostics(manifest),
@@ -412,6 +425,12 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
         candidate_workspace=workspace, exercise_motion_contract=contract)
     loops = bake.build_candidate_review_eligible_loops(bake.load_motion_json(cleaned), source_interval_authority=authority)
     support = bake.pre_wham_source_foot_support_evidence(workspace)
+    from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
+    if requires_body_support(contract) or observed_stationary_sole_contacts(support):
+        observation = observe_body_support(workspace/'input/selected_segment.mp4', None,
+                                           workspace/'segment_detection/body_support')
+        if observation.get('status') != 'observed':
+            return {'status': 'skipped', 'reason': 'source_contact_observation_unavailable'}
     artifacts = bake.bake_preview_loops_with_playwright(preview, loops, workspace, item.request.review_frames,
         rank_preview_variants=item.request.rank_preview_variants,
         adaptive_preview_settings=item.request.adaptive_preview_settings,
@@ -675,6 +694,16 @@ def _run_staged_bake_wave(
                     )
                     review_prepared_source(candidate, request=item.request, selected_video=selected_video,
                         contract=contract, caption_images=source_session.caption_images)
+                    # Contact semantics must be available before the CPU-only
+                    # prefetch, otherwise it fits once without them and again
+                    # after the final stage acquires its visual model.
+                    from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
+                    from .bake_and_rank import load_pre_wham_exact_source_phase_metrics
+                    candidate_workspace = item.request.workspace / candidate.workspace_slug
+                    phase_metrics = load_pre_wham_exact_source_phase_metrics(candidate_workspace) or {}
+                    if requires_body_support(contract) or observed_stationary_sole_contacts(phase_metrics.get('sourceFootSupportEvidence')):
+                        observe_body_support(selected_video, source_session.caption_images,
+                                             candidate_workspace/'segment_detection/body_support')
                 except Exception as exc:
                     if is_storage_failure(exc):
                         raise
@@ -735,6 +764,9 @@ def _run_staged_bake_wave(
                             ),
                         )
                     )
+                if item.request.max_reconstruction_candidate_attempts > 0:
+                    requested_portfolio_size = min(requested_portfolio_size,
+                                                   item.request.max_reconstruction_candidate_attempts)
                 if len(selected_sources) >= requested_portfolio_size:
                     break
             if not item_states[item.exercise_id]["source"].get("deferred"):
@@ -1217,6 +1249,18 @@ def _run_staged_bake_wave(
             "retryExerciseIds": [state["exerciseId"] for state in retry],
         }
     )
+    attempts = [attempt for state in item_states.values()
+                for attempt in state.get("wham", {}).get("attempts", [])]
+    elapsed_minutes = float(report.get("elapsedSeconds") or 0.) / 60.
+    report["generationEfficiency"] = {
+        "acceptedMovementCount": len(completed),
+        "candidateReconstructionAttempts": len(attempts),
+        "reportedReconstructionCacheHits": sum(
+            str(attempt.get("cacheStatus") or "").startswith("reused") for attempt in attempts),
+        "acceptedPerElapsedMinute": len(completed) / elapsed_minutes if elapsed_minutes > 0 else None,
+        "candidateAttemptsPerAcceptedMovement": len(attempts) / len(completed) if completed else None,
+        "timingBasis": "wave_wall_clock_including_queue_and_validation",
+    }
     heartbeat_stop.set()
     heartbeat_thread.join(timeout=1.0)
     _write_json_atomic(report_path, report)

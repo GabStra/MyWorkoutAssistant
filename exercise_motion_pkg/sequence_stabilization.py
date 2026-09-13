@@ -135,11 +135,13 @@ def contact_mask(payload, names, count):
 
 def pose_digest(payload):
     contents = {'fps': payload.get('fps'), 'jointNames': payload.get('jointNames'),
-                'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints')} for f in payload.get('frames', [])],
+                'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints')} for f in payload.get('frames', [])],
                 'supports': payload.get('sourceFootSupportEvidence'), 'floor': payload.get('renderFloorY'),
                 'fixedRig': payload.get('fixedRig'), 'loop': payload.get('loop')}
     if 'anatomicalSourceRepair' in payload:
         contents['anatomicalSourceRepair'] = payload['anatomicalSourceRepair']
+    if 'equipmentConstraints' in payload:
+        contents['equipmentConstraints'] = payload['equipmentConstraints']
     if 'scenePlacement' in payload:
         contents['scenePlacement'] = payload['scenePlacement']
     return hashlib.sha256(json.dumps(contents, sort_keys=True, separators=(',', ':')).encode()).hexdigest()

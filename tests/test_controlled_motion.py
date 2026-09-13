@@ -19,6 +19,89 @@ def payload(names,points,fps=30.):
                                                 for i,p in enumerate(points)]}
 
 
+def test_cyclic_fit_evaluates_all_seam_residuals_with_matching_dependencies(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+    calls = []
+    def solve(residual, initial, pattern, max_evaluations):
+        errors = residual(initial)
+        assert pattern.shape == (len(errors), len(initial))
+        assert np.isfinite(errors).all()
+        calls.append(True)
+        return SimpleNamespace(x=initial, nfev=1, status=0)
+    monkeypatch.setattr(motion, 'solve_trajectory', solve)
+    motion.fit_controlled_motion(current, timeout_seconds=10.)
+    assert calls
+
+
+def test_temporal_reference_is_unchanged_by_preview_noise(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+    names, reference = stance(12)
+    reference[:, names.index('head'), 0] += .0002*np.sin(np.arange(12))
+    monkeypatch.setattr(motion, 'solve_trajectory', lambda residual, initial, pattern, max_evaluations:
+                        SimpleNamespace(x=initial, nfev=1, status=0))
+    reports = []
+    for noise in (.0001, .002):
+        points = reference.copy()
+        points[:, names.index('head'), 0] += noise*(-1.)**np.arange(12)
+        current = payload(names, points)
+        for frame, source in zip(current['frames'], reference):
+            frame['controlledArticulationReferenceJoints'] = dict(zip(names, source.tolist()))
+        _, report = fit_controlled_motion(current, timeout_seconds=10.)
+        assert report['temporalReference'] == 'source_articulation_before_repairs'
+        reports.append(report)
+    expected = float(np.sqrt(np.mean(np.diff(reference, n=3, axis=0)**2)))
+    assert reports[0]['jerkBefore'] == reports[1]['jerkBefore'] == expected
+    assert reports[0]['settlingSpeedBefore'] == reports[1]['settlingSpeedBefore']
+
+
+def test_default_fit_refines_failed_cycle_without_exceeding_explicit_iteration_cap(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+    calls = []
+    clean = []
+    stalled = [False]
+
+    def solve(residual, initial, pattern, limit):
+        calls.append(limit)
+        if len(calls) == 1:
+            clean.append(initial.copy())
+            bad = initial.copy().reshape(12, -1)
+            bad[-1, 0] += .01  # A broken restart in an otherwise stationary rig.
+            return SimpleNamespace(x=bad.ravel(), nfev=limit, status=0)
+        if stalled[0]:
+            return SimpleNamespace(x=initial.copy(), nfev=1, status=1)
+        if len(calls) == 2:
+            improving = clean[0].copy().reshape(12, -1)
+            improving[-1, 0] += .005
+            return SimpleNamespace(x=improving.ravel(), nfev=limit, status=0)
+        return SimpleNamespace(x=clean[0].copy(), nfev=1, status=1)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', solve)
+    _, refined = motion.fit_controlled_motion(current, timeout_seconds=10.)
+    assert refined['applied'], refined
+    assert calls == [25, 5, 5]
+    assert refined['boundedRefinement']['initialFailedChecks']
+    assert len(refined['boundedRefinement']['blocks']) == 2
+    calls.clear()
+    stalled[0] = True
+    _, stopped = motion.fit_controlled_motion(current, timeout_seconds=10.)
+    assert not stopped['applied']
+    assert stopped['boundedRefinement']['stopReason'] == 'objective_stalled'
+    assert calls == [25, 5]
+    calls.clear()
+    _, capped = motion.fit_controlled_motion(current, max_evaluations=25, timeout_seconds=10.)
+    assert not capped['applied']
+    assert calls == [25]
+
+
 def test_rig_has_constant_bones_and_fixed_sockets_under_arbitrary_rotation():
     names,points=stance()
     rig=FixedRig(points,names)
@@ -31,6 +114,39 @@ def test_rig_has_constant_bones_and_fixed_sockets_under_arbitrary_rotation():
     for a,b in [('left_hip','right_hip'),('left_collar','right_collar')]:
         distances=np.linalg.norm(result[:,names.index(a)]-result[:,names.index(b)],axis=1)
         assert np.ptp(distances)<1e-12
+
+
+def test_solver_can_leave_an_inactive_stiff_constraint_toward_a_better_fit():
+    from scipy.sparse import csr_matrix
+    from exercise_motion_pkg.controlled_motion import solve_trajectory
+    def residual(values):
+        x = values[0]
+        return np.array([x-.09, 1e8*max(x-.10000005, 0.)])
+    solved = solve_trajectory(residual, np.array([.1]), csr_matrix(np.ones((2, 1))), 25)
+    assert abs(solved.x[0]-.09) < 1e-7
+
+
+def test_anatomy_fit_margin_has_consistent_derivatives_at_socket_boundary():
+    from exercise_motion_pkg.physical_validation import anatomical_structure_residuals, SOCKET_ALIGNMENT_MAX_LATERAL_RATIO
+    names, points = stance(1)
+    left, right, neck = [names.index(n) for n in ('left_collar', 'right_collar', 'neck')]
+    span = points[0, right]-points[0, left]
+    center = (points[0, right]+points[0, left])*.5
+    current = np.dot(points[0, neck]-center, span)/np.dot(span, span)
+    margin = 1e-4
+    points[0, neck] += (SOCKET_ALIGNMENT_MAX_LATERAL_RATIO-margin-current)*span
+    def evaluate(offset, fitting_margin):
+        moved = points.copy()
+        moved[0, neck] += offset*span
+        values, labels = anatomical_structure_residuals(moved, names, pose_only=True, margin=fitting_margin)
+        return values[0, labels.index('anatomy_socket_alignment:neck')]
+    step = 1e-8
+    midpoint = evaluate(0., margin)
+    left_derivative = (midpoint-evaluate(-step, margin))/step
+    right_derivative = (evaluate(step, margin)-midpoint)/step
+    assert abs(left_derivative-right_derivative) < 1e-3
+    assert midpoint > 0.
+    assert evaluate(0., 0.) == 0.
 
 
 def test_positive_kernel_does_not_rebound_at_a_stop():
@@ -71,7 +187,9 @@ def test_small_subordinate_deviations_reduce_without_a_world_axis_lock():
 
 
 def test_fit_preserves_contact_and_rig_and_is_reusable():
-    names,points=stance(30)
+    # A short stationary clip covers denoising, contact, rig and cache reuse;
+    # longer trajectories have separate motion and loop regression coverage.
+    names,points=stance(12)
     rng=np.random.default_rng(13)
     head=names.index('head')
     points[:,head,0]+=rng.normal(0,.002,len(points))
@@ -99,6 +217,37 @@ def test_timeout_and_irregular_sampling_return_original():
     p['frames'][3]['timeSec']+=.01
     result,report=fit_controlled_motion(p)
     assert result is p and report['reason']=='irregular_sampling'
+
+
+def test_time_budget_validates_saved_progress_before_discarding_it(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+
+    def timed_out(residual, initial, pattern, max_evaluations):
+        residual(initial)
+        raise TimeoutError
+
+    monkeypatch.setattr(motion, 'solve_trajectory', timed_out)
+    result, report = motion.fit_controlled_motion(current, timeout_seconds=20.)
+    assert report['optimizerTermination'] == 'time_budget'
+    assert report['applied']
+    assert all(report['checks'].values())
+    assert result.get('fixedRig')
+    assert not motion.controlled_fit_processing_incomplete(report)
+
+    def invalid_progress(residual, initial, pattern, max_evaluations):
+        shifted = initial.copy().reshape(12, -1)
+        shifted[:, 1] -= 1.
+        residual(shifted.ravel())
+        raise TimeoutError
+
+    monkeypatch.setattr(motion, 'solve_trajectory', invalid_progress)
+    rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=20.)
+    assert rejected is current
+    assert not failure['applied']
+    assert motion.controlled_fit_processing_incomplete(failure)
 
 
 def test_small_monotonic_motion_is_not_a_hold():

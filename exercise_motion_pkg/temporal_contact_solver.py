@@ -782,13 +782,10 @@ def solve_temporal_contact_rigid_world_alignment(
             aligned, frame_contacts
         )
 
-    # A measured video floor normal fixes upright world pitch, so do not
-    # re-fit ordinary standing clips around their contacts. Horizontal clips
-    # explicitly preserve authoritative contacts, though; a rigid hinge about
-    # that measured support pair is the only correction that can remove body
-    # penetration without making the support float.
+    # Measured gravity owns world orientation for every support mode. Keeping
+    # contacts fixed does not authorize overturning the body around those contacts.
     hinge_rotation_degrees = 0.0
-    if not uses_authoritative_floor_normal or preserve_authoritative_contacts:
+    if not uses_authoritative_floor_normal:
         aligned, hinge_rotation_degrees = _apply_consistent_contact_hinge(
             aligned,
             frame_contacts,

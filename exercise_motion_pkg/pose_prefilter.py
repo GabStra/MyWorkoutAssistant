@@ -232,6 +232,8 @@ def run_yolo_pose_prefilter(
     payload["sampledFrameCount"] = len(samples)
     payload["dominantPoseSamples"] = dominant_pose_samples_payload(samples, metadata=metadata)
     payload["dominantPoseSampleCoordinateSpace"] = "normalized_image_xy"
+    payload["imageWidth"] = metadata.width
+    payload["imageHeight"] = metadata.height
     payload["sampledWindows"] = sampled_windows
     payload["sampledWindowCount"] = len(sampled_windows)
     payload["device"] = device or "auto"
@@ -564,7 +566,9 @@ def score_pose_samples(
                 if eligible:
                     break
             refined_window_seconds /= 2.0
-    best = max(eligible or scored, key=lambda item: float(item["score"]))
+    from .source_observability import observability_ranking_adjustment
+    best = max(eligible or scored, key=lambda item: float(item["score"])
+               + observability_ranking_adjustment(item.get("reconstructionObservability")))
     valid_chunk_score_threshold = max(settings.min_score, CLEAR_VALID_CHUNK_MIN_SCORE)
     valid_chunks = pose_valid_chunks_from_scored_windows(
         scored,
@@ -623,6 +627,7 @@ def score_pose_samples(
         "shoulderWidthBodyRatio": best["shoulderWidthBodyRatio"],
         "hipWidthBodyRatio": best["hipWidthBodyRatio"],
         "viewQualitySampleCount": best["viewQualitySampleCount"],
+        "reconstructionObservability": best.get("reconstructionObservability"),
         "activeJoints": best["activeJoints"],
         "activeChains": best["activeChains"],
         "targetMotionObservability": best["targetMotionObservability"],
@@ -944,7 +949,7 @@ def score_pose_window(
             "motionStrength": 0.0,
             "activeJointVisibility": 0.0,
             "activeChainVisibility": 0.0,
-            "bilateralActiveChainBalance": 1.0,
+            "bilateralActiveChainBalance": None,
             "reconstructionViewQuality": 0.0,
             "threeQuarterViewPreference": 0.0,
             "frontalOrBackViewEvidence": 0.0,
@@ -980,6 +985,12 @@ def score_pose_window(
         contract=settings.target_motion_contract,
     )
     view_quality = pose_reconstruction_view_quality(present, metadata=metadata)
+    from .source_observability import reconstruction_observability
+    observability = reconstruction_observability([
+        {'joints': {name: list(point[:2]) for name, point in detection.keypoints.items()
+                    if point[2] >= settings.min_keypoint_confidence}} if detection else {'joints': {}}
+        for detection in dominant
+    ], settings.target_motion_contract)
     score = clamp_unit(
         single_person_ratio * 0.13
         + keypoint_coverage * 0.08
@@ -990,7 +1001,7 @@ def score_pose_window(
         + motion_strength * 0.09
         + active_quality["activeJointVisibility"] * 0.12
         + active_quality["activeChainVisibility"] * 0.09
-        + active_quality["bilateralActiveChainBalance"] * 0.06
+        + (active_quality["bilateralActiveChainBalance"] if active_quality["bilateralActiveChainBalance"] is not None else .5) * 0.06
     )
     blocking_issues: list[str] = []
     if multi_person_ratio > 0.0:
@@ -1026,8 +1037,8 @@ def score_pose_window(
         blocking_issues.append("low_active_joint_visibility")
     if active_quality["activeChainVisibility"] < 0.68:
         blocking_issues.append("low_active_chain_visibility")
-    if active_quality["bilateralActiveChainBalance"] < 0.55:
-        blocking_issues.append("asymmetric_bilateral_active_chain_visibility")
+    # Bilateral balance is advisory: an unobserved or unilateral chain must
+    # neither become perfect evidence nor impose a universal two-side gate.
     if bool(target_motion.get("required")) and not bool(target_motion.get("passed", True)):
         blocking_issues.append(TARGET_MOTION_PREFILTER_BLOCKING_ISSUE)
     blocking_issues = dedupe_text(blocking_issues)
@@ -1060,6 +1071,7 @@ def score_pose_window(
         "shoulderWidthBodyRatio": view_quality["shoulderWidthBodyRatio"],
         "hipWidthBodyRatio": view_quality["hipWidthBodyRatio"],
         "viewQualitySampleCount": view_quality["viewQualitySampleCount"],
+        "reconstructionObservability": observability,
         "activeJoints": active_quality["activeJoints"],
         "activeChains": active_quality["activeChains"],
         "targetMotionObservability": target_motion,
@@ -1550,7 +1562,7 @@ def active_motion_reconstruction_quality(
         return {
             "activeJointVisibility": 0.0,
             "activeChainVisibility": 0.0,
-            "bilateralActiveChainBalance": 1.0,
+            "bilateralActiveChainBalance": None,
             "activeJoints": [],
             "activeChains": [],
         }
@@ -1565,7 +1577,7 @@ def active_motion_reconstruction_quality(
         return {
             "activeJointVisibility": 0.0,
             "activeChainVisibility": 0.0,
-            "bilateralActiveChainBalance": 1.0,
+            "bilateralActiveChainBalance": None,
             "activeJoints": [],
             "activeChains": [],
         }
@@ -1604,7 +1616,7 @@ def active_motion_reconstruction_quality(
     return {
         "activeJointVisibility": clamp_unit(active_joint_visibility),
         "activeChainVisibility": clamp_unit(active_chain_visibility),
-        "bilateralActiveChainBalance": clamp_unit(bilateral_balance),
+        "bilateralActiveChainBalance": clamp_unit(bilateral_balance) if bilateral_balance is not None else None,
         "activeJoints": active_joints,
         "activeChains": active_chain_names,
     }
@@ -2136,7 +2148,7 @@ def bilateral_active_chain_balance(
     motion_by_joint: dict[str, float],
     visibility_by_joint: dict[str, float],
     active_threshold: float,
-) -> float:
+) -> float | None:
     balances: list[float] = []
     for left_name, right_name in (("left_arm", "right_arm"), ("left_leg", "right_leg")):
         left_motion = max(motion_by_joint.get(joint, 0.0) for joint in SIDE_CHAINS[left_name])
@@ -2146,7 +2158,7 @@ def bilateral_active_chain_balance(
         left_visibility = chain_visibility_score(visibility_by_joint, SIDE_CHAINS[left_name])
         right_visibility = chain_visibility_score(visibility_by_joint, SIDE_CHAINS[right_name])
         balances.append(min(left_visibility, right_visibility) / max(left_visibility, right_visibility, 1e-6))
-    return min(balances) if balances else 1.0
+    return min(balances) if balances else None
 
 
 def weighted_average(values: list[float], weights: list[float]) -> float:

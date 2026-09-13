@@ -614,15 +614,20 @@
         up: shoulderUp,
         forward: wearUnit(shoulderSide.clone().cross(shoulderUp), axes.forward),
       };
-      const shoulderRadius = (
-        stableSegmentLength("left_shoulder", "left_elbow") +
-        stableSegmentLength("right_shoulder", "right_elbow")
-      ) * .5 * .30 * .48 * 1.10;
-      // Keep chest depth through the shoulder rim; its side walls overlap both caps.
-      const upperChest = shoulderCenter.clone().addScaledVector(shoulderUp, -shoulderRadius * .55);
-      const shoulderSocketTop = shoulderCenter.clone().addScaledVector(shoulderUp, shoulderRadius * .55);
+      // Fit each cap inside the upper arm's narrower (depth) dimension.
+      const shoulderCapRadius = side => stableSegmentLength(`${side}_shoulder`, `${side}_elbow`) * .30 * .40;
+      // Keep the torso socket height independent of the visible joint cap size.
+      const shoulderRadius = (stableSegmentLength("left_shoulder", "left_elbow")
+        + stableSegmentLength("right_shoulder", "right_elbow")) * .5 * .30 * .44;
+      // Enclose the inner shoulder cap up to its upper hemisphere, as limb
+      // segments enclose their joint caps. This is the start of the neck taper.
+      const upperChest = shoulderCenter.clone().addScaledVector(shoulderUp, shoulderRadius * .35);
+      // Leave room for the traps even when the reconstructed neck is short.
+      const neckRise = Math.max(joints.neck.clone().sub(shoulderCenter).dot(shoulderUp), 0);
       const chest = waist.clone().lerp(joints.neck, .45);
-      const upperTransitionCenter = joints.neck.clone().addScaledVector(shoulderUp, -shoulderWidth * .06);
+      const upperTransitionCenter = joints.neck.clone().addScaledVector(
+        shoulderUp, -Math.min(shoulderWidth * .06, neckRise * .20)
+      );
       const pelvisUp = wearUnit(waist.clone().sub(hipCenter), torsoUp);
       const hipSide = joints.right_hip.clone().sub(joints.left_hip);
       const pelvisSide = wearUnit(
@@ -657,17 +662,12 @@
         waistRing,
         wearDirectionalRing(
           mesh, chest, chestAxes.side, chestAxes.forward,
-          shoulderWidth * .40, shoulderWidth * .18, shoulderWidth * .24, null, .18
+          shoulderWidth * .37, shoulderWidth * .18, shoulderWidth * .24, null, .38
         ),
         wearDirectionalRing(
           mesh, upperChest, upperChestAxes.side, upperChestAxes.forward,
-          Math.max(joints.left_shoulder.distanceTo(joints.right_shoulder) * .5 - shoulderRadius * .25, .001),
-          shoulderWidth * .18, shoulderWidth * .24, null, .18
-        ),
-        wearDirectionalRing(
-          mesh, shoulderSocketTop, upperChestAxes.side, upperChestAxes.forward,
-          Math.max(joints.left_shoulder.distanceTo(joints.right_shoulder) * .5 - shoulderRadius * .25, .001),
-          shoulderWidth * .18, shoulderWidth * .24, null, .18
+          Math.max(joints.left_shoulder.distanceTo(joints.right_shoulder) * .5 - shoulderRadius * .35, .001),
+          shoulderWidth * .18, shoulderWidth * .24, null, .38
         ),
       ];
       // Blend corresponding surface vertices toward the socket, with an upright
@@ -685,10 +685,20 @@
       }
       const upperTransitionRing = wearDirectionalRing(
         mesh, upperTransitionCenter, upperTransitionAxes.side, upperTransitionAxes.forward,
-        shoulderWidth * .14, shoulderWidth * .105, shoulderWidth * .09
+        shoulderWidth * .14, shoulderWidth * .105, shoulderWidth * .09, null, .18
       );
-      // One uninterrupted trapezius surface, sharing vertices with chest and collar.
-      wearStrip(mesh, chestRings[chestRings.length - 1], upperTransitionRing, primary);
+      // Continue the upper chest directly into the neck. A second full-width
+      // shoulder rim would create a flat shelf beneath the trapezius surface.
+      const shoulderRing = chestRings[chestRings.length - 1];
+      const trapeziusRing = shoulderRing.map((lowerIndex, index) => {
+        const lower = mesh.vertices[lowerIndex];
+        const upper = mesh.vertices[upperTransitionRing[index]];
+        const rise = Math.max(upper.clone().sub(lower).dot(shoulderUp), 0);
+        const control = lower.clone().lerp(upper, .5).addScaledVector(shoulderUp, rise * .25);
+        return wearVertex(mesh, lower.clone().lerp(control, .5).lerp(control.clone().lerp(upper, .5), .5));
+      });
+      wearStrip(mesh, shoulderRing, trapeziusRing, primary);
+      wearStrip(mesh, trapeziusRing, upperTransitionRing, primary);
       const neckLowerCenter = upperTransitionCenter;
       const neckLowerRing = upperTransitionRing;
       const neckMidLerp = .55;
@@ -758,7 +768,7 @@
       wearSphere(mesh, joints.left_hip, axes, segmentWidth("left_hip", "left_knee", .27) * .48, joint);
       wearSphere(mesh, joints.right_hip, axes, segmentWidth("right_hip", "right_knee", .27) * .48, joint);
       for (const side of ["left", "right"]) {
-        wearSphere(mesh, joints[`${side}_shoulder`], upperChestAxes, shoulderRadius, joint);
+        wearSphere(mesh, joints[`${side}_shoulder`], upperChestAxes, shoulderCapRadius(side), joint);
       }
 
       const headHeightAtJoint = stableSegmentLength("neck", "head");
@@ -888,6 +898,14 @@
       );
     }
 
+    function wearApplyExportedSoleSides(frame, sides) {
+      for (const side of ["left", "right"]) {
+        const key = `${side}_ankle->${side}_foot`;
+        const exported = frame.boneSides?.[key];
+        if (exported) sides.set(key, new THREE.Vector3(...exported));
+      }
+    }
+
     function updateWearExactMesh(frame, frameTranslation) {
       if (wearStableFrames !== playbackState.frames) {
         wearStableFrames = playbackState.frames;
@@ -920,6 +938,7 @@
           : smplBoneCrossSectionReference(frame, start, end, frameTranslation);
         if (reference) stableSides.set(key, reference);
       }
+      wearApplyExportedSoleSides(frame, stableSides);
       const stableBodyAxes = wearStableBodyAxesByFrame[resolvedFrameIndex] ?? null;
       const generated = wearBuildHumanoid(joints, stableSides, stableBodyAxes);
       if (!generated) {

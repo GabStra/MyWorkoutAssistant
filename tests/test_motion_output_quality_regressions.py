@@ -52,6 +52,38 @@ def test_export_audit_detects_cleanup_distortion_but_allows_source_asymmetry():
     assert "materialized_leg_articulation_changed_by_cleanup" in b.FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS
 
 
+def test_leg_audit_uses_validated_support_correction_and_rejects_corrupt_reference():
+    import json
+    import numpy as np
+    from exercise_motion_pkg.controlled_motion import FixedRig
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    points = np.tile([fixture['joints'][n] for n in names], (8, 1, 1))
+    rig = FixedRig(points, names)
+    points = rig.decode(rig.initial)
+    frames = []
+    for i, point in enumerate(points):
+        joints = dict(zip(names, point.tolist()))
+        source = copy.deepcopy(joints)
+        source['left_knee'][0] += .3
+        frames.append({'timeSec': i/30., 'joints': joints, 'sourceJoints': source,
+                       'supportCorrectedReferenceJoints': copy.deepcopy(joints)})
+    payload = {'fps': 30., 'jointNames': names, 'frames': frames,
+        'fixedRig': {'jointNames': names, 'parents': rig.parents, 'order': rig.order,
+            'offsets': rig.offsets.tolist(), 'rotationJointNames': [names[j] for j in rig.active],
+            'coordinates': rig.initial.tolist()},
+        'sourceFootSupportEvidence': {'bodySupport': {'required': True, 'status': 'confirmed',
+                                                     'stationaryJoints': ['pelvis']}}}
+    legacy = copy.deepcopy(payload)
+    legacy.pop('fixedRig')
+    assert b.baked_leg_articulation_preservation_metrics(legacy)['maximumPreventedExcessDegrees'] > 5.
+    corrected = b.baked_leg_articulation_preservation_metrics(payload)
+    assert corrected['referenceField'] == 'supportCorrectedReferenceJoints'
+    assert corrected.get('maximumPreventedExcessDegrees', 0.) < 1e-6
+    payload['frames'][1]['supportCorrectedReferenceJoints']['pelvis'][1] += .04
+    assert b.baked_leg_articulation_preservation_metrics(payload)['invalidSupportReference']
+
+
 def test_failed_second_view_cannot_fall_back_to_single_video(tmp_path, monkeypatch):
     html = tmp_path / "preview.html"
     html.write_text("html")

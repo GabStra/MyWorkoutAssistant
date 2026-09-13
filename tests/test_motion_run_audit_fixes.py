@@ -58,6 +58,22 @@ def test_review_retry_stops_when_second_review_succeeds():
     assert result["reviewAttemptCount"] == 2
 
 
+@pytest.mark.parametrize("entry_key", ["rejectedBest", "manualReviewFallback"])
+def test_outer_retry_does_not_multiply_completed_candidate_review_budget(entry_key):
+    calls = []
+    def run():
+        calls.append(1)
+        return {"selected": None, "candidateResults": [{"status": "needs_manual_review"}],
+                entry_key: {"ranking": {"payload": {"finalOutputValidation": {
+                    "passed": False, "failureOwner": "review", "underlyingMotionRejected": False,
+                    "boundedReview": {"additionalReviewCount": 1},
+                    "rejectionReasons": ["visual_review_unresolved"]}}}}}
+    result = wave.finalize_with_bounded_review_retry(run)
+    assert len(calls) == 1
+    assert result["selected"] is None
+    assert result["reviewRetrySkippedReason"] == "candidate_review_budget_exhausted"
+
+
 def test_incomplete_source_review_does_not_penalize_source(tmp_path, monkeypatch):
     request = SimpleNamespace(source_outcome_index=tmp_path / "outcomes.json")
     item = wave.StagedWaveItem("curl", "Curl", request)

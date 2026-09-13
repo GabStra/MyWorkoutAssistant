@@ -50,6 +50,7 @@ def test_contradictory_body_mechanics_remain_rejected():
     result = review(["wrong_variant"], [{
         "tag": "wrong_variant", "basis": "body_motion",
         "observation": "Both arms stay below the shoulders throughout the squat.",
+        "bodyRelation": {"subject": "hands", "reference": "shoulders", "relation": "below"},
     }])
     assert result["underlyingMotionRejected"]
     assert "wrong_variant" in result["hardRejectionReasons"]
@@ -74,6 +75,7 @@ def test_evidenced_support_failure_survives_omitted_equipment_judgment():
     result = review(["wrong_variant", "support_mode_mismatch"], [
         {"tag": "wrong_variant", "basis": "omitted_equipment", "observation": "No rings."},
         {"tag": "support_mode_mismatch", "basis": "body_motion",
+         "bodyRelation": {"subject": "hands", "reference": "hips", "relation": "near"},
          "observation": "Hands remain at the hips through the entire pull-up."},
     ])
     assert "support_mode_mismatch" in result["hardRejectionReasons"]
@@ -92,6 +94,7 @@ def test_planted_feet_claim_checked_against_exported_motion(tmp_path, foot_lift,
     parsed = review(["wrong_variant"], [{
         "tag": "wrong_variant", "basis": "body_motion",
         "observation": "The feet remain planted on the ground throughout.",
+        "bodyRelation": {"subject": "feet", "reference": "pelvis", "relation": "below"},
     }])
     result = bake.enforce_body_only_rejection_evidence(parsed, item=SimpleNamespace(skeleton_path=path))
     assert result["failureOwner"] == expected_owner

@@ -116,6 +116,8 @@ def test_bake_checkpoint_restores_payload_and_video_without_browser(tmp_path, mo
     video = tmp_path / "review.webm"
     calls = []
     def generate(*args, **kwargs):
+        from exercise_motion_pkg.fit_runtime import current_fit_session
+        assert current_fit_session() is not None
         calls.append("browser")
         skeleton.write_text('{"frames": []}')
         video.write_bytes(b"video")

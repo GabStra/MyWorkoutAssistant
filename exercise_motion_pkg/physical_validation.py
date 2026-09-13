@@ -13,6 +13,8 @@ from .contact_constraints import contact_frame_bounds, motion_support_contacts
 from .temporal_quality import body_local_head_direction
 
 
+SOCKET_ALIGNMENT_MAX_LATERAL_RATIO = .06
+
 ARTICULATIONS = tuple(
     (f"{side}_{joint}", parent.format(s=side), f"{side}_{joint}", child.format(s=side), tolerance)
     for side in ("left", "right")
@@ -164,7 +166,7 @@ def support_balance(points, names, fps, support_mask=None):
             "limitations": "No equipment mass, contact forces, or angular momentum; not full dynamics validation."}, outside
 
 
-def anatomical_structure_residuals(points, names, *, pose_only=False):
+def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.):
     """Source-independent limits for our simplified exercise rig.
 
     These dimensionless model limits are not clinical ROM claims. They allow
@@ -177,7 +179,17 @@ def anatomical_structure_residuals(points, names, *, pose_only=False):
 
     def add(label, value):
         labels.append(label)
-        rows.append(np.maximum(value, 0.))
+        bounded = value + margin
+        if margin > 0.:
+            # Fitting needs a continuous derivative at its safety boundary.
+            # A sharp hinge there gives incompatible one-sided derivatives
+            # when several rotations jointly change an attachment. Validation
+            # (margin=0) keeps the exact original violation threshold.
+            rows.append(np.where(bounded <= -margin, 0.,
+                                 np.where(bounded >= margin, bounded,
+                                          (bounded + margin)**2/(4.*margin))))
+        else:
+            rows.append(np.maximum(bounded, 0.))
 
     def point(name):
         return points[:, index[name]]
@@ -218,7 +230,7 @@ def anatomical_structure_residuals(points, names, *, pose_only=False):
         width = np.linalg.norm(span, axis=-1)
         displacement = point(center)-(point(a)+point(b))*.5
         add('anatomy_socket_alignment:'+center,
-            abs(np.sum(displacement*span, axis=-1))/np.maximum(width**2, 1e-9)-.06)
+            abs(np.sum(displacement*span, axis=-1))/np.maximum(width**2, 1e-9)-SOCKET_ALIGNMENT_MAX_LATERAL_RATIO)
     chain = ['pelvis', 'spine1', 'spine2', 'spine3', 'neck']
     if all(n in index for n in chain):
         if all(n in index for n in ('left_hip', 'right_hip')):
@@ -371,6 +383,11 @@ def physical_metrics_from_payload(payload):
             if not np.isfinite(reference).all() or np.any(repair_residuals(reference, names)[0] > 1e-6):
                 return {'passed': False, 'reasons': ['anatomical_reference_invalid'],
                         'events': [{'reason': 'anatomical_reference_invalid'}]}
+    from .support_geometry import support_evidence, validated_support_reference
+    if fixed_rig and support_evidence(payload).get('required'):
+        reference, reason = validated_support_reference(payload)
+        if reason:
+            return {'passed': False, 'reasons': [reason], 'events': []}
     supported={side:np.zeros(len(frames),dtype=bool) for side in ('left','right')}
     other_support=False
     for contact in motion_support_contacts(payload.get('sourceFootSupportEvidence')):

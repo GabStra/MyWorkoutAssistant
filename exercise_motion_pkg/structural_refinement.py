@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import threading
+from time import monotonic
 from dataclasses import replace
 from statistics import median
 from typing import Any
@@ -12,6 +14,7 @@ from exercise_motion_pkg.kinematic_policy import (
     DISTAL_STEP_SPIKE_RATIO,
 )
 from exercise_motion_pkg.pose_fidelity import (
+    registered_camera_pose_fidelity_metrics,
     source_to_motion_pose_fidelity_metrics,
     source_to_motion_pose_fidelity_metrics_for_projection,
 )
@@ -118,6 +121,9 @@ TEMPORAL_POLISH_FIDELITY_TOLERANCES = {
     "p90JointAngleErrorDegrees": 0.5,
 }
 SOURCE_FIDELITY_MAX_RELATIVE_METRIC_REGRESSION = 0.10
+# These sparse solves spend substantial time in Python residual evaluation.
+# Concurrent threads contend on the GIL and exhaust each other's wall budgets.
+_SOURCE_BODY_FIT_LOCK = threading.Lock()
 SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES = 1.0
 SOURCE_PRESERVED_ARTICULATION_CHAINS = (
     (
@@ -528,14 +534,14 @@ def _accept_source_preserving_refinement_step(
             "articulationConstraint": articulation_constraint,
             "temporalQuality": temporal_quality,
         }
-    before_metrics = source_to_motion_pose_fidelity_metrics(
+    before_metrics = registered_camera_pose_fidelity_metrics(
         source_pose_payload,
         _motion_clip_pose_payload(before),
     )
-    proposed_metrics = source_to_motion_pose_fidelity_metrics_for_projection(
+    proposed_metrics = registered_camera_pose_fidelity_metrics(
         source_pose_payload,
         _motion_clip_pose_payload(proposed),
-        projection_reference=before_metrics,
+        camera_reference=before_metrics,
     )
     if not before_metrics.get("available") or not proposed_metrics.get("available"):
         return before, {
@@ -631,6 +637,37 @@ def _accept_source_preserving_refinement_step(
     }
 
 
+def preserve_terminal_bone_lengths(clip, reference_clip, *, source_pose_payload=None):
+    """Preserve bones after all edits, independent of earlier stage flags."""
+    # Later contact, articulation and temporal stages may edit a clip even when
+    # the initial profile-specific refinement was a no-op.
+    refinement_changed_joints = clip.frames != reference_clip.frames
+    if not _has_authoritative_support_anchors(clip) and refinement_changed_joints:
+        terminal_input = clip
+        terminal_candidate, report = _preserve_reference_bone_lengths(
+            clip,
+            reference_clip=reference_clip,
+        )
+        clip, terminal_transaction = _accept_source_preserving_refinement_step(
+            terminal_input,
+            terminal_candidate,
+            source_pose_payload=source_pose_payload,
+            step_name="terminal_bone_length_projection",
+        )
+        report["transaction"] = terminal_transaction
+    elif not refinement_changed_joints:
+        report = {
+            "applied": False,
+            "reason": "source_preserving_refinement_changed_no_joints",
+        }
+    else:
+        report = {
+            "applied": False,
+            "reason": "authoritative_support_solver_owns_terminal_chain_lengths",
+        }
+    return clip, report
+
+
 def refine_motion_clip_structurally(
     clip: MotionClip,
     *,
@@ -669,46 +706,27 @@ def refine_motion_clip_structurally(
         step_name="source_guided_vertical_trajectory",
     )
     source_vertical_metadata["transaction"] = source_vertical_transaction
-    torso_candidate, source_torso_metadata = _align_torso_axis_to_source_pose(
-        clip,
-        source_pose_payload=source_pose_payload,
-    )
-    clip, source_torso_transaction = _accept_source_preserving_refinement_step(
-        clip,
-        torso_candidate,
-        source_pose_payload=source_pose_payload,
-        step_name="source_guided_torso_axis",
-        source_guided_articulation=True,
-    )
-    source_torso_metadata["transaction"] = source_torso_transaction
-    source_guided_candidate, source_guided_metadata = _align_hinge_articulation_to_source_pose(
-        clip,
-        source_pose_payload=source_pose_payload,
+    source_support_alignment = {"applied": False, "reason": "horizontal_torso_not_required"}
+    if horizontal_torso_required:
+        clip, source_support_alignment = _align_upper_body_to_horizontal_support(
+            clip, level_shoulders=rigid_paired_hands_required,
+        )
+    source_guided_candidate, source_guided_metadata = _align_body_to_source_pose(
+        clip, source_pose_payload=source_pose_payload,
+        rigid_paired_hands_required=rigid_paired_hands_required,
+        horizontal_torso_required=horizontal_torso_required,
     )
     clip, source_guided_transaction = _accept_source_preserving_refinement_step(
         clip,
         source_guided_candidate,
         source_pose_payload=source_pose_payload,
-        step_name="source_guided_hinge_articulation",
+        step_name="source_guided_body_articulation",
         source_guided_articulation=True,
+        preserve_rigid_constraints=True,
     )
     source_guided_metadata["transaction"] = source_guided_transaction
-    source_guided_arm_steps: list[dict[str, object]] = []
-    for arm_chain in SOURCE_GUIDED_ARM_CHAINS:
-        arm_candidate, arm_metadata = _align_hinge_articulation_to_source_pose(
-            clip,
-            source_pose_payload=source_pose_payload,
-            chains=(arm_chain,),
-        )
-        clip, arm_transaction = _accept_source_preserving_refinement_step(
-            clip,
-            arm_candidate,
-            source_pose_payload=source_pose_payload,
-            step_name=f"source_guided_{arm_chain[0]}_articulation",
-            source_guided_articulation=True,
-        )
-        arm_metadata["transaction"] = arm_transaction
-        source_guided_arm_steps.append(arm_metadata)
+    source_torso_metadata = {"applied": False, "reason": "included_in_joint_body_solve"}
+    source_guided_arm_steps = []
     source_clip = clip
     articulation_reference_clip = clip
 
@@ -837,30 +855,8 @@ def refine_motion_clip_structurally(
         bilateral_modes=bilateral_modes,
         dominant_profile=dominant_profile,
     )
-    refinement_changed_joints = refinement_metadata.get("applied") is not False
-    if not _has_authoritative_support_anchors(refined) and refinement_changed_joints:
-        terminal_input = refined
-        terminal_candidate, terminal_bone_projection_metadata = _preserve_reference_bone_lengths(
-            refined,
-            reference_clip=source_clip,
-        )
-        refined, terminal_transaction = _accept_source_preserving_refinement_step(
-            terminal_input,
-            terminal_candidate,
-            source_pose_payload=source_pose_payload,
-            step_name="terminal_bone_length_projection",
-        )
-        terminal_bone_projection_metadata["transaction"] = terminal_transaction
-    elif not refinement_changed_joints:
-        terminal_bone_projection_metadata = {
-            "applied": False,
-            "reason": "source_preserving_refinement_changed_no_joints",
-        }
-    else:
-        terminal_bone_projection_metadata = {
-            "applied": False,
-            "reason": "authoritative_support_solver_owns_terminal_chain_lengths",
-        }
+    refined, terminal_bone_projection_metadata = preserve_terminal_bone_lengths(
+        refined, source_clip, source_pose_payload=source_pose_payload)
     refined, rigid_support_restoration = _restore_rigid_bilateral_support(refined)
     refined, lateral_support_restoration = _restore_support_relative_lateral_root_trajectory(
         refined,
@@ -1092,6 +1088,7 @@ def refine_motion_clip_structurally(
         "finalSamePhaseArmSymmetry": final_arm_symmetry_metadata,
         "terminalSamePhaseArmSymmetry": terminal_arm_symmetry_metadata,
         "horizontalTorsoAlignment": horizontal_torso_metadata,
+        "sourceSupportAlignment": source_support_alignment,
         "symmetricCoreAlignment": symmetric_core_metadata,
         "symmetricTravelPath": symmetric_travel_metadata,
         "sourceGuidedVerticalTrajectory": source_vertical_metadata,
@@ -1113,6 +1110,7 @@ def refine_motion_clip_structurally(
         "rigidSupportRestoration": rigid_support_restoration,
         "lateralSupportRestoration": lateral_support_restoration,
         "structuralRollback": {
+            "baseline": "accepted_source_guided_articulation",
             "applied": structural_rollback,
             "reason": (
                 "refinement_increased_structural_bone_length_variation"
@@ -1176,7 +1174,7 @@ def _align_torso_axis_to_source_pose(
 ) -> tuple[MotionClip, dict[str, object]]:
     """Resolve WHAM's forward/backward torso branch from the fixed source view."""
 
-    source_frames = _source_pose_frames_with_normalized_time(source_pose_payload)
+    source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 2:
         return clip, {"applied": False, "reason": "source_pose_reference_unavailable"}
     fidelity = source_to_motion_pose_fidelity_metrics(
@@ -1204,12 +1202,7 @@ def _align_torso_axis_to_source_pose(
     corrected_frames: list[MotionFrame] = []
     corrections: list[Point3] = []
     for frame_index, frame in enumerate(clip.frames):
-        normalized_time = (
-            (frame.time_sec - clip.frames[0].time_sec) / duration
-            if duration > 1e-9
-            else frame_index / max(1, clip.frame_count - 1)
-        )
-        source_joints = _interpolated_source_joints(source_frames, normalized_time)
+        source_joints = _interpolated_source_joints(source_frames, frame.time_sec)
         joints = dict(frame.joints)
         pelvis = joints.get("pelvis") or joints.get("hips")
         shoulder_midpoint = (
@@ -1585,7 +1578,7 @@ def _align_terminal_contact_to_source_pose(
         or not isinstance(contacts, list)
     ):
         return clip, {"applied": False, "reason": "intermittent_contacts_unavailable"}
-    source_frames = _source_pose_frames_with_normalized_time(source_pose_payload)
+    source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 3:
         return clip, {"applied": False, "reason": "source_pose_frames_unavailable"}
     ankle_pairs: list[tuple[float, tuple[float, float], tuple[float, float]]] = []
@@ -3163,7 +3156,7 @@ def _align_intermittent_vertical_trajectory_to_source_pose(
     ).strip().casefold()
     if ground_contact_mode != "intermittent":
         return clip, {"applied": False, "reason": "support_mode_is_not_intermittent"}
-    source_frames = _source_pose_frames_with_normalized_time(source_pose_payload)
+    source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 2:
         return clip, {"applied": False, "reason": "source_pose_reference_unavailable"}
     root_joint = next((name for name in ROOT_VERTICAL_MOTION_JOINTS if name in clip.joint_names), None)
@@ -3197,12 +3190,7 @@ def _align_intermittent_vertical_trajectory_to_source_pose(
     corrected_frames: list[MotionFrame] = []
     corrections: list[float] = []
     for frame_index, frame in enumerate(clip.frames):
-        normalized_time = (
-            (frame.time_sec - clip.frames[0].time_sec) / duration
-            if duration > 1e-9
-            else frame_index / max(1, clip.frame_count - 1)
-        )
-        source_joints = _interpolated_source_joints(source_frames, normalized_time)
+        source_joints = _interpolated_source_joints(source_frames, frame.time_sec)
         source_root = source_joints.get("pelvis") or source_joints.get("hips")
         if not isinstance(source_root, (list, tuple)) or len(source_root) < 2:
             correction = corrections[-1] if corrections else (0.0, 0.0, 0.0)
@@ -3249,11 +3237,107 @@ def _align_intermittent_vertical_trajectory_to_source_pose(
     }
 
 
+def _align_body_to_source_pose(
+    clip: MotionClip,
+    *,
+    source_pose_payload: dict[str, Any] | None,
+    rigid_paired_hands_required: bool = False,
+    horizontal_torso_required: bool = False,
+) -> tuple[MotionClip, dict[str, object]]:
+    """Fit observed core and limb positions together in one fixed camera.
+
+    The camera observes two dimensions. Bone lengths and supported joints are
+    hard kinematic constraints; unobserved depth retains a reconstruction prior.
+    """
+    import numpy as np
+    from itertools import combinations
+    from .articulation_trajectory import fit_pose_and_temporal_trajectories
+    from .source_pose_evidence import audit_source_pose
+
+    source_pose_payload = audit_source_pose(source_pose_payload or {})
+    if source_pose_payload.get('sourcePoseEvidenceAudit', {}).get('unresolved'):
+        return clip, {'applied': False, 'reason': 'source_pose_reference_unreliable',
+                      'sourcePoseEvidenceAudit': source_pose_payload['sourcePoseEvidenceAudit']}
+
+    source_frames = _source_pose_frames(source_pose_payload)
+    if len(source_frames) < 5:
+        return clip, {"applied": False, "reason": "source_pose_reference_unavailable"}
+    camera = registered_camera_pose_fidelity_metrics(source_pose_payload or {}, _motion_clip_pose_payload(clip))
+    if not camera.get('available'):
+        return clip, {"applied": False, "reason": "source_camera_registration_unavailable"}
+    matrix = np.diag([1., -1., -1.]) @ np.asarray(camera['cameraRotation'])
+    def rotate(value, rotation):
+        return replace(value, frames=[MotionFrame(f.time_sec, {
+            n: tuple(float(v) for v in rotation @ np.asarray(p)) for n, p in f.joints.items()
+        }) for f in value.frames])
+    camera_clip = rotate(clip, matrix)
+    edges = [(a, b) for a, b in STRUCTURAL_BONES if a in clip.joint_names and b in clip.joint_names]
+    # A rotation upstream of a support changes that support. Freeze its entire
+    # ancestor path, not just the terminal bone, so coordinates remain exact.
+    frozen = set(_locked_support_anchor_names(clip))
+    if horizontal_torso_required:
+        # Preserve the support-aligned core while fitting the moving limbs.
+        # A 2D observation must not tilt an explicitly supported torso to
+        # improve an arm reprojection residual.
+        frozen.update(('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip'))
+    for parent, child in reversed(edges):
+        if child in frozen:
+            frozen.add(parent)
+    edges = [(a, b) for a, b in edges if b not in frozen]
+    if not edges:
+        return clip, {'applied': False, 'reason': 'all_chains_support_constrained'}
+    moved = [b for _, b in edges]
+    fit_root_translation = not frozen and 'pelvis' in clip.joint_names
+    if fit_root_translation:
+        moved.append('pelvis')
+    swap = camera['bilateralAssignment'] == 'swapped'
+    targets, weights = [], []
+    for frame in camera_clip.frames:
+        observation = pose_fidelity._motion_frame_at_time(source_frames, frame.time_sec)
+        joints = dict(frame.joints)
+        frame_weights = []
+        for name in moved:
+            source_name = pose_fidelity._bilateral_name(name, swap=swap)
+            point = observation['joints'].get(source_name) if observation is not None else None
+            # Coverage is never extrapolated beyond measured timestamps.
+            confidence = float(np.interp(frame.time_sec, [f['time'] for f in source_frames],
+                [f.get('jointConfidence', {}).get(source_name, 1.) for f in source_frames]))
+            frame_weights.append(confidence if point is not None else 0.)
+            if point is not None:
+                x, y = _inverse_similarity_point(point, tuple(camera['cameraImageTransform']))
+                joints[name] = (x, -y, joints[name][2])
+        targets.append(MotionFrame(frame.time_sec, joints))
+        weights.append(frame_weights)
+    core = ('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
+    queued_at = monotonic()
+    with _SOURCE_BODY_FIT_LOCK:
+        queue_seconds = monotonic() - queued_at
+        fitted, report = fit_pose_and_temporal_trajectories(
+            camera_clip, replace(camera_clip, frames=targets), tuple(edges),
+            observation_weights=weights, projected_observations=True,
+            fit_root_translation=fit_root_translation,
+            rigid_pair=('left_hand', 'right_hand') if rigid_paired_hands_required else None,
+            rigid_pair_reference=(('left_shoulder', 'right_shoulder')
+                                  if rigid_paired_hands_required and horizontal_torso_required else None),
+            rigid_distances=tuple(combinations(core, 2)),
+            projection_segments=tuple(dict.fromkeys(edge for chain in pose_fidelity.ANGLE_CHAINS.values()
+                                                   for edge in zip(chain, chain[1:]))),
+            timeout_seconds=120., max_evaluations=400,
+        )
+    report['queueSeconds'] = queue_seconds
+    return rotate(fitted, matrix.T) if report.get('applied') else clip, {
+        'applied': report.get('applied', False), 'strategy': 'joint_body_source_projection_temporal_fit',
+        'cameraRegistration': camera, 'trajectoryFit': report, 'frozenSupportAncestors': sorted(frozen),
+    }
+
+
 def _align_hinge_articulation_to_source_pose(
     clip: MotionClip,
     *,
     source_pose_payload: dict[str, Any] | None,
     chains: tuple[tuple[str, str, str, str, tuple[str, ...]], ...] = SOURCE_GUIDED_HINGE_CHAINS,
+    rigid_paired_hands_required: bool = False,
+    _registered_projection: dict[str, Any] | None = None,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Fit distal hinge endpoints to the source projection without stretching.
 
@@ -3263,14 +3347,31 @@ def _align_hinge_articulation_to_source_pose(
     length.  WHAM therefore remains authoritative for depth branch and global
     motion while the source corrects only what the camera actually observed.
     """
-    source_frames = _source_pose_frames_with_normalized_time(source_pose_payload)
+    source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 2:
         return clip, {"applied": False, "reason": "source_pose_reference_unavailable"}
 
-    fidelity = source_to_motion_pose_fidelity_metrics(
-        source_pose_payload or {},
-        _motion_clip_pose_payload(clip),
-    )
+    if _registered_projection is None:
+        import numpy as np
+        camera = registered_camera_pose_fidelity_metrics(source_pose_payload or {}, _motion_clip_pose_payload(clip))
+        if not camera.get('available'):
+            return clip, {'applied': False, 'reason': 'source_camera_registration_unavailable'}
+        # Solve in camera coordinates, then restore the original world frame.
+        # Flipping both Y and Z preserves handedness and rigid limb geometry.
+        rotation = np.diag([1., -1., -1.]) @ np.asarray(camera['cameraRotation'])
+        def rotate_motion(value, matrix):
+            return replace(value, frames=[MotionFrame(frame.time_sec,
+                {name: tuple(float(v) for v in matrix @ np.asarray(point)) for name, point in frame.joints.items()})
+                for frame in value.frames])
+        camera_clip = rotate_motion(clip, rotation)
+        result, report = _align_hinge_articulation_to_source_pose(camera_clip,
+            source_pose_payload=source_pose_payload, chains=chains,
+            rigid_paired_hands_required=rigid_paired_hands_required,
+            _registered_projection={**camera, 'projectionHorizontalVector': [1., 0.], 'mirrored': False})
+        report['cameraRegistration'] = camera
+        return rotate_motion(result, rotation.T) if report.get('applied') else clip, report
+
+    fidelity = _registered_projection
     if not fidelity.get("available"):
         return clip, {"applied": False, "reason": "source_projection_alignment_unavailable"}
     horizontal_vector_value = fidelity.get("projectionHorizontalVector")
@@ -3291,6 +3392,9 @@ def _align_hinge_articulation_to_source_pose(
     mirror = fidelity.get("mirrored") is True
     swap_bilateral = fidelity.get("bilateralAssignment") == "swapped"
     locked_support_joints = _locked_support_anchor_names(clip)
+    chains = tuple(chain for chain in chains
+                   if not set((chain[2], chain[3], *chain[4])).intersection(locked_support_joints)
+                   and all(name in clip.joint_names for name in (chain[1], chain[2], chain[3], *chain[4])))
 
     motion_frames = pose_fidelity._pose_frames(
         _motion_clip_pose_payload(clip),
@@ -3310,14 +3414,10 @@ def _align_hinge_articulation_to_source_pose(
     corrected_frames: list[MotionFrame] = []
     corrections: list[float] = []
     corrected_chains: set[str] = set()
+    observed_joints = [set() for _ in clip.frames]
     for frame_index, frame in enumerate(clip.frames):
-        normalized_time = (
-            (frame.time_sec - clip.frames[0].time_sec) / duration
-            if duration > 1e-9
-            else frame_index / max(1, clip.frame_count - 1)
-        )
         joints = dict(frame.joints)
-        source_joints = _interpolated_source_joints(source_frames, normalized_time)
+        source_joints = _interpolated_source_joints(source_frames, frame.time_sec)
         fit_names = [
             source_name
             for source_name in pose_fidelity.ALIGNMENT_JOINTS
@@ -3343,6 +3443,7 @@ def _align_hinge_articulation_to_source_pose(
                 or source_parent not in source_joints
             ):
                 continue
+            observed_joints[frame_index].update((hinge, child, *descendants))
             if hinge not in locked_support_joints:
                 desired_hinge_projection = _source_relative_endpoint_projection(
                     source_parent=source_joints[source_parent],
@@ -3397,17 +3498,20 @@ def _align_hinge_articulation_to_source_pose(
         corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
     if not corrections:
         return clip, {"applied": False, "reason": "source_hinge_angles_already_matched"}
-    from .articulation_trajectory import fit_chain_rotations
+    from .articulation_trajectory import fit_pose_and_temporal_trajectories
     proposed = replace(clip, frames=corrected_frames)
-    fitted = clip
-    for _, parent, hinge, child, descendants in chains:
-        chain = tuple(dict.fromkeys((parent, hinge, child, *descendants)))
-        if set(chain[1:]).intersection(locked_support_joints):
-            continue
-        fitted = fit_chain_rotations(fitted, chain, proposal=proposed)
+    fit_chains = tuple(tuple(dict.fromkeys((parent, hinge, child, *descendants)))
+                       for _, parent, hinge, child, descendants in chains)
+    moved = list(dict.fromkeys(name for chain in fit_chains for name in chain[1:]))
+    weights = [[float(name in observed) for name in moved] for observed in observed_joints]
+    pair = ('left_hand', 'right_hand') if rigid_paired_hands_required and all(
+        name in moved for name in ('left_hand', 'right_hand')) else None
+    fitted, trajectory_report = fit_pose_and_temporal_trajectories(
+        clip, proposed, fit_chains, observation_weights=weights, rigid_pair=pair)
     return fitted, {
-        "applied": True,
-        "strategy": "temporally_fitted_source_rotation_correction_with_fixed_bone_length",
+        "applied": trajectory_report["applied"],
+        "strategy": "joint_source_pose_and_temporal_correction",
+        "trajectoryFit": trajectory_report,
         "correctedChains": sorted(corrected_chains),
         "correctedFrameJointCount": len(corrections),
         "averageCorrection": sum(corrections) / len(corrections),
@@ -3514,34 +3618,10 @@ def _point_for_projected_endpoint_with_fixed_length(
     )
 
 
-def _source_pose_frames_with_normalized_time(
+def _source_pose_frames(
     source_pose_payload: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    if not isinstance(source_pose_payload, dict):
-        return []
-    raw_frames = source_pose_payload.get("frames")
-    if not isinstance(raw_frames, list):
-        return []
-    frames: list[dict[str, Any]] = []
-    for index, raw_frame in enumerate(raw_frames):
-        if not isinstance(raw_frame, dict) or not isinstance(raw_frame.get("joints"), dict):
-            continue
-        try:
-            time_sec = float(raw_frame.get("sourceTimeSec", index))
-        except (TypeError, ValueError):
-            time_sec = float(index)
-        frames.append({"timeSec": time_sec, "joints": raw_frame["joints"]})
-    if len(frames) < 2:
-        return frames
-    start = float(frames[0]["timeSec"])
-    duration = float(frames[-1]["timeSec"]) - start
-    for index, frame in enumerate(frames):
-        frame["normalizedTime"] = (
-            (float(frame["timeSec"]) - start) / duration
-            if duration > 1e-9
-            else index / max(1, len(frames) - 1)
-        )
-    return frames
+    return pose_fidelity._pose_frames(source_pose_payload or {}, source=True)
 
 
 def _source_angle_track(
@@ -3563,41 +3643,10 @@ def _source_angle_track(
 
 def _interpolated_source_joints(
     source_frames: list[dict[str, Any]],
-    normalized_time: float,
+    time_seconds: float,
 ) -> dict[str, list[float]]:
-    if not source_frames:
-        return {}
-    if normalized_time <= float(source_frames[0].get("normalizedTime", 0.0)):
-        return dict(source_frames[0]["joints"])
-    if normalized_time >= float(source_frames[-1].get("normalizedTime", 1.0)):
-        return dict(source_frames[-1]["joints"])
-    for left, right in zip(source_frames, source_frames[1:]):
-        left_time = float(left.get("normalizedTime", 0.0))
-        right_time = float(right.get("normalizedTime", 1.0))
-        if not left_time <= normalized_time <= right_time:
-            continue
-        span = right_time - left_time
-        alpha = (normalized_time - left_time) / span if span > 1e-9 else 0.0
-        left_joints = left["joints"]
-        right_joints = right["joints"]
-        interpolated: dict[str, list[float]] = {}
-        for name in left_joints.keys() & right_joints.keys():
-            left_point = left_joints[name]
-            right_point = right_joints[name]
-            if not isinstance(left_point, (list, tuple)) or not isinstance(
-                right_point, (list, tuple)
-            ):
-                continue
-            dimensions = min(len(left_point), len(right_point))
-            if dimensions < 2:
-                continue
-            interpolated[name] = [
-                float(left_point[axis]) * (1.0 - alpha)
-                + float(right_point[axis]) * alpha
-                for axis in range(dimensions)
-            ]
-        return interpolated
-    return dict(source_frames[-1]["joints"])
+    frame = pose_fidelity._motion_frame_at_time(source_frames, time_seconds)
+    return {name: list(point) for name, point in frame["joints"].items()} if frame else {}
 
 
 def _point_angle_degrees(first: Any, middle: Any, last: Any) -> float | None:
@@ -5322,6 +5371,9 @@ def _align_upper_body_to_horizontal_support(
     *, level_shoulders: bool = False,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Flatten a contract-required horizontal torso without moving lower-body contacts."""
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+
     required = {"pelvis", "neck", "left_shoulder", "right_shoulder"}
     if not required.issubset(clip.joint_names) or clip.frame_count < 2:
         return clip, {"applied": False, "reason": "torso_frame_unavailable"}
@@ -5344,66 +5396,62 @@ def _align_upper_body_to_horizontal_support(
             _add(frame.joints["left_shoulder"], frame.joints["right_shoulder"]),
             0.5,
         )
-        # Use the visible torso silhouette rather than pelvis-to-neck.  The
-        # latter can be horizontal while asymmetric shoulder/hip offsets still
-        # leave the rendered trunk visibly pitched against the support plane.
-        current_torso_axis = _normalize(_subtract(shoulder_center, hip_center))
-        if current_torso_axis is None:
-            frames.append(frame)
-            continue
-        target_torso_axis = _normalize(
-            (current_torso_axis[0], 0.0, current_torso_axis[2])
-        )
-        if target_torso_axis is None:
-            frames.append(frame)
-            continue
-        alignment = max(
-            -1.0,
-            min(1.0, _dot(current_torso_axis, target_torso_axis)),
-        )
-        pitch_angle = math.acos(alignment)
-        pitch_axis = _normalize(_cross(current_torso_axis, target_torso_axis))
-        if pitch_axis is None or pitch_angle <= 1e-8:
-            pitch_angle = 0.0
-            pitch_axis = (1.0, 0.0, 0.0)
-        pitch_corrections.append(math.degrees(pitch_angle))
-        joints = dict(frame.joints)
-        for joint_name in upper_body_joints:
-            point = joints.get(joint_name)
-            if point is None:
-                continue
-            relative = _subtract(point, hip_center)
-            rotated = _rotate_vector_about_axis(
-                relative,
-                axis=pitch_axis,
-                angle_radians=pitch_angle,
-            )
-            target = _add(hip_center, rotated)
-            maximum_correction = max(maximum_correction, _distance(point, target))
-            joints[joint_name] = target
+        # Rotate the complete upper subtree about its actual skeleton root.
+        # A hip-midpoint or shoulder-center pivot changes pelvis->spine length,
+        # making the final structural transaction roll back the entire repair.
+        origin = np.asarray(pelvis, dtype=float)
+        center = np.asarray(shoulder_center) - origin
+        lateral = np.asarray(frame.joints["right_shoulder"]) - frame.joints["left_shoulder"]
+        vertical_target = float(hip_center[1] - pelvis[1])
         if level_shoulders:
-            # A supported bilateral press needs a level shoulder line as well
-            # as a horizontal torso axis. Pitch-only alignment leaves camera
-            # roll in the reconstruction and gives the arms different reaches.
-            center = _scale(_add(joints["left_shoulder"], joints["right_shoulder"]), 0.5)
-            lateral = _subtract(joints["right_shoulder"], joints["left_shoulder"])
-            lateral = _normalize(_subtract(lateral, _scale(target_torso_axis, _dot(lateral, target_torso_axis))))
-            target_lateral = _normalize(_cross(target_torso_axis, (0.0, 1.0, 0.0)))
-            if lateral is not None and target_lateral is not None:
-                if _dot(lateral, target_lateral) < 0:
-                    target_lateral = _scale(target_lateral, -1)
-                roll = math.atan2(_dot(target_torso_axis, _cross(lateral, target_lateral)),
-                                  _dot(lateral, target_lateral))
-                for name in upper_body_joints:
-                    if name in joints:
-                        point = joints[name]
-                        joints[name] = _add(center, _rotate_vector_about_axis(
-                            _subtract(point, center), axis=target_torso_axis, angle_radians=roll))
-                        maximum_correction = max(maximum_correction, _distance(point, joints[name]))
+            lateral_length = float(np.linalg.norm(lateral))
+            if lateral_length <= 1e-9:
+                frames.append(frame)
+                continue
+            lateral /= lateral_length
+            longitudinal = center - np.dot(center, lateral) * lateral
+            length = float(np.linalg.norm(longitudinal))
+            target_lateral = lateral.copy()
+            target_lateral[1] = 0.0
+            if length <= 1e-9 or np.linalg.norm(target_lateral) <= 1e-9 or abs(vertical_target) >= length:
+                frames.append(frame)
+                continue
+            longitudinal /= length
+            target_lateral /= np.linalg.norm(target_lateral)
+            horizontal = np.cross(target_lateral, [0., 1., 0.])
+            if np.dot(horizontal, longitudinal) < 0:
+                horizontal *= -1
+            vertical_ratio = vertical_target / length
+            target_longitudinal = horizontal * math.sqrt(1 - vertical_ratio**2)
+            target_longitudinal[1] = vertical_ratio
+            before_basis = np.column_stack((lateral, longitudinal, np.cross(lateral, longitudinal)))
+            after_basis = np.column_stack((target_lateral, target_longitudinal,
+                                           np.cross(target_lateral, target_longitudinal)))
+            rotation = after_basis @ before_basis.T
+        else:
+            length = float(np.linalg.norm(center))
+            horizontal_length = float(np.linalg.norm(center[[0, 2]]))
+            if horizontal_length <= 1e-9 or abs(vertical_target) >= length:
+                frames.append(frame)
+                continue
+            target = center.copy()
+            target[[0, 2]] *= math.sqrt(length**2 - vertical_target**2) / horizontal_length
+            target[1] = vertical_target
+            rotation = Rotation.align_vectors([target], [center])[0].as_matrix()
+        pitch_corrections.append(math.degrees(math.acos(max(-1., min(1., (np.trace(rotation)-1)/2)))))
+        joints = dict(frame.joints)
+        for name in upper_body_joints:
+            if name in joints:
+                target = tuple(origin + rotation @ (np.asarray(joints[name]) - origin))
+                maximum_correction = max(maximum_correction, _distance(joints[name], target))
+                joints[name] = target
         frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
     refined = replace(clip, frames=frames)
     resulting_axes = [
-        _normalize(_subtract(frame.joints["neck"], frame.joints["pelvis"]))
+        _normalize(_subtract(
+            _scale(_add(frame.joints["left_shoulder"], frame.joints["right_shoulder"]), .5),
+            _scale(_add(frame.joints["left_hip"], frame.joints["right_hip"]), .5)
+            if {"left_hip", "right_hip"}.issubset(frame.joints) else frame.joints["pelvis"]))
         for frame in refined.frames
     ]
     vertical_components = [abs(axis[1]) for axis in resulting_axes if axis is not None]
@@ -7032,7 +7080,9 @@ def _bilateral_motion_mode(
         pose_symmetry=pose_symmetry,
     )
     pose_symmetric = bool(pose_symmetry.get("eligible")) or bool(motion_driven_pose_acceptance.get("accepted"))
-    motion_symmetric = ratio >= SYMMETRY_MIN_RATIO and correlation >= max(0.80, SYMMETRY_MIN_CORRELATION)
+    # Aligned coordinates can contain NumPy scalars; metadata and identity
+    # checks require native booleans regardless of the coordinate producer.
+    motion_symmetric = bool(ratio >= SYMMETRY_MIN_RATIO and correlation >= max(0.80, SYMMETRY_MIN_CORRELATION))
     same_phase = motion_symmetric and pose_symmetric
     if same_phase:
         mode = "same_phase_symmetric"

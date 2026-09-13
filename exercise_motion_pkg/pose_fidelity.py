@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from bisect import bisect_left
 from typing import Any, Iterable
 
 
@@ -42,6 +43,186 @@ ALIGNMENT_JOINTS = (
 )
 PROJECTION_COARSE_ANGLE_STEP_DEGREES = 15.0
 PROJECTION_REFINEMENT_STEPS_DEGREES = (3.0, 0.5)
+
+
+def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, camera_reference=None):
+    """Fit one scaled orthographic camera using proximal joints, never each pose.
+
+    Camera elevation and scene rotation are nuisance parameters. Distal joints
+    are held out of registration so their errors cannot steer the camera fit.
+    """
+    import numpy as np
+    from scipy.optimize import least_squares
+    from scipy.spatial.transform import Rotation
+
+    source = _pose_frames(source_payload, source=True)
+    motion = _pose_frames(motion_payload, source=False)
+    if len(source) < 5 or len(motion) < 5:
+        return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                    reason="insufficient_pose_frames")
+    if camera_reference is not None:
+        rotation = np.asarray(camera_reference.get('cameraRotation', []), dtype=float)
+        if rotation.shape != (3, 3) or not np.isfinite(rotation).all():
+            return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                        reason="fixed_camera_registration_unavailable")
+        transform = camera_reference.get('cameraImageTransform')
+        if not isinstance(transform, (list, tuple)) or len(transform) != 6 or not np.isfinite(transform).all():
+            return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                        reason="fixed_camera_image_transform_unavailable")
+        return _registered_projection_metrics(source, motion, rotation,
+                    camera_reference.get('bilateralAssignment') == 'swapped', image_transform=tuple(transform))
+    candidates = []
+    for swap in (False, True):
+        pairs = []
+        for frame in source:
+            other = _motion_frame_at_time(motion, frame['time'])
+            if other is None:
+                continue
+            pairs.extend((other['joints'][_bilateral_name(name, swap=swap)], frame['joints'][name])
+                         for name in ALIGNMENT_JOINTS if name in frame['joints']
+                         and _bilateral_name(name, swap=swap) in other['joints'])
+        if len(pairs) < 6:
+            continue
+        x, y = (np.asarray(values) for values in zip(*pairs))
+        center_x, center_y = x.mean(0), y.mean(0)
+        x, y = x-center_x, y-center_y
+        if np.linalg.matrix_rank(x, tol=1e-8) < 2:
+            continue
+        affine = np.linalg.lstsq(x, y, rcond=None)[0].T
+        u, singular, vt = np.linalg.svd(affine, full_matrices=False)
+        rows = u @ vt
+        orientation = np.vstack([rows, np.cross(rows[0], rows[1])])
+        initial = np.r_[Rotation.from_matrix(orientation).as_rotvec(), np.log(max(float(singular.mean()), 1e-8))]
+        def residual(parameters):
+            rotation = Rotation.from_rotvec(parameters[:3]).as_matrix()
+            return (np.exp(parameters[3]) * (x @ rotation[:2].T)-y).ravel()
+        solved = least_squares(residual, initial, max_nfev=80)
+        if not solved.success or not np.isfinite(solved.x).all():
+            continue
+        rotation = Rotation.from_rotvec(solved.x[:3]).as_matrix()
+        metrics = _registered_projection_metrics(source, motion, rotation, swap)
+        metrics['cameraRegistrationRms'] = float(np.sqrt(np.mean(residual(solved.x)**2)))
+        candidates.append(metrics)
+    if not candidates:
+        return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                    reason="camera_registration_unavailable")
+    # Registration selection uses only held-in proximal evidence.
+    return min(candidates, key=lambda metric: metric['cameraRegistrationRms'])
+
+
+def _registered_projection_metrics(source, motion, rotation, swap, *, image_transform=None):
+    import numpy as np
+    transformed = [{**frame, 'joints': {name: tuple((rotation @ np.asarray(point)) * [1., -1., -1.])
+                    for name, point in frame['joints'].items()}} for frame in motion]
+    if image_transform is None:
+        image_transform = _global_similarity_transform(source, transformed, horizontal_vector=(1., 0.),
+                                                       mirror=False, swap_bilateral=swap)
+    if image_transform is None:
+        return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                    reason='camera_image_alignment_unavailable')
+    metrics = _projection_metrics(source, transformed, horizontal_vector=(1., 0.), mirror=False,
+                                   swap_bilateral=swap, image_transform=image_transform)
+    return {**metrics, 'cameraModel': 'fixed_scaled_orthographic', 'cameraRotation': rotation.tolist(),
+            'cameraImageTransform': list(image_transform),
+            'available': True, 'sourceFrameCount': len(source), 'motionFrameCount': len(motion)}
+
+
+def source_pose_reference_for_motion(source_payload: dict[str, Any], motion_payload: dict[str, Any]) -> dict[str, Any]:
+    """Select parent-video observations using explicit retained source timestamps."""
+    frames = motion_payload.get("frames") or []
+    if not frames or any("sourceTimeSec" not in frame for frame in frames):
+        return {**source_payload, "frames": []}
+    start, end = float(frames[0]["sourceTimeSec"]), float(frames[-1]["sourceTimeSec"])
+    return {**source_payload, "sourceTimeOriginSec": start - float(frames[0].get("timeSec", 0.0)),
+            "frames": [frame for frame in source_payload.get("frames", [])
+                       if start <= float(frame.get("sourceTimeSec", -math.inf)) <= end]}
+
+
+def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):
+    """Carry the correction camera through unchanged root-relative body shape.
+
+    Registration uses retained pre-fit coordinates, never the fitted output
+    under review. Shape changes make registration unavailable. A single constant
+    origin preserves time-varying root-motion differences in the comparison.
+    """
+    import numpy as np
+
+    reference = motion_payload.get('sourcePoseCameraReference')
+    if reference is None:
+        return registered_camera_pose_fidelity_metrics(source_payload, motion_payload)
+    def unavailable(reason):
+        return _unavailable_metrics(source_frame_count=len(source_payload.get('frames', [])),
+                                    motion_frame_count=len(motion_payload.get('frames', [])), reason=reason)
+    if not isinstance(reference, dict):
+        return unavailable('invalid_source_camera_reference')
+    evidence = reference.get('sourcePose', {})
+    for field in ('coordinateSpace', 'imageWidth', 'imageHeight'):
+        if evidence.get(field) != source_payload.get(field):
+            return unavailable('source_camera_evidence_mismatch')
+    observed = {f.get('sourceTimeSec'): f for f in evidence.get('frames', [])}
+    if any(observed.get(f.get('sourceTimeSec')) != f for f in source_payload.get('frames', [])):
+        return unavailable('source_camera_evidence_mismatch')
+    # Retained observations use the parent video clock; a selected cycle's
+    # playback starts at zero. Align by explicit provenance, also when the
+    # caller supplies the whole parent reference. This is idempotent for an
+    # already selected reference and never stretches sparse observations.
+    if motion_payload.get('frames') and all('sourceTimeSec' in frame for frame in motion_payload['frames']):
+        source_payload = source_pose_reference_for_motion(source_payload, motion_payload)
+    coordinate_frames = _pose_frames(reference.get('coordinateReference', {}), source=False)
+    original_points, placed_points, original_roots, placed_roots = [], [], [], []
+    for frame in motion_payload.get('frames', []):
+        if frame.get('syntheticLoopBridge'):
+            continue
+        before = _motion_frame_at_time(coordinate_frames, float(frame.get('sourceTimeSec', frame.get('timeSec', 0.))))
+        placed = frame.get('cameraPlacementReferenceJoints', frame.get('controlledSourceJoints'))
+        if before is None or not isinstance(placed, dict):
+            return unavailable('source_camera_placement_reference_unavailable')
+        root_name = next((n for n in ('pelvis', 'hips') if n in before['joints'] and n in placed), None)
+        if root_name is None:
+            return unavailable('source_camera_placement_root_unavailable')
+        original_root, placed_root = np.asarray(before['joints'][root_name]), np.asarray(placed[root_name])
+        original_roots.append(original_root)
+        placed_roots.append(placed_root)
+        for name in POSE_JOINTS:
+            if name in before['joints'] and name in placed:
+                original_points.append(np.asarray(before['joints'][name])-original_root)
+                placed_points.append(np.asarray(placed[name])-placed_root)
+    if len(original_points) < 6:
+        return unavailable('source_camera_placement_reference_unavailable')
+    x, y = np.asarray(original_points), np.asarray(placed_points)
+    if not np.isfinite(x).all() or not np.isfinite(y).all():
+        return unavailable('invalid_source_camera_placement')
+    # Contact registration can translate the whole body differently per frame.
+    # Recover orientation from unchanged root-relative shape; use only ONE
+    # constant origin so real root-motion differences remain measurable.
+    x0, y0 = x, y
+    denominator = float(np.sum(x0*x0))
+    if denominator <= 1e-12 or np.linalg.matrix_rank(x0, tol=1e-8) < 2:
+        return unavailable('source_camera_placement_degenerate')
+    u, _, vt = np.linalg.svd(x0.T @ y0)
+    orientation = u @ vt
+    if np.linalg.det(orientation) < 0:
+        u[:, -1] *= -1
+        orientation = u @ vt
+    scale = float(np.sum((x0 @ orientation)*y0)/denominator)
+    error = np.linalg.norm(scale*x0 @ orientation-y, axis=1)
+    extent = max(float(np.max(np.linalg.norm(y0, axis=1))), .01)
+    if scale <= 1e-12 or float(np.max(error)) > extent * 1e-5:
+        return unavailable('source_camera_placement_not_rigid')
+    origins = np.asarray(placed_roots)-scale*np.asarray(original_roots) @ orientation
+    origin = origins.mean(0)
+    restored = {**motion_payload, 'frames': [{**f, 'joints': {
+        n: ((np.asarray(p)-origin) @ orientation.T/scale).tolist()
+        for n, p in f['joints'].items()
+    }} for f in motion_payload.get('frames', [])]}
+    camera = reference.get('camera')
+    if not isinstance(camera, dict):
+        return unavailable('invalid_source_camera_reference')
+    metrics = registered_camera_pose_fidelity_metrics(source_payload, restored, camera_reference=camera)
+    return {**metrics, 'cameraAuthority': 'retained_source_correction_camera',
+            'cameraPlacementMaximumError': float(np.max(error)),
+            'cameraPlacementBasis': 'root_relative_shape_and_one_constant_origin',
+            'cameraReferenceRootTranslationRange': np.ptp(origins, axis=0).tolist()}
 
 
 def source_to_motion_pose_fidelity_metrics(
@@ -222,6 +403,7 @@ def _projection_metrics(
     horizontal_vector: tuple[float, float],
     mirror: bool,
     swap_bilateral: bool,
+    image_transform: tuple[float, ...] | None = None,
 ) -> dict[str, Any]:
     joint_errors: dict[str, list[float]] = {name: [] for name in POSE_JOINTS}
     angle_errors: dict[str, list[float]] = {name: [] for name in ANGLE_CHAINS}
@@ -231,7 +413,7 @@ def _projection_metrics(
     expected_observations = len(source_frames) * len(POSE_JOINTS)
     observed = 0
 
-    transform = _global_similarity_transform(
+    transform = image_transform if image_transform is not None else _global_similarity_transform(
         source_frames,
         motion_frames,
         horizontal_vector=horizontal_vector,
@@ -259,7 +441,9 @@ def _projection_metrics(
         }
 
     for source_frame in source_frames:
-        motion_frame = _nearest_normalized_frame(motion_frames, source_frame["normalizedTime"])
+        motion_frame = _motion_frame_at_time(motion_frames, source_frame["time"])
+        if motion_frame is None:
+            continue
         source_joints = source_frame["joints"]
         motion_joints = motion_frame["joints"]
         fit_names = [
@@ -297,13 +481,14 @@ def _projection_metrics(
             source_angle = _angle_degrees(*(source_joints[joint] for joint in chain))
             motion_angle = _angle_degrees(*(projected[joint] for joint in chain))
             if source_angle is not None and motion_angle is not None:
-                angle_errors[name].append(abs(source_angle - motion_angle))
                 # Near end-on segments make a projected angle ill-conditioned.
-                if all(math.dist(source_joints[a], source_joints[b]) > body_span * .07
+                confidence = source_frame.get("jointConfidence", {})
+                if all(confidence.get(joint, 1.) >= .35 for joint in chain) and all(math.dist(source_joints[a], source_joints[b]) > body_span * .07
                        for a, b in zip(chain, chain[1:])):
                     if all(math.dist(projected[a], projected[b]) > body_span * .07
                            for a, b in zip(chain, chain[1:])):
                         angle_samples[name].append((source_angle, motion_angle))
+                        angle_errors[name].append(abs(source_angle - motion_angle))
                     else:
                         output_unobservable[name] += 1
 
@@ -374,10 +559,9 @@ def _global_similarity_transform(
     source_fit: list[tuple[float, float]] = []
     motion_fit: list[tuple[float, float]] = []
     for source_frame in source_frames:
-        motion_frame = _nearest_normalized_frame(
-            motion_frames,
-            float(source_frame["normalizedTime"]),
-        )
+        motion_frame = _motion_frame_at_time(motion_frames, source_frame["time"])
+        if motion_frame is None:
+            continue
         source_joints = source_frame["joints"]
         motion_joints = motion_frame["joints"]
         for name in ALIGNMENT_JOINTS:
@@ -411,6 +595,16 @@ def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any
     frames_value = payload.get("frames")
     if not isinstance(frames_value, list):
         return []
+    horizontal_scale = 1.0
+    if source and payload.get("coordinateSpace") == "normalized_image_xy":
+        try:
+            width, height = float(payload["imageWidth"]), float(payload["imageHeight"])
+        except (KeyError, TypeError, ValueError):
+            return []  # A normalized image without dimensions is not metric geometry.
+        if not math.isfinite(width + height) or min(width, height) <= 0:
+            return []
+        horizontal_scale = width / height
+    origin = float(payload.get("sourceTimeOriginSec", 0.0)) if source else 0.0
     frames: list[dict[str, Any]] = []
     for index, frame in enumerate(frames_value):
         if not isinstance(frame, dict) or not isinstance(frame.get("joints"), dict):
@@ -420,14 +614,27 @@ def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any
             for name, value in frame["joints"].items()
             if (point := _point(value, dimensions=2 if source else 3)) is not None
         }
+        if source:
+            joints = {name: (point[0] * horizontal_scale, point[1]) for name, point in joints.items()}
         time_value = frame.get("sourceTimeSec") if source else frame.get("timeSec")
         try:
             time_seconds = float(time_value) if time_value is not None else float(index)
         except (TypeError, ValueError):
             time_seconds = float(index)
-        frames.append({"time": time_seconds, "joints": joints})
+        if not math.isfinite(time_seconds):
+            continue
+        confidence = frame.get("jointConfidence")
+        confidence = {str(name): float(value) if isinstance(value, (float, int)) and math.isfinite(value) else 0.
+                      for name, value in confidence.items()} if isinstance(confidence, dict) else {}
+        if source:
+            # Explicitly weak observations must not influence camera fitting or
+            # spatial rejection either. Legacy absent confidence stays unknown.
+            joints = {name: point for name, point in joints.items() if confidence.get(name, 1.) >= .35}
+        frames.append({"time": time_seconds - origin, "joints": joints,
+                       "jointConfidence": confidence})
     if not frames:
         return []
+    frames.sort(key=lambda frame: frame["time"])
     start = frames[0]["time"]
     duration = frames[-1]["time"] - start
     for index, frame in enumerate(frames):
@@ -437,6 +644,26 @@ def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any
             else index / max(1, len(frames) - 1)
         )
     return frames
+
+
+def _motion_frame_at_time(frames: list[dict[str, Any]], time_seconds: float) -> dict[str, Any] | None:
+    """Interpolate at the observed time without stretching or extrapolating coverage."""
+    if not frames or time_seconds < frames[0]["time"] - 1e-8 or time_seconds > frames[-1]["time"] + 1e-8:
+        return None
+    index = bisect_left([frame["time"] for frame in frames], time_seconds)
+    if index == 0:
+        return frames[0]
+    if index == len(frames):
+        return frames[-1]
+    left, right = frames[index - 1], frames[index]
+    duration = right["time"] - left["time"]
+    if duration <= 1e-9:
+        return right
+    ratio = (time_seconds - left["time"]) / duration
+    return {"time": time_seconds, "joints": {
+        name: tuple(a + ratio * (b - a) for a, b in zip(left["joints"][name], right["joints"][name]))
+        for name in left["joints"].keys() & right["joints"].keys()
+    }}
 
 
 def _nearest_normalized_frame(

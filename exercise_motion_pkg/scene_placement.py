@@ -61,8 +61,14 @@ def normalize_scene_placement(payload):
     origin = (low + high) / 2
     origin[1] = float(floor) if floor is not None else (low[1] if inferred_floor else 0.)
     result = deepcopy(payload)
+    body_support = (result.get('sourceFootSupportEvidence') or {}).get('bodySupport') or {}
+    for group in body_support.get('coplanarGroups', []) + body_support.get('nonPenetrationChains', []) + body_support.get('soleContacts', []):
+        group['normal'] = rotation.apply(group['normal']).tolist()
+        if 'planeOffsetMeters' in group:
+            normal = np.asarray(group['normal'], dtype=float)
+            group['planeOffsetMeters'] -= float(np.dot(normal/np.linalg.norm(normal), origin))
     for frame in result['frames']:
-        for key in ('joints', 'sourceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints'):
+        for key in ('joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints'):
             for name, value in frame.get(key, {}).items():
                 frame[key][name] = (rotation.apply(value) - origin).tolist()
         for name, value in frame.get('boneSides', {}).items():

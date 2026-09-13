@@ -12,13 +12,15 @@ from typing import Any
 from urllib.request import urlopen
 
 import numpy as np
-from .contact_constraints import contact_frame_bounds
+from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 2
+POLICY_VERSION = 5
 # Classification changes reuse the exact same expensive landmark observations.
-OBSERVATION_CACHE_VERSION = 1
-LANDMARKS = {"left_hip": 23, "right_hip": 24, "left_knee": 25, "right_knee": 26,
+OBSERVATION_CACHE_VERSION = 2
+LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
+             "left_elbow": 13, "right_elbow": 14, "left_wrist": 15, "right_wrist": 16,
+             "left_hip": 23, "right_hip": 24, "left_knee": 25, "right_knee": 26,
              "left_ankle": 27, "right_ankle": 28, "left_heel": 29, "right_heel": 30,
              "left_toe": 31, "right_toe": 32}
 _RUNTIME_WARNING_EMITTED = False
@@ -156,6 +158,13 @@ def classify_foot_contacts(
             named = [points.get(f"{side}_{part}") for part in ("ankle", "heel", "toe")]
             if any(not point or point["confidence"] < 0.8 for point in named):
                 continue
+            # Trackers can confidently predict landmarks outside the image.
+            # Those predictions are not observed support or release evidence.
+            if any(not np.isfinite(point['image']).all()
+                   or not np.isfinite(point['world']).all()
+                   or any(value < 0.0 or value > 1.0 for value in point['image'])
+                   for point in named):
+                continue
             ankle, heel, toe = named
             reference = min(source_frames, key=lambda f: abs(float(f.get("sourceTimeSec", f.get("timeSec", 0))) - frame["timeSeconds"]))
             reference_ankle = reference.get("joints", {}).get(f"{side}_ankle")
@@ -173,11 +182,17 @@ def classify_foot_contacts(
             valid[index] = True
         possible_contact = np.zeros(count, dtype=bool)
         calibration = np.zeros(count, dtype=bool)
+        forefoot_contact = np.zeros(count, dtype=bool)
+        whole_foot_contact = np.zeros(count, dtype=bool)
         for record in contacts:
             if str(record.get("jointName", "")) not in {f"{side}_ankle", f"{side}_foot"}:
                 continue
             start, end = contact_frame_bounds(record, count)
             possible_contact[start:end + 1] = True
+            if record.get('supportKind') == 'forefoot':
+                forefoot_contact[start:end + 1] = True
+            elif not record.get('verticalOnly'):
+                whole_foot_contact[start:end + 1] = True
             if not record.get("verticalOnly"):
                 calibration[start:end + 1] = True
         calibration &= valid
@@ -216,7 +231,11 @@ def classify_foot_contacts(
                 continue
             differences = [image_pitch[index] - references[0], world_pitch[index] - references[1]]
             if all(abs(value) <= tolerance for value, tolerance in zip(differences, tolerances)):
-                states[index] = "full_sole"
+                # A neutral-looking pitch is not evidence of heel support when
+                # the independent contact observation establishes only forefoot
+                # contact. Keep its toe anchor without inventing an ankle lock.
+                states[index] = ("toe_only" if forefoot_contact[index] and not whole_foot_contact[index]
+                                 else "full_sole")
             elif all(value < -tolerance for value, tolerance in zip(differences, tolerances)):
                 states[index] = "toe_only"
             elif all(value > tolerance for value, tolerance in zip(differences, tolerances)):
@@ -247,14 +266,25 @@ def classify_foot_contacts(
                         )
                     )
                     lift_ratio = float(np.sin(min(lift_angle, np.pi / 2)))
-                result["contacts"].append({
+                contact = {
                     "jointName": f"{side}_foot", "supportKind": "observed_foot_patch",
                     "contactState": state, "contactMotion": "stationary" if stationary else "unknown",
                     "verticalOnly": state != "full_sole", "startRatio": start / max(1, count - 1),
                     "endRatio": (end - 1) / max(1, count - 1), "confidence": 0.8,
                     "source": "observed_heel_and_forefoot", "anchorImageSpread": spread,
                     "minimumLiftRatio": lift_ratio,
-                })
+                }
+                if state == 'full_sole' and stationary:
+                    for candidate_index, candidate in enumerate(contacts):
+                        first, last = contact_frame_bounds(candidate, count)
+                        if (candidate.get('jointName') == f'{side}_ankle'
+                                and is_stationary_contact(candidate)
+                                and first <= start and end-1 <= last):
+                            # Missing heel observations split classified patches,
+                            # not an independently observed stationary stance.
+                            contact['ankleAnchorGroupId'] = f'{side}:ankle:{candidate_index}'
+                            break
+                result["contacts"].append(contact)
             start = end
         assign_stationary_anchor_groups(result["contacts"], side=side, valid=valid,
                                         toe_points=toe_points, foot_sizes=foot_sizes, states=states)

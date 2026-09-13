@@ -25,6 +25,16 @@
 - Handle errors appropriately - use try-catch blocks, nullable types, and Result types where appropriate.
 - Maintain consistency with existing codebase patterns and conventions.
 
+## Exercise Movement Generator Working Principles
+
+- Optimize for the highest practical movement quality across the widest possible range of exercises, with the shortest time and fewest attempts needed to produce a genuinely usable result. Evaluate speed and quality together; neither faster rejection nor a higher automated acceptance count is sufficient evidence of improvement.
+- Prefer generic fixes to shared logic over exercise-name branches, hardcoded poses, camera-specific assumptions, or per-exercise tuning. Derive constraints from observed motion, support contacts, and explicit requirements. Distinguish clip-specific evidence from reusable logic, and introduce exceptions only when the exercise actually requires different behavior.
+- Start with the actual source, generated artifact, rendered playback, failure evidence, and stage timings. Identify the owning failure layer before changing code or launching another expensive attempt. Do not repeatedly regenerate to compensate for a reproducible processing or validation bug.
+- Keep both test additions and test runs to the minimum that provides meaningful confidence. Reuse existing coverage and add a focused regression only for a concrete failure or material risk that is not already covered. Avoid duplicate tests, tests that merely mirror the implementation, and accumulating checks or rerunning passing checks without new evidence. Batch related changes and perform the smallest sufficient final verification.
+- Use the agreed two-exercise test base for controlled iteration, reusing retained inputs and valid cached stages. Expand testing only to answer a specific unresolved generalization risk. A passing result for those two exercises is not proof that every exercise works.
+- Measure bottlenecks and prioritize changes that reduce total time to a good result: avoid redundant model calls, repeated rendering, unnecessary solver work, and unbounded retries. Keep attempts bounded and inspect their evidence before deciding what to run next.
+- Judge success from the actual production-rendered movement as well as appropriate automated checks. Preserve legitimate articulation, motion range, support geometry, and temporal quality. Do not obtain acceptance by freezing valid motion, weakening validation to hide a defect, or tailoring a test to make a failing result pass. Report verified quality, runtime, and remaining limitations honestly.
+
 ## Build and Compilation
 
 - Keep verification scoped to the change. Do not run broad or full Python test files/suites by default when a targeted test, parser check, or compile check covers the edited path.

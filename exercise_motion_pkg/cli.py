@@ -22,6 +22,8 @@ from exercise_motion_pkg.bake_and_rank import (
     DEFAULT_REVIEW_FRAMES,
     DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     BakeAndRankRequest,
+    LazyLlamaCppVisionSession,
+    bake_and_rank_request_from_selection_manifest,
     audit_selected_outputs,
     prefetch_ranked_youtube_sources,
     run_bake_and_rank_pipeline,
@@ -1032,6 +1034,10 @@ def build_parser() -> argparse.ArgumentParser:
     audit_selected.add_argument("--exercise")
     audit_selected.add_argument("--write-report", action="store_true")
 
+    convert_webm = subparsers.add_parser("convert-video-webm", help="Convert a retained source video to WebM.")
+    convert_webm.add_argument("--video-path", required=True)
+    convert_webm.add_argument("--out-video", required=True)
+
     trim = subparsers.add_parser("trim-video", help="Trim a local video to an exact time span.")
     trim.add_argument("--video-path", required=True)
     trim.add_argument("--out-video", required=True)
@@ -1612,14 +1618,29 @@ def main() -> None:
             print("Selected Wear skeleton: none")
             raise SystemExit(1)
         return
+    if args.command == "convert-video-webm":
+        from exercise_motion_pkg.video_utils import convert_video_to_webm
+        print(convert_video_to_webm(source_path=Path(args.video_path), output_path=Path(args.out_video)))
+        return
     if args.command == "reselect-baked":
-        manifest = run_bake_and_rank_reselection(
+        selection_options = dict(
             workspace=Path(args.workspace),
             min_selected_score=args.min_selected_score,
             review_frames=args.review_frames,
             max_review_windows=args.max_review_windows,
             max_selected_results=args.max_selected_results,
         )
+        existing = json.loads((Path(args.workspace) / "selection_manifest.json").read_text(encoding="utf-8"))
+        request = bake_and_rank_request_from_selection_manifest(existing, **selection_options)
+        # Reselection must supply the same required source reviewer as a fresh
+        # run; otherwise valid retained fits force unnecessary regeneration.
+        vision_session = LazyLlamaCppVisionSession(request)
+        try:
+            manifest = run_bake_and_rank_reselection(
+                **selection_options, final_output_caption_images=vision_session.caption_images,
+            )
+        finally:
+            vision_session.close()
         selection_path = Path(args.workspace) / "selection_manifest.json"
         print(f"Selection manifest: {selection_path.resolve()}")
         selected = manifest.get("selected")

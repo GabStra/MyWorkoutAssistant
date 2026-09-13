@@ -129,16 +129,17 @@ class AcceptanceDecision:
         return asdict(self)
 
 
-def decide_acceptance(
-    metrics: dict[str, Any], review: dict[str, Any], *,
-    deterministic_rejections: list[str], review_rejections: list[str],
-    require_visual_review: bool = True,
-) -> AcceptanceDecision:
-    """Independent failures survive review uncertainty; missing evidence cannot approve."""
-    # Old cached balance warnings no longer constitute an acceptance failure.
-    deterministic_rejections = [reason for reason in deterministic_rejections
-                                if reason != "physical_balance_requires_review"]
+def required_evidence_gaps(metrics: dict[str, Any]) -> list[str]:
+    """One missing-evidence policy for review scheduling and final acceptance."""
     missing: list[str] = []
+    required_metric_failures = {
+        "materialized_motion_metrics_unavailable", "materialized_preview_readability_metrics_unavailable",
+        "materialized_kinematic_metrics_unavailable", "materialized_hand_lock_arm_metrics_unavailable",
+        "materialized_paired_hands_metrics_unavailable",
+    }
+    if metrics.get("loopContinuityRequired"):
+        required_metric_failures.add("materialized_loop_bridge_metrics_unavailable")
+    missing.extend(sorted(set(metrics.get("skippedReasons") or []) & required_metric_failures))
     if not metrics:
         missing.append("materialized_output_evidence_missing")
     for name, value in metrics.items():
@@ -148,16 +149,37 @@ def decide_acceptance(
             missing.append(f"required_evidence_unavailable:{name}")
     if metrics.get("skippedReasons") and "materialized_output_skeleton_missing" in metrics["skippedReasons"]:
         missing.append("materialized_output_skeleton_missing")
+    return list(dict.fromkeys(missing))
+
+
+def decide_acceptance(
+    metrics: dict[str, Any], review: dict[str, Any], *,
+    deterministic_rejections: list[str], review_rejections: list[str],
+    require_visual_review: bool = True,
+) -> AcceptanceDecision:
+    """Independent failures survive review uncertainty; missing evidence cannot approve."""
+    # Old cached balance warnings no longer constitute an acceptance failure.
+    deterministic_rejections = [reason for reason in deterministic_rejections
+                                if reason != "physical_balance_requires_review"]
+    missing = required_evidence_gaps(metrics)
     concrete = [reason for reason in deterministic_rejections
                 if not any(word in reason for word in ("unavailable", "missing", "validator_failed"))]
     if concrete:
+        if all(reason.startswith(("materialized_exported_preview_", "materialized_preview_video_", "final_render_"))
+               for reason in concrete):
+            return AcceptanceDecision("invalid", "rendering", tuple(dict.fromkeys(deterministic_rejections)), False)
         source_failure = any("source" in r and any(w in r for w in ("incomplete", "identity", "boundary", "variant")) for r in concrete)
         return AcceptanceDecision("invalid", "source" if source_failure else "motion_output",
                                   tuple(dict.fromkeys(deterministic_rejections)), not source_failure)
     if missing or deterministic_rejections:
         return AcceptanceDecision("needs_manual_review", "evidence", tuple(dict.fromkeys([*missing, *deterministic_rejections])))
+    if review.get("advisoryOnly") is True:
+        # A bare observer result cannot stand in for required render evidence.
+        if require_visual_review:
+            return AcceptanceDecision("needs_manual_review", "rendering", ("required_render_evidence_missing",))
+        return AcceptanceDecision("valid", None, ())
     if review.get("failureOwner") == "review" or review.get("reviewStatus") == "needs_manual_review":
-        return AcceptanceDecision("needs_manual_review", "review", tuple(review_rejections or ["review_unresolved"]))
+        return AcceptanceDecision("needs_manual_review", review.get("failureOwner") or "review", tuple(review_rejections or ["review_unresolved"]))
     if review_rejections:
         owner = review.get("failureOwner") or "motion_output"
         return AcceptanceDecision("invalid", owner, tuple(review_rejections), owner == "motion_output")

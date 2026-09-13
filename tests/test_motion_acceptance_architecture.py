@@ -94,10 +94,15 @@ def test_approval_has_no_extra_model_call():
 
 
 def test_corroboration_requires_body_evidence_and_retains_only_common_findings():
-    evidence = {"tag": "wrong_variant", "basis": "body_motion", "observation": "Both arms move alternately."}
+    evidence = {"tag": "wrong_variant", "basis": "body_motion", "observation": "Both arms move alternately.",
+                "bodyRelation": {"subject": "left_wrist", "reference": "right_wrist", "relation": "moving_alternately"}}
     first = {"passed": False, "reject": ["wrong_variant", "unsupported"],
              "modelPayload": {"rejectionEvidence": [evidence]}}
     second = {"passed": False, "reject": ["wrong_variant"], "modelPayload": {"rejectionEvidence": [evidence]}}
+    claim = {**evidence, "status": "observed", "defectType": "wrong_action",
+             "bodyRegion": "both_arms", "frameIndices": [1, 2]}
+    first["localizedClaims"] = [claim]
+    second["localizedClaims"] = [claim]
     result = corroborate_rejection(first, lambda: second)
     assert result["boundedReview"]["corroborated"]
     assert result["hardRejectionReasons"] == ["wrong_variant"]

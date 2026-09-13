@@ -117,6 +117,59 @@ def video_world_alignment_rms_is_acceptable(rms_error: float) -> bool:
     return math.isfinite(rms_error) and rms_error <= MAX_ALIGNMENT_RMS_METERS
 
 
+def body_fit_projection_metrics(clip, pose_payload, rotation, translation):
+    """Compare body fits against observed pixels, allowing only camera scale/offset."""
+    if not isinstance(pose_payload, dict) or not clip.frames:
+        return {"available": False}
+    if pose_payload.get("coordinateSpace") != "normalized_image_xy":
+        return {"available": False}
+    width, height = pose_payload.get("imageWidth"), pose_payload.get("imageHeight")
+    if not width or not height:
+        return {"available": False}
+    times = np.asarray([frame.time_sec for frame in clip.frames])
+    observed, original, fitted, weights = [], [], [], []
+    for frame in pose_payload.get("frames", []):
+        time_sec = frame.get("sourceTimeSec", frame.get("timeSec"))
+        if not isinstance(time_sec, (int, float)):
+            continue
+        index = int(np.argmin(abs(times - time_sec)))
+        if abs(times[index] - time_sec) > max(1.0 / clip.fps, 0.0625):
+            continue
+        for name, value in frame.get("joints", {}).items():
+            confidence = frame.get("jointConfidence", {}).get(name, 1.0)
+            xy = _source_joint_xy(value)
+            if (name not in clip.frames[index].joints or confidence < 0.5 or xy is None
+                    or not all(0.0 <= coordinate <= 1.0 for coordinate in xy)):
+                continue
+            point = np.asarray(clip.frames[index].joints[name], dtype=float)
+            transformed = rotation @ point + translation
+            if not np.all(np.isfinite([point, transformed])) or min(point[2], transformed[2]) <= 1e-8:
+                continue
+            observed.append([xy[0] * width, xy[1] * height])
+            original.append(point[:2] / point[2])
+            fitted.append(transformed[:2] / transformed[2])
+            weights.append(confidence)
+    if len(observed) < 12:
+        return {"available": False, "sampleCount": len(observed)}
+    target = np.asarray(observed).ravel()
+    root_weights = np.sqrt(np.repeat(weights, 2))
+
+    def projection_error(points):
+        design = np.zeros((len(target), 3))
+        design[:, 0] = np.asarray(points).ravel()
+        design[::2, 1], design[1::2, 2] = 1.0, 1.0
+        camera, _, rank, _ = np.linalg.lstsq(design * root_weights[:, None], target * root_weights, rcond=None)
+        if rank < 3 or camera[0] <= 0.0:
+            return None
+        return float(np.sqrt(np.average((design @ camera - target) ** 2, weights=root_weights ** 2)))
+
+    before, after = projection_error(original), projection_error(fitted)
+    available = before is not None and after is not None
+    return {"available": available, "sampleCount": len(observed),
+            "originalRmsPixels": before, "fittedRmsPixels": after,
+            "regressed": bool(available and after > before + 1e-6)}
+
+
 def support_joint_names_for_mode(support_mode_hint: str | None) -> tuple[str, ...]:
     mode = str(support_mode_hint or "unknown").strip().casefold()
     if mode == "kneeling":
@@ -395,18 +448,23 @@ def align_motion_clip_to_video(
         "rawMotionScore": raw_uprightness,
         "alignedMotionScore": aligned_uprightness,
     }
-    if (
+    projection = body_fit_projection_metrics(clip, source_pose_payload, rotation, translation)
+    metadata["sourceProjectionRegressionGate"] = projection
+    uprightness_regressed = (
         source_uprightness is not None
         and source_uprightness >= 0.65
         and raw_uprightness is not None
         and aligned_uprightness is not None
         and aligned_uprightness + 1e-6 < raw_uprightness
-    ):
+    )
+    if projection.get("regressed") or uprightness_regressed:
+        rejection_reason = ("source_projection_alignment_regression" if projection.get("regressed")
+                            else "upright_source_alignment_regression")
         metadata.update(
             {
                 "applied": False,
                 "rejectedTransform": True,
-                "rejectionReason": "upright_source_alignment_regression",
+                "rejectionReason": rejection_reason,
             }
         )
         floor_only = floor_only_alignment_fallback(clip, camera_leveling_rotation)
@@ -414,7 +472,7 @@ def align_motion_clip_to_video(
             return VideoWorldAlignmentResult(
                 clip=clip,
                 applied=False,
-                reason="upright_source_alignment_regression",
+                reason=rejection_reason,
                 confidence=confidence,
                 camera_ground_plane=camera_plane,
                 correspondence_rms_error=rms_error,
@@ -434,6 +492,14 @@ def align_motion_clip_to_video(
             "floorOnlyUprightnessScore": motion_clip_camera_uprightness_score(floor_only),
         })
         metadata.pop("rejectionReason", None)
+        # Preserve rejected measurements for diagnosis, not as authoritative
+        # contact targets for the next solver. The measured floor remains valid.
+        body_evidence_keys = ("videoFloorDistances", "videoFloorDistanceObservations",
+                              "inferredSupportJointNames", "orientationConstraintJointNames")
+        metadata["rejectedBodyFitEvidence"] = {key: metadata[key] for key in body_evidence_keys}
+        for key in body_evidence_keys:
+            metadata[key] = {} if isinstance(metadata[key], dict) else []
+        metadata["supportInferenceSource"] = "motion_contact_fallback_after_rejected_body_fit"
     aligned_clip = replace(
         aligned_clip,
         metadata={
@@ -462,12 +528,13 @@ def floor_only_alignment_fallback(clip: MotionClip, rotation: np.ndarray) -> Mot
     This rotates the whole clip once; it never straightens individual poses or
     forces a leaning torso to become vertical.
     """
-    leveled = apply_rigid_transform_to_clip(clip, rotation=rotation, translation=np.zeros(3))
-    before = motion_clip_camera_uprightness_score(clip)
-    after = motion_clip_camera_uprightness_score(leveled)
-    if before is None or after is None or after + 1e-6 < before:
+    # The caller checks measured floor quality. Torso verticality cannot veto
+    # gravity: leveling the camera may reveal a legitimate hinge or body lean.
+    if (rotation.shape != (3, 3) or not np.all(np.isfinite(rotation))
+            or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6)
+            or not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6)):
         return None
-    return leveled
+    return apply_rigid_transform_to_clip(clip, rotation=rotation, translation=np.zeros(3))
 
 
 def estimate_camera_floor_plane(

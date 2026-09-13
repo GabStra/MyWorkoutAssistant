@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from exercise_motion_pkg.motion_placement import contact_consistent_target, root_motion_quality, register_contact_placement
@@ -67,18 +68,20 @@ def test_stance_registration_removes_placement_reset_without_inventing_contacts(
     np.testing.assert_allclose(np.diff(registered[:, 0], axis=0), np.diff(truth[:, 0], axis=0), atol=.003)
 
 
-def test_registration_preserves_flight_with_an_independent_root_reference():
-    truth = np.tile(np.array([[0., 1., 0.], [-.2, 0., 0.], [.2, 0., 0.]]), (48, 1, 1))
-    truth[10:38, :, 1] += (.22*np.sin(np.linspace(0., np.pi, 28)))[:, None]
+@pytest.mark.parametrize('count,release,landing,reset', [(48, 10, 38, 20), (540, 110, 430, 230)])
+def test_registration_preserves_flight_with_an_independent_root_reference(count, release, landing, reset):
+    truth = np.tile(np.array([[0., 1., 0.], [-.2, 0., 0.], [.2, 0., 0.]]), (count, 1, 1))
+    truth[release:landing, :, 1] += (.22*np.sin(np.linspace(0., np.pi, landing-release)))[:, None]
     observed = truth.copy()
-    observed[20:] += [.3, 0., 0.]
+    observed[reset:] += [.3, 0., .2]
     pinned = np.zeros(observed.shape[:2], dtype=bool)
-    pinned[:10, 1:] = True
-    pinned[38:, 1:] = True
+    pinned[:release, 1:] = True
+    pinned[landing:, 1:] = True
     registered, report = register_contact_placement(observed, pinned, 0, 30., truth[:, 0])
     assert report['applied']
     np.testing.assert_allclose(registered[:, 0, 1], truth[:, 0, 1], atol=1e-7)
     assert np.ptp(registered[:, 0, 1]) > .21
+    np.testing.assert_allclose(registered-registered[:, :1], observed-observed[:, :1], atol=1e-12)
 
 
 def test_already_registered_stance_is_an_exact_noop():
@@ -88,6 +91,24 @@ def test_already_registered_stance_is_an_exact_noop():
     registered, report = register_contact_placement(points, pinned, 0, 30., points[:, 0])
     np.testing.assert_array_equal(registered, points)
     assert report['reason'] == 'placement_already_coherent'
+
+
+def test_observed_floor_anchors_remove_vertical_reset_and_preserve_flight():
+    count, release, landing = 90, 25, 65
+    truth = np.tile(np.array([[0., 1., 0.], [-.2, 0., 0.], [.2, 0., 0.]]), (count, 1, 1))
+    truth[release:landing, :, 1] += (.22*np.sin(np.linspace(0., np.pi, landing-release)))[:, None]
+    observed = truth.copy()
+    observed[:45, :, 1] += .35
+    observed[45:, :, 1] -= .2
+    pinned = np.zeros(observed.shape[:2], dtype=bool)
+    pinned[:release, 1:] = True
+    pinned[landing:, 1:] = True
+    registered, report = register_contact_placement(observed, pinned, 0, 30., truth[:, 0],
+                                                     ground_contacts=pinned, floor=0.)
+    assert report['observedGroundEpisodes'] == 4
+    np.testing.assert_allclose(registered[:, 0], truth[:, 0], atol=.0001)
+    np.testing.assert_allclose(registered-registered[:, :1], observed-observed[:, :1], atol=1e-12)
+    assert np.max(registered[release:landing, 1:, 1]) > .21
 
 
 def test_contact_height_gauge_preserves_articulation_and_relative_support_heights():

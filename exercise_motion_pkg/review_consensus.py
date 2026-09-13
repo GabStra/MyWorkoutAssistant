@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from .visual_evidence import claims_agree, body_evidence_exclusion
 
 
 def corroborate_rejection(
@@ -16,12 +17,12 @@ def corroborate_rejection(
     common = set(first.get("reject") or []) & set(second.get("reject") or [])
     # Agreement on a generic rejection or on unsupported evidence is insufficient.
     common -= {"unclear", "low_confidence", "needs_retry"}
+    common = {tag for tag in common if claims_agree(first, second, tag)}
     for observation in (first, second):
         payload = observation.get("modelPayload") or {}
         evidence = payload.get("rejectionEvidence") or []
         supported = {row.get("tag") for row in evidence if isinstance(row, dict)
-                     and row.get("basis") == "body_motion"
-                     and isinstance(row.get("observation"), str) and row["observation"].strip()}
+                     and body_evidence_exclusion(row) is None}
         common &= supported
     corroborated = bool(common) and all(
         result.get("passed") is False and result.get("failureOwner") != "review"
@@ -29,7 +30,8 @@ def corroborate_rejection(
         for result in (first, second)
     )
     result = dict(first)
-    result["boundedReview"] = {"additionalReviewCount": 1, "first": first, "second": second,
+    result["boundedReview"] = {"additionalReviewCount": 0 if second.get("additionalEvidenceUnavailable") else 1,
+                              "first": first, "second": second,
                               "corroborated": corroborated, "commonRejectionTags": sorted(common)}
     if not corroborated:
         result.update(passed=False, approved=False, retry=False, needsRetry=False,

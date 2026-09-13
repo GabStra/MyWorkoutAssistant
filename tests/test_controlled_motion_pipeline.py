@@ -143,6 +143,25 @@ def test_global_translation_jitter_cannot_mask_an_introduced_limb_spike():
     assert relative_motion_quality(source, translated, names, 30.)['relativeJointShake']
 
 
+def test_temporal_fit_budget_is_consistent_across_duration_and_frame_rate():
+    from exercise_motion_pkg.controlled_motion import temporal_fit_scales, relative_motion_quality
+
+    payload = accepted_payload()
+    names = payload['jointNames']
+    pose = np.asarray([payload['frames'][0]['joints'][name] for name in names])
+    for count, fps in ((10, 30.), (40, 30.), (40, 60.)):
+        source = np.tile(pose, (count, 1, 1))
+        candidate = source.copy()
+        wrist = names.index('left_wrist')
+        # A known second difference at 80% of the independent jitter limit.
+        amplitude = .8*.003*(30./fps)**2*np.sqrt(3)/4
+        candidate[:, wrist, 0] += np.where(np.arange(count)%2, amplitude, -amplitude)
+        scale, _ = temporal_fit_scales(source, names, fps)
+        normalized = np.diff(candidate[:, wrist]-candidate[:, names.index('pelvis')], n=2, axis=0)/scale[wrist]
+        np.testing.assert_allclose(np.linalg.norm(normalized), 1., atol=1e-10)
+        assert relative_motion_quality(candidate, source, names, fps)['relativeJointShake']
+
+
 def test_final_acceptance_requires_the_complete_current_fit_contract():
     payload = accepted_payload()
     metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)

@@ -63,10 +63,8 @@ def test_independently_validated_repair_is_not_clamped_to_erroneous_input(monkey
     before = leg_clip()
     frames = [MotionFrame(f.time_sec, {**f.joints, "left_knee": (-.15, .5, .1)}) for f in before.frames]
     proposed = replace(before, frames=frames)
-    monkeypatch.setattr(s, "source_to_motion_pose_fidelity_metrics", lambda *a: {
-        "available": True, "p90JointErrorBodyRatio": .2})
-    monkeypatch.setattr(s, "source_to_motion_pose_fidelity_metrics_for_projection", lambda *a, **k: {
-        "available": True, "p90JointErrorBodyRatio": .1})
+    monkeypatch.setattr(s, "registered_camera_pose_fidelity_metrics", lambda *a, **k: {
+        "available": True, "p90JointErrorBodyRatio": .1 if k.get('camera_reference') else .2})
     repaired, report = s._accept_source_preserving_refinement_step(
         before, proposed, source_pose_payload={}, step_name="source_guided", source_guided_articulation=True)
     assert report["accepted"]
@@ -107,7 +105,10 @@ def test_rigid_hand_solver_preserves_shared_endpoints_and_all_arm_bone_lengths()
     result, report = s._stabilize_rigid_paired_hand_spacing(clip)
     for before, after in zip(clip.frames, result.frames):
         assert math.dist(after.joints["left_hand"], after.joints["right_hand"]) == pytest.approx(report["targetSpacing"], abs=1e-7)
-        assert after.joints["left_hand"][1] == pytest.approx(after.joints["right_hand"][1], abs=1e-7)
+        before_axis = np.subtract(before.joints["left_hand"], before.joints["right_hand"])
+        after_axis = np.subtract(after.joints["left_hand"], after.joints["right_hand"])
+        np.testing.assert_allclose(after_axis/np.linalg.norm(after_axis),
+                                   before_axis/np.linalg.norm(before_axis), atol=1e-7)
         for side in ("left", "right"):
             for parent, child in [("shoulder", "elbow"), ("elbow", "wrist"), ("wrist", "hand")]:
                 assert math.dist(after.joints[f"{side}_{parent}"], after.joints[f"{side}_{child}"]) == pytest.approx(

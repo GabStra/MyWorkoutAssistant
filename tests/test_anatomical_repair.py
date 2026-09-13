@@ -5,6 +5,7 @@ from pathlib import Path
 from time import monotonic
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from exercise_motion_pkg.anatomical_repair import repair_rig_anatomy, torso_directions
@@ -70,7 +71,21 @@ def test_impossible_bilateral_forearm_lengths_are_corrected():
     np.testing.assert_allclose(corrected[:, names.index('left_foot')], points[:, names.index('left_foot')], atol=1e-12)
 
 
-def test_folded_source_is_corrected_and_accepted_without_erasing_original():
+@pytest.mark.parametrize('placement_shift,yaw', [(0., 0.), (.25, .7)])
+def test_folded_source_is_corrected_and_accepted_without_erasing_original(monkeypatch, placement_shift, yaw):
+    from exercise_motion_pkg import anatomical_repair, controlled_motion
+
+    calls = []
+    original_repair = anatomical_repair.repair_rig_anatomy
+
+    def counted_repair(*args, **kwargs):
+        calls.append(True)
+        return original_repair(*args, **kwargs)
+
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy', counted_repair)
+    monkeypatch.setattr(controlled_motion, 'register_contact_placement',
+                        lambda points, *args: (points @ Rotation.from_euler('y', yaw).as_matrix()+[placement_shift, 0., 0.],
+                                              {'applied': bool(placement_shift or yaw)}))
     names, points = stance()
     axis = points[0, names.index('neck')]-points[0, names.index('pelvis')]
     lateral = points[0, names.index('right_hip')]-points[0, names.index('left_hip')]
@@ -85,6 +100,8 @@ def test_folded_source_is_corrected_and_accepted_without_erasing_original():
     assert payload == original
     assert report['applied'], report
     assert report['anatomicalSourceRepair']['passed']
+    assert report['anatomicalSourceRepair']['reusedInitialization']
+    assert len(calls) == 1
     assert report['anatomicalSourceRepair']['maximumCorrectionMeters'] > .01
     assert report['playback']['passed']
     assert physical_metrics_from_payload(result)['passed']
@@ -100,3 +117,13 @@ def test_folded_source_is_corrected_and_accepted_without_erasing_original():
     result['frames'][0]['correctedAnatomicalReferenceJoints']['head'][0] += .4
     assert not can_reuse_controlled_motion(result)
     assert not physical_metrics_from_payload(result)['passed']
+
+
+def test_anatomical_repair_reuse_rejects_changed_articulation_and_reflection():
+    from exercise_motion_pkg.anatomical_repair import transport_equivalent_anatomical_repair
+
+    names, points = stance()
+    altered = points.copy()
+    altered[:, names.index('left_wrist'), 0] += .01
+    assert transport_equivalent_anatomical_repair(points, points, altered, names) is None
+    assert transport_equivalent_anatomical_repair(points, points, points*[-1., 1., 1.], names) is None

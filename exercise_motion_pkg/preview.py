@@ -8584,14 +8584,18 @@ def _build_html(
           }},
         }};
       }}
-      const normalizedFrames = frames.map((frame) => {{
+      const normalizeJointMap = (points) => {{
         const joints = {{}};
-        for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
+        for (const [jointName, point] of Object.entries(points ?? {{}})) {{
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
           joints[jointName] = [point[0], -point[1], -point[2]];
         }}
+        return joints;
+      }};
+      const normalizedFrames = frames.map((frame) => {{
+        const joints = normalizeJointMap(frame.joints);
         const boneSides = {{}};
         for (const [boneKey, side] of Object.entries(frame.boneSides ?? {{}})) {{
           if (Array.isArray(side) && side.length >= 3) {{
@@ -8601,6 +8605,9 @@ def _build_html(
         return {{
           ...frame,
           joints,
+          ...(frame.cameraPlacementReferenceJoints ? {{
+            cameraPlacementReferenceJoints: normalizeJointMap(frame.cameraPlacementReferenceJoints),
+          }} : {{}}),
           boneSides,
         }};
       }});
@@ -8772,9 +8779,9 @@ def _build_html(
       const rotationSequence = Array.isArray(alignment.rotationSequence)
         ? alignment.rotationSequence
         : [{{ axis: [axis.x, axis.y, axis.z], radians: angle }}];
-      return frames.map((frame) => {{
+      const rotateJointMap = (points) => {{
         const joints = {{}};
-        for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
+        for (const [jointName, point] of Object.entries(points ?? {{}})) {{
           if (!Array.isArray(point) || point.length < 3) {{
             continue;
           }}
@@ -8788,6 +8795,10 @@ def _build_html(
           rotated.add(pivotVector);
           joints[jointName] = [rotated.x, rotated.y, rotated.z];
         }}
+        return joints;
+      }};
+      return frames.map((frame) => {{
+        const joints = rotateJointMap(frame.joints);
         const boneSides = {{}};
         for (const [boneKey, side] of Object.entries(frame.boneSides ?? {{}})) {{
           if (!Array.isArray(side) || side.length < 3) {{
@@ -8805,6 +8816,9 @@ def _build_html(
         return {{
           ...frame,
           joints,
+          ...(frame.cameraPlacementReferenceJoints ? {{
+            cameraPlacementReferenceJoints: rotateJointMap(frame.cameraPlacementReferenceJoints),
+          }} : {{}}),
           boneSides,
         }};
       }});
@@ -8878,6 +8892,7 @@ def _build_html(
           ? payload.frames[sourceFrameIndex]
           : null;
         const joints = {{}};
+        const cameraPlacementReferenceJoints = {{}};
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
           if (!Array.isArray(point) || point.length < 3) {{
@@ -8885,6 +8900,9 @@ def _build_html(
           }}
           const transformed = toBaseWorldPoint(point, translation, true, jointName, selectedPreviewSettings.fixedRoot);
           joints[jointName] = [transformed.x, transformed.y, transformed.z];
+          // Preserve rigid camera placement before joint-specific contact IK.
+          const reference = toBaseWorldPoint(point, translation, true, null, selectedPreviewSettings.fixedRoot);
+          cameraPlacementReferenceJoints[jointName] = [reference.x, reference.y, reference.z];
         }}
         const boneSides = {{}};
         for (const spec of smplPoseSource?.twistSpecs ?? []) {{
@@ -8907,6 +8925,7 @@ def _build_html(
           rootTranslationApplied: translation,
           sourceJoints: sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints ?? null,
           joints,
+          cameraPlacementReferenceJoints,
           boneSides,
         }};
       }});
@@ -9187,7 +9206,10 @@ def _build_html(
 
     async function renderDeterministicFrame(frameIndex) {{
       const frames = playbackState.frames ?? [];
-      const boundedIndex = Math.max(0, Math.min(Math.max(0, frames.length - 1), Math.floor(Number(frameIndex) || 0)));
+      const requested = Number(frameIndex) || 0;
+      const boundedIndex = playbackState.loopable && frames.length > 0
+        ? ((requested % frames.length) + frames.length) % frames.length
+        : Math.max(0, Math.min(Math.max(0, frames.length - 1), requested));
       paused = true;
       refreshPauseLabel();
       frameCursor = boundedIndex;
@@ -9243,11 +9265,13 @@ def _build_html(
       showBoundsHelper = Boolean(options.showBoundsHelper);
       const wearDisplay = exportPayload.wearDisplay ?? {{}};
       const reviewYaw = Number(options.cameraYawDegrees);
+      const reviewPitch = Number(options.cameraPitchDegrees);
       yaw = (options.cameraYawDegrees != null && Number.isFinite(reviewYaw)
         ? reviewYaw : (Number(wearDisplay.viewYawDegrees) || 0.0)) * Math.PI / 180.0;
       pitch = Math.max(
         -1.2,
-        Math.min(1.2, (Number(wearDisplay.viewPitchDegrees) || 0.0) * Math.PI / 180.0)
+        Math.min(1.2, (options.cameraPitchDegrees != null && Number.isFinite(reviewPitch)
+          ? reviewPitch : (Number(wearDisplay.viewPitchDegrees) || 0.0)) * Math.PI / 180.0)
       );
       cameraTouched = true;
       const layoutNode = document.querySelector(".layout");
@@ -10279,6 +10303,7 @@ def _build_html(
           const key = `${{side}}_elbow->${{side}}_wrist`;
           if (frame.boneSides?.[key]) sides.set(key, new THREE.Vector3(...frame.boneSides[key]));
         }}
+        wearApplyExportedSoleSides(frame, sides);
         const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index]);
         points.push(...(mesh?.vertices ?? Object.values(joints)));
       }});
@@ -10384,6 +10409,53 @@ def _build_html(
       perspectiveCamera.lookAt(cameraTarget);
     }}
 
+    function limitedRigTangent(previous, current, following, quaternion, smoothLimiter) {{
+      const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
+      if (quaternion) {{
+        previous = previous.map(v => v * (dot(previous, current) < 0 ? -1 : 1));
+        following = following.map(v => v * (dot(following, current) < 0 ? -1 : 1));
+      }}
+      let incoming = current.map((v, i) => v - previous[i]);
+      let outgoing = current.map((v, i) => following[i] - v);
+      if (quaternion) {{
+        const a = dot(incoming, current), b = dot(outgoing, current);
+        incoming = incoming.map((v, i) => v - a * current[i]);
+        outgoing = outgoing.map((v, i) => v - b * current[i]);
+      }}
+      if (dot(incoming, outgoing) <= 0) return current.map(() => 0);
+      const tangent = incoming.map((v, i) => (v + outgoing[i]) / 2);
+      const limit = 2 * Math.min(Math.hypot(...incoming), Math.hypot(...outgoing));
+      const scale = Math.min(1, limit / Math.max(Math.hypot(...tangent), 1e-12));
+      const alignment = smoothLimiter ? Math.min(1, dot(incoming, outgoing) /
+        Math.max(Math.hypot(...incoming) * Math.hypot(...outgoing), 1e-12)) : 1;
+      return tangent.map(v => v * scale * alignment);
+    }}
+
+    const rigSplineCache = new WeakMap();
+    function rigSpline(rig, quaternion) {{
+      const wrap = playbackState.loopable;
+      let cache = rigSplineCache.get(rig);
+      if (cache?.wrap === wrap) return cache;
+      const roots = rig.coordinates.map(row => row.slice(0, 3));
+      const rotations = rig.rotationJointNames.map((name, j) => rig.coordinates.map(row => quaternion(row, 3 + j * 3).toArray()));
+      const tangents = (track, isQuaternion) => track.map((row, i) => limitedRigTangent(
+        track[wrap ? (i - 1 + track.length) % track.length : Math.max(0, i - 1)], row,
+        track[wrap ? (i + 1) % track.length : Math.min(track.length - 1, i + 1)], isQuaternion,
+        rig.interpolation === 'limited_quaternion_hermite_v2'));
+      cache = {{wrap, roots, rotations, rootTangents: tangents(roots, false), rotationTangents: rotations.map(track => tangents(track, true))}};
+      rigSplineCache.set(rig, cache);
+      return cache;
+    }}
+
+    function rigHermite(track, tangents, first, last, t, quaternion) {{
+      const a = track[first], b = track[last], ma = tangents[first], mb = tangents[last];
+      const sign = quaternion && a.reduce((sum, v, i) => sum + v * b[i], 0) < 0 ? -1 : 1;
+      const result = a.map((v, i) => (2*t*t*t-3*t*t+1)*v + (t*t*t-2*t*t+t)*ma[i]
+        + (-2*t*t*t+3*t*t)*b[i]*sign + (t*t*t-t*t)*mb[i]*sign);
+      const norm = quaternion ? Math.max(Math.hypot(...result), 1e-12) : 1;
+      return result.map(v => v / norm);
+    }}
+
     function interpolateFixedRig(rig, first, last, alpha) {{
       const a = rig.coordinates[first], b = rig.coordinates[last];
       if (!a || !b) return null;
@@ -10394,14 +10466,19 @@ def _build_html(
         const angle = axis.length();
         return angle < 1e-12 ? new THREE.Quaternion() : new THREE.Quaternion().setFromAxisAngle(axis.multiplyScalar(1 / angle), angle);
       }};
+      const spline = ['limited_quaternion_hermite_v1', 'limited_quaternion_hermite_v2'].includes(rig.interpolation) ? rigSpline(rig, quaternion) : null;
       // Serialized order is parent-first, independent of external joint order.
       for (const index of rig.order) {{
         const name = rig.jointNames[index], parent = rig.parents[index];
         const slot = slots.get(name);
-        const local = slot == null ? new THREE.Quaternion() : quaternion(a, slot).slerp(quaternion(b, slot), alpha);
+        const rotationIndex = slot == null ? -1 : (slot - 3) / 3;
+        const local = slot == null ? new THREE.Quaternion() : spline
+          ? new THREE.Quaternion(...rigHermite(spline.rotations[rotationIndex], spline.rotationTangents[rotationIndex], first, last, alpha, true))
+          : quaternion(a, slot).slerp(quaternion(b, slot), alpha);
         rotations[index] = parent < 0 ? local : rotations[parent].clone().multiply(local);
         positions[index] = parent < 0
-          ? new THREE.Vector3(...a.slice(0, 3)).lerp(new THREE.Vector3(...b.slice(0, 3)), alpha)
+          ? (spline ? new THREE.Vector3(...rigHermite(spline.roots, spline.rootTangents, first, last, alpha, false))
+                    : new THREE.Vector3(...a.slice(0, 3)).lerp(new THREE.Vector3(...b.slice(0, 3)), alpha))
           : new THREE.Vector3(...rig.offsets[index]).applyQuaternion(rotations[index]).add(positions[parent]);
         joints[name] = positions[index].toArray();
       }}

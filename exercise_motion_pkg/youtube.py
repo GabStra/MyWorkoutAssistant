@@ -3297,6 +3297,7 @@ SEMANTIC_PRESENTATION_CONTEXT_TERMS = {
     "learn the moves",
     "proper form",
     "series",
+    "technique",
     "tutorial",
     "workout",
 }
@@ -4353,9 +4354,10 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "recognizable; use an empty list only when no body-relative reference is meaningful. primaryAxis is the main anatomical travel "
         "direction, not the camera direction. motionPattern must describe the visible relationship rather than the implement.\n"
         "Return minified JSON only. No markdown table, code fence, timestamps, chain-of-thought, or explanation.\n"
-        "Use exactly these keys: movementType, groundContactMode, implementSupportMode, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, "
+        "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, "
         "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
         "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
+        "handRelationship must be rigid_pair only when both hands maintain fixed spacing on the same rigid implement throughout the movement; independent for separate implements or independently moving hands, single for one-hand use, none for no hand-equipment relationship, or unknown. Do not infer rigid_pair from bilateral motion or hands supporting equipment alone.\n"
         "completionMode must be one of: return_to_start, distinct_end_state, stable_hold, active_travel, "
         "representative_cycle, alternating_pair. requiresReturnToStart must agree with completionMode and is true only "
         "for return_to_start.\n"
@@ -4936,6 +4938,9 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     )
     if implement_support_mode is not None:
         fields["implementSupportMode"] = implement_support_mode
+    from .equipment_constraints import HAND_RELATIONSHIPS
+    if isinstance(payload.get("handRelationship"), str) and payload["handRelationship"] in HAND_RELATIONSHIPS:
+        fields["handRelationship"] = payload["handRelationship"]
 
     explicit_completion_mode = normalize_exercise_completion_mode(
         first_contract_value(payload, "completionMode", "completion_mode", "movementCompletionMode")
@@ -5085,7 +5090,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 24
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 25
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 11
 
 
@@ -5371,6 +5376,7 @@ EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "primaryMovingRegions",
     "referenceRegions",
     "mustBeVisibleRegions",
+    "handRelationship",
     "allowedExerciseTransitions",
     "excludedSetupOrCleanup",
     "boundaryRule",
@@ -5776,6 +5782,9 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
     duration_text = str(candidate.duration_seconds) if candidate.duration_seconds is not None else "unknown"
     return (
         "Text-only semantic gate. Classify whether the YouTube title/description is the exact target movement. "
+        "The requestedMovement in the motion context defines the target's phases and endpoints. "
+        "A component phase described there is part of the requested movement, not an unrequested variant. "
+        "Instructional wording describes presentation; let visual review verify actual execution. "
         "Reject routines, compilations, briefly mentioned exercises, wrong base movements, and named variants not in the target. "
         "First identify every movement-changing qualifier expressed by the target and every qualifier expressed by the candidate. "
         "A qualifier changes how the movement is performed, including but not limited to range of motion, assistance, loading method, "
@@ -5986,12 +5995,16 @@ def candidate_pose_prefilter_passed(candidate: YouTubeCandidate) -> bool:
 
 
 def reviewed_candidate_sort_key(candidate: YouTubeCandidate, settings: YouTubeRankingSettings) -> tuple[Any, ...]:
+    from .source_observability import observability_ranking_adjustment
     semantic_rank = semantic_gate_ranking_score(candidate, settings)
     semantic_score = semantic_gate_score(candidate)
     duration_preference = semantic_gate_duration_preference_score(candidate, settings)
     duration_sort_value = semantic_gate_duration_sort_value(candidate)
     historical_prior = candidate_source_outcome_prior_score(candidate)
     prior_adjusted_final_score = candidate.final_score + historical_prior * 0.08
+    pose = (candidate.vision_payload or {}).get("posePrefilter") or {}
+    observability = pose.get("reconstructionObservability") or {}
+    prior_adjusted_final_score += observability_ranking_adjustment(observability)
     if settings.rank_with_vision:
         return (
             candidate.vision_score is not None,
@@ -6075,9 +6088,18 @@ def run_youtube_candidate_review_pass(
 
     if settings.semantic_gate_enabled:
         semantic_gate_started = time.monotonic()
+        semantic_exercise = exercise
+        if isinstance(exercise_motion_contract, dict):
+            movement = {key: exercise_motion_contract[key] for key in (
+                "validStartState", "validEndState", "requiredPhases", "movementTopology",
+                "groundContactMode", "handRelationship",
+            ) if key in exercise_motion_contract}
+            semantic_exercise = dataclass_replace(exercise, motion_context={
+                **(exercise.motion_context or {}), "requestedMovement": movement,
+            })
         try:
             reviewed = rank_candidates_with_semantic_gate(
-                exercise=exercise,
+                exercise=semantic_exercise,
                 ranked=reviewed,
                 settings=settings,
                 semantic_gate=semantic_gate,
@@ -7710,7 +7732,7 @@ def discover_and_rank_youtube_candidates(
                     and not any(word in key for word in ("workers", "candidates", "timeout", "parallel", "batch", "ctx", "server", "base_url"))
                 }
                 signature = hashlib.sha256(json.dumps({
-                    "version": 3,
+                    "version": 4,
                     "contractVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
                     "prompt": build_exercise_motion_contract_prompt(exercise),
                     "contract": {key: value for key, value in (review_motion_contract or {}).items()

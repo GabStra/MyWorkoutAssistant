@@ -8,6 +8,63 @@ from typing import Any
 import numpy as np
 
 
+def track_discontinuity_metrics(joint_tracks, *, root_joint, fps=30., body_height=None):
+    """Distinguish a local motion discontinuity from a smooth speed maximum.
+
+    Evaluate at a common time interval. Large displacement alone is not a
+    tracking jump; it must also depart abruptly from neighbouring velocities.
+    """
+    if root_joint not in joint_tracks or len(joint_tracks[root_joint]) < 5 or fps <= 0:
+        return {'available': False, 'severe': False, 'events': []}
+    names = [name for name, values in joint_tracks.items() if len(values) == len(joint_tracks[root_joint])]
+    points = np.asarray([joint_tracks[name] for name in names]).transpose(1, 0, 2)
+    if not np.isfinite(points).all():
+        return {'available': False, 'severe': True, 'events': [], 'reason': 'nonfinite_motion'}
+    scale = float(np.median(np.max(np.linalg.norm(points[:, :, None]-points[:, None, :], axis=-1), axis=(1, 2))))
+    if body_height is not None and np.isfinite(body_height) and body_height > 0:
+        scale = body_height
+    old_times = np.arange(len(points))/fps
+    times = np.arange(int(np.floor(old_times[-1]*30+1e-8))+1)/30.
+    from scipy.interpolate import PchipInterpolator
+    # Preserve monotonic travel without introducing the alternating zero/change
+    # acceleration produced by linear upsampling of lower-rate observations.
+    sampled = PchipInterpolator(old_times, points, axis=0)(times)
+    relative = sampled-sampled[:, names.index(root_joint):names.index(root_joint)+1]
+    velocity = np.diff(relative, axis=0)
+    residual = velocity[1:-1]-.5*(velocity[:-2]+velocity[2:])
+    events = []
+    for j, name in enumerate(names):
+        if not name.endswith(('elbow', 'wrist', 'hand', 'ankle', 'foot')):
+            continue
+        steps = np.linalg.norm(velocity[1:-1, j], axis=-1)/max(scale, 1e-8)
+        changes = np.linalg.norm(residual[:, j], axis=-1)/max(scale, 1e-8)
+        coordinated = np.zeros(len(steps), dtype=bool)
+        counterparts = [name.replace('left_', 'right_', 1) if name.startswith('left_') else name.replace('right_', 'left_', 1)]
+        if name.endswith('foot'):
+            counterparts.append(name[:-4]+'ankle')
+        if name.endswith('hand'):
+            counterparts.append(name[:-4]+'wrist')
+        if name.endswith('ankle'):
+            counterparts.append(name[:-5]+'foot')
+        if name.endswith('wrist'):
+            counterparts.append(name[:-5]+'hand')
+        a = velocity[1:-1, j]
+        for other in counterparts:
+            if other == name or other not in names:
+                continue
+            b = velocity[1:-1, names.index(other)]
+            lengths = np.linalg.norm(a, axis=-1)*np.linalg.norm(b, axis=-1)
+            coordinated |= ((np.sum(a*b, axis=-1)/np.maximum(lengths, 1e-12) > .8)
+                            & (np.linalg.norm(b, axis=-1) > .5*np.linalg.norm(a, axis=-1)))
+        limits = np.where(coordinated, .12, .03)
+        for index in np.flatnonzero((steps > limits) & (changes > .01)):
+            events.append({'joint': name, 'timeSec': float(times[index+2]),
+                           'stepBodyRatioAt30Hz': float(steps[index]),
+                           'velocityResidualBodyRatioAt30Hz': float(changes[index])})
+    return {'available': True, 'severe': bool(events), 'events': events,
+            'policy': 'time_normalized_local_velocity_discontinuity_v1', 'referenceFps': 30.}
+
+
 def body_orientation_axes(points, names):
     """Dimensionless axes expose rotation noise even on a narrow skeleton."""
     required = ('left_hip', 'right_hip', 'pelvis', 'neck')
@@ -120,6 +177,19 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
                 transported = transport_side(side, axes[0], axes[1])
                 if transported is not None:
                     after["boneSides"][key] = transported.tolist()
+    # A confirmed sole contact owns shoe roll. Transporting the old roll after
+    # correcting pitch would preserve the very tilt the support repair removed.
+    from .support_geometry import support_evidence, evidence_is_complete
+    evidence = support_evidence(payload)
+    if evidence.get('status') == 'confirmed' and evidence_is_complete(evidence, payload.get('jointNames', [])):
+        for contact in evidence.get('soleContacts', []):
+            _, ankle, toe = contact['joints']
+            normal = np.asarray(contact['normal'], dtype=float)
+            for frame in payload.get('frames', []):
+                forward = np.asarray(frame['joints'][toe])-frame['joints'][ankle]
+                side = _unit(np.cross(forward, normal))
+                if side is not None:
+                    frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
 
 
 def bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:

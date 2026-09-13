@@ -31,12 +31,10 @@ def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, 
             return result
 
     class Context:
-        def __enter__(self): return object()
+        def __enter__(self): return SimpleNamespace(new_page=lambda **kwargs: Page(), close=lambda: None)
         def __exit__(self, *args): pass
 
-    monkeypatch.setattr("playwright.sync_api.sync_playwright", Context)
-    monkeypatch.setattr(bake, "launch_chromium_browser", lambda _: SimpleNamespace(
-        new_page=lambda **kwargs: Page(), close=lambda: None))
+    monkeypatch.setattr(bake, "browser_session", lambda launch: Context())
     monkeypatch.setattr(bake, "stage_preview_for_browser_if_needed", lambda path: (path, None))
     monkeypatch.setattr(bake, "plan_adaptive_preview_settings_variants", lambda **kwargs: [
         {"id": "adaptive-baseline", "label": "Baseline", "options": {}}])

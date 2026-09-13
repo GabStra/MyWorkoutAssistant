@@ -37,6 +37,21 @@ def test_cycle_preserves_excursion_and_direction_without_duplicate_endpoint():
     assert payload['frameCount'] == 100
 
 
+def test_declared_phase_range_ignores_incidental_drift_but_keeps_endpoint_gate():
+    payload = repeated_motion()
+    signal = [.15*np.sin(i*2*np.pi/60) for i in range(100)]
+    for i, frame in enumerate(payload['frames']):
+        frame['joints']['head'][2] += i*.002
+    assert not rank_loop_cycles(payload, endpoint_correction_ratio=.08)
+    choices = rank_loop_cycles(payload, endpoint_correction_ratio=.08, phase_values=signal)
+    assert choices
+    assert choices[0]['minimumRetainedRangeRatio'] > .99
+    for i, frame in enumerate(payload['frames']):
+        for point in frame['joints'].values():
+            point[0] += i*.03
+    assert not rank_loop_cycles(payload, endpoint_correction_ratio=.08, phase_values=signal)
+
+
 def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
     payload = repeated_motion()
     payload['sourceFootSupportEvidence'] = {
@@ -44,11 +59,16 @@ def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
                              'startFrame': 10, 'endFrame': 30}],
         'contacts': [{'jointName': 'right_foot', 'contactState': 'toe_only',
                       'startRatio': 60/99, 'endRatio': 90/99}],
+        'footContactCandidates': [{'jointName': 'left_ankle', 'startFrame': 10, 'endFrame': 90}],
+        'footPatchEvidence': {'feet': {'left': {'states': ['airborne']*20+['unknown']*60+['airborne']*20}}},
     }
     original = contact_mask(payload, payload['jointNames'], 100)
     result = slice_loop_cycle(payload, {'startFrame': 20, 'stopFrameExclusive': 80})
     np.testing.assert_array_equal(contact_mask(result, payload['jointNames'], 60), original[20:80])
     assert 'supportContacts' not in result['sourceFootSupportEvidence']
+    candidate = result['sourceFootSupportEvidence']['footContactCandidates'][0]
+    assert (candidate['startRatio'], candidate['endRatio']) == (0., 1.)
+    assert result['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left']['states'] == ['unknown']*60
 
 
 def test_net_travel_and_stationary_holds_are_not_misidentified_as_cycles():

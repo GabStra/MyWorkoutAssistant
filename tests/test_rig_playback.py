@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 from exercise_motion_pkg.controlled_motion import FixedRig
 from exercise_motion_pkg.rig_playback import decode_rig, sample_rig, validate_rig_playback
@@ -19,6 +20,125 @@ def export(rig):
     points=decode_rig(rig,rig['coordinates'])
     return {'fps':30.,'jointNames':rig['jointNames'],'fixedRig':rig,'loop':{'enabled':True},
             'frames':[{'timeSec':i/30.,'joints':dict(zip(rig['jointNames'],p.tolist()))} for i,p in enumerate(points)]}
+
+
+def test_grounded_toe_recalibrates_overlapping_ankle_before_fitting():
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    rig = rig_payload(12)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    original = points.copy()
+    ankle, foot = (names.index('right_'+part) for part in ('ankle', 'foot'))
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, foot] = True
+    pinned[3:8, ankle] = True
+    grounded = points[0, foot] + [0., -.08, 0.]
+    targets, _ = rig_contact_targets(points, names, pinned, rig['offsets'],
+                                     stationary_positions={'right_foot': grounded})
+    np.testing.assert_allclose(targets[:, foot], np.tile(grounded, (12, 1)))
+    np.testing.assert_allclose(np.linalg.norm(targets[3:8, ankle]-targets[3:8, foot], axis=1),
+                               np.linalg.norm(rig['offsets'][foot]))
+    np.testing.assert_array_equal(points, original)
+    np.testing.assert_array_equal(targets[:3, ankle], points[:3, ankle])
+    # Playback reconstructs exactly the same anchors from the exported reference.
+    reference = points.copy()
+    reference[:, foot] = grounded
+    playback, _ = rig_contact_targets(reference, names, pinned, rig['offsets'])
+    np.testing.assert_allclose(playback, targets)
+
+
+@pytest.mark.parametrize('same_stance', [True, False])
+def test_observed_stance_identity_prevents_false_ankle_loop_jump(same_stance):
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    rig = rig_payload(12)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    ankle, foot = (names.index('right_'+part) for part in ('ankle', 'foot'))
+    points[:4, ankle, 2] += .03
+    points[8:, ankle, 2] -= .03
+    original = points.copy()
+    contacts = [{'jointName': 'right_foot', 'contactState': 'full_sole',
+                 'contactMotion': 'stationary', 'startFrame': start, 'endFrame': end,
+                 'ankleAnchorGroupId': group}
+                for start, end, group in ((0, 3, 'stance-a'), (8, 11, 'stance-a' if same_stance else 'stance-b'))]
+    evidence = {'contacts': contacts}
+    pinned = contact_mask({'sourceFootSupportEvidence': evidence}, names, len(points))
+    targets, _ = rig_contact_targets(points, names, pinned, rig['offsets'], evidence=evidence)
+    assert (np.linalg.norm(targets[0, ankle]-targets[-1, ankle]) < 1e-10) == same_stance
+    np.testing.assert_array_equal(targets[4:8, ankle], points[4:8, ankle])
+    np.testing.assert_allclose(np.linalg.norm((targets[:, ankle]-targets[:, foot])[pinned[:, ankle]], axis=1),
+                               np.linalg.norm(rig['offsets'][foot]))
+    np.testing.assert_array_equal(points, original)
+
+
+@pytest.mark.parametrize('surface,shared_plane,calibrated,grounded', [
+    ('ground', False, False, True), ('raised_surface', True, False, False),
+    ('', True, False, True), ('', False, False, False), ('ground', True, True, False)])
+def test_contact_surface_owns_height_without_pinning_release(surface, shared_plane, calibrated, grounded):
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    rig = rig_payload(12)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    points[:, :, 1] += .4
+    contact = {'jointName': 'right_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+               'supportKind': 'observed_foot_patch', 'surfaceKind': surface, 'startFrame': 0, 'endFrame': 3}
+    evidence = {'contacts': [contact]}
+    if shared_plane:
+        evidence['sharedSupportPlaneY'] = .8
+    if calibrated:
+        evidence['bodySupport'] = {'required': True, 'status': 'confirmed',
+                                   'stationaryJoints': ['right_foot', 'right_ankle']}
+    pinned = contact_mask({'sourceFootSupportEvidence': evidence}, names, len(points))
+    targets, _ = rig_contact_targets(points, names, pinned, rig['offsets'], evidence=evidence, floor=0.)
+    foot, ankle = names.index('right_foot'), names.index('right_ankle')
+    np.testing.assert_allclose(targets[:4, foot, 1], 0. if grounded else points[0, foot, 1])
+    np.testing.assert_array_equal(targets[4:], points[4:])
+    np.testing.assert_allclose(targets[:4, ankle]-targets[:4, foot], points[:4, ankle]-points[:4, foot], atol=1e-12)
+
+
+@pytest.mark.parametrize('anchored', [False, True])
+def test_floor_clearance_translates_free_rig_without_changing_motion(anchored):
+    from exercise_motion_pkg.rig_playback import unanchored_floor_clearance_lift
+    rig = rig_payload()
+    before = sample_rig(rig, np.arange(120) / 4, wrap=True)
+    floor = float(before[:, :, 1].min()) + .01
+    pinned = np.zeros(before[::4].shape[:2], dtype=bool)
+    pinned[:, 0] = anchored
+    lift = unanchored_floor_clearance_lift(rig, floor, pinned, cyclic=True)
+    if anchored:
+        assert lift == 0.0
+        return
+    coordinates = np.asarray(rig['coordinates'])
+    coordinates[:, 1] += lift
+    rig['coordinates'] = coordinates.tolist()
+    after = sample_rig(rig, np.arange(120) / 4, wrap=True)
+    assert float(after[:, :, 1].min()) == pytest.approx(floor)
+    np.testing.assert_allclose(after - before, np.broadcast_to([0., lift, 0.], before.shape), atol=1e-12)
+
+
+def test_materialized_support_uses_final_rig_and_still_rejects_penetration(tmp_path):
+    from exercise_motion_pkg.bake_and_rank import materialized_cleanup_support_metrics
+    rig = rig_payload()
+    payload = export(rig)
+    floor = float(decode_rig(rig, rig['coordinates'])[:, :, 1].min())
+    payload['renderFloorY'] = floor
+    (tmp_path / 'cleaned').mkdir()
+    (tmp_path / 'cleaned/motion.cleaned.json').write_text(json.dumps({
+        'metadata': {'cleanup': {'supportSurfaceConstraint': {'maximumSuppressedNonPenetrationLift': .6}}}}))
+    skeleton = tmp_path / 'final.json'
+    skeleton.write_text(json.dumps(payload))
+    assert not materialized_cleanup_support_metrics(tmp_path, skeleton_path=skeleton)['supportContactContradiction']
+    values = np.asarray(rig['coordinates'])
+    values[:, 1] -= .01
+    rig['coordinates'] = values.tolist()
+    payload = export(rig)
+    payload['renderFloorY'] = floor
+    skeleton.write_text(json.dumps(payload))
+    assert materialized_cleanup_support_metrics(tmp_path, skeleton_path=skeleton)['supportContactContradiction']
 
 
 def test_scene_placement_preserves_fractional_articulation_travel_and_reuse():
@@ -54,6 +174,23 @@ def test_scene_placement_respects_explicit_floor_and_digest():
     assert pose_digest(placed) != digest
 
 
+def test_scene_placement_transforms_support_plane_offset_with_floor():
+    from exercise_motion_pkg.scene_placement import normalize_scene_placement
+    from exercise_motion_pkg.support_geometry import geometry_errors
+    original = export(rig_payload())
+    original['renderFloorY'] = -10.
+    names = original['jointNames']
+    points = np.array([[f['joints'][n] for n in names] for f in original['frames']])
+    group = {'joints': ['left_foot', 'right_foot'], 'normal': [0, 2, 0],
+             'planeOffsetMeters': float(points[0, names.index('left_foot'), 1])}
+    original['sourceFootSupportEvidence'] = {'bodySupport': {'coplanarGroups': [group]}}
+    placed = normalize_scene_placement(original)
+    after = np.array([[f['joints'][n] for n in names] for f in placed['frames']])
+    np.testing.assert_allclose(
+        geometry_errors(after, names, placed['sourceFootSupportEvidence']['bodySupport']),
+        geometry_errors(points, names, original['sourceFootSupportEvidence']['bodySupport']), atol=1e-12)
+
+
 def test_scene_placement_levels_consistent_supported_stance_once():
     from exercise_motion_pkg.scene_placement import normalize_scene_placement
     rig = rig_payload()
@@ -67,7 +204,8 @@ def test_scene_placement_levels_consistent_supported_stance_once():
     original['groundContactMode'] = 'continuous'
     original['sourceFootSupportEvidence'] = {'contacts': [
         {'jointName': side+'_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
-         'startRatio': 0., 'endRatio': 1.} for side in ('left', 'right')]}
+         'supportKind': 'observed_foot_patch', 'startRatio': 0., 'endRatio': 1.} for side in ('left', 'right')],
+         'sharedSupportPlaneY': .8}
     placed = normalize_scene_placement(original)
     assert placed['scenePlacement']['orientationReason'] == 'consistent_extended_supported_stance'
     assert placed['scenePlacement']['rotationDegrees'] > 1.

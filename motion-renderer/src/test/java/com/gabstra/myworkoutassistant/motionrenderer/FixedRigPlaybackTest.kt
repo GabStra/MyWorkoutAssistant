@@ -6,6 +6,27 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FixedRigPlaybackTest {
+    @Test
+    fun continuousVelocityPlaybackMatchesPythonAcrossFrameBoundariesAndSeam() {
+        val data = JsonParser.parseString(checkNotNull(javaClass.classLoader?.getResource(
+            "fixed-rig-continuous-parity.json")).readText()).asJsonObject
+        for ((version, expectedKey) in listOf(1 to "expected", 2 to "expectedV2")) {
+            val value = data.getAsJsonObject("rig").deepCopy()
+            value.addProperty("interpolation", "limited_quaternion_hermite_v$version")
+            val rig = FixedRigPlayback.parse(value, 8)
+            val expected = data.getAsJsonArray(expectedKey)
+            data.getAsJsonArray("cursors").forEachIndexed { frame, cursor ->
+                val result = rig.sample(cursor.asDouble, wrap = true)
+                rig.jointNames.forEachIndexed { joint, name ->
+                    (0..2).forEach { axis ->
+                        assertEquals(expected[frame].asJsonArray[joint].asJsonArray[axis].asDouble,
+                            checkNotNull(result[name])[axis], 1e-9)
+                    }
+                }
+            }
+        }
+    }
+
     private fun fixture() = JsonParser.parseString(
         checkNotNull(javaClass.classLoader?.getResource("fixed-rig-parity.json")).readText()
     ).asJsonObject

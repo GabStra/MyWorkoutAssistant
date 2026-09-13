@@ -87,15 +87,30 @@ def rotation(degrees):
     return np.array([[1, 0, 0], [0, np.cos(angle), -np.sin(angle)], [0, np.sin(angle), np.cos(angle)]])
 
 
-def test_floor_fallback_removes_camera_pitch_preserving_real_lean_and_distances():
+def test_body_fit_must_preserve_observed_source_projection():
+    from exercise_motion_pkg.video_world_alignment import body_fit_projection_metrics
+    clip = apply_rigid_transform_to_clip(camera_clip(), rotation=np.eye(3), translation=np.array([0., 0., 3.]))
+    source = {'coordinateSpace': 'normalized_image_xy', 'imageWidth': 400, 'imageHeight': 400,
+              'frames': [{'sourceTimeSec': frame.time_sec, 'joints': {
+                  name: [(100 * point[0] / point[2] + 200) / 400,
+                         (100 * point[1] / point[2] + 200) / 400, 0.]
+                  for name, point in frame.joints.items()}} for frame in clip.frames]}
+    unchanged = body_fit_projection_metrics(clip, source, np.eye(3), np.zeros(3))
+    rotated = body_fit_projection_metrics(clip, source, rotation(30), np.zeros(3))
+    assert unchanged['available'] and not unchanged['regressed']
+    assert rotated['available'] and rotated['regressed']
+
+
+@pytest.mark.parametrize("camera_pitch", [-15, 15])
+def test_floor_fallback_removes_camera_pitch_preserving_real_lean_and_distances(camera_pitch):
     original = camera_clip()
-    tilted = apply_rigid_transform_to_clip(original, rotation=rotation(-15), translation=np.zeros(3))
-    result = floor_only_alignment_fallback(tilted, rotation(15))
+    tilted = apply_rigid_transform_to_clip(original, rotation=rotation(camera_pitch), translation=np.zeros(3))
+    result = floor_only_alignment_fallback(tilted, rotation(-camera_pitch))
     assert result is not None
     for expected, actual in zip(original.frames, result.frames):
         for name in original.joint_names:
             assert actual.joints[name] == pytest.approx(expected.joints[name])
-    assert floor_only_alignment_fallback(original, rotation(-30)) is None
+    assert floor_only_alignment_fallback(original, np.eye(3) * 2) is None
 
 
 def test_cleanup_uses_output_floor_coordinates_and_ignores_rejected_transform():

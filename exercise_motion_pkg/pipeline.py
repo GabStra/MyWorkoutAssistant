@@ -410,7 +410,7 @@ def run_generation_pipeline(
         settings.pop(name, None)
     inputs = [value for value in settings.values() if isinstance(value, Path) and value.is_file()]
     inputs.extend(Path(__file__).with_name(name) for name in (
-        "pipeline.py", "cleanup.py", "structural_refinement.py", "video_world_alignment.py",
+        "pipeline.py", "cleanup.py", "temporal_contact_solver.py", "structural_refinement.py", "video_world_alignment.py",
         "preview.py", "wham_convert.py", "wham_retarget_source.py", "ground.py", "models.py",
         "spinepose_wham_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
         "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
@@ -744,6 +744,10 @@ def _run_generation_pipeline_uncached(
             if source_pose_reference_path is not None and source_pose_reference_path.is_file()
             else None
         )
+        from .source_pose_evidence import verify_source_pose
+        source_pose_payload = verify_source_pose(source_pose_payload, input_video_path)
+        if isinstance(source_pose_payload, dict) and source_pose_payload.get("sourcePoseEvidenceAudit", {}).get("unresolved"):
+            raise ValueError("source_pose_reference_unreliable: unresolved landmark associations")
         # Keep the validated source timeline intact during reconstruction and
         # cleanup. Candidate review owns the single movement-instance cut;
         # cropping here as well rebases motion before source-video selection.
