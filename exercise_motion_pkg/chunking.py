@@ -6,8 +6,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Any
+from typing import Any, Mapping
 
 
 DEFAULT_MODEL = "gemma-4-E4B-it"
@@ -26,39 +25,55 @@ class ChunkEstimate:
     reason: str
 
 
-KNOWN_DURATION_HINTS: dict[str, tuple[float, float, str, str]] = {
-    "pull up": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
-    "pull ups": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
-    "pull-up": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
-    "pull-ups": (2.0, 6.0, "simple", "A pull-up is usually a short single-phase vertical pulling repetition."),
-    "chin up": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
-    "chin ups": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
-    "chin-up": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
-    "chin-ups": (2.0, 6.0, "simple", "A chin-up is usually a short single-phase vertical pulling repetition."),
-    "dip": (2.0, 6.0, "simple", "A dip is usually a short supported vertical pressing repetition."),
-    "dips": (2.0, 6.0, "simple", "A dip is usually a short supported vertical pressing repetition."),
-    "triceps pushdown": (2.0, 6.0, "simple", "A triceps pushdown is usually a short elbow-extension repetition."),
-    "tricep pushdown": (2.0, 6.0, "simple", "A triceps pushdown is usually a short elbow-extension repetition."),
-    "pushdown": (2.0, 6.0, "simple", "A pushdown is usually a short elbow-extension repetition."),
-    "push up": (2.0, 6.0, "simple", "A push-up is usually a short controlled bodyweight repetition."),
-    "push-up": (2.0, 6.0, "simple", "A push-up is usually a short controlled bodyweight repetition."),
-    "squat": (3.0, 8.0, "compound", "A squat needs enough time for descent, bottom position, and ascent."),
-    "split squat": (3.0, 8.0, "compound", "A split squat needs enough time for descent, bottom position, and ascent."),
-    "bulgarian split squat": (3.0, 8.0, "compound", "A Bulgarian split squat needs enough time for descent, bottom position, and ascent."),
-    "lunge": (3.0, 8.0, "compound", "A lunge needs enough time for descent, bottom position, and return to standing."),
-    "reverse lunge": (3.0, 8.0, "compound", "A reverse lunge needs enough time for step-back, descent, and return to standing."),
-    "walking lunge": (3.0, 8.0, "compound", "A walking lunge needs enough time for one clear unilateral stride and recovery."),
-    "deadlift": (2.0, 7.0, "compound", "A deadlift is usually a short hinge lift with setup excluded."),
-    "bench press": (2.0, 7.0, "compound", "A bench press repetition includes controlled lowering and pressing."),
-    "clean": (4.0, 12.0, "multi_phase", "A clean includes pull, catch, and recovery phases."),
-    "clean and jerk": (6.0, 18.0, "multi_phase", "A clean and jerk includes clean, recovery, dip, drive, catch, and stabilization."),
-    "snatch": (4.0, 14.0, "multi_phase", "A snatch includes pull, turnover, catch, and stabilization."),
-    "turkish get up": (20.0, 60.0, "long_duration", "A Turkish get-up is a long multi-position floor-to-standing movement."),
-    "turkish get-up": (20.0, 60.0, "long_duration", "A Turkish get-up is a long multi-position floor-to-standing movement."),
-}
+def movement_complexity_from_contract(contract: Mapping[str, Any] | None) -> str | None:
+    """Derive validation complexity from contract structure, not the exercise name.
+
+    Complexity decides whether repetition-phase completeness is required and
+    whether loop-continuity review applies, so it must reflect the requested
+    movement's own contract. Returns None when the contract carries no
+    structural evidence, leaving the caller on its generic fallback.
+    """
+    if not isinstance(contract, Mapping):
+        return None
+    movement_type = str(contract.get("movementType") or "").strip().lower()
+    if movement_type in {"hold", "carry"}:
+        return "long_duration"
+    duration = contract.get("singleExecutionDurationSeconds")
+    min_sec = coerce_float(duration.get("minSec")) if isinstance(duration, Mapping) else None
+    if min_sec is not None and min_sec >= 15.0:
+        return "long_duration"
+    topology = contract.get("movementTopology")
+    phases = topology.get("phases") if isinstance(topology, Mapping) else None
+    phase_count = len(phases) if isinstance(phases, list) else 0
+    if phase_count >= 5:
+        return "multi_phase"
+    if phase_count >= 3:
+        return "compound"
+    if phase_count >= 1:
+        return "simple"
+    if movement_type == "transition_sequence":
+        return "multi_phase"
+    if movement_type in {"repetition", "cyclic"}:
+        return "compound"
+    return None
 
 
-@lru_cache(maxsize=256)
+def chunk_hint_from_contract(contract: Mapping[str, Any] | None) -> tuple[float, float, str, str] | None:
+    """Read the one-execution duration hint from a usable contract."""
+    if not isinstance(contract, Mapping):
+        return None
+    duration = contract.get("singleExecutionDurationSeconds")
+    if not isinstance(duration, Mapping):
+        return None
+    min_sec = coerce_float(duration.get("minSec"))
+    max_sec = coerce_float(duration.get("maxSec"))
+    if min_sec is None or max_sec is None:
+        return None
+    complexity = movement_complexity_from_contract(contract) or "compound"
+    reason = "Contract estimate for one complete execution of the requested movement."
+    return min_sec, max_sec, complexity, reason
+
+
 def estimate_chunking(
     *,
     exercise_name: str,
@@ -66,17 +81,17 @@ def estimate_chunking(
     model: str = DEFAULT_MODEL,
     backend: str = "gpu",
     use_llm: bool = False,
+    exercise_motion_contract: Mapping[str, Any] | None = None,
 ) -> ChunkEstimate:
-    normalized = normalize_exercise_name(exercise_name)
-    known = known_duration_hint_for(normalized)
-    if known is not None:
-        min_sec, max_sec, complexity, reason = known
+    contract_hint = chunk_hint_from_contract(exercise_motion_contract)
+    if contract_hint is not None:
+        min_sec, max_sec, complexity, reason = contract_hint
         return build_chunk_estimate(
             exercise_name=exercise_name,
             min_sec=min_sec,
             max_sec=max_sec,
             complexity=complexity,
-            source="known_hint",
+            source="contract",
             reason=reason,
         )
 
@@ -105,18 +120,8 @@ def estimate_chunking(
         max_sec=DEFAULT_MAX_REP_SECONDS,
         complexity="unknown",
         source="fallback",
-        reason="No validated exercise-specific estimate was available.",
+        reason="No contract duration hint or validated exercise-specific estimate was available.",
     )
-
-
-def known_duration_hint_for(normalized_exercise_name: str) -> tuple[float, float, str, str] | None:
-    exact = KNOWN_DURATION_HINTS.get(normalized_exercise_name)
-    if exact is not None:
-        return exact
-    for phrase, hint in sorted(KNOWN_DURATION_HINTS.items(), key=lambda item: len(item[0]), reverse=True):
-        if re.search(rf"\b{re.escape(phrase)}\b", normalized_exercise_name):
-            return hint
-    return None
 
 
 def frames_for_chunk_seconds(chunk_seconds: float) -> int:

@@ -1040,6 +1040,7 @@ class YouTubeRankingSettings:
     rank_with_vision: bool = False
     exercise_name_rewrite_enabled: bool = True
     exercise_motion_contract_enabled: bool = True
+    exercise_motion_contract_critic_enabled: bool = True
     exercise_motion_contract_cache_dir: Path | None = None
     semantic_gate_enabled: bool = False
     semantic_gate_candidates_per_exercise: int | None = 24
@@ -2299,6 +2300,10 @@ def planned_query_preserves_target_action(exercise_name: str, query: str) -> boo
 
 
 def common_youtube_movement_aliases(normalized_exercise_name: str) -> list[str]:
+    # Sanctioned name-based exception: these aliases only widen the YouTube
+    # search-query vocabulary so common upload titles can be found. They never
+    # influence motion logic, validation, or cut policy, which derive from the
+    # exercise-motion contract.
     aliases: list[str] = []
     tokens = normalized_exercise_name.split()
     token_set = set(tokens)
@@ -4354,9 +4359,12 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "recognizable; use an empty list only when no body-relative reference is meaningful. primaryAxis is the main anatomical travel "
         "direction, not the camera direction. motionPattern must describe the visible relationship rather than the implement.\n"
         "Return minified JSON only. No markdown table, code fence, timestamps, chain-of-thought, or explanation.\n"
-        "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, "
+        "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, singleExecutionDurationSeconds, "
         "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
         "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
+        "singleExecutionDurationSeconds is an object with minSec and maxSec estimating the visible duration of ONE "
+        "complete execution of the movement (one repetition, hold, carry distance, or full transition sequence), "
+        "excluding setup, rest, talking, and repeated repetitions. Use conservative values when unsure.\n"
         "handRelationship must be rigid_pair only when both hands maintain fixed spacing on the same rigid implement throughout the movement; independent for separate implements or independently moving hands, single for one-hand use, none for no hand-equipment relationship, or unknown. Do not infer rigid_pair from bilateral motion or hands supporting equipment alone.\n"
         "completionMode must be one of: return_to_start, distinct_end_state, stable_hold, active_travel, "
         "representative_cycle, alternating_pair. requiresReturnToStart must agree with completionMode and is true only "
@@ -4397,25 +4405,156 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     )
 
 
+def _exercise_equipment_label(exercise: ExerciseEntry) -> str | None:
+    primary = exercise.motion_context.get("primaryEquipment") if isinstance(exercise.motion_context, dict) else None
+    if not isinstance(primary, dict):
+        return None
+    for key in ("name", "type"):
+        text = str(primary.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _contract_critic_caption_kwargs(
+    *,
+    ranker: "LlamaCppVisionRanker",
+    settings: YouTubeRankingSettings,
+) -> dict[str, Any]:
+    from .contract_critic import CONTRACT_CRITIC_MAX_TOKENS
+
+    caption_kwargs: dict[str, Any] = {
+        "frame_paths": [],
+        "max_tokens": CONTRACT_CRITIC_MAX_TOKENS,
+    }
+    if callable_accepts_keyword(ranker.client.caption_images, "disable_reasoning"):
+        caption_kwargs["disable_reasoning"] = True
+    if callable_accepts_keyword(ranker.client.caption_images, "json_response"):
+        caption_kwargs["json_response"] = True
+    if callable_accepts_keyword(ranker.client.caption_images, "temperature"):
+        caption_kwargs["temperature"] = 0.0
+    if callable_accepts_keyword(ranker.client.caption_images, "top_p"):
+        caption_kwargs["top_p"] = 1.0
+    if callable_accepts_keyword(ranker.client.caption_images, "top_k"):
+        caption_kwargs["top_k"] = 0
+    if callable_accepts_keyword(ranker.client.caption_images, "request_timeout_seconds"):
+        caption_kwargs["request_timeout_seconds"] = max(
+            1.0,
+            float(settings.llama_cpp_request_timeout_seconds),
+        )
+    return caption_kwargs
+
+
+def _copy_contract_generation_metadata(
+    target: dict[str, Any],
+    source: dict[str, Any],
+    *,
+    started: float,
+) -> dict[str, Any]:
+    for key in (
+        "motionContext",
+        "model",
+        "generationMode",
+        "generationFallbackReasons",
+    ):
+        if key in source:
+            target[key] = source[key]
+    target["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
+    return target
+
+
+def _apply_contract_critic_to_usable_draft(
+    *,
+    contract: dict[str, Any],
+    exercise: ExerciseEntry,
+    settings: YouTubeRankingSettings,
+    ranker: "LlamaCppVisionRanker",
+    started: float,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
+    """Critique a usable draft.
+
+    Returns ``(accepted_contract, critic_issues, repair_draft)``.
+    - accepted_contract is set when the draft is clean or a patch succeeds
+    - repair_draft is set when critic ops need a repair attempt
+    - critic_issues are recorded for repair prompts / final visibility
+    """
+    from .contract_critic import (
+        apply_contract_critic_patches,
+        critique_exercise_motion_contract,
+    )
+
+    try:
+        issues = critique_exercise_motion_contract(
+            exercise_name=exercise.name,
+            equipment=_exercise_equipment_label(exercise),
+            contract=contract,
+            caption_images=ranker.client.caption_images,
+            caption_kwargs=_contract_critic_caption_kwargs(ranker=ranker, settings=settings),
+        )
+    except Exception as exc:
+        if is_critical_vlm_interaction_error(exc):
+            add_vlm_context(
+                exc,
+                stage="exercise_motion_contract_critic",
+                exerciseName=exercise.name,
+                model=settings.llama_cpp_model,
+            )
+            raise
+        return contract, [], None
+
+    if not issues:
+        return contract, [], None
+
+    patched_payload, applied = apply_contract_critic_patches(contract, issues)
+    if not applied:
+        return None, issues, contract
+
+    try:
+        renormalized = normalize_exercise_motion_contract(
+            patched_payload,
+            exercise=exercise,
+            source="llm",
+        )
+    except Exception:
+        return None, issues, contract
+
+    _copy_contract_generation_metadata(renormalized, contract, started=started)
+    if exercise_motion_contract_is_usable(renormalized, exercise=exercise):
+        renormalized["criticAdjustments"] = applied
+        return renormalized, issues, None
+    return None, issues, renormalized
+
+
 def generate_exercise_motion_contract_with_ranker(
     *,
     exercise: ExerciseEntry,
     settings: YouTubeRankingSettings,
     ranker: "LlamaCppVisionRanker",
 ) -> dict[str, Any]:
+    from .contract_critic import critic_issue_validation_texts
+
     started = time.monotonic()
     failed_attempts: list[str] = []
     rejected_drafts: list[dict[str, Any]] = []
     repair_draft: dict[str, Any] | None = None
+    usable_draft: dict[str, Any] | None = None
+    critic_issues: list[dict[str, Any]] = []
+    pending_critic_repair = False
     attempt_specs = (
         ("thinking", False, False),
         ("direct", True, False),
         ("direct_repair", True, True),
     )
     for attempt_mode, disable_reasoning, use_repair_draft in attempt_specs:
+        if pending_critic_repair and attempt_mode == "direct":
+            continue
+        if pending_critic_repair and attempt_mode != "direct_repair":
+            continue
         prompt = build_exercise_motion_contract_prompt(exercise)
         if use_repair_draft and repair_draft is not None:
             repair_issues = exercise_motion_contract_quality_issues(repair_draft, exercise=exercise)
+            if critic_issues:
+                repair_issues = [*repair_issues, *critic_issue_validation_texts(critic_issues)]
             prompt += (
                 "\nThe previous draft failed deterministic contract validation. Correct the entire contract, not "
                 "only the quoted words. Re-evaluate the physical support posture, natural target-action boundary, "
@@ -4459,7 +4598,31 @@ def generate_exercise_motion_contract_with_ranker(
             if exercise_motion_contract_is_usable(contract, exercise=exercise):
                 if failed_attempts:
                     contract["generationFallbackReasons"] = failed_attempts
-                return contract
+                if pending_critic_repair:
+                    if critic_issues:
+                        contract["criticIssues"] = critic_issues
+                    return contract
+                if not settings.exercise_motion_contract_critic_enabled:
+                    return contract
+                accepted, critic_issues, critic_repair = _apply_contract_critic_to_usable_draft(
+                    contract=contract,
+                    exercise=exercise,
+                    settings=settings,
+                    ranker=ranker,
+                    started=started,
+                )
+                if accepted is not None:
+                    return accepted
+                usable_draft = contract
+                repair_draft = critic_repair if critic_repair is not None else contract
+                if attempt_mode == "direct_repair":
+                    usable_draft["criticIssues"] = critic_issues
+                    usable_draft["generationElapsedSeconds"] = round_elapsed(
+                        time.monotonic() - started
+                    )
+                    return usable_draft
+                pending_critic_repair = True
+                continue
             failed_attempts.append(
                 f"{attempt_mode}: {exercise_motion_contract_unusable_reason(contract, exercise=exercise)}"
             )
@@ -4482,6 +4645,12 @@ def generate_exercise_motion_contract_with_ranker(
                 )
                 raise
             failed_attempts.append(f"{attempt_mode}: {truncate_text(str(exc), 240)}")
+
+    if usable_draft is not None:
+        if critic_issues:
+            usable_draft["criticIssues"] = critic_issues
+        usable_draft["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
+        return usable_draft
 
     return {
         "schemaVersion": 1,
@@ -4849,6 +5018,27 @@ def first_contract_value(payload: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def normalize_single_execution_duration_hint(value: Any) -> dict[str, float] | None:
+    """Normalize the optional one-execution duration hint (seconds)."""
+    min_sec: Any = None
+    max_sec: Any = None
+    if isinstance(value, dict):
+        min_sec = value.get("minSec", value.get("min", value.get("minSeconds")))
+        max_sec = value.get("maxSec", value.get("max", value.get("maxSeconds")))
+    elif isinstance(value, list) and len(value) == 2:
+        min_sec, max_sec = value
+    if min_sec is None or max_sec is None:
+        return None
+    try:
+        min_sec = float(min_sec)
+        max_sec = float(max_sec)
+    except (TypeError, ValueError):
+        return None
+    min_sec = min(max(min_sec, 1.0), 60.0)
+    max_sec = min(max(max_sec, min_sec), 90.0)
+    return {"minSec": round(min_sec, 2), "maxSec": round(max_sec, 2)}
+
+
 def synthesize_exercise_motion_advisory_text(payload: dict[str, Any]) -> str:
     valid_start = cleaned_contract_string(
         first_contract_value(payload, "validStartState", "requiredStartPosture", "startState", "source"),
@@ -5014,6 +5204,16 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     required_phases = normalize_required_phase_labels(
         first_contract_value(payload, "requiredPhases", "phases", "completePhases")
     )
+    duration_hint = normalize_single_execution_duration_hint(
+        first_contract_value(
+            payload,
+            "singleExecutionDurationSeconds",
+            "singleExecutionDurationSec",
+            "repDurationSeconds",
+        )
+    )
+    if duration_hint is not None:
+        fields["singleExecutionDurationSeconds"] = duration_hint
     if requires_return is True and required_phases and not any(
         re.search(r"\b(?:return|returns|returned|back)\b", phase.casefold())
         for phase in required_phases
@@ -5091,7 +5291,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
 
 
 EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 25
-EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 11
+EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 13
 
 
 def exercise_motion_contract_cache_path(
@@ -9485,6 +9685,7 @@ def prepare_vision_review(
         chunk_estimate = estimate_chunking(
             exercise_name=exercise.name,
             use_llm=False,
+            exercise_motion_contract=exercise_motion_contract,
         )
         chunk_seconds = settings.vision_chunk_seconds or chunk_estimate.chunk_seconds
         chunk_overlap_seconds = (

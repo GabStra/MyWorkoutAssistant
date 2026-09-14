@@ -374,7 +374,11 @@ def transported_hinge_dots(source_parent, source_bend, current_parent, current_b
 
 def fit_time_budget(payload, timeout_seconds=None):
     """Bound runtime by problem size; an explicit caller deadline takes priority."""
-    return float(timeout_seconds) if timeout_seconds is not None else max(150., min(300., 1.5*len(payload.get('frames') or [])))
+    if timeout_seconds is not None:
+        return float(timeout_seconds)
+    frames = len(payload.get('frames') or [])
+    # One bounded bump so multi-cycle observed fits can finish without per-exercise overrides.
+    return max(180., min(360., 2.5 * frames))
 
 
 def solve_trajectory(residual, initial, pattern, max_evaluations):
@@ -432,8 +436,17 @@ def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None
                          'reason': 'fit_timeout', 'budgetOwner': 'candidate', 'elapsedSeconds': 0.}
     session.fit_calls += 1
     try:
+        # Cycle attempts share one deadline. When using the frame-scaled default,
+        # allow up to 2x that base if the candidate session still has time so a
+        # short single-fit floor cannot leave usable budget stranded mid-cycle.
+        # Explicit caller deadlines stay hard caps.
+        base = fit_time_budget(payload, timeout_seconds)
+        if timeout_seconds is None:
+            allocated = min(remaining, max(base, min(remaining, 2.0 * base)))
+        else:
+            allocated = min(remaining, base)
         result, report = _fit_observed_cycles(payload, max_evaluations=max_evaluations,
-            timeout_seconds=min(fit_time_budget(payload, timeout_seconds), remaining))
+            timeout_seconds=allocated)
     finally:
         session.save()
     report['candidateFitBudget'] = {'seconds': session.budget_seconds,
@@ -463,13 +476,17 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         return _fit_controlled_motion(payload, max_evaluations=max_evaluations,
                                       timeout_seconds=max(0., timeout_seconds-(monotonic()-started)))
     attempts = []
-    for choice in choices:
+    for index, choice in enumerate(choices):
         remaining = timeout_seconds-(monotonic()-started)
         if remaining <= 0:
             break
+        # Share the outer deadline across ranked cycle proposals so the first
+        # attempt cannot leave later proposals with a useless leftover.
+        attempts_left = len(choices) - index
+        attempt_timeout = remaining if attempts_left <= 1 else remaining / attempts_left
         candidate, report = _fit_controlled_motion(slice_loop_cycle(payload, choice),
                                                    max_evaluations=max_evaluations,
-                                                   timeout_seconds=remaining)
+                                                   timeout_seconds=attempt_timeout)
         attempts.append({'selection': choice, 'reason': report['reason'],
                          'checks': report.get('checks', {}),
                          'elapsedSeconds': report.get('elapsedSeconds', 0.),
@@ -486,7 +503,9 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
 def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None):
     """Return only a validated fit; otherwise retain the input with a report."""
     allow_refinement = max_evaluations is None
-    max_evaluations = 25 if max_evaluations is None else max_evaluations
+    if max_evaluations is None:
+        frames = len(payload.get('frames') or [])
+        max_evaluations = max(25, min(40, (frames // 3) or 25))
     started = monotonic()
     timeout_seconds = fit_time_budget(payload, timeout_seconds)
     report = {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY, 'timeBudgetSeconds':timeout_seconds}

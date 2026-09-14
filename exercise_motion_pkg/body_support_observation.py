@@ -10,16 +10,45 @@ from pathlib import Path
 
 import numpy as np
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 BODY_SUPPORT_ANCHORS = ('pelvis', 'left_shoulder', 'right_shoulder')
+_REGION_ANCHORS = {
+    'shoulders': ('left_shoulder', 'right_shoulder'),
+    'upper_body': ('left_shoulder', 'right_shoulder'),
+    'upper_limb': ('left_shoulder', 'right_shoulder'),
+    'pelvis': ('pelvis',),
+    'hips': ('pelvis',),
+    'core': ('pelvis',),
+}
+
+
+def _contract_primary_moving_regions(contract):
+    contract = contract or {}
+    regions = set(contract.get('primaryMovingRegions') or [])
+    spec = contract.get('observableMotionSpec') or {}
+    if isinstance(spec, dict):
+        regions.update(spec.get('primaryMovingRegions') or [])
+    return {str(region).casefold() for region in regions if region}
+
+
+def body_support_required_anchors(contract=None):
+    """Stationary torso anchors, excluding joints the contract says must move."""
+    excluded = set()
+    for region in _contract_primary_moving_regions(contract):
+        excluded.update(_REGION_ANCHORS.get(region, ()))
+    return tuple(name for name in BODY_SUPPORT_ANCHORS if name not in excluded)
 
 
 def requires_body_support(contract):
     contract = contract or {}
+    moving = _contract_primary_moving_regions(contract)
+    reference = set(contract.get('referenceRegions') or [])
+    spec = contract.get('observableMotionSpec') or {}
+    if isinstance(spec, dict):
+        reference.update(spec.get('referenceRegions') or [])
     return ((contract.get('startPoseConstraints') or {}).get('supportMode') == 'lying'
-            and 'torso' in (contract.get('referenceRegions') or [])
-            and not set(contract.get('primaryMovingRegions') or []).intersection(
-                {'torso', 'spine', 'hips', 'pelvis', 'core'}))
+            and 'torso' in {str(region).casefold() for region in reference}
+            and not moving.intersection({'torso', 'spine', 'hips', 'pelvis', 'core'}))
 
 
 def observe_body_support(video_path, caption_images, cache_dir):
@@ -348,10 +377,16 @@ def materialize_stationary_sole_support(payload):
         evidence['bodySupport'] = support
 
 
-def body_support_source_readiness(source_pose):
+def body_support_source_readiness(source_pose, contract=None):
     """Expose the fitter's existing evidence prerequisites before reconstruction."""
-    unresolved = [name for name in BODY_SUPPORT_ANCHORS
+    anchors = body_support_required_anchors(contract)
+    if not anchors:
+        return {'required': True, 'ready': True, 'unresolvedAnchors': [],
+                'reason': 'no_stationary_body_support_anchors_required',
+                'requiredAnchors': []}
+    unresolved = [name for name in anchors
                   if not stationary_source_track(source_pose, name)]
     return {'required': True, 'ready': not unresolved, 'unresolvedAnchors': unresolved,
+            'requiredAnchors': list(anchors),
             'reason': 'stationary_support_anchors_observed' if not unresolved
                       else 'supported_body_stationarity_unresolved'}

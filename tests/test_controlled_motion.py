@@ -353,10 +353,11 @@ def test_vectorized_hinge_frames_match_the_final_branch_validator():
 
 def test_fit_budget_scales_with_frames_and_preserves_explicit_limits():
     from exercise_motion_pkg.controlled_motion import fit_time_budget
-    assert fit_time_budget({'frames':[None]*60})==150.
-    assert fit_time_budget({'frames':[None]*146})==219.
-    assert fit_time_budget({'frames':[None]*240})==300.
-    assert fit_time_budget({'frames':[None]*2000})==300.
+    assert fit_time_budget({'frames':[None]*60})==180.
+    assert fit_time_budget({'frames':[None]*92})==230.
+    assert fit_time_budget({'frames':[None]*146})==360.
+    assert fit_time_budget({'frames':[None]*240})==360.
+    assert fit_time_budget({'frames':[None]*2000})==360.
     assert fit_time_budget({'frames':[None]*240},60.)==60.
     assert fit_time_budget({'frames':[None]*240},0.)==0.
 

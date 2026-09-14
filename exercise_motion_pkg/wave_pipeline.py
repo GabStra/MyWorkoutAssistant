@@ -119,6 +119,31 @@ def finalize_with_bounded_review_retry(operation: Callable[[], dict[str, Any]]) 
     return manifest
 
 
+def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Refit incomplete controlled-motion once on retained source/WHAM inputs.
+
+    Prefetch may hand final processing a one-shot incomplete bake. Invalidate that
+    attempt and retry once so deferred library work is not required for a finished
+    pass/fail verdict.
+    """
+    from .stage_cache import advance_processing_attempt
+
+    for attempt in range(2):
+        if attempt > 0:
+            advance_processing_attempt()
+        manifest = finalize_with_bounded_review_retry(operation)
+        manifest["processingAttemptCount"] = attempt + 1
+        state = {
+            "finalValidation": {
+                "status": "selected" if manifest.get("selected") else "no_selection",
+                **final_processing_diagnostics(manifest),
+            }
+        }
+        if wave_retry_disposition(state) != "retry_processing":
+            break
+    return manifest
+
+
 def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
     """Keep processing errors distinct from quality rejections in progress output."""
     candidates = []
@@ -958,9 +983,13 @@ def _run_staged_bake_wave(
                 wham_attempts[exercise_id].append(attempt)
                 _ready_item, ready_sources = wham_ready.setdefault(exercise_id, (item, []))
                 ready_sources.append((candidate, selected_video_path))
-                render_futures[_candidate_key(candidate)] = render_executor.submit(
-                    prepare_cpu_render_cache, item, candidate, result,
-                    prepared_contracts.get(_candidate_key(candidate)))
+                # Speculative CPU bake/fit only for the first ready source. Later
+                # sources bake during final processing if the primary fails, so
+                # unfinished secondary fits cannot stall the kept path.
+                if len(ready_sources) == 1:
+                    render_futures[_candidate_key(candidate)] = render_executor.submit(
+                        prepare_cpu_render_cache, item, candidate, result,
+                        prepared_contracts.get(_candidate_key(candidate)))
             except Exception as exc:
                 if is_storage_failure(exc):
                     raise
@@ -1044,22 +1073,42 @@ def _run_staged_bake_wave(
         validation_start_times[exercise_id] = time.perf_counter()
 
         def wait_for_prefetch():
-            for candidate, _path in ready_sources:
+            from .fit_runtime import prioritize_fit_workspaces
+            # Prefer completing the candidate entering final validation over unfinished
+            # speculative CPU bake/fit work for other ready sources.
+            workspaces = [
+                item.request.workspace / candidate.workspace_slug
+                for candidate, _path in ready_sources
+            ]
+            primary_sources = ready_sources[:1] or ready_sources
+            secondary_sources = ready_sources[1:]
+
+            def collect(candidate):
                 key = _candidate_key(candidate)
                 future = render_futures.get(key)
-                if future is not None:
-                    try:
-                        metrics["cpuRenderPrefetch"][key] = future.result()
-                    except Exception as exc:
-                        # A speculative render is never a quality decision. The
-                        # owning candidate path will retry and classify a failure.
-                        if is_storage_failure(exc):
-                            raise
-                        metrics["cpuRenderPrefetch"][key] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-                        announce(f"CPU render preparation failed for {item.exercise_name}; normal bake will retry: {exc}")
+                if future is None:
+                    return
+                try:
+                    metrics["cpuRenderPrefetch"][key] = future.result()
+                except Exception as exc:
+                    # A speculative render is never a quality decision. The
+                    # owning candidate path will retry and classify a failure.
+                    if is_storage_failure(exc):
+                        raise
+                    metrics["cpuRenderPrefetch"][key] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                    announce(f"CPU render preparation failed for {item.exercise_name}; normal bake will retry: {exc}")
+
+            with prioritize_fit_workspaces(workspaces[:1] or workspaces):
+                for candidate, _path in primary_sources:
+                    collect(candidate)
+            for candidate, _path in secondary_sources:
+                key = _candidate_key(candidate)
+                future = render_futures.get(key)
+                if future is not None and future.done():
+                    collect(candidate)
 
         def process():
-            return finalize_with_bounded_review_retry(lambda: run_bake_and_rank_pipeline(
+            return finalize_with_bounded_processing_retry(lambda: run_bake_and_rank_pipeline(
                 replace(
                     item.request,
                     require_wham_cache=True,

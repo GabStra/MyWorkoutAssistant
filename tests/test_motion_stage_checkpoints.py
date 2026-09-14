@@ -137,6 +137,56 @@ def test_bake_checkpoint_restores_payload_and_video_without_browser(tmp_path, mo
     assert len(calls) == 2
 
 
+def test_bake_path_code_digest_scopes_to_bake_path_source():
+    source = Path(bake.__file__).read_text(encoding="utf-8")
+    base = bake._bake_path_code_digest_source(source)
+    assert base["version"] == 1
+    assert base["functionCount"] > 50
+    orchestrator_edit = source.replace(
+        "def run_bake_and_rank_pipeline(", "def run_bake_and_rank_pipeline(  # digest probe", 1)
+    assert orchestrator_edit != source
+    assert bake._bake_path_code_digest_source(orchestrator_edit) == base
+    bake_path_edit = source.replace(
+        '"""Constrain browser IK using each baked frame\'s pre-IK source joints."""',
+        '"""Constrain browser IK using each baked frame\'s pre-IK source joints."""  # digest probe',
+        1)
+    assert bake_path_edit != source
+    assert bake._bake_path_code_digest_source(bake_path_edit) != base
+    constant_edit = source.replace(
+        "FIXED_PREVIEW_CAMERA_YAW_DEGREES = 135.0", "FIXED_PREVIEW_CAMERA_YAW_DEGREES = 136.0", 1)
+    assert constant_edit != source
+    assert bake._bake_path_code_digest_source(constant_edit) != base
+
+
+def test_bake_checkpoint_key_scopes_code_hash_to_bake_path(tmp_path, monkeypatch):
+    preview = tmp_path / "preview.html"
+    preview.write_text("preview")
+    skeleton = tmp_path / "skeleton.json"
+    video = tmp_path / "review.webm"
+    captured = {}
+    real_cache_key = stage_cache.cache_key
+
+    def capture_cache_key(settings, inputs):
+        captured["settings"] = settings
+        captured["inputs"] = list(inputs)
+        return real_cache_key(settings, inputs)
+
+    monkeypatch.setattr(stage_cache, "cache_key", capture_cache_key)
+
+    def generate(*args, **kwargs):
+        skeleton.write_text('{"frames": []}')
+        video.write_bytes(b"video")
+        return [bake.BakedLoopArtifact(0, skeleton, video, {"frames": []})]
+
+    monkeypatch.setattr(bake, "_bake_preview_loops_with_playwright_uncached", generate)
+    bake.bake_preview_loops_with_playwright(
+        preview, [bake.EligibleLoop(0, {}, 1, 0, 1)], tmp_path, 6)
+    assert Path(bake.__file__) not in captured["inputs"]
+    digest = captured["settings"]["bakePathCodeDigest"]
+    assert digest["version"] == 1
+    assert digest["sha256"]
+
+
 def test_cached_review_frames_regenerate_when_image_missing(tmp_path):
     image = tmp_path / "image.jpg"
     calls = []

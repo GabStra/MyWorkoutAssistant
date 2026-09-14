@@ -109,7 +109,10 @@ def test_contract_identity_failure_uses_existing_bounded_repair():
     entry = exercise("Standing Cable Press")
     prompts = []
     def caption_images(**kwargs):
-        prompts.append(kwargs["prompt"])
+        prompt = kwargs["prompt"]
+        if "semantic consistency review" in prompt:
+            return '{"issues":[]}'
+        prompts.append(prompt)
         return json.dumps(contract_for(entry, "kneeling" if len(prompts) < 3 else "standing"))
     result = youtube.generate_exercise_motion_contract_with_ranker(
         exercise=entry, settings=youtube.YouTubeRankingSettings(), ranker=SimpleNamespace(client=SimpleNamespace(caption_images=caption_images)))

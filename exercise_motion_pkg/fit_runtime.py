@@ -9,23 +9,62 @@ from time import monotonic
 
 
 _CURRENT = ContextVar('movement_fit_session', default=None)
-_CPU_FIT_LOCK = threading.RLock()
+_FIT_GUARD = threading.Condition(threading.Lock())
+_FIT_BUSY = False
+_PRIORITY_WORKSPACES: set[str] = set()
+# Default covers multi-cycle observed fits for longer clips without unbounded waits.
+DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS = 360.
+
+
+def _workspace_key(workspace) -> str | None:
+    if workspace is None:
+        return None
+    return str(Path(workspace).expanduser().resolve())
+
+
+@contextmanager
+def prioritize_fit_workspaces(workspaces):
+    """Prefer CPU fitting for candidates about to enter final validation."""
+    keys = {_workspace_key(workspace) for workspace in workspaces}
+    keys.discard(None)
+    if not keys:
+        yield
+        return
+    with _FIT_GUARD:
+        _PRIORITY_WORKSPACES.update(keys)
+        _FIT_GUARD.notify_all()
+    try:
+        yield
+    finally:
+        with _FIT_GUARD:
+            _PRIORITY_WORKSPACES.difference_update(keys)
+            _FIT_GUARD.notify_all()
 
 
 @contextmanager
 def cpu_fit_slot():
     """Avoid competing Python-heavy solvers; queueing consumes no fit budget."""
+    global _FIT_BUSY
     queued = monotonic()
-    with _CPU_FIT_LOCK:
-        waited = monotonic()-queued
-        session = current_fit_session()
+    session = current_fit_session()
+    workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
+    with _FIT_GUARD:
+        while _FIT_BUSY or (_PRIORITY_WORKSPACES and workspace not in _PRIORITY_WORKSPACES):
+            _FIT_GUARD.wait(timeout=0.25)
+        _FIT_BUSY = True
+        waited = monotonic() - queued
         if session is not None and session.started is not None:
             session.started += waited
+    try:
         yield waited
+    finally:
+        with _FIT_GUARD:
+            _FIT_BUSY = False
+            _FIT_GUARD.notify_all()
 
 
 class CandidateFitSession:
-    def __init__(self, workspace=None, *, budget_seconds=300.):
+    def __init__(self, workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS):
         self.budget_seconds = budget_seconds
         self.started = None
         self.path = Path(workspace)/'anatomy_repair_checkpoint.json' if workspace else None
@@ -76,7 +115,7 @@ def fit_input_key(payload):
 
 
 @contextmanager
-def candidate_fit_session(workspace=None, *, budget_seconds=300.):
+def candidate_fit_session(workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS):
     existing = current_fit_session()
     if existing is not None:
         yield existing

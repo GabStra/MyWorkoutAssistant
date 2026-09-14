@@ -198,7 +198,7 @@ from exercise_motion_pkg.youtube import (
 from exercise_motion_pkg.chunking import (
     estimate_chunking,
     frames_for_chunk_seconds,
-    known_duration_hint_for,
+    movement_complexity_from_contract,
     normalize_exercise_name,
 )
 
@@ -488,7 +488,9 @@ FIRST_ATTEMPT_MEDIUM_TRACKABILITY = 0.65
 FIRST_ATTEMPT_HIGH_RECONSTRUCTION_PRIORITY = 0.70
 KINEMATIC_CUT_STRATEGY = "kinematic_cycle"
 KINEMATIC_CUT_MAX_PROPOSALS = 2
-SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 14
+SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 15
+SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS = 8
+SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS = 3
 PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
 SOURCE_CUT_KINEMATIC_SUBJECT_MOTION_REJECTION_REASONS = frozenset(
     {
@@ -756,7 +758,7 @@ FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO = 0.55
 FULL_REPETITION_PHASE_COMPLETENESS_EDGE_MARGIN_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MIN_FRAMES = 5
-EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 41
+EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 42
 SOURCE_ENDPOINT_RETURN_HAND_HEIGHT_DELTA_RATIO_MAX = 0.20
 SOURCE_ENDPOINT_RETURN_ROOT_HORIZONTAL_DISPLACEMENT_RATIO_MAX = 0.065
 RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
@@ -1496,6 +1498,7 @@ def resolved_segment_max_seconds(
     *,
     ranked_candidate: RankedCandidate | None = None,
     source_hint: SourceChunkHint | None = None,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> float:
     """Resolve an automatic, evidence-based segment limit when the configured value is zero."""
     configured = float(request.segment_max_seconds)
@@ -1504,7 +1507,11 @@ def resolved_segment_max_seconds(
         return max(minimum, configured)
     estimated_seconds = minimum
     if ranked_candidate is not None:
-        estimate = estimate_chunking(exercise_name=ranked_candidate.exercise_name, use_llm=False)
+        estimate = estimate_chunking(
+            exercise_name=ranked_candidate.exercise_name,
+            use_llm=False,
+            exercise_motion_contract=exercise_motion_contract,
+        )
         estimated_seconds = max(
             estimated_seconds,
             parse_optional_float(getattr(estimate, "chunk_seconds", None)) or 0.0,
@@ -11944,9 +11951,13 @@ def movement_complexity_for_validation(
             complexity = payload_chunk_estimate.get("movementComplexity")
             if complexity:
                 return str(complexity)
-    known = known_duration_hint_for(normalize_exercise_name(exercise_name))
-    if known is not None:
-        return str(known[2])
+    contract_complexity = movement_complexity_from_contract(
+        target_motion_contract_from_ranking_payload(ranking_payload)
+        if isinstance(ranking_payload, dict)
+        else None
+    )
+    if contract_complexity is not None:
+        return contract_complexity
     return "unknown"
 
 
@@ -12047,21 +12058,6 @@ def focused_motion_adjustment_for_exercise(
     return focused_score, reasons, payload
 
 
-def exercise_name_suggests_lower_body_deterministic_review(exercise_name: str) -> bool:
-    normalized = normalize_exercise_name(exercise_name)
-    lower_body_name_terms = (
-        "split squat",
-        "bulgarian",
-        "lunge",
-        "squat",
-        "deadlift",
-        "hip thrust",
-        "leg press",
-        "calf raise",
-    )
-    return any(term in normalized for term in lower_body_name_terms)
-
-
 def should_skip_deterministic_review_validation(item: ReviewItem, ranking: LoopRanking) -> bool:
     if not DETERMINISTIC_REVIEW_VALIDATION_ENABLED:
         return True
@@ -12080,19 +12076,10 @@ def should_skip_deterministic_review_validation(item: ReviewItem, ranking: LoopR
             return True
         if parse_optional_float(payload.get("full_rep_motion")) is None:
             return True
-    if review_item_loop_continuity_required(item, ranking):
-        return False
-    complexity = movement_complexity_for_validation(
-        item.exercise_name,
-        ranking_payload=payload,
-    )
-    if complexity in NON_LOOPING_MOVEMENT_COMPLEXITIES:
-        return True
-    if normalize_exercise_name(item.exercise_name) in {"movement", "exercise"}:
-        return True
-    if exercise_name_suggests_lower_body_deterministic_review(item.exercise_name):
-        return False
-    return True
+    # Loop continuity is the only remaining reason to keep the deterministic
+    # loop pass; movement structure comes from the contract, not from
+    # exercise-name terms.
+    return not review_item_loop_continuity_required(item, ranking)
 
 
 def apply_loop_continuity_adjustment(item: ReviewItem, ranking: LoopRanking) -> LoopRanking:
@@ -18619,8 +18606,17 @@ def process_ranked_candidate(
         # A failed fit deliberately retains its input, which can still violate
         # support/kinematic gates. Preserve the processing owner's status even
         # when those downstream filters remove every artifact from review.
-        processing_incomplete = any(controlled_fit_processing_incomplete(
-            artifact.export_payload.get("controlledMotionFit")) for artifact in baked_artifacts)
+        # Sibling variants that exhaust the shared candidate budget after a
+        # validated fit must not reopen an incomplete-processing disposition.
+        has_applied_controlled_motion = any(
+            isinstance(artifact.export_payload.get("controlledMotionFit"), dict)
+            and artifact.export_payload["controlledMotionFit"].get("applied")
+            for artifact in baked_artifacts
+        )
+        processing_incomplete = (not has_applied_controlled_motion) and any(
+            controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
+            for artifact in baked_artifacts
+        )
         record_timing_seconds(result_payload, "previewBakeSeconds", stage_started)
         active_stage = "baked_motion_validation"
         review_item_started = time.perf_counter()
@@ -20119,9 +20115,13 @@ def prepare_candidate_input_video(
         )
         detection_source_offset_seconds = source_chunk_hint.start_seconds
     segment_dir = candidate_workspace / "segment_detection"
+    estimate_contract = exercise_motion_contract
+    if estimate_contract is None and exercise_motion_contract_resolver is not None:
+        estimate_contract = exercise_motion_contract_resolver(ranked_candidate)
     chunk_estimate = estimate_chunking(
         exercise_name=ranked_candidate.exercise_name,
         use_llm=False,
+        exercise_motion_contract=estimate_contract,
     )
     segment_window_seconds = request.segment_window_seconds or chunk_estimate.chunk_seconds
     segment_overlap_seconds = (
@@ -20190,6 +20190,7 @@ def prepare_candidate_input_video(
                         request,
                         ranked_candidate=ranked_candidate,
                         source_hint=ranked_candidate.source_chunk_hint,
+                        exercise_motion_contract=estimate_contract,
                     ),
                     refinement_window_seconds=request.segment_refinement_window_seconds,
                     refinement_overlap_seconds=request.segment_refinement_overlap_seconds,
@@ -20689,9 +20690,52 @@ def source_cut_deterministic_confirmation_candidates(
             float(candidate.get("startSeconds") or 0.0),
         )
     )
-    ordered_candidates = [selected, *alternatives]
+    # Soft eligibility can hide scorecard-unreviewed boundary expansions
+    # (for example multi-cycle parents). Exact confirmation owns splitting or
+    # rejecting those repairs, so keep a bounded expansion queue.
+    repair_expansions: list[dict[str, Any]] = []
+    for candidate in payload.get("sourceCutCandidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId"))
+        if not candidate_id or candidate_id == selected_id:
+            continue
+        if any(
+            normalize_source_cut_candidate_id(item.get("candidateId")) == candidate_id
+            for item in alternatives
+        ):
+            continue
+        if not source_cut_is_boundary_expansion(candidate, selected):
+            continue
+        scorecard = scorecards.get(candidate_id)
+        if isinstance(scorecard, dict) and not bool(scorecard.get("passed")):
+            continue
+        window_key = (
+            round(float(candidate.get("startSeconds") or 0.0), 3),
+            round(float(candidate.get("endSeconds") or 0.0), 3),
+        )
+        if window_key in seen_windows:
+            continue
+        seen_windows.add(window_key)
+        repair_expansions.append(candidate)
+    repair_expansions.sort(
+        key=lambda candidate: (
+            -source_cut_confirmation_window_overlap_ratio(selected, candidate),
+            max(
+                0.0,
+                float(candidate.get("endSeconds") or 0.0)
+                - float(candidate.get("startSeconds") or 0.0),
+            ),
+            float(candidate.get("startSeconds") or 0.0),
+        )
+    )
+    ordered_candidates = [
+        selected,
+        *alternatives,
+        *repair_expansions[:SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS],
+    ]
     if max_candidates is None:
-        return ordered_candidates
+        return ordered_candidates[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
     return ordered_candidates[: max(0, int(max_candidates))]
 
 
@@ -20921,7 +20965,7 @@ def select_exact_pose_confirmed_source_cut(
     selected_validation: dict[str, Any] | None = None
     selected_video_path: Path | None = None
     candidate_queue = list(candidates)
-    while candidate_queue:
+    while candidate_queue and len(attempts) < SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS:
         candidate = candidate_queue.pop(0)
         candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId")) or "unknown"
         candidate_dir = output_dir / f"source_candidate_{candidate_id}"
@@ -20948,12 +20992,25 @@ def select_exact_pose_confirmed_source_cut(
                     "Required exact source-pose validator failed: "
                     + infrastructure_error
                 )
+            support_readiness = validation.get("sourceBodySupportReadiness") or {}
+            unresolved_support = bool(support_readiness.get("unresolvedAnchors"))
+            # Unresolved support on a multi-repetition parent must not block
+            # splitting into single cycles; each child is confirmed on its own.
+            allow_cycle_refinement = (
+                not exact_source_validation_effectively_passed(validation)
+                and (
+                    not unresolved_support
+                    or (
+                        validation.get("hasCompleteMajorCycle") is True
+                        and validation.get("hasSingleMajorCycle") is False
+                    )
+                )
+            )
             cycle_refinements = exact_pose_single_cycle_refinement_candidates(
                 candidate,
                 validation,
                 exercise_motion_contract=exercise_motion_contract,
-            ) if (not exact_source_validation_effectively_passed(validation)
-                  and not (validation.get("sourceBodySupportReadiness") or {}).get("unresolvedAnchors")) else []
+            ) if allow_cycle_refinement else []
             # A validated interval may contain multiple usable repetitions.
             # Keep that temporal context for reconstruction and let the 3D
             # cycle selector choose compatible pose/velocity boundaries. Only
@@ -21414,6 +21471,7 @@ def choose_pre_wham_source_cut_or_reject(
     chunk_estimate = source_chunk_estimate or estimate_chunking(
         exercise_name=ranked_candidate.exercise_name,
         use_llm=False,
+        exercise_motion_contract=exercise_motion_contract,
     )
     segment_dir = candidate_workspace / "segment_detection"
     selection_dir = segment_dir / "pre_wham_source_candidates"
@@ -21741,7 +21799,8 @@ def validate_exact_pre_wham_source_video(
     )
     from .body_support_observation import requires_body_support, body_support_source_readiness
     if requires_body_support(exercise_motion_contract):
-        metrics["sourceBodySupportReadiness"] = body_support_source_readiness(source_pose_reference)
+        metrics["sourceBodySupportReadiness"] = body_support_source_readiness(
+            source_pose_reference, exercise_motion_contract)
     endpoint_features = metrics.get("sourcePoseEndpointFeatures")
     metrics["sourcePoseEndpointContractValidation"] = validate_source_pose_endpoints_against_contract(
         endpoint_features if isinstance(endpoint_features, dict) else None,
@@ -22554,6 +22613,141 @@ def constrain_baked_payload_to_source_articulation(
     return payload, metadata
 
 
+BAKE_CACHE_CODE_DIGEST_ENTRY_POINTS: tuple[str, ...] = (
+    "bake_preview_loops_with_playwright",
+    "_bake_preview_loops_with_playwright_uncached",
+    "bake_preview_time_range_with_playwright",
+    "constrain_baked_payload_to_source_articulation",
+    "_bake_path_code_digest_source",
+    "_bake_path_code_digest",
+)
+BAKE_CACHE_CODE_DIGEST_DATA_CLASSES: tuple[str, ...] = ("BakedLoopArtifact", "EligibleLoop")
+
+
+def _bake_path_code_digest_source(source: str) -> dict[str, Any]:
+    """Digest only the bake-path source of this module.
+
+    This module also hosts discovery, review, and selection orchestration;
+    hashing the whole file would discard every baked artifact after any
+    orchestrator edit. The digest instead covers the transitive call closure
+    of the bake entry points, the module-level constants that closure reads,
+    and the baked-artifact dataclasses, so edits outside the bake path keep
+    the bake stage cache valid while any bake-path change still invalidates
+    it. Pure function of the source text so it can be regression-tested
+    without importing a modified module.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    functions: dict[str, ast.AST] = {}
+    classes: dict[str, ast.ClassDef] = {}
+    module_values: dict[str, str] = {}
+
+    class _CallsAndNames(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.calls: set[str] = set()
+            self.bound: set[str] = set()
+            self.loaded: set[str] = set()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Name):
+                self.calls.add(node.func.id)
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            (self.bound if isinstance(node.ctx, ast.Store) else self.loaded).add(node.id)
+
+    def _constant_text(node: ast.AST) -> str:
+        try:
+            return repr(ast.literal_eval(node))
+        except (ValueError, TypeError, SyntaxError):
+            return ast.unparse(node)
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            visitor = _CallsAndNames()
+            visitor.visit(node)
+            for nested in ast.walk(node):
+                if isinstance(nested, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    if not isinstance(nested, ast.Lambda):
+                        visitor.bound.add(nested.name)
+                elif isinstance(nested, ast.arg):
+                    visitor.bound.add(nested.arg)
+            functions[node.name] = (node, visitor.calls, visitor.loaded - visitor.bound)
+        elif isinstance(node, ast.ClassDef):
+            classes[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name_node in ast.walk(target):
+                    if isinstance(name_node, ast.Name):
+                        module_values[name_node.id] = _constant_text(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            module_values[node.target.id] = _constant_text(node.value)
+
+    closure: set[str] = set()
+    frontier = set(BAKE_CACHE_CODE_DIGEST_ENTRY_POINTS)
+    while frontier:
+        name = frontier.pop()
+        if name in closure or name not in functions:
+            continue
+        closure.add(name)
+        _, calls, _ = functions[name]
+        frontier |= {call for call in calls if call in functions and call not in closure}
+
+    constant_names: set[str] = set()
+    for name in closure:
+        _, _, loaded = functions[name]
+        constant_names |= loaded & module_values.keys()
+
+    def _segment(node: ast.AST) -> str:
+        start = node.lineno  # type: ignore[attr-defined]
+        for decorator in getattr(node, "decorator_list", []):
+            start = min(start, decorator.lineno)
+        return "\n".join(lines[start - 1 : node.end_lineno])  # type: ignore[attr-defined]
+
+    payload = {
+        "entryPoints": list(BAKE_CACHE_CODE_DIGEST_ENTRY_POINTS),
+        "functions": {name: _segment(functions[name][0]) for name in sorted(closure)},
+        "classes": {
+            name: _segment(classes[name])
+            for name in sorted(set(BAKE_CACHE_CODE_DIGEST_DATA_CLASSES) & classes.keys())
+        },
+        "constants": {name: module_values[name] for name in sorted(constant_names)},
+    }
+    return {
+        "version": 1,
+        "functionCount": len(closure),
+        "constantCount": len(constant_names),
+        "sha256": hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest(),
+    }
+
+
+_BAKE_PATH_CODE_DIGEST_CACHE: dict[tuple[int, int], dict[str, Any]] = {}
+
+
+def _bake_path_code_digest() -> dict[str, Any]:
+    path = Path(__file__)
+    try:
+        stats = path.stat()
+        cache_token = (stats.st_size, stats.st_mtime_ns)
+        cached = _BAKE_PATH_CODE_DIGEST_CACHE.get(cache_token)
+        if cached is None:
+            cached = _bake_path_code_digest_source(path.read_text(encoding="utf-8"))
+            if len(_BAKE_PATH_CODE_DIGEST_CACHE) > 4:
+                _BAKE_PATH_CODE_DIGEST_CACHE.clear()
+            _BAKE_PATH_CODE_DIGEST_CACHE[cache_token] = cached
+        return cached
+    except (OSError, SyntaxError, ValueError):
+        # An unreadable or unparsable module must stay conservative: keep the
+        # previous whole-module content hash semantics instead of guessing.
+        return {
+            "version": 0,
+            "fallbackWholeModule": True,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+
 def bake_preview_loops_with_playwright(
     preview_html_path: Path,
     eligible_loops: list[EligibleLoop],
@@ -22590,8 +22784,9 @@ def bake_preview_loops_with_playwright(
         "rankVariants": rank_preview_variants, "adaptive": adaptive_preview_settings,
         "maxVariants": max_adaptive_preview_settings, "exercise": exercise_name,
         "contract": exercise_motion_contract, "support": source_foot_support_evidence,
+        "bakePathCodeDigest": _bake_path_code_digest(),
     }
-    key = cache_key(settings, [preview_html_path, Path(__file__),
+    key = cache_key(settings, [preview_html_path,
                               Path(__file__).with_name("browser_workers.py"),
                               Path(__file__).with_name("preview.py"),
                               Path(__file__).with_name("wear_exact_mesh.js"),
@@ -22633,6 +22828,18 @@ def bake_preview_loops_with_playwright(
                 if entry.get("cachedVideo"):
                     shutil.copy2(entry["cachedVideo"], values["review_video_path"])
                 artifacts.append(BakedLoopArtifact(**values))
+            if cached.get("processingAttemptId") is not None:
+                # Prefetch and final processing share one unresolved result. Mark it
+                # consumed so a later process/deferred pass actually refits.
+                try:
+                    record = json.loads(checkpoint.read_text(encoding="utf-8"))
+                    outputs = [Path(identity["path"]) for identity in record.get("outputs") or []]
+                except (OSError, ValueError, TypeError, KeyError):
+                    outputs = []
+                if outputs:
+                    consumed = dict(cached)
+                    consumed["processingAttemptId"] = f"consumed:{PROCESSING_ATTEMPT_ID}"
+                    save_stage(checkpoint, key, consumed, outputs)
             return artifacts
         from .storage import require_storage_reserve
         require_storage_reserve(candidate_workspace)
@@ -22783,15 +22990,17 @@ def _bake_preview_loops_with_playwright_uncached(
                         options=options,
                     )
                 )
-                if camera_rebake_applied:
-                    export_payload = bake_current_range()
                 options, post_bake_orientation_hint, post_bake_orientation_applied = (
                     deterministic_post_bake_scene_orientation_correction(
                         export_payload,
                         options=options,
                     )
                 )
-                if post_bake_orientation_applied:
+                if camera_rebake_applied or post_bake_orientation_applied:
+                    # The orientation verdict reads world joints plus the
+                    # yaw/pitch carried in options, never camera-rendered
+                    # payload fields, so both decisions can be taken from the
+                    # first export and applied together in one rebake.
                     export_payload = bake_current_range()
                 export_payload, _ = constrain_baked_payload_to_source_articulation(
                     export_payload,
@@ -25666,22 +25875,15 @@ def bake_preview_time_range_with_playwright(
                 options=effective_options,
             )
         )
-        if camera_rebake_applied:
-            export_payload = page.evaluate(
-                """({ startSeconds, endSeconds, options }) => window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options)""",
-                {
-                    "startSeconds": start_seconds,
-                    "endSeconds": end_seconds,
-                    "options": effective_options,
-                },
-            )
         effective_options, post_bake_orientation_hint, post_bake_orientation_applied = (
             deterministic_post_bake_scene_orientation_correction(
                 export_payload,
                 options=effective_options,
             )
         )
-        if post_bake_orientation_applied:
+        if camera_rebake_applied or post_bake_orientation_applied:
+            # Same camera-invariance argument as the candidate bake loop: one
+            # combined rebake covers both deterministic corrections.
             export_payload = page.evaluate(
                 """({ startSeconds, endSeconds, options }) => window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options)""",
                 {
@@ -25700,6 +25902,7 @@ def bake_preview_time_range_with_playwright(
         )
         export_payload["deterministicPreviewCameraSelection"] = camera_yaw_selection
         export_payload["selectedSectionBakeCacheVersion"] = SELECTED_SECTION_BAKE_CACHE_VERSION
+        export_payload["selectedSectionBakePathCodeDigest"] = _bake_path_code_digest()["sha256"]
         export_payload["selectedSectionPreviewSource"] = preview_source
         skeleton_path.write_text(json.dumps(export_payload, indent=2), encoding="utf-8")
         frame_indices = dense_loop_review_video_frame_indices(export_payload)
@@ -25753,6 +25956,7 @@ def bake_preview_time_range_with_playwright(
             json.dumps(
                 {
                     "schemaVersion": SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION,
+                    "bakePathCodeDigest": _bake_path_code_digest()["sha256"],
                     "frameCount": len(frame_data_urls),
                     "fps": review_video_fps,
                     "repeats": SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS,
@@ -25977,6 +26181,11 @@ def selected_section_wear_skeleton_cache_is_current(
 ) -> bool:
     if int(export_payload.get("selectedSectionBakeCacheVersion") or 0) != SELECTED_SECTION_BAKE_CACHE_VERSION:
         return False
+    # The exported payload is post-processed by Python code whose behavior
+    # changes independently of the preview HTML and options; only a current
+    # bake-path code digest proves the retained artifact still matches it.
+    if export_payload.get("selectedSectionBakePathCodeDigest") != _bake_path_code_digest()["sha256"]:
+        return False
     if not preview_html_source_signature_matches(
         export_payload.get("selectedSectionPreviewSource"),
         preview_source,
@@ -26187,6 +26396,7 @@ def selected_section_review_video_cache_is_current(
     frame_indices = dense_loop_review_video_frame_indices(export_payload)
     return (
         int(metadata.get("schemaVersion") or 0) == SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION
+        and metadata.get("bakePathCodeDigest") == _bake_path_code_digest()["sha256"]
         and int(metadata.get("repeats") or 0) == SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS
         and int(metadata.get("frameCount") or 0) == len(frame_indices)
         and metadata.get("exportPayloadSignature") == selected_section_export_payload_signature(export_payload)

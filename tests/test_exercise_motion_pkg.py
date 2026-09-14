@@ -1393,7 +1393,7 @@ def test_choose_readable_preview_camera_yaw_never_uses_opposite_isometric_diagon
     assert diagnostics["canonicalYawDegrees"] == pytest.approx(135.0)
 
 
-def test_choose_readable_preview_camera_yaw_uses_frontal_view_for_upright_coronal_motion() -> None:
+def test_choose_readable_preview_camera_yaw_keeps_canonical_view_for_upright_coronal_motion() -> None:
     payload = {
         "jointNames": ["pelvis", "head", "left_shoulder", "right_shoulder", "right_hand"],
         "frames": [
@@ -1413,12 +1413,12 @@ def test_choose_readable_preview_camera_yaw_uses_frontal_view_for_upright_corona
 
     yaw, diagnostics = bake_and_rank_module.choose_readable_preview_camera_yaw(payload)
 
-    assert yaw == pytest.approx(90.0)
-    assert diagnostics["selectionReason"] == "upright_coronal_motion"
+    assert yaw == pytest.approx(bake_and_rank_module.FIXED_PREVIEW_CAMERA_YAW_DEGREES)
+    assert diagnostics["strategy"] == "fixed_isometric_projection"
     assert diagnostics["bodyPosture"]["mode"] == "upright"
 
 
-def test_select_readable_preview_camera_options_rebakes_changed_coronal_view() -> None:
+def test_select_readable_preview_camera_options_keeps_canonical_coronal_view() -> None:
     payload = {
         "jointNames": ["pelvis", "head", "left_shoulder", "right_shoulder", "right_hand"],
         "frames": [
@@ -1443,13 +1443,12 @@ def test_select_readable_preview_camera_options_rebakes_changed_coronal_view() -
         )
     )
 
-    assert rebake_applied is True
-    assert options["cameraYawDegrees"] == pytest.approx(90.0)
+    assert rebake_applied is False
+    assert options["cameraYawDegrees"] == pytest.approx(135.0)
     assert options["cameraPitchDegrees"] == pytest.approx(
         bake_and_rank_module.FIXED_PREVIEW_CAMERA_PITCH_DEGREES
     )
-    assert diagnostics["selectionReason"] == "upright_coronal_motion"
-    assert diagnostics["rebakeApplied"] is True
+    assert diagnostics["rebakeApplied"] is False
 
 
 def test_select_readable_preview_camera_options_keeps_readable_sagittal_view() -> None:
@@ -1551,20 +1550,9 @@ def test_choose_readable_preview_camera_yaw_avoids_severe_bilateral_overlap() ->
 
     yaw, diagnostics = bake_and_rank_module.choose_readable_preview_camera_yaw(payload)
 
-    assert yaw != pytest.approx(90.0)
-    assert diagnostics["visibilityOverrideApplied"] is True
-    assert diagnostics["selectionReason"].startswith("visibility_override:")
-    selected = next(
-        candidate
-        for candidate in diagnostics["candidates"]
-        if candidate["yawDegrees"] == yaw
-    )
-    frontal = next(
-        candidate
-        for candidate in diagnostics["candidates"]
-        if candidate["yawDegrees"] == 90.0
-    )
-    assert selected["bilateralVisibilityScore"] > frontal["bilateralVisibilityScore"]
+    assert yaw == pytest.approx(bake_and_rank_module.FIXED_PREVIEW_CAMERA_YAW_DEGREES)
+    assert diagnostics["strategy"] == "fixed_isometric_projection"
+    assert diagnostics["visibilityOverrideApplied"] is False
 
 
 def test_prepare_wham_inference_video_adds_context_and_returns_exact_output_crop(
@@ -13017,6 +13005,9 @@ def test_prepare_vision_review_plans_motion_windows_without_eager_frame_extracti
             vision_motion_scan_sample_fps=0.25,
             vision_motion_scan_max_seconds=12.0,
         ),
+        exercise_motion_contract={
+            "singleExecutionDurationSeconds": {"minSec": 2.0, "maxSec": 7.0}
+        },
     )
 
     try:
@@ -13152,6 +13143,9 @@ def test_prepare_vision_review_prioritizes_pose_prefilter_valid_chunks(
             vision_chunk_overlap_seconds=0.0,
             vision_motion_scan_max_seconds=8.0,
         ),
+        exercise_motion_contract={
+            "singleExecutionDurationSeconds": {"minSec": 2.0, "maxSec": 7.0}
+        },
     )
 
     try:
@@ -13208,6 +13202,9 @@ def test_prepare_vision_review_expands_pose_anchor_to_long_exercise_window(
             },
         ),
         YouTubeRankingSettings(vision_motion_scan_max_seconds=84.0),
+        exercise_motion_contract={
+            "singleExecutionDurationSeconds": {"minSec": 20.0, "maxSec": 60.0}
+        },
     )
 
     try:
@@ -15791,6 +15788,8 @@ def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None
             top_p: float | None = None,
             top_k: int | None = None,
         ) -> str:
+            if "semantic consistency review" in prompt:
+                return '{"issues":[]}'
             captured["frame_paths"] = frame_paths
             captured["prompt"] = prompt
             captured["max_tokens"] = max_tokens
@@ -15863,6 +15862,9 @@ def test_exercise_motion_contract_generation_falls_back_to_direct_mode() -> None
 
     class FakeClient:
         def caption_images(self, **kwargs: object) -> str:
+            prompt = str(kwargs.get("prompt") or "")
+            if "semantic consistency review" in prompt:
+                return '{"issues":[]}'
             disable_reasoning = kwargs.get("disable_reasoning")
             reasoning_modes.append(
                 disable_reasoning if isinstance(disable_reasoning, bool) else None
@@ -15910,7 +15912,10 @@ def test_exercise_motion_contract_generation_retries_independently_after_invalid
 
     class FakeClient:
         def caption_images(self, **kwargs: object) -> str:
-            prompts.append(str(kwargs["prompt"]))
+            prompt = str(kwargs["prompt"])
+            if "semantic consistency review" in prompt:
+                return '{"issues":[]}'
+            prompts.append(prompt)
             if len(prompts) == 1:
                 return json.dumps(
                     {
@@ -29542,6 +29547,7 @@ def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings
     manual_rotation = {"x": 0.0, "y": 0.0, "z": 0.0}
     export_payload = {
         "selectedSectionBakeCacheVersion": bake_and_rank_module.SELECTED_SECTION_BAKE_CACHE_VERSION,
+        "selectedSectionBakePathCodeDigest": bake_and_rank_module._bake_path_code_digest()["sha256"],
         "selectedSectionPreviewSource": preview_source,
         "selectedPreviewSettings": {
             **dict(options),
@@ -29567,6 +29573,49 @@ def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings
     }
 
     assert bake_and_rank_module.selected_section_wear_skeleton_cache_is_current(
+        export_payload,
+        options=options,
+        preview_source=preview_source,
+    )
+
+
+def test_selected_section_wear_skeleton_cache_rejects_stale_code_digest() -> None:
+    preview_source = {"sizeBytes": 123, "sha256": "preview-source"}
+    options = {
+        "fixedRoot": True,
+        "autoWorldAlignment": True,
+        "lockYDrift": False,
+        "lockPlantedFeet": False,
+        "lockPlantedHands": True,
+        "sceneInverted": False,
+        "cameraYawDegrees": 45.0,
+        "cameraPitchDegrees": 30.0,
+        "playbackSpeed": 1.0,
+    }
+    export_payload = {
+        "selectedSectionBakeCacheVersion": bake_and_rank_module.SELECTED_SECTION_BAKE_CACHE_VERSION,
+        "selectedSectionBakePathCodeDigest": "stale-digest",
+        "selectedSectionPreviewSource": preview_source,
+        "selectedPreviewSettings": dict(options),
+        "bakedPreviewConfiguration": {
+            "lockGlobalRootDrift": True,
+            "autoWorldAlignment": True,
+            "lockYDrift": False,
+            "lockPlantedFeet": False,
+            "lockPlantedHands": True,
+            "invertScene": False,
+            "canonicalWorldUp": True,
+            "cameraYawDegrees": 45.0,
+            "cameraPitchDegrees": 30.0,
+            "playbackSpeed": 1.0,
+        },
+        "wearDisplay": {
+            "viewYawDegrees": 45.0,
+            "viewPitchDegrees": 30.0,
+        },
+    }
+
+    assert not bake_and_rank_module.selected_section_wear_skeleton_cache_is_current(
         export_payload,
         options=options,
         preview_source=preview_source,
@@ -31369,6 +31418,143 @@ def test_source_cut_confirmation_can_repair_with_unreviewed_boundary_expansion(
     assert [candidate["candidateId"] for candidate in candidates] == ["A", "B"]
 
 
+def test_source_cut_confirmation_queues_ineligible_multi_cycle_boundary_expansion(
+    tmp_path: Path,
+) -> None:
+    selected = source_cut_confirmation_test_candidate(
+        tmp_path, "B", start_seconds=0.0, end_seconds=3.5
+    )
+    selected["chunking"] = {"strategy": "kinematic_cycle"}
+    expansion = source_cut_confirmation_test_candidate(
+        tmp_path, "C", start_seconds=0.0, end_seconds=5.6
+    )
+    expansion["chunking"] = {"strategy": "progressive_multiscale_sliding"}
+    expansion["motionCoverage"] = {
+        "candidateFullRepetitionPhaseCompletenessMetrics": {
+            "required": True,
+            "passed": True,
+            "hasCompleteMajorCycle": True,
+            "hasSingleMajorCycle": False,
+            "reason": "complete_multi_cycle",
+        }
+    }
+    ranking = LoopRanking(
+        score=0.95,
+        model_score=0.95,
+        reasons=["source_candidate_scorecard_passed"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "B",
+            "selectedScorecard": {"id": "B", "passed": True, "score": 0.95},
+            "sourceCutScorecardCandidates": [
+                {"id": "B", "passed": True, "score": 0.95},
+            ],
+            "sourceCutCandidates": [selected, expansion],
+        },
+    )
+
+    assert bake_and_rank_module.source_cut_confirmation_candidate_is_eligible(selected)
+    assert not bake_and_rank_module.source_cut_confirmation_candidate_is_eligible(expansion)
+    candidates = bake_and_rank_module.source_cut_deterministic_confirmation_candidates(
+        ranking
+    )
+    assert [candidate["candidateId"] for candidate in candidates] == ["B", "C"]
+
+
+def test_exact_pose_confirmation_refines_multi_cycle_despite_unresolved_support(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = source_cut_confirmation_test_candidate(
+        tmp_path, "B", start_seconds=0.0, end_seconds=3.5
+    )
+    parent["chunking"] = {"strategy": "kinematic_cycle"}
+    ranking = LoopRanking(
+        score=0.95,
+        model_score=0.95,
+        reasons=["source_candidate_scorecard_passed"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "B",
+            "selectedScorecard": {"id": "B", "passed": True, "score": 0.95},
+            "sourceCutScorecardCandidates": [{"id": "B", "passed": True, "score": 0.95}],
+            "sourceCutCandidates": [parent],
+        },
+    )
+    calls = {"n": 0}
+
+    def fake_materialize(**kwargs):
+        return tmp_path / "clip.mp4", "computed"
+
+    def fake_validate(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "required": True,
+                "passed": False,
+                "reason": "source_pose_full_repetition_phase_return_detected",
+                "hasCompleteMajorCycle": True,
+                "hasSingleMajorCycle": False,
+                "sourceBodySupportReadiness": {
+                    "required": True,
+                    "ready": False,
+                    "unresolvedAnchors": ["right_shoulder"],
+                },
+                "sourcePoseReferencePath": str(tmp_path / "pose.json"),
+            }
+        return {
+            "required": True,
+            "passed": True,
+            "reason": "validated",
+            "hasCompleteMajorCycle": True,
+            "hasSingleMajorCycle": True,
+            "sourceBodySupportReadiness": {"required": True, "ready": True},
+        }
+
+    def fake_refine(candidate, validation, **kwargs):
+        refined = dict(candidate)
+        refined.update({
+            "candidateId": "B-CYCLE-1",
+            "startSeconds": 0.2,
+            "endSeconds": 1.8,
+            "exactCycleRefinementDepth": 1,
+        })
+        return [refined]
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "materialize_source_cut_candidate_for_exact_validation",
+        fake_materialize,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "validate_exact_source_with_cached_gpu_handoff",
+        fake_validate,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "exact_pose_single_cycle_refinement_candidates",
+        fake_refine,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "confirm_pre_wham_named_equipment",
+        lambda **kwargs: {"passed": True},
+    )
+    (tmp_path / "clip.mp4").write_bytes(b"fake")
+    confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
+        ranking,
+        detection_source_video_path=tmp_path / "source.mp4",
+        exercise_name="Barbell Bench Press",
+        exercise_motion_contract=source_cut_confirmation_test_contract(),
+        caption_images=lambda **kwargs: "{}",
+        output_dir=tmp_path / "deterministic_confirmation",
+    )
+    assert "source_cut_deterministic_confirmation_passed" in confirmed.reasons
+    assert confirmed.payload["selectedCandidateId"] == "B-CYCLE-1"
+    assert calls["n"] == 2
+
+
 def test_source_cut_confirmation_stops_after_explicit_all_candidate_rejection(
     tmp_path: Path,
 ) -> None:
@@ -33024,6 +33210,7 @@ def test_selected_section_review_video_cache_requires_current_repeat_metadata(tm
         json.dumps(
                 {
                     "schemaVersion": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION,
+                    "bakePathCodeDigest": bake_and_rank_module._bake_path_code_digest()["sha256"],
                     "frameCount": expected_frame_count,
                     "repeats": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS,
                     "exportPayloadSignature": bake_and_rank_module.selected_section_export_payload_signature(
@@ -33041,6 +33228,36 @@ def test_selected_section_review_video_cache_requires_current_repeat_metadata(tm
         metadata_path,
         export_payload=export_payload,
     ) is True
+
+
+def test_selected_section_review_video_cache_rejects_stale_code_digest(tmp_path: Path) -> None:
+    metadata_path = tmp_path / "review_video.json"
+    export_payload = {"frameCount": 87, "fps": 30.0}
+    expected_frame_count = len(
+        bake_and_rank_module.dense_loop_review_video_frame_indices(export_payload)
+    )
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION,
+                "bakePathCodeDigest": "stale-digest",
+                "frameCount": expected_frame_count,
+                "repeats": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS,
+                "exportPayloadSignature": bake_and_rank_module.selected_section_export_payload_signature(
+                    export_payload
+                ),
+                "reviewVideoQuality": {
+                    "passed": True,
+                    "encodeFidelity": {"passed": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert bake_and_rank_module.selected_section_review_video_cache_is_current(
+        metadata_path,
+        export_payload=export_payload,
+    ) is False
 
 
 def test_loop_time_bounds_ignore_synthetic_bridge_frames() -> None:
@@ -38272,11 +38489,100 @@ def test_materialized_output_gate_keeps_selected_source_phase_hint_diagnostic(tm
     assert source_phase["passed"] is False
 
 
-def test_validation_complexity_knows_plural_bodyweight_and_pushdown_names() -> None:
-    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Pull-Ups") == "simple"
-    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Chin-Ups") == "simple"
-    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Dips") == "simple"
-    assert bake_and_rank_module.movement_complexity_for_validation("Cable Triceps Pushdown") == "simple"
+def test_validation_complexity_comes_from_contract_structure_not_names() -> None:
+    assert bake_and_rank_module.movement_complexity_for_validation("Weighted Pull-Ups") == "unknown"
+    repetition_contract = {
+        "movementType": "repetition",
+        "movementTopology": {
+            "phases": [
+                {"id": "phase_01"},
+                {"id": "phase_02"},
+            ]
+        },
+    }
+    assert bake_and_rank_module.movement_complexity_for_validation(
+        "Weighted Pull-Ups",
+        ranking_payload={"exerciseMotionContract": repetition_contract},
+    ) == "simple"
+    hold_contract = {"movementType": "hold"}
+    assert bake_and_rank_module.movement_complexity_for_validation(
+        "Weighted Pull-Ups",
+        ranking_payload={"exerciseMotionContract": hold_contract},
+    ) == "long_duration"
+    transition_contract = {"movementType": "transition_sequence"}
+    assert bake_and_rank_module.movement_complexity_for_validation(
+        "Turkish Get-Up",
+        ranking_payload={"exerciseMotionContract": transition_contract},
+    ) == "multi_phase"
+
+
+def test_estimate_chunking_prefers_contract_duration_hint() -> None:
+    contract = {
+        "movementType": "transition_sequence",
+        "singleExecutionDurationSeconds": {"minSec": 20.0, "maxSec": 60.0},
+    }
+    estimate = bake_and_rank_module.estimate_chunking(
+        exercise_name="Turkish Get-Up",
+        use_llm=False,
+        exercise_motion_contract=contract,
+    )
+    assert estimate.source == "contract"
+    assert estimate.rep_duration_min_sec == 20.0
+    assert estimate.rep_duration_max_sec == 60.0
+    assert estimate.movement_complexity == "long_duration"
+
+    fallback = bake_and_rank_module.estimate_chunking(
+        exercise_name="Turkish Get-Up",
+        use_llm=False,
+    )
+    assert fallback.source == "fallback"
+    assert fallback.movement_complexity == "unknown"
+
+
+def test_deterministic_review_gate_ignores_exercise_name_terms(tmp_path: Path) -> None:
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Dumbbell Bulgarian Split Squat",
+        candidate_title="Bulgarian split squat",
+        candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html",
+        skeleton_path=tmp_path / "skeleton.json",
+        review_video_path=tmp_path / "review.webm",
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "bulgarian"},
+    )
+
+    # Without a contract, lower-body name terms no longer keep the
+    # deterministic loop pass; the gate depends only on contract structure
+    # and loop-continuity requirements.
+    assert bake_and_rank_module.should_skip_deterministic_review_validation(
+        item,
+        LoopRanking(score=0.9, reasons=[], payload={}),
+    ) is True
+
+    loop_contract = {
+        "movementType": "repetition",
+        "completionMode": "return_to_start",
+        "movementTopology": {
+            "phases": [
+                {"id": "phase_01"},
+                {"id": "phase_02"},
+            ]
+        },
+        "full_rep_motion": 1.0,
+    }
+    assert bake_and_rank_module.should_skip_deterministic_review_validation(
+        item,
+        LoopRanking(
+            score=0.9,
+            reasons=[],
+            payload={"exerciseMotionContract": loop_contract, "full_rep_motion": 1.0},
+        ),
+    ) is False
 
 
 def test_materialized_output_gate_rejects_calf_raise_without_target_motion(tmp_path: Path) -> None:
@@ -39107,7 +39413,9 @@ def test_materialized_output_gate_prefers_lower_body_phase_for_lower_body_exerci
     phase = metrics["fullRepetitionPhaseCompletenessMetrics"]
     assert phase["passed"] is False
     assert phase["reason"] == "one_way_partial_repetition_phase"
-    assert phase["dominantJointSelection"] == "preferred"
+    # The contract's lower-body observable spec (hips/knees/legs) owns the
+    # dominant phase track; the label records that provenance.
+    assert phase["dominantJointSelection"] == "observable_motion_spec_primary"
     assert "hand" not in phase["dominantJoint"]
 
 

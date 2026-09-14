@@ -12,6 +12,13 @@ _locks: dict[str, threading.RLock] = {}
 PROCESSING_ATTEMPT_ID = uuid.uuid4().hex
 
 
+def advance_processing_attempt() -> str:
+    """Start a new processing attempt so incomplete bake caches must refit."""
+    global PROCESSING_ATTEMPT_ID
+    PROCESSING_ATTEMPT_ID = uuid.uuid4().hex
+    return PROCESSING_ATTEMPT_ID
+
+
 def file_identity(path: Path) -> dict[str, Any]:
     path = path.resolve()
     if not path.is_file():

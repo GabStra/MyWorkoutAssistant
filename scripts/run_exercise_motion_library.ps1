@@ -15,7 +15,7 @@ param(
 
     [switch]$SkipExistingSelectionRevalidation,
 
-    [int]$PrefetchWorkers = 4,
+    [int]$PrefetchWorkers = 8,
 
     [int]$PrefetchQueueDepth = 40,
 
@@ -33,6 +33,13 @@ param(
     [int]$StagedWaveMaxWaitSeconds = 300,
     [ValidateRange(0, 10000)]
     [int]$MaxDeferredRounds = 0,
+
+    # Per-exercise wall-clock budget for unattended library batches. Completed
+    # library runs stay far below this (observed p90 ~4 min, max ~15 min), so it
+    # only stops a pathological source pool from stalling the whole library.
+    # Pass 0 to disable the bound.
+    [ValidateRange(0, 86400)]
+    [double]$ExerciseTimeoutSeconds = 1200.0,
 
     [switch]$DisableStagedWaves,
 
@@ -218,6 +225,9 @@ function Invoke-MovementPass {
     $reviewSeconds = if ($FirstPass) { $FirstPassReviewSeconds } else { $DeferredReviewSeconds }
     $runnerArguments += @('-DiscoveryCandidateBudget', "$candidateBudget",
         '-DiscoveryTimeBudgetSeconds', "$reviewSeconds", '-StagedWaveMaxWaitSeconds', "$StagedWaveMaxWaitSeconds")
+    if ($ExerciseTimeoutSeconds -gt 0) {
+        $runnerArguments += @('-ExerciseTimeoutSeconds', "$ExerciseTimeoutSeconds")
+    }
     Write-MotionLibraryMessage "Discovery turn: up to $candidateBudget new candidates or $reviewSeconds seconds of review; finish the active batch before yielding."
     if (-not $DisableCpuPrefetch) {
         $runnerArguments += @(

@@ -174,3 +174,40 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
     assert upgraded['coplanarGroups'][0]['joints'] == ['right_wrist']
     assert upgraded['coplanarGroups'][0]['planeOffsetMeters'] == 2.
     assert partial == original
+
+
+def test_lying_press_does_not_require_moving_shoulder_anchors():
+    joints = {
+        'pelvis': [0.5, 0.6, 0.0],
+        'left_shoulder': [0.3, 0.4, 0.0],
+        'right_shoulder': [0.7, 0.4, 0.0],
+    }
+    pose = {'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
+    for index, frame in enumerate(pose['frames']):
+        frame['joints']['right_shoulder'] = [0.7 + index * 0.01, 0.4, 0.0]
+    contract = {
+        'startPoseConstraints': {'supportMode': 'lying'},
+        'referenceRegions': ['torso'],
+        'primaryMovingRegions': ['elbows', 'shoulders'],
+        'observableMotionSpec': {
+            'primaryMovingRegions': ['elbows', 'shoulders'],
+            'referenceRegions': ['torso'],
+        },
+    }
+    readiness = body_support_source_readiness(pose, contract)
+    assert readiness['requiredAnchors'] == ['pelvis']
+    assert readiness['ready']
+    assert readiness['unresolvedAnchors'] == []
+    blocked = body_support_source_readiness(pose)
+    assert 'right_shoulder' in blocked['unresolvedAnchors']
+    from exercise_motion_pkg.bake_and_rank import (
+        exact_source_phase_validation_rejection_reasons,
+        exact_source_validation_effectively_passed,
+    )
+    validation = {
+        'required': True,
+        'passed': True,
+        'sourceBodySupportReadiness': readiness,
+    }
+    assert exact_source_validation_effectively_passed(validation)
+    assert exact_source_phase_validation_rejection_reasons(validation) == []

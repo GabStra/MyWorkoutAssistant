@@ -50,6 +50,64 @@ def test_incomplete_processing_preserves_source_and_resumes_processing(tmp_path)
     assert not index.exists()
 
 
+def test_sibling_variant_timeout_does_not_mask_applied_controlled_motion():
+    applied = bake.BakedLoopArtifact(
+        0, Path("a.json"), Path("a.webm"),
+        {"controlledMotionFit": {"applied": True, "reason": "validated_controlled_motion"}},
+    )
+    timed_out = bake.BakedLoopArtifact(
+        0, Path("b.json"), Path("b.webm"),
+        {"controlledMotionFit": {"applied": False, "reason": "fit_timeout"}},
+    )
+    only_timeout = [timed_out]
+    mixed = [applied, timed_out]
+
+    def classify(artifacts):
+        has_applied = any(
+            isinstance(a.export_payload.get("controlledMotionFit"), dict)
+            and a.export_payload["controlledMotionFit"].get("applied")
+            for a in artifacts
+        )
+        return (not has_applied) and any(
+            controlled_fit_processing_incomplete(a.export_payload.get("controlledMotionFit"))
+            for a in artifacts
+        )
+
+    assert classify(only_timeout) is True
+    assert classify(mixed) is False
+
+
+def test_bounded_processing_retry_refits_after_incomplete_prefetch(monkeypatch):
+    from exercise_motion_pkg import stage_cache
+    from exercise_motion_pkg.wave_pipeline import finalize_with_bounded_processing_retry
+
+    attempts = []
+    initial_attempt = stage_cache.PROCESSING_ATTEMPT_ID
+
+    def operation():
+        attempts.append(stage_cache.PROCESSING_ATTEMPT_ID)
+        if len(attempts) == 1:
+            return {
+                "selected": None,
+                "candidateResults": [{
+                    "status": "needs_motion_processing",
+                    "failures": [{"reason": "controlled_motion_processing_incomplete"}],
+                }],
+            }
+        return {
+            "selected": {"candidate": {"videoId": "kept"}},
+            "candidateResults": [{"status": "ready_for_selection"}],
+        }
+
+    manifest = finalize_with_bounded_processing_retry(operation)
+    assert manifest.get("selected")
+    assert manifest["processingAttemptCount"] == 2
+    assert len(attempts) == 2
+    assert attempts[0] == initial_attempt
+    assert attempts[1] != initial_attempt
+    assert stage_cache.PROCESSING_ATTEMPT_ID == attempts[1]
+
+
 def test_timed_out_bake_reuses_prefetch_but_retries_on_next_run(tmp_path, monkeypatch):
     from exercise_motion_pkg import stage_cache
     preview = tmp_path / "preview.html"
@@ -67,6 +125,9 @@ def test_timed_out_bake_reuses_prefetch_but_retries_on_next_run(tmp_path, monkey
     bake.bake_preview_loops_with_playwright(*args)
     bake.bake_preview_loops_with_playwright(*args)
     assert len(calls) == 1
-    monkeypatch.setattr(stage_cache, "PROCESSING_ATTEMPT_ID", "next-process")
+    # One-shot incomplete reuse is consumed after the prefetch→final handoff.
     bake.bake_preview_loops_with_playwright(*args)
     assert len(calls) == 2
+    monkeypatch.setattr(stage_cache, "PROCESSING_ATTEMPT_ID", "next-process")
+    bake.bake_preview_loops_with_playwright(*args)
+    assert len(calls) == 3
