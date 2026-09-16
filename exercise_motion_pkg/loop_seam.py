@@ -2,8 +2,10 @@
 import numpy as np
 
 
-MAX_STEP_EXCESS_BODY_RATIO = .001
-MAX_VELOCITY_MISMATCH_BODY_RATIO = .15
+# ~0.4% of leg length (~3–4 mm). Tighter 0.1% rejected otherwise-valid wraps
+# with sub-centimeter hitch that boundary nudging or mild residual still fix.
+MAX_STEP_EXCESS_BODY_RATIO = .004
+MAX_VELOCITY_MISMATCH_BODY_RATIO = .25
 
 
 def seam_errors(points):

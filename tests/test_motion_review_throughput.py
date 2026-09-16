@@ -27,6 +27,25 @@ def test_questions_run_concurrently_with_candidate_deadline():
     assert session._candidate_deadlines.value == 12345
 
 
+def test_question_pool_grows_to_vlm_parallel_slots():
+    class Session:
+        _max_active_calls = 8
+        _candidate_deadlines = threading.local()
+        def caption_images(self): pass
+    session = Session()
+    session._candidate_deadlines.value = 99
+    barrier = threading.Barrier(8, timeout=5)
+    def question(index):
+        barrier.wait()
+        return index
+    result = review_questions.run_questions(
+        {str(i): lambda i=i: question(i) for i in range(8)},
+        session.caption_images,
+    )
+    assert result == {str(i): i for i in range(8)}
+    assert review_questions.question_cache_metrics()["executorWorkers"] >= 8
+
+
 def test_question_retry_reuses_conclusive_negative_but_not_missing_answer(tmp_path):
     frame = tmp_path / "frame.jpg"
     frame.write_bytes(b"image")
@@ -206,6 +225,121 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
                                "pipelineProcessingSeconds"}
         assert all(value >= 0 for value in timing.values())
         assert final["elapsedSeconds"] == pytest.approx(sum(timing.values()), abs=.002)
+
+
+def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeypatch):
+    import time as time_module
+    finalize_started = threading.Event()
+    release_render = threading.Event()
+    render_started = threading.Event()
+
+    class Session:
+        def __init__(self, request): pass
+        def caption_images(self, **kwargs): pytest.fail("Test must not call a model")
+        def run_without_llama_overlap(self, operation): return operation()
+        def close(self, **kwargs): pass
+
+    monkeypatch.setattr(wave, "LazyLlamaCppVisionSession", Session)
+    monkeypatch.setattr(wave, "build_exercise_motion_contract_resolver", lambda **kwargs: None)
+    monkeypatch.setattr(wave, "evaluate_source_candidate_gate", lambda *args, **kwargs: {"passed": True})
+    monkeypatch.setattr(wave, "first_attempt_readiness_assessment", lambda *args, **kwargs: {"eligible": True})
+    item = wave.StagedWaveItem(
+        "slow", "Slow",
+        bake.BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path / "slow",
+            wham_repo_path=None,
+            body_model_root=None,
+            fallback_candidates=0,
+            max_final_output_rejections=0,
+            llama_cpp_parallel=1,
+        ),
+    )
+    monkeypatch.setattr(wave, "_wave_candidates_for_item", lambda _item: [bake.RankedCandidate(
+        0, 1, "slow", "Slow", "slow", {"videoId": "slow"})])
+    monkeypatch.setattr(wave, "prepare_candidate_input_video", lambda candidate, **kwargs: tmp_path / "video.mp4")
+    monkeypatch.setattr(
+        wave,
+        "generate_candidate_motion",
+        lambda candidate, **kwargs: SimpleNamespace(wham_cache_status="reused", wham_results_pkl=None),
+    )
+
+    def render(_item, candidate, result, contract):
+        render_started.set()
+        # Stay unfinished until finalization has already started process().
+        assert finalize_started.wait(5)
+        release_render.wait(5)
+        return {"status": "prepared", "artifactCount": 0}
+
+    monkeypatch.setattr(wave, "prepare_cpu_render_cache", render)
+    monkeypatch.setattr(wave, "_stop_warm_wham_worker_before_vlm", lambda items: {"stopped": True})
+
+    def finalize(request, **kwargs):
+        finalize_started.set()
+        # Give the abandon path a moment; must not block on the stuck prefetch.
+        time_module.sleep(0.05)
+        release_render.set()
+        return {"selected": {"candidate": {"videoId": "slow"}}, "candidateResults": []}
+
+    monkeypatch.setattr(wave, "run_bake_and_rank_pipeline", finalize)
+    started = time_module.perf_counter()
+    result = wave.run_staged_bake_wave([item], workspace=tmp_path / "wave", wave_id="abandon")
+    elapsed = time_module.perf_counter() - started
+    assert elapsed < 2.0
+    assert result["completedExerciseCount"] == 1
+    prefetch = result["metrics"]["cpuRenderPrefetch"]
+    assert len(prefetch) == 1
+    status = next(iter(prefetch.values()))["status"]
+    assert status in {"abandoned_for_finalization", "prepared"}
+    if status == "abandoned_for_finalization":
+        assert render_started.is_set()
+    timing = result["items"][0]["finalValidation"]["schedulingTimings"]
+    assert timing["renderPrefetchWaitSeconds"] < 0.5
+
+
+def test_abandoned_speculative_prefetch_releases_bake_checkpoint_lock(tmp_path, monkeypatch):
+    import time as time_module
+    from exercise_motion_pkg import fit_runtime
+
+    preview = tmp_path / "preview.html"
+    preview.write_text("preview")
+    speculative_started = threading.Event()
+    release_speculative = threading.Event()
+    bake_calls = {"count": 0}
+    args = (preview, [bake.EligibleLoop(0, {}, 1, 0, 1)], tmp_path, 6)
+
+    def uncached(*_args, **_kwargs):
+        bake_calls["count"] += 1
+        if bake_calls["count"] == 1:
+            speculative_started.set()
+            while not release_speculative.wait(0.05):
+                if fit_runtime.speculative_prefetch_abandoned(tmp_path):
+                    raise fit_runtime.SpeculativePrefetchAbandoned()
+            raise fit_runtime.SpeculativePrefetchAbandoned()
+        skeleton = tmp_path / "skeleton.json"
+        video = tmp_path / "review.webm"
+        skeleton.write_text('{"frames": []}')
+        video.write_bytes(b"video")
+        return [bake.BakedLoopArtifact(0, skeleton, video, {"frames": []})]
+
+    monkeypatch.setattr(bake, "_bake_preview_loops_with_playwright_uncached", uncached)
+
+    def speculative():
+        with fit_runtime.speculative_workspace(tmp_path), fit_runtime.speculative_fit_context():
+            try:
+                bake.bake_preview_loops_with_playwright(*args, speculative_prefetch=True)
+            except fit_runtime.SpeculativePrefetchAbandoned:
+                pass
+
+    thread = threading.Thread(target=speculative)
+    thread.start()
+    assert speculative_started.wait(5)
+    fit_runtime.abandon_speculative_workspace(tmp_path)
+    started = time_module.perf_counter()
+    bake.bake_preview_loops_with_playwright(*args)
+    assert time_module.perf_counter() - started < 2.0
+    release_speculative.set()
+    thread.join(5)
 
 
 def test_browser_reuse_context_isolation_and_failed_job_recovery():

@@ -69,6 +69,7 @@ def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, 
 
 @pytest.mark.parametrize("status,failure_stage,expected", [
     ("rejected_raw_wham_validation", None, "raw_reconstruction_validation"),
+    ("rejected_baked_motion_validation", None, "baked_motion_validation"),
     ("skipped_no_baked_clip", None, "baked_motion_validation"),
     ("failed", "browser_bake", "browser_bake"),
     ("failed", None, "processing_error"),
@@ -82,6 +83,50 @@ def test_final_diagnostics_distinguish_quality_from_processing_errors(status, fa
     assert candidate["stage"] == expected
     assert candidate["reasons"] == ["test_failure"]
     assert candidate["timings"] == {"previewBakeSeconds": 12.5}
+
+
+def test_final_diagnostics_surface_concrete_baked_rejection_codes():
+    diagnostics = wave.final_processing_diagnostics({
+        "candidateResults": [{
+            "status": "rejected_baked_motion_validation",
+            "failures": [{
+                "reason": "baked_motion_validation_failed",
+                "rejectionReasons": [
+                    "materialized_pre_render_rejected",
+                    "materialized_source_endpoint_pose_mismatch",
+                ],
+            }],
+            "rejectedSourceClips": [{
+                "reason": "materialized_pre_render_rejected",
+                "rejectionReasons": ["materialized_source_endpoint_pose_mismatch"],
+            }],
+        }]
+    })
+    assert diagnostics["candidateDiagnostics"][0]["stage"] == "baked_motion_validation"
+    assert diagnostics["candidateDiagnostics"][0]["reasons"] == [
+        "baked_motion_validation_failed",
+        "materialized_pre_render_rejected",
+        "materialized_source_endpoint_pose_mismatch",
+    ]
+
+
+def test_final_diagnostics_surface_fit_timeout_under_incomplete_processing():
+    diagnostics = wave.final_processing_diagnostics({
+        "candidateResults": [{
+            "status": "needs_motion_processing",
+            "failures": [{
+                "reason": "controlled_motion_processing_incomplete",
+                "rejectionReasons": ["no_validated_loop_cycle"],
+            }],
+            "controlledMotionFit": {"applied": False, "reason": "fit_timeout"},
+        }]
+    })
+    assert diagnostics["candidateDiagnostics"][0]["stage"] == "controlled_motion_processing"
+    assert diagnostics["candidateDiagnostics"][0]["reasons"] == [
+        "controlled_motion_processing_incomplete",
+        "no_validated_loop_cycle",
+        "fit_timeout",
+    ]
 
 
 def test_final_diagnostics_identify_model_rejection():

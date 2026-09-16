@@ -28,6 +28,14 @@ CONTACT_FIT_WEIGHT = 10. / (.8 * .0005)
 COLLISION_FIT_MARGIN_RATIO = .0025
 ANATOMY_FIT_MARGIN = .0001
 ANATOMY_FIT_WEIGHT = 10000.
+# Keep pre-solve stages from consuming the whole candidate fit budget, while
+# still allowing hard anatomy/support repairs enough wall-clock to finish well.
+ANATOMY_REPAIR_TIME_FRACTION = .35
+ANATOMY_REPAIR_MIN_SECONDS = 75.
+SUPPORT_INIT_TIME_FRACTION = .3
+SUPPORT_INIT_MIN_SECONDS = 60.
+SUPPORT_INIT_WARM_START_EVALUATIONS = 20
+SUPPORT_INIT_COLD_EVALUATIONS = 40
 HEAD_ARTICULATION_FIT_WEIGHT = 1000.
 REQUIRED_FIT_CHECKS = ('anatomy', 'contacts', 'sourceArticulation', 'trajectoryFit',
                        'rootTravel', 'jointRange', 'jointShake', 'settling', 'jerk',
@@ -43,6 +51,54 @@ def controlled_fit_processing_incomplete(report):
         controlled_fit_processing_incomplete(attempt.get('fitReport', attempt))
         for attempt in report.get('cycleSelectionAttempts', [])
     )
+
+
+def hard_trajectory_and_root_failure(checks):
+    """True when both hard geometric acceptance checks already failed."""
+    if not isinstance(checks, dict) or not checks:
+        return False
+    return checks.get('trajectoryFit') is False and checks.get('rootTravel') is False
+
+
+def seam_or_playback_only_failure(report):
+    """True when the body fit is otherwise OK and only loop closure failed.
+
+    Another observed slice is low-EV after a full near-miss: soft refinement
+    rarely invents seam continuity, and a cold second cycle often burns the
+    remaining budget without a keep. Prefer stopping this pass and resuming.
+    """
+    if not isinstance(report, dict) or report.get('applied'):
+        return False
+    if report.get('reason') not in {
+        'loop_requires_cycle_repair',
+        'playback_validation_failed',
+    }:
+        return False
+    checks = report.get('checks')
+    if not isinstance(checks, dict) or not checks:
+        return True
+    failed = {name for name, passed in checks.items() if passed is False}
+    return bool(failed) and failed <= {'loopSeam', 'playback'}
+
+
+def controlled_fit_unusable_for_more_preview_work(report):
+    """Stop sibling preview loops/variants when more fitting cannot produce a selectable clip."""
+    if not isinstance(report, dict) or report.get('applied'):
+        return False
+    if controlled_fit_processing_incomplete(report):
+        return True
+    if report.get('reason') in {
+        'fit_validation_failed',
+        'no_validated_loop_cycle',
+        'source_cycle_preflight_rejected',
+        'pre_fit_source_articulation_fidelity_failed',
+        'loop_requires_cycle_repair',
+        'playback_validation_failed',
+    }:
+        return True
+    if seam_or_playback_only_failure(report):
+        return True
+    return hard_trajectory_and_root_failure(report.get('checks'))
 
 
 def can_reuse_controlled_motion(payload):
@@ -381,6 +437,43 @@ def fit_time_budget(payload, timeout_seconds=None):
     return max(180., min(360., 2.5 * frames))
 
 
+def _stage_deadline(fit_started, timeout_seconds, *, fraction, minimum_seconds):
+    """Bound a pre-solve stage so the main trajectory still gets wall-clock."""
+    stage_budget = max(float(minimum_seconds), float(fraction) * float(timeout_seconds))
+    fit_deadline = float(fit_started) + float(timeout_seconds)
+    return min(fit_deadline, monotonic() + stage_budget)
+
+
+def _support_cache_key(evidence, points, names):
+    stationary = tuple(evidence.get('stationaryJoints') or [])
+    if not stationary:
+        return None
+    indices = [names.index(name) for name in stationary if name in names]
+    if not indices:
+        return None
+    median = np.median(points[:, indices], axis=0)
+    digest = np.round(median, 3).tobytes()
+    groups = tuple(
+        (tuple(group.get('joints') or []), tuple(np.round(group.get('normal') or [0., 1., 0.], 4)))
+        for group in (evidence.get('coplanarGroups') or [])
+    )
+    return (stationary, groups, digest)
+
+
+def _resample_rig_coordinates(coordinates, new_count):
+    coords = np.asarray(coordinates, dtype=float)
+    if coords.ndim != 2 or new_count < 1:
+        return None
+    if len(coords) == new_count:
+        return coords.copy()
+    t_old = np.linspace(0., 1., len(coords))
+    t_new = np.linspace(0., 1., new_count)
+    out = np.empty((new_count, coords.shape[1]), dtype=float)
+    for column in range(coords.shape[1]):
+        out[:, column] = np.interp(t_new, t_old, coords[:, column])
+    return out
+
+
 def solve_trajectory(residual, initial, pattern, max_evaluations):
     # Use an absolute perturbation throughout the solve. Relative steps shrink
     # toward cancellation at tiny rotations, especially under stiff penalties.
@@ -476,17 +569,24 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         return _fit_controlled_motion(payload, max_evaluations=max_evaluations,
                                       timeout_seconds=max(0., timeout_seconds-(monotonic()-started)))
     attempts = []
+    shared_support = {}
     for index, choice in enumerate(choices):
         remaining = timeout_seconds-(monotonic()-started)
+        sliced = slice_loop_cycle(payload, choice)
+        # Give the current ranked cycle all remaining time. Even-splitting left
+        # ~120s slices that were consumed by support init alone. Only start a
+        # later proposal when leftover still covers a real frame-scaled fit.
         if remaining <= 0:
             break
-        # Share the outer deadline across ranked cycle proposals so the first
-        # attempt cannot leave later proposals with a useless leftover.
-        attempts_left = len(choices) - index
-        attempt_timeout = remaining if attempts_left <= 1 else remaining / attempts_left
-        candidate, report = _fit_controlled_motion(slice_loop_cycle(payload, choice),
-                                                   max_evaluations=max_evaluations,
-                                                   timeout_seconds=attempt_timeout)
+        if index > 0 and remaining < fit_time_budget(sliced):
+            break
+        attempt_timeout = remaining
+        candidate, report = _fit_controlled_motion(
+            sliced,
+            max_evaluations=max_evaluations,
+            timeout_seconds=attempt_timeout,
+            shared_support=shared_support,
+        )
         attempts.append({'selection': choice, 'reason': report['reason'],
                          'checks': report.get('checks', {}),
                          'elapsedSeconds': report.get('elapsedSeconds', 0.),
@@ -495,12 +595,20 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             report['cycleSelectionAttempts'] = attempts
             report['elapsedSeconds'] = monotonic()-started
             return candidate, report
+        # Another observed slice will not repair a collapsed root track or a
+        # trajectory that already missed both hard geometric checks.
+        if hard_trajectory_and_root_failure(report.get('checks')):
+            break
+        # Seam/playback-only near-miss: stop this pass instead of a cold second
+        # ranked window that rarely converts. Resume can retry later.
+        if seam_or_playback_only_failure(report):
+            break
     return payload, {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
                      'reason': 'no_validated_loop_cycle', 'cycleSelectionAttempts': attempts,
                      'elapsedSeconds': monotonic()-started}
 
 
-def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None):
+def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None, shared_support=None):
     """Return only a validated fit; otherwise retain the input with a report."""
     allow_refinement = max_evaluations is None
     if max_evaluations is None:
@@ -571,7 +679,13 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     from .anatomical_repair import repair_residuals, repair_rig_anatomy, transport_equivalent_anatomical_repair
     repaired_reference = None
     try:
-        initialized_points, anatomy_initialization = repair_rig_anatomy(rig, points, deadline=started+timeout_seconds)
+        anatomy_deadline = _stage_deadline(
+            started, timeout_seconds,
+            fraction=ANATOMY_REPAIR_TIME_FRACTION,
+            minimum_seconds=ANATOMY_REPAIR_MIN_SECONDS,
+        )
+        initialized_points, anatomy_initialization = repair_rig_anatomy(
+            rig, points, deadline=anatomy_deadline)
         source_violations, _ = repair_residuals(reference, names)
         if np.any(source_violations > 1e-6):
             repaired_reference = transport_equivalent_anatomical_repair(points, initialized_points, reference, names)
@@ -584,7 +698,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             else:
                 reference_rig = FixedRig(reference, names)
                 repaired_reference, source_anatomy = repair_rig_anatomy(
-                    reference_rig, reference, deadline=started+timeout_seconds)
+                    reference_rig, reference, deadline=anatomy_deadline)
             report['anatomicalSourceRepair'] = source_anatomy
             if not source_anatomy['passed']:
                 return payload, {**report, 'reason': 'anatomical_source_projection_incomplete'}
@@ -610,8 +724,24 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     support_range_reference = initialized_points.copy()
     if body_support.get('required'):
         support_started = monotonic()
-        support_pose, support_calibration = calibrate_support_pose(rig, points, body_support, alignment_reference=alignment_source)
-        support_calibration['elapsedSeconds'] = monotonic()-support_started
+        support_key = _support_cache_key(body_support, points, names)
+        reused_pose = (
+            isinstance(shared_support, dict)
+            and support_key is not None
+            and shared_support.get('supportKey') == support_key
+            and shared_support.get('supportPose') is not None
+        )
+        if reused_pose:
+            support_pose = np.asarray(shared_support['supportPose'], dtype=float)
+            support_calibration = {
+                **deepcopy(shared_support.get('supportCalibration') or {}),
+                'reusedAcrossCycles': True,
+                'elapsedSeconds': 0.,
+            }
+        else:
+            support_pose, support_calibration = calibrate_support_pose(
+                rig, points, body_support, alignment_reference=alignment_source)
+            support_calibration['elapsedSeconds'] = monotonic()-support_started
         report['supportCalibration'] = support_calibration
         if support_pose is None:
             return payload, {**report, 'reason': 'supported_body_evidence_or_geometry_unresolved'}
@@ -627,14 +757,36 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                                   for name in body_support.get('stationaryJoints', [])},
             evidence=payload.get('sourceFootSupportEvidence'), floor=payload.get('renderFloorY'))
         from .support_geometry import initialize_supported_motion
+        warm_started = False
+        if isinstance(shared_support, dict) and shared_support.get('supportInitializedCoordinates') is not None:
+            warm = _resample_rig_coordinates(
+                shared_support['supportInitializedCoordinates'], len(points))
+            if warm is not None and warm.shape == rig.initial.shape and np.isfinite(warm).all():
+                rig.initial[:] = warm
+                warm_started = True
+                support_calibration['warmStartedFromPriorCycle'] = True
+        support_deadline = _stage_deadline(
+            started, timeout_seconds,
+            fraction=SUPPORT_INIT_TIME_FRACTION,
+            minimum_seconds=SUPPORT_INIT_MIN_SECONDS,
+        )
+        projection_evals = (
+            SUPPORT_INIT_WARM_START_EVALUATIONS if warm_started else SUPPORT_INIT_COLD_EVALUATIONS
+        )
         try:
             initialized_points = initialize_supported_motion(
                 rig, points, body_support, support_pose, support_calibration,
-                started+timeout_seconds, fps=fps, alignment_reference=alignment_source,
-                pinned=pinned, contact_targets=contact_targets, equipment=equipment)
+                support_deadline, fps=fps, alignment_reference=alignment_source,
+                pinned=pinned, contact_targets=contact_targets, equipment=equipment,
+                max_evaluations=projection_evals)
             report['supportInitializationSeconds'] = monotonic()-support_started
         except TimeoutError:
             return payload, {**report, 'reason': 'fit_timeout', 'elapsedSeconds': monotonic()-started}
+        if isinstance(shared_support, dict) and support_key is not None:
+            shared_support['supportKey'] = support_key
+            shared_support['supportPose'] = np.asarray(support_pose, dtype=float).copy()
+            shared_support['supportCalibration'] = deepcopy(support_calibration)
+            shared_support['supportInitializedCoordinates'] = rig.initial.copy()
         report['supportReferenceGeometry'] = validate_support_geometry(payload, initialized_points, names)
         report['supportReferenceAlignment'] = validate_alignment(initialized_points, alignment_source, names, body_support)
         report['supportReferenceEquipment'] = validate_grip(initialized_points, names, equipment)
@@ -774,14 +926,14 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     initial_rotations = Rotation.from_rotvec(rig.initial[:,3:].reshape(-1,3))
     floor = payload.get('renderFloorY')
     source_head = body_local_head_direction(reference,names)
-    from .fit_runtime import current_fit_session, fit_input_key
+    from .fit_runtime import current_fit_session, fit_input_key, fit_should_yield_for_priority
     fit_session = current_fit_session()
     trajectory_key = fit_input_key(payload) if fit_session is not None else None
     best_coordinates = None
     best_cost = float('inf')
     def residual(values):
         nonlocal best_coordinates, best_cost
-        if monotonic() > optimization_deadline:
+        if fit_should_yield_for_priority() or monotonic() > optimization_deadline:
             raise TimeoutError
         coordinates = values.reshape(count,rig.width)
         candidate = rig.decode(coordinates)
@@ -863,7 +1015,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             best_cost, best_coordinates = cost, values.copy()
         return errors
     try:
-        if monotonic()-started > timeout_seconds:
+        if fit_should_yield_for_priority() or monotonic()-started > timeout_seconds:
             raise TimeoutError
         initial_points = rig.decode(rig.initial)
         # Rig feasibility belongs to the observed pose. Comparing against the
@@ -1077,8 +1229,23 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     # short, require progress, and share the original deadline.
     while (allow_refinement and not report.get('applied') and report.get('checks')
             and report.get('optimizerTermination') != 'time_budget'
-            and monotonic()-started < timeout_seconds):
+            and monotonic()-started < timeout_seconds
+            and not fit_should_yield_for_priority()):
         failed_checks = [key for key, passed in report['checks'].items() if not passed]
+        if set(failed_checks) <= {'playback', 'loopSeam'} and failed_checks:
+            # Soft LS rarely closes a seam after a full solve; further blocks
+            # mostly burn budget before a low-EV second cycle.
+            report.setdefault('boundedRefinement', {
+                'initialFailedChecks': failed_checks, 'evaluationsPerBlock': 5, 'blocks': []
+            })['stopReason'] = 'seam_playback_only'
+            break
+        if hard_trajectory_and_root_failure(report.get('checks')):
+            remaining = max(0., started + timeout_seconds - monotonic())
+            if remaining < 0.2 * timeout_seconds:
+                report.setdefault('boundedRefinement', {
+                    'initialFailedChecks': failed_checks, 'evaluationsPerBlock': 5, 'blocks': []
+                })['stopReason'] = 'hard_trajectory_root_failure'
+                break
         refinement = report.setdefault('boundedRefinement', {
             'initialFailedChecks': failed_checks, 'evaluationsPerBlock': 5, 'blocks': []})
         initial_evaluations = solved.nfev or 0
@@ -1102,9 +1269,53 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         candidate, report = validate_solution(solved)
         refinement['blocks'].append({'costBefore': cost_before, 'costAfter': cost_after,
             'failedChecks': [key for key, passed in report.get('checks', {}).items() if not passed]})
+        hard_blocks = sum(
+            1 for block in refinement['blocks']
+            if 'trajectoryFit' in (block.get('failedChecks') or [])
+            and 'rootTravel' in (block.get('failedChecks') or [])
+        )
+        remaining = max(0., started + timeout_seconds - monotonic())
+        if hard_trajectory_and_root_failure(report.get('checks')) and (
+                stalled or hard_blocks >= 2 or remaining < 0.2 * timeout_seconds):
+            refinement['stopReason'] = 'hard_trajectory_root_failure'
+            break
+        if set(key for key, passed in report.get('checks', {}).items() if not passed) <= {
+                'playback', 'loopSeam'} and any(
+                not passed for passed in report.get('checks', {}).values()):
+            refinement['stopReason'] = 'seam_playback_only'
+            break
         if stalled and not report.get('applied'):
             refinement['stopReason'] = 'objective_stalled'
             break
+    # One more full eval block when the hard evaluation cap stopped a still-improving
+    # (or stalled-but-time-rich) solve. Face-pull-style incompletes often leave tens
+    # of seconds unused after fit_evaluation_limit.
+    remaining = max(0., started + timeout_seconds - monotonic())
+    useful_floor = min(30., max(1., 0.15 * float(timeout_seconds)))
+    if (allow_refinement and not report.get('applied')
+            and report.get('reason') == 'fit_evaluation_limit'
+            and remaining >= useful_floor
+            and not fit_should_yield_for_priority()):
+        continuation = {
+            'remainingSeconds': round(remaining, 3),
+            'extraEvaluations': int(max_evaluations),
+        }
+        previous_coordinates = solved.x.copy()
+        initial_evaluations = solved.nfev or 0
+        try:
+            solved = solve_trajectory(residual, solved.x, pattern, max_evaluations)
+            solved.nfev = (solved.nfev or 0) + initial_evaluations
+        except TimeoutError:
+            report['optimizerTermination'] = 'time_budget'
+            solved = SimpleNamespace(
+                x=best_coordinates if best_coordinates is not None else previous_coordinates,
+                nfev=None, status=0)
+        if fit_session is not None and best_coordinates is not None:
+            fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
+        candidate, report = validate_solution(solved)
+        continuation['applied'] = bool(report.get('applied'))
+        continuation['reason'] = report.get('reason')
+        report['evaluationContinuation'] = continuation
     return candidate, report
 
 

@@ -32,7 +32,7 @@ def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypa
     assert fit_runtime.current_fit_session() is None
 
 
-def test_observed_cycle_attempts_share_outer_deadline(monkeypatch):
+def test_observed_cycle_attempts_prefer_top_cycle_budget(monkeypatch):
     now = [0.]
     monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
     received = []
@@ -50,10 +50,117 @@ def test_observed_cycle_attempts_share_outer_deadline(monkeypatch):
                         lambda payload, choice: {**payload, 'loopCycleSelection': choice})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=100.)
-    assert received == [50., 50.]
+    assert received == [100.]
+    assert report['reason'] == 'no_validated_loop_cycle'
+    assert len(report['cycleSelectionAttempts']) == 1
+
+
+def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    received = []
+
+    def fit(payload, **kwargs):
+        received.append(kwargs['timeout_seconds'])
+        now[0] += 5.
+        return payload, {
+            'applied': False,
+            'reason': 'loop_requires_cycle_repair',
+            'elapsedSeconds': 5.,
+            'checks': {
+                'trajectoryFit': True,
+                'rootTravel': True,
+                'jointRange': True,
+                'loopSeam': False,
+                'playback': False,
+            },
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    import exercise_motion_pkg.loop_cycles as loop_cycles
+    monkeypatch.setattr(loop_cycles, 'rank_loop_cycles', lambda payload, max_candidates=3: [
+        {'startFrame': 2, 'stopFrameExclusive': 40, 'score': 0.1},
+        {'startFrame': 10, 'stopFrameExclusive': 50, 'score': 0.2},
+    ])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda payload, choice: {**payload, 'loopCycleSelection': choice,
+                                                 'frames': payload.get('frames')})
+    payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
+    assert received == [400.]
+    assert report['reason'] == 'no_validated_loop_cycle'
+    assert len(report['cycleSelectionAttempts']) == 1
+
+
+def test_observed_cycle_tries_next_when_non_seam_failure_leaves_budget(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    received = []
+
+    def fit(payload, **kwargs):
+        received.append(kwargs['timeout_seconds'])
+        now[0] += 5.
+        return payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'elapsedSeconds': 5.,
+            'checks': {'jointRange': False, 'trajectoryFit': True, 'rootTravel': True},
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    import exercise_motion_pkg.loop_cycles as loop_cycles
+    monkeypatch.setattr(loop_cycles, 'rank_loop_cycles', lambda payload, max_candidates=3: [
+        {'startFrame': 0, 'stopFrameExclusive': 12}, {'startFrame': 5, 'stopFrameExclusive': 17}])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda payload, choice: {**payload, 'loopCycleSelection': choice,
+                                                 'frames': payload.get('frames')})
+    payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
+    assert received == [400., 395.]
     assert report['reason'] == 'no_validated_loop_cycle'
     assert len(report['cycleSelectionAttempts']) == 2
 
+
+def test_observed_cycle_skips_later_cycles_after_hard_trajectory_root_failure(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    received = []
+
+    def fit(payload, **kwargs):
+        received.append(kwargs['timeout_seconds'])
+        now[0] += 5.
+        return payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'elapsedSeconds': 5.,
+            'checks': {'trajectoryFit': False, 'rootTravel': False, 'loopSeam': True},
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    import exercise_motion_pkg.loop_cycles as loop_cycles
+    monkeypatch.setattr(loop_cycles, 'rank_loop_cycles', lambda payload, max_candidates=3: [
+        {'startFrame': 0, 'stopFrameExclusive': 12}, {'startFrame': 5, 'stopFrameExclusive': 17}])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda payload, choice: {**payload, 'loopCycleSelection': choice,
+                                                 'frames': payload.get('frames')})
+    payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
+    assert received == [400.]
+    assert report['reason'] == 'no_validated_loop_cycle'
+    assert len(report['cycleSelectionAttempts']) == 1
+
+
+def test_controlled_fit_unusable_for_more_preview_work():
+    assert motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': False, 'reason': 'fit_validation_failed'})
+    assert motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': False, 'reason': 'fit_timeout'})
+    assert motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': False, 'reason': 'other', 'checks': {'trajectoryFit': False, 'rootTravel': False}})
+    assert motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': False, 'reason': 'loop_requires_cycle_repair', 'checks': {'loopSeam': False}})
+    assert not motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': True, 'reason': 'validated_controlled_motion'})
 
 def test_candidate_fit_can_use_remaining_session_beyond_single_fit_floor(monkeypatch):
     now = [0.]
@@ -71,8 +178,10 @@ def test_candidate_fit_can_use_remaining_session_beyond_single_fit_floor(monkeyp
     assert received == [300.]
 
 
-def test_finalization_priority_prefers_kept_candidate_workspace(tmp_path):
+def test_finalization_priority_prefers_kept_candidate_workspace(tmp_path, monkeypatch):
     import threading
+    # Force a single slot so priority ordering is observable under contention.
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 1)
     order = []
     blocker = threading.Event()
     prioritized_started = threading.Event()
@@ -110,6 +219,203 @@ def test_finalization_priority_prefers_kept_candidate_workspace(tmp_path):
     priority.join(5)
     follower.join(5)
     assert order.index('kept:enter') < order.index('follower:enter')
+
+
+def test_speculative_fit_yields_when_any_final_is_prioritized(tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 1)
+    order = []
+    speculative_entered = threading.Event()
+    other_priority_armed = threading.Event()
+    speculative_left = threading.Event()
+
+    def run_speculative():
+        with fit_runtime.speculative_fit_context():
+            with fit_runtime.candidate_fit_session(tmp_path / 'speculative'):
+                with fit_runtime.cpu_fit_slot():
+                    order.append('speculative:enter')
+                    speculative_entered.set()
+                    assert other_priority_armed.wait(5)
+                    deadline = threading.Event()
+                    while not deadline.wait(0.05):
+                        if fit_runtime.fit_should_yield_for_priority():
+                            order.append('speculative:yield')
+                            break
+                    else:
+                        order.append('speculative:timeout')
+                order.append('speculative:leave')
+                speculative_left.set()
+
+    def run_other_priority():
+        speculative_entered.wait(5)
+        with fit_runtime.prioritize_fit_workspaces([tmp_path / 'other-final']):
+            other_priority_armed.set()
+            speculative_left.wait(5)
+            with fit_runtime.candidate_fit_session(tmp_path / 'other-final'):
+                with fit_runtime.cpu_fit_slot():
+                    order.append('final:enter')
+                    order.append('final:leave')
+
+    speculative = threading.Thread(target=run_speculative)
+    other = threading.Thread(target=run_other_priority)
+    speculative.start()
+    other.start()
+    speculative.join(5)
+    other.join(5)
+    assert 'speculative:yield' in order
+    assert order.index('speculative:leave') < order.index('final:enter')
+
+
+def test_speculative_fit_waits_while_other_workspace_finalizes(tmp_path, monkeypatch):
+    import threading
+    from time import sleep
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 2)
+    order = []
+    priority_armed = threading.Event()
+    final_entered = threading.Event()
+    release_final = threading.Event()
+
+    def run_final():
+        with fit_runtime.prioritize_fit_workspaces([tmp_path / 'final']):
+            priority_armed.set()
+            with fit_runtime.candidate_fit_session(tmp_path / 'final'):
+                with fit_runtime.cpu_fit_slot():
+                    order.append('final:enter')
+                    final_entered.set()
+                    assert release_final.wait(5)
+                    order.append('final:leave')
+
+    def run_speculative():
+        assert priority_armed.wait(5)
+        acquired = []
+
+        def try_acquire():
+            with fit_runtime.speculative_fit_context():
+                with fit_runtime.candidate_fit_session(tmp_path / 'speculative'):
+                    with fit_runtime.cpu_fit_slot():
+                        acquired.append(True)
+                        order.append('speculative:enter')
+
+        waiter = threading.Thread(target=try_acquire)
+        waiter.start()
+        sleep(0.3)
+        assert not acquired
+        assert final_entered.wait(5)
+        release_final.set()
+        waiter.join(5)
+        assert acquired
+        order.append('speculative:after-final')
+
+    final = threading.Thread(target=run_final)
+    speculative = threading.Thread(target=run_speculative)
+    final.start()
+    speculative.start()
+    final.join(5)
+    speculative.join(5)
+    assert order.index('final:enter') < order.index('speculative:enter')
+    assert order.index('final:leave') < order.index('speculative:enter')
+
+
+def test_two_cpu_fit_slots_run_concurrently(tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 2)
+    entered = []
+    both_inside = threading.Event()
+    release = threading.Event()
+
+    def run_fit(label):
+        with fit_runtime.candidate_fit_session(tmp_path / label):
+            with fit_runtime.cpu_fit_slot():
+                entered.append(label)
+                if len(entered) >= 2:
+                    both_inside.set()
+                assert both_inside.wait(5)
+                release.wait(5)
+
+    first = threading.Thread(target=run_fit, args=('a',))
+    second = threading.Thread(target=run_fit, args=('b',))
+    first.start()
+    second.start()
+    assert both_inside.wait(5)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert set(entered) == {'a', 'b'}
+
+
+def test_abandoned_speculative_fit_raises_instead_of_holding_slot(tmp_path):
+    fit_runtime.abandon_speculative_workspace(tmp_path / 'speculative')
+    with fit_runtime.speculative_fit_context():
+        with fit_runtime.candidate_fit_session(tmp_path / 'speculative'):
+            try:
+                with fit_runtime.cpu_fit_slot():
+                    raise AssertionError('abandoned speculative fit must not acquire a slot')
+            except fit_runtime.SpeculativePrefetchAbandoned:
+                pass
+
+
+def test_abandoned_speculative_workspace_yields_without_priority(tmp_path):
+    import threading
+    order = []
+    speculative_entered = threading.Event()
+    abandon_armed = threading.Event()
+    speculative_left = threading.Event()
+
+    def run_speculative():
+        with fit_runtime.speculative_fit_context():
+            with fit_runtime.candidate_fit_session(tmp_path / 'speculative'):
+                with fit_runtime.cpu_fit_slot():
+                    order.append('speculative:enter')
+                    speculative_entered.set()
+                    assert abandon_armed.wait(5)
+                    while not fit_runtime.fit_should_yield_for_priority():
+                        threading.Event().wait(0.05)
+                    order.append('speculative:yield')
+                order.append('speculative:leave')
+                speculative_left.set()
+
+    def run_abandon():
+        speculative_entered.wait(5)
+        fit_runtime.abandon_speculative_workspace(tmp_path / 'speculative')
+        abandon_armed.set()
+        speculative_left.wait(5)
+        with fit_runtime.candidate_fit_session(tmp_path / 'speculative'):
+            with fit_runtime.cpu_fit_slot():
+                order.append('final:enter')
+                order.append('final:leave')
+
+    speculative = threading.Thread(target=run_speculative)
+    abandon = threading.Thread(target=run_abandon)
+    speculative.start()
+    abandon.start()
+    speculative.join(5)
+    abandon.join(5)
+    assert order.index('speculative:yield') < order.index('speculative:leave')
+    assert order.index('speculative:leave') < order.index('final:enter')
+
+
+def test_final_fit_does_not_self_preempt_when_only_own_workspace_prioritized(tmp_path):
+    import threading
+    entered = threading.Event()
+    release = threading.Event()
+    order = []
+
+    def run_final():
+        with fit_runtime.prioritize_fit_workspaces([tmp_path / 'final']):
+            with fit_runtime.candidate_fit_session(tmp_path / 'final'):
+                with fit_runtime.cpu_fit_slot():
+                    order.append('final:enter')
+                    entered.set()
+                    assert not fit_runtime.fit_should_yield_for_priority()
+                    release.wait(5)
+                    order.append('final:leave')
+
+    thread = threading.Thread(target=run_final)
+    thread.start()
+    assert entered.wait(5)
+    release.set()
+    thread.join(5)
+    assert order == ['final:enter', 'final:leave']
 
 
 def test_cpu_queue_wait_preserves_remaining_candidate_budget(monkeypatch):
@@ -217,3 +523,37 @@ def test_timed_out_fit_resumes_trajectory_in_a_later_session(tmp_path, monkeypat
 def test_iteration_limit_is_processing_incomplete_without_overriding_acceptance():
     assert motion.controlled_fit_processing_incomplete({'reason': 'fit_evaluation_limit', 'applied': False})
     assert not motion.controlled_fit_processing_incomplete({'reason': 'validated_controlled_motion', 'applied': True})
+
+
+def test_evaluation_limit_with_remaining_budget_runs_continuation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from test_controlled_motion_pipeline import accepted_payload
+
+    payload = accepted_payload()
+    payload.pop('fixedRig', None)
+    payload.pop('controlledMotionFit', None)
+    for index, frame in enumerate(payload['frames']):
+        frame['joints']['head'][0] += .05 * (-1) ** index
+        frame['joints']['pelvis'][1] += .02
+    eval_sizes = []
+
+    def force_eval_limit(residual, initial, pattern, max_evaluations):
+        # Skip the real LS work: return a corrupted iterate that fails checks
+        # with optimizer status=0 so the fit_evaluation_limit path owns the report.
+        eval_sizes.append(max_evaluations)
+        x = np.asarray(initial, dtype=float).copy()
+        x = x + (0.15 if max_evaluations >= 25 else 0.02)
+        return SimpleNamespace(x=x, nfev=max_evaluations, status=0)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', force_eval_limit)
+    with fit_runtime.candidate_fit_session(tmp_path):
+        _, report = motion._fit_controlled_motion(payload, timeout_seconds=180.)
+    assert report.get('evaluationContinuation'), {
+        'reason': report.get('reason'),
+        'applied': report.get('applied'),
+        'evalSizes': eval_sizes,
+        'refinement': report.get('boundedRefinement'),
+    }
+    assert report['evaluationContinuation']['extraEvaluations'] >= 25
+    full_blocks = [size for size in eval_sizes if size >= 25]
+    assert len(full_blocks) >= 2

@@ -1519,7 +1519,11 @@ def _authoritative_baked_elevated_support_surfaces(
     surfaces: list[dict[str, object]] = []
     for episode in episodes[1:]:
         height = _median([sample[1] for sample in episode])
-        if height <= base_height + UNIFORM_CAPSULE_RADIUS:
+        # A distinct support surface must clear the base floor by a plausible
+        # equipment height. Terminal contacts only a few centimeters up are
+        # grounding noise on the same floor, not a box or bench, and emitting
+        # them renders a slab the landing feet sink into.
+        if height <= base_height + max(2.0 * UNIFORM_CAPSULE_RADIUS, 0.10):
             continue
         surfaces.append({
             "center": [
@@ -5613,12 +5617,37 @@ def _build_html(
       return {{ x: median(roots.map(point => point.x)), z: median(roots.map(point => point.z)) }};
     }}
 
+    function bakedWearSupportExtent() {{
+      // The floor exists under the support path. Airborne or reaching limbs
+      // must not inflate the rendered ground size for traveling movements.
+      const supportJoints = ["pelvis", "left_foot", "right_foot"];
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const frame of (playbackState.frames ?? [])) {{
+        const joints = frame?.joints;
+        if (!joints) continue;
+        for (const jointName of supportJoints) {{
+          const point = joints[jointName];
+          if (!Array.isArray(point) || point.length < 3) continue;
+          minX = Math.min(minX, point[0]);
+          maxX = Math.max(maxX, point[0]);
+          minZ = Math.min(minZ, point[2]);
+          maxZ = Math.max(maxZ, point[2]);
+        }}
+      }}
+      if (!Number.isFinite(minX)) return null;
+      return {{ width: maxX - minX, depth: maxZ - minZ }};
+    }}
+
     function refreshGroundPlacement() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
         const bounds = bakedWearReviewBounds.sourceBounds;
         const height = Math.max(0.001, bounds.maxY - bounds.minY);
-        const width = Math.max(0.001, bounds.maxX - bounds.minX);
-        const depth = Math.max(0.001, bounds.maxZ - bounds.minZ);
+        const supportExtent = bakedWearSupportExtent();
+        // Keep a floor under a stationary body while letting genuine support
+        // travel (jumps, lunges) extend the ground only as far as needed.
+        const minimumExtent = height * 0.75;
+        const width = Math.max(supportExtent ? supportExtent.width : 0.001, minimumExtent);
+        const depth = Math.max(supportExtent ? supportExtent.depth : 0.001, minimumExtent);
         const floorSize = Math.max(width, depth) * 1.24;
         const floorY = Number.isFinite(bakedWearRenderFloorY)
           ? bakedWearRenderFloorY

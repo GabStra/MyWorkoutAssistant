@@ -124,7 +124,7 @@ from exercise_motion_pkg.pose_prefilter import (
 import exercise_motion_pkg.pose_prefilter as pose_prefilter_module
 from exercise_motion_pkg.physics_bundle import write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
-from exercise_motion_pkg.render_geometry import support_joint_height_for_surface, support_surface_height
+from exercise_motion_pkg.render_geometry import UNIFORM_CAPSULE_RADIUS, support_joint_height_for_surface, support_surface_height
 from exercise_motion_pkg.spinepose_wham_correction import (
     SPINEPOSE_FULL_SPINE_INDICES,
     _build_spinepose_profile_candidate,
@@ -137,6 +137,7 @@ from exercise_motion_pkg.preview import (
     _aligned_body_points_down,
     _align_baked_sagittal_plane_to_grid_axis,
     _apply_rotations_to_point,
+    _authoritative_baked_elevated_support_surfaces,
     _build_preview_translation_track,
     _center_preview_clip_for_render,
     _compute_preview_auto_alignment,
@@ -5723,6 +5724,50 @@ def test_center_preview_clip_for_render_removes_camera_space_offset() -> None:
     assert centered.metadata["previewCenterOffset"]["point"] == pytest.approx([10.0, 1.0, 20.0])
     assert centered.metadata["ground"]["renderGroundPlane"]["offset"] == pytest.approx(1.0)
     assert centered.metadata["ground"]["renderGroundOrigin"]["point"] == pytest.approx([0.0, -1.0, 0.0])
+
+
+def _elevated_surface_clip(terminal_height: float) -> tuple:
+    frames = []
+    contacts = []
+    heights = [0.05, 0.05, None, None, terminal_height, terminal_height]
+    for index, height in enumerate(heights):
+        foot_y = height if height is not None else 0.5
+        frames.append(
+            MotionFrame(
+                time_sec=index / 30.0,
+                joints={
+                    "pelvis": (0.0, 0.9, 0.0),
+                    "left_foot": (0.0, foot_y, 0.0),
+                    "right_foot": (0.1, foot_y, 0.1),
+                },
+            )
+        )
+        contacts.append(
+            {"contactJoints": ["left_foot", "right_foot"]} if height is not None else {"contactJoints": []}
+        )
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis", "left_foot", "right_foot"],
+        frames=frames,
+        metadata={"cleanup": {"footContacts": contacts}},
+    )
+    serialized_frames = [
+        {"joints": {name: list(frame.joints[name]) for name in frame.joints}} for frame in frames
+    ]
+    return clip, serialized_frames
+
+
+def test_terminal_contact_noise_does_not_emit_elevated_support_surface() -> None:
+    clip, frames = _elevated_surface_clip(terminal_height=0.08)
+    surfaces = _authoritative_baked_elevated_support_surfaces(clip, frames, active_start_frame=0)
+    assert surfaces == []
+
+
+def test_elevated_terminal_contact_emits_support_surface() -> None:
+    clip, frames = _elevated_surface_clip(terminal_height=0.4)
+    surfaces = _authoritative_baked_elevated_support_surfaces(clip, frames, active_start_frame=0)
+    assert len(surfaces) == 1
+    assert surfaces[0]["topY"] == pytest.approx(0.4 - UNIFORM_CAPSULE_RADIUS)
 
 
 def test_preview_grid_uses_authoritative_render_ground_plane(tmp_path: Path) -> None:

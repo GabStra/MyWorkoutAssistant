@@ -19,6 +19,20 @@ def test_generation_status_counts_finished_failures(statuses, expected_count, re
     assert wave.generation_status([{'status': status} for status in statuses], expected_count) == result
 
 
+def test_staged_source_portfolio_allows_two_when_recon_budget_is_two():
+    readiness = {'tier': 'high', 'eligible': True, 'portfolioSize': 2}
+    single = SimpleNamespace(
+        fallback_candidates=0, max_final_output_rejections=0,
+        max_reconstruction_candidate_attempts=1,
+    )
+    dual = SimpleNamespace(
+        fallback_candidates=0, max_final_output_rejections=0,
+        max_reconstruction_candidate_attempts=2,
+    )
+    assert wave.staged_source_portfolio_size(single, readiness) == 1
+    assert wave.staged_source_portfolio_size(dual, readiness) == 2
+
+
 @pytest.mark.parametrize('unavailable_count', [0, 5])
 @pytest.mark.parametrize('remaining_source_passes', [True, False])
 def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, monkeypatch, remaining_source_passes, unavailable_count):

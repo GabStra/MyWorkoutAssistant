@@ -159,6 +159,8 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
+    # Cap VLM slots for RTX 4070 SUPER with Cursor open; do not raise past 8
+    # without confirming spare VRAM. CPU fit concurrency is separate.
     [Nullable[int]]$LlamaCppParallel = 8,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse,
@@ -691,6 +693,41 @@ function Copy-SelectedFile {
     $destinationPath = Join-Path $DestinationDirectory $DestinationFileName
     Copy-Item -LiteralPath $SourcePath -Destination $destinationPath -Force
     return $destinationPath
+}
+
+function Write-PublishedSelectionAcceptanceMarker {
+    param(
+        [object]$WorkItem,
+        [string]$SelectedOutputDir,
+        [string]$SelectionManifestPath
+    )
+
+    # Newly accepted keeps already passed current pipeline gates. Replace any
+    # stale library-revalidation marker so resume reuse matches the published
+    # selection instead of an older invalid verdict.
+    if (
+        [string]::IsNullOrWhiteSpace($SelectedOutputDir) -or
+        [string]::IsNullOrWhiteSpace($SelectionManifestPath) -or
+        -not (Test-Path -LiteralPath $SelectionManifestPath)
+    ) {
+        return
+    }
+    New-Item -ItemType Directory -Force -Path $SelectedOutputDir | Out-Null
+    $markerPath = Join-Path $SelectedOutputDir "revalidation.json"
+    $marker = [ordered]@{
+        schemaVersion = 1
+        selectionValidationPolicyVersion = [int]$SelectionValidationPolicyVersion
+        retainedSelectedArtifactFallbackVersion = [int]$RetainedSelectedRevalidationVersion
+        validatedAt = (Get-Date).ToUniversalTime().ToString("o")
+        exerciseId = "$($WorkItem.exerciseId)"
+        exerciseName = "$($WorkItem.exerciseName)"
+        status = "valid"
+        reasons = @()
+        retryable = $false
+        selectedManifestSha256 = (Get-FileHash -LiteralPath $SelectionManifestPath -Algorithm SHA256).Hash
+        publishedBy = "workout_plan_selected_output"
+    }
+    $marker | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $markerPath -Encoding UTF8
 }
 
 function Copy-SelectedPreviewRuntimeAssets {
@@ -1713,6 +1750,104 @@ function Test-BakeStageReady {
         return $true
     } catch {
         return $false
+    }
+}
+
+function Test-SelectionHasNeedsMotionProcessing {
+    param([string]$SelectionPath)
+
+    if ([string]::IsNullOrWhiteSpace($SelectionPath) -or -not (Test-Path -LiteralPath $SelectionPath)) {
+        return $false
+    }
+    try {
+        $selection = Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-Json
+        $results = @()
+        if ($selection.PSObject.Properties.Name -contains "candidateResults") {
+            $results += @($selection.candidateResults)
+        }
+        if ($selection.PSObject.Properties.Name -contains "candidateDiagnostics") {
+            $results += @($selection.candidateDiagnostics)
+        }
+        return (@($results | Where-Object { "$($_.status)" -eq "needs_motion_processing" }).Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+function Test-MotionProcessingResumeReady {
+    param([object]$WorkItem)
+
+    # Incomplete controlled-motion fits already paid WHAM/bake. Resume bake even
+    # when DisableStageResume blocks discovery/download stage reuse.
+    if ([string]::IsNullOrWhiteSpace($WorkItem.exerciseCandidatesPath) -or
+        -not (Test-Path -LiteralPath $WorkItem.exerciseCandidatesPath)) {
+        return $false
+    }
+    if (Test-BakeStageReady -WorkItem $WorkItem) {
+        return $false
+    }
+    $manifestPaths = @(
+        (Join-Path $WorkItem.bakeWorkspace "selection_manifest.json"),
+        (Join-Path $WorkItem.bakeWorkspace "attempt_manifests\best_no_selection_manifest.json")
+    )
+    foreach ($manifestPath in $manifestPaths) {
+        if (Test-SelectionHasNeedsMotionProcessing -SelectionPath $manifestPath) {
+            return $true
+        }
+    }
+    $attemptDir = Join-Path $WorkItem.bakeWorkspace "attempt_manifests"
+    if (Test-Path -LiteralPath $attemptDir) {
+        foreach ($attemptManifest in @(Get-ChildItem -LiteralPath $attemptDir -Filter "selection_manifest.attempt-*.json" -File -ErrorAction SilentlyContinue)) {
+            if (Test-SelectionHasNeedsMotionProcessing -SelectionPath $attemptManifest.FullName) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
+function Test-SourceTurnResumePresent {
+    param([object]$WorkItem)
+
+    $resumePath = Join-Path $WorkItem.bakeWorkspace "source_turn_resume.json"
+    return (Test-Path -LiteralPath $resumePath)
+}
+
+function Get-BakeQueuePriority {
+    param([object]$WorkItem)
+
+    if (
+        ($WorkItem.PSObject.Properties.Name -contains "motionProcessingResumed" -and $WorkItem.motionProcessingResumed) -or
+        (Test-MotionProcessingResumeReady -WorkItem $WorkItem)
+    ) {
+        return 0
+    }
+    if (Test-SourceTurnResumePresent -WorkItem $WorkItem) {
+        return 1
+    }
+    return 2
+}
+
+function Optimize-PendingBakeQueue {
+    param([System.Collections.Queue]$Queue)
+
+    if ($null -eq $Queue -or $Queue.Count -le 1) {
+        return
+    }
+    $items = [System.Collections.Generic.List[object]]::new()
+    while ($Queue.Count -gt 0) {
+        $items.Add($Queue.Dequeue())
+    }
+    $ranked = [System.Collections.Generic.List[object]]::new()
+    for ($order = 0; $order -lt $items.Count; $order += 1) {
+        $ranked.Add([pscustomobject]@{
+            Item = $items[$order]
+            Priority = (Get-BakeQueuePriority -WorkItem $items[$order])
+            Order = $order
+        })
+    }
+    foreach ($entry in @($ranked | Sort-Object Priority, Order)) {
+        [void]$Queue.Enqueue($entry.Item)
     }
 }
 
@@ -2801,6 +2936,10 @@ function Complete-BakeJob {
             $optionIndex += 1
         }
         if ($status -eq "completed") {
+            Write-PublishedSelectionAcceptanceMarker `
+                -WorkItem $workItem `
+                -SelectedOutputDir $selectedOutputDir `
+                -SelectionManifestPath $selectedSelectionManifestPath
             Remove-ExerciseIntermediateArtifacts -WorkItem $workItem
         }
     }
@@ -3011,7 +3150,11 @@ function Get-StagedWaveActivityText {
                 $usable = @($items | Where-Object { "$($_.source.status)" -eq "prepared" }).Count
                 $failed = @($items | Where-Object { "$($_.source.status)" -eq "failed" }).Count
                 $workerCount = [int](Get-ObjectProperty -Object $checkpoint.metrics -Name "sourceValidationWorkers")
-                $workerText = if ($workerCount -gt 0) { ", $workerCount configured lanes" } else { "" }
+                $meta = @()
+                if ($usable -gt 0) { $meta += "$usable ok" }
+                if ($failed -gt 0) { $meta += "$failed fail" }
+                if ($workerCount -gt 0) { $meta += "$workerCount lanes" }
+                $metaText = if ($meta.Count -gt 0) { " ($($meta -join ', '))" } else { "" }
                 $workText = ''
                 if ($IncludeWorkerDetails) {
                     $active = @($items | Where-Object {
@@ -3022,39 +3165,113 @@ function Get-StagedWaveActivityText {
                         $age = [DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($oldest.sourceActivity.startedAt)
                         $duration = Format-CompactElapsed -Elapsed $age
                         $video = Get-ObjectProperty -Object $oldest.sourceActivity -Name 'videoId'
-                        $workText = " | Work: $($active.Count) active source task(s); oldest: $($oldest.exerciseName)"
-                        if ($video) { $workText += " / video $video" }
-                        $workText += " — $($oldest.sourceActivity.operation) for $duration; no overall operation deadline"
-                    } else {
-                        $workText = ' | Work: no active source task reported'
+                        $op = Get-ObjectProperty -Object $oldest.sourceActivity -Name 'operation'
+                        if ([string]::IsNullOrWhiteSpace("$op")) { $op = 'source check' }
+                        $op = ("$op" -replace '^preparing and validating source video$', 'prepare/validate' `
+                            -replace '^checking source candidates$', 'check candidates')
+                        $workText = " | $($active.Count) active: $($oldest.exerciseName)"
+                        if ($video) { $workText += " /$video" }
+                        $workText += " · $op · $duration"
                     }
                 }
-                return "Checking source videos: $finished of $($items.Count) ($usable usable, $failed unresolved$workerText)$latestSuffix$workText"
+                return "Checking sources: $finished/$($items.Count)$metaText$latestSuffix$workText"
             }
             "wham_generation" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
                 $finished = @($eligible | Where-Object { "$($_.wham.status)" -ne "pending" }).Count
                 $failed = @($eligible | Where-Object { "$($_.wham.status)" -eq "failed" }).Count
                 $stillRunning = [Math]::Max(0, $eligible.Count - $finished)
-                $failedText = if ($failed -gt 0) { ", $failed failed" } else { "" }
-                $runningText = if ($stillRunning -gt 0) { ", $stillRunning still running" } else { "" }
-                return "Extracting motion: $finished of $($eligible.Count) done$failedText$runningText$latestSuffix"
+                $bits = @("$finished/$($eligible.Count) done")
+                if ($failed -gt 0) { $bits += "$failed fail" }
+                if ($stillRunning -gt 0) { $bits += "$stillRunning run" }
+                return "Extracting: $($bits -join ', ')$latestSuffix"
             }
             "wham_released" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
                 $ready = @($eligible | Where-Object { "$($_.wham.status)" -eq "prepared" }).Count
-                return "Motion extraction finished ($ready ready). Starting deterministic and model validation"
+                return "Extraction done ($ready ready) → validate"
             }
             "final_validation" {
                 $eligible = @($items | Where-Object { "$($_.wham.status)" -eq "prepared" })
-                $finished = @($eligible | Where-Object { "$($_.finalValidation.status)" -ne "pending" }).Count
+                $finished = @($eligible | Where-Object {
+                    $status = "$($_.finalValidation.status)"
+                    $status -ne "" -and $status -ne "pending"
+                }).Count
                 $selected = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "selected" }).Count
+                $incomplete = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "incomplete_processing" }).Count
                 $failed = @($eligible | Where-Object { "$($_.finalValidation.status)" -in @("failed", "no_selection") }).Count
-                return "Validating generated movements: $finished of $($eligible.Count) ($selected kept, $failed without selection; includes baking, deterministic checks and model review)$latestSuffix"
+                $pending = @($eligible | Where-Object {
+                    $status = "$($_.finalValidation.status)"
+                    $status -eq "" -or $status -eq "pending"
+                })
+                $workerCount = [int](Get-ObjectProperty -Object $checkpoint.metrics -Name "finalValidationWorkers")
+                $budget = Get-ObjectProperty -Object $checkpoint.metrics -Name "resourceBudget"
+                $fitSlots = [int](Get-ObjectProperty -Object $budget -Name "cpuFitSlots")
+                if ($fitSlots -le 0) {
+                    $fitSlots = [int](Get-ObjectProperty -Object $checkpoint.metrics -Name "finalValidationFitSlots")
+                }
+                $meta = @()
+                if ($selected -gt 0) { $meta += "$selected keep" }
+                if ($incomplete -gt 0) { $meta += "$incomplete incomplete" }
+                if ($failed -gt 0) { $meta += "$failed fail" }
+                if ($workerCount -gt 0 -and $fitSlots -gt 0) { $meta += "$workerCount lanes/$fitSlots fit" }
+                elseif ($workerCount -gt 0) { $meta += "$workerCount lanes" }
+                elseif ($fitSlots -gt 0) { $meta += "$fitSlots fit" }
+                $metaText = if ($meta.Count -gt 0) { " ($($meta -join ', '))" } else { "" }
+                $workText = ''
+                if ($IncludeWorkerDetails -and $pending.Count -gt 0) {
+                    $running = @($pending | Where-Object {
+                        $activity = Get-ObjectProperty -Object $_ -Name 'finalValidationActivity'
+                        if ($null -eq $activity) { return $false }
+                        $operation = "$(Get-ObjectProperty -Object $activity -Name 'operation')"
+                        $operation -ne '' -and $operation -ne 'wait lane'
+                    } | Sort-Object {
+                        $updated = Get-ObjectProperty -Object $_.finalValidationActivity -Name 'updatedAt'
+                        if ([string]::IsNullOrWhiteSpace("$updated")) {
+                            "$($_.finalValidationActivity.startedAt)"
+                        } else {
+                            "$updated"
+                        }
+                    })
+                    $queued = [Math]::Max(0, $pending.Count - $running.Count)
+                    if ($running.Count -gt 0) {
+                        $oldest = $running[0]
+                        $startedAt = Get-ObjectProperty -Object $oldest.finalValidationActivity -Name 'startedAt'
+                        $ageText = ''
+                        if (-not [string]::IsNullOrWhiteSpace("$startedAt")) {
+                            $age = [DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($startedAt)
+                            $ageText = " · $(Format-CompactElapsed -Elapsed $age)"
+                        }
+                        $operation = Get-ObjectProperty -Object $oldest.finalValidationActivity -Name 'operation'
+                        if ([string]::IsNullOrWhiteSpace("$operation")) { $operation = 'bake/fit/review' }
+                        $operation = ("$operation" `
+                            -replace '^waiting for a final-validation worker$', 'wait lane' `
+                            -replace '^queued for final bake and review$', 'start' `
+                            -replace '^releasing unfinished speculative prefetch$', 'drop prefetch' `
+                            -replace '^baking, fitting loops, and model review$', 'bake/fit/review' `
+                            -replace '^baking and fitting$', 'bake/fit' `
+                            -replace '^incomplete fit; trying next candidate$', 'fit incomplete→next' `
+                            -replace '^candidate finished; continuing review$', 'next step' `
+                            -replace '^model review$', 'review')
+                        $detail = Get-ObjectProperty -Object $oldest.finalValidationActivity -Name 'detail'
+                        $shortDetail = ''
+                        if ("$detail" -match 'candidate\s+(\d+/\S+)') { $shortDetail = "cand $($Matches[1])" }
+                        elseif ("$detail" -match 'status=([^\s]+)') { $shortDetail = "$($Matches[1])" }
+                        $workText = " | $($running.Count) active"
+                        if ($queued -gt 0) { $workText += ", $queued wait" }
+                        $workText += ": $($oldest.exerciseName)$ageText · $operation"
+                        if ($shortDetail) { $workText += " · $shortDetail" }
+                    } else {
+                        $names = @($pending | Select-Object -First 3 | ForEach-Object { $_.exerciseName }) -join ', '
+                        $more = if ($pending.Count -gt 3) { " +$($pending.Count - 3)" } else { "" }
+                        $workText = " | $($pending.Count) pending: $names$more"
+                    }
+                }
+                return "Validating: $finished/$($eligible.Count)$metaText$workText"
             }
             "completed" {
                 $completed = @($items | Where-Object { "$($_.status)" -eq "completed" }).Count
-                return "Batch finished: $completed of $($items.Count) kept"
+                return "Batch done: $completed/$($items.Count) kept"
             }
             default {
                 $stageName = "$($checkpoint.stage)".Replace("_", " ")
@@ -3271,7 +3488,9 @@ if ($DeferAfterFirstAttempt) {
     $MaxCandidateReviewTargetSuitableCount = 1
     $FallbackCandidates = 0
     $MaxFinalOutputRejections = 0
-    $MaxReconstructionCandidateAttempts = 1
+    # Keep discovery breadth (single suitable source target), but allow one
+    # orientation-diverse reconstruction fallback in the same staged wave.
+    $MaxReconstructionCandidateAttempts = 2
     $CandidateWorkers = 1
 }
 if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParameters.ContainsKey("LlamaCppFitCtx")) {
@@ -3878,6 +4097,7 @@ foreach ($exercise in $exerciseList.exercises) {
         primarySourceDownloadReused = $false
         fallbackSourceDownloadReused = $false
         bakeReused = $false
+        motionProcessingResumed = $false
         sourceDownloadSeconds = 0.0
         bakeCommandSeconds = 0.0
         discoveryAttemptCount = 0
@@ -4044,6 +4264,16 @@ foreach ($workItem in $workItems) {
         $completedCount += 1
         continue
     }
+    # Incomplete fits keep discovery advancement disabled, but skip cold
+    # rediscovery so retained WHAM/bake can finish this pass.
+    if (Test-MotionProcessingResumeReady -WorkItem $workItem) {
+        $workItem.motionProcessingResumed = $true
+        $workItem.primarySourceDownloadReused = $true
+        "[$(Get-Date -Format o)] resumed incomplete motion processing; skipping rediscovery" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
+        $pendingBakeItems.Enqueue($workItem)
+        Write-Host ("Resuming {0} at incomplete motion processing." -f $workItem.exerciseName)
+        continue
+    }
     if (-not $DisableStageResume -and (Test-BakeStageReady -WorkItem $workItem)) {
         $workItem.bakeReused = $true
         "[$(Get-Date -Format o)] reused completed movement bake; resuming selected-output materialization" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
@@ -4092,6 +4322,7 @@ foreach ($workItem in $workItems) {
         $pendingDiscoveryItems.Enqueue($workItem)
     }
 }
+Optimize-PendingBakeQueue -Queue $pendingBakeItems
 Write-ProgressCheckpoint
 
 $overallStartedAt = Get-Date
@@ -4104,7 +4335,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
     $bakeCompletedCount = 0
     $bakeTotalCount = $pendingBakeItems.Count
     $stagedWaveIndex = 0
-    $lastProgressAt = [datetime]::MinValue
+    # Absolute cadence from run start (slot 0, 1, 2, ...) so reports stay on
+    # ProgressIntervalSeconds boundaries instead of drifting after each late poll.
+    $lastProgressSlot = -1
     $warmWhamWorkerInstance = $null
     $script:WhamWorkerStartedOnce = $false
     $reusedCount = $completedCount
@@ -4164,7 +4397,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             $partialWaveDue = $null -ne $readyWaveSince -and ((Get-Date) - $readyWaveSince).TotalSeconds -ge $StagedWaveMaxWaitSeconds
             $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -gt 0 -and (
                 $pendingBakeItems.Count -ge $StagedWaveSize -or $partialWaveDue -or
-                ($stagedWaveIndex -eq 0 -and @($pendingBakeItems | Where-Object { $_.primarySourceDownloadReused }).Count -gt 0)
+                ($stagedWaveIndex -eq 0 -and @($pendingBakeItems | Where-Object {
+                    $_.primarySourceDownloadReused -or $_.motionProcessingResumed
+                }).Count -gt 0)
             )
             if ($stagedWaveReady) {
                 foreach ($discoveryJob in $discoveryRunningJobs) {
@@ -4232,6 +4467,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             }
 
             if ($canStartStagedWave) {
+                Optimize-PendingBakeQueue -Queue $pendingBakeItems
                 $waveItems = @()
                 while ($pendingBakeItems.Count -gt 0 -and $waveItems.Count -lt $StagedWaveSize) {
                     $waveItems += $pendingBakeItems.Dequeue()
@@ -4278,10 +4514,12 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 Write-LiveLogUpdates -RunningJobs $runningJobs
             }
             $now = Get-Date
-            if (($now - $lastProgressAt).TotalSeconds -ge $ProgressIntervalSeconds) {
+            $progressInterval = [Math]::Max(1, [int]$ProgressIntervalSeconds)
+            $progressSlot = [int][Math]::Floor(($now - $overallStartedAt).TotalSeconds / $progressInterval)
+            if ($progressSlot -gt $lastProgressSlot) {
                 $successfulCount = @($summaryByIndex.Values | Where-Object { "$($_.status)" -eq "completed" }).Count
                 $unsuccessfulCount = @($summaryByIndex.Values | Where-Object { "$($_.status)" -ne "completed" }).Count
-                Write-Host ("Queues: {0} awaiting candidate preparation | {1} awaiting source review | {2} ready for reconstruction | {3} reconstructing" -f $pendingPrefetchItems.Count, $pendingDiscoveryItems.Count, $pendingBakeItems.Count, $bakeRunningJobs.Count)
+                Write-Host ("Queues: {0} prep | {1} review | {2} ready | {3} batch" -f $pendingPrefetchItems.Count, $pendingDiscoveryItems.Count, $pendingBakeItems.Count, $bakeRunningJobs.Count)
                 foreach ($reviewJob in $discoveryRunningJobs) {
                     $reviewProgressPath = Join-Path (Split-Path -Parent $reviewJob.WorkItem.exerciseCandidatesPath) "youtube_discovery_progress.jsonl"
                     try {
@@ -4292,10 +4530,15 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     } catch { Write-Verbose "Review progress is not available yet." }
                 }
                 Write-ProgressSnapshot -Stage "Pipeline" -StartedAt $overallStartedAt -RunningJobs $runningJobs -SuccessfulCount $successfulCount -UnsuccessfulCount $unsuccessfulCount -ProcessedCount $completedCount -TotalCount $workItems.Count -PendingCount ($pendingPrefetchItems.Count + $pendingDiscoveryItems.Count + $pendingSourceDownloadItems.Count + $pendingFallbackSourceDownloadItems.Count + $pendingBakeItems.Count + $pendingLegacyBakeItems.Count + $pendingCompletionItems.Count) -DetailedLogs:$DetailedProgressLogs
-                $lastProgressAt = $now
+                $lastProgressSlot = $progressSlot
             }
 
-            $finishedJobs = @(Wait-Job -Job $runningJobs -Any -Timeout 2)
+            $secondsUntilNextProgress = (($lastProgressSlot + 1) * $progressInterval) - ((Get-Date) - $overallStartedAt).TotalSeconds
+            $jobWaitSeconds = 2
+            if ($secondsUntilNextProgress -lt $jobWaitSeconds) {
+                $jobWaitSeconds = [Math]::Max(0, [int][Math]::Ceiling($secondsUntilNextProgress))
+            }
+            $finishedJobs = @(Wait-Job -Job $runningJobs -Any -Timeout $jobWaitSeconds)
             if (Test-MotionRunCancelRequested) {
                 break
             }
@@ -4427,6 +4670,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     }
                     if ($downloadKind -eq "primary") {
                         $pendingBakeItems.Enqueue($workItem)
+                        Optimize-PendingBakeQueue -Queue $pendingBakeItems
                         if ($workItem.hasFallbackSourceDownloads) {
                             $pendingFallbackSourceDownloadItems.Enqueue($workItem)
                         }

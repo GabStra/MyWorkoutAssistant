@@ -15,6 +15,36 @@ from .temporal_quality import body_local_head_direction
 
 SOCKET_ALIGNMENT_MAX_LATERAL_RATIO = .06
 
+# Girdle spans (shoulders/hips) are not single bones: rotating the collar or
+# pelvis joints swings the width while every parent-child bone stays rigid.
+# Tolerance covers genuine clavicle protraction/elevation plus solver slack
+# (~10% on an accepted dynamic jump); wider swings collapse or splay the
+# girdle visibly (an accepted-with-complaints thruster reached ~19%).
+SPAN_TOLERANCE_RATIO = .12
+SPAN_TOLERANCE_METERS = .03
+SPAN_JOINT_PAIRS = (('shoulders', 'left_shoulder', 'right_shoulder'),
+                    ('hips', 'left_hip', 'right_hip'))
+
+
+def span_rigidity_violations(points, names, span_targets=None):
+    """Per-frame girdle-width deviations from constant clip targets.
+
+    Without explicit targets the clip median of the passed points is used, so
+    a single-frame batch compares only against itself (no residual). The
+    anatomical repair solver passes targets captured once from its observed
+    input so per-frame Jacobian rows stay independent observations.
+    """
+    violations = {}
+    for label, a, b in SPAN_JOINT_PAIRS:
+        if a not in names or b not in names:
+            continue
+        span = np.linalg.norm(points[:, names.index(a)]-points[:, names.index(b)], axis=-1)
+        target = (float(span_targets[label])
+                  if isinstance(span_targets, dict) and label in span_targets
+                  else float(np.median(span)))
+        violations[label] = (np.abs(span-target), target)
+    return violations
+
 ARTICULATIONS = tuple(
     (f"{side}_{joint}", parent.format(s=side), f"{side}_{joint}", child.format(s=side), tolerance)
     for side in ("left", "right")
@@ -295,6 +325,11 @@ def validate_physical_motion(points, names, *, reference=None, fps=30., support_
         median = float(np.median(lengths))
         for frame in np.flatnonzero(abs(lengths-median) > max(.005, median*.015)):
             events.append({'reason': 'anatomy_bone_length_variation', 'joint': name, 'frameIndex': int(frame)})
+    # Girdle span rigidity: see SPAN_TOLERANCE_RATIO for the tolerance basis.
+    for label, (deviation, median) in span_rigidity_violations(points, names).items():
+        for frame in np.flatnonzero(deviation > max(SPAN_TOLERANCE_METERS, median*SPAN_TOLERANCE_RATIO)):
+            events.append({'reason': 'anatomy_span_variation', 'span': label,
+                           'frameIndex': int(frame), 'deviationMeters': float(deviation[frame])})
     if reference is not None:
         # Use the same body-relative, temporally supported branch definition
         # as the final articulation guard. Matching angles is not sufficient.
@@ -404,6 +439,12 @@ def physical_metrics_from_payload(payload):
         support_mask[:]=False
     report=validate_physical_motion(points, names, reference=reference,
                                    fps=float(payload.get('fps') or 30.),support_mask=support_mask)
+    if not fixed_rig:
+        # Raw SMPL spans jitter with occlusion; only the calibrated fixed rig
+        # owns a girdle width it must keep stable across frames.
+        report['events']=[e for e in report['events'] if e['reason']!='anatomy_span_variation']
+        report['reasons']=sorted({e['reason'] for e in report['events']})
+        report['passed']=not report['events']
     if fixed_rig:
         # Calibrated rig lengths replace noisy source lengths, but every other
         # anatomical constraint and the actual interpolated playback still apply.

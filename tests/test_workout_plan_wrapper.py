@@ -394,6 +394,27 @@ def test_workout_plan_defer_after_first_attempt_allows_two_final_rejections() ->
     assert "if ($DeferAfterFirstAttempt)" in script
 
 
+def test_workout_plan_defer_keeps_two_reconstruction_attempts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+    defer_block = script.split("if ($DeferAfterFirstAttempt)", 1)[1].split("}", 1)[0]
+    assert "$MaxReconstructionCandidateAttempts = 2" in defer_block
+    assert "$MaxReconstructionCandidateAttempts = 1" not in defer_block
+    assert "$FallbackCandidates = 0" in defer_block
+
+
+def test_workout_plan_hot_path_resume_helpers_are_wired() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+    assert "function Test-MotionProcessingResumeReady" in script
+    assert "function Optimize-PendingBakeQueue" in script
+    assert "Resuming {0} at incomplete motion processing." in script
+    assert "Optimize-PendingBakeQueue -Queue $pendingBakeItems" in script
+    assert "motionProcessingResumed = $false" in script
+    library = (repo_root / "scripts/run_exercise_motion_library.ps1").read_text(encoding="utf-8")
+    assert "finish retained processing and advance source cursors" in library
+
+
 def test_workout_plan_wrapper_mobile_package_output_is_strict_and_completion_gated() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")

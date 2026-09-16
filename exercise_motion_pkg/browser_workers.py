@@ -3,7 +3,6 @@ import atexit
 from concurrent.futures import Future, TimeoutError
 from contextlib import contextmanager
 from functools import wraps
-import os
 from queue import Queue
 import threading
 import time
@@ -140,7 +139,9 @@ class BrowserWorkers:
             return {"workerLimit": self._workers, **self._metrics}
 
 
-_workers = BrowserWorkers(max(1, min(4, (os.cpu_count() or 2) // 2)))
+from exercise_motion_pkg.resource_budget import browser_worker_limit
+
+_workers = BrowserWorkers(browser_worker_limit())
 atexit.register(_workers.close)
 
 

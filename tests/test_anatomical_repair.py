@@ -84,7 +84,7 @@ def test_folded_source_is_corrected_and_accepted_without_erasing_original(monkey
 
     monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy', counted_repair)
     monkeypatch.setattr(controlled_motion, 'register_contact_placement',
-                        lambda points, *args: (points @ Rotation.from_euler('y', yaw).as_matrix()+[placement_shift, 0., 0.],
+                        lambda points, *args, **kwargs: (points @ Rotation.from_euler('y', yaw).as_matrix()+[placement_shift, 0., 0.],
                                               {'applied': bool(placement_shift or yaw)}))
     names, points = stance()
     axis = points[0, names.index('neck')]-points[0, names.index('pelvis')]
@@ -127,3 +127,23 @@ def test_anatomical_repair_reuse_rejects_changed_articulation_and_reflection():
     altered[:, names.index('left_wrist'), 0] += .01
     assert transport_equivalent_anatomical_repair(points, points, altered, names) is None
     assert transport_equivalent_anatomical_repair(points, points, points*[-1., 1., 1.], names) is None
+
+
+def test_shoulder_girdle_span_swing_is_repaired_to_a_rigid_width():
+    names, points = stance()
+    left, right = names.index('left_shoulder'), names.index('right_shoulder')
+    inward = points[:, right]-points[:, left]
+    inward /= np.linalg.norm(inward, axis=1, keepdims=True)
+    points[2:5, left] += inward[2:5]*.04
+    points[2:5, right] -= inward[2:5]*.04
+    span = lambda a: np.linalg.norm(a[:, left]-a[:, right], axis=1)
+    assert np.max(np.abs(span(points)-np.median(span(points)))) > .06
+
+    rig = FixedRig(points, names)
+    corrected, report = repair_rig_anatomy(rig, points, deadline=monotonic()+30.)
+    assert 'anatomy_span_variation:shoulders' in report['sourceViolations']
+    assert 'anatomy_span_variation:shoulders' not in report['remainingViolations']
+    assert report['passed']
+    from exercise_motion_pkg.physical_validation import SPAN_TOLERANCE_METERS, SPAN_TOLERANCE_RATIO
+    limit = max(SPAN_TOLERANCE_METERS, np.median(span(points))*SPAN_TOLERANCE_RATIO)
+    assert np.max(np.abs(span(corrected)-np.median(span(points)))) <= limit + 1e-6

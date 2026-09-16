@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +19,7 @@ from exercise_motion_pkg.bake_and_rank import (
     SourceCandidateRejected,
     ExerciseMotionContractRejected,
     SOURCE_SELECTION_POLICY_VERSION,
+    bake_progress_activity,
     build_exercise_motion_contract_resolver,
     evaluate_source_candidate_gate,
     expand_ranked_candidates_for_source_windows,
@@ -42,7 +43,36 @@ from exercise_motion_pkg.storage import is_storage_failure, require_storage_rese
 
 STAGED_SOURCE_PORTFOLIO_MAX_SIZE = 3
 STAGED_SOURCE_VALIDATION_MAX_WORKERS = 6
-STAGED_GENERATION_CPU_WORKERS = 2
+
+
+def staged_source_portfolio_size(request: BakeAndRankRequest, readiness: dict[str, Any]) -> int:
+    """How many validated sources to prepare in one staged wave.
+
+    Discovery-defer paths keep fallback/final-rejection budgets at zero. When
+    reconstruction attempts are also capped at one, prepare a single source.
+    With recon budget >= 2, keep the orientation-diverse first-attempt portfolio
+    so a raw/baked failure can advance in-wave.
+    """
+    recon_budget = int(getattr(request, "max_reconstruction_candidate_attempts", 0) or 0)
+    first_pass_single_source = (
+        int(getattr(request, "fallback_candidates", 0) or 0) <= 0
+        and int(getattr(request, "max_final_output_rejections", 0) or 0) <= 0
+        and recon_budget == 1
+    )
+    size = (
+        1
+        if first_pass_single_source
+        else max(
+            1,
+            min(
+                STAGED_SOURCE_PORTFOLIO_MAX_SIZE,
+                first_attempt_portfolio_size(readiness),
+            ),
+        )
+    )
+    if recon_budget > 0:
+        size = min(size, recon_budget)
+    return size
 
 
 @dataclass(frozen=True)
@@ -62,6 +92,16 @@ def generation_failure_status(error: Exception) -> str:
     return "failed"
 
 
+def final_validation_outcome_status(manifest: dict[str, Any]) -> str:
+    """Separate unfinished fits from finished quality rejects for Progress/logs."""
+    if manifest.get("selected"):
+        return "selected"
+    diagnostics = final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
+    if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
+        return "incomplete_processing"
+    return "no_selection"
+
+
 def wave_retry_disposition(state: dict[str, Any]) -> str:
     if state.get("status") == "completed":
         return "export_selected"
@@ -70,7 +110,7 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
     if state.get("source", {}).get("failureReason") == "source_review_incomplete":
         return "retry_review"
     final = state.get("finalValidation", {})
-    if final.get("status") == "no_selection":
+    if final.get("status") in {"no_selection", "incomplete_processing"}:
         diagnostics = final.get("candidateDiagnostics", [])
         if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
             return "retry_processing"
@@ -119,12 +159,64 @@ def finalize_with_bounded_review_retry(operation: Callable[[], dict[str, Any]]) 
     return manifest
 
 
+def _candidate_fit_budget_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    budget = result.get("candidateFitBudget")
+    if isinstance(budget, dict):
+        return budget
+    controlled = result.get("controlledMotionFit")
+    if isinstance(controlled, dict):
+        budget = controlled.get("candidateFitBudget")
+        if isinstance(budget, dict):
+            return budget
+    return None
+
+
+def _controlled_motion_report_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    controlled = result.get("controlledMotionFit")
+    return controlled if isinstance(controlled, dict) else None
+
+
+# Leftover below a real support-init / solve floor cannot finish another fit.
+MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS = 30.0
+# Final bake may run two processing attempts, each with fit + browser + review.
+DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS = 7200.0
+
+
+def exhausted_candidate_fit_session(manifest: dict[str, Any]) -> bool:
+    """True when incomplete processing already spent the full candidate fit budget."""
+    from .controlled_motion import controlled_fit_processing_incomplete
+
+    for result in manifest.get("candidateResults") or []:
+        if not isinstance(result, dict) or result.get("status") != "needs_motion_processing":
+            continue
+        budget = _candidate_fit_budget_from_result(result)
+        if budget is None:
+            continue
+        remaining = budget.get("remainingSeconds")
+        if not isinstance(remaining, (int, float)):
+            continue
+        budget_seconds = budget.get("seconds")
+        useful_floor = MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS
+        if isinstance(budget_seconds, (int, float)) and budget_seconds > 0:
+            useful_floor = min(useful_floor, max(1.0, 0.1 * float(budget_seconds)))
+        if remaining > useful_floor:
+            continue
+        controlled = _controlled_motion_report_from_result(result)
+        if controlled is None:
+            # Budget exhausted and disposition is needs_motion_processing.
+            return True
+        if controlled_fit_processing_incomplete(controlled):
+            return True
+    return False
+
+
 def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Refit incomplete controlled-motion once on retained source/WHAM inputs.
 
     Prefetch may hand final processing a one-shot incomplete bake. Invalidate that
     attempt and retry once so deferred library work is not required for a finished
-    pass/fail verdict.
+    pass/fail verdict. Skip the second burn when the candidate session was already
+    fully exhausted on timeout-style incompleteness; library resume keeps the source.
     """
     from .stage_cache import advance_processing_attempt
 
@@ -141,7 +233,39 @@ def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any
         }
         if wave_retry_disposition(state) != "retry_processing":
             break
+        if exhausted_candidate_fit_session(manifest):
+            manifest["processingRetrySkippedReason"] = "candidate_fit_session_exhausted"
+            break
     return manifest
+
+
+def _rejection_codes_from_candidate_result(result: dict[str, Any]) -> list[str]:
+    """Prefer concrete gate codes over coarse status labels for progress output."""
+    codes: list[str] = []
+    for failure in result.get("failures") or []:
+        if not isinstance(failure, dict):
+            continue
+        reason = failure.get("reason")
+        if isinstance(reason, str) and reason:
+            codes.append(reason)
+        for nested in failure.get("rejectionReasons") or []:
+            if isinstance(nested, str) and nested:
+                codes.append(nested)
+    for clip in result.get("rejectedSourceClips") or []:
+        if not isinstance(clip, dict):
+            continue
+        clip_reason = clip.get("reason")
+        if isinstance(clip_reason, str) and clip_reason:
+            codes.append(clip_reason)
+        for nested in clip.get("rejectionReasons") or []:
+            if isinstance(nested, str) and nested:
+                codes.append(nested)
+    controlled = result.get("controlledMotionFit")
+    if isinstance(controlled, dict):
+        fit_reason = controlled.get("reason")
+        if isinstance(fit_reason, str) and fit_reason:
+            codes.append(fit_reason)
+    return list(dict.fromkeys(codes))
 
 
 def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -152,14 +276,17 @@ def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
         stage = result.get("failureStage") or {
             "rejected_raw_wham_validation": "raw_reconstruction_validation",
             "rejected_incomplete_wham_tracking": "raw_reconstruction_validation",
+            "rejected_baked_motion_validation": "baked_motion_validation",
             "skipped_no_baked_clip": "baked_motion_validation",
+            "skipped_no_usable_baked_motion": "baked_motion_validation",
+            "needs_motion_processing": "controlled_motion_processing",
             "failed": "processing_error",
             "ready_for_selection": "output_validation",
         }.get(status, status)
         candidates.append({
             "stage": stage,
             "status": status,
-            "reasons": [failure.get("reason", "unknown") for failure in result.get("failures", [])],
+            "reasons": _rejection_codes_from_candidate_result(result),
             "timings": {key: value for key, value in result.get("timings", {}).items()
                         if key.endswith("Seconds") and isinstance(value, (int, float))},
         })
@@ -176,6 +303,7 @@ def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
         "reviewTimings": {key: value for key, value in manifest.get("timings", {}).items()
                           if key.endswith("Seconds") and isinstance(value, (int, float))},
     }
+
 
 
 def run_timed_final_processing(*, queued_at: float, wait_for_prefetch: Callable[[], None],
@@ -456,12 +584,24 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
                                            workspace/'segment_detection/body_support')
         if observation.get('status') != 'observed':
             return {'status': 'skipped', 'reason': 'source_contact_observation_unavailable'}
-    artifacts = bake.bake_preview_loops_with_playwright(preview, loops, workspace, item.request.review_frames,
-        rank_preview_variants=item.request.rank_preview_variants,
-        adaptive_preview_settings=item.request.adaptive_preview_settings,
-        max_adaptive_preview_settings=item.request.max_adaptive_preview_settings,
-        caption_images=None, exercise_name=item.exercise_name, exercise_motion_contract=contract,
-        source_foot_support_evidence=support)
+    from .fit_runtime import SpeculativePrefetchAbandoned, speculative_fit_context, speculative_workspace
+    try:
+        with speculative_workspace(workspace), speculative_fit_context():
+            artifacts = bake.bake_preview_loops_with_playwright(
+                preview, loops, workspace, item.request.review_frames,
+                rank_preview_variants=item.request.rank_preview_variants,
+                adaptive_preview_settings=item.request.adaptive_preview_settings,
+                max_adaptive_preview_settings=item.request.max_adaptive_preview_settings,
+                caption_images=None, exercise_name=item.exercise_name, exercise_motion_contract=contract,
+                source_foot_support_evidence=support, speculative_prefetch=True)
+    except SpeculativePrefetchAbandoned:
+        return {
+            "status": "abandoned_for_finalization",
+            "reason": "yielded_for_finalization",
+            "startedAt": started_at,
+            "finishedAt": _utc_now(),
+            "elapsedSeconds": round(time.perf_counter() - started, 3),
+        }
     return {"status": "prepared", "artifactCount": len(artifacts),
             "startedAt": started_at, "finishedAt": _utc_now(),
             "elapsedSeconds": round(time.perf_counter() - started, 3)}
@@ -474,11 +614,16 @@ def run_staged_bake_wave(
     wave_id: str,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    # These workers only prepare CPU-rendered artifacts. Final VLM work remains
-    # behind the WHAM-release boundary in the coordinator.
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="motion-render-prefetch") as render_executor:
+    # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
+    from .resource_budget import render_prefetch_worker_limit
+    prefetch_workers = render_prefetch_worker_limit(len(items))
+    with ThreadPoolExecutor(
+        max_workers=prefetch_workers,
+        thread_name_prefix="motion-render-prefetch",
+    ) as render_executor:
         return _run_staged_bake_wave(items, workspace=workspace, wave_id=wave_id,
-            progress=progress, render_executor=render_executor)
+            progress=progress, render_executor=render_executor,
+            render_prefetch_workers=prefetch_workers)
 
 
 def _run_staged_bake_wave(
@@ -488,6 +633,7 @@ def _run_staged_bake_wave(
     wave_id: str,
     progress: Callable[[str], None] | None = None,
     render_executor: ThreadPoolExecutor,
+    render_prefetch_workers: int | None = None,
 ) -> dict[str, Any]:
     """Run one cache-first VLM -> WHAM -> VLM wave.
 
@@ -527,6 +673,7 @@ def _run_staged_bake_wave(
     started_at = time.perf_counter()
     metrics: dict[str, Any] = {
         "sourceValidationWorkers": 0,
+        "renderPrefetchWorkers": max(1, int(render_prefetch_workers or 1)),
         "sourceAttemptEvents": [],
         "acceleratorTransitions": [],
         "phaseTimings": {},
@@ -774,24 +921,9 @@ def _run_staged_bake_wave(
                     ready_source_ids.add(item.exercise_id)
                 selected_source_identities.add(source_identity)
                 if requested_portfolio_size is None:
-                    first_pass_single_source = (
-                        item.request.fallback_candidates <= 0
-                        and item.request.max_final_output_rejections <= 0
+                    requested_portfolio_size = staged_source_portfolio_size(
+                        item.request, readiness
                     )
-                    requested_portfolio_size = (
-                        1
-                        if first_pass_single_source
-                        else max(
-                            1,
-                            min(
-                                STAGED_SOURCE_PORTFOLIO_MAX_SIZE,
-                                first_attempt_portfolio_size(readiness),
-                            ),
-                        )
-                    )
-                if item.request.max_reconstruction_candidate_attempts > 0:
-                    requested_portfolio_size = min(requested_portfolio_size,
-                                                   item.request.max_reconstruction_candidate_attempts)
                 if len(selected_sources) >= requested_portfolio_size:
                     break
             if not item_states[item.exercise_id]["source"].get("deferred"):
@@ -947,9 +1079,10 @@ def _run_staged_bake_wave(
         for exercise_id, (item, sources) in prepared.items()
         for candidate, selected_video_path in sources
     ]
-    # GPU jobs remain serialized by the WHAM/global GPU locks. A second caller
-    # overlaps video preparation and CPU postprocessing in a different workspace.
-    wham_worker_count = min(STAGED_GENERATION_CPU_WORKERS, max(1, len(prepared_candidates)))
+    # GPU jobs remain serialized by the WHAM/global GPU locks. Extra callers
+    # overlap video preparation and CPU postprocessing in different workspaces.
+    from .resource_budget import staged_generation_cpu_workers
+    wham_worker_count = min(staged_generation_cpu_workers(), max(1, len(prepared_candidates)))
     metrics["generationCpuWorkers"] = wham_worker_count
     wham_completed_count = 0
     wham_attempts: dict[str, list[dict[str, Any]]] = {
@@ -1058,9 +1191,12 @@ def _run_staged_bake_wave(
     metrics["acceleratorTransitions"].append({"stage": "final_vlm", "at": _utc_now()})
     final_phase_started = time.perf_counter()
     final_session = LazyLlamaCppVisionSession(items[0].request)
-    # Prepare independent workspaces while the shared session bounds GPU calls.
-    final_worker_count = min(configured_parallelism, max(1, len(wham_ready)))
+    # Do not oversubscribe the shared CPU fit: each final needs a real shot at
+    # the candidate budget. Extra ready exercises wait in the executor queue.
+    from .resource_budget import cpu_fit_slot_limit, final_validation_worker_limit
+    final_worker_count = final_validation_worker_limit(configured_parallelism, len(wham_ready))
     metrics["finalValidationWorkers"] = final_worker_count
+    metrics["finalValidationFitSlots"] = max(1, int(cpu_fit_slot_limit()))
     validation_start_times: dict[str, float] = {}
     validation_queued_times: dict[str, float] = {}
     validation_scheduling_times: dict[str, dict[str, float]] = {}
@@ -1071,66 +1207,145 @@ def _run_staged_bake_wave(
         ready_sources: list[tuple[RankedCandidate, Path]],
     ) -> dict[str, Any]:
         validation_start_times[exercise_id] = time.perf_counter()
+        with checkpoint_lock:
+            existing = item_states[exercise_id].get("finalValidationActivity")
+        activity_started_at = (
+            str(existing.get("startedAt"))
+            if isinstance(existing, dict) and existing.get("startedAt")
+            else _utc_now()
+        )
+        from .fit_runtime import abandon_speculative_workspace, prioritize_fit_workspaces
+        # Prefer the candidate entering final bake over its own unfinished
+        # speculative prefetch. Other exercises' speculative work keeps running.
+        primary_workspaces = [
+            item.request.workspace / candidate.workspace_slug
+            for candidate, _path in (ready_sources[:1] or ready_sources)
+        ]
 
-        def wait_for_prefetch():
-            from .fit_runtime import prioritize_fit_workspaces
-            # Prefer completing the candidate entering final validation over unfinished
-            # speculative CPU bake/fit work for other ready sources.
-            workspaces = [
-                item.request.workspace / candidate.workspace_slug
-                for candidate, _path in ready_sources
-            ]
+        def set_final_activity(operation: str, **extra: Any) -> None:
+            payload = {
+                "startedAt": activity_started_at,
+                "updatedAt": _utc_now(),
+                "operation": operation,
+                **extra,
+            }
+            with checkpoint_lock:
+                item_states[exercise_id]["finalValidationActivity"] = payload
+
+        def clear_final_activity() -> None:
+            with checkpoint_lock:
+                item_states[exercise_id].pop("finalValidationActivity", None)
+
+        def on_bake_progress(message: str) -> None:
+            text = " ".join(str(message).split())
+            if len(text) > 140:
+                text = text[:137] + "..."
+            lower = text.lower()
+            if "starting" in lower:
+                phase = "bake/fit"
+            elif "needs_motion_processing" in lower:
+                phase = "fit incomplete→next"
+            elif "status=" in lower:
+                phase = "next step"
+            elif "model" in lower or "review" in lower:
+                phase = "review"
+            else:
+                phase = "bake/fit/review"
+            set_final_activity(phase, detail=text)
+
+        set_final_activity(
+            "start",
+            candidateCount=len(ready_sources),
+        )
+
+        def collect_prefetch_result(candidate):
+            key = _candidate_key(candidate)
+            future = render_futures.get(key)
+            if future is None:
+                return
+            try:
+                metrics["cpuRenderPrefetch"][key] = future.result()
+            except Exception as exc:
+                # A speculative render is never a quality decision. The
+                # owning candidate path will retry and classify a failure.
+                if is_storage_failure(exc):
+                    raise
+                metrics["cpuRenderPrefetch"][key] = {
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                announce(
+                    f"CPU render preparation failed for {item.exercise_name}; "
+                    f"normal bake will retry: {exc}"
+                )
+
+        def join_or_abandon_prefetch():
+            """Never block finalization on unfinished speculative bake/fit."""
+            set_final_activity("drop prefetch")
             primary_sources = ready_sources[:1] or ready_sources
             secondary_sources = ready_sources[1:]
-
-            def collect(candidate):
+            for candidate, _path in primary_sources:
                 key = _candidate_key(candidate)
                 future = render_futures.get(key)
                 if future is None:
-                    return
-                try:
-                    metrics["cpuRenderPrefetch"][key] = future.result()
-                except Exception as exc:
-                    # A speculative render is never a quality decision. The
-                    # owning candidate path will retry and classify a failure.
-                    if is_storage_failure(exc):
-                        raise
-                    metrics["cpuRenderPrefetch"][key] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-                    announce(f"CPU render preparation failed for {item.exercise_name}; normal bake will retry: {exc}")
-
-            with prioritize_fit_workspaces(workspaces[:1] or workspaces):
-                for candidate, _path in primary_sources:
-                    collect(candidate)
+                    continue
+                if future.done():
+                    collect_prefetch_result(candidate)
+                    continue
+                cancelled = future.cancel()
+                if not cancelled:
+                    abandon_speculative_workspace(
+                        item.request.workspace / candidate.workspace_slug
+                    )
+                metrics["cpuRenderPrefetch"][key] = {
+                    "status": "abandoned_for_finalization",
+                    "cancelledBeforeStart": bool(cancelled),
+                }
             for candidate, _path in secondary_sources:
                 key = _candidate_key(candidate)
                 future = render_futures.get(key)
                 if future is not None and future.done():
-                    collect(candidate)
+                    collect_prefetch_result(candidate)
 
         def process():
-            return finalize_with_bounded_processing_retry(lambda: run_bake_and_rank_pipeline(
-                replace(
-                    item.request,
-                    require_wham_cache=True,
-                    reuse_previous_terminal_results=False,
-                    fallback_candidates=0,
-                    max_final_output_rejections=effective_wave_final_output_rejection_limit(
-                        item.request.max_final_output_rejections,
-                        len(ready_sources),
+            set_final_activity(
+                "bake/fit/review",
+                candidateCount=len(ready_sources),
+            )
+            with bake_progress_activity(on_bake_progress):
+                return finalize_with_bounded_processing_retry(lambda: run_bake_and_rank_pipeline(
+                    replace(
+                        item.request,
+                        require_wham_cache=True,
+                        reuse_previous_terminal_results=False,
+                        fallback_candidates=0,
+                        max_final_output_rejections=effective_wave_final_output_rejection_limit(
+                            item.request.max_final_output_rejections,
+                            len(ready_sources),
+                        ),
                     ),
-                ),
-                shared_vision_session=final_session,
-                prepared_candidates=[candidate for candidate, _path in ready_sources],
-                prepared_candidate_video_paths={
-                    candidate.workspace_slug: selected_video_path
-                    for candidate, selected_video_path in ready_sources
-                },
-            ))
+                    shared_vision_session=final_session,
+                    prepared_candidates=[candidate for candidate, _path in ready_sources],
+                    prepared_candidate_video_paths={
+                        candidate.workspace_slug: selected_video_path
+                        for candidate, selected_video_path in ready_sources
+                    },
+                ))
+
+        def process_with_priority():
+            with prioritize_fit_workspaces(primary_workspaces):
+                return process()
+
         timings = validation_scheduling_times[exercise_id]
-        return run_timed_final_processing(
-            queued_at=validation_queued_times[exercise_id],
-            wait_for_prefetch=wait_for_prefetch, operation=process, timings=timings,
-        )
+        try:
+            return run_timed_final_processing(
+                queued_at=validation_queued_times[exercise_id],
+                wait_for_prefetch=join_or_abandon_prefetch,
+                operation=process_with_priority,
+                timings=timings,
+            )
+        finally:
+            clear_final_activity()
 
     final_executor = ThreadPoolExecutor(max_workers=final_worker_count)
     try:
@@ -1138,14 +1353,22 @@ def _run_staged_bake_wave(
         for exercise_id, (item, ready_sources) in wham_ready.items():
             validation_queued_times[exercise_id] = time.perf_counter()
             validation_scheduling_times[exercise_id] = {}
+            with checkpoint_lock:
+                item_states[exercise_id]["finalValidationActivity"] = {
+                    "startedAt": _utc_now(),
+                    "updatedAt": _utc_now(),
+                    "operation": "wait lane",
+                    "candidateCount": len(ready_sources),
+                }
             future = final_executor.submit(finalize_item, exercise_id, item, ready_sources)
             final_futures[future] = (exercise_id, item, ready_sources)
+        checkpoint("final_validation")
         for future in as_completed(final_futures):
             exercise_id, item, ready_sources = final_futures[future]
             state = item_states[exercise_id]
             validation_started = validation_start_times[exercise_id]
             try:
-                manifest = future.result()
+                manifest = future.result(timeout=DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS)
                 # Each wave may be resumed, and fallback rewrites the exercise's
                 # selection manifest. Keep the decision itself in a unique file.
                 decision_path = workspace / "final-decisions" / (
@@ -1174,7 +1397,7 @@ def _run_staged_bake_wave(
                 state["finalValidation"] = {
                     **final_processing_diagnostics(manifest),
                     "reviewAttemptCount": manifest.get("reviewAttemptCount", 1),
-                    "status": "selected" if selected else "no_selection",
+                    "status": final_validation_outcome_status(manifest),
                     "candidateKeys": [
                         _candidate_key(candidate) for candidate, _path in ready_sources
                     ],
@@ -1189,6 +1412,16 @@ def _run_staged_bake_wave(
                     ),
                 }
                 state["status"] = "completed" if selected else "retry_required"
+            except FutureTimeoutError:
+                state["finalValidation"] = {
+                    "status": "failed",
+                    "elapsedSeconds": round(time.perf_counter() - validation_started, 3),
+                    "error": (
+                        f"TimeoutError: final validation exceeded "
+                        f"{DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS:.0f}s"
+                    ),
+                }
+                state["status"] = "retry_required"
             except Exception as exc:
                 if is_storage_failure(exc):
                     raise
@@ -1270,8 +1503,24 @@ def _run_staged_bake_wave(
 
     completed = [state for state in item_states.values() if state["status"] == "completed"]
     from exercise_motion_pkg.browser_workers import browser_worker_metrics
+    from exercise_motion_pkg.resource_budget import (
+        CODING_HEADROOM_LOGICAL_CORES,
+        browser_worker_limit,
+        cpu_fit_slot_limit,
+        logical_core_count,
+        staged_generation_cpu_workers,
+        usable_logical_cores,
+    )
     from exercise_motion_pkg.review_questions import question_cache_metrics
     metrics["browserWorkers"] = browser_worker_metrics()
+    metrics["resourceBudget"] = {
+        "logicalCores": logical_core_count(),
+        "codingHeadroomLogicalCores": CODING_HEADROOM_LOGICAL_CORES,
+        "usableLogicalCores": usable_logical_cores(),
+        "cpuFitSlots": cpu_fit_slot_limit(),
+        "browserWorkerLimit": browser_worker_limit(),
+        "generationCpuWorkers": staged_generation_cpu_workers(),
+    }
     metrics["reviewQuestionCache"] = question_cache_metrics()
     retry = [state for state in item_states.values() if state["status"] != "completed"]
     try:

@@ -7,11 +7,22 @@ import threading
 from pathlib import Path
 from time import monotonic
 
+from .resource_budget import cpu_fit_slot_limit
+
 
 _CURRENT = ContextVar('movement_fit_session', default=None)
+_SPECULATIVE_FIT = ContextVar('speculative_fit', default=False)
 _FIT_GUARD = threading.Condition(threading.Lock())
-_FIT_BUSY = False
+_FIT_IN_USE = 0
 _PRIORITY_WORKSPACES: set[str] = set()
+_ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
+_ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
+
+
+class SpeculativePrefetchAbandoned(Exception):
+    """Speculative prefetch yielded because final validation owns the workspace."""
+
+
 # Default covers multi-cycle observed fits for longer clips without unbounded waits.
 DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS = 360.
 
@@ -20,6 +31,75 @@ def _workspace_key(workspace) -> str | None:
     if workspace is None:
         return None
     return str(Path(workspace).expanduser().resolve())
+
+
+@contextmanager
+def speculative_fit_context():
+    """Mark prefetch bake/fit so finalization priority can preempt it."""
+    token = _SPECULATIVE_FIT.set(True)
+    try:
+        yield
+    finally:
+        _SPECULATIVE_FIT.reset(token)
+
+
+@contextmanager
+def speculative_workspace(workspace):
+    """Track speculative prefetch for a workspace across browser-worker threads."""
+    key = _workspace_key(workspace)
+    if key is None:
+        yield
+        return
+    with _FIT_GUARD:
+        _ACTIVE_SPECULATIVE_WORKSPACES.add(key)
+        _FIT_GUARD.notify_all()
+    try:
+        yield
+    finally:
+        with _FIT_GUARD:
+            _ACTIVE_SPECULATIVE_WORKSPACES.discard(key)
+            _FIT_GUARD.notify_all()
+
+
+def active_speculative_workspace(workspace) -> bool:
+    key = _workspace_key(workspace)
+    if key is None:
+        return False
+    with _FIT_GUARD:
+        return key in _ACTIVE_SPECULATIVE_WORKSPACES
+
+
+def abandon_speculative_workspace(workspace) -> None:
+    """Stop speculative prefetch/fit for a workspace entering final validation."""
+    key = _workspace_key(workspace)
+    if key is None:
+        return
+    with _FIT_GUARD:
+        _ABANDONED_SPECULATIVE_WORKSPACES.add(key)
+        _FIT_GUARD.notify_all()
+
+
+def speculative_prefetch_abandoned(workspace) -> bool:
+    key = _workspace_key(workspace)
+    if key is None:
+        return False
+    with _FIT_GUARD:
+        return key in _ABANDONED_SPECULATIVE_WORKSPACES
+
+
+def fit_should_yield_for_priority() -> bool:
+    """Speculative fits yield whenever any final validation needs the CPU fit."""
+    session = current_fit_session()
+    workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
+    with _FIT_GUARD:
+        speculative = bool(_SPECULATIVE_FIT.get()) or (
+            workspace is not None and workspace in _ACTIVE_SPECULATIVE_WORKSPACES
+        )
+        if not speculative:
+            return False
+        return bool(_PRIORITY_WORKSPACES) or (
+            workspace is not None and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
+        )
 
 
 @contextmanager
@@ -43,15 +123,37 @@ def prioritize_fit_workspaces(workspaces):
 
 @contextmanager
 def cpu_fit_slot():
-    """Avoid competing Python-heavy solvers; queueing consumes no fit budget."""
-    global _FIT_BUSY
+    """Bound concurrent Python-heavy solvers; queueing consumes no fit budget."""
+    global _FIT_IN_USE
     queued = monotonic()
     session = current_fit_session()
     workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
+    slot_limit = max(1, int(cpu_fit_slot_limit()))
     with _FIT_GUARD:
-        while _FIT_BUSY or (_PRIORITY_WORKSPACES and workspace not in _PRIORITY_WORKSPACES):
+        speculative = bool(_SPECULATIVE_FIT.get()) or (
+            workspace is not None and workspace in _ACTIVE_SPECULATIVE_WORKSPACES
+        )
+        # Limited concurrent fits (coding headroom). Speculative work yields the
+        # whole fit pool while any final validation is prioritized. Abandoned
+        # speculative workspaces must not reacquire.
+        while True:
+            if (
+                speculative
+                and workspace is not None
+                and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
+            ):
+                raise SpeculativePrefetchAbandoned()
+            blocked_for_priority = (
+                speculative and bool(_PRIORITY_WORKSPACES)
+            ) or (
+                not speculative
+                and _PRIORITY_WORKSPACES
+                and (workspace is None or workspace not in _PRIORITY_WORKSPACES)
+            )
+            if _FIT_IN_USE < slot_limit and not blocked_for_priority:
+                break
             _FIT_GUARD.wait(timeout=0.25)
-        _FIT_BUSY = True
+        _FIT_IN_USE += 1
         waited = monotonic() - queued
         if session is not None and session.started is not None:
             session.started += waited
@@ -59,7 +161,7 @@ def cpu_fit_slot():
         yield waited
     finally:
         with _FIT_GUARD:
-            _FIT_BUSY = False
+            _FIT_IN_USE = max(0, _FIT_IN_USE - 1)
             _FIT_GUARD.notify_all()
 
 

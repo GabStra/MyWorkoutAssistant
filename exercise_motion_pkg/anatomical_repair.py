@@ -8,7 +8,23 @@ from scipy.optimize import least_squares
 from .physical_validation import anatomical_structure_residuals, angles, body_scale
 
 
-ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v3_batched_derivatives'
+ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v5_local_dof'
+
+# Stop soft polishing once geometry is valid and overall lean matches the
+# observation to the same tolerance as the lean-preservation tests.
+_ANATOMY_FEASIBLE_LEAN = 1e-5
+
+
+class _AnatomyFeasible(Exception):
+    """Stop least_squares once geometry is already inside repair bounds."""
+
+    def __init__(self, values):
+        self.values = np.asarray(values, dtype=float)
+
+# Cap pathological pre-solve burn, but leave room for hard multi-frame repairs.
+# Unbounded runs were seen at ~700–1350 evals; keep a high-quality ceiling below that.
+ANATOMY_REPAIR_MAX_EVALS_PER_FRAME = 60
+ANATOMY_REPAIR_MAX_TOTAL_EVALS = 480
 
 # These defects may reach projection; they still must pass final validation.
 # Degenerate bones and non-anatomical physical failures are not repair promises.
@@ -17,7 +33,7 @@ ANATOMICAL_REPAIR_INPUT_REASONS = frozenset({
     'anatomy_socket_alignment', 'anatomy_torso_bend',
     'anatomy_chest_attachment', 'anatomy_spine_deviation',
     'anatomy_spine_fold', 'anatomy_neck_fold', 'anatomy_hinge_collapse',
-    'anatomy_bone_length_variation',
+    'anatomy_bone_length_variation', 'anatomy_span_variation',
 })
 
 
@@ -27,7 +43,7 @@ def torso_directions(points, names):
     return directions/np.maximum(np.linalg.norm(directions, axis=-1, keepdims=True), 1e-9)
 
 
-def repair_residuals(points, names):
+def repair_residuals(points, names, span_targets=None):
     structure, labels = anatomical_structure_residuals(points, names)
     rows = [structure]
     for side in ('left', 'right'):
@@ -35,6 +51,11 @@ def repair_residuals(points, names):
         value = angles(*(points[:, names.index(n)] for n in joints))
         rows.append(np.maximum(np.maximum(np.deg2rad(35.1)-value, value-np.deg2rad(164.9)), 0.)[:, None])
         labels.append('anatomy_ankle_collapse:'+side+'_ankle')
+    from .physical_validation import (SPAN_TOLERANCE_METERS, SPAN_TOLERANCE_RATIO,
+                                      span_rigidity_violations)
+    for label, (deviation, target) in span_rigidity_violations(points, names, span_targets).items():
+        rows.append(np.maximum(deviation-max(SPAN_TOLERANCE_METERS, target*SPAN_TOLERANCE_RATIO), 0.)[:, None])
+        labels.append('anatomy_span_variation:'+label)
     return np.concatenate(rows, axis=1), labels
 
 
@@ -69,6 +90,75 @@ def batched_forward_jacobian(residual_batch, values):
     return ((residuals[1:] - residuals[0]) / actual_steps[:, None]).T
 
 
+def _joints_for_repair_label(label, names, parents):
+    reason, joint = label.split(':', 1)
+    if reason == 'anatomy_ankle_collapse':
+        side = joint.split('_')[0]
+        return [side + '_' + part for part in ('knee', 'ankle', 'foot')]
+    if reason == 'anatomy_span_variation':
+        if joint == 'shoulders':
+            return ['left_shoulder', 'right_shoulder', 'left_collar', 'right_collar', 'spine3', 'neck']
+        if joint == 'hips':
+            return ['left_hip', 'right_hip', 'pelvis', 'spine1']
+        return [joint]
+    if reason == 'anatomy_degenerate_bone':
+        parent = names[parents[names.index(joint)]] if joint in names and parents[names.index(joint)] >= 0 else joint
+        return [joint, parent]
+    if reason == 'anatomy_bilateral_proportions':
+        other = joint.replace('left_', 'right_', 1)
+        affected = [joint, other]
+        for name in list(affected):
+            if name in names and parents[names.index(name)] >= 0:
+                affected.append(names[parents[names.index(name)]])
+        return affected
+    if reason == 'anatomy_segment_proportion':
+        return [joint, names[parents[names.index(joint)]]] if joint in names and parents[names.index(joint)] >= 0 else [joint]
+    if reason == 'anatomy_socket_alignment':
+        suffix = 'hip' if joint == 'pelvis' else 'collar'
+        return [joint, 'left_' + suffix, 'right_' + suffix]
+    if reason == 'anatomy_hinge_collapse':
+        side, hinge = joint.split('_', 1)
+        parts = ('hip', 'knee', 'ankle') if hinge == 'knee' else ('shoulder', 'elbow', 'wrist')
+        return [side + '_' + part for part in parts]
+    if reason == 'anatomy_spine_deviation':
+        return ['pelvis', 'neck', joint]
+    if reason == 'anatomy_spine_fold':
+        parent = names[parents[names.index(joint)]] if joint in names else joint
+        return ['pelvis', 'neck', joint, parent]
+    if reason == 'anatomy_neck_fold':
+        return ['spine3', 'neck', 'head']
+    if reason == 'anatomy_torso_bend':
+        affected = ['left_hip', 'right_hip', 'spine1']
+        affected += ['left_shoulder', 'right_shoulder'] if joint == 'shoulders' else ['neck']
+        return affected
+    if reason == 'anatomy_chest_attachment':
+        affected = ['spine3', 'neck']
+        affected += (['left_shoulder', 'right_shoulder'] if joint == 'shoulders'
+                     else ['left_collar', 'right_collar'])
+        return affected
+    if reason == 'anatomy_bone_length_variation':
+        return [joint]
+    return [joint] if joint in names else []
+
+
+def free_rotation_columns(rig, active_labels):
+    """Limit FD probes to rotations that can fix the active frame violations."""
+    names = rig.names
+    affected = {'pelvis', 'left_hip', 'right_hip', 'neck'}
+    for label in active_labels:
+        affected.update(_joints_for_repair_label(label, names, rig.parents))
+    columns = set()
+    for name in affected:
+        if name not in names:
+            continue
+        ancestor = names.index(name)
+        while ancestor >= 0:
+            if ancestor in rig.slots:
+                columns.update(range(rig.slots[ancestor], rig.slots[ancestor] + 3))
+            ancestor = rig.parents[ancestor]
+    return sorted(columns) or list(range(3, rig.width))
+
+
 def repair_rig_anatomy(rig, observed, *, deadline):
     """Correct curvature with fixed root positions, lengths and overall lean.
 
@@ -79,6 +169,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     names = rig.names
     from .fit_runtime import current_fit_session
     session = current_fit_session()
+    from .physical_validation import span_rigidity_violations
+    span_targets = {label: target
+                    for label, (_, target) in span_rigidity_violations(observed, names).items()}
     before, labels = repair_residuals(observed, names)
     # Only impossible proportions are changed; preserve the approved model's
     # dimensions whenever they are already inside the display-rig bounds.
@@ -103,16 +196,19 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     residual_batches = 0
     residual_points = 0
     warm_starts = 0
+    skipped_feasible = 0
+    free_column_total = 0
+    free_column_frames = 0
     previous_correction = None
     cache = {}
-    children = rig.order[1:]
-    parents = [rig.parents[j] for j in children]
-    direction_weights = np.array([1. if names[j] == 'head' else .3 for j in children])
+
     for frame in np.flatnonzero(bad):
+        if evaluated >= ANATOMY_REPAIR_MAX_TOTAL_EVALS:
+            break
+        if monotonic() >= deadline:
+            break
         base = rig.initial[frame].copy()
         target = initial_points[frame]-base[:3]
-        target_bones = target[children]-target[parents]
-        target_directions = target_bones/np.maximum(np.linalg.norm(target_bones, axis=-1, keepdims=True), 1e-9)
         torso_direction = observed_torso_directions[frame]
         key = hashlib.sha256(ANATOMICAL_REPAIR_STRATEGY.encode() + repr(names).encode()
                              + rig.offsets.tobytes() + np.float64(scale).tobytes()
@@ -126,49 +222,104 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             rig.initial[frame, columns] = cache[key]
             continue
 
+        active_labels = [labels[index] for index in np.flatnonzero(violations[frame] > 1e-6)]
+        free_columns = free_rotation_columns(rig, active_labels)
+        column_position = {column: index for index, column in enumerate(columns)}
+        free_column_total += len(free_columns)
+        free_column_frames += 1
+        frame_nfev = 0
+        seed_full = base[columns]
+
+        def pack(full_values):
+            return np.asarray([full_values[column_position[column]] for column in free_columns], dtype=float)
+
+        def unpack(free_values, full_seed):
+            full_values = np.asarray(full_seed, dtype=float).copy()
+            for column, value in zip(free_columns, free_values):
+                full_values[column_position[column]] = value
+            return full_values
+
+        def repair_feasible(values):
+            current = base.copy()
+            current[columns] = values
+            candidate = rig.decode(current[None])
+            if np.max(repair_residuals(candidate, names, span_targets)[0], initial=0.) > 1e-6:
+                return False
+            lean = torso_directions(candidate, names) - torso_direction
+            return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
+
         def residual_batch(values):
-            nonlocal residual_batches, residual_points
-            if monotonic() >= deadline:
+            nonlocal residual_batches, residual_points, frame_nfev
+            from .fit_runtime import fit_should_yield_for_priority
+            if fit_should_yield_for_priority() or monotonic() >= deadline:
                 raise TimeoutError
             residual_batches += 1
             residual_points += len(values)
+            if len(values) == 1:
+                frame_nfev += 1
             current = np.tile(base, (len(values), 1))
-            current[:, columns] = values
+            for row, free_values in enumerate(values):
+                current[row, columns] = unpack(free_values, seed_full)
             candidate = rig.decode(current)
-            geometry = repair_residuals(candidate, names)[0]
-            fidelity = (candidate-base[:3]-target)/scale
-            bones = candidate[:, children]-candidate[:, parents]
-            directions = bones/np.maximum(np.linalg.norm(bones, axis=-1, keepdims=True), 1e-9)
-            orientation = (directions-target_directions)*direction_weights[:, None]
+            geometry = repair_residuals(candidate, names, span_targets)[0]
             lean = torso_directions(candidate, names)-torso_direction
+            # Soft orientation polishing used to keep burning evals after the
+            # initializer bounds were already met. Exit as soon as geometry and
+            # lean pass; keep a light fidelity pull so articulation stays near
+            # the observation while those bounds are enforced.
+            if (len(values) == 1 and np.max(geometry, initial=0.) <= 1e-6
+                    and float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN):
+                raise _AnatomyFeasible(unpack(values[0], seed_full))
+            fidelity = (candidate-base[:3]-target)/scale
             return np.concatenate([fidelity.reshape(len(values), -1),
-                                   orientation.reshape(len(values), -1),
                                    10000.*geometry, 10000.*lean], axis=1)
 
-        initial = base[columns]
+        full_initial = base[columns]
         if previous_correction is not None:
-            proposed = initial + previous_correction
-            costs = np.sum(residual_batch(np.stack([initial, proposed]))**2, axis=1)
+            proposed = full_initial + previous_correction
+            costs = np.sum(residual_batch(np.stack([pack(full_initial), pack(proposed)]))**2, axis=1)
             if costs[1] < costs[0]:
-                initial = proposed
+                full_initial = proposed
+                seed_full = full_initial
                 warm_starts += 1
-        solved = least_squares(lambda values: residual_batch(values[None])[0], initial,
-                               jac=lambda values: batched_forward_jacobian(residual_batch, values), max_nfev=80,
-                               ftol=1e-8, xtol=1e-8, gtol=1e-8)
-        evaluated += solved.nfev
-        rig.initial[frame, columns] = solved.x
-        cache[key] = solved.x
-        previous_correction = solved.x-base[columns]
-        # Persist only feasible completed frames; a timed-out fit can resume them.
-        if session is not None:
-            candidate = rig.decode(rig.initial[frame:frame+1])
-            if np.max(repair_residuals(candidate, names)[0], initial=0.) <= 1e-6:
-                session.repairs[key] = solved.x.tolist()
+        if repair_feasible(full_initial):
+            rig.initial[frame, columns] = full_initial
+            cache[key] = np.asarray(full_initial, dtype=float)
+            previous_correction = full_initial - base[columns]
+            skipped_feasible += 1
+            if session is not None:
+                session.repairs[key] = np.asarray(full_initial, dtype=float).tolist()
+            continue
+        frame_budget = min(
+            ANATOMY_REPAIR_MAX_EVALS_PER_FRAME,
+            ANATOMY_REPAIR_MAX_TOTAL_EVALS - evaluated,
+        )
+        if frame_budget < 1:
+            break
+        try:
+            solved = least_squares(
+                lambda values: residual_batch(values[None])[0], pack(seed_full),
+                jac=lambda values: batched_forward_jacobian(residual_batch, values),
+                max_nfev=frame_budget, ftol=1e-8, xtol=1e-8, gtol=1e-8)
+            solved_x = unpack(solved.x, seed_full)
+            evaluated += solved.nfev
+        except _AnatomyFeasible as done:
+            solved_x = done.values
+            evaluated += max(frame_nfev, 1)
+        except TimeoutError:
+            break
+        rig.initial[frame, columns] = solved_x
+        cache[key] = solved_x
+        previous_correction = solved_x-base[columns]
+        if session is not None and repair_feasible(solved_x):
+            session.repairs[key] = np.asarray(solved_x, dtype=float).tolist()
+
     corrected = rig.decode(rig.initial)
-    after, _ = repair_residuals(corrected, names)
+    after, _ = repair_residuals(corrected, names, span_targets)
     displacement = np.linalg.norm(corrected-observed, axis=-1)
     lean_change = np.rad2deg(np.arccos(np.clip(np.sum(
         torso_directions(corrected, names)*observed_torso_directions, axis=-1), -1., 1.)))
+    remaining_bad = int(np.sum(np.any(after > 1e-6, axis=1)))
     return corrected, {
         'strategy': ANATOMICAL_REPAIR_STRATEGY,
         'applied': bool(np.max(displacement) > 1e-8),
@@ -178,6 +329,11 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         'projectedFrameCount': int(bad.sum()), 'evaluations': evaluated,
         'residualBatchCount': residual_batches, 'residualPointCount': residual_points,
         'warmStartedFrameCount': warm_starts,
+        'feasibleSkipFrameCount': skipped_feasible,
+        'averageFreeColumnCount': (
+            float(free_column_total) / free_column_frames if free_column_frames else float(len(columns))),
+        'evaluationBudget': ANATOMY_REPAIR_MAX_TOTAL_EVALS,
+        'unrepairedFrameCount': remaining_bad,
         'maximumCorrectionMeters': float(displacement.max()),
         'maximumTorsoDirectionChangeDegrees': float(lean_change.max()),
     }

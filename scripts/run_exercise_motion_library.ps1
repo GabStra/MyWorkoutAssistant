@@ -426,7 +426,7 @@ while ($true) {
     $round += 1
     $beforeReviewCount = Get-DiscoveryReviewCount
     $beforeSourceTurnSignature = Get-SourceTurnResumeSignature
-    Write-MotionLibraryMessage -NewBlock "Pass 2 - round $round`: larger discovery turns for unresolved exercises; reuse movements already saved."
+    Write-MotionLibraryMessage -NewBlock "Pass 2 - round $round`: finish retained processing and advance source cursors; larger discovery turns for cold unresolved exercises; reuse movements already saved."
     Write-RunState -Phase "deferred_pass_started" -SummaryJson $firstPassSummaryPath
     Invoke-MovementPass -ReuseSelected
     Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath

@@ -27,6 +27,8 @@ import threading
 import traceback
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -546,6 +548,13 @@ MATERIALIZED_SOURCE_FIDELITY_REJECTION_REASONS = frozenset(
         "materialized_source_endpoint_pose_mismatch",
     )
 )
+# Hard fidelity codes that mean the articulation target itself cannot pass the
+# source-pose gate. Unavailable/incomplete evidence must not skip fitting.
+PRE_FIT_SOURCE_ARTICULATION_FIDELITY_REJECTION_REASONS = frozenset(
+    reason
+    for reason in MATERIALIZED_SOURCE_FIDELITY_REJECTION_REASONS
+    if reason != "materialized_source_pose_fidelity_unavailable"
+)
 MATERIALIZED_NON_BLOCKING_WHEN_VALIDATION_DISABLED = frozenset(
     (
         "materialized_exported_preview_blank",
@@ -576,6 +585,9 @@ FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS = frozenset(
         "materialized_source_confirmed_support_unverifiable",
         "materialized_support_contact_contradiction",
         "materialized_unrendered_elevated_support_surface",
+        "materialized_contract_terminal_support_not_elevated",
+        "materialized_terminal_support_not_settled",
+        "materialized_travel_facing_mismatch",
         "materialized_exported_preview_blank",
         "materialized_exported_preview_unreadable",
         "materialized_scene_orientation_inverted",
@@ -646,6 +658,45 @@ FINAL_OUTPUT_HARD_SYSTEM_REJECTION_REASONS = frozenset(
     )
 )
 PARENT_SOURCE_WINDOW_FALLBACK_ATTEMPT_MODE = "parent_source_window_fallback"
+TERMINAL_SETTLE_TRIM_ATTEMPT_MODE = "terminal_settle_boundary_trim"
+
+
+def ranked_candidate_with_trimmed_source_window(
+    ranked_candidate: RankedCandidate,
+    *,
+    end_seconds: float,
+    reason: str,
+) -> RankedCandidate | None:
+    """Shorten the source window to an already-settled boundary frame.
+
+    This is the repair arm of the terminal-settle gate: instead of discarding
+    a candidate whose export ends mid-rotation, re-cut the same source so the
+    boundary lands on the latest settled frame the gate identified.
+    """
+    hint = ranked_candidate.source_chunk_hint
+    if hint is None or not math.isfinite(end_seconds):
+        return None
+    from .contract_support_gates import TERMINAL_TRIM_MIN_REMAINING_SECONDS
+    if end_seconds <= hint.start_seconds + TERMINAL_TRIM_MIN_REMAINING_SECONDS:
+        return None
+    if ranked_candidate.candidate.get("sourceWindowAttemptMode") == TERMINAL_SETTLE_TRIM_ATTEMPT_MODE:
+        return None
+    candidate = copy.deepcopy(ranked_candidate.candidate)
+    current_attempt_index = parse_optional_int(candidate.get("sourceWindowAttemptIndex"))
+    candidate["sourceWindowAttemptIndex"] = 1 if current_attempt_index is None else current_attempt_index + 1
+    candidate["sourceWindowAttemptSource"] = TERMINAL_SETTLE_TRIM_ATTEMPT_MODE
+    candidate["sourceWindowAttemptMode"] = TERMINAL_SETTLE_TRIM_ATTEMPT_MODE
+    candidate["terminalSettleTrimReason"] = reason
+    candidate["sourceWindowHint"] = source_chunk_hint_manifest(
+        SourceChunkHint(
+            start_seconds=hint.start_seconds,
+            end_seconds=min(float(end_seconds), hint.end_seconds),
+            score=hint.score,
+        )
+    )
+    updated = replace(ranked_candidate, candidate=candidate)
+    candidate["sourceWindowAttemptKey"] = ranked_candidate_attempt_key(updated)
+    return updated
 PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS = frozenset(
     (
         *FINAL_OUTPUT_VALIDATOR_REJECT_TAGS,
@@ -692,6 +743,9 @@ PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS = frozenset(
         *MATERIALIZED_SOURCE_FIDELITY_REJECTION_REASONS,
         SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON,
         TARGET_MOTION_MATERIALIZED_REJECTION_REASON,
+        "materialized_contract_terminal_support_not_elevated",
+        "materialized_terminal_support_not_settled",
+        "materialized_travel_facing_mismatch",
     )
 )
 PARENT_SOURCE_WINDOW_FALLBACK_NON_RECOVERABLE_REASONS = frozenset(
@@ -2001,12 +2055,17 @@ def expand_ranked_candidates_for_source_windows(
 
 
 def reconstruction_priority_score(ranked_candidate: RankedCandidate) -> float | None:
-    """Estimate reconstruction observability without preferring a named view.
+    """Estimate reconstruction observability, preferring views by contract need.
 
-    Angle is deliberately absent. A side, frontal, or oblique source wins only
-    when its required moving chains are more completely and stably observable.
+    Angle enters only through the contract-derived band: exercises whose
+    dominant motion travels toward equipment (jumps onto a box, step-ups) are
+    depth-ambiguous unless the camera is near profile, so candidates outside
+    that band are penalized. Angle-agnostic exercises keep the previous
+    behavior: the best view is whichever observes the moving chains most
+    completely and stably.
     """
     from .source_observability import observability_ranking_adjustment
+    from .contract_support_gates import contract_preferred_view_band, contract_view_band_penalty
     score = _weighted_pose_prefilter_score(
         ranked_candidate,
         (
@@ -2025,8 +2084,12 @@ def reconstruction_priority_score(ranked_candidate: RankedCandidate) -> float | 
     if score is None:
         return None
     pose = (ranked_candidate.candidate.get("visionPayload") or {}).get("posePrefilter") or {}
+    band = contract_preferred_view_band(
+        source_window_motion_contract_from_candidate(ranked_candidate.candidate))
+    view_penalty = contract_view_band_penalty(
+        band, parse_optional_float(pose.get("frontalOrBackViewEvidence")))
     return max(0., min(1., score + observability_ranking_adjustment(
-        pose.get("reconstructionObservability"))))
+        pose.get("reconstructionObservability")) - view_penalty))
 
 
 def candidate_requires_depth_observable_lying_support(
@@ -3592,6 +3655,22 @@ def set_caption_candidate_deadline(
         session.set_candidate_deadline(deadline)
 
 
+_PROGRESS_ACTIVITY: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "bake_and_rank_progress_activity",
+    default=None,
+)
+
+
+@contextmanager
+def bake_progress_activity(callback: Callable[[str], None] | None):
+    """Forward bake-and-rank progress lines to a wave/UI activity updater."""
+    token = _PROGRESS_ACTIVITY.set(callback)
+    try:
+        yield
+    finally:
+        _PROGRESS_ACTIVITY.reset(token)
+
+
 def bake_and_rank_progress(message: str) -> None:
     text = f"[bake-and-rank] {message}"
     try:
@@ -3600,6 +3679,13 @@ def bake_and_rank_progress(message: str) -> None:
         encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
         safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
         print(safe_text, flush=True)
+    activity = _PROGRESS_ACTIVITY.get()
+    if activity is not None:
+        try:
+            activity(str(message))
+        except Exception:
+            # Progress must never fail the owning bake.
+            pass
 
 
 def ranked_candidate_progress_label(ranked_candidate: RankedCandidate) -> str:
@@ -7965,11 +8051,26 @@ def materialized_output_acceptance_metrics(
         and not bool(target_motion_preservation_metrics.get("passed", True))
     ):
         rejection_reasons.append(SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON)
+    from .contract_support_gates import contract_support_gates
+    try:
+        contract_support_export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        contract_support_contract = (
+            target_motion_contract_from_ranking_payload(ranking.payload)
+            if isinstance(ranking.payload, dict) else None
+        )
+        contract_support_metrics = contract_support_gates(
+            contract_support_export, contract_support_contract)
+    except Exception:
+        contract_support_metrics = {"available": False, "passed": True, "reasons": []}
+    if contract_support_metrics.get("available") and not contract_support_metrics.get("passed", True):
+        rejection_reasons.extend(
+            str(reason) for reason in contract_support_metrics.get("reasons") or [])
 
     payload: dict[str, Any] = {
         "passed": not rejection_reasons,
         "rejectionReasons": dedupe_text(rejection_reasons),
         "skippedReasons": dedupe_text(skipped_reasons),
+        "contractSupportMetrics": contract_support_metrics,
         "motionStrengthMetrics": motion_metrics,
         "previewReadabilityMetrics": readability_metrics,
         "kinematicPlausibilityMetrics": kinematic_metrics,
@@ -9328,8 +9429,10 @@ def materialized_source_pose_fidelity_metrics(
     if gate_applied:
         if required and any(metric.get("comparisonUnresolved") for metric in metrics.get("perAngleEndpointMetrics", {}).values()):
             rejection_reasons.append("materialized_source_pose_fidelity_unavailable")
-        if any(metric.get("mismatch") and source_pose_chain_has_spatial_mismatch(metrics, name)
-               for name, metric in metrics.get("perAngleEndpointMetrics", {}).items()):
+        if any(
+            materialized_source_endpoint_mismatch_is_decisive(metrics, name, metric)
+            for name, metric in metrics.get("perAngleEndpointMetrics", {}).items()
+        ):
             rejection_reasons.append("materialized_source_endpoint_pose_mismatch")
         p90_joint_error = parse_optional_float(metrics.get("p90JointErrorBodyRatio"))
         median_lower_error = parse_optional_float(
@@ -9435,12 +9538,44 @@ def numeric_percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
-def source_pose_chain_has_spatial_mismatch(metrics: dict[str, Any], name: str) -> bool:
+def source_pose_chain_has_spatial_mismatch(
+    metrics: dict[str, Any],
+    name: str,
+    *,
+    min_body_ratio: float = 0.03,
+) -> bool:
     from .pose_fidelity import ANGLE_CHAINS
     errors = metrics.get("perJointMedianErrorBodyRatio") or {}
     # A projected angle alone cannot establish material source-pose loss.
-    return any((parse_optional_float(errors.get(joint)) or 0.) > .03
-               for joint in ANGLE_CHAINS.get(name, ()))
+    return any(
+        (parse_optional_float(errors.get(joint)) or 0.0) > min_body_ratio
+        for joint in ANGLE_CHAINS.get(name, ())
+    )
+
+
+def materialized_source_endpoint_mismatch_is_decisive(
+    metrics: dict[str, Any],
+    name: str,
+    metric: dict[str, Any] | None = None,
+) -> bool:
+    """Hard-kill only when endpoint error is well-conditioned and spatially clear.
+
+    Endpoint angles are compared in camera-frame 3D (2D landmarks lifted with
+    motion depth). Soft-demote hard-kill until that signal is proven reliable:
+    skip when the chain has many unobservable/degenerate samples (>=25%), or
+    when spatial corroboration is weak. Clear, well-conditioned mismatches with
+    strong spatial error still hard-kill.
+    """
+    detail = metric if isinstance(metric, dict) else (metrics.get("perAngleEndpointMetrics") or {}).get(name)
+    if not isinstance(detail, dict) or not detail.get("mismatch"):
+        return False
+    conditioned = int(detail.get("conditionedSampleCount") or 0)
+    foreshortened = int(detail.get("outputForeshortenedSampleCount") or 0)
+    observed = conditioned + foreshortened
+    if observed > 0 and foreshortened / observed >= 0.25:
+        return False
+    # Stronger than the soft 0.03 used for multi-region angle corroboration.
+    return source_pose_chain_has_spatial_mismatch(metrics, name, min_body_ratio=0.06)
 
 
 def source_pose_angle_mismatch_is_corroborated(
@@ -18063,6 +18198,38 @@ def process_ranked_candidates_until_final_selection(
                 f"{ranked_candidate_progress_label(ranked_candidate)} "
                 f"reason={source_family_block_reason}"
             )
+        # Repair before discarding: an unsettled endpoint with a settled
+        # boundary inside the trim budget is re-cut from the same source
+        # rather than losing the whole candidate.
+        terminal_trim_candidate = None
+        if (
+            allow_parent_source_window_fallback
+            and "materialized_terminal_support_not_settled" in rejection_reasons
+            and local_rejected_best is not None
+            and local_rejected_best[1] is not None
+        ):
+            gate_payload = (local_rejected_best[1].payload or {}).get("materializedOutputAcceptanceGate")
+            settle_check = ((gate_payload or {}).get("contractSupportMetrics") or {}).get("checks", {}).get("terminalSettle") if isinstance(gate_payload, dict) else None
+            trim_repair = settle_check.get("repair") if isinstance(settle_check, dict) else None
+            if isinstance(trim_repair, dict) and trim_repair.get("feasible"):
+                terminal_trim_candidate = ranked_candidate_with_trimmed_source_window(
+                    ranked_candidate,
+                    end_seconds=float(trim_repair.get("sourceTimeSec")),
+                    reason="materialized_terminal_support_not_settled",
+                )
+        if terminal_trim_candidate is not None:
+            terminal_trim_key = ranked_candidate_attempt_key(terminal_trim_candidate)
+            if terminal_trim_key not in queued_attempt_keys:
+                queued_attempt_keys.add(terminal_trim_key)
+                candidate_queue.append(terminal_trim_candidate)
+                timings["terminalSettleTrimQueuedCount"] = int(
+                    timings.get("terminalSettleTrimQueuedCount", 0)) + 1
+                result["terminalSettleTrimQueued"] = True
+                attempt_payload["terminalSettleTrimQueued"] = True
+                bake_and_rank_progress(
+                    "queued terminal-settle boundary trim retry for "
+                    f"{ranked_candidate_progress_label(ranked_candidate)}"
+                )
         if allow_parent_source_window_fallback and should_queue_parent and parent_fallback_reason is not None:
             parent_fallback_candidate = ranked_candidate_with_parent_source_window_fallback(
                 ranked_candidate,
@@ -18617,6 +18784,23 @@ def process_ranked_candidate(
             controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
             for artifact in baked_artifacts
         )
+        if processing_incomplete:
+            for artifact in baked_artifacts:
+                controlled = artifact.export_payload.get("controlledMotionFit")
+                if not isinstance(controlled, dict):
+                    continue
+                if not controlled_fit_processing_incomplete(controlled):
+                    continue
+                budget = controlled.get("candidateFitBudget")
+                if isinstance(budget, dict):
+                    result_payload["candidateFitBudget"] = budget
+                result_payload["controlledMotionFit"] = {
+                    key: controlled.get(key)
+                    for key in ("applied", "reason", "candidateFitBudget", "cycleSelectionAttempts",
+                                "elapsedSeconds", "budgetOwner")
+                    if key in controlled
+                }
+                break
         record_timing_seconds(result_payload, "previewBakeSeconds", stage_started)
         active_stage = "baked_motion_validation"
         review_item_started = time.perf_counter()
@@ -18811,11 +18995,43 @@ def process_ranked_candidate(
         elif processing_incomplete or any("controlled_motion_processing_incomplete" in item.get("rejectionReasons", [])
                  for item in result_payload["rejectedSourceClips"]):
             result_payload["status"] = "needs_motion_processing"
-            result_payload["failures"].append({"reason": "controlled_motion_processing_incomplete"})
+            failure = {"reason": "controlled_motion_processing_incomplete"}
+            controlled = result_payload.get("controlledMotionFit")
+            if isinstance(controlled, dict) and controlled.get("reason"):
+                failure["rejectionReasons"] = [str(controlled["reason"])]
+            result_payload["failures"].append(failure)
         elif any(item.get("reason") == "baked_motion_too_static" for item in result_payload["rejectedSourceClips"]):
             result_payload["status"] = "skipped_no_usable_baked_motion"
+            result_payload["failureStage"] = "baked_motion_validation"
+            result_payload["failures"].append({
+                "reason": "baked_motion_too_static",
+                "rejectionReasons": ["baked_motion_too_static"],
+            })
         else:
-            result_payload["status"] = "skipped_no_baked_clip"
+            rejection_codes: list[str] = []
+            for item in result_payload.get("rejectedSourceClips") or []:
+                if not isinstance(item, dict):
+                    continue
+                item_reason = item.get("reason")
+                if isinstance(item_reason, str) and item_reason:
+                    rejection_codes.append(item_reason)
+                for nested in item.get("rejectionReasons") or []:
+                    if isinstance(nested, str) and nested:
+                        rejection_codes.append(nested)
+            rejection_codes = list(dict.fromkeys(rejection_codes))
+            if rejection_codes:
+                # Prefer an explicit validation rejection over the opaque
+                # "skipped_no_baked_clip" umbrella used when no review clip remains.
+                result_payload["status"] = "rejected_baked_motion_validation"
+                result_payload["failureStage"] = "baked_motion_validation"
+                result_payload["failures"].append({
+                    "reason": "baked_motion_validation_failed",
+                    "rejectionReasons": rejection_codes,
+                })
+            else:
+                result_payload["status"] = "skipped_no_baked_clip"
+                result_payload["failureStage"] = "baked_motion_validation"
+                result_payload["failures"].append({"reason": "no_baked_review_clip"})
         record_timing_seconds(result_payload, "totalSeconds", candidate_started)
         write_candidate_bake_manifest(candidate_workspace, result_payload)
         return result_payload
@@ -22387,6 +22603,52 @@ def baked_source_support_evidence(payload: dict[str, Any]) -> dict[str, Any] | N
     return evidence
 
 
+def pre_fit_source_articulation_fidelity_rejection(
+    export_payload: dict[str, Any],
+    source_pose_reference: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return fidelity metrics when bake sourceJoints already fail hard fidelity.
+
+    Fit retargets toward each frame's sourceJoints. Browser IK joints alone can
+    still be salvaged, so only the articulation target is probed here. Missing
+    reference or incomplete sourceJoints leaves fitting enabled.
+    """
+    if not isinstance(source_pose_reference, dict):
+        return None
+    frames = export_payload.get("frames")
+    if not isinstance(frames, list) or not frames:
+        return None
+    articulation_frames: list[dict[str, Any]] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            return None
+        source_joints = frame.get("sourceJoints")
+        if not isinstance(source_joints, dict) or not source_joints:
+            return None
+        articulation_frames.append({**frame, "joints": source_joints})
+    probe = {**export_payload, "frames": articulation_frames}
+    reference = source_pose_reference
+    if source_pose_reference.get("frames") and probe.get("frames"):
+        reference = source_pose_reference_for_motion(source_pose_reference, probe)
+    fidelity = materialized_source_pose_fidelity_metrics(
+        source_pose_payload=reference,
+        output_motion_payload=probe,
+        required=True,
+    )
+    hard_reasons = [
+        reason
+        for reason in (fidelity.get("rejectionReasons") or [])
+        if reason in PRE_FIT_SOURCE_ARTICULATION_FIDELITY_REJECTION_REASONS
+    ]
+    if not hard_reasons:
+        return None
+    return {
+        **fidelity,
+        "rejectionReasons": hard_reasons,
+        "preFitSourceArticulationProbe": True,
+    }
+
+
 def constrain_baked_payload_to_source_articulation(
     payload: dict[str, Any],
     *,
@@ -22761,6 +23023,7 @@ def bake_preview_loops_with_playwright(
     exercise_name: str | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
     source_foot_support_evidence: dict[str, Any] | None = None,
+    speculative_prefetch: bool = False,
 ) -> list[BakedLoopArtifact]:
     from dataclasses import asdict
     from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock, render_with_cpu_slot, PROCESSING_ATTEMPT_ID
@@ -22814,69 +23077,97 @@ def bake_preview_loops_with_playwright(
                               Path(__file__).with_name("loop_cycles.py"),
                               Path(__file__).with_name("repetition_phase.py"),
                               Path(__file__).with_name("pose_fidelity.py")])
-    with stage_lock(checkpoint):
+    def artifacts_from_cached(cached: dict[str, Any]) -> list[BakedLoopArtifact]:
+        artifacts = []
+        for entry in cached["artifacts"]:
+            values = dict(entry["artifact"])
+            values["skeleton_path"] = Path(values["skeleton_path"])
+            values["review_video_path"] = Path(values["review_video_path"])
+            values["skeleton_path"].write_text(json.dumps(values["export_payload"]), encoding="utf-8")
+            if entry.get("cachedVideo"):
+                shutil.copy2(entry["cachedVideo"], values["review_video_path"])
+            artifacts.append(BakedLoopArtifact(**values))
+        if cached.get("processingAttemptId") is not None:
+            # Prefetch and final processing share one unresolved result. Mark it
+            # consumed so a later process/deferred pass actually refits.
+            try:
+                record = json.loads(checkpoint.read_text(encoding="utf-8"))
+                outputs = [Path(identity["path"]) for identity in record.get("outputs") or []]
+            except (OSError, ValueError, TypeError, KeyError):
+                outputs = []
+            if outputs:
+                consumed = dict(cached)
+                consumed["processingAttemptId"] = f"consumed:{PROCESSING_ATTEMPT_ID}"
+                save_stage(checkpoint, key, consumed, outputs)
+        return artifacts
+
+    def load_cached_artifacts() -> list[BakedLoopArtifact] | None:
         cached = load_stage(checkpoint, key)
         if cached is not None and cached.get("processingAttemptId", PROCESSING_ATTEMPT_ID) != PROCESSING_ATTEMPT_ID:
             cached = None
-        if cached is not None:
-            artifacts = []
-            for entry in cached["artifacts"]:
-                values = dict(entry["artifact"])
-                values["skeleton_path"] = Path(values["skeleton_path"])
-                values["review_video_path"] = Path(values["review_video_path"])
-                values["skeleton_path"].write_text(json.dumps(values["export_payload"]), encoding="utf-8")
-                if entry.get("cachedVideo"):
-                    shutil.copy2(entry["cachedVideo"], values["review_video_path"])
-                artifacts.append(BakedLoopArtifact(**values))
-            if cached.get("processingAttemptId") is not None:
-                # Prefetch and final processing share one unresolved result. Mark it
-                # consumed so a later process/deferred pass actually refits.
-                try:
-                    record = json.loads(checkpoint.read_text(encoding="utf-8"))
-                    outputs = [Path(identity["path"]) for identity in record.get("outputs") or []]
-                except (OSError, ValueError, TypeError, KeyError):
-                    outputs = []
-                if outputs:
-                    consumed = dict(cached)
-                    consumed["processingAttemptId"] = f"consumed:{PROCESSING_ATTEMPT_ID}"
-                    save_stage(checkpoint, key, consumed, outputs)
+        if cached is None:
+            return None
+        return artifacts_from_cached(cached)
+
+    with stage_lock(checkpoint):
+        cached_artifacts = load_cached_artifacts()
+        if cached_artifacts is not None:
+            return cached_artifacts
+
+    from .fit_runtime import SpeculativePrefetchAbandoned, speculative_prefetch_abandoned
+
+    def should_abort_speculative() -> bool:
+        return speculative_prefetch and speculative_prefetch_abandoned(candidate_workspace)
+
+    if should_abort_speculative():
+        raise SpeculativePrefetchAbandoned()
+
+    from .storage import require_storage_reserve
+    require_storage_reserve(candidate_workspace)
+
+    def bake_candidate():
+        from .fit_runtime import candidate_fit_session, SpeculativePrefetchAbandoned
+        if should_abort_speculative():
+            raise SpeculativePrefetchAbandoned()
+        with candidate_fit_session(candidate_workspace):
+            return _bake_preview_loops_with_playwright_uncached(
+                preview_html_path, eligible_loops, candidate_workspace, review_frames,
+                rank_preview_variants=rank_preview_variants, adaptive_preview_settings=adaptive_preview_settings,
+                max_adaptive_preview_settings=max_adaptive_preview_settings, caption_images=caption_images,
+                exercise_name=exercise_name, exercise_motion_contract=exercise_motion_contract,
+                source_foot_support_evidence=source_foot_support_evidence,
+            )
+
+    artifacts = render_with_cpu_slot(bake_candidate)
+    entries = []
+    outputs = []
+    for index, artifact in enumerate(artifacts):
+        if not artifact.export_payload.get("preRenderDeterministicGate", {}).get("passed", True):
+            entries.append({"artifact": asdict(artifact), "cachedVideo": None})
+            outputs.append(artifact.skeleton_path)
+            continue
+        if not artifact.review_video_path.is_file():
             return artifacts
-        from .storage import require_storage_reserve
-        require_storage_reserve(candidate_workspace)
-        def bake_candidate():
-            from .fit_runtime import candidate_fit_session
-            with candidate_fit_session(candidate_workspace):
-                return _bake_preview_loops_with_playwright_uncached(
-                    preview_html_path, eligible_loops, candidate_workspace, review_frames,
-                    rank_preview_variants=rank_preview_variants, adaptive_preview_settings=adaptive_preview_settings,
-                    max_adaptive_preview_settings=max_adaptive_preview_settings, caption_images=caption_images,
-                    exercise_name=exercise_name, exercise_motion_contract=exercise_motion_contract,
-                    source_foot_support_evidence=source_foot_support_evidence,
-                )
-        artifacts = render_with_cpu_slot(bake_candidate)
-        entries = []
-        outputs = []
-        for index, artifact in enumerate(artifacts):
-            if not artifact.export_payload.get("preRenderDeterministicGate", {}).get("passed", True):
-                entries.append({"artifact": asdict(artifact), "cachedVideo": None})
-                outputs.append(artifact.skeleton_path)
-                continue
-            if not artifact.review_video_path.is_file():
-                return artifacts
-            cached_video = candidate_workspace / "baked-stage-cache" / key / f"{index}.webm"
-            cached_video.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(artifact.review_video_path, cached_video)
-            entries.append({"artifact": asdict(artifact), "cachedVideo": str(cached_video)})
-            outputs.append(cached_video)
-        from .controlled_motion import controlled_fit_processing_incomplete
-        cache_payload = {"artifacts": entries}
-        if any(controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
-               for artifact in artifacts):
-            # Prefetch and final processing share this attempt. Reuse its
-            # unresolved result once, but retry it in a later process/run.
-            cache_payload["processingAttemptId"] = PROCESSING_ATTEMPT_ID
+        cached_video = candidate_workspace / "baked-stage-cache" / key / f"{index}.webm"
+        cached_video.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(artifact.review_video_path, cached_video)
+        entries.append({"artifact": asdict(artifact), "cachedVideo": str(cached_video)})
+        outputs.append(cached_video)
+    from .controlled_motion import controlled_fit_processing_incomplete
+    cache_payload = {"artifacts": entries}
+    if any(controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
+           for artifact in artifacts):
+        # Prefetch and final processing share this attempt. Reuse its
+        # unresolved result once, but retry it in a later process/run.
+        cache_payload["processingAttemptId"] = PROCESSING_ATTEMPT_ID
+    with stage_lock(checkpoint):
+        if should_abort_speculative():
+            raise SpeculativePrefetchAbandoned()
+        cached_artifacts = load_cached_artifacts()
+        if cached_artifacts is not None:
+            return cached_artifacts
         save_stage(checkpoint, key, cache_payload, outputs)
-        return artifacts
+    return artifacts
 
 
 @browser_worker
@@ -22930,20 +23221,21 @@ def _bake_preview_loops_with_playwright_uncached(
             if isinstance(source_foot_support_evidence, dict):
                 base_options["sourceFootSupportEvidence"] = source_foot_support_evidence
             artifact_base_label = "full-input" if eligible_loop.loop_index < 0 else f"source-{eligible_loop.loop_index + 1}"
+            # Controlled-motion fit is authoritative: after the first fitted
+            # baseline the variant loop breaks, so adaptive planning's extra
+            # bake/VLM work never materializes. Fit baseline first instead.
             if adaptive_preview_settings:
-                variants = plan_adaptive_preview_settings_variants(
-                    page=page,
-                    eligible_loop=eligible_loop,
-                    base_options=base_options,
-                    review_dir=review_dir,
-                    artifact_base_label=artifact_base_label,
-                    review_frames=review_frames,
-                    motion_tuning_enabled=motion_tuning_enabled,
-                    max_variants=max_adaptive_preview_settings,
-                    exercise_name=exercise_name,
-                    exercise_motion_contract=exercise_motion_contract,
-                    source_foot_support_evidence=source_foot_support_evidence,
-                )
+                variants = [
+                    {
+                        "id": "adaptive-baseline",
+                        "label": "Adaptive baseline",
+                        "options": {},
+                        "adaptivePreviewSettings": {
+                            "source": "deterministic_baseline",
+                            "reason": "baseline_fit_before_adaptive_planning",
+                        },
+                    }
+                ]
             elif rank_preview_variants:
                 variants = preview_settings_variants(motion_tuning_enabled=motion_tuning_enabled)
             else:
@@ -22954,6 +23246,7 @@ def _bake_preview_loops_with_playwright_uncached(
                         "options": {},
                     }
                 ]
+            stop_after_incomplete_fit = False
             for variant in variants:
                 variant_id = str(variant["id"])
                 variant_label = str(variant["label"])
@@ -23002,12 +23295,39 @@ def _bake_preview_loops_with_playwright_uncached(
                     # payload fields, so both decisions can be taken from the
                     # first export and applied together in one rebake.
                     export_payload = bake_current_range()
-                export_payload, _ = constrain_baked_payload_to_source_articulation(
+                pre_fit_fidelity = pre_fit_source_articulation_fidelity_rejection(
                     export_payload,
-                    source_foot_support_evidence=source_foot_support_evidence,
-                    exercise_motion_contract=exercise_motion_contract,
-                    source_pose_reference=source_pose_reference,
+                    source_pose_reference,
                 )
+                if pre_fit_fidelity is not None:
+                    # Articulation target already fails the same fidelity gate
+                    # fit cannot repair. Skip the expensive controlled-motion burn.
+                    export_payload = copy.deepcopy(export_payload)
+                    hard_reasons = list(pre_fit_fidelity.get("rejectionReasons") or [])
+                    export_payload["controlledMotionFit"] = {
+                        "applied": False,
+                        "reason": "pre_fit_source_articulation_fidelity_failed",
+                        "rejectionReasons": hard_reasons,
+                        "sourcePoseFidelity": pre_fit_fidelity,
+                    }
+                    export_payload["preRenderDeterministicGate"] = {
+                        "passed": False,
+                        "rejectionReasons": hard_reasons,
+                        "sourcePoseFidelity": pre_fit_fidelity,
+                        "preFitSourceArticulationProbe": True,
+                    }
+                    unusable_fit = True
+                else:
+                    export_payload, _ = constrain_baked_payload_to_source_articulation(
+                        export_payload,
+                        source_foot_support_evidence=source_foot_support_evidence,
+                        exercise_motion_contract=exercise_motion_contract,
+                        source_pose_reference=source_pose_reference,
+                    )
+                    from .controlled_motion import controlled_fit_unusable_for_more_preview_work
+                    unusable_fit = controlled_fit_unusable_for_more_preview_work(
+                        export_payload.get("controlledMotionFit")
+                    )
                 annotate_export_payload_post_bake_scene_orientation(
                     export_payload,
                     orientation_hint=post_bake_orientation_hint,
@@ -23045,6 +23365,11 @@ def _bake_preview_loops_with_playwright_uncached(
                         adaptive_preview_settings=adaptive_settings,
                     )
                 )
+                if unusable_fit:
+                    # Incomplete or geometrically doomed fits cannot produce a
+                    # selectable clip; do not spend more loops/variants here.
+                    stop_after_incomplete_fit = True
+                    break
                 if (not rank_preview_variants
                         and export_payload.get('controlledMotionFit')):
                     # The unified fit already tried its bounded source cycles
@@ -23179,7 +23504,29 @@ def _bake_preview_loops_with_playwright_uncached(
                                     },
                                 )
                             )
-        render_prechecked_baked_artifacts(page, artifacts, candidate_workspace)
+            if stop_after_incomplete_fit:
+                break
+        from .controlled_motion import controlled_fit_unusable_for_more_preview_work
+        if any(
+            controlled_fit_unusable_for_more_preview_work(artifact.export_payload.get("controlledMotionFit"))
+            for artifact in artifacts
+        ):
+            # Doomed or incomplete fits fail selection gates; apply the gate without
+            # encoding review videos that cannot be selected.
+            reference = load_verified_source_pose_reference(
+                candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
+                candidate_workspace / "input" / "selected_segment.mp4",
+            )
+            for artifact in artifacts:
+                payload = artifact.export_payload
+                reference_for_artifact = reference
+                if reference and reference.get("frames") and payload.get("frames"):
+                    reference_for_artifact = source_pose_reference_for_motion(reference, payload)
+                gate = pre_render_deterministic_gate(payload, reference_for_artifact)
+                payload["preRenderDeterministicGate"] = gate
+                artifact.skeleton_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        else:
+            render_prechecked_baked_artifacts(page, artifacts, candidate_workspace)
     if staged_preview_temp is not None:
         staged_preview_temp.cleanup()
     return artifacts

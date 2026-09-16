@@ -108,3 +108,38 @@ def test_export_and_interpolated_playback_reject_a_corrupt_constant_length_rig()
     assert not report['passed']
     assert any(r.startswith('anatomy_spine_') for r in report['physicalReasons'])
     assert not physical_metrics_from_payload(payload)['passed']
+
+
+def _stance_with_shoulder_span_swing(swing_meters):
+    """Draw both shoulders symmetrically inward by swing_meters/2 each."""
+    names, _, points = calibrated_stance()
+    swung = points.copy()
+    left, right = names.index('left_shoulder'), names.index('right_shoulder')
+    inward = (swung[:, right] - swung[:, left])
+    inward /= np.linalg.norm(inward, axis=1, keepdims=True)
+    half = swing_meters*.5
+    swung[2:5, left] += inward[2:5]*half
+    swung[2:5, right] -= inward[2:5]*half
+    return names, points, swung
+
+
+def test_shoulder_girdle_span_swing_is_rejected():
+    names, points, swung = _stance_with_shoulder_span_swing(.18)
+    span = np.linalg.norm(swung[:, names.index('left_shoulder')]-swung[:, names.index('right_shoulder')], axis=1)
+    deviation = np.max(np.abs(span-np.median(span)))/np.median(span)
+    assert deviation > .12
+    report = validate_physical_motion(swung, names)
+    assert 'anatomy_span_variation' in report['reasons']
+
+
+def test_small_shoulder_girdle_span_motion_is_accepted():
+    names, points, swung = _stance_with_shoulder_span_swing(.01)
+    assert validate_physical_motion(swung, names)['passed']
+
+
+def test_raw_source_span_jitter_does_not_gate_non_fixed_rig_payload():
+    names, points, swung = _stance_with_shoulder_span_swing(.18)
+    payload = {'fps': 30., 'jointNames': names,
+               'frames': [{'joints': dict(zip(names, p.tolist()))} for p in swung]}
+    report = physical_metrics_from_payload(payload)
+    assert 'anatomy_span_variation' not in report['reasons']

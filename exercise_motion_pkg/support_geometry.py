@@ -342,7 +342,7 @@ def moving_support_articulations(points, names, evidence, *, support_corrected_p
 
 
 def initialize_supported_motion(rig, original, evidence, pose, calibration, deadline, fps=30., alignment_reference=None,
-                                *, pinned=None, contact_targets=None, equipment=None):
+                                *, pinned=None, contact_targets=None, equipment=None, max_evaluations=40):
     """Project observed articulation onto contacts without locking ancestors."""
     from time import monotonic
     from scipy.sparse import eye, kron, csr_matrix, vstack
@@ -391,7 +391,8 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     source_alignment = alignment_features(original if alignment_reference is None else alignment_reference, rig.names, evidence)
 
     def residual(values):
-        if monotonic() > deadline:
+        from .fit_runtime import fit_should_yield_for_priority
+        if fit_should_yield_for_priority() or monotonic() > deadline:
             raise TimeoutError
         coordinates = values.reshape(count, rig.width)
         candidate = rig.decode(coordinates)
@@ -433,8 +434,9 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     pattern = vstack([pattern, kron(d2, csr_matrix(rig.dependencies))], format='csr')
     if pattern.shape != (residual(rig.initial.ravel()).size, rig.initial.size):
         raise ValueError('Support projection residual and dependency shapes differ')
-    solved = solve_trajectory(residual, rig.initial.ravel(), pattern, 40)
+    solved = solve_trajectory(residual, rig.initial.ravel(), pattern, max(1, int(max_evaluations)))
     calibration['projectionEvaluations'] = solved.nfev
+    calibration['projectionEvaluationBudget'] = int(max_evaluations)
     rig.initial[:] = solved.x.reshape(count, rig.width)
     rig.project_neck_attachment(maximum_lateral_ratio=SOCKET_ALIGNMENT_MAX_LATERAL_RATIO-ANATOMY_FIT_MARGIN)
     return rig.decode(rig.initial)

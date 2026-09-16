@@ -20,6 +20,18 @@ function ConvertTo-MotionLibraryReasons {
         materialized_phase_articulation_changed = 'Processing changed the limb pose too much.'
         materialized_source_joint_angle_mismatch = 'Joint angles do not match the source.'
         materialized_output_rejected = 'The generated movement failed validation.'
+        materialized_pre_render_rejected = 'The baked movement failed deterministic pre-render checks.'
+        baked_motion_validation_failed = 'The baked movement failed validation before review.'
+        baked_motion_too_static = 'The baked movement had too little motion to review.'
+        no_baked_review_clip = 'No reviewable baked movement clip was produced.'
+        controlled_motion_processing_incomplete = 'Motion fitting did not finish within the candidate budget.'
+        fit_timeout = 'Motion fitting hit its time budget before a validated cycle.'
+        fit_evaluation_limit = 'Motion fitting hit its evaluation limit before a validated cycle.'
+        no_validated_loop_cycle = 'No validated repetition cycle was produced.'
+        pre_fit_source_articulation_fidelity_failed = 'Source articulation already mismatches the reference before fitting.'
+        raw_wham_motion_validation_failed = 'The raw reconstructed motion failed validation.'
+        raw_wham_rigid_two_hand_spacing_instability = 'Hand spacing in the reconstruction is unstable.'
+        raw_wham_kinematic_artifact = 'The raw reconstruction has kinematic artifacts.'
     }
     $informational = @('pre_wham_validated_source_interval_review',
         'post_wham_movement_cut_blocked_by_source_authority', 'loop_continuity_not_required',
@@ -33,6 +45,10 @@ function ConvertTo-MotionLibraryReasons {
     })
     $result = @($codes | ForEach-Object {
         if ($_ -eq 'materialized_output_rejected' -and $codes.Count -gt 1) { return }
+        if ($_ -eq 'baked_motion_validation_failed' -and $codes.Count -gt 1) { return }
+        if ($_ -eq 'materialized_pre_render_rejected' -and (
+                $codes | Where-Object { $_ -like 'materialized_*' -and $_ -ne 'materialized_pre_render_rejected' }
+            ).Count) { return }
         if ($_ -eq 'source_candidate_window_choice_failed' -and
             'source_candidate_scorecard_no_passing_candidate' -in $codes) { return }
         if ($labels.ContainsKey($_)) { $labels[$_] }
@@ -52,63 +68,82 @@ function ConvertTo-MotionLibraryProgress {
     }
     if ($text -match '^Revalidation\s+\[') { return $text }
     if ($text -match '^Source attempt: (.+?) \| video (\S+) \| needs_source_review:') {
-        return "Source review uncertain: $($Matches[1]) | Review evidence is incomplete or conflicting; no quality verdict. | Video: $($Matches[2])$attemptContext"
+        return "Source uncertain: $($Matches[1]) | incomplete/conflicting evidence | $($Matches[2])$attemptContext"
     }
     if ($text -match '^Source attempt: (.+?) \| video (\S+) \| (source_processing_failed|rejected_vlm_timeout):') {
-        return "Source processing failed: $($Matches[1]) | Review could not finish; no quality verdict. See detailed log. | Video: $($Matches[2])$attemptContext"
+        return "Source processing failed: $($Matches[1]) | no verdict | $($Matches[2])$attemptContext"
     }
     if ($text -match '^Source review: (.+?) \| unresolved: source_review_incomplete$') {
-        return "Source review uncertain: $($Matches[1]) | Needs further review; the source has not been approved or conclusively rejected."
+        return "Source uncertain: $($Matches[1]) | needs more review"
     }
     if ($text -match '^Source review: (.+?) \| unresolved: source_processing_failed$') {
-        return "Source processing failed: $($Matches[1]) | Processing must be retried; no quality verdict."
+        return "Source processing failed: $($Matches[1]) | retry; no verdict"
     }
     if ($text -match '^Source attempt: (.+?) \| video (\S+) \| rejected_source_validation: (.+)$') {
         $name, $video, $detail = $Matches[1], $Matches[2], $Matches[3]
-        $reason = 'The source video interval failed validation. See detailed log.'
+        $reason = 'interval failed validation'
         if ($detail -match 'reasons=\[(.+)\]') {
             $translated = ConvertTo-MotionLibraryReasons $Matches[1] -CodesOnly
             if ($translated) { $reason = $translated }
         }
         if ($attemptContext) {
-            return "Source window rejected: $name$attemptContext | Video: $video | Reasons: $reason"
+            return "Source window rejected: $name$attemptContext | $video | $reason"
         }
-        return "Source rejected: $name | $reason | Video: $video"
+        return "Source rejected: $name | $reason | $video"
     }
     if ($text -match '^Source review: (.+?) \| unresolved: no_source_passed_exact_window_validation$') {
-        return "No usable source: $($Matches[1]) | None of the reviewed video intervals passed validation."
+        return "No usable source: $($Matches[1]) | no interval passed"
     }
     if ($text -match '^Source review: .+ \| deferred remaining attempts; ready movements take priority\.$') { return $null }
     if ($text -match '^Source review: (.+?) \| unresolved: source_turn_deferred$') {
-        return "Source review deferred: $($Matches[1]) | Remaining attempts are pending; ready movements take priority."
+        return "Source deferred: $($Matches[1]) | ready movements first"
     }
-    if ($text -match '^Movement result: (.+?) \| (selected|no_selection|failed) \| ([0-9.]+)s final processing \|') {
+    if ($text -match '^Movement result: (.+?) \| (selected|no_selection|incomplete_processing|failed) \| ([0-9.]+)s final processing \|') {
         $name, $status, $elapsed = $Matches[1], $Matches[2], $Matches[3]
         $timingDetail = ''
         if ($text -match ' \| elapsed breakdown: ([^|]+)') {
             $timingDetail = " | $($Matches[1].Trim())"
         }
         if ($status -eq 'selected') {
-            return "Movement validated: $name | Final processing: ${elapsed}s; saving selected files next.$timingDetail"
+            return "Movement validated: $name | ${elapsed}s$timingDetail"
         }
-        $reason = 'No movement passed final validation. See detailed log.'
-        if ($status -eq 'failed') { $reason = 'Processing could not finish. See detailed log for the error.' }
+        $reason = 'failed final validation'
+        if ($status -eq 'failed') { $reason = 'processing error' }
+        if ($status -eq 'incomplete_processing') { $reason = 'fitting incomplete' }
+        $reasonText = $null
         if ($text -match ' \| reasons: (.+)$') {
-            $translated = ConvertTo-MotionLibraryReasons $Matches[1]
+            $reasonText = $Matches[1]
+            $translated = ConvertTo-MotionLibraryReasons $reasonText
             if ($translated) { $reason = $translated }
         }
+        # Legacy no_selection lines that still carry incomplete-fit codes.
+        $incompleteCodes = @(
+            'controlled_motion_processing_incomplete',
+            'fit_timeout',
+            'fit_evaluation_limit',
+            'no_validated_loop_cycle'
+        )
+        $looksIncomplete = $status -eq 'incomplete_processing'
+        if (-not $looksIncomplete -and $status -eq 'no_selection' -and $reasonText) {
+            foreach ($code in $incompleteCodes) {
+                if ($reasonText -match [regex]::Escape($code)) { $looksIncomplete = $true; break }
+            }
+        }
+        if ($looksIncomplete) {
+            return "Movement incomplete: $name | ${elapsed}s$timingDetail | Reasons: $reason"
+        }
         $label = if ($status -eq 'failed') { 'Movement processing failed' } else { 'Movement rejected' }
-        return "$label`: $name | Final processing: ${elapsed}s$timingDetail | Reasons: $reason"
+        return "$label`: $name | ${elapsed}s$timingDetail | Reasons: $reason"
     }
-    if ($text -match '^(Checking source videos:|Batch finished:|\d+/\d+ movements ready)') {
+    if ($text -match '^(Checking source videos:|Checking sources:|Batch finished:|Batch done:|\d+/\d+ movements ready)') {
         $text = $text -replace '(\d+) failed', '$1 unresolved'
     }
     if ($text -match '^(Source review:|Source attempt:|Discovery yield requested:|Movement result:|Deferred:|WARNING:|ERROR:|Failed:|Needs review:|No suitable movement:|Could not find a source|Ctrl\+C|Motion run stopped|Stopping background)') { return $text }
     if ($text -match '^SUCCESS:') { return $text }
     if ($text -match '^Ready: (.+)$') { return "SUCCESS: $($Matches[1]) | Validated movement saved." }
     if ($text -match '^Already have a movement for (.+)\.$') { return "Reused: $($Matches[1])" }
-    if ($text -match '^Preparing \d+ missing exercise motion contract') { return 'Checking cached exercise contracts; generating only missing or invalid entries...' }
-    if ($text -match '^(Queues:|Reviewing:|Exercise contracts:|Contracts ready:|Inference:|Generating movements for|Finding a source for|Generating:|Resuming |Starting batch|Retrying remaining|Checking source videos:|Checking sources:|Validating sources:|Source validation:|Extracting motion:|Motion extraction finished|Validating generated movements:|Batch finished:|Batch |Starting motion extractor|Restarting motion extractor|Motion extractor ready|Mobile package updated:)') { return $text }
+    if ($text -match '^Preparing \d+ missing exercise motion contract') { return 'Checking contracts...' }
+    if ($text -match '^(Queues:|Reviewing:|Exercise contracts:|Contracts ready:|Inference:|Generating movements for|Finding a source for|Generating:|Resuming |Starting batch|Retrying remaining|Checking source videos:|Checking sources:|Validating sources:|Source validation:|Extracting motion:|Extracting:|Motion extraction finished|Extraction done|Validating generated movements:|Validating:|Batch finished:|Batch done:|Batch |Starting motion extractor|Restarting motion extractor|Motion extractor ready|Mobile package updated:)') { return $text }
     if ($text -match '^\d+/\d+ movements ready') { return "Progress: $($text -replace ', (\d+) failed', ', $1 unresolved')" }
     return $null
 }
@@ -128,7 +163,13 @@ function New-MotionLibraryLogState {
 
 function Get-MotionLibraryActivityKey {
     param([string]$Activity)
-    return (($Activity -split ' \| Work: ', 2)[0] -replace ' (?:—|-) .+$', '').TrimEnd('.')
+    # Ignore only transient age/elapsed tokens so the same step stays one key.
+    $key = "$Activity"
+    $key = $key -replace ' · \d+[smhd]\b', ''
+    $key = $key -replace ' for \d+[smhd]\b', ''
+    $key = $key -replace ' after \d+[smhd]\.?$', ''
+    $key = $key -replace ' (?:—|-) .+$', ''
+    return $key.Trim().TrimEnd('.')
 }
 
 function Format-MotionLibraryProgress {
@@ -144,6 +185,7 @@ function Format-MotionLibraryProgress {
         $exercise, $details = $Matches[1], $Matches[2]
         $State.LastChange = $Now
         $State.LastWaiting = $null
+        $State.Snapshot = $null
         ''
         '================================================================'
         "[$Timestamp] MOVEMENT GENERATED SUCCESSFULLY"
@@ -172,19 +214,9 @@ function Format-MotionLibraryProgress {
         $counts = $parts[0] -replace ', \d+ remaining', ''
         $activity = if ($parts.Count -gt 1) { $parts[1] -replace '^Generating:', 'Preparing / reviewing:' } else { '' }
         $activityKey = Get-MotionLibraryActivityKey $activity
-        # Stage events and periodic snapshots describe the same activity. Share
-        # their last displayed value instead of treating each channel as new work.
-        $activityChanged = $activityKey -and $State.LastStage -ne $activityKey
-        $snapshotKey = @($counts, $State.Queue, $State.Review) -join "`n"
-        if ($State.Snapshot -eq $snapshotKey -and -not $activityChanged) {
-            if ($null -ne $State.LastChange -and ($Now - $State.LastChange).TotalSeconds -ge $QuietSeconds -and
-                ($null -eq $State.LastWaiting -or ($Now - $State.LastWaiting).TotalSeconds -ge $QuietSeconds)) {
-                $minutes = [int][Math]::Floor(($Now - $State.LastChange).TotalMinutes)
-                $work = ($activity -split ' \| Work: ', 2)
-                $detail = if ($work.Count -gt 1) { $work[1] } else { "$activityKey; worker details unavailable" }
-                "[$Timestamp] Waiting: no reported progress for ${minutes}m. $detail"
-                $State.LastWaiting = $Now
-            }
+        $snapshotKey = @($counts, $State.Queue, $State.Review, $activityKey) -join "`n"
+        # Same step + same queues/counts: keep quiet. Elapsed-only heartbeats are noise.
+        if ($State.Snapshot -eq $snapshotKey) {
             $State.Queue = $null
             $State.Review = $null
             return
@@ -192,17 +224,24 @@ function Format-MotionLibraryProgress {
         $State.Snapshot = $snapshotKey
         $State.LastChange = $Now
         $State.LastWaiting = $null
+        if ($activityKey) { $State.LastStage = $activityKey }
         ''
         "[$Timestamp] Progress$elapsed"
         "  $counts"
         if ($State.Queue) {
-            $queue = $State.Queue -replace '^Queues: ', '' -replace '(\d+) reconstructing$', '$1 active generation batch(es)'
+            $queue = $State.Queue -replace '^Queues: ', ''
+            $queue = $queue `
+                -replace ' awaiting candidate preparation', ' prep' `
+                -replace ' awaiting source review', ' review' `
+                -replace ' ready for reconstruction', ' ready' `
+                -replace ' reconstructing$', ' batch' `
+                -replace ' active generation batch\(es\)', ' batch' `
+                -replace ' \| ', ' | '
             "  Queues: $queue"
         }
         if ($State.Review) { "  $($State.Review)" }
-        if ($activityChanged) {
+        if ($activity) {
             "  Activity: $activity"
-            $State.LastStage = $activityKey
         }
         $State.Queue = $null
         $State.Review = $null
@@ -210,11 +249,12 @@ function Format-MotionLibraryProgress {
     }
     # Per-exercise outcomes already announce source completion. Keep source
     # counters in the periodic progress block instead of printing both events.
-    if ($Message.StartsWith('Checking source videos:')) { return }
-    $isStage = $Message -match '^(Extracting motion:|Validating generated movements:|Batch finished:)'
+    if ($Message.StartsWith('Checking source videos:') -or $Message.StartsWith('Checking sources:')) { return }
+    $isStage = $Message -match '^(Extracting motion:|Extracting:|Validating generated movements:|Validating:|Batch finished:|Batch done:)'
     if ($Message -match '^Starting batch') {
         # Identical counters in a new batch still represent new work.
         $State.LastStage = $null
+        $State.Snapshot = $null
     }
     if ($isStage) {
         # A transient latest-exercise suffix should not cause the following
@@ -224,16 +264,19 @@ function Format-MotionLibraryProgress {
         $State.LastStage = $stage
         $State.LastChange = $Now
         $State.LastWaiting = $null
+        $State.Snapshot = $null
     }
-    if ($Message -match '^(SUCCESS:|Saved:|Reused:|Source (?:window rejected|review uncertain|processing failed|rejected):|No usable source:|Source review deferred:|Movement validated:|Movement rejected:|Movement processing failed:|Source review:|Source attempt:|Discovery yield requested:|Movement result:|Starting |Restarting |Deferred:|Failed:|Needs review:|No suitable movement:)') {
+    if ($Message -match '^(SUCCESS:|Saved:|Reused:|Source (?:window rejected|uncertain|processing failed|rejected|deferred):|No usable source:|Movement validated:|Movement incomplete:|Movement rejected:|Movement processing failed:|Source review:|Source attempt:|Discovery yield requested:|Movement result:|Starting |Restarting |Deferred:|Failed:|Needs review:|No suitable movement:)') {
         $State.LastChange = $Now
         $State.LastWaiting = $null
+        # Allow the next Progress snapshot to print once after an outcome event.
+        $State.Snapshot = $null
     }
     # Never suppress warnings, failures, or per-exercise outcomes.
     if ($Message -match '^(SUCCESS:|Starting batch|Starting motion extractor|Restarting motion extractor|Deferred:|Failed:|WARNING:|ERROR:|Saved:|Needs review:|No suitable movement:)') {
         ''
     }
-    if ($Message -match '^(Movement rejected:|Movement processing failed:|Source window rejected:).+ \| Reasons: ') {
+    if ($Message -match '^(Movement rejected:|Movement incomplete:|Movement processing failed:|Source window rejected:).+ \| Reasons: ') {
         $parts = $Message -split ' \| Reasons: ', 2
         "[$Timestamp] $($parts[0])"
         foreach ($reason in ($parts[1] -split '; ')) { "  - $reason" }

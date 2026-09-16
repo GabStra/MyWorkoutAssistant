@@ -438,6 +438,7 @@ def _projection_metrics(
             "p90JointAngleErrorDegrees": None,
             "perJointMedianErrorBodyRatio": {},
             "perAngleMedianErrorDegrees": {},
+            "angleComparisonSpace": "camera_frame_3d_lifted_source",
         }
 
     for source_frame in source_frames:
@@ -459,13 +460,19 @@ def _projection_metrics(
             continue
         comparable_frames += 1
         projected: dict[str, tuple[float, float]] = {}
+        camera_motion: dict[str, tuple[float, float, float]] = {}
         for name, point in motion_joints.items():
-            projected[_bilateral_name(name, swap=swap_bilateral)] = _apply_similarity(
-                _project_motion_point(
-                    point,
-                    horizontal_vector=horizontal_vector,
-                    mirror=mirror,
-                ),
+            mapped = _bilateral_name(name, swap=swap_bilateral)
+            camera_point = _motion_point_in_camera_frame(
+                point,
+                horizontal_vector=horizontal_vector,
+                mirror=mirror,
+            )
+            if camera_point is None:
+                continue
+            camera_motion[mapped] = camera_point
+            projected[mapped] = _apply_similarity(
+                (camera_point[0], -camera_point[1]),
                 transform,
             )
         for name in POSE_JOINTS:
@@ -476,21 +483,52 @@ def _projection_metrics(
             observed += 1
             joint_errors[name].append(math.dist(source_point, motion_point) / body_span)
         for name, chain in ANGLE_CHAINS.items():
-            if any(joint not in source_joints or joint not in projected for joint in chain):
+            if any(joint not in source_joints or joint not in camera_motion for joint in chain):
                 continue
-            source_angle = _angle_degrees(*(source_joints[joint] for joint in chain))
-            motion_angle = _angle_degrees(*(projected[joint] for joint in chain))
-            if source_angle is not None and motion_angle is not None:
-                # Near end-on segments make a projected angle ill-conditioned.
-                confidence = source_frame.get("jointConfidence", {})
-                if all(confidence.get(joint, 1.) >= .35 for joint in chain) and all(math.dist(source_joints[a], source_joints[b]) > body_span * .07
-                       for a, b in zip(chain, chain[1:])):
-                    if all(math.dist(projected[a], projected[b]) > body_span * .07
-                           for a, b in zip(chain, chain[1:])):
-                        angle_samples[name].append((source_angle, motion_angle))
-                        angle_errors[name].append(abs(source_angle - motion_angle))
-                    else:
-                        output_unobservable[name] += 1
+            confidence = source_frame.get("jointConfidence", {})
+            if not all(confidence.get(joint, 1.0) >= 0.35 for joint in chain):
+                continue
+            if not all(
+                math.dist(source_joints[a], source_joints[b]) > body_span * 0.07
+                for a, b in zip(chain, chain[1:])
+            ):
+                continue
+            # Same-space angles: lift each 2D source landmark into the registered
+            # camera frame using that joint's motion depth, then compare 3D chain
+            # angles. Avoids mixing image-plane angles with projected-3D angles.
+            lifted: dict[str, tuple[float, float, float]] = {}
+            well_conditioned = True
+            for joint in chain:
+                lifted_point = _lift_source_joint_to_camera_frame(
+                    source_joints[joint],
+                    camera_motion[joint],
+                    transform=transform,
+                )
+                if lifted_point is None:
+                    well_conditioned = False
+                    break
+                lifted[joint] = lifted_point
+            if not well_conditioned:
+                output_unobservable[name] += 1
+                continue
+            body_span_3d = _body_span_3d(camera_motion.values())
+            if body_span_3d <= 1e-9:
+                output_unobservable[name] += 1
+                continue
+            if not all(
+                math.dist(lifted[a], lifted[b]) > body_span_3d * 0.07
+                and math.dist(camera_motion[a], camera_motion[b]) > body_span_3d * 0.07
+                for a, b in zip(chain, chain[1:])
+            ):
+                output_unobservable[name] += 1
+                continue
+            source_angle = _angle_degrees_3d(*(lifted[joint] for joint in chain))
+            motion_angle = _angle_degrees_3d(*(camera_motion[joint] for joint in chain))
+            if source_angle is None or motion_angle is None:
+                output_unobservable[name] += 1
+                continue
+            angle_samples[name].append((source_angle, motion_angle))
+            angle_errors[name].append(abs(source_angle - motion_angle))
 
     all_joint_errors = [value for values in joint_errors.values() for value in values]
     lower_errors = [value for name in LOWER_BODY_JOINTS for value in joint_errors[name]]
@@ -517,11 +555,16 @@ def _projection_metrics(
             name: _median(values) for name, values in angle_errors.items()
         },
         "perAngleEndpointMetrics": {
-            name: {**_endpoint_angle_metrics(values),
-                   "outputForeshortenedSampleCount": output_unobservable[name],
-                   "comparisonUnresolved": len(values) < 6 and len(values) + output_unobservable[name] >= 6}
+            name: {
+                **_endpoint_angle_metrics(values),
+                "conditionedSampleCount": len(values),
+                "outputForeshortenedSampleCount": output_unobservable[name],
+                "comparisonUnresolved": len(values) < 6
+                and len(values) + output_unobservable[name] >= 6,
+            }
             for name, values in angle_samples.items()
         },
+        "angleComparisonSpace": "camera_frame_3d_lifted_source",
     }
 
 
@@ -690,10 +733,64 @@ def _project_motion_point(
     horizontal_vector: tuple[float, float] | None = None,
     mirror: bool,
 ) -> tuple[float, float]:
+    camera = _motion_point_in_camera_frame(
+        point,
+        horizontal_axis=horizontal_axis,
+        horizontal_vector=horizontal_vector,
+        mirror=mirror,
+    )
+    if camera is None:
+        raise ValueError("motion point must include xyz for camera projection")
+    return (camera[0], -camera[1])
+
+
+def _motion_point_in_camera_frame(
+    point: tuple[float, ...],
+    *,
+    horizontal_axis: int | None = None,
+    horizontal_vector: tuple[float, float] | None = None,
+    mirror: bool,
+) -> tuple[float, float, float] | None:
+    if len(point) < 3:
+        return None
     if horizontal_vector is None:
         horizontal_vector = (1.0, 0.0) if horizontal_axis == 0 else (0.0, 1.0)
-    horizontal = point[0] * horizontal_vector[0] + point[2] * horizontal_vector[1]
-    return (-horizontal if mirror else horizontal, -point[1])
+    hx, hz = horizontal_vector
+    x_cam = point[0] * hx + point[2] * hz
+    z_cam = -point[0] * hz + point[2] * hx
+    y_cam = point[1]
+    if mirror:
+        x_cam = -x_cam
+    return (x_cam, y_cam, z_cam)
+
+
+def _lift_source_joint_to_camera_frame(
+    source_xy: tuple[float, float],
+    motion_camera_xyz: tuple[float, float, float],
+    *,
+    transform: tuple[float, float, float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Place a 2D source landmark into the motion camera frame with motion depth."""
+    projected = _invert_similarity(source_xy, transform)
+    if projected is None:
+        return None
+    return (projected[0], -projected[1], motion_camera_xyz[2])
+
+
+def _invert_similarity(
+    point: tuple[float, float],
+    transform: tuple[float, float, float, float, float, float],
+) -> tuple[float, float] | None:
+    scale_cos, scale_sin, source_x, source_y, target_x, target_y = transform
+    x = point[0] - target_x
+    y = point[1] - target_y
+    denominator = scale_cos * scale_cos + scale_sin * scale_sin
+    if denominator <= 1e-20:
+        return None
+    return (
+        (scale_cos * x + scale_sin * y) / denominator + source_x,
+        (-scale_sin * x + scale_cos * y) / denominator + source_y,
+    )
 
 
 def _projection_axis_label(horizontal_vector: tuple[float, float]) -> str:
@@ -777,6 +874,21 @@ def _angle_degrees(
     return math.degrees(math.acos(cosine))
 
 
+def _angle_degrees_3d(
+    first: tuple[float, float, float],
+    middle: tuple[float, float, float],
+    last: tuple[float, float, float],
+) -> float | None:
+    left = (first[0] - middle[0], first[1] - middle[1], first[2] - middle[2])
+    right = (last[0] - middle[0], last[1] - middle[1], last[2] - middle[2])
+    left_length = math.sqrt(sum(component * component for component in left))
+    right_length = math.sqrt(sum(component * component for component in right))
+    if left_length <= 1e-12 or right_length <= 1e-12:
+        return None
+    cosine = sum(a * b for a, b in zip(left, right)) / (left_length * right_length)
+    return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+
+
 def _body_span(points: Iterable[tuple[float, ...]]) -> float:
     points_list = list(points)
     if len(points_list) < 4:
@@ -784,6 +896,16 @@ def _body_span(points: Iterable[tuple[float, ...]]) -> float:
     return max(
         max(point[axis] for point in points_list) - min(point[axis] for point in points_list)
         for axis in (0, 1)
+    )
+
+
+def _body_span_3d(points: Iterable[tuple[float, float, float]]) -> float:
+    points_list = list(points)
+    if len(points_list) < 4:
+        return 0.0
+    return max(
+        max(point[axis] for point in points_list) - min(point[axis] for point in points_list)
+        for axis in (0, 1, 2)
     )
 
 

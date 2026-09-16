@@ -4,16 +4,42 @@ from pathlib import Path
 import threading
 from typing import Any, Callable
 
+from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_PARALLEL
 from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
 
-_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="source-review-question")
+_executor_lock = threading.Lock()
+_executor: ThreadPoolExecutor | None = None
+_executor_workers = 0
 _metrics_lock = threading.Lock()
-_metrics = {"cacheHits": 0, "questionsAsked": 0}
+_metrics = {"cacheHits": 0, "questionsAsked": 0, "executorWorkers": 0}
 
 
 def question_cache_metrics() -> dict[str, int]:
     with _metrics_lock:
         return dict(_metrics)
+
+
+def _default_question_workers() -> int:
+    return max(1, int(DEFAULT_LLAMA_CPP_PARALLEL or 1))
+
+
+def _ensure_question_executor(workers: int) -> ThreadPoolExecutor:
+    """Grow the shared pool up to the active VLM parallel slot count."""
+    global _executor, _executor_workers
+    target = max(_default_question_workers(), max(1, int(workers or 0)))
+    with _executor_lock:
+        if _executor is None or target > _executor_workers:
+            previous = _executor
+            _executor = ThreadPoolExecutor(
+                max_workers=target,
+                thread_name_prefix="source-review-question",
+            )
+            _executor_workers = target
+            with _metrics_lock:
+                _metrics["executorWorkers"] = target
+            if previous is not None:
+                previous.shutdown(wait=False)
+        return _executor
 
 
 def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Path],
@@ -44,6 +70,7 @@ def run_questions(jobs: dict[str, Callable[[], Any]], caption_images: Callable[.
         return {name: operation() for name, operation in jobs.items()}
     deadlines = getattr(owner, "_candidate_deadlines", None)
     deadline = getattr(deadlines, "value", None)
+    executor = _ensure_question_executor(int(getattr(owner, "_max_active_calls", 0) or 0))
 
     def invoke(operation: Callable[[], Any]) -> Any:
         # Session deadlines are thread-local; preserve the candidate's budget
@@ -57,7 +84,7 @@ def run_questions(jobs: dict[str, Callable[[], Any]], caption_images: Callable[.
             if deadlines is not None:
                 deadlines.value = previous
 
-    futures = {name: _executor.submit(invoke, operation) for name, operation in jobs.items()}
+    futures = {name: executor.submit(invoke, operation) for name, operation in jobs.items()}
     try:
         answers = {}
         for name, future in futures.items():
