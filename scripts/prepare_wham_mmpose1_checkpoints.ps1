@@ -1,5 +1,5 @@
 param(
-    [string]$WhamRepoPath = "C:\Users\gabri\Downloads\WHAM"
+    [string]$WhamRepoPath = (Join-Path $PSScriptRoot "..\third_party\WHAM")
 )
 
 $ErrorActionPreference = "Stop"

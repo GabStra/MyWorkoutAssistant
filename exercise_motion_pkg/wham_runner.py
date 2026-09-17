@@ -17,6 +17,8 @@ from exercise_motion_pkg.gpu_lock import (gpu_stage_lock, open_lock_lease, close
 
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
+DEFAULT_WHAM_REPO_PATH = Path(__file__).resolve().parents[1] / "third_party" / "WHAM"
+DEFAULT_WHAM_BODY_MODEL_ROOT = DEFAULT_WHAM_REPO_PATH / "dataset" / "body_models"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
 DEFAULT_WHAM_TIMEOUT_SECONDS = 20 * 60.0
 DEFAULT_WHAM_POSE_BACKEND = "vitpose"

@@ -3613,10 +3613,7 @@ if ($resolvedMaxCandidateReviewTargetSuitableCount -gt 0 -and $resolvedMaxCandid
 }
 
 if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
-    $WhamRepoPath = "C:\Users\gabri\Downloads\WHAM"
-    if (-not (Test-Path -LiteralPath $WhamRepoPath)) {
-        $WhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
-    }
+    $WhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
 }
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
     $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"

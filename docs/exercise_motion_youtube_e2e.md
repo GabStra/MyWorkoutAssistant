@@ -16,7 +16,7 @@ The current default path is optimized for source quality first:
 
 - Run from the repo root: `C:\Users\gabri\Documents\MyWorkoutAssistant`.
 - Docker Desktop must be running for the default WHAM Docker path.
-- The default WHAM repo is `C:\Users\gabri\Downloads\WHAM`; otherwise the scripts try `third_party\WHAM`.
+- The default WHAM repo is the `third_party/WHAM` submodule. Init it with `git submodule update --init third_party/WHAM`, then keep SMPL models and checkpoints in that working tree (they are gitignored).
 - The default body model root is `<WHAM>\dataset\body_models`.
 - The default VLM path uses llama.cpp with:
   - `C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf`

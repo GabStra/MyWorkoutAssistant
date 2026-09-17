@@ -29,22 +29,27 @@ pip install -e .[motion,test]
 
 ## WHAM Setup
 
-Clone and prepare the official WHAM repo locally:
+The generator uses the WHAM git submodule at `third_party/WHAM`. After clone:
 
-1. Clone `https://github.com/yohanshin/WHAM`
-2. Follow the repo install instructions
-3. Make sure these required assets exist:
-   - `demo.py`
-   - `checkpoints/wham_vit_w_3dpw.pth.tar`
-   - `checkpoints/hmr2a.ckpt`
-   - `checkpoints/vitpose-h-multi-coco.pth`
-   - `checkpoints/yolo26x.pt`
-   - `dataset/body_models/smpl/SMPL_NEUTRAL.pkl`
+```powershell
+git submodule update --init third_party/WHAM
+pwsh ./scripts/apply_wham_mmpose1_patch.ps1
+pwsh ./scripts/prepare_wham_mmpose1_checkpoints.ps1
+```
+
+SMPL body models and large checkpoints stay local (gitignored) under that checkout. Required files:
+
+- `demo.py`
+- `checkpoints/wham_vit_w_3dpw.pth.tar`
+- `checkpoints/hmr2a.ckpt`
+- `checkpoints/vitpose-h-multi-coco.pth`
+- `checkpoints/yolo26x.pt`
+- `dataset/body_models/smpl/SMPL_NEUTRAL.pkl`
 
 Repo defaults:
 
-- WHAM repo: `C:\Users\gabri\Downloads\WHAM`
-- body model root: `C:\Users\gabri\Downloads\WHAM\dataset\body_models`
+- WHAM repo: `third_party/WHAM`
+- body model root: `third_party/WHAM/dataset/body_models`
 - workspace: `build/exercise_motion`
 
 ## Repo Runner
@@ -76,8 +81,8 @@ Key overrides:
 pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -ExerciseSlug burpee `
   -VideoPath "C:\path\to\video.mp4" `
-  -WhamRepoPath "C:\Users\gabri\Downloads\WHAM" `
-  -BodyModelRoot "C:\Users\gabri\Downloads\WHAM\dataset\body_models" `
+  -WhamRepoPath "third_party\WHAM" `
+  -BodyModelRoot "third_party\WHAM\dataset\body_models" `
   -WhamPython "python" `
   -EstimateLocalOnly
 ```
@@ -156,8 +161,8 @@ If you already have a normalized motion JSON, pass `--normalized-motion-json` an
 python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --youtube-url "https://www.youtube.com/watch?v=eFYv8Skf66g" `
-  --wham-repo-path "C:\\Users\\gabri\\Downloads\\WHAM" `
-  --body-model-root "C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models"
+  --wham-repo-path "third_party\\WHAM" `
+  --body-model-root "third_party\\WHAM\\dataset\\body_models"
 ```
 
 If you already ran WHAM yourself:
@@ -167,7 +172,7 @@ python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --video-path "C:\\path\\to\\video.mp4" `
   --wham-results-pkl "C:\\path\\to\\wham_output.pkl" `
-  --body-model-root "C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models"
+  --body-model-root "third_party\\WHAM\\dataset\\body_models"
 ```
 
 ## Kinematic Refinement

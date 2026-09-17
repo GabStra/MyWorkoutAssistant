@@ -445,6 +445,14 @@ def test_workout_plan_wrapper_defaults_youtube_search_timeout_to_sixty_seconds()
     assert '"--youtube-search-timeout-seconds", "$YouTubeSearchTimeoutSeconds"' in script
 
 
+def test_workout_plan_wrapper_defaults_wham_repo_to_third_party() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+
+    assert 'Join-Path $repoRoot "third_party\\WHAM"' in script
+    assert r"C:\Users\gabri\Downloads\WHAM" not in script
+
+
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
 def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]

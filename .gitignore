@@ -80,3 +80,8 @@ equipment_capabilities/equipment_capabilities_*.json
 
 # Local model downloads
 yolo*-pose.pt
+
+# Local WHAM assets (not part of the WHAM submodule)
+third_party/WHAM/checkpoints/
+third_party/WHAM/dataset/body_models/
+third_party/WHAM/.codex_backup/

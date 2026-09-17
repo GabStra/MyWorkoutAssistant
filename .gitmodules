@@ -1,3 +1,6 @@
 [submodule "third_party/UniDepth"]
 	path = third_party/UniDepth
 	url = https://github.com/lpiccinelli-eth/unidepth
+[submodule "third_party/WHAM"]
+	path = third_party/WHAM
+	url = https://github.com/yohanshin/WHAM.git

@@ -327,10 +327,7 @@ if ($ReselectExisting) {
 
 $pythonCommand = Get-PythonCommand
 
-$defaultWhamRepoPath = "C:\Users\gabri\Downloads\WHAM"
-if (-not (Test-Path -LiteralPath $defaultWhamRepoPath)) {
-    $defaultWhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
-}
+$defaultWhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
 if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
     $WhamRepoPath = $defaultWhamRepoPath
 }

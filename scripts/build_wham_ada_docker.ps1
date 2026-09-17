@@ -1,5 +1,5 @@
 param(
-    [string]$WhamRepoPath = "C:\Users\gabri\Downloads\WHAM",
+    [string]$WhamRepoPath = (Join-Path $PSScriptRoot "..\third_party\WHAM"),
     [string]$ImageTag = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$BaseImage = "pytorch/pytorch:2.9.0-cuda12.8-cudnn9-devel",
     [switch]$NoCache

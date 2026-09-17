@@ -70,8 +70,10 @@ from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_wha
 from exercise_motion_pkg.trim_selector import TrimSelectorRequest, run_trim_selector
 from exercise_motion_pkg.video_utils import trim_video
 from exercise_motion_pkg.wham_runner import (
+    DEFAULT_WHAM_BODY_MODEL_ROOT,
     DEFAULT_WHAM_DOCKER_IMAGE,
     DEFAULT_WHAM_DOCKER_SHM_SIZE,
+    DEFAULT_WHAM_REPO_PATH,
     DEFAULT_WHAM_TIMEOUT_SECONDS,
 )
 from exercise_motion_pkg.youtube import (
@@ -1075,12 +1077,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     select_trim.add_argument(
         "--wham-repo-path",
-        default="C:\\Users\\gabri\\Downloads\\WHAM",
+        default=str(DEFAULT_WHAM_REPO_PATH),
         help="Local WHAM checkout used when --run-wham-on-write is set.",
     )
     select_trim.add_argument(
         "--body-model-root",
-        default="C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models",
+        default=str(DEFAULT_WHAM_BODY_MODEL_ROOT),
         help="SMPL body model root used when --run-wham-on-write is set.",
     )
     select_trim.add_argument("--wham-python-command", default="python")

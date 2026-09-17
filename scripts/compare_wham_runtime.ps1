@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$InputVideo,
 
-    [string]$WhamRepoPath = "C:\Users\gabri\Downloads\WHAM",
+    [string]$WhamRepoPath = (Join-Path $PSScriptRoot "..\third_party\WHAM"),
     [string]$OutputRoot = "build/exercise_motion/wham-runtime-compare",
     [string]$LocalPython = "python",
     [string]$DockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",

@@ -26,8 +26,8 @@ Useful options:
 - `-UseSourceAsIs`: skip segment detection and use the whole source clip.
 - `-SkipSegmentDetection`: skip automatic segment detection but still run the rest of the pipeline.
 - `-SegmentStartSeconds <n> -SegmentEndSeconds <n>`: manually trim the source before WHAM.
-- `-WhamRepoPath "C:\Users\gabri\Downloads\WHAM"`: override the WHAM checkout path.
-- `-BodyModelRoot "C:\Users\gabri\Downloads\WHAM\dataset\body_models"`: override SMPL body model path.
+- `-WhamRepoPath "third_party\WHAM"`: override the WHAM checkout path.
+- `-BodyModelRoot "third_party\WHAM\dataset\body_models"`: override SMPL body model path.
 
 Main generated artifacts are written under:
 

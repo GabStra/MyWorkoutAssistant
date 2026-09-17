@@ -13,7 +13,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-from exercise_motion_pkg.wham_runner import DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
+from exercise_motion_pkg.wham_runner import (
+    DEFAULT_WHAM_BODY_MODEL_ROOT,
+    DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
+    DEFAULT_WHAM_REPO_PATH,
+)
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import download_youtube_preview, sanitize_video_for_processing
 
@@ -29,8 +33,8 @@ class TrimSelectorRequest:
     youtube_cookies: Path | None = None
     run_wham_on_write: bool = False
     generation_workspace: Path = Path("build/exercise_motion")
-    wham_repo_path: Path = Path("C:\\Users\\gabri\\Downloads\\WHAM")
-    body_model_root: Path = Path("C:\\Users\\gabri\\Downloads\\WHAM\\dataset\\body_models")
+    wham_repo_path: Path = DEFAULT_WHAM_REPO_PATH
+    body_model_root: Path = DEFAULT_WHAM_BODY_MODEL_ROOT
     wham_python_command: str = "python"
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
