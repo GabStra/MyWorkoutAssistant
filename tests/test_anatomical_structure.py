@@ -37,6 +37,25 @@ def test_calibration_centers_sockets_and_matches_lengths_without_mirroring_pose(
     assert validate_physical_motion(moved, names)['passed']
 
 
+def test_torso_bend_follows_flexed_reference_instead_of_upright_absolute():
+    names, _, points = calibrated_stance()
+    # Prone/supported torso: hip–spine–shoulder angle well below the upright floor.
+    flexed = points.copy()
+    upper = ('spine1', 'spine2', 'spine3', 'neck', 'head', 'left_collar', 'right_collar',
+             'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+             'left_wrist', 'right_wrist', 'left_hand', 'right_hand')
+    for name in upper:
+        if name in names:
+            flexed[:, names.index(name), 2] += .35
+            flexed[:, names.index(name), 1] -= .2
+    absolute, labels = anatomical_structure_residuals(flexed, names)
+    relative, _ = anatomical_structure_residuals(flexed, names, reference=flexed)
+    bend = [i for i, label in enumerate(labels) if label.startswith('anatomy_torso_bend')]
+    assert bend and absolute[:, bend].max() > 1e-6
+    assert relative[:, bend].max() <= 1e-6
+    assert 'anatomy_torso_bend' not in validate_physical_motion(flexed, names, reference=flexed)['reasons']
+
+
 def test_structure_is_invariant_to_world_rotation_translation_and_scale():
     names, _, points = calibrated_stance()
     turned = points @ Rotation.from_euler('xyz', [.8, -.6, 1.1]).as_matrix()*1.3+[3., -2., 5.]
@@ -88,6 +107,37 @@ def test_equally_elongated_limbs_are_rejected_without_a_source_reference():
         points[:, wrist] += extension
         points[:, hand] += extension
     assert 'anatomy_segment_proportion' in validate_physical_motion(points, names)['reasons']
+
+
+def test_millimetre_anatomical_span_leftover_does_not_void_legal_output(monkeypatch):
+    from exercise_motion_pkg import anatomical_repair
+    from exercise_motion_pkg.physical_validation import anatomical_reference_is_usable
+    from test_controlled_motion_pipeline import accepted_payload
+
+    points = np.zeros((2, 1, 3))
+    names = ['pelvis']
+
+    def span_leftover(pts, labels, span_targets=None):
+        return np.array([[0.0012], [0.0]]), ['anatomy_span_variation:shoulders']
+
+    monkeypatch.setattr(anatomical_repair, 'repair_residuals', span_leftover)
+    assert anatomical_reference_is_usable(points, names)
+
+    def corrupt(pts, labels, span_targets=None):
+        return np.array([[0.0012, 0.05], [0.0, 0.0]]), [
+            'anatomy_span_variation:shoulders', 'anatomy_torso_bend:spine1']
+
+    monkeypatch.setattr(anatomical_repair, 'repair_residuals', corrupt)
+    assert not anatomical_reference_is_usable(points, names)
+
+    payload = accepted_payload()
+    payload['anatomicalSourceRepair'] = {'passed': True}
+    for frame in payload['frames']:
+        frame['correctedAnatomicalReferenceJoints'] = dict(frame['joints'])
+        frame['controlledArticulationReferenceJoints'] = dict(frame['joints'])
+    monkeypatch.setattr(anatomical_repair, 'repair_residuals', span_leftover)
+    from exercise_motion_pkg.physical_validation import physical_metrics_from_payload
+    assert physical_metrics_from_payload(payload)['passed']
 
 
 def test_export_and_interpolated_playback_reject_a_corrupt_constant_length_rig():

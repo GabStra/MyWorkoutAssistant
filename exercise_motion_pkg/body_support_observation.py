@@ -154,22 +154,30 @@ def stationary_source_track(source_pose, joint):
                 <= SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD)
 
 
-def materialize_body_support(payload, source_pose):
-    """Convert confirmed contacts to constraints in the baked coordinate frame."""
+def materialize_body_support(payload, source_pose, contract=None):
+    """Convert confirmed contacts to constraints in the baked coordinate frame.
+
+    Stationary anchors respect the contract's primary movers (e.g. shoulders on
+    a lying press). Readiness and plane pin use that filtered anchor set; the
+    bench/normal direction may still be estimated from torso landmark medians.
+    """
     evidence = payload.get('sourceFootSupportEvidence') or {}
     if (evidence.get('bodySupport') or {}).get('status') == 'confirmed':
         return  # Existing explicit source annotations remain authoritative.
     observed = evidence.get('bodySupportObservation') or {}
     answer = observed.get('observation') or {}
-    anchors = list(BODY_SUPPORT_ANCHORS)
+    anchors = list(body_support_required_anchors(contract))
     if not (observed.get('status') == 'observed'
             and answer.get('pelvisAndUpperBackSameSurface') is True
             and answer.get('pelvis') == answer.get('upperBack') == 'stationary_support'
             and answer.get('torsoSurface') in {'horizontal', 'inclined', 'vertical'}
-            and body_support_source_readiness(source_pose)['ready']):
+            and body_support_source_readiness(source_pose, contract)['ready']):
+        return
+    if not anchors:
         return
     names = payload.get('jointNames') or []
-    required = anchors+['neck', 'spine1', 'spine2', 'spine3']
+    plane_refs = [name for name in BODY_SUPPORT_ANCHORS if name in names]
+    required = list(dict.fromkeys([*anchors, *plane_refs, 'neck', 'spine1', 'spine2', 'spine3']))
     if not set(required).issubset(names) or not payload.get('frames'):
         return
     medians = {n: np.median([f['joints'][n] for f in payload['frames']], axis=0) for n in names}
@@ -184,11 +192,14 @@ def materialize_body_support(payload, source_pose):
         if normal[1] < 0:
             normal *= -1
     normal = normal.tolist()
+    plane_offset = float(np.dot(medians[anchors[0]], normal))
     support = {'required': True, 'status': 'confirmed',
                'source': 'exact_source_contacts_and_stationary_pose_tracks',
                'sourceVideoSha256': observed['sourceVideoSha256'],
                'observation': deepcopy(answer), 'stationaryJoints': list(anchors),
-               'coplanarGroups': [{'joints': list(anchors), 'normal': normal}],
+               'coplanarGroups': [{'joints': list(anchors), 'normal': normal,
+                                   'anchorJoint': anchors[0],
+                                   'planeOffsetMeters': plane_offset}],
                'nonPenetrationChains': [{'endpoints': ['pelvis', 'neck'],
                                          'joints': ['spine1', 'spine2', 'spine3'], 'normal': normal}],
                'soleContacts': []}

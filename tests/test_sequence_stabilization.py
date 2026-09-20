@@ -55,6 +55,20 @@ def test_parent_coordinates_roundtrip_asymmetric_and_travelling_motion():
     np.testing.assert_allclose(first[:, 3:], second[:, 3:], atol=1e-8)
 
 
+def test_contact_mask_skips_unrepresented_heel_without_dropping_other_plants():
+    names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
+    payload = {'sourceFootSupportEvidence': {'contacts': [
+        {'jointName': 'left_foot', 'contactState': 'heel_only', 'contactMotion': 'stationary',
+         'startFrame': 0, 'endFrame': 9},
+        {'jointName': 'right_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'startFrame': 0, 'endFrame': 9},
+    ]}}
+    mask = contact_mask(payload, names, 10)
+    assert mask is not None
+    assert not mask[:, :2].any()
+    assert mask[:, 2:].all()
+
+
 def test_contact_mask_preserves_release_and_unilateral_support():
     names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot', 'left_hand']
     payload = {'sourceFootSupportEvidence': {'contacts': [

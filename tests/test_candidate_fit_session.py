@@ -9,6 +9,41 @@ from exercise_motion_pkg import anatomical_repair as anatomy
 from exercise_motion_pkg import fit_runtime
 
 
+def test_source_confirmed_cycle_precedes_full_interval_with_shared_budget(monkeypatch):
+    from exercise_motion_pkg import loop_cycles
+
+    choice = {'startFrame': 10, 'stopFrameExclusive': 50}
+    payload = {'frames': [None] * 100, 'loop': {'enabled': True},
+               'observedCycleProposals': [choice],
+               'sourceCyclePreflight': [{'selection': choice, 'passed': True}]}
+    now, calls = [0.], []
+    succeeds = [True]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda p, c: {**p, 'loopCycleSelection': c})
+
+    def fit(candidate, **kwargs):
+        calls.append((candidate.get('loopCycleSelection'), kwargs['timeout_seconds']))
+        elapsed = 40. if succeeds[0] else kwargs['timeout_seconds']
+        now[0] += elapsed
+        return candidate, {'applied': succeeds[0], 'reason': 'validated_controlled_motion'
+                           if succeeds[0] else 'fit_validation_failed',
+                           'checks': {'loopSeam': succeeds[0]}, 'elapsedSeconds': elapsed}
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
+    assert calls == [(choice, 108.)]
+    assert report['applied'] and report['elapsedSeconds'] == 40.
+    assert report['cycleSelectionAttempts'][0]['sourceConfirmedFirst']
+    succeeds[0] = False
+    calls.clear()
+    now[0] = 0.
+    result, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
+    assert calls == [(choice, 108.), (None, 252.)]
+    assert now[0] == 360.
+    assert result is payload and not report['applied']
+
+
 def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypatch):
     now = [0.]
     monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
@@ -50,9 +85,11 @@ def test_observed_cycle_attempts_prefer_top_cycle_budget(monkeypatch):
                         lambda payload, choice: {**payload, 'loopCycleSelection': choice})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=100.)
-    assert received == [100.]
+    # The retained interval cannot consume the reserved crop allowance; spend
+    # the remaining 45 seconds on one crop instead of stranding that budget.
+    assert received == [55., 45.]
     assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 1
+    assert len(report['cycleSelectionAttempts']) == 2
 
 
 def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch):
@@ -74,6 +111,11 @@ def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch
                 'loopSeam': False,
                 'playback': False,
             },
+            # Within 2× limit → early-stop (near-miss).
+            'playback': {
+                'seamStepExcessMeters': 0.005,
+                'seamStepExcessLimitMeters': 0.003,
+            },
         }
 
     monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
@@ -87,9 +129,98 @@ def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [400.]
+    assert received == [310.]
     assert report['reason'] == 'no_validated_loop_cycle'
     assert len(report['cycleSelectionAttempts']) == 1
+
+
+def test_observed_cycle_tries_next_when_seam_excess_far_from_limit(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    received = []
+
+    def fit(payload, **kwargs):
+        received.append(kwargs['timeout_seconds'])
+        now[0] += 5.
+        return payload, {
+            'applied': False,
+            'reason': 'loop_requires_cycle_repair',
+            'elapsedSeconds': 5.,
+            'checks': {
+                'trajectoryFit': True,
+                'rootTravel': True,
+                'jointRange': True,
+                'loopSeam': False,
+                'playback': False,
+            },
+            # ≫2× limit → try next ranked cycle.
+            'playback': {
+                'seamStepExcessMeters': 0.025,
+                'seamStepExcessLimitMeters': 0.003,
+                'seamVelocityMismatchMetersPerSecond': 0.2,
+                'seamVelocityMismatchLimitMetersPerSecond': 0.2,
+            },
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    import exercise_motion_pkg.loop_cycles as loop_cycles
+    monkeypatch.setattr(loop_cycles, 'rank_loop_cycles', lambda payload, max_candidates=3: [
+        {'startFrame': 2, 'stopFrameExclusive': 40, 'score': 0.1},
+        {'startFrame': 10, 'stopFrameExclusive': 50, 'score': 0.2},
+    ])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda payload, choice: {**payload, 'loopCycleSelection': choice,
+                                                 'frames': payload.get('frames'),
+                                                 'fps': payload.get('fps')})
+    payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
+    assert len(received) == 2
+    assert report['reason'] == 'no_validated_loop_cycle'
+    assert len(report['cycleSelectionAttempts']) == 2
+
+
+def test_observed_cycle_tries_next_when_seam_velocity_far_from_limit(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    received = []
+
+    def fit(payload, **kwargs):
+        received.append(kwargs['timeout_seconds'])
+        now[0] += 5.
+        return payload, {
+            'applied': False,
+            'reason': 'loop_requires_cycle_repair',
+            'elapsedSeconds': 5.,
+            'checks': {
+                'trajectoryFit': True,
+                'rootTravel': True,
+                'jointRange': True,
+                'loopSeam': False,
+                'playback': False,
+            },
+            # Step near-miss but velocity ≫2× → still try next cycle.
+            'playback': {
+                'seamStepExcessMeters': 0.004,
+                'seamStepExcessLimitMeters': 0.003,
+                'seamVelocityMismatchMetersPerSecond': 0.75,
+                'seamVelocityMismatchLimitMetersPerSecond': 0.2,
+            },
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    import exercise_motion_pkg.loop_cycles as loop_cycles
+    monkeypatch.setattr(loop_cycles, 'rank_loop_cycles', lambda payload, max_candidates=3: [
+        {'startFrame': 2, 'stopFrameExclusive': 40, 'score': 0.1},
+        {'startFrame': 10, 'stopFrameExclusive': 50, 'score': 0.2},
+    ])
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle',
+                        lambda payload, choice: {**payload, 'loopCycleSelection': choice,
+                                                 'frames': payload.get('frames'),
+                                                 'fps': payload.get('fps')})
+    payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
+    assert len(received) == 2
+    assert len(report['cycleSelectionAttempts']) == 2
 
 
 def test_observed_cycle_tries_next_when_non_seam_failure_leaves_budget(monkeypatch):
@@ -116,7 +247,7 @@ def test_observed_cycle_tries_next_when_non_seam_failure_leaves_budget(monkeypat
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [400., 395.]
+    assert received == [310., 395.]
     assert report['reason'] == 'no_validated_loop_cycle'
     assert len(report['cycleSelectionAttempts']) == 2
 
@@ -145,7 +276,7 @@ def test_observed_cycle_skips_later_cycles_after_hard_trajectory_root_failure(mo
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [400.]
+    assert received == [310.]
     assert report['reason'] == 'no_validated_loop_cycle'
     assert len(report['cycleSelectionAttempts']) == 1
 
@@ -219,6 +350,25 @@ def test_finalization_priority_prefers_kept_candidate_workspace(tmp_path, monkey
     priority.join(5)
     follower.join(5)
     assert order.index('kept:enter') < order.index('follower:enter')
+
+
+def test_finalization_priority_allows_every_listed_candidate_workspace(tmp_path, monkeypatch):
+    """Regression for Reverse Hyper hang: only prioritizing candidate 1/N
+    left candidate 2 blocked forever inside the same finalize context."""
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 1)
+    first = tmp_path / 'cand-1'
+    second = tmp_path / 'cand-2'
+    entered = []
+
+    with fit_runtime.prioritize_fit_workspaces([first, second]):
+        with fit_runtime.candidate_fit_session(first):
+            with fit_runtime.cpu_fit_slot():
+                entered.append('first')
+        with fit_runtime.candidate_fit_session(second):
+            with fit_runtime.cpu_fit_slot():
+                entered.append('second')
+
+    assert entered == ['first', 'second']
 
 
 def test_speculative_fit_yields_when_any_final_is_prioritized(tmp_path, monkeypatch):
@@ -354,6 +504,32 @@ def test_abandoned_speculative_fit_raises_instead_of_holding_slot(tmp_path):
                 pass
 
 
+def test_browser_fit_cancellation_is_owned_by_task_not_workspace(tmp_path):
+    import pytest
+    from exercise_motion_pkg.browser_workers import BrowserWorkers
+
+    workers = BrowserWorkers(workers=1)
+
+    def fit():
+        with fit_runtime.candidate_fit_session(tmp_path):
+            with fit_runtime.cpu_fit_slot():
+                assert not fit_runtime.fit_should_yield_for_priority()
+                return 'finalized'
+
+    try:
+        # Prefetch is still active when finalization submits work for the same
+        # workspace. Reuse the browser thread to also check context isolation.
+        with fit_runtime.speculative_workspace(tmp_path):
+            fit_runtime.abandon_speculative_workspace(tmp_path)
+            with fit_runtime.speculative_fit_context():
+                with pytest.raises(fit_runtime.SpeculativePrefetchAbandoned):
+                    workers.run(fit)
+            with fit_runtime.prioritize_fit_workspaces([tmp_path]):
+                assert workers.run(fit) == 'finalized'
+    finally:
+        workers.close()
+
+
 def test_abandoned_speculative_workspace_yields_without_priority(tmp_path):
     import threading
     order = []
@@ -474,6 +650,22 @@ def test_anatomy_resume_reuses_completed_frames_and_invalidates_changed_input(tm
         assert session.reused_frames == 3
     assert not calls
     np.testing.assert_array_equal(actual, expected)
+    from exercise_motion_pkg import physical_validation
+    original_spans = physical_validation.span_rigidity_violations
+    def changed_span_targets(values, joint_names, span_targets=None):
+        result = original_spans(values, joint_names, span_targets)
+        if span_targets is None:
+            return {label: (deviation, target * 1.001) for label, (deviation, target) in result.items()}
+        return result
+    with monkeypatch.context() as context:
+        context.setattr(physical_validation, 'span_rigidity_violations', changed_span_targets)
+        with fit_runtime.candidate_fit_session(tmp_path) as session:
+            _, changed_report = anatomy.repair_rig_anatomy(
+                motion.FixedRig(points, names), points, deadline=monotonic()+10.)
+            assert session.reused_frames == 2  # Only the two duplicate frames reuse the newly solved constraint.
+            assert changed_report['passed']
+        assert calls  # Same frame and rig, different clip constraint must be solved again.
+    calls.clear()
     altered = points.copy()
     altered[:, names.index('spine1')] += forward/np.linalg.norm(forward)*.005
     with fit_runtime.candidate_fit_session(tmp_path):
@@ -506,7 +698,8 @@ def test_timed_out_fit_resumes_trajectory_in_a_later_session(tmp_path, monkeypat
         # A timed-out iterate may already pass independent validation. Keep the
         # incomplete-processing resume path covered even when that happens.
         result, report = real_fit(payload, **kwargs)
-        if report.get('optimizerTermination') == 'time_budget' and report.get('applied'):
+        if (report.get('optimizerTermination') in {'time_budget', 'solve_phase_budget'}
+                and report.get('applied')):
             return payload, {**report, 'applied': False, 'reason': 'fit_timeout'}
         return result, report
 
@@ -525,7 +718,7 @@ def test_iteration_limit_is_processing_incomplete_without_overriding_acceptance(
     assert not motion.controlled_fit_processing_incomplete({'reason': 'validated_controlled_motion', 'applied': True})
 
 
-def test_evaluation_limit_with_remaining_budget_runs_continuation(tmp_path, monkeypatch):
+def test_evaluation_limit_skips_continuation_when_acceptance_stalled(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from test_controlled_motion_pipeline import accepted_payload
 
@@ -548,12 +741,35 @@ def test_evaluation_limit_with_remaining_budget_runs_continuation(tmp_path, monk
     monkeypatch.setattr(motion, 'solve_trajectory', force_eval_limit)
     with fit_runtime.candidate_fit_session(tmp_path):
         _, report = motion._fit_controlled_motion(payload, timeout_seconds=180.)
-    assert report.get('evaluationContinuation'), {
-        'reason': report.get('reason'),
-        'applied': report.get('applied'),
-        'evalSizes': eval_sizes,
-        'refinement': report.get('boundedRefinement'),
-    }
-    assert report['evaluationContinuation']['extraEvaluations'] >= 25
-    full_blocks = [size for size in eval_sizes if size >= 25]
-    assert len(full_blocks) >= 2
+    assert not report.get('applied')
+    assert report.get('reason') == 'fit_validation_failed', report
+    assert not report.get('evaluationContinuation'), report
+    assert (report.get('boundedRefinement') or {}).get('stopReason') in {
+        'acceptance_stalled', 'objective_stalled'}, report
+    assert report.get('termination') in motion.EVIDENCE_TERMINATIONS, report
+    assert not motion.controlled_fit_processing_incomplete(report), report
+    # Chunked main solve (5) + at most two short refinement blocks; no full continuation.
+    assert eval_sizes and all(size <= 8 for size in eval_sizes), eval_sizes
+    assert eval_sizes.count(5) >= 1, eval_sizes
+    assert len(eval_sizes) <= 1 + 2 + 3, eval_sizes  # chunks + polish
+
+
+def test_acceptance_stalled_helpers_match_prod_timeout_signatures():
+    assert motion.acceptance_stalled_after_refinement({
+        'blocks': [
+            {'failedChecks': ['jointRange']},
+            {'failedChecks': ['jointRange']},
+        ]})
+    assert not motion.acceptance_stalled_after_refinement({
+        'blocks': [
+            {'failedChecks': ['jointRange', 'settling']},
+            {'failedChecks': ['jointRange']},
+        ]})
+    assert motion.refinement_improved_acceptance({
+        'initialFailedChecks': ['jointRange', 'settling'],
+        'blocks': [{'failedChecks': ['jointRange']}],
+    })
+    assert not motion.refinement_improved_acceptance({
+        'initialFailedChecks': ['jointRange'],
+        'blocks': [{'failedChecks': ['jointRange']}],
+    })

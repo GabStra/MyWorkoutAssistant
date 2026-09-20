@@ -7,6 +7,102 @@ from exercise_motion_pkg.yolo_track_stabilize import load_workspace_yolo_pose_tr
 from exercise_motion_pkg.stage_cache import file_identity
 
 
+def test_seam_policy_change_reopens_cached_terminal_decision(tmp_path, monkeypatch):
+    package = tmp_path / 'package'
+    package.mkdir()
+    owner = package / 'bake_and_rank.py'
+    seam = package / 'loop_seam.py'
+    owner.write_text('old bake policy')
+    seam.write_text('old seam policy')
+    os.utime(owner, (1000., 1000.))
+    os.utime(seam, (1000., 1000.))
+    monkeypatch.setattr(bake, '__file__', str(owner))
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    manifest = workspace / 'selection_manifest.json'
+    manifest.write_text(json.dumps({'candidateResults': [{
+        'exerciseIndex': 0, 'candidateRank': 0,
+        'candidate': {'videoId': 'retained-source'},
+        'status': 'ready_for_selection',
+        'finalSelectionStatus': 'rejected_after_materialized_review',
+    }]}))
+    os.utime(manifest, (2000., 2000.))
+    assert bake.load_previous_terminal_candidate_results(workspace)
+    seam.write_text('corrected seam policy')
+    os.utime(seam, (3000., 3000.))
+    assert not bake.load_previous_terminal_candidate_results(workspace)
+
+
+def test_source_render_cache_requires_individual_quality_evidence(tmp_path, monkeypatch):
+    from exercise_motion_pkg.segment_detection import DetectionWindow
+
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'video')
+    sheet = tmp_path / 'contact_sheet_01.jpg'
+    frames = [tmp_path / 'frame_01.jpg', tmp_path / 'frame_02.jpg']
+    calls = []
+
+    def render(**kwargs):
+        calls.append(kwargs)
+        sheet.write_bytes(b'sheet')
+        for frame in frames:
+            frame.write_bytes(b'source frame')
+        return [sheet]
+
+    monkeypatch.setattr(bake, '_render_video_window_contact_sheet_uncached', render)
+
+    def prepare():
+        return bake.render_video_window_contact_sheet(
+            video_path=video, window=DetectionWindow(0, 0., 2.),
+            output_dir=tmp_path, frame_count=2)
+
+    assert prepare() == [sheet]
+    assert prepare() == [sheet]
+    assert len(calls) == 1
+    frames[0].unlink()
+    assert prepare() == [sheet]
+    assert len(calls) == 2
+    assert frames[0].read_bytes() == b'source frame'
+    frames[1].write_bytes(b'wrong interval')
+    assert prepare() == [sheet]
+    assert len(calls) == 3
+
+
+def test_legacy_sparse_pose_refresh_uses_local_video_and_reuses_evidence(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import pose_prefilter as pose
+
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'local video')
+    legacy = {'scanStrategy': 'spread', 'sampleFps': 8., 'maxSeconds': 32.}
+    fresh = {**legacy, 'samplingPolicyVersion': 2, 'dominantPoseSamples': []}
+    calls = []
+
+    def infer(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(payload=fresh)
+
+    monkeypatch.setattr(pose, 'run_yolo_pose_prefilter', infer)
+
+    def refresh(payload=legacy):
+        return pose.refresh_legacy_spread_pose_evidence(
+            payload, video_path=video, output_dir=tmp_path / 'evidence',
+            exercise_name='Exercise', contract=None)
+
+    assert refresh() == fresh
+    assert refresh() == fresh
+    assert len(calls) == 1
+    assert calls[0]['video_path'] == video
+    assert calls[0]['settings'].sample_fps == 8.
+    assert calls[0]['settings'].max_seconds == 32.
+    assert refresh(fresh) is fresh
+    assert refresh({**legacy, 'sampleFps': 1.})['sampleFps'] == 1.
+    assert len(calls) == 1
+    video.write_bytes(b'different local video')
+    assert refresh() == fresh
+    assert len(calls) == 2
+
+
 def test_context_cache_tracks_content_and_interval_not_filename(tmp_path, monkeypatch):
     source, output = tmp_path / "source.mp4", tmp_path / "context.mp4"
     source.write_bytes(b"one")

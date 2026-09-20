@@ -13,6 +13,51 @@ MAX_BOUNDARY_CENTER_DISTANCE_SCALE = 1.25
 MAX_BOUNDARY_KEYPOINT_DISTANCE_SCALE = 0.60
 MAX_BOUNDARY_SCALE_RATIO = 1.75
 MIN_REQUIRED_FRAME_COVERAGE = 0.95
+MAX_DUPLICATE_POSE_DISTANCE_SCALE = 0.08
+
+
+def overlapping_tracks_match(left, right, *, max_overlap_frames):
+    """Require simultaneous identity evidence before joining duplicate track IDs."""
+    left_frames, right_frames = track_frames(left), track_frames(right)
+    if right_frames[0] <= left_frames[0] or right_frames[-1] <= left_frames[-1]:
+        return False
+    if left_frames[-1] - right_frames[0] + 1 > max_overlap_frames:
+        return False
+    common = sorted(set(left_frames) & set(right_frames))
+    if len(common) < 2:
+        return False
+    left_pose = np.asarray(left.get('keypoints', []), dtype=float)
+    right_pose = np.asarray(right.get('keypoints', []), dtype=float)
+    left_boxes = np.asarray(left.get('bbox', []), dtype=float)
+    right_boxes = np.asarray(right.get('bbox', []), dtype=float)
+    if (left_pose.ndim != 3 or right_pose.ndim != 3
+            or left_pose.shape[1:] != right_pose.shape[1:] or left_pose.shape[-1] < 3
+            or left_pose.shape[0] != len(left_frames) or right_pose.shape[0] != len(right_frames)
+            or left_boxes.ndim != 2 or right_boxes.ndim != 2
+            or left_boxes.shape[1] < 3 or right_boxes.shape[1] < 3
+            or len(left_boxes) != len(left_frames) or len(right_boxes) != len(right_frames)):
+        return False
+    left_indices, right_indices = ({frame: i for i, frame in enumerate(ids)}
+                                   for ids in (left_frames, right_frames))
+    for frame in common:
+        li, ri = left_indices[frame], right_indices[frame]
+        lb, rb = left_boxes[li, :3], right_boxes[ri, :3]
+        if not np.isfinite(np.r_[lb, rb]).all() or min(lb[2], rb[2]) <= 0.:
+            return False
+        scale = min(lb[2], rb[2]) * 200.
+        if max(lb[2], rb[2]) / min(lb[2], rb[2]) > 1.2:
+            return False
+        if np.linalg.norm(lb[:2] - rb[:2]) > scale * MAX_DUPLICATE_POSE_DISTANCE_SCALE:
+            return False
+        lp, rp = left_pose[li], right_pose[ri]
+        visible = ((lp[:, 2] >= .3) & (rp[:, 2] >= .3)
+                   & np.isfinite(lp[:, :3]).all(axis=1) & np.isfinite(rp[:, :3]).all(axis=1))
+        if visible.sum() < 5:
+            return False
+        distances = np.linalg.norm(lp[visible, :2] - rp[visible, :2], axis=1)
+        if np.percentile(distances, 90) > scale * MAX_DUPLICATE_POSE_DISTANCE_SCALE:
+            return False
+    return True
 
 
 def track_frames(track: dict[str, Any]) -> list[int]:
@@ -40,7 +85,9 @@ def tracks_are_compatible(
     if not left_frames or not right_frames:
         return False
     missing_frame_count = right_frames[0] - left_frames[-1] - 1
-    if missing_frame_count < 0 or missing_frame_count > max_gap_frames:
+    if missing_frame_count < 0:
+        return overlapping_tracks_match(left, right, max_overlap_frames=max(2, max_gap_frames))
+    if missing_frame_count > max_gap_frames:
         return False
     left_bbox = track_boundary_bbox(left, first=False)
     right_bbox = track_boundary_bbox(right, first=True)
@@ -145,7 +192,9 @@ def stitch_track_chain(
             stitched["frame_id"] = np.concatenate((stitched["frame_id"], missing_frames), axis=0)
             interpolated_frame_count += len(missing_frames)
         for key in ("frame_id", "bbox", "keypoints"):
-            stitched[key] = np.concatenate((stitched[key], np.asarray(next_track[key])), axis=0)
+            # Simultaneous duplicates were checked by the compatibility gate.
+            # Keep each timestamp once; never stretch the output time axis.
+            stitched[key] = np.concatenate((stitched[key], np.asarray(next_track[key])[right_frames > left_frame]), axis=0)
 
     merged_results = {
         track_id: track

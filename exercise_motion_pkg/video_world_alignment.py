@@ -15,6 +15,7 @@ import numpy as np
 from exercise_motion_pkg.ground import PlaneEstimate
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.unidepth_runner import (
+    DepthPredictionError,
     DepthFrameSample,
     infer_depth_samples_for_video,
     is_unidepth_runtime_available,
@@ -261,11 +262,17 @@ def align_motion_clip_to_video(
     if source_pose_payload is None:
         return _empty_alignment_result(clip, reason="source_pose_reference_missing")
 
-    depth_samples = infer_depth_samples_for_video(
-        video_path=video_path,
-        sample_times_seconds=_motion_aligned_sample_times(clip, max_samples=max_depth_samples),
-        max_samples=max_depth_samples,
-    )
+    try:
+        depth_samples = infer_depth_samples_for_video(
+            video_path=video_path,
+            sample_times_seconds=_motion_aligned_sample_times(clip, max_samples=max_depth_samples),
+            max_samples=max_depth_samples,
+        )
+    except DepthPredictionError as error:
+        # Depth is optional scene evidence. Retain the reconstruction and let
+        # contact/source gates judge it; never turn invalid depth into a floor.
+        return _empty_alignment_result(
+            clip, reason="unidepth_prediction_invalid", extra={"error": str(error)})
     if not depth_samples:
         return _empty_alignment_result(clip, reason="unidepth_inference_failed")
 
@@ -450,13 +457,8 @@ def align_motion_clip_to_video(
     }
     projection = body_fit_projection_metrics(clip, source_pose_payload, rotation, translation)
     metadata["sourceProjectionRegressionGate"] = projection
-    uprightness_regressed = (
-        source_uprightness is not None
-        and source_uprightness >= 0.65
-        and raw_uprightness is not None
-        and aligned_uprightness is not None
-        and aligned_uprightness + 1e-6 < raw_uprightness
-    )
+    uprightness_regressed = source_uprightness_regressed(
+        source_uprightness, raw_uprightness, aligned_uprightness)
     if projection.get("regressed") or uprightness_regressed:
         rejection_reason = ("source_projection_alignment_regression" if projection.get("regressed")
                             else "upright_source_alignment_regression")
@@ -468,7 +470,16 @@ def align_motion_clip_to_video(
             }
         )
         floor_only = floor_only_alignment_fallback(clip, camera_leveling_rotation)
-        if floor_only is None or camera_plane.rms_error > PLANE_RANSAC_THRESHOLD_METERS:
+        floor_uprightness = (
+            motion_clip_camera_uprightness_score(floor_only) if floor_only is not None else None)
+        floor_regressed = source_uprightness_regressed(
+            source_uprightness, raw_uprightness, floor_uprightness)
+        metadata["floorOnlyUprightnessScore"] = floor_uprightness
+        metadata["floorOnlyUprightnessRegressed"] = floor_regressed
+        # A planar depth patch is not sufficient evidence that it is the floor.
+        # The fallback must satisfy the same source check as the primary fit.
+        if (floor_only is None or floor_regressed
+                or camera_plane.rms_error > PLANE_RANSAC_THRESHOLD_METERS):
             return VideoWorldAlignmentResult(
                 clip=clip,
                 applied=False,
@@ -489,7 +500,7 @@ def align_motion_clip_to_video(
             "policy": "measured_floor_leveling_without_body_fit",
             "rotationMatrix": camera_leveling_rotation.tolist(),
             "translation": [0.0, 0.0, 0.0],
-            "floorOnlyUprightnessScore": motion_clip_camera_uprightness_score(floor_only),
+            "floorOnlyUprightnessScore": floor_uprightness,
         })
         metadata.pop("rejectionReason", None)
         # Preserve rejected measurements for diagnosis, not as authoritative
@@ -522,14 +533,21 @@ def align_motion_clip_to_video(
     )
 
 
+def source_uprightness_regressed(source_score, original_score, proposed_score) -> bool:
+    """Reject loss of uprightness only when the observed source is upright."""
+    return bool(source_score is not None and source_score >= 0.65
+                and original_score is not None and proposed_score is not None
+                and proposed_score + 1e-6 < original_score)
+
+
 def floor_only_alignment_fallback(clip: MotionClip, rotation: np.ndarray) -> MotionClip | None:
     """Retain measured gravity when the independently fitted body pose fails.
 
     This rotates the whole clip once; it never straightens individual poses or
     forces a leaning torso to become vertical.
     """
-    # The caller checks measured floor quality. Torso verticality cannot veto
-    # gravity: leveling the camera may reveal a legitimate hinge or body lean.
+    # The caller checks measured floor quality and source consistency. This
+    # geometric helper preserves articulation, including legitimate body lean.
     if (rotation.shape != (3, 3) or not np.all(np.isfinite(rotation))
             or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6)
             or not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6)):

@@ -42,6 +42,18 @@ class DiscoveryBudget:
     def exhausted(self) -> bool:
         return self.remaining(1) == 0
 
+    @property
+    def stop_reason(self) -> str | None:
+        # A scheduler pause must not turn an exhausted configured allowance
+        # into an automatic new allowance.
+        if self.candidate_limit > 0 and self.consumed >= self.candidate_limit:
+            return "candidate_budget_exhausted"
+        if self.seconds_limit > 0 and time.monotonic() - self.started_at >= self.seconds_limit:
+            return "time_budget_exhausted"
+        if self.yield_path is not None and self.yield_path.exists():
+            return "scheduler_yield"
+        return None
+
     def record(self, candidates: dict[str, dict[str, Any]]) -> None:
         self.consumed += len(candidates)
         self.reviewed.update(candidates)
@@ -51,8 +63,8 @@ class DiscoveryBudget:
             temporary.write_text(json.dumps({"signature": self.signature, "reviewed": self.reviewed}), encoding="utf-8")
             temporary.replace(self.checkpoint_path)
 
-    def remaining_seconds(self) -> float | None:
-        if self.yield_path is not None and self.yield_path.exists():
+    def remaining_seconds(self, *, ignore_scheduler_yield: bool = False) -> float | None:
+        if not ignore_scheduler_yield and self.yield_path is not None and self.yield_path.exists():
             return 0.0
         if self.seconds_limit <= 0:
             return None

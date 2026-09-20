@@ -22,6 +22,9 @@ SOCKET_ALIGNMENT_MAX_LATERAL_RATIO = .06
 # girdle visibly (an accepted-with-complaints thruster reached ~19%).
 SPAN_TOLERANCE_RATIO = .12
 SPAN_TOLERANCE_METERS = .03
+# A reported anatomical repair can leave a millimetre of girdle leftover
+# against the 30 mm span cap. That must not void an otherwise legal output.
+ANATOMICAL_REFERENCE_SPAN_LEFTOVER_METERS = .002
 SPAN_JOINT_PAIRS = (('shoulders', 'left_shoulder', 'right_shoulder'),
                     ('hips', 'left_hip', 'right_hip'))
 
@@ -196,16 +199,25 @@ def support_balance(points, names, fps, support_mask=None):
             "limitations": "No equipment mass, contact forces, or angular momentum; not full dynamics validation."}, outside
 
 
-def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.):
+def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0., reference=None):
     """Source-independent limits for our simplified exercise rig.
 
     These dimensionless model limits are not clinical ROM claims. They allow
     torso flexion and independent limbs, but reject folded spine chains,
     displaced sockets, collapsed bones and mismatched bilateral proportions.
     Positive residuals are violations; fitting and acceptance share this policy.
+
+    When ``reference`` is provided, torso-bend floors follow the observed
+    (or support-corrected) pose instead of demanding an upright 145° angle that
+    prone/supported exercises cannot and should not satisfy.
     """
     index = {name: i for i, name in enumerate(names)}
     rows, labels = [], []
+    reference_points = None
+    if reference is not None:
+        reference_points = np.asarray(reference, dtype=float)
+        if reference_points.shape != np.asarray(points, dtype=float).shape:
+            reference_points = None
 
     def add(label, value):
         labels.append(label)
@@ -223,6 +235,16 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.)
 
     def point(name):
         return points[:, index[name]]
+
+    def reference_point(name):
+        return reference_points[:, index[name]]
+
+    def torso_bend_floor(proximal, hinge, distal):
+        absolute = np.deg2rad(145.)
+        if reference_points is None:
+            return absolute
+        observed = angles(proximal, hinge, distal)
+        return np.minimum(absolute, observed - np.deg2rad(1.))
 
     from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
     lengths = {}
@@ -265,8 +287,12 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.)
     if all(n in index for n in chain):
         if all(n in index for n in ('left_hip', 'right_hip')):
             hips = (point('left_hip')+point('right_hip'))*.5
-            add('anatomy_torso_bend:spine1',
-                np.deg2rad(145.)-angles(hips, point('spine1'), point('neck')))
+            if reference_points is not None:
+                ref_hips = (reference_point('left_hip')+reference_point('right_hip'))*.5
+                spine_floor = torso_bend_floor(ref_hips, reference_point('spine1'), reference_point('neck'))
+            else:
+                spine_floor = torso_bend_floor(hips, point('spine1'), point('neck'))
+            add('anatomy_torso_bend:spine1', spine_floor - angles(hips, point('spine1'), point('neck')))
         if all(n in index for n in ('left_collar', 'right_collar', 'left_shoulder', 'right_shoulder')):
             collars = (point('left_collar')+point('right_collar'))*.5
             shoulders = (point('left_shoulder')+point('right_shoulder'))*.5
@@ -278,8 +304,14 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.)
             progress = np.sum((shoulders-point('spine3'))*neck_axis, axis=-1)/np.maximum(np.sum(neck_axis**2, axis=-1), 1e-9)
             add('anatomy_chest_attachment:shoulders', np.maximum(.35-progress, progress-1.25))
             if all(n in index for n in ('left_hip', 'right_hip')):
+                if reference_points is not None:
+                    ref_hips = (reference_point('left_hip')+reference_point('right_hip'))*.5
+                    ref_shoulders = (reference_point('left_shoulder')+reference_point('right_shoulder'))*.5
+                    shoulder_floor = torso_bend_floor(ref_hips, reference_point('spine1'), ref_shoulders)
+                else:
+                    shoulder_floor = torso_bend_floor(hips, point('spine1'), shoulders)
                 add('anatomy_torso_bend:shoulders',
-                    np.deg2rad(145.)-angles(hips, point('spine1'), shoulders))
+                    shoulder_floor - angles(hips, point('spine1'), shoulders))
         axis = point('neck')-point('pelvis')
         height = np.linalg.norm(axis, axis=-1)
         direction = axis/np.maximum(height[:, None], 1e-9)
@@ -312,7 +344,7 @@ def validate_physical_motion(points, names, *, reference=None, fps=30., support_
     index = {name: i for i, name in enumerate(names)}
     scale = body_scale(reference if reference is not None else points, names)
     events = []
-    structure, labels = anatomical_structure_residuals(points, names)
+    structure, labels = anatomical_structure_residuals(points, names, reference=reference)
     for frame, column in np.argwhere(structure > 1e-6):
         reason, joint = labels[column].split(':', 1)
         events.append({'reason': reason, 'joint': joint, 'frameIndex': int(frame)})
@@ -395,6 +427,32 @@ def validate_physical_motion(points, names, *, reference=None, fps=30., support_
             'policy': 'whole_body_repair_v5_anatomical_structure'}
 
 
+def _joint_array_from_frames(frames, key, names):
+    if not all(all(n in frame.get(key, {}) for n in names) for frame in frames):
+        return None
+    return np.asarray([[frame[key][n] for n in names] for frame in frames], dtype=float)
+
+
+def anatomical_reference_is_usable(points, names):
+    """True when a stored source-repair pose may still authorise output checks."""
+    from .anatomical_repair import repair_residuals
+
+    if points is None or not np.isfinite(points).all():
+        return False
+    residuals, labels = repair_residuals(points, names)
+    if residuals.size == 0 or not np.any(residuals > 1e-6):
+        return True
+    leftover = residuals.max(axis=0)
+    for value, label in zip(leftover, labels):
+        if value <= 1e-6:
+            continue
+        if not str(label).startswith('anatomy_span_variation:'):
+            return False
+        if float(value) > ANATOMICAL_REFERENCE_SPAN_LEFTOVER_METERS:
+            return False
+    return True
+
+
 def physical_metrics_from_payload(payload):
     frames = payload.get('frames') or []
     names = payload.get('jointNames') or []
@@ -411,13 +469,13 @@ def physical_metrics_from_payload(payload):
             return {'passed':False,'reasons':['fixed_rig_reference_unavailable'],'events':[]}
         reference=np.asarray([[f.get('controlledArticulationReferenceJoints',f['controlledSourceJoints'])[n] for n in names] for f in frames],dtype=float)
         if payload.get('anatomicalSourceRepair'):
-            if not all(all(n in f.get('correctedAnatomicalReferenceJoints', {}) for n in names) for f in frames):
+            corrected = _joint_array_from_frames(frames, 'correctedAnatomicalReferenceJoints', names)
+            if corrected is None:
                 return {'passed': False, 'reasons': ['anatomical_reference_unavailable'], 'events': []}
-            reference = np.asarray([[f['correctedAnatomicalReferenceJoints'][n] for n in names] for f in frames], dtype=float)
-            from .anatomical_repair import repair_residuals
-            if not np.isfinite(reference).all() or np.any(repair_residuals(reference, names)[0] > 1e-6):
+            if not anatomical_reference_is_usable(corrected, names):
                 return {'passed': False, 'reasons': ['anatomical_reference_invalid'],
                         'events': [{'reason': 'anatomical_reference_invalid'}]}
+            reference = corrected
     from .support_geometry import support_evidence, validated_support_reference
     if fixed_rig and support_evidence(payload).get('required'):
         reference, reason = validated_support_reference(payload)
@@ -449,12 +507,25 @@ def physical_metrics_from_payload(payload):
         # Calibrated rig lengths replace noisy source lengths, but every other
         # anatomical constraint and the actual interpolated playback still apply.
         report['events']=[e for e in report['events'] if e['reason']!='repair_bone_length_distortion']
+        from .controlled_motion import intentional_open_loop_seam
         from .rig_playback import validate_rig_playback
-        playback=validate_rig_playback(payload)
+        open_seam = intentional_open_loop_seam(payload)
+        # Intentional open seams already labeled requires_cycle_repair. Evaluate
+        # playback without cyclic wrap so the known seam gap does not invent
+        # mid-wrap physics failures, and do not re-reject as unsafe_loop_transition.
+        playback_payload = payload
+        if open_seam:
+            loop = dict(payload.get('loop') or {})
+            loop['enabled'] = False
+            playback_payload = {**payload, 'loop': loop}
+        playback = validate_rig_playback(playback_payload)
+        if open_seam:
+            playback = {**playback, 'openLoopSeam': True}
         report['rigPlayback']=playback
         if not playback['passed']:
             report['events'].append({'reason':'fixed_rig_playback_invalid'})
-        if (payload.get('loop') or {}).get('enabled') and not playback['seamContinuous']:
+        if ((payload.get('loop') or {}).get('enabled') and not playback['seamContinuous']
+                and not open_seam):
             report['events'].append({'reason':'unsafe_loop_transition'})
         report['reasons']=sorted({e['reason'] for e in report['events']})
         report['passed']=not report['events']

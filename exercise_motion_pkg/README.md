@@ -37,9 +37,18 @@ pwsh ./scripts/apply_wham_mmpose1_patch.ps1
 pwsh ./scripts/prepare_wham_mmpose1_checkpoints.ps1
 ```
 
-SMPL body models and large checkpoints stay local (gitignored) under that checkout. Required files:
+SMPL body models and large checkpoints stay local (gitignored) under that checkout and are **baked into the WHAM Docker image** at build time. Rebuild after changing weights:
+
+```powershell
+pwsh ./scripts/build_wham_ada_docker.ps1
+```
+
+Docker inference uses `/opt/wham-src` inside the image (code, checkpoints, SMPL). It does not mount the host WHAM tree. Host `dataset/body_models` is still used by the Python pipeline to convert WHAM output to joints.
+
+Required host files for a local (non-Docker) WHAM run, and for building the image:
 
 - `demo.py`
+- `checkpoints/wham_vit_bedlam_w_3dpw.pth.tar`
 - `checkpoints/wham_vit_w_3dpw.pth.tar`
 - `checkpoints/hmr2a.ckpt`
 - `checkpoints/vitpose-h-multi-coco.pth`

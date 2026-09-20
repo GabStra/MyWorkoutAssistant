@@ -40,6 +40,8 @@ from exercise_motion_pkg.wham_runner import (
     DEFAULT_WHAM_DOCKER_IMAGE,
     DEFAULT_WHAM_DOCKER_SHM_SIZE,
     DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
+    WHAM_DEMO_CHECKPOINT_NAME,
+    WHAM_EVAL_CHECKPOINT_NAME,
     run_wham_locally,
     wham_preprocessing_environment,
 )
@@ -62,7 +64,7 @@ SPINEPOSE_CONDA_ENV_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_CONDA_ENV"
 DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
-WHAM_GLOBAL_CACHE_VERSION = 2
+WHAM_GLOBAL_CACHE_VERSION = 4
 WHAM_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
 SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "import ctypes, os, pathlib, site; "
@@ -272,7 +274,8 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
             wham_repo / "demo.py",
             wham_repo / "configs" / "yamls" / "demo.yaml",
             wham_repo / "lib" / "models" / "preproc" / "detector.py",
-            wham_repo / "checkpoints" / "wham_vit_w_3dpw.pth.tar",
+            wham_repo / "checkpoints" / WHAM_DEMO_CHECKPOINT_NAME,
+            wham_repo / "checkpoints" / WHAM_EVAL_CHECKPOINT_NAME,
             wham_repo / "checkpoints" / "hmr2a.ckpt",
         )
         for path in repository_inputs:
@@ -411,6 +414,7 @@ def run_generation_pipeline(
     inputs = [value for value in settings.values() if isinstance(value, Path) and value.is_file()]
     inputs.extend(Path(__file__).with_name(name) for name in (
         "pipeline.py", "cleanup.py", "temporal_contact_solver.py", "structural_refinement.py", "video_world_alignment.py",
+        "unidepth_runner.py",
         "preview.py", "wham_convert.py", "wham_retarget_source.py", "ground.py", "models.py",
         "spinepose_wham_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
         "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
@@ -801,6 +805,10 @@ def _run_generation_pipeline_uncached(
             preserve_temporal_extent=isinstance(source_pose_payload, dict),
         )
         record_timing("cleanupMotionSeconds", stage_started)
+        stage_started = time.perf_counter()
+        from .structural_refinement import retain_camera_through_cleanup
+        cleaned_clip = retain_camera_through_cleanup(tuning_input_clip, cleaned_clip, source_pose_payload)
+        record_timing("cleanupCameraRegistrationSeconds", stage_started)
         stage_started = time.perf_counter()
         cleaned_clip = refine_motion_clip_structurally(
             cleaned_clip,

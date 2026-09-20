@@ -121,3 +121,51 @@ def test_prefetched_candidates_are_reviewed_before_search(tmp_path, monkeypatch)
     youtube.discover_and_rank_youtube_candidates(workout_plan_json=plan, out_json=tmp_path / "candidates.json",
         settings=settings, search_fn=forbidden, semantic_gate=reject)
     assert reviewed == [candidate.key()]
+
+
+def test_scheduler_yield_is_not_semantic_exhaustion_and_resume_reviews(tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"exercises": [{"name": "Dumbbell Thruster"}]}))
+    signal = tmp_path / "discovery_yield.request"
+    item = YouTubeCandidate("https://www.youtube.com/watch?v=demo", "demo",
+        "Dumbbell Thruster", "Coach", 20, 100, None, None, None)
+    reviewed = []
+    def search(*args):
+        signal.write_text("Reconstruction ready")
+        return [item]
+    def reject(exercise, candidate, settings):
+        reviewed.append(candidate.key())
+        return .1, ["wrong_exercise"], {"enabled": True, "passed": False, "score": .1, "wrongExercise": True}
+    settings = YouTubeRankingSettings(exercise_motion_contract_enabled=False,
+        exercise_name_rewrite_enabled=False, llama_cpp_base_url=None,
+        llama_cpp_auto_start_server=False, discovery_candidate_budget=2,
+        discovery_time_budget_seconds=300, semantic_gate_enabled=True)
+    def run(searcher):
+        return discover_and_rank_youtube_candidates(workout_plan_json=plan,
+            out_json=tmp_path / "candidates.json", settings=settings,
+            search_fn=searcher, semantic_gate=reject)
+    result = run(search)
+    expansion = result["exercises"][0]["candidateExpansion"]
+    assert reviewed == []
+    assert expansion["terminalReason"] == "discovery_scheduler_yield"
+    turn = expansion["discoveryTurn"]
+    assert turn["stopReason"] == "scheduler_yield"
+    assert 0 < turn["remainingTimeSeconds"] <= 300
+    signal.unlink()
+    run(lambda *_: [item])
+    assert reviewed == [item.key()]
+
+
+def test_yield_does_not_renew_exhausted_allowance(tmp_path, monkeypatch):
+    signal = tmp_path / "yield.request"
+    signal.write_text("pause")
+    monkeypatch.setattr(budget_module.time, "monotonic", lambda: 105.0)
+    budget = DiscoveryBudget(2, 10, started_at=100, yield_path=signal)
+    assert budget.stop_reason == "scheduler_yield"
+    assert budget.remaining_seconds() == 0
+    assert budget.remaining_seconds(ignore_scheduler_yield=True) == 5
+    budget.consumed = 2
+    assert budget.stop_reason == "candidate_budget_exhausted"
+    budget.consumed = 0
+    budget.seconds_limit = 5
+    assert budget.stop_reason == "time_budget_exhausted"

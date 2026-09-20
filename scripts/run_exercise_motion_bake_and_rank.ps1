@@ -207,13 +207,12 @@ function Start-WhamWarmWorker {
     $trackingPreflightPath = Join-Path $workerModuleDir "wham_tracking_preflight.py"
     $trackingCoveragePath = Join-Path $workerModuleDir "wham_tracking_coverage.py"
     $dockerArgs += @(
-        "-v", "$($resolvedWhamRepoPath):/code",
         "-v", "$($MountRoot):/workspace",
         "-v", "$($SessionDir):/worker_state",
         "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
         "-v", "$($trackingPreflightPath):/worker/wham_tracking_preflight.py:ro",
         "-v", "$($trackingCoveragePath):/worker/wham_tracking_coverage.py:ro",
-        "-w", "/code",
+        "-w", "/opt/wham-src",
         $WhamDockerImage,
         "python", "-u", "/worker/wham_warm_worker.py",
         "--state-dir", "/worker_state"

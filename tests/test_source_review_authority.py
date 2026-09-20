@@ -39,6 +39,18 @@ def test_inferred_descriptions_do_not_change_prompt_or_decision(candidate):
     assert all(ranking == rankings[0] for ranking in rankings)
 
 
+def test_hold_review_has_no_unconditional_dynamic_completion_requirement(candidate):
+    prompt = bake.build_source_cut_candidate_choice_prompt(
+        exercise_name="Copenhagen Plank", candidate_title="irrelevant", candidate=candidate,
+        exercise_motion_contract={"completionMode": "stable_hold"})
+    assert "maintaining the target hold is exercise execution, not waiting or setup" in prompt
+    assert "starting or ending mid-hold or mid-travel is not a bad boundary" in prompt
+    assert "Apply the matching case below, not all cases" in prompt
+    assert "completeMovement must be true only when the full execution" not in prompt
+    assert "namedEquipmentEngagedStatus" in prompt
+    assert "correct explicit qualifiers" in prompt
+
+
 @pytest.mark.parametrize("changes", [
     {"approved": False, "reject": ["wrong_variant"], "identityMatch": "mismatch",
      "identityEvidence": "Dumbbells are held instead of the required barbell."},

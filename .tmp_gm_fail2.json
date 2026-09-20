@@ -1,0 +1,105 @@
+{
+  "wall": 187.8,
+  "reason": "fit_validation_failed",
+  "applied": false,
+  "jerkBefore": 0.0021351564466412024,
+  "jerkAfter": 0.0029027808435215683,
+  "optimizerTermination": "time_budget",
+  "termination": "polish_stalled",
+  "evaluations": null,
+  "elapsedSeconds": 187.06949610001175,
+  "supportInitializationSeconds": 80.08330969999952,
+  "supportReferenceGeometry": {
+    "required": true,
+    "passed": true,
+    "policyVersion": 3,
+    "maximumStationaryJointRangeMeters": 6.404951302222777e-10,
+    "maximumSurfaceErrorMeters": 1.2845912789050118e-07,
+    "toleranceMeters": 0.005,
+    "rejectionReasons": []
+  },
+  "supportReferenceAlignment": {
+    "required": false,
+    "passed": true
+  },
+  "supportReferenceAnatomy": {
+    "passed": true,
+    "violations": []
+  },
+  "supportReferenceEquipment": {
+    "required": true,
+    "passed": false,
+    "maximumSpacingErrorMeters": 0.17598561663404333,
+    "constraint": {
+      "handRelationship": "rigid_pair",
+      "available": true,
+      "endpointPair": [
+        "left_hand",
+        "right_hand"
+      ],
+      "distanceMeters": 0.9674329589042905,
+      "distanceSource": "robust_reconstruction_estimate",
+      "toleranceMeters": 0.01934865917808581
+    }
+  },
+  "supportReferenceContacts": {
+    "passed": true,
+    "maximumErrorMeters": 1.0680676481940417e-09
+  },
+  "supportCalibration": {
+    "strategy": "plant_projection",
+    "elapsedSeconds": 7.382799699989846,
+    "reusedAcrossCycles": null,
+    "stationaryJoints": null,
+    "surface": null
+  },
+  "boundedRefinement": {
+    "initialFailedChecks": [
+      "jerk",
+      "equipment",
+      "playback"
+    ],
+    "evaluationsPerBlock": 5,
+    "blocks": [
+      {
+        "costBefore": 58861524.85706164,
+        "costAfter": null,
+        "failedChecks": [
+          "jerk",
+          "equipment",
+          "playback"
+        ],
+        "stage": "A",
+        "method": "stage_a_contact_boost"
+      }
+    ],
+    "stage": "A",
+    "stopReason": "polish_stalled"
+  },
+  "failedChecks": [
+    "jerk",
+    "equipment",
+    "playback"
+  ],
+  "equipment": {
+    "required": true,
+    "passed": false,
+    "maximumSpacingErrorMeters": 0.17598561663404333,
+    "constraint": {
+      "handRelationship": "rigid_pair",
+      "available": true,
+      "endpointPair": [
+        "left_hand",
+        "right_hand"
+      ],
+      "distanceMeters": 0.9674329589042905,
+      "distanceSource": "robust_reconstruction_estimate",
+      "toleranceMeters": 0.01934865917808581
+    }
+  },
+  "playbackContact": 0.002000758447952944,
+  "playbackFloor": 0.0,
+  "kfContact": 0.00013846351046511508,
+  "retainedIntervalFit": true,
+  "strategy": "fixed_rig_controlled_motion_v50_observed_surface_authority"
+}

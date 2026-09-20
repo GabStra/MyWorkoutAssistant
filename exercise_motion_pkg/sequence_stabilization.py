@@ -117,7 +117,9 @@ def contact_mask(payload, names, count):
     pinned = np.zeros((count, len(names)), dtype=bool)
     for contact in motion_support_contacts(payload.get('sourceFootSupportEvidence')):
         if contact.get('contactState') == 'heel_only':
-            return None
+            # Heel-only is not a pin in this shoe model. Skip it so other
+            # observed plants can still constrain the retained interval.
+            continue
         if not is_stationary_contact(contact):
             continue
         name = str(contact.get('jointName', ''))

@@ -25,10 +25,18 @@ def test_supported_chain_range_uses_feasible_reference_but_free_arm_keeps_source
         original, names, {'stationaryJoints': ['right_wrist']}, support_corrected_points=corrected)}
     assert np.isclose(np.rad2deg(np.ptp(tracks['left_shoulder'])), 90.)
     assert np.isclose(np.rad2deg(np.ptp(tracks['right_shoulder'])), 45.)
+    # Explicit support-like endpoints may still opt into the corrected chain.
     paired = {label: track for label, _, track in moving_support_articulations(
         original, names, {}, support_corrected_points=corrected,
         constraint_endpoints=['left_wrist', 'right_wrist'])}
     assert np.isclose(np.rad2deg(np.ptp(paired['left_shoulder'])), 45.)
+    # Grip equipment is not planted support: feet-only evidence must keep free-arm
+    # source ROM even when a bar/dumbbell endpoint pair exists.
+    feet_only = {label: track for label, _, track in moving_support_articulations(
+        original, names, {'stationaryJoints': ['left_hip', 'right_hip']},
+        support_corrected_points=corrected)}
+    assert np.isclose(np.rad2deg(np.ptp(feet_only['left_shoulder'])), 90.)
+    assert np.isclose(np.rad2deg(np.ptp(feet_only['right_shoulder'])), 90.)
 
 
 def test_supported_reference_includes_partial_contacts_and_rigid_grip():
@@ -313,3 +321,109 @@ def test_support_projection_repairs_reference_before_final_fit():
     assert validate_support_geometry({'sourceFootSupportEvidence': {'bodySupport': evidence}}, result, names)['passed']
     from exercise_motion_pkg.anatomical_repair import repair_residuals
     assert np.max(repair_residuals(result, names)[0]) <= 1e-6
+
+
+def test_plant_only_body_support_detects_feet_not_torso():
+    from exercise_motion_pkg.support_geometry import plant_only_body_support
+    feet = {'required': True, 'status': 'confirmed',
+            'stationaryJoints': ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']}
+    assert plant_only_body_support(feet)
+    torso = {**feet, 'stationaryJoints': ['pelvis', 'spine1', 'left_ankle']}
+    assert not plant_only_body_support(torso)
+    assert not plant_only_body_support({'required': True, 'status': 'unknown',
+                                        'stationaryJoints': feet['stationaryJoints']})
+
+
+def test_contact_plant_projection_clears_millimeter_scale_support_error():
+    """Regression: support init often stopped ~2 mm off; plant polish must hit 0.5 mm."""
+    from exercise_motion_pkg.controlled_motion import FixedRig, project_contact_plant_coordinates
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    points = np.tile([fixture['joints'][n] for n in names], (8, 1, 1))
+    rig = FixedRig(points, names)
+    points = rig.decode(rig.initial)
+    feet = [names.index('left_foot'), names.index('right_foot')]
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, feet] = True
+    targets, _ = rig_contact_targets(points, names, pinned, rig.offsets)
+    # Leave a multi-millimeter plant error like incomplete support projection.
+    shifted = rig.initial.copy()
+    shifted[:, :3] += [0.003, 0.0, 0.002]
+    before = float(np.max(np.linalg.norm((rig.decode(shifted) - targets)[pinned], axis=-1)))
+    assert before > 0.0005
+    planted = project_contact_plant_coordinates(shifted, rig, pinned, targets, max_nfev=40)
+    after = float(np.max(np.linalg.norm((rig.decode(planted) - targets)[pinned], axis=-1)))
+    assert after < 0.0005, (before, after)
+
+
+def test_contact_plant_projection_holds_interpolated_playback_plants():
+    """Keyframe plants can still skate between samples under rotation interpolation."""
+    from exercise_motion_pkg.controlled_motion import (
+        FixedRig, project_contact_plant_coordinates,
+        project_interval_playback_plants, _playback_contact_sample_error,
+        _playback_failing_intervals)
+    from exercise_motion_pkg.rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, rig_contact_targets
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    points = np.tile([fixture['joints'][n] for n in names], (8, 1, 1))
+    # Longer clip so a per-interval TRF would be expensive if not gated.
+    points = np.concatenate([points, points, points, points], axis=0)
+    rig = FixedRig(points, names)
+    points = rig.decode(rig.initial)
+    feet = [names.index('left_foot'), names.index('right_foot')]
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, feet] = True
+    targets, _ = rig_contact_targets(points, names, pinned, rig.offsets)
+    shifted = rig.initial.copy()
+    ankle = rig.slots[names.index('left_ankle')]
+    shifted[1:-1, ankle:ankle + 3] += [0.2, 0.0, 0.05]
+    keyed = project_contact_plant_coordinates(shifted, rig, pinned, targets, max_nfev=40)
+    before = _playback_contact_sample_error(keyed, rig, pinned, targets, cyclic=False)
+    assert before > PLAYBACK_CONTACT_LIMIT_METERS
+    assert _playback_failing_intervals(keyed, rig, pinned, targets, cyclic=False)
+    started = __import__('time').monotonic()
+    planted = project_interval_playback_plants(
+        keyed, rig, pinned, targets, cyclic=False)
+    elapsed = __import__('time').monotonic() - started
+    after_key = float(np.max(np.linalg.norm((rig.decode(planted) - targets)[pinned], axis=-1)))
+    after_play = _playback_contact_sample_error(planted, rig, pinned, targets, cyclic=False)
+    assert after_key < PLAYBACK_CONTACT_LIMIT_METERS, (after_key, after_play)
+    assert after_play < PLAYBACK_CONTACT_LIMIT_METERS, (before, after_play)
+    assert not _playback_failing_intervals(planted, rig, pinned, targets, cyclic=False)
+    # Coupled mid-sample TRF is heavier than a root-only scan, but must stay
+    # well under a dense clip-wide plant solve on this fixture.
+    assert elapsed < 25.0, elapsed
+
+
+def test_contiguous_failing_interval_runs_group_neighbors():
+    from exercise_motion_pkg.controlled_motion import (
+        _contiguous_interval_runs, _hermite_stencil_frames)
+    assert _contiguous_interval_runs([]) == []
+    assert _contiguous_interval_runs([3]) == [(3, 3)]
+    assert _contiguous_interval_runs([1, 2, 3, 7, 8, 10]) == [(1, 3), (7, 8), (10, 10)]
+    # Mid-samples on [0,1] depend on tangent neighbors including frame 2.
+    assert _hermite_stencil_frames([0], 8, cyclic=False) == [0, 1, 2]
+    assert _hermite_stencil_frames([0], 8, cyclic=True) == [0, 1, 2, 7]
+    from exercise_motion_pkg.controlled_motion import (
+        FixedRig, apply_supported_floor_clearance, _playback_contact_sample_error)
+    from exercise_motion_pkg.rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, rig_contact_targets
+    fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    points = np.tile([fixture['joints'][n] for n in names], (8, 1, 1))
+    rig = FixedRig(points, names)
+    points = rig.decode(rig.initial)
+    feet = [names.index('left_foot'), names.index('right_foot')]
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, feet] = True
+    targets, _ = rig_contact_targets(points, names, pinned, rig.offsets)
+    floor = float(points[:, feet, 1].min())
+    dipped = rig.initial.copy()
+    dipped[:, 1] -= 0.003
+    restored, lift = apply_supported_floor_clearance(
+        dipped, rig, pinned, targets, floor, cyclic=False)
+    assert lift > 0
+    key = float(np.max(np.linalg.norm((rig.decode(restored) - targets)[pinned], axis=-1)))
+    play = _playback_contact_sample_error(restored, rig, pinned, targets, cyclic=False)
+    assert key < PLAYBACK_CONTACT_LIMIT_METERS
+    assert play < PLAYBACK_CONTACT_LIMIT_METERS

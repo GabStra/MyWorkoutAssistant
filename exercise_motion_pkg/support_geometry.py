@@ -26,6 +26,23 @@ def support_evidence(payload):
     return (payload.get('sourceFootSupportEvidence') or {}).get('bodySupport', {})
 
 
+# Distal plants owned by contact pins / plant projection. Torso/back support still
+# needs the heavy initialize_supported_motion solve.
+PLANT_ONLY_SUPPORT_JOINTS = frozenset({
+    'left_ankle', 'left_foot', 'right_ankle', 'right_foot',
+})
+
+
+def plant_only_body_support(evidence):
+    """True when confirmed support is only planted feet/ankles, not a torso surface."""
+    if not isinstance(evidence, dict):
+        return False
+    if not evidence.get('required') or evidence.get('status') != 'confirmed':
+        return False
+    stationary = evidence.get('stationaryJoints') or []
+    return bool(stationary) and set(stationary).issubset(PLANT_ONLY_SUPPORT_JOINTS)
+
+
 def evidence_is_complete(evidence, names):
     stationary = evidence.get('stationaryJoints') or []
     if not stationary or not set(stationary).issubset(names):
@@ -258,7 +275,7 @@ def calibrate_support_pose(rig, points, evidence, alignment_reference=None):
             height = float(group.get('planeOffsetMeters', np.dot(target[index], normal)))
             anchor_errors.append(np.dot(candidate[0, index], normal)-height)
         return np.r_[(candidate[0]-target).ravel(),
-                     10.*alignment_constraint_errors(candidate, source_alignment, rig.names, evidence).ravel(),
+                     200.*alignment_constraint_errors(candidate, source_alignment, rig.names, evidence).ravel(),
                      1000.*geometry_errors(candidate, rig.names, evidence).ravel(),
                      1000.*np.asarray(anchor_errors),
                      1000.*anatomical_structure_residuals(
@@ -407,11 +424,18 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
              *contact_active[:, contact_indices, None]).reshape(count, -1),
             2000.*grip_residual(candidate, rig.names, equipment),
             2000.*geometry_errors(candidate, rig.names, evidence),
-            10.*alignment_constraint_errors(candidate, source_alignment, rig.names, evidence),
+            # Alignment was under-weighted vs plant/contact (10 vs 2000), so
+            # support init planted feet by introducing ~12 mm spine lateral
+            # offset and failed support_correction_introduced_torso_deformation.
+            200.*alignment_constraint_errors(candidate, source_alignment, rig.names, evidence),
             1000.*anatomical_structure_residuals(
                 candidate, rig.names, pose_only=True, margin=ANATOMY_FIT_MARGIN)[0],
             1000.*np.minimum(collision_clearances(candidate, rig.names, scale)[0]-.003*scale, 0.),
             .0001*(coordinates-source_coordinates),
+            # Acceptance rejects stationary ptp > 5 mm. Soft-penalize wander about
+            # the median plant so under-iterated projections do not leave 7–17 mm drift.
+            (400. * (candidate[:, indices] - np.median(candidate[:, indices], axis=0, keepdims=True))
+             ).reshape(count, -1),
         ], axis=1).ravel()
         # Independent pose projections can choose different redundant spine
         # configurations in adjacent frames. Regularize the correction itself
@@ -426,9 +450,11 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     collision_rows = [joint_dependencies(rig, [*a, *b]) for _, a, b, _, _ in collision_specs(rig.names)]
     direction_rows = np.repeat(np.asarray([joint_dependencies(rig, [rig.names[j], rig.names[parent]])
                                          for j, parent in zip(direction_children, direction_parents)]), 3, axis=0)
+    plant_rows = np.repeat(
+        np.asarray([joint_dependencies(rig, [rig.names[j]]) for j in indices]), 3, axis=0)
     frame_pattern = np.vstack([rig.dependencies, direction_rows, rig.dependencies[contact_rows], grip_rows,
         geometry_dependencies(rig, evidence), alignment_dependencies(rig, evidence), anatomical_structure_dependencies(rig, original, rig.names),
-        collision_rows, np.eye(rig.width)])
+        collision_rows, np.eye(rig.width), plant_rows])
     pattern = kron(eye(count), csr_matrix(frame_pattern), format='csr')
     d2 = csr_matrix(abs(np.diff(np.eye(count), n=2, axis=0)))
     pattern = vstack([pattern, kron(d2, csr_matrix(rig.dependencies))], format='csr')

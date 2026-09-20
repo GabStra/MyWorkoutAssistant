@@ -305,6 +305,15 @@ def rendered_bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+SPIKE_JOINT_NAMES = ("left_wrist", "right_wrist", "left_ankle", "right_ankle",
+                     "left_knee", "right_knee", "left_elbow", "right_elbow")
+
+
+def introduced_joint_spike_limit(before, scale):
+    """Largest local residual allowed by the source-amplification spike gate."""
+    return np.maximum(np.maximum(scale * .012, before * 2.5), before + scale * .008)
+
+
 def introduced_joint_spikes(payload: dict[str, Any]) -> dict[str, Any]:
     """Detect local jitter amplified by postprocessing, allowing rigid motion.
 
@@ -324,8 +333,7 @@ def introduced_joint_spikes(payload: dict[str, Any]) -> dict[str, Any]:
         return {"severe": False, "events": []}
     for i in range(1, len(frames) - 1):
         group = frames[i-1:i+2]
-        for name in ("left_wrist", "right_wrist", "left_ankle", "right_ankle",
-                     "left_knee", "right_knee", "left_elbow", "right_elbow"):
+        for name in SPIKE_JOINT_NAMES:
             residuals = []
             for field in ("sourceJoints", "joints"):
                 if not all(name in f.get(field, {}) and "pelvis" in f.get(field, {}) for f in group):
@@ -336,6 +344,6 @@ def introduced_joint_spikes(payload: dict[str, Any]) -> dict[str, Any]:
                          if all(isinstance(t, (float, int)) for t in times) and times[2] > times[0]
                          else .5)
                 residuals.append(float(np.linalg.norm(points[1] - (points[0] * (1-alpha) + points[2] * alpha))))
-            if len(residuals) == 2 and residuals[1] > max(scale * .012, residuals[0] * 2.5) and residuals[1] - residuals[0] > scale * .008:
+            if len(residuals) == 2 and residuals[1] > introduced_joint_spike_limit(residuals[0], scale):
                 events.append({"joint": name, "frameIndex": i, "before": residuals[0], "after": residuals[1]})
     return {"severe": bool(events), "events": events}

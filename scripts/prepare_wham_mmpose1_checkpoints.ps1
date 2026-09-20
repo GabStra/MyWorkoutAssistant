@@ -30,3 +30,13 @@ if (-not (Test-Path -LiteralPath $yoloPath)) {
 } else {
     Write-Host "YOLO26x checkpoint already exists: $yoloPath"
 }
+
+$bedlamName = "wham_vit_bedlam_w_3dpw.pth.tar"
+$bedlamPath = Join-Path $checkpointDir $bedlamName
+if (-not (Test-Path -LiteralPath $bedlamPath)) {
+    Write-Host "Downloading WHAM demo checkpoint to $bedlamPath"
+    python -m pip install --quiet gdown
+    python -m gdown "https://drive.google.com/uc?id=19qkI-a6xuwob9_RFNSPWf1yWErwVVlks" -O $bedlamPath
+} else {
+    Write-Host "WHAM demo checkpoint already exists: $bedlamPath"
+}

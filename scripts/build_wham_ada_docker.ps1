@@ -31,24 +31,27 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $dockerignore = Join-Path $resolvedWhamRepoPath ".dockerignore"
-if (-not (Test-Path -LiteralPath $dockerignore)) {
-    @(
-        ".git",
-        ".venv-fetch",
-        "__pycache__",
-        "**/__pycache__",
-        "output",
-        "examples",
-        "dataset",
-        "checkpoints",
-        "*.mp4",
-        "*.mov",
-        "*.pth",
-        "*.pth.tar",
-        "*.ckpt",
-        "*.pkl"
-    ) | Set-Content -LiteralPath $dockerignore -Encoding UTF8
-    Write-Host "Created WHAM build .dockerignore: $dockerignore"
+@(
+    ".git",
+    ".venv-fetch",
+    "__pycache__",
+    "**/__pycache__",
+    "output",
+    "examples",
+    "*.mp4",
+    "*.mov"
+) | Set-Content -LiteralPath $dockerignore -Encoding UTF8
+Write-Host "Wrote WHAM build .dockerignore (checkpoints and body models are included in the image): $dockerignore"
+
+$requiredImageAssets = @(
+    (Join-Path $resolvedWhamRepoPath "checkpoints\wham_vit_bedlam_w_3dpw.pth.tar"),
+    (Join-Path $resolvedWhamRepoPath "checkpoints\wham_vit_w_3dpw.pth.tar"),
+    (Join-Path $resolvedWhamRepoPath "checkpoints\hmr2a.ckpt"),
+    (Join-Path $resolvedWhamRepoPath "dataset\body_models\smpl\SMPL_NEUTRAL.pkl")
+)
+$missingImageAssets = $requiredImageAssets | Where-Object { -not (Test-Path -LiteralPath $_) }
+if ($missingImageAssets.Count -gt 0) {
+    throw "Cannot build a self-contained WHAM image; missing:`n$($missingImageAssets -join "`n")"
 }
 
 $argsList = @(

@@ -63,10 +63,12 @@ def test_required_validator_unavailable_is_not_motion_failure():
     assert decision.failure_owner == "evidence"
 
 
-def test_single_implement_does_not_invent_one_arm_or_carry_position():
+def test_single_dumbbell_requires_one_arm_without_inventing_carry_position():
     fields = contract_field_authority("Single Dumbbell Forward Lunge", {"carryPosition": "hip"})
     assert fields["implementCount"]["required"]
-    assert "actingArmCount" not in fields
+    assert fields["actingArmCount"]["required"]
+    assert fields["actingArmCount"]["value"] == 1
+    assert "actingArmCount" not in contract_field_authority("Single Kettlebell Forward Lunge", {})
     assert not fields["carryPosition"]["required"]
     assert contract_field_authority("Single-Arm Dumbbell Bulgarian Split Squat", {})["actingArmCount"]["value"] == 1
 
@@ -155,3 +157,11 @@ def test_final_invariant_rejects_late_stretch_but_accepts_rigid_translation():
         for key, p in frame.joints.items()}) for i, frame in enumerate(original.frames)])
     result, report = enforce_final_structural_invariant(original, shifted)
     assert result is shifted and report["accepted"]
+
+
+def test_incomplete_source_cut_recovery_runs_even_after_deterministic_confirmation():
+    """Regression: confirmed-but-partial cuts used to skip parent recovery and hit fit empty."""
+    assert bake.incomplete_source_cut_requires_same_source_recovery("partial")
+    assert bake.incomplete_source_cut_requires_same_source_recovery("invalid")
+    assert not bake.incomplete_source_cut_requires_same_source_recovery("complete")
+    assert not bake.incomplete_source_cut_requires_same_source_recovery("uncertain")

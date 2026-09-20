@@ -22,6 +22,12 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
 
     End frames are exclusive: the matching endpoint is the first sample of the
     next repetition, not a duplicated pause at the end of this one.
+
+    Opposite endpoint velocity is expected at extreme-to-extreme returns.
+    Incomplete windows with opposite phase or whole-body velocity are rejected
+    as eccentric/concentric crossings. Complete returns may carry a soft
+    whole-body opposite-velocity score penalty. Source wraps above
+    MAX_RANKED_SOURCE_WRAP_RATIO on support joints are not proposed.
     """
     frames, names = payload['frames'], payload['jointNames']
     count, fps = len(frames), float(payload['fps'])
@@ -33,6 +39,15 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     contacts = contact_mask(payload, names, count)
     if contacts is None:
         return []
+    # Use the same whole-interval support authority as the fitter. Fragmented
+    # landmark visibility must not turn a confirmed stationary stance into
+    # incompatible endpoint contacts and exclude the actual return cycle.
+    from .support_geometry import evidence_is_complete, support_evidence
+    support = support_evidence(payload)
+    if (support.get('required') and support.get('status') == 'confirmed'
+            and evidence_is_complete(support, names)):
+        for name in support['stationaryJoints']:
+            contacts[:, names.index(name)] = True
     scale = body_scale(points, names)
     root = names.index('pelvis')
     features = np.concatenate([points[:, root:root+1], points-points[:, root:root+1]], axis=1)
@@ -56,12 +71,21 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     centered = flattened - flattened.mean(axis=0)
     principal = np.linalg.svd(centered, full_matrices=False)[2][0]
     phase_track = gaussian_filter1d(centered @ principal, max(.5, fps*.04))
+    phase_velocity = np.gradient(phase_track) * fps
+    phase_span = float(np.ptp(phase_track))
+    phase_speed_floor = max(.05 * phase_span * fps / max(count - 1, 1), 1e-6)
     minimum_frames = max(6, round(fps*.5))
-    proposals = []
     counts = {'intervalPairs': 0, 'contactCompatible': 0, 'endpointFeasible': 0,
-              'directionCompatible': 0, 'completePhase': 0, 'rangePreserved': 0}
+              'directionCompatible': 0, 'completePhase': 0, 'rangePreserved': 0,
+              'wrapFeasible': 0}
     if diagnostics is not None:
         diagnostics.update(counts=counts, endpointGapLimitMeters=max(.08, 2*endpoint_correction_ratio)*scale)
+    from .loop_seam import (
+        seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO,
+        MAX_RANKED_SOURCE_WRAP_RATIO)
+    support_idx = [i for i, name in enumerate(names)
+                   if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
+    complete_proposals = []
     for start in range(count-minimum_frames):
         for stop in range(start+minimum_frames, count):
             counts['intervalPairs'] += 1
@@ -73,22 +97,74 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
             if jump > max(.08, 2*endpoint_correction_ratio)*scale:
                 continue
             counts['endpointFeasible'] += 1
+            phase_window = phase_track[start:stop]
+            if stop < count:
+                phase_for_complete = np.concatenate([phase_window, phase_track[stop:stop + 1]])
+            else:
+                phase_for_complete = np.concatenate([phase_window, phase_track[start:start + 1]])
+            complete, _ = complete_repetition(phase_for_complete.tolist())
+            # Extreme-to-extreme returns reverse phase velocity at the apex by
+            # construction. Hard-reject opposite motion only for incomplete
+            # windows (eccentric/concentric pose crossings and half-reps).
+            phase_left, phase_right = float(phase_velocity[start]), float(phase_velocity[stop])
+            phase_opposite = (abs(phase_left) > phase_speed_floor
+                              and abs(phase_right) > phase_speed_floor
+                              and phase_left * phase_right < 0)
             left, right = velocity[start].ravel(), velocity[stop].ravel()
             magnitude = np.linalg.norm(left)*np.linalg.norm(right)
-            if magnitude > (.05*scale)**2 and np.dot(left, right) < 0:
+            body_opposite = bool(magnitude > (.05*scale)**2 and np.dot(left, right) < 0)
+            if not complete and (phase_opposite or body_opposite):
                 continue
             counts['directionCompatible'] += 1
+            if not complete:
+                continue
+            counts['completePhase'] += 1
             mismatch = float(np.sqrt(np.mean((left-right)**2)))
-            score = (jump+.15*mismatch)/scale + .01*(1-(stop-start)/count)
-            proposals.append((score, start, stop, jump, mismatch))
+            # Prefer intervals whose source wrap already looks playback-feasible.
+            # Hard-reject uses support/lower-body joints so incidental head drift
+            # cannot empty otherwise-valid geometric proposals.
+            _, excess, increments = seam_errors(points[start:stop])
+            support_points = points[start:stop][:, support_idx] if support_idx else points[start:stop]
+            _, support_excess, support_increments = seam_errors(support_points)
+            step_ratio = float(np.max(excess, initial=0.)) / max(
+                MAX_STEP_EXCESS_BODY_RATIO * scale, 1e-9)
+            vel_ratio = (
+                float(np.max(np.linalg.norm(increments, axis=-1), initial=0.)) * fps
+                / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
+            wrap_ratio = max(step_ratio, vel_ratio)
+            support_step_ratio = float(np.max(support_excess, initial=0.)) / max(
+                MAX_STEP_EXCESS_BODY_RATIO * scale, 1e-9)
+            support_vel_ratio = (
+                float(np.max(np.linalg.norm(support_increments, axis=-1), initial=0.)) * fps
+                / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
+            support_wrap_ratio = max(support_step_ratio, support_vel_ratio)
+            if support_wrap_ratio > MAX_RANKED_SOURCE_WRAP_RATIO:
+                continue
+            counts['wrapFeasible'] += 1
+            # Whole-body opposite velocity is advisory on complete returns.
+            score = (wrap_ratio + 0.2 * (jump / scale) + 0.05 * (mismatch / scale)
+                     + (0.25 if body_opposite else 0.)
+                     + .01 * (1 - (stop - start) / count))
+            retained = np.linalg.norm(np.ptp(features[start:stop], axis=0), axis=-1)
+            complete_proposals.append(
+                (score, start, stop, jump, mismatch, wrap_ratio, retained))
+    # Whole-clip feature range includes multi-rep drift. A single observed cycle
+    # must preserve one-repetition excursion, not incidental drift across the
+    # entire source window (same intent as the phase_values path above).
+    if complete_proposals:
+        cycle_range = np.max([retained for *_, retained in complete_proposals], axis=0)
+        moving_cycle = cycle_range > .1 * scale
+    else:
+        cycle_range = full_range
+        moving_cycle = moving
+    # A collection of nearly still windows is not a reference repetition.
+    # Fall back to the observed excursion before filtering, not just when
+    # reporting the ratio; otherwise tiny pauses consume every proposal slot.
+    range_basis = cycle_range if moving_cycle.any() else full_range
+    moving_basis = moving_cycle if moving_cycle.any() else moving
     accepted = []
-    for score, start, stop, jump, mismatch in sorted(proposals):
-        complete, _ = complete_repetition(phase_track[start:stop].tolist())
-        if not complete:
-            continue
-        counts['completePhase'] += 1
-        retained = np.linalg.norm(np.ptp(features[start:stop], axis=0), axis=-1)
-        if np.any(retained[moving] < .9*full_range[moving]):
+    for score, start, stop, jump, mismatch, wrap_ratio, retained in sorted(complete_proposals):
+        if np.any(retained[moving_basis] < .9 * range_basis[moving_basis]):
             continue
         counts['rangePreserved'] += 1
         # Do not spend every bounded fit attempt on the adjacent sample of the
@@ -99,8 +175,11 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
         accepted.append({'startFrame': start, 'stopFrameExclusive': stop,
                          'score': score, 'endpointGapMeters': jump,
                          'velocityMismatchRmsMetersPerSecond': mismatch,
+                         'sourceWrapOverLimitRatio': wrap_ratio,
                          'requiresEndpointCorrection': jump > .08*scale,
-                         'minimumRetainedRangeRatio': float(np.min(retained[moving]/full_range[moving]))})
+                         'minimumRetainedRangeRatio': float(
+                             np.min(retained[moving_basis] / np.maximum(range_basis[moving_basis], 1e-12))
+                             if moving_basis.any() else 1.)})
         if len(accepted) >= max_candidates:
             break
     return accepted

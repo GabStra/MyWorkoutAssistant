@@ -31,6 +31,52 @@ def test_feasible_rig_is_not_reposed_by_anatomical_projection():
     np.testing.assert_allclose(corrected, points, atol=1e-12)
 
 
+def test_repair_detects_constant_span_mismatch_against_observed_clip():
+    names, points = stance()
+    rig = FixedRig(points, names)
+    observed = points.copy()
+    left, right = names.index('left_shoulder'), names.index('right_shoulder')
+    axis = points[:, right] - points[:, left]
+    axis /= np.linalg.norm(axis, axis=1)[:, None]
+    observed[:, left] -= .05 * axis
+    observed[:, right] += .05 * axis
+    # Expired budget isolates detection: a constant rig width is internally
+    # stable, but it does not meet this clip's observed span constraint.
+    _, report = repair_rig_anatomy(rig, observed, deadline=monotonic() - 1.)
+    assert report['projectedFrameCount'] == len(points)
+    assert report['unrepairedFrameCount'] == len(points)
+    assert 'anatomy_span_variation:shoulders' in report['remainingViolations']
+
+
+def test_priority_yield_during_warm_start_preserves_completed_repair(monkeypatch):
+    from exercise_motion_pkg import anatomical_repair as anatomy, fit_runtime
+    names, points = stance()
+    points = points[:3].copy()
+    axis = points[0, names.index('neck')] - points[0, names.index('pelvis')]
+    lateral = points[0, names.index('right_hip')] - points[0, names.index('left_hip')]
+    forward = np.cross(axis, lateral)
+    forward /= np.linalg.norm(forward)
+    points[:, names.index('spine1')] += np.array([.14, .145, .15])[:, None] * forward
+    rig = FixedRig(points, names)
+    initial = rig.initial.copy()
+    yield_requested = [False]
+    solve = anatomy.least_squares
+    def solve_first(*args, **kwargs):
+        try:
+            return solve(*args, **kwargs)
+        finally:
+            yield_requested[0] = True
+    monkeypatch.setattr(anatomy, 'least_squares', solve_first)
+    monkeypatch.setattr(fit_runtime, 'fit_should_yield_for_priority', lambda: yield_requested[0])
+    corrected, report = repair_rig_anatomy(rig, points, deadline=monotonic()+10.)
+    assert report['passed'] is False
+    assert report['unrepairedFrameCount'] == 2
+    assert report['evaluations'] > 0
+    assert not np.array_equal(rig.initial[0], initial[0])
+    np.testing.assert_array_equal(rig.initial[1:], initial[1:])
+    assert np.isfinite(corrected).all()
+
+
 def test_valid_forward_lean_and_world_tilt_are_preserved():
     names, points = stance()
     points = points @ Rotation.from_euler('xyz', [.7, -.3, .9]).as_matrix()+[2., -1., .5]

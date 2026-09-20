@@ -4397,7 +4397,7 @@ def test_intermittent_transition_ground_plane_uses_lower_support_surface() -> No
     assert math.isclose(-plane.offset, 0.004, abs_tol=1e-9)
 
 
-def test_intermittent_travel_alignment_rotates_only_root_trajectory() -> None:
+def test_intermittent_travel_preserves_observed_oblique_trajectory() -> None:
     frames = []
     for index in range(5):
         root = (index * 0.1, 1.0, index * 0.1)
@@ -4429,9 +4429,11 @@ def test_intermittent_travel_alignment_rotates_only_root_trajectory() -> None:
 
     aligned, metadata = structural_refinement_module._align_root_travel_to_body_yaw(clip)
 
-    assert metadata["applied"] is True
+    assert metadata["applied"] is False
+    assert metadata["reason"] == "root_travel_direction_requires_source_evidence"
     for before, after in zip(clip.frames, aligned.frames):
         for joint_name in clip.joint_names:
+            assert after.joints[joint_name] == pytest.approx(before.joints[joint_name])
             before_relative = tuple(
                 before.joints[joint_name][axis] - before.joints["pelvis"][axis]
                 for axis in range(3)
@@ -4448,7 +4450,7 @@ def test_intermittent_travel_alignment_rotates_only_root_trajectory() -> None:
         for axis in range(3)
     )
     horizontal_dot = body_right[0] * travel[0] + body_right[2] * travel[2]
-    assert horizontal_dot == pytest.approx(0.0, abs=1e-9)
+    assert abs(horizontal_dot) == pytest.approx(0.4)
 
 
 def test_distinct_contact_surface_stabilization_locks_each_episode_without_pose_deformation() -> None:
@@ -7748,6 +7750,8 @@ def test_build_wham_tracking_preflight_command_reuses_wham_output_directory(tmp_
 
     assert f"{output_root.resolve()}:/output" in command
     assert f"{script.parent.resolve()}:/mwa" in command
+    assert command[command.index("-w") + 1] == "/opt/wham-src"
+    assert not any("WHAM:/code" in item or item.endswith(":/code") for item in command)
     assert command[command.index("--required-start-seconds") + 1] == "0.500000"
     assert command[command.index("--required-end-seconds") + 1] == "3.500000"
 
@@ -9169,6 +9173,7 @@ def test_download_youtube_preview_stops_immediately_when_rate_limited(
 
 
 def test_download_youtube_preview_reuses_cached_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('exercise_motion_pkg.youtube._preview_decodes', lambda *args: True)
     cache_dir = tmp_path / "preview-cache"
     cache_dir.mkdir()
     cached = cache_dir / "test-e1c4ada7dfce.mp4"
@@ -9194,6 +9199,7 @@ def test_download_youtube_preview_reuses_cache_during_rate_limit_cooldown(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr('exercise_motion_pkg.youtube._preview_decodes', lambda *args: True)
     cache_dir = tmp_path / "preview-cache"
     cache_dir.mkdir()
     cached = cache_dir / "test-e1c4ada7dfce.mp4"
@@ -10029,6 +10035,9 @@ def test_build_wham_command_uses_docker_mounts() -> None:
     assert "/input/burpee.mp4" in command
     assert "--estimate_local_only" in command
     assert "--run_smplify" in command
+    assert "-w" in command
+    assert command[command.index("-w") + 1] == "/opt/wham-src"
+    assert not any(item.endswith(":/code") or item.endswith(":/code/") for item in command)
 
 
 def test_run_wham_locally_defaults_to_smplify() -> None:
@@ -17432,18 +17441,21 @@ def test_source_cut_prompt_ignores_instruction_text_and_requires_all_named_phase
 
     assert "Ignore written labels, captions, arrows, diagrams, and instruction text" in prompt
     assert "the visible body must perform all named actions/phases" in prompt
-    assert "A candidate showing only one named phase is partial_movement" in prompt
+    assert "Do not infer a missing phase" in prompt
+    assert "Ignore the meaning of source text and logos, but assess their visual obstruction" in prompt
+    assert "Reject low_source_quality when a source overlay hides" in prompt
+    assert "including at either required boundary" in prompt
+    assert "Unobstructive watermarks and review frame badges are not rejection reasons" in prompt
     assert "setup_or_filler" in prompt
     assert "reject must use only these fixed tags" in prompt
     assert "completeMovement" in prompt
     assert "startBoundaryClean" in prompt
     assert "finishBoundaryClean" in prompt
     assert "setupOrFiller" in prompt
-    assert "Audit the phase order before approving" in prompt
-    assert "Do not reject it by posture name alone" in prompt
-    assert "A stable top or bottom posture is clean" in prompt
-    assert "Preparation, waiting, adjustment, repositioning" in prompt
-    assert "do not require an extra repetition or extra return after the normal finish posture" in prompt
+    assert "require the visible turning points and return in order" in prompt
+    assert "or reject a legitimate boundary merely because it is a bottom" in prompt
+    assert "no material setup, reset, unrelated waiting, equipment transitions" in prompt
+    assert "meaningful start, full exercise-defining action path, and natural finish" in prompt
     assert CONTACT_SHEET_READING_INSTRUCTIONS.strip() in prompt
     assert "Target exercise: clean and jerk." in prompt
 
@@ -21568,7 +21580,11 @@ def test_pose_prefilter_default_sample_plan_is_bounded_spread_scan() -> None:
     frames, windows = build_pose_sample_plan(metadata, settings=PosePrefilterSettings())
 
     assert len(windows) == 4
-    assert len(frames) <= 36
+    # Requested 8 FPS is about 7.5 FPS on a 30 FPS video. Preserve that density
+    # within the same 32-second coverage budget, rather than silently using 1 FPS.
+    assert 224 <= len(frames) <= 256
+    first_window_frames = [frame for frame in frames if frame < 8 * 30]
+    assert max(right - left for left, right in zip(first_window_frames, first_window_frames[1:])) <= 4
     assert windows[0]["startSeconds"] == pytest.approx(0.0)
     assert windows[-1]["endSeconds"] == pytest.approx(180.0)
     assert max(frames) > 160 * 30
@@ -21866,7 +21882,12 @@ def test_pose_prefilter_cuda_runtime_error_is_fatal() -> None:
         )
 
 
-def test_pose_prefilter_rate_limit_is_recorded_as_candidate_failure() -> None:
+@pytest.mark.parametrize('message,reason', [
+    ('YouTube requests are paused by the shared rate-limit circuit breaker '
+     'for approximately 120 more second(s).', 'youtube_rate_limited'),
+    ('Could not open video: cached-preview.mp4', 'pose_prefilter_failed'),
+])
+def test_pose_prefilter_operational_failure_is_incomplete(message, reason) -> None:
     exercise = ExerciseEntry(exercise_id="pull-up", name="Pull Up", slug="pull-up")
     candidate = YouTubeCandidate(
         url="https://www.youtube.com/watch?v=pull-up",
@@ -21886,10 +21907,7 @@ def test_pose_prefilter_rate_limit_is_recorded_as_candidate_failure() -> None:
         settings: YouTubeRankingSettings,
     ) -> tuple[float, list[str], dict[str, object]]:
         del exercise, candidate, settings
-        raise RuntimeError(
-            "YouTube requests are paused by the shared rate-limit circuit breaker "
-            "for approximately 120 more second(s)."
-        )
+        raise RuntimeError(message)
 
     reviewed = youtube_module.rank_candidates_with_pose_prefilter(
         exercise=exercise,
@@ -21899,9 +21917,20 @@ def test_pose_prefilter_rate_limit_is_recorded_as_candidate_failure() -> None:
     )
 
     assert len(reviewed) == 1
-    assert "youtube_rate_limited" in reviewed[0].score_reasons
-    assert reviewed[0].vision_payload["posePrefilter"]["failureReason"] == "youtube_rate_limited"
-    assert "shared rate-limit circuit breaker" in reviewed[0].vision_payload["posePrefilter"]["error"]
+    assert reason in reviewed[0].score_reasons
+    assert reviewed[0].vision_payload["posePrefilter"]["failureReason"] == reason
+    assert reviewed[0].vision_payload["posePrefilter"]["error"] == message
+    assert reviewed[0].status == 'candidate'
+    assert 'pose_prefilter_below_threshold' not in reviewed[0].score_reasons
+    assert not youtube_module.candidate_pose_prefilter_passed(reviewed[0])
+    assert not youtube_module.candidate_has_debug_review_payload(reviewed[0])
+    # Old checkpoints lack reviewStatus and label these failures rejected.
+    reviewed[0].vision_payload['posePrefilter'].pop('reviewStatus')
+    legacy = youtube_module.replace_candidate(reviewed[0], status='rejected')
+    assert not youtube_module.candidate_has_debug_review_payload(legacy)
+    assert not youtube_module.youtube_candidate_payload_should_contribute_exclusion({
+        'videoId': legacy.video_id, 'vision': legacy.vision_payload,
+    })
 
 
 def test_pose_prefilter_multiple_people_hard_rejects_candidate() -> None:
@@ -34590,7 +34619,10 @@ def test_structural_refinement_transaction_rejects_source_fidelity_regression() 
     assert retained.frames == before.frames
     assert transaction["accepted"] is False
     assert transaction["reason"] in {"protected_source_fidelity_degraded", "temporal_quality_degraded"}
-    assert transaction["degradedMetrics"]
+    if transaction["reason"] == "temporal_quality_degraded":
+        assert transaction["temporalQuality"]["passed"] is False
+    else:
+        assert transaction["degradedMetrics"]
 
 
 def test_source_guided_hinge_correction_matches_angle_and_preserves_bone_length() -> None:

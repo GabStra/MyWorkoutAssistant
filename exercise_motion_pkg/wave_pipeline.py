@@ -92,6 +92,20 @@ def generation_failure_status(error: Exception) -> str:
     return "failed"
 
 
+def wave_manifest_is_exportable(manifest: dict[str, Any]) -> bool:
+    """True when staged-wave completion should keep the baked artifact.
+
+    Automatic selection and a safe manual-review fallback are both exportable.
+    The latter is still labeled needs_manual_review by the workout-plan wrapper.
+    """
+    if manifest.get("selected"):
+        return True
+    return (
+        manifest.get("selectionStatus") == "needs_manual_review"
+        and isinstance(manifest.get("manualReviewFallback"), dict)
+    )
+
+
 def final_validation_outcome_status(manifest: dict[str, Any]) -> str:
     """Separate unfinished fits from finished quality rejects for Progress/logs."""
     if manifest.get("selected"):
@@ -127,6 +141,7 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
         return "next_source"
     if state.get("source", {}).get("failureReason") in {
         "no_source_passed_exact_window_validation", "source_turn_deferred",
+        "no_reconstruction_ready_source", "no_approved_discovery_candidates",
     }:
         return "next_source"
     return "retry_infrastructure"
@@ -972,6 +987,8 @@ def _run_staged_bake_wave(
                     if isinstance(exc, ValueError) and str(exc) == (
                         "No fully identity-reviewed recommended YouTube candidate found."
                     ):
+                        state["source"]["failureReason"] = "no_approved_discovery_candidates"
+                        state["source"]["noNewWork"] = True
                         source_message = "No approved candidates in cached discovery results."
                     source_event(
                         f"Source review: {submitted_item.exercise_name} | unresolved: {source_message}"
@@ -1215,11 +1232,14 @@ def _run_staged_bake_wave(
             else _utc_now()
         )
         from .fit_runtime import abandon_speculative_workspace, prioritize_fit_workspaces
-        # Prefer the candidate entering final bake over its own unfinished
-        # speculative prefetch. Other exercises' speculative work keeps running.
+        # Prioritize every ready candidate for this exercise. Listing only the
+        # first deadlocks later candidates: cpu_fit_slot blocks non-priority
+        # non-speculative fits while this context stays open for the whole
+        # finalize_item call (seen as "candidate 2/2 … starting" with no
+        # further bake progress).
         primary_workspaces = [
             item.request.workspace / candidate.workspace_slug
-            for candidate, _path in (ready_sources[:1] or ready_sources)
+            for candidate, _path in ready_sources
         ]
 
         def set_final_activity(operation: str, **extra: Any) -> None:
@@ -1282,9 +1302,10 @@ def _run_staged_bake_wave(
         def join_or_abandon_prefetch():
             """Never block finalization on unfinished speculative bake/fit."""
             set_final_activity("drop prefetch")
-            primary_sources = ready_sources[:1] or ready_sources
-            secondary_sources = ready_sources[1:]
-            for candidate, _path in primary_sources:
+            # Abandon every ready candidate's unfinished prefetch. Leaving
+            # secondary speculative work running while priority covers all
+            # ready workspaces only spins it in cpu_fit_slot waits.
+            for candidate, _path in ready_sources:
                 key = _candidate_key(candidate)
                 future = render_futures.get(key)
                 if future is None:
@@ -1301,11 +1322,6 @@ def _run_staged_bake_wave(
                     "status": "abandoned_for_finalization",
                     "cancelledBeforeStart": bool(cancelled),
                 }
-            for candidate, _path in secondary_sources:
-                key = _candidate_key(candidate)
-                future = render_futures.get(key)
-                if future is not None and future.done():
-                    collect_prefetch_result(candidate)
 
         def process():
             set_final_activity(
@@ -1377,6 +1393,8 @@ def _run_staged_bake_wave(
                 decision_path.parent.mkdir(parents=True, exist_ok=True)
                 _write_json_atomic(decision_path, manifest)
                 selected = manifest.get("selected")
+                fallback = manifest.get("manualReviewFallback")
+                exportable = wave_manifest_is_exportable(manifest)
                 selected_candidate_payload = (
                     selected.get("candidate")
                     if isinstance(selected, dict)
@@ -1394,6 +1412,11 @@ def _run_staged_bake_wave(
                     ),
                     ready_sources[0][0],
                 )
+                exported_skeleton = None
+                if isinstance(selected, dict):
+                    exported_skeleton = selected.get("selectedWearSkeletonPath")
+                elif isinstance(fallback, dict):
+                    exported_skeleton = fallback.get("selectedWearSkeletonPath")
                 state["finalValidation"] = {
                     **final_processing_diagnostics(manifest),
                     "reviewAttemptCount": manifest.get("reviewAttemptCount", 1),
@@ -1405,13 +1428,9 @@ def _run_staged_bake_wave(
                     "elapsedSeconds": round(time.perf_counter() - validation_started, 3),
                     "selectionManifestPath": str(decision_path),
                     "currentSelectionManifestPath": str(item.request.workspace / "selection_manifest.json"),
-                    "selectedWearSkeletonPath": (
-                        selected.get("selectedWearSkeletonPath")
-                        if isinstance(selected, dict)
-                        else None
-                    ),
+                    "selectedWearSkeletonPath": exported_skeleton,
                 }
-                state["status"] = "completed" if selected else "retry_required"
+                state["status"] = "completed" if exportable else "retry_required"
             except FutureTimeoutError:
                 state["finalValidation"] = {
                     "status": "failed",

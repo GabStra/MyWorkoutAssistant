@@ -155,6 +155,89 @@ class InfeasibleContactCorrection(ValueError):
     """A contact proposal cannot satisfy its geometric constraints."""
 
 
+def calibrate_shared_contact_pair(points, mask, anchor_ids, *, distance, ground_mask, floor):
+    """Calibrate linked stationary anchors without splitting their identities.
+
+    Each node is one observed anchor, each edge one fixed-length foot. The small
+    static solve changes anchor positions, never contact intervals or releases.
+    Calibration is bounded to ten percent of the segment length; larger source
+    disagreements need new evidence rather than a substantially rewritten stance.
+    """
+    from scipy.optimize import minimize
+
+    groups = np.full(mask.shape, -1, dtype=int)
+    members = []
+    for joint in range(2):
+        identities = {}
+        episode = -1
+        for frame in range(len(points)):
+            if not mask[frame, joint]:
+                continue
+            if frame == 0 or not mask[frame - 1, joint]:
+                episode += 1
+            identity = anchor_ids[frame, joint]
+            key = ('observed', identity) if identity is not None else ('episode', episode)
+            if key not in identities:
+                identities[key] = len(members)
+                members.append((joint, []))
+            group = identities[key]
+            groups[frame, joint] = group
+            members[group][1].append(frame)
+    reference = np.asarray([np.mean(points[frames, joint], axis=0) for joint, frames in members])
+    weights = np.asarray([len(frames) for _, frames in members], dtype=float)
+    weights /= weights.max()
+    edges = np.unique(groups[np.all(mask, axis=1)], axis=0)
+    first, last = edges.T
+    length_squared = float(distance)**2
+    allowance = .1 * float(distance)
+    bounds = [(value - allowance, value + allowance) for value in reference.ravel()]
+    for group, (joint, frames) in enumerate(members):
+        if floor is not None and np.any(ground_mask[frames, joint]):
+            bounds[group * 3 + 1] = (float(floor), float(floor))
+
+    def objective(values):
+        delta = values.reshape(-1, 3) - reference
+        return .5 * np.sum(weights[:, None] * delta**2) / length_squared
+
+    def gradient(values):
+        return (weights[:, None] * (values.reshape(-1, 3) - reference) / length_squared).ravel()
+
+    def lengths(values):
+        values = values.reshape(-1, 3)
+        return np.sum((values[first] - values[last])**2, axis=1) / length_squared - 1.
+
+    def length_jacobian(values):
+        values = values.reshape(-1, 3)
+        delta = 2. * (values[first] - values[last]) / length_squared
+        jacobian = np.zeros((len(edges), len(reference), 3))
+        jacobian[np.arange(len(edges)), first] = delta
+        jacobian[np.arange(len(edges)), last] = -delta
+        return jacobian.reshape(len(edges), -1)
+
+    def correction_limits(values):
+        return 1. - np.sum((values.reshape(-1, 3) - reference)**2, axis=1) / allowance**2
+
+    def correction_jacobian(values):
+        jacobian = np.zeros((len(reference), len(reference), 3))
+        indexes = np.arange(len(reference))
+        jacobian[indexes, indexes] = -2. * (values.reshape(-1, 3) - reference) / allowance**2
+        return jacobian.reshape(len(reference), -1)
+
+    solved = minimize(objective, reference.ravel(), jac=gradient, method='SLSQP', bounds=bounds,
+                      constraints=[{'type': 'eq', 'fun': lengths, 'jac': length_jacobian},
+                                   {'type': 'ineq', 'fun': correction_limits, 'jac': correction_jacobian}],
+                      options={'maxiter': 100, 'ftol': 1e-12})
+    calibrated = solved.x.reshape(-1, 3)
+    errors = np.abs(np.linalg.norm(calibrated[first] - calibrated[last], axis=1) - distance)
+    if (not solved.success or not np.isfinite(calibrated).all() or np.max(errors) > 1e-7
+            or np.max(np.linalg.norm(calibrated - reference, axis=1)) > allowance + 1e-7):
+        raise InfeasibleContactCorrection('Stationary anchors cannot share rigid lengths within the calibration allowance')
+    result = points.copy()
+    for group, (joint, frames) in enumerate(members):
+        result[frames, joint] = calibrated[group]
+    return result
+
+
 def reachable_root_track(
     count: int, fps: float, constraints: list[tuple[np.ndarray, np.ndarray, float]],
 ) -> np.ndarray:

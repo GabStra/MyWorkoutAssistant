@@ -3,7 +3,100 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from exercise_motion_pkg import bake_and_rank, youtube
+
+
+@pytest.mark.parametrize("visible,evidence,expected", [
+    (["none"], "standing upright with arms extended straight up holding a bar", False),
+    ([], "The hands are raised, not holding a bar across the shoulders.", False),
+    (None, "possibly holding a bar", False),
+    (["barbell"], "both hands grip the implement", True),
+])
+def test_required_equipment_is_not_inferred_from_ambiguous_narrative(visible, evidence, expected):
+    assert bake_and_rank.two_scale_required_equipment_observed(
+        {"visibleEquipment": visible, "evidence": evidence}, equipment="barbell") is expected
+
+
+@pytest.mark.parametrize("uncertain,complete,conflict,malformed", [
+    (False, True, False, False), (True, True, False, False),
+    (False, False, False, False), (False, True, True, False), (False, False, False, True),
+    (False, True, False, "identity_missing"), (False, True, False, "identity_uncertain"),
+    (False, True, False, "identity_mismatch"),
+])
+def test_full_resolution_equipment_evidence_preserves_action_gates(
+    tmp_path, monkeypatch, uncertain, complete, conflict, malformed,
+):
+    sheets = [tmp_path / "sheet.jpg"]
+    sheets[0].write_bytes(b"sheet")
+    frames = [tmp_path / f"frame-{index}.jpg" for index in range(16)]
+    for frame in frames:
+        frame.write_bytes(b"original")
+    (tmp_path / "contact_sheet_crop.json").write_text(
+        json.dumps({"framePaths": [str(frame) for frame in frames]}), encoding="utf-8")
+    detail_frames = [frames[0], frames[8], frames[-1]]
+    assert bake_and_rank.source_equipment_detail_frames(sheets) == detail_frames
+    monkeypatch.setattr(bake_and_rank, "final_output_motion_contact_sheets", lambda *a, **k: sheets)
+    detail = {"heldEquipment": ["dumbbell"], "objectCount": 1, "visibleShape": "two weighted ends",
+              "holdingPattern": "one end in each hand", "uncertain": uncertain}
+    observation = {"visibleEquipment": [], "orderedPhases": ["raise", "lower"],
+                   "startStateVisible": True, "actionPhaseVisible": True,
+                   "turningPointVisible": True, "returnOrFinishVisible": complete, "complete": complete}
+    completeness_observation = dict(observation)
+    if malformed is True:
+        completeness_observation["actionPhaseVisible"] = False  # Contradicts the nonempty action phases.
+    def run_questions(jobs, callback):
+        # Execute these jobs to verify production wiring, not just the evidence reducer.
+        identity = jobs["identity"]()
+        topology = jobs["topology"]()
+        return {"identity": identity, "topology": topology,
+                "uniform-0": ("", {"unrelatedActionVisible": False, "unrelatedTileNumbers": []}),
+                "motion-0": ("", {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged"}),
+                "completeness": ("", completeness_observation), "observation": ("", observation)}
+    monkeypatch.setattr("exercise_motion_pkg.review_questions.run_questions", run_questions)
+    def caption_images(*, frame_paths, prompt, **kwargs):
+        if prompt.startswith("Inspect only equipment"):
+            assert frame_paths == detail_frames
+            assert "Dumbbell Shrug" not in prompt
+            return json.dumps(detail)
+        if prompt.startswith("Audit only"):
+            assert '"targetBlindFullResolutionEquipment"' in prompt
+            return json.dumps({"corroboratedConflict": conflict,
+                               "corroboratedContradictions": ["incompatible action"] if conflict else [],
+                               "requiredEquipmentSupported": "true"})
+        assert all(path in sheets for path in frame_paths)
+        assert "original full-resolution frames" in prompt
+        assert json.dumps(detail) in prompt
+        if prompt.startswith("You verify only exercise identity"):
+            if malformed == "identity_missing":
+                return '{"verdict":"match","evidence":"unfinished'
+            if malformed in {"identity_uncertain", "identity_mismatch"}:
+                return json.dumps({"verdict": malformed.removeprefix("identity_"), "visibleEquipment": ["dumbbell"]})
+            return json.dumps({"verdict": "match", "visibleEquipment": ["dumbbell"]})
+        return json.dumps(topology_response())
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path), uniform_sheet_paths=sheets, output_dir=tmp_path / "review",
+        caption_images=caption_images)
+    assert result["passed"] is (not uncertain and complete and not conflict and not malformed)
+    assert result["gates"]["targetBlindEquipmentDetail"]["clear"] is (not uncertain)
+    if malformed in {"identity_missing", "identity_uncertain"}:
+        assert result["reviewStatus"] == "incomplete"
+        assert result["missingEvidenceReasons"] == ["two_scale_source_identity_review_incomplete"]
+        _, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(result, exercise_name="Dumbbell Shrug")
+        assert claims == ["target_identity"]
+    elif malformed == "identity_mismatch":
+        assert result["reviewStatus"] == "rejected"
+        assert result["missingEvidenceReasons"] == []
+    elif malformed is True:
+        assert result["reviewStatus"] == "incomplete"
+        assert result["missingEvidenceReasons"] == ["two_scale_source_completeness_observation_inconsistent"]
+        assert bake_and_rank.two_scale_source_validation_needs_repair(result)
+        _, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(result, exercise_name="Dumbbell Shrug")
+        assert claims == ["complete_action"]
+    elif not complete:
+        assert result["reviewStatus"] == "rejected"
+        assert result["missingEvidenceReasons"] == []
 
 
 def make_review_item(tmp_path: Path, exercise_name: str = "Dumbbell Shrug") -> bake_and_rank.ReviewItem:
@@ -257,21 +350,6 @@ def test_two_scale_source_gate_rejects_vlm_approval_that_contradicts_pose_endpoi
     assert "two_scale_source_pose_contract_mismatch" in result["rejectionReasons"]
 
 
-def test_two_scale_source_gate_does_not_let_one_blind_outlier_override_corroborated_match(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    uniform_sheets = [tmp_path / "uniform.jpg"]
-    motion_sheets = [tmp_path / "motion.jpg"]
-    for path in [*uniform_sheets, *motion_sheets]:
-        path.write_bytes(b"image")
-    monkeypatch.setattr(
-        bake_and_rank,
-        "final_output_motion_contact_sheets",
-        lambda *_args, **_kwargs: motion_sheets,
-    )
-
-
 def topology_response(*, equipment_match: str = "match", complete: bool = True) -> dict[str, object]:
     return {
         "startStateMatch": "match" if complete else "mismatch",
@@ -284,9 +362,38 @@ def topology_response(*, equipment_match: str = "match", complete: bool = True) 
         "complete": complete,
         "evidence": "complete ordered movement" if complete else "required phases are missing",
     }
+
+
+@pytest.mark.parametrize("complete_observations", [False, True])
+def test_two_scale_source_gate_does_not_let_one_blind_outlier_override_corroborated_match(
+    tmp_path: Path,
+    monkeypatch,
+    complete_observations: bool,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+
+
+    identity = {"verdict": "match", "observedAction": "rack pull", "evidence": "bar rises to thighs"}
+    observation = {
+        "visibleEquipment": ["barbell"],
+        "orderedPhases": ["bar rises from below knees", "body stands", "bar lowers"],
+        "evidence": "bar remains below the hips",
+    }
+    if complete_observations:
+        identity["visibleEquipment"] = ["barbell"]
+        observation.update(startStateVisible=True, actionPhaseVisible=True,
+                           turningPointVisible=True, returnOrFinishVisible=True, complete=True)
     responses = iter(
         [
-            {"verdict": "match", "observedAction": "rack pull", "evidence": "bar rises to thighs"},
+            identity,
             {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "rack pull"},
             {
                 "targetExerciseActionVisible": True,
@@ -303,11 +410,7 @@ def topology_response(*, equipment_match: str = "match", complete: bool = True) 
                 "complete": True,
                 "evidence": "outlying clean and jerk description",
             },
-            {
-                "visibleEquipment": ["barbell"],
-                "orderedPhases": ["bar rises from below knees", "body stands", "bar lowers"],
-                "evidence": "bar remains below the hips",
-            },
+            observation,
             topology_response(),
             {
                 "corroboratedConflict": False,
@@ -326,7 +429,10 @@ def topology_response(*, equipment_match: str = "match", complete: bool = True) 
         caption_images=lambda **_kwargs: json.dumps(next(responses)),
     )
 
-    assert result["passed"] is True
+    assert result["passed"] is complete_observations
+    if not complete_observations:
+        assert result["reviewStatus"] == "incomplete"
+        assert "two_scale_source_target_blind_motion_observation_inconsistent" in result["missingEvidenceReasons"]
 
 
 def test_two_scale_source_gate_rejects_conflicting_exercise_evidence(
@@ -632,3 +738,53 @@ def test_two_scale_endpoint_gate_uses_deterministic_return_cycle_when_identity_i
 
     assert result["gates"]["deterministicPoseEndpoints"]["passed"] is True
     assert result["rejectionReasons"] == ["two_scale_source_identity_failed"]
+
+
+def test_two_scale_hold_prompts_preserve_static_effort_and_bound_observation_size(tmp_path, monkeypatch):
+    import pytest
+    from exercise_motion_pkg import review_questions
+
+    class PromptsCaptured(Exception):
+        pass
+
+    def capture_jobs(jobs, callback):
+        for operation in jobs.values():
+            operation()
+        raise PromptsCaptured()
+
+    monkeypatch.setattr(review_questions, "run_questions", capture_jobs)
+    monkeypatch.setattr(bake_and_rank, "final_output_motion_contact_sheets", lambda *a, **k: [tmp_path / "motion.jpg"])
+    monkeypatch.setattr(bake_and_rank, "resolve_two_scale_exercise_motion_contract", lambda item, **kw: (kw["contract"], None, None))
+    for mode in ("stable_hold", "return_to_start"):
+        item = make_review_item(tmp_path, "Target Identity")
+        contract = item.candidate["exerciseMotionContract"]
+        contract["completionMode"] = mode
+        contract["movementTopology"]["completionMode"] = mode
+        contract['advisoryText'] = 'Hold one implement in one hand during the prescribed action.'
+        prompts = []
+        def caption(**kwargs):
+            prompts.append(kwargs["prompt"])
+            return "{}"
+        with pytest.raises(PromptsCaptured):
+            bake_and_rank._validate_two_scale_source_uncached(item,
+                uniform_sheet_paths=[tmp_path / "uniform.jpg"], output_dir=tmp_path,
+                caption_images=caption, exercise_motion_contract=contract)
+        observations = [p for p in prompts if "Make a target-blind observation" in p]
+        assert len(observations) == 2
+        for prompt in observations:
+            assert "Target Identity" not in prompt
+            assert "at most eight distinct phases" in prompt
+            assert "never one entry per tile" in prompt
+            assert "complete true exactly when all four visibility fields are true" in prompt
+            assert '"startStateVisible":false' not in prompt
+            assert 'There are no default boolean answers' in prompt
+            assert 'orderedPhases must be an empty array' in prompt
+            assert ("sustained static hold" in prompt) is (mode == "stable_hold")
+        identity = next(p for p in prompts if 'You verify only exercise identity' in p)
+        assert contract['advisoryText'] in identity
+        assert 'holding limbs, moving limbs, stance and support are separate properties' in identity
+        assert 'Do not invent an extra variant requirement' in identity
+        motion = next(p for p in prompts if "You inspect one motion-focused" in p)
+        uniform = next(p for p in prompts if "You inspect one uniformly sampled" in p)
+        assert ("not merely a static pose" in motion) is (mode != "stable_hold")
+        assert ("not waiting or setup" in uniform) is (mode == "stable_hold")

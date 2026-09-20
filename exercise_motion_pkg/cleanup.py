@@ -150,7 +150,8 @@ def clip_preserves_video_floor_orientation(clip: MotionClip) -> bool:
     if not isinstance(payload, dict):
         return False
     policy = str(payload.get("policy") or "")
-    if "floor_distance" not in policy:
+    if ("floor_distance" not in policy
+            and policy != "measured_floor_leveling_without_body_fit"):
         return False
     return bool(payload.get("applied", True))
 
@@ -2140,18 +2141,92 @@ def apply_kneeling_knee_lock(
         ground_y=ground_y,
         preserve_chain_lengths=False,
     )
+    locked_clip, chain_repair = restore_bilateral_support_chain_lengths(
+        locked_clip, aligned_clip,
+        parent_support_pairs=(("left_hip", "left_knee"), ("right_hip", "right_knee")),
+    )
+    if not chain_repair["applied"]:
+        # Keep the rigid result rather than publishing stretched legs as an
+        # authoritative support reference. The downstream joint fit must resolve
+        # an unreachable contact configuration.
+        return aligned_clip, {**support_constraint, "kneeLock": {
+            "applied": False, "reason": "support_chain_fit_required",
+            "chainRepair": chain_repair, "rigidPrealignment": rigid_alignment_metadata,
+        }}
     locked_clip, distal_support_vectors = stabilize_kneeling_distal_support_pose(
         locked_clip
     )
     lock_metadata = dict(lock_metadata)
     lock_metadata["allowWholeSkeletonSolver"] = False
     lock_metadata["rigidPrealignment"] = rigid_alignment_metadata
+    lock_metadata["chainRepair"] = chain_repair
     lock_metadata["distalSupportVectors"] = distal_support_vectors
     updated = dict(support_constraint)
     updated["kneeLock"] = lock_metadata
     if lock_metadata.get("applied"):
         updated["applied"] = True
     return locked_clip, updated
+
+
+def restore_bilateral_support_chain_lengths(
+    clip: MotionClip,
+    reference: MotionClip,
+    *,
+    parent_support_pairs: tuple[tuple[str, str], tuple[str, str]],
+) -> tuple[MotionClip, dict[str, object]]:
+    """Translate the rigid core onto both original limb-length constraints.
+
+    Each planted endpoint defines a sphere of feasible core translations.
+    Choose the point on their intersection nearest zero, retaining the core's
+    shape and orientation and leaving both support subtrees fixed.
+    """
+    if clip.frame_count != reference.frame_count or not clip.frames:
+        return clip, {"applied": False, "reason": "missing_matching_frames"}
+    stationary = set()
+    for _, support in parent_support_pairs:
+        stationary.add(support)
+        stationary.update(SUPPORT_CHAIN_CONSTRAINTS.get(support, (None, ()))[1])
+    frames = []
+    maximum_correction = 0.0
+    for frame, source in zip(clip.frames, reference.frames):
+        if any(n not in f.joints for f in (frame, source)
+               for pair in parent_support_pairs for n in pair):
+            return clip, {"applied": False, "reason": "missing_chain_joints"}
+        centers = [np.asarray(frame.joints[s]) - np.asarray(frame.joints[p])
+                   for p, s in parent_support_pairs]
+        radii = [math.dist(source.joints[p], source.joints[s])
+                 for p, s in parent_support_pairs]
+        first, second = centers
+        r1, r2 = radii
+        axis = second - first
+        distance = float(np.linalg.norm(axis))
+        if (distance > r1 + r2 + 1e-9
+                or distance < abs(r1 - r2) - 1e-9):
+            return clip, {"applied": False, "reason": "unreachable_support_pair"}
+        if distance <= 1e-9:
+            # Identical constraints are common in a symmetric stance. Their
+            # intersection is the whole sphere, not an unreachable pair.
+            center, radius = first, r1
+            toward_origin = -center
+        else:
+            axis /= distance
+            offset = (r1 * r1 - r2 * r2 + distance * distance) / (2 * distance)
+            center = first + offset * axis
+            radius = math.sqrt(max(0.0, r1 * r1 - offset * offset))
+            toward_origin = -center + np.dot(center, axis) * axis
+        direction_length = float(np.linalg.norm(toward_origin))
+        if direction_length <= 1e-9 and radius > 1e-9:
+            return clip, {"applied": False, "reason": "ambiguous_core_translation"}
+        correction = center + radius * toward_origin / max(direction_length, 1e-9)
+        maximum_correction = max(maximum_correction, float(np.linalg.norm(correction)))
+        frames.append(MotionFrame(frame.time_sec, {
+            name: point if name in stationary else tuple(float(v) for v in np.asarray(point) + correction)
+            for name, point in frame.joints.items()
+        }))
+    return replace(clip, frames=frames), {
+        "applied": True, "strategy": "rigid_core_support_sphere_intersection",
+        "maximumCorrection": maximum_correction,
+    }
 
 
 def stabilize_kneeling_distal_support_pose(
@@ -2241,7 +2316,11 @@ def lock_support_pair_midpoint_rigidly(
         - np.asarray(frame.joints[right_name], dtype=np.float64)
         for frame in clip.frames
     ]
-    target_pair_vector = np.median(np.asarray(pair_vectors), axis=0)
+    observed_pair_vector = np.median(np.asarray(pair_vectors), axis=0)
+    target_pair_vector = observed_pair_vector.copy()
+    # Both declared supports land on ground_y. Keeping the observed vertical
+    # separation here makes the subsequent independent pins shear the chains.
+    target_pair_vector[1] = 0.0
     target_pair_length = float(np.linalg.norm(target_pair_vector))
     if target_pair_length <= 1e-8:
         return clip, {"applied": False, "reason": "degenerate_bilateral_support_pair"}
@@ -2254,7 +2333,10 @@ def lock_support_pair_midpoint_rigidly(
     maximum_correction = 0.0
     maximum_rotation_degrees = 0.0
     frames: list[MotionFrame] = []
-    for frame, midpoint, pair_vector in zip(clip.frames, midpoints, pair_vectors):
+    for frame, midpoint in zip(clip.frames, midpoints):
+        # A clip-wide rotation cannot inject tracked support-direction noise
+        # into every limb. Residual endpoint placement is solved kinematically.
+        pair_vector = observed_pair_vector
         pair_length = float(np.linalg.norm(pair_vector))
         current_direction = (
             pair_vector / pair_length if pair_length > 1e-8 else target_pair_direction
@@ -2311,6 +2393,7 @@ def lock_support_pair_midpoint_rigidly(
         "maximumCorrection": maximum_correction,
         "maximumRotationDegrees": maximum_rotation_degrees,
         "preservesAllPairwiseDistances": True,
+        "rotationPolicy": "constant_observed_support_plane_rotation",
     }
 
 

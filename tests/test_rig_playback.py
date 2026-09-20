@@ -22,6 +22,28 @@ def export(rig):
             'frames':[{'timeSec':i/30.,'joints':dict(zip(rig['jointNames'],p.tolist()))} for i,p in enumerate(points)]}
 
 
+def test_final_loop_gate_uses_playback_velocity_even_when_endpoints_coincide():
+    from exercise_motion_pkg.bake_and_rank import compute_loop_bridge_quality_metrics_from_payload
+
+    rig = rig_payload(12)
+    stable = export(rig)
+    assert not compute_loop_bridge_quality_metrics_from_payload(stable)['severeLoopMismatch']
+    coordinates = np.asarray(rig['coordinates'])
+    coordinates[1, 0] += .02
+    rig['coordinates'] = coordinates.tolist()
+    hitch = export(rig)
+    metrics = compute_loop_bridge_quality_metrics_from_payload(hitch)
+    playback = validate_rig_playback(hitch)
+    assert metrics['endpointMaxDistance'] == 0.
+    assert metrics['severeLoopMismatch']
+    assert not playback['seamContinuous']
+    for key, value in metrics['playbackSeam'].items():
+        assert value == pytest.approx(playback[key])
+    # Legacy exports retain their existing diagnostic without claiming rig authority.
+    hitch.pop('fixedRig')
+    assert compute_loop_bridge_quality_metrics_from_payload(hitch)['playbackSeam'] is None
+
+
 def test_grounded_toe_recalibrates_overlapping_ankle_before_fitting():
     from exercise_motion_pkg.rig_playback import rig_contact_targets
     rig = rig_payload(12)
@@ -58,19 +80,87 @@ def test_observed_stance_identity_prevents_false_ankle_loop_jump(same_stance):
     ankle, foot = (names.index('right_'+part) for part in ('ankle', 'foot'))
     points[:4, ankle, 2] += .03
     points[8:, ankle, 2] -= .03
+    # Independently observed toe episodes need not have identical anchors.
+    # Foot-length calibration must still keep the explicitly shared ankle.
+    points[:4, foot, 2] += .008
+    points[8:, foot, 2] -= .008
     original = points.copy()
     contacts = [{'jointName': 'right_foot', 'contactState': 'full_sole',
                  'contactMotion': 'stationary', 'startFrame': start, 'endFrame': end,
+                 'supportKind': 'observed_foot_patch', 'surfaceKind': 'ground',
                  'ankleAnchorGroupId': group}
                 for start, end, group in ((0, 3, 'stance-a'), (8, 11, 'stance-a' if same_stance else 'stance-b'))]
     evidence = {'contacts': contacts}
     pinned = contact_mask({'sourceFootSupportEvidence': evidence}, names, len(points))
-    targets, _ = rig_contact_targets(points, names, pinned, rig['offsets'], evidence=evidence)
+    floor = float(points[0, foot, 1])
+    targets, _ = rig_contact_targets(points, names, pinned, rig['offsets'], evidence=evidence, floor=floor)
     assert (np.linalg.norm(targets[0, ankle]-targets[-1, ankle]) < 1e-10) == same_stance
     np.testing.assert_array_equal(targets[4:8, ankle], points[4:8, ankle])
     np.testing.assert_allclose(np.linalg.norm((targets[:, ankle]-targets[:, foot])[pinned[:, ankle]], axis=1),
                                np.linalg.norm(rig['offsets'][foot]))
     np.testing.assert_array_equal(points, original)
+    np.testing.assert_allclose(targets[:4, foot], np.broadcast_to(targets[0, foot], (4, 3)))
+    np.testing.assert_allclose(targets[8:, foot], np.broadcast_to(targets[8, foot], (4, 3)))
+    assert np.max(np.linalg.norm(targets[:, foot] - points[:, foot], axis=1)) < .01
+    np.testing.assert_allclose(targets[pinned[:, foot], foot, 1], floor)
+
+
+@pytest.mark.parametrize('placed', [False, True])
+def test_incompatible_shared_stance_is_an_explicit_contact_rejection(placed):
+    from exercise_motion_pkg.contact_constraints import InfeasibleContactCorrection
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    rig = rig_payload(12)
+    current = export(rig)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    foot = names.index('right_foot')
+    points[8:, foot, 0] += 1.
+    current['sourceFootSupportEvidence'] = {'contacts': [
+        {'jointName': 'right_foot', 'contactState': 'full_sole',
+         'contactMotion': 'stationary', 'ankleAnchorGroupId': 'same-ankle',
+         'startFrame': start, 'endFrame': end}
+        for start, end in ((0, 3), (8, 11))]}
+    for frame, source in zip(current['frames'], points):
+        frame['controlledSourceJoints'] = dict(zip(names, source.tolist()))
+    if placed:
+        current['scenePlacement'] = {'version': 1, 'rotationVector': [0., 0., 0.],
+                                     'originAfterRotation': [0., 0., 0.]}
+    pinned = contact_mask(current, names, len(points))
+    with pytest.raises(InfeasibleContactCorrection):
+        rig_contact_targets(points, names, pinned, rig['offsets'],
+                            evidence=current['sourceFootSupportEvidence'])
+    report = validate_rig_playback(current)
+    assert report['passed'] is False
+    assert report['reason'] == 'incompatible_stationary_contact_anchors'
+
+
+def test_joint_anchor_calibration_enforces_displacement_radius_during_solve():
+    from exercise_motion_pkg.contact_constraints import calibrate_shared_contact_pair
+
+    # Unequal observed episode lengths favor a diagonal toe correction beyond
+    # the radial allowance if the optimizer only receives per-axis bounds.
+    points = np.zeros((84, 2, 3))
+    points[:, 0] = [0., .05, 0.]
+    points[:32, 1] = [.137, 0., -.0555]
+    points[32:, 1] = [.1204, 0., -.0237]
+    mask = np.ones((84, 2), dtype=bool)
+    mask[31] = False
+    identities = np.full((84, 2), 'ankle', dtype=object)
+    identities[:32, 1], identities[32:, 1] = 'toe-a', 'toe-b'
+    ground = mask.copy()
+    ground[:, 0] = False
+    length = .134
+    result = calibrate_shared_contact_pair(points, mask, identities, distance=length,
+                                           ground_mask=ground, floor=0.)
+    assert np.max(np.linalg.norm(result - points, axis=-1)) <= .1 * length + 1e-7
+    np.testing.assert_allclose(result[mask[:, 0], 0],
+                               np.broadcast_to(result[0, 0], (83, 3)), atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(result[mask[:, 0], 0] - result[mask[:, 0], 1], axis=1),
+                               length, atol=1e-7)
+    np.testing.assert_array_equal(result[31], points[31])
+    np.testing.assert_allclose(result[mask[:, 1], 1, 1], 0., atol=1e-12)
 
 
 @pytest.mark.parametrize('surface,shared_plane,calibrated,grounded', [
@@ -118,6 +208,21 @@ def test_floor_clearance_translates_free_rig_without_changing_motion(anchored):
     after = sample_rig(rig, np.arange(120) / 4, wrap=True)
     assert float(after[:, :, 1].min()) == pytest.approx(floor)
     np.testing.assert_allclose(after - before, np.broadcast_to([0., lift, 0.], before.shape), atol=1e-12)
+
+
+def test_free_joint_floor_lift_ignores_planted_contacts():
+    from exercise_motion_pkg.rig_playback import free_joint_floor_clearance_lift
+    rig = rig_payload(8)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    floor = float(points[:, :, 1].min())
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, names.index('left_foot')] = True
+    dipped = np.asarray(rig['coordinates'], dtype=float)
+    dipped[:, 1] -= 0.003
+    rig['coordinates'] = dipped.tolist()
+    lift = free_joint_floor_clearance_lift(rig, floor, pinned, cyclic=False)
+    assert lift == pytest.approx(0.003, abs=1e-4)
 
 
 def test_materialized_support_uses_final_rig_and_still_rejects_penetration(tmp_path):
@@ -265,6 +370,39 @@ def test_final_physical_gate_rejects_unsafe_loop_without_fade_exception():
     report=physical_metrics_from_payload(payload)
     assert not report['passed']
     assert 'unsafe_loop_transition' in report['reasons']
+
+
+def test_final_physical_gate_allows_intentional_open_loop_seam():
+    from copy import deepcopy
+    from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY, REQUIRED_FIT_CHECKS
+    from exercise_motion_pkg.physical_validation import physical_metrics_from_payload
+    from exercise_motion_pkg.sequence_stabilization import pose_digest
+    rig = rig_payload()
+    values = np.array(rig['coordinates'])
+    values[:, 0] += np.linspace(0., 0.05, len(values))
+    rig['coordinates'] = values.tolist()
+    payload = export(rig)
+    payload['loop'] = {
+        **payload['loop'],
+        'enabled': True,
+        'transition': 'requires_cycle_repair',
+        'restartFadeMillis': 0,
+    }
+    for frame in payload['frames']:
+        frame['controlledSourceJoints'] = deepcopy(frame['joints'])
+    payload['controlledMotionFit'] = {
+        'applied': True,
+        'reason': 'validated_controlled_motion_open_seam',
+        'loopSeamOpen': True,
+        'strategy': CONTROLLED_MOTION_STRATEGY,
+        'checks': {**dict.fromkeys(REQUIRED_FIT_CHECKS, True), 'loopSeam': False},
+    }
+    payload['controlledMotionFit']['outputPoseDigest'] = pose_digest(payload)
+    report = physical_metrics_from_payload(payload)
+    assert 'unsafe_loop_transition' not in report.get('reasons', [])
+    # Open-seam labeling alone must not invent a wrap rejection; body playback
+    # may still fail for independent reasons on a traveling clip.
+    assert report.get('rigPlayback', {}).get('openLoopSeam') is True
 
 
 def test_pose_digest_covers_rig_coordinates_and_loop_policy():

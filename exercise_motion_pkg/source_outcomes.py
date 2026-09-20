@@ -10,9 +10,31 @@ from typing import Any, Iterable
 from exercise_motion_pkg.process_lock import InterProcessFileLock
 
 
-SOURCE_OUTCOME_INDEX_SCHEMA_VERSION = 1
+SOURCE_OUTCOME_INDEX_SCHEMA_VERSION = 2
 SOURCE_OUTCOME_INDEX_LOCK_TIMEOUT_SECONDS = 30.0
 SOURCE_OUTCOME_INDEX_LOCK_STALE_SECONDS = 5 * 60.0
+UNRESOLVED_OUTCOME_STATUSES = frozenset({
+    "needs_source_review", "needs_motion_processing", "needs_manual_review",
+    "source_processing_failed", "rejected_vlm_timeout", "failed", "blocked_contract",
+    "skipped_previous_terminal_result",
+})
+QUALITY_HISTORY_FIELDS = ("attempts", "sourcePasses", "accepts")
+
+
+def source_quality_history(stats: dict[str, Any]) -> dict[str, Any]:
+    """Keep mixed legacy execution counts out of source-quality ranking.
+
+    Rejection tags overlap within an observation, so subtracting them cannot
+    reconstruct a reliable denominator. Retain the old totals for inspection
+    and learn a fresh prior from resolved observations for affected records.
+    """
+    history = stats.get("qualityHistory")
+    if isinstance(history, dict):
+        return history
+    tags = stats.get("rejectionCounts") or {}
+    if any(int(tags.get(f"status:{status}") or 0) > 0 for status in UNRESOLVED_OUTCOME_STATUSES):
+        return {}
+    return stats
 
 
 def normalize_source_channel(value: Any) -> str | None:
@@ -77,6 +99,8 @@ def source_outcome_prior(
     channel_stats = (index.get("channels") or {}).get(channel_key) if channel_key else None
     source_stats = source_stats if isinstance(source_stats, dict) else None
     channel_stats = channel_stats if isinstance(channel_stats, dict) else None
+    source_stats = source_quality_history(source_stats) if source_stats is not None else None
+    channel_stats = source_quality_history(channel_stats) if channel_stats is not None else None
 
     weighted_scores: list[tuple[float, float]] = []
     if source_stats is not None:
@@ -155,6 +179,13 @@ def _increment_stats(
     rejection_tags: Iterable[str],
     observed_at: str,
 ) -> None:
+    if not isinstance(stats.get("qualityHistory"), dict):
+        history = source_quality_history(stats)
+        stats["qualityHistory"] = {key: int(history.get(key) or 0) for key in QUALITY_HISTORY_FIELDS}
+    history = stats["qualityHistory"]
+    history["attempts"] += 1
+    history["sourcePasses"] += int(source_passed)
+    history["accepts"] += int(accepted)
     stats["attempts"] = int(stats.get("attempts") or 0) + 1
     stats["sourcePasses"] = int(stats.get("sourcePasses") or 0) + int(source_passed)
     stats["reconstructionAttempts"] = int(stats.get("reconstructionAttempts") or 0) + int(reconstruction_attempted)
@@ -176,7 +207,8 @@ def update_source_outcome_index(
     for result in candidate_results:
         # An unresolved observation or contract is not evidence against a source.
         # Other, resolved windows from that same video still update its history.
-        if result.get("status") in {"needs_source_review", "needs_motion_processing"}:
+        if (result.get("status") in UNRESOLVED_OUTCOME_STATUSES
+                or result.get("finalSelectionStatus") in {"processing_incomplete", "review_incomplete"}):
             continue
         candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else {}
         identity = source_identity(candidate.get("videoId"), candidate.get("url"))

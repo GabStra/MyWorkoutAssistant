@@ -149,6 +149,7 @@ def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
     return {
         "fps": clip.fps,
         "jointNames": list(clip.joint_names),
+        "sourcePoseRegistration": clip.metadata.get("sourcePoseRegistration"),
         "frames": [
             {
                 "timeSec": frame.time_sec,
@@ -160,6 +161,98 @@ def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
             for frame in clip.frames
         ]
     }
+
+
+def reconstruction_camera_orientation(clip: MotionClip):
+    """Invert recorded WHAM coordinate changes before any pose processing.
+
+    Only use on reconstruction input: processing metadata alone cannot prove
+    that later cleanup or articulation left the coordinate basis unchanged.
+    Translation is handled by the single global image-framing fit.
+    """
+    import numpy as np
+
+    if (clip.source.get('extractor') != 'WHAM'
+            or clip.metadata.get('wham', {}).get('coordinateSpace') != 'camera'):
+        return None
+    try:
+        angle = math.radians(float(clip.source.get('outputRotationDegrees', 0.0)))
+        cosine, sine = math.cos(angle), math.sin(angle)
+        transform = np.array([[cosine, -sine, 0.], [sine, cosine, 0.], [0., 0., 1.]])
+        alignment = clip.metadata.get('videoWorldAlignment', {})
+        if alignment.get('applied'):
+            rotation = np.asarray(alignment.get('rotationMatrix'), dtype=float)
+            if rotation.shape != (3, 3):
+                return None
+            transform = rotation @ transform
+        normalization = clip.metadata.get('coordinateNormalization')
+        if normalization:
+            if normalization.get('transform') != 'rotate_x_180_degrees':
+                return None
+            transform = np.diag([1., -1., -1.]) @ transform
+        if (not np.isfinite(transform).all()
+                or not np.allclose(transform.T @ transform, np.eye(3), atol=1e-6)
+                or not np.isclose(np.linalg.det(transform), 1., atol=1e-6)):
+            return None
+        return transform.T
+    except (TypeError, ValueError):
+        return None
+
+
+def retain_camera_through_cleanup(
+    before: MotionClip, after: MotionClip, source_pose: dict[str, Any] | None,
+) -> MotionClip:
+    """Carry the pre-cleanup camera through a verified rigid torso mapping.
+
+    Fit only the coordinate change between processing stages, not a new camera
+    to the output under review. One mean translation preserves temporal root
+    errors; no per-frame image alignment can hide them.
+    """
+    import numpy as np
+
+    if not isinstance(source_pose, dict) or before.frame_count != after.frame_count:
+        return after
+    core = ('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
+    if not before.frames or any(n not in f.joints for clip in (before, after)
+                                for f in clip.frames for n in core):
+        return after
+    if any(abs(a.time_sec - b.time_sec) > 1e-8 for a, b in zip(before.frames, after.frames)):
+        return after
+    x = np.array([[f.joints[n] for n in core] for f in before.frames])
+    y = np.array([[f.joints[n] for n in core] for f in after.frames])
+    x_center, y_center = x.mean(axis=1), y.mean(axis=1)
+    x0 = (x - x_center[:, None]).reshape(-1, 3)
+    y0 = (y - y_center[:, None]).reshape(-1, 3)
+    if not np.isfinite(x0).all() or not np.isfinite(y0).all() or np.linalg.matrix_rank(x0) < 2:
+        return after
+    u, _, vt = np.linalg.svd(x0.T @ y0)
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        u[:, -1] *= -1
+        rotation = u @ vt
+    error = float(np.max(np.linalg.norm(x0 @ rotation - y0, axis=1)))
+    extent = max(float(np.max(np.linalg.norm(x0, axis=1))), .01)
+    if error > extent * 1e-5:
+        return after
+    camera = registered_camera_pose_fidelity_metrics(
+        source_pose, _motion_clip_pose_payload(before),
+        camera_orientation=reconstruction_camera_orientation(before),
+    )
+    if not camera.get('available') or not camera.get('cameraImageTransform'):
+        return after
+    translation = np.mean(y_center - x_center @ rotation, axis=0)
+    mapped_rotation = np.asarray(camera['cameraRotation']) @ rotation
+    transform = list(camera['cameraImageTransform'])
+    shift = mapped_rotation @ translation
+    transform[2] += float(shift[0])
+    transform[3] += float(shift[1])
+    return replace(after, metadata={**after.metadata, 'sourcePoseRegistration': {
+        'sourcePose': source_pose,
+        'camera': {**camera, 'cameraRotation': mapped_rotation.tolist(),
+                   'cameraImageTransform': transform},
+        'policy': 'pre_cleanup_camera_with_verified_rigid_torso_mapping',
+        'maximumMappingErrorMeters': error,
+    }})
 
 
 def _point_angle_degrees_3d(
@@ -611,7 +704,13 @@ def _accept_source_preserving_refinement_step(
         }
     from .articulation_trajectory import temporal_quality_comparison
     temporal_quality = temporal_quality_comparison(before, proposed)
-    accepted = accepted and temporal_quality["passed"]
+    from .bake_and_rank import materialized_source_endpoint_mismatch_is_decisive
+    introduced_endpoint_mismatches = [
+        name for name in proposed_metrics.get("perAngleEndpointMetrics", {})
+        if materialized_source_endpoint_mismatch_is_decisive(proposed_metrics, name)
+        and not materialized_source_endpoint_mismatch_is_decisive(before_metrics, name)
+    ]
+    accepted = accepted and temporal_quality["passed"] and not introduced_endpoint_mismatches
     return (proposed if accepted else before), {
         "step": step_name,
         "accepted": accepted,
@@ -622,7 +721,8 @@ def _accept_source_preserving_refinement_step(
                 else "source_fidelity_preserved_or_improved"
             )
             if accepted
-            else ("temporal_quality_degraded" if not temporal_quality["passed"]
+            else ("source_endpoint_pose_degraded" if introduced_endpoint_mismatches
+                  else "temporal_quality_degraded" if not temporal_quality["passed"]
                   else "protected_source_fidelity_degraded")
         ),
         "degradedMetrics": degraded_metrics,
@@ -634,7 +734,16 @@ def _accept_source_preserving_refinement_step(
         "temporalNoiseTradeoff": temporal_noise_tradeoff,
         "articulationConstraint": articulation_constraint,
         "temporalQuality": temporal_quality,
+        "introducedSourceEndpointMismatches": introduced_endpoint_mismatches,
     }
+
+
+def source_fidelity_override_is_safe(transaction: dict[str, object]) -> bool:
+    """Ambiguous pose evidence cannot excuse a decisive or temporal regression."""
+    return bool(
+        transaction.get("temporalQuality", {}).get("passed")
+        and not transaction.get("introducedSourceEndpointMismatches")
+    )
 
 
 def preserve_terminal_bone_lengths(clip, reference_clip, *, source_pose_payload=None):
@@ -894,6 +1003,7 @@ def refine_motion_clip_structurally(
         final_leg_symmetry_transaction.get("accepted") is False
         and isinstance(leg_motion_acceptance, dict)
         and leg_motion_acceptance.get("accepted") is True
+        and source_fidelity_override_is_safe(final_leg_symmetry_transaction)
     ):
         refined = final_leg_symmetry_candidate
         final_leg_symmetry_transaction = {
@@ -918,6 +1028,7 @@ def refine_motion_clip_structurally(
     if (
         contact_surface_transaction.get("accepted") is False
         and contact_surface_metadata.get("bilateralFootAnchors")
+        and source_fidelity_override_is_safe(contact_surface_transaction)
     ):
         # A monocular 2D projection cannot disprove a stationary 3D support
         # constraint.  Contact evidence owns planted-foot translation; source
@@ -955,6 +1066,7 @@ def refine_motion_clip_structurally(
     if (
         final_contact_surface_transaction.get("accepted") is False
         and contact_surface_metadata.get("bilateralFootAnchors")
+        and source_fidelity_override_is_safe(final_contact_surface_transaction)
     ):
         refined = final_surface_candidate
         final_contact_surface_transaction = {
@@ -991,6 +1103,7 @@ def refine_motion_clip_structurally(
         final_arm_symmetry_transaction.get("accepted") is False
         and isinstance(arm_motion_acceptance, dict)
         and arm_motion_acceptance.get("accepted") is True
+        and source_fidelity_override_is_safe(final_arm_symmetry_transaction)
     ):
         refined = final_arm_symmetry_candidate
         final_arm_symmetry_transaction = {
@@ -1015,12 +1128,12 @@ def refine_motion_clip_structurally(
         isinstance(terminal_arm_mode, dict)
         and terminal_arm_mode.get("mode") == "same_phase_symmetric"
     ):
-        refined = terminal_arm_symmetry_candidate
-        terminal_arm_symmetry_metadata["transaction"] = {
-            "step": "pre_equipment_same_phase_arm_symmetry",
-            "accepted": True,
-            "reason": "terminal_bilateral_3d_symmetry_invariant",
-        }
+        refined, terminal_arm_symmetry_metadata["transaction"] = _accept_source_preserving_refinement_step(
+            refined, terminal_arm_symmetry_candidate,
+            source_pose_payload=source_pose_payload,
+            step_name="pre_equipment_same_phase_arm_symmetry",
+            preserve_rigid_constraints=True,
+        )
     else:
         terminal_arm_symmetry_metadata["transaction"] = {
             "step": "pre_equipment_same_phase_arm_symmetry",
@@ -2878,65 +2991,20 @@ def _align_root_travel_to_body_yaw(
             "travelLength": travel_length,
             "noiseScale": noise_scale,
         }
-    travel_direction = _scale(travel, 1.0 / travel_length)
-    right_samples = [
-        body_frame.right
-        for frame in clip.frames
-        if (body_frame := _body_local_frame(frame)) is not None
-    ]
-    if not right_samples:
-        return clip, {"applied": False, "reason": "body_right_axis_unavailable"}
-    horizontal_right = _normalize(
-        (
-            median([point[0] for point in right_samples]),
-            0.0,
-            median([point[2] for point in right_samples]),
-        )
-    )
-    forward = (
-        (-horizontal_right[2], 0.0, horizontal_right[0])
-        if horizontal_right is not None
-        else None
-    )
-    if forward is None:
-        return clip, {"applied": False, "reason": "body_forward_axis_degenerate"}
-    signed_forward = forward if _dot(forward, travel_direction) >= 0.0 else _scale(forward, -1.0)
-    yaw_radians = math.atan2(
-        signed_forward[0] * travel_direction[2]
-        - signed_forward[2] * travel_direction[0],
-        _dot(travel_direction, signed_forward),
-    )
-    corrected_frames: list[MotionFrame] = []
-    root_origin = roots[travel_start_index]
-    for frame in clip.frames:
-        current_root = frame.joints[root_joint]
-        root_displacement = _subtract(current_root, root_origin)
-        rotated_horizontal = _rotate_vector_about_axis(
-                (root_displacement[0], 0.0, root_displacement[2]),
-                axis=(0.0, 1.0, 0.0),
-                angle_radians=yaw_radians,
-            )
-        target_root = (
-            root_origin[0] + rotated_horizontal[0],
-            current_root[1],
-            root_origin[2] + rotated_horizontal[2],
-        )
-        translation = _subtract(target_root, current_root)
-        joints = {
-            name: _add(point, translation)
-            for name, point in frame.joints.items()
-        }
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
-    return replace(clip, frames=corrected_frames), {
-        "applied": True,
-        "strategy": "horizontal_root_trajectory_alignment_perpendicular_to_body_right_axis",
+    # Facing direction is not evidence of travel direction. Sideways jumps,
+    # shuffles and oblique steps can all legitimately move across the torso's
+    # right axis. Source-guided trajectory fitting owns any correction; rotating
+    # only root displacement here invents motion unsupported by the observation.
+    return clip, {
+        "applied": False,
+        "reason": "root_travel_direction_requires_source_evidence",
         "travelLength": travel_length,
         "travelStartFrame": travel_start_index,
         "travelEndFrame": travel_end_index,
         "noiseScale": noise_scale,
-        "trajectoryYawCorrectionDegrees": math.degrees(yaw_radians),
-        "bodyAxisSign": "forward" if signed_forward == forward else "reverse_forward",
     }
+
+
 SOURCE_GUIDED_ARM_CHAINS = (
     ("left_elbow", "left_shoulder", "left_elbow", "left_wrist", ("left_wrist", "left_hand")),
     ("right_elbow", "right_shoulder", "right_elbow", "right_wrist", ("right_wrist", "right_hand")),

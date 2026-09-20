@@ -90,5 +90,6 @@ RUN if [ ! -d thirdparty/eigen-3.4.0 ]; then \
 
 COPY . /opt/wham-src
 
-WORKDIR /code
+WORKDIR /opt/wham-src
+ENV PYTHONPATH="/opt/wham-src/third-party/DPVO:/opt/wham-src/third-party/DPVO/dpvo"
 CMD ["bash"]

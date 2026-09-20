@@ -17,12 +17,15 @@ from exercise_motion_pkg.gpu_lock import (gpu_stage_lock, open_lock_lease, close
 
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
 DEFAULT_WHAM_DOCKER_SHM_SIZE = "16g"
+WHAM_DOCKER_SOURCE_ROOT = "/opt/wham-src"
 DEFAULT_WHAM_REPO_PATH = Path(__file__).resolve().parents[1] / "third_party" / "WHAM"
 DEFAULT_WHAM_BODY_MODEL_ROOT = DEFAULT_WHAM_REPO_PATH / "dataset" / "body_models"
 DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY = True
 DEFAULT_WHAM_TIMEOUT_SECONDS = 20 * 60.0
 DEFAULT_WHAM_POSE_BACKEND = "vitpose"
 DEFAULT_WHAM_POSE_BATCH_SIZE = 16
+WHAM_EVAL_CHECKPOINT_NAME = "wham_vit_w_3dpw.pth.tar"
+WHAM_DEMO_CHECKPOINT_NAME = "wham_vit_bedlam_w_3dpw.pth.tar"
 DEFAULT_WHAM_FEATURE_BATCH_SIZE = 32
 DEFAULT_WHAM_MAX_TRACK_GAP_FRAMES = 3
 WHAM_DOCKER_LOCK_ENV_VAR = "EXERCISE_MOTION_WHAM_DOCKER_LOCK"
@@ -131,7 +134,11 @@ def run_wham_locally(
     required_start_seconds: float | None = None,
     required_end_seconds: float | None = None,
 ) -> WhamRunResult:
-    validate_wham_repo_layout(wham_repo_path, estimate_local_only=estimate_local_only)
+    validate_wham_repo_layout(
+        wham_repo_path,
+        estimate_local_only=estimate_local_only,
+        use_docker=use_docker,
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -672,13 +679,11 @@ def build_wham_command(
         command.extend(
             [
                 "-v",
-                f"{wham_repo_path.resolve()}:/code",
-                "-v",
                 f"{input_video.parent.resolve()}:/input",
                 "-v",
                 f"{output_root.resolve()}:/output",
                 "-w",
-                "/code",
+                WHAM_DOCKER_SOURCE_ROOT,
                 docker_image,
                 "python",
                 "-u",
@@ -742,8 +747,6 @@ def build_wham_tracking_preflight_command(
         command.extend(
             [
                 "-v",
-                f"{wham_repo_path.resolve()}:/code",
-                "-v",
                 f"{script_path.parent.resolve()}:/mwa",
                 "-v",
                 f"{input_video.parent.resolve()}:/input",
@@ -752,7 +755,7 @@ def build_wham_tracking_preflight_command(
                 "-v",
                 f"{report_path.parent.resolve()}:/logs",
                 "-w",
-                "/code",
+                WHAM_DOCKER_SOURCE_ROOT,
                 docker_image,
                 "python",
                 "-u",
@@ -783,11 +786,19 @@ def build_wham_tracking_preflight_command(
     return command
 
 
-def validate_wham_repo_layout(wham_repo_path: Path, *, estimate_local_only: bool) -> None:
+def validate_wham_repo_layout(
+    wham_repo_path: Path,
+    *,
+    estimate_local_only: bool,
+    use_docker: bool = False,
+) -> None:
+    if use_docker:
+        return
     required_paths = [
         wham_repo_path / "demo.py",
         wham_repo_path / "requirements.txt",
-        wham_repo_path / "checkpoints" / "wham_vit_w_3dpw.pth.tar",
+        wham_repo_path / "checkpoints" / WHAM_DEMO_CHECKPOINT_NAME,
+        wham_repo_path / "checkpoints" / WHAM_EVAL_CHECKPOINT_NAME,
         wham_repo_path / "checkpoints" / "hmr2a.ckpt",
         wham_repo_path / "checkpoints" / "vitpose-h-multi-coco.pth",
         wham_repo_path / "checkpoints" / "yolo26x.pt",

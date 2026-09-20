@@ -270,6 +270,7 @@ def detect_exercise_segment(
         else [MotionInterval(0.0, metadata.duration_seconds, 1.0)]
     )
     detections: list[WindowDetection] = []
+    completed_intervals: dict[tuple[float, float], WindowDetection] = {}
     detected_span: DetectedSpan | None = None
     for tier_index, multiplier in enumerate(_normalized_chunk_retry_multipliers(settings.chunk_retry_multipliers)):
         tier_window_seconds = min(metadata.duration_seconds, max(0.5, settings.window_seconds * multiplier))
@@ -296,12 +297,30 @@ def detect_exercise_segment(
             for window in windows
         ]
         tier_dir = output_dir / f"tier_{tier_index:02d}_{tier_window_seconds:.1f}s"
-        tier_detections = _classify_detection_windows_parallel(
-            windows=windows,
+        pending_intervals = {
+            (window.start_seconds, window.end_seconds): window
+            for window in windows
+            if (window.start_seconds, window.end_seconds) not in completed_intervals
+        }
+        new_detections = _classify_detection_windows_parallel(
+            windows=list(pending_intervals.values()),
             classify_window=lambda window, current_tier_dir=tier_dir: classify_window(window, tier_dir=current_tier_dir),
             classification_workers=settings.classification_workers,
         )
-        detections.extend(tier_detections)
+        detections.extend(new_detections)
+        tier_intervals = dict(completed_intervals)
+        for detection in new_detections:
+            key = (detection.window.start_seconds, detection.window.end_seconds)
+            tier_intervals[key] = detection
+            # Parser/transport failures have zero confidence and may use the
+            # existing bounded retries. Completed judgments on identical
+            # frames need neither another render nor another model call.
+            if detection.confidence > 0.0:
+                completed_intervals[key] = detection
+        tier_detections = [
+            tier_intervals[(window.start_seconds, window.end_seconds)]
+            for window in windows
+        ]
         detected_span = choose_detected_span(
             detections=tier_detections,
             confidence_threshold=settings.confidence_threshold,
@@ -1644,11 +1663,19 @@ class LlamaCppVisionClient:
             attempt_client_generation = self._client_generation
             try:
                 response = self._post_chat_completion(**request_kwargs)
-                if response.status_code >= 400:
+                error_body = response.text.casefold() if response.status_code in {400, 422} else ""
+                unsupported_format_fields = [
+                    field for field in ("response_format", "reasoning_format")
+                    if field in payload and field in error_body
+                    and any(marker in error_body for marker in (
+                        "unsupported", "not supported", "unknown", "unrecognized", "unexpected"))
+                ]
+                if unsupported_format_fields:
+                    # Compatibility fallback must not turn thinking back on or
+                    # repeat context-limit/server failures with altered semantics.
                     fallback_payload = dict(payload)
-                    fallback_payload.pop("response_format", None)
-                    fallback_payload.pop("reasoning_format", None)
-                    fallback_payload.pop("chat_template_kwargs", None)
+                    for field in unsupported_format_fields:
+                        fallback_payload.pop(field)
                     fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
                     response = self._post_chat_completion(**fallback_request_kwargs)
                 if response.status_code >= 400:

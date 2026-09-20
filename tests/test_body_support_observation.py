@@ -200,6 +200,45 @@ def test_lying_press_does_not_require_moving_shoulder_anchors():
     assert readiness['unresolvedAnchors'] == []
     blocked = body_support_source_readiness(pose)
     assert 'right_shoulder' in blocked['unresolvedAnchors']
+    joints_full = {
+        **joints,
+        'left_hip': [0.4, 0.6, 0.0],
+        'right_hip': [0.6, 0.6, 0.0],
+        'neck': [0.5, 0.35, 0.0],
+        'spine1': [0.5, 0.55, 0.0],
+        'spine2': [0.5, 0.5, 0.0],
+        'spine3': [0.5, 0.45, 0.0],
+    }
+    answer = {
+        'pelvisAndUpperBackSameSurface': True,
+        'torsoSurface': 'horizontal',
+        'pelvis': 'stationary_support',
+        'upperBack': 'stationary_support',
+        'head': 'moving',
+        'leftFoot': 'moving',
+        'rightFoot': 'unknown',
+    }
+    base = {
+        'jointNames': list(joints_full),
+        'frames': [{'joints': deepcopy(joints_full)}],
+        'sourceFootSupportEvidence': {
+            'bodySupport': {'required': True, 'status': 'unknown'},
+            'bodySupportObservation': {
+                'status': 'observed',
+                'sourceVideoSha256': 'fixture',
+                'observation': answer,
+            },
+        },
+    }
+    blocked_payload = deepcopy(base)
+    materialize_body_support(blocked_payload, pose)
+    assert blocked_payload['sourceFootSupportEvidence']['bodySupport']['status'] == 'unknown'
+    accepted = deepcopy(base)
+    materialize_body_support(accepted, pose, contract)
+    support = accepted['sourceFootSupportEvidence']['bodySupport']
+    assert support['status'] == 'confirmed'
+    assert support['stationaryJoints'] == ['pelvis']
+    assert support['coplanarGroups'][0]['joints'] == ['pelvis']
     from exercise_motion_pkg.bake_and_rank import (
         exact_source_phase_validation_rejection_reasons,
         exact_source_validation_effectively_passed,

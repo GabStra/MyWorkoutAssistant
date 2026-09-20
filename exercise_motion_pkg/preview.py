@@ -2052,11 +2052,9 @@ def _clip_requests_raw_motion_render(clip: MotionClip) -> bool:
 
 
 def _clip_has_authoritative_video_floor_alignment(clip: MotionClip) -> bool:
-    metadata = clip.metadata if isinstance(clip.metadata, dict) else {}
-    alignment = metadata.get("videoWorldAlignment")
-    if not isinstance(alignment, dict) or alignment.get("applied") is False:
-        return False
-    return "floor_distance" in str(alignment.get("policy") or "")
+    from exercise_motion_pkg.cleanup import clip_preserves_video_floor_orientation
+
+    return clip_preserves_video_floor_orientation(clip)
 
 
 def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:

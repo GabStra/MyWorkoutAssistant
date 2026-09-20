@@ -128,15 +128,20 @@ New-Item -ItemType Directory -Force -Path $resolvedOutputRoot | Out-Null
 
 $requiredPaths = @(
     (Join-Path $resolvedRepo "demo.py"),
-    (Join-Path $resolvedRepo "requirements.txt"),
-    (Join-Path $resolvedRepo "checkpoints\wham_vit_w_3dpw.pth.tar"),
-    (Join-Path $resolvedRepo "checkpoints\hmr2a.ckpt"),
-    (Join-Path $resolvedRepo "checkpoints\vitpose-h-multi-coco.pth"),
-    (Join-Path $resolvedRepo "checkpoints\yolo26x.pt"),
-    (Join-Path $resolvedRepo "dataset\body_models\smpl\SMPL_NEUTRAL.pkl")
+    (Join-Path $resolvedRepo "requirements.txt")
 )
-if (-not $EstimateLocalOnly) {
-    $requiredPaths += Join-Path $resolvedRepo "checkpoints\dpvo.pth"
+if (-not $UseDocker) {
+    $requiredPaths += @(
+        (Join-Path $resolvedRepo "checkpoints\wham_vit_bedlam_w_3dpw.pth.tar"),
+        (Join-Path $resolvedRepo "checkpoints\wham_vit_w_3dpw.pth.tar"),
+        (Join-Path $resolvedRepo "checkpoints\hmr2a.ckpt"),
+        (Join-Path $resolvedRepo "checkpoints\vitpose-h-multi-coco.pth"),
+        (Join-Path $resolvedRepo "checkpoints\yolo26x.pt"),
+        (Join-Path $resolvedRepo "dataset\body_models\smpl\SMPL_NEUTRAL.pkl")
+    )
+    if (-not $EstimateLocalOnly) {
+        $requiredPaths += Join-Path $resolvedRepo "checkpoints\dpvo.pth"
+    }
 }
 
 $missing = $requiredPaths | Where-Object { -not (Test-Path -LiteralPath $_) }
@@ -182,10 +187,9 @@ if ($UseDocker) {
         "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
     )
     $dockerArgs += @(
-        "-v", "${resolvedRepo}:/code",
         "-v", "${inputDir}:/input",
         "-v", "${resolvedOutputRoot}:/output",
-        "-w", "/code",
+        "-w", "/opt/wham-src",
         $DockerImage,
         "python",
         "-u",

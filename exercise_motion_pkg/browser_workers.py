@@ -2,6 +2,7 @@
 import atexit
 from concurrent.futures import Future, TimeoutError
 from contextlib import contextmanager
+from contextvars import copy_context
 from functools import wraps
 from queue import Queue
 import threading
@@ -35,7 +36,9 @@ class BrowserWorkers:
                     thread = threading.Thread(target=self._work, name=f"motion-browser-{index}", daemon=True)
                     self._threads.append(thread)
                     thread.start()
-            self._queue.put((future, operation, time.perf_counter()))
+            # Fit ownership and cancellation belong to the submitting task,
+            # not to the reusable browser thread or its workspace.
+            self._queue.put((future, copy_context(), operation, time.perf_counter()))
         try:
             while True:
                 try:
@@ -54,13 +57,13 @@ class BrowserWorkers:
                 job = self._queue.get()
                 if job is None:
                     break
-                future, operation, submitted = job
+                future, context, operation, submitted = job
                 if not future.set_running_or_notify_cancel():
                     continue
                 started = time.perf_counter()
                 error = None
                 try:
-                    result = operation()
+                    result = context.run(operation)
                 except BaseException as exc:
                     error = exc
                     with self._lock:

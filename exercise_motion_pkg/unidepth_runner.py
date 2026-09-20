@@ -25,6 +25,10 @@ _MODEL_LOAD_COUNT = 0
 _MODEL_CACHE_HIT_COUNT = 0
 
 
+class DepthPredictionError(ValueError):
+    """The depth model returned unusable geometry for an optional alignment."""
+
+
 @dataclass(frozen=True)
 class DepthFrameSample:
     time_seconds: float
@@ -166,7 +170,7 @@ def _depth_predictions_to_arrays(predictions: dict[str, Any]) -> tuple[np.ndarra
     points_value = predictions.get("points")
     intrinsics_value = predictions.get("intrinsics")
     if depth_value is None or points_value is None or intrinsics_value is None:
-        raise RuntimeError("UniDepth prediction missing depth, points, or intrinsics")
+        raise DepthPredictionError("UniDepth prediction missing depth, points, or intrinsics")
 
     def to_numpy(value: Any) -> np.ndarray:
         if hasattr(value, "detach"):
@@ -181,13 +185,17 @@ def _depth_predictions_to_arrays(predictions: dict[str, Any]) -> tuple[np.ndarra
     points = np.squeeze(to_numpy(points_value)).astype(np.float64)
     intrinsics = np.squeeze(to_numpy(intrinsics_value)).astype(np.float64)
     if depth.ndim != 2:
-        raise RuntimeError(f"Unexpected UniDepth depth shape: {depth.shape}")
+        raise DepthPredictionError(f"Unexpected UniDepth depth shape: {depth.shape}")
     if points.ndim == 3 and points.shape[0] == 3 and points.shape[-1] != 3:
         points = np.transpose(points, (1, 2, 0))
     if points.ndim != 3 or points.shape[-1] != 3:
-        raise RuntimeError(f"Unexpected UniDepth points shape: {points.shape}")
+        raise DepthPredictionError(f"Unexpected UniDepth points shape: {points.shape}")
     if intrinsics.shape != (3, 3):
-        raise RuntimeError(f"Unexpected UniDepth intrinsics shape: {intrinsics.shape}")
+        raise DepthPredictionError(f"Unexpected UniDepth intrinsics shape: {intrinsics.shape}")
+    if points.shape[:2] != depth.shape:
+        raise DepthPredictionError(f"UniDepth depth/points shape mismatch: {depth.shape}, {points.shape}")
+    if not all(np.all(np.isfinite(value)) for value in (depth, points, intrinsics)):
+        raise DepthPredictionError("UniDepth prediction contains non-finite geometry")
     return depth, points, intrinsics
 
 

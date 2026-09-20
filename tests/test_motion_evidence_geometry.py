@@ -53,15 +53,127 @@ def test_fidelity_matches_sparse_video_to_motion_in_metric_space():
     assert result['p90JointErrorBodyRatio'] < 1e-10
 
 
-def test_rejected_source_cycle_does_not_call_expensive_solver(monkeypatch):
+@pytest.mark.parametrize('closed', [False, True])
+def test_empty_cycle_proposals_attempt_retained_seam_and_preserve_verdict(monkeypatch, closed):
     from exercise_motion_pkg import controlled_motion
-    def unexpected(*args, **kwargs):
-        pytest.fail('Source-rejected cycles must not spend a trajectory-fit attempt')
-    monkeypatch.setattr(controlled_motion, '_fit_controlled_motion', unexpected)
+    calls = []
+    def retained_fit(payload, **kwargs):
+        calls.append(payload.get('loop', {}).get('enabled'))
+        return payload, {'applied': closed, 'reason': 'validated_controlled_motion' if closed
+                         else 'loop_requires_cycle_repair', 'checks': {'loopSeam': closed}}
+    monkeypatch.setattr(controlled_motion, '_fit_controlled_motion', retained_fit)
     payload = {'loop': {'enabled': True}, 'observedCycleProposals': [], 'sourceCyclePreflight': []}
     result, report = controlled_motion._fit_observed_cycles(payload, timeout_seconds=10)
-    assert result is payload
-    assert report['reason'] == 'source_cycle_preflight_rejected'
+    assert result is not None
+    assert calls == [True]
+    assert report['applied'] is closed
+    assert report['retainedIntervalFit'] is True
+    assert report['checks']['loopSeam'] is closed
+    assert report['reason'] == ('validated_controlled_motion' if closed else 'loop_requires_cycle_repair')
+    assert not report.get('loopSeamOpen')
+
+
+def test_cycle_budget_does_not_reserve_unaffordable_later_attempts(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+    elapsed = [0.]
+    budgets = []
+
+    def fit(payload, **kwargs):
+        budget = kwargs['timeout_seconds']
+        budgets.append(budget)
+        if len(budgets) == 1:
+            elapsed[0] += 265.
+            return payload, {'applied': False, 'reason': 'fit_validation_failed',
+                             'checks': {'jointShake': False}}
+        # This wrap needs 80 s; a 55 s turn fails even though 95 s is available.
+        passed = budget >= 80.
+        elapsed[0] += min(80., budget)
+        return payload, {'applied': passed, 'reason': 'validated_controlled_motion' if passed
+                         else 'fit_validation_failed', 'checks': {'jointShake': passed}}
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: elapsed[0])
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle', lambda payload, choice: dict(payload))
+    _, report = motion._fit_observed_cycles(
+        {'loop': {'enabled': True}, 'observedCycleProposals': [{}, {}, {}]}, timeout_seconds=360.)
+    assert report['applied']
+    assert len(budgets) == 2
+    assert 80. <= budgets[1] <= 95.
+    assert elapsed[0] <= 360.
+
+
+def test_phase_valid_wrap_uses_leftover_budget_after_retained_fit(monkeypatch):
+    from exercise_motion_pkg import controlled_motion
+    reasons = []
+    def fake_fit(payload, **kwargs):
+        kind = 'slice' if payload.get('_sliced') else 'retained'
+        reasons.append((kind, payload.get('loop', {}).get('enabled')))
+        if kind == 'slice':
+            return payload, {'applied': True, 'reason': 'validated_controlled_motion', 'checks': {'loopSeam': True}}
+        return payload, {'applied': True, 'reason': 'validated_controlled_motion_open_seam', 'checks': {}}
+    monkeypatch.setattr(controlled_motion, '_fit_controlled_motion', fake_fit)
+    monkeypatch.setattr(
+        'exercise_motion_pkg.loop_cycles.slice_loop_cycle',
+        lambda payload, choice: {**payload, '_sliced': True, 'choice': choice},
+    )
+    payload = {
+        'loop': {'enabled': True},
+        'observedCycleProposals': [{'startFrame': 0, 'stopFrameExclusive': 20}],
+    }
+    _, report = controlled_motion._fit_observed_cycles(payload, timeout_seconds=120)
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion'
+    assert reasons[0] == ('retained', False)
+    assert any(kind == 'slice' for kind, _ in reasons)
+
+
+@pytest.mark.parametrize('second_closes', [True, False])
+def test_open_cycle_does_not_discard_budgeted_alternatives(monkeypatch, second_closes):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+    calls = []
+
+    def fit(payload, **kwargs):
+        calls.append(payload)
+        index = payload.get('crop')
+        if index is None:
+            return payload, {'applied': False, 'reason': 'fit_validation_failed',
+                             'checks': {'jointShake': False}}
+        closed = index == 2 and second_closes
+        return payload, {'applied': True, 'loopSeamOpen': not closed,
+                         'reason': 'validated_controlled_motion' if closed else
+                                   'validated_controlled_motion_open_seam',
+                         'termination': None if closed else 'seam_excess_needs_different_cycle',
+                         'checks': {'loopSeam': closed}}
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle', lambda payload, choice: {**payload, 'crop': choice})
+    result, report = motion._fit_observed_cycles(
+        {'loop': {'enabled': True}, 'observedCycleProposals': [1, 2]}, timeout_seconds=360.)
+    assert len(calls) == 3
+    assert result['crop'] == (2 if second_closes else 1)
+    assert report['checks']['loopSeam'] is second_closes
+    assert len(report['cycleSelectionAttempts']) == 3
+
+
+@pytest.mark.parametrize('completion_mode', ['stable_hold', 'representative_cycle', 'active_travel'])
+def test_source_coverage_requires_locomotion_only_for_active_travel(monkeypatch, completion_mode):
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.segment_detection import DetectionWindow
+
+    joints = {'head': [0., 1.8, 0.], 'pelvis': [0., 1., 0.],
+              'left_ankle': [-.1, 0., 0.], 'right_ankle': [.1, 0., 0.]}
+    payload = {'jointNames': list(joints), 'rootJoint': 'pelvis',
+               'frames': [{'timeSec': i / 4., 'joints': dict(joints)} for i in range(8)]}
+    monkeypatch.setattr(bake, 'source_pose_skeleton_payload_for_window', lambda *args, **kwargs: payload)
+    metrics = bake.source_cut_candidate_motion_coverage_metrics(
+        candidate_window=DetectionWindow(0, 0., 2.), pose_payload={}, exercise_name='Exercise',
+        chunk_estimate=None, exercise_motion_contract={'completionMode': completion_mode,
+                                                     'requiresReturnToStart': False})
+    locomotion = metrics['activeTravelLocomotion']
+    assert locomotion['required'] is (completion_mode == 'active_travel')
+    assert locomotion['passed'] is (completion_mode != 'active_travel')
+    assert ('source_cut_missing_active_travel_locomotion' in metrics['rejectionReasons']) is (
+        completion_mode == 'active_travel')
 
 
 @pytest.mark.parametrize('verified_fit', [False, True])
@@ -81,6 +193,28 @@ def test_support_invariant_uses_verified_fit_ownership(tmp_path, monkeypatch, ve
     kept = bake.prefer_baseline_safe_support_lock_artifacts([baseline, alternative])
     assert (alternative in kept) == verified_fit
     assert bool(checks) == (not verified_fit)
+
+
+def test_support_gate_uses_cropped_contact_timing_and_still_rejects_sliding():
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.loop_cycles import slice_loop_cycle
+
+    evidence = {'contacts': [{'jointName': 'left_ankle', 'supportKind': 'foot',
+                             'startRatio': 0., 'endRatio': 39 / 79, 'confidence': .9}]}
+    payload = {'fps': 30., 'sourceFootSupportEvidence': evidence, 'frames': [
+        {'timeSec': i / 30., 'joints': {
+            'head': [0., 1.8, 0.], 'pelvis': [0., 1., 0.],
+            'left_ankle': [max(0, i - 39) * .06, 0., 0.],
+            'right_ankle': [.2, 0., 0.]}} for i in range(80)]}
+    cropped = slice_loop_cycle(payload, {'startFrame': 30, 'stopFrameExclusive': 70})
+    assert bake.source_confirmed_support_stationarity_metrics(cropped, evidence)['passed']
+    stale = copy.deepcopy(cropped)
+    stale.pop('sourceFootSupportEvidence')
+    assert not bake.source_confirmed_support_stationarity_metrics(stale, evidence)['passed']
+    drifting = copy.deepcopy(cropped)
+    for i in range(10):
+        drifting['frames'][i]['joints']['left_ankle'][0] += i * .04
+    assert not bake.source_confirmed_support_stationarity_metrics(drifting, evidence)['passed']
 
 
 def test_retained_source_window_uses_explicit_time_origin_without_mutation():

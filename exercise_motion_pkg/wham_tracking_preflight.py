@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,22 +66,47 @@ def run_tracking_preflight(
     report_path = report_path.expanduser().resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     input_sha256 = _sha256(video_path)
+    # Video identity alone cannot validate a verdict after stitching/coverage
+    # or detector configuration changes. Both the package and Docker worker
+    # expose the actual loaded coverage module through its code filename.
+    policy_sha256 = hashlib.sha256(json.dumps({
+        "preflight": _sha256(Path(__file__)),
+        "coverage": _sha256(Path(tracking_coverage_report.__code__.co_filename)),
+        "detector": _sha256(Path(inspect.getfile(detection_model_factory))),
+        "detectorEnvironment": {
+            name: os.environ.get(name)
+            for name in (
+                "WHAM_KEYPOINT_VIS_THRESH", "WHAM_BBOX_CONF", "WHAM_TRACKING_THR",
+                "WHAM_MINIMUM_TRACK_FRAMES", "WHAM_MINIMUM_JOINTS",
+                "WHAM_MAX_TRACK_GAP_FRAMES", "WHAM_POSE_BATCH_SIZE",
+                "WHAM_DUPLICATE_BBOX_IOU_THRESHOLD", "WHAM_POSE_BACKEND",
+                "WHAM_MMPOSE_CONFIG", "WHAM_MMPOSE_CHECKPOINT",
+                "WHAM_YOLO_BBOX_MODEL", "WHAM_YOLO_POSE_MODEL",
+            )
+        },
+        "configuration": str(cfg),
+    }, sort_keys=True).encode("utf-8")).hexdigest()
     tracking_results_path = sequence_dir / "tracking_results.pth"
     slam_results_path = sequence_dir / "slam_results.pth"
+    detection_tracks_path = sequence_dir / "detection_tracks.pth"
     try:
         cached_report = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         cached_report = {}
     if (
         cached_report.get("inputSha256") == input_sha256
+        and cached_report.get("trackingPolicySha256") == policy_sha256
         and cached_report.get("requiredStartSeconds") == required_start_seconds
         and cached_report.get("requiredEndSeconds") == required_end_seconds
     ):
-        if cached_report.get("passed") is False:
+        if cached_report.get("passed") is False and detection_tracks_path.is_file():
             cached_report["cacheStatus"] = "reused"
             return cached_report
         if (
             cached_report.get("passed") is True
+            # Coverage is written before extraction. Only the completion
+            # marker ties these files to this attempt after both writes finish.
+            and cached_report.get("reusablePreprocessingWritten") is True
             and tracking_results_path.is_file()
             and slam_results_path.is_file()
         ):
@@ -99,7 +126,15 @@ def run_tracking_preflight(
                 break
             detector.track(frame, fps, frame_count)
     cap.release()
-    tracking_results = detector.process(fps)
+    # WHAM returns nested defaultdicts with local lambda factories. Persist
+    # plain mappings so evidence remains serializable before feature extraction.
+    tracking_results = {
+        track_id: dict(track) for track_id, track in detector.process(fps).items()
+    }
+    # Preserve original fragments before stitching or feature extraction. Failed
+    # coverage otherwise discards the geometry needed to diagnose an ID handoff,
+    # forcing another detector run merely to inspect the rejected evidence.
+    joblib.dump(tracking_results, detection_tracks_path)
     stitch_gap_frames = max(2, int(np.ceil(fps * MAX_STITCH_GAP_SECONDS)))
     stitch_chain = best_compatible_chain(
         tracking_results,
@@ -121,6 +156,8 @@ def run_tracking_preflight(
     report["stitchedTrackIds"] = stitched_track_ids if len(stitched_track_ids) > 1 else []
     report["interpolatedTrackingFrameCount"] = interpolated_frame_count
     report["inputSha256"] = input_sha256
+    report["detectionTracksPath"] = str(detection_tracks_path)
+    report["trackingPolicySha256"] = policy_sha256
     report["cacheStatus"] = "computed"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if not report["passed"]:

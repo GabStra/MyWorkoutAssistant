@@ -56,6 +56,9 @@ def test_modified_contact_evidence_and_incomplete_reports_cannot_reuse():
     payload=accepted_payload()
     payload['controlledMotionFit']['checks'].pop('playback')
     assert not can_reuse_controlled_motion(payload)
+    payload=accepted_payload()
+    payload['controlledMotionFit']['strategy']='fixed_rig_controlled_motion_v51_contact_boundary_consistency'
+    assert not can_reuse_controlled_motion(payload)
 
 
 def test_loop_reuse_requires_a_positive_seam_result():
@@ -65,6 +68,24 @@ def test_loop_reuse_requires_a_positive_seam_result():
     assert not can_reuse_controlled_motion(payload)
     payload['controlledMotionFit']['checks']['loopSeam']=True
     assert can_reuse_controlled_motion(payload)
+
+
+def test_open_seam_reuse_does_not_require_closed_loop_seam():
+    payload = accepted_payload()
+    payload['loop'] = {
+        'enabled': True,
+        'transition': 'requires_cycle_repair',
+        'restartFadeMillis': 0,
+    }
+    fit = payload['controlledMotionFit']
+    fit['reason'] = 'validated_controlled_motion_open_seam'
+    fit['loopSeamOpen'] = True
+    fit['checks']['loopSeam'] = False
+    fit['outputPoseDigest'] = pose_digest(payload)
+    assert can_reuse_controlled_motion(payload)
+    # Unrelated body check failures still block reuse.
+    fit['checks']['trajectoryFit'] = False
+    assert not can_reuse_controlled_motion(payload)
 
 
 def test_default_controlled_path_preserves_original_reference_and_skips_legacy_repairs(monkeypatch):

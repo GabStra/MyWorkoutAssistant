@@ -485,6 +485,13 @@ def test_bake_skips_constrain_when_pre_fit_fidelity_fails(tmp_path, monkeypatch)
             pass
 
     constrain_calls = []
+    pre_fit_camera_references = []
+    camera = {'available': True, 'cameraImageTransform': [1, 0, 0, 0, 0, 0]}
+    cleaned_dir = tmp_path / 'candidate' / 'cleaned'
+    cleaned_dir.mkdir(parents=True)
+    (cleaned_dir / 'motion.cleaned.json').write_text(json.dumps({
+        'frames': baseline['frames'], 'metadata': {'structuralRefinement': {
+            'sourceGuidedArticulation': {'cameraRegistration': camera}}}}))
     monkeypatch.setattr(bake, "browser_session", lambda launch: Context())
     monkeypatch.setattr(bake, "stage_preview_for_browser_if_needed", lambda path: (path, None))
     monkeypatch.setattr(bake, "plan_adaptive_preview_settings_variants",
@@ -496,7 +503,7 @@ def test_bake_skips_constrain_when_pre_fit_fidelity_fails(tmp_path, monkeypatch)
     monkeypatch.setattr(
         bake,
         "pre_fit_source_articulation_fidelity_rejection",
-        lambda payload, reference: {
+        lambda payload, reference: pre_fit_camera_references.append(payload.get('sourcePoseCameraReference')) or {
             "available": True,
             "passed": False,
             "rejectionReasons": ["materialized_source_endpoint_pose_mismatch"],
@@ -524,6 +531,7 @@ def test_bake_skips_constrain_when_pre_fit_fidelity_fails(tmp_path, monkeypatch)
         adaptive_preview_settings=True,
     )
     assert constrain_calls == []
+    assert pre_fit_camera_references[0]['camera'] == camera
     assert len(artifacts) == 1
     assert artifacts[0].export_payload["controlledMotionFit"]["reason"] == (
         "pre_fit_source_articulation_fidelity_failed"

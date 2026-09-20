@@ -15,7 +15,7 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 5
+POLICY_VERSION = 9
 # Classification changes reuse the exact same expensive landmark observations.
 OBSERVATION_CACHE_VERSION = 2
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
@@ -92,6 +92,8 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
         fps = float(capture.get(cv2.CAP_PROP_FPS))
         if not capture.isOpened() or fps <= 0:
             raise ValueError(f"Cannot decode foot landmark source: {video_path}")
+        image_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        image_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
             index = 0
             while True:
@@ -114,7 +116,8 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
     finally:
         capture.release()
     payload = {"available": True, "policyVersion": POLICY_VERSION, "sourceVideoSha256": digest,
-               "source": "mediapipe_full_heel_forefoot", "fps": fps, "frames": frames}
+               "source": "mediapipe_full_heel_forefoot", "fps": fps, "frames": frames,
+               "imageWidth": image_width, "imageHeight": image_height}
     cache_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache_dir, delete=False) as stream:
         json.dump(payload, stream)
@@ -141,7 +144,19 @@ def classify_foot_contacts(
     if not frames or not source_frames:
         return {"available": False, "reason": "missing_reference_frames"}
     count = len(frames)
-    normal = np.asarray(camera_normal if camera_normal is not None else [0, -1, 0], dtype=float)
+    # MediaPipe normalizes x and y by different image dimensions. Angles
+    # require equal axis units; retain normalized coordinates for identity and
+    # anchor comparisons, but measure pitch in the actual image plane. Exact
+    # source dimensions also cover retained v2 landmark caches without sizes.
+    image_width = observations.get("imageWidth", source_pose.get("imageWidth", 1))
+    image_height = observations.get("imageHeight", source_pose.get("imageHeight", 1))
+    image_axes = np.asarray([image_width, image_height], dtype=float)
+    if not np.isfinite(image_axes).all() or np.any(image_axes <= 0):
+        return {"available": False, "reason": "invalid_image_dimensions"}
+    ground_referenced = camera_normal is not None
+    normal = np.asarray(camera_normal if ground_referenced else [0, -1, 0], dtype=float)
+    if normal.shape != (3,) or not np.isfinite(normal).all() or np.linalg.norm(normal) < 1e-8:
+        return {"available": False, "reason": "invalid_ground_normal"}
     normal /= max(np.linalg.norm(normal), 1e-8)
     contacts = evidence.get("footContactCandidates", evidence.get("contacts", []))
     result: dict[str, Any] = {"available": True, "policyVersion": POLICY_VERSION,
@@ -175,8 +190,35 @@ def classify_foot_contacts(
             image_length, world_length = np.linalg.norm(image_delta), np.linalg.norm(world_delta)
             if image_length < 0.005 or world_length < 0.02:
                 continue
-            image_pitch[index] = np.arcsin(np.clip(-image_delta[1] / image_length, -1, 1))
+            pixel_delta = image_delta * image_axes
+            pixel_length = np.linalg.norm(pixel_delta)
+            ankle_disagreement = np.linalg.norm(
+                (np.asarray(ankle["image"]) - np.asarray(reference_ankle[:2])) * image_axes)
+            # A whole-image identity tolerance can accept an ankle displaced
+            # by most of the foot's length. In that case the accompanying heel
+            # and toe are not independent evidence of a support change, even
+            # when the landmark model reports high confidence.
+            if ankle_disagreement > max(.003 * np.min(image_axes), .5 * pixel_length):
+                continue
+            image_pitch[index] = np.arcsin(np.clip(-pixel_delta[1] / pixel_length, -1, 1))
             world_pitch[index] = np.arcsin(np.clip(np.dot(world_delta, normal) / world_length, -1, 1))
+            if ground_referenced:
+                # A stationary tilted foot is not a neutral sole. Project its
+                # ground-tangent direction into the image, then measure the
+                # observed toe/heel ray toward the projected ground normal.
+                # This follows camera orientation instead of assuming image-up.
+                tangent = world_delta - normal * np.dot(world_delta, normal)
+                projected_length = np.linalg.norm(tangent[:2])
+                if projected_length < .1 * world_length:
+                    continue  # Nearly end-on: image evidence cannot resolve pitch.
+                ground_direction = tangent[:2] / projected_length
+                lift_direction = normal[:2] - ground_direction * np.dot(normal[:2], ground_direction)
+                lift_length = np.linalg.norm(lift_direction)
+                if lift_length < .1:
+                    continue
+                lift_direction /= lift_length
+                image_pitch[index] = np.arctan2(
+                    np.dot(pixel_delta, lift_direction), np.dot(pixel_delta, ground_direction))
             toe_points[index], heel_points[index] = toe["image"], heel["image"]
             foot_sizes[index] = image_length
             valid[index] = True
@@ -206,9 +248,10 @@ def classify_foot_contacts(
         tolerances = []
         for track in (image_pitch, world_pitch):
             samples = track[calibration]
-            center = float(np.median(samples))
+            center = 0.0 if ground_referenced else float(np.median(samples))
             references.append(center)
-            tolerances.append(max(np.deg2rad(8), 3 * 1.4826 * float(np.median(np.abs(samples - center)))))
+            tolerances.append(np.deg2rad(8) if ground_referenced else
+                              max(np.deg2rad(8), 3 * 1.4826 * float(np.median(np.abs(samples - center)))))
         for index in range(count):
             if not valid[index]:
                 continue
@@ -289,6 +332,7 @@ def classify_foot_contacts(
         assign_stationary_anchor_groups(result["contacts"], side=side, valid=valid,
                                         toe_points=toe_points, foot_sizes=foot_sizes, states=states)
         result["feet"][side] = {"states": states, "validObservationCount": int(valid.sum()),
+                                "pitchReferenceSource": "observed_ground_plane" if ground_referenced else "relative_stance",
                                 "imagePitchReference": references[0], "worldPitchReference": references[1],
                                 "pitchTolerances": tolerances}
     return result
@@ -299,10 +343,12 @@ def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_s
 
     Contact classification can change from full sole to toe-only without the
     toe changing its location. Unknown contact frames remain unconstrained;
-    only the observed episodes share an anchor when the entire gap supplies
-    reliable stationary toe observations. Missing observations never bridge.
+    only the observed episodes share an anchor. A missing toe observation can
+    also be resolved by an independently shared stationary ankle and matching
+    observed sole positions on either side; it never labels the gap as contact.
     """
     previous = None
+    observed_stances = {}
     count = len(valid)
     for number, contact in enumerate(contacts):
         if contact.get('jointName') != f'{side}_foot':
@@ -323,6 +369,21 @@ def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_s
                 tolerance = max(.005, float(np.median(foot_sizes[indexes])) * .15)
                 if spread <= tolerance:
                     group = previous_contact['anchorGroupId']
+        ankle_group = contact.get('ankleAnchorGroupId') if contact.get('contactState') == 'full_sole' else None
+        if ankle_group is not None:
+            center = np.median(toe_points[start:end + 1], axis=0)
+            size = float(np.median(foot_sizes[start:end + 1]))
+            candidates = observed_stances.setdefault(ankle_group, [])
+            for prior_contact, prior_end, prior_center, prior_size in reversed(candidates):
+                # Independent stationary-ankle evidence plus the observed
+                # return of the sole can recover spatial anchor identity.
+                # This does not infer whether the obscured foot lifted or
+                # pivoted in between, and observed flight contradicts it.
+                if ('airborne' not in states[prior_end:start + 1]
+                        and np.linalg.norm(center - prior_center) <= max(.005, .15 * min(size, prior_size))):
+                    group = prior_contact['anchorGroupId']
+                    break
+            candidates.append((contact, end, center, size))
         contact['anchorGroupId'] = group
         previous = contact, end
 

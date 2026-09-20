@@ -4,10 +4,12 @@ from contextvars import ContextVar
 import hashlib
 import json
 import threading
+import uuid
 from pathlib import Path
 from time import monotonic
 
 from .resource_budget import cpu_fit_slot_limit
+from .stage_cache import stage_lock
 
 
 _CURRENT = ContextVar('movement_fit_session', default=None)
@@ -92,9 +94,7 @@ def fit_should_yield_for_priority() -> bool:
     session = current_fit_session()
     workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
     with _FIT_GUARD:
-        speculative = bool(_SPECULATIVE_FIT.get()) or (
-            workspace is not None and workspace in _ACTIVE_SPECULATIVE_WORKSPACES
-        )
+        speculative = bool(_SPECULATIVE_FIT.get())
         if not speculative:
             return False
         return bool(_PRIORITY_WORKSPACES) or (
@@ -130,9 +130,7 @@ def cpu_fit_slot():
     workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
     slot_limit = max(1, int(cpu_fit_slot_limit()))
     with _FIT_GUARD:
-        speculative = bool(_SPECULATIVE_FIT.get()) or (
-            workspace is not None and workspace in _ACTIVE_SPECULATIVE_WORKSPACES
-        )
+        speculative = bool(_SPECULATIVE_FIT.get())
         # Limited concurrent fits (coding headroom). Speculative work yields the
         # whole fit pool while any final validation is prioritized. Abandoned
         # speculative workspaces must not reacquire.
@@ -200,12 +198,19 @@ class CandidateFitSession:
 
     def save(self):
         if self.path:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.path.with_suffix('.tmp')
-            temporary.write_text(json.dumps({'version': 1, 'namespace': self.cache_namespace,
-                                            'repairs': self.repairs,
-                                            'trajectories': self.trajectories}), encoding='utf-8')
-            temporary.replace(self.path)
+            # Prefetch can finish saving while finalization starts the same
+            # candidate. Each writer owns its temporary file; serialize the
+            # replacement so they cannot truncate or rename each other's work.
+            with stage_lock(self.path):
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self.path.with_name(self.path.name + '.' + uuid.uuid4().hex + '.tmp')
+                try:
+                    temporary.write_text(json.dumps({'version': 1, 'namespace': self.cache_namespace,
+                                                    'repairs': self.repairs,
+                                                    'trajectories': self.trajectories}), encoding='utf-8')
+                    temporary.replace(self.path)
+                finally:
+                    temporary.unlink(missing_ok=True)
 
 
 def current_fit_session():

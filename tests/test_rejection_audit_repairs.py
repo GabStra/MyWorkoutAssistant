@@ -76,8 +76,21 @@ def test_cached_contradiction_requires_review_once(monkeypatch):
     assert youtube.candidate_has_debug_review_payload(candidate)
 
 
-@pytest.mark.parametrize('status,version,expected', [('recommended', 0, True), ('rejected', 0, False), ('rejected', 1, True)])
-def test_resume_revisits_only_old_all_rejected_discovery(tmp_path, status, version, expected):
+@pytest.mark.parametrize('status,version,yield_mode,expected', [
+    ('recommended', 0, None, True), ('rejected', 0, None, False),
+    ('rejected', 1, None, True), ('rejected', 1, 'scheduler_yield', False),
+    ('rejected', 1, 'legacy', False), ('recommended', 1, 'scheduler_yield', True),
+    ('rejected', 1, 'old_camera', False), ('rejected', 1, 'current_camera', True),
+    ('recommended', 1, 'old_camera', True),
+    ('rejected', 1, 'pose_error', False), ('candidate', 1, 'pose_incomplete', False),
+    ('recommended', 1, 'pose_error', True),
+    ('rejected', 1, 'old_hold', False), ('rejected', 1, 'current_hold', True),
+    ('recommended', 1, 'old_hold', True),
+    ('recommended', 1, 'old_single_dumbbell', False),
+    ('rejected', 1, 'old_single_dumbbell', False),
+    ('recommended', 1, 'current_single_dumbbell', True),
+])
+def test_resume_revisits_only_old_all_rejected_discovery(tmp_path, status, version, yield_mode, expected):
     shell = shutil.which('pwsh')
     if not shell:
         pytest.skip('PowerShell required')
@@ -89,6 +102,32 @@ def test_resume_revisits_only_old_all_rejected_discovery(tmp_path, status, versi
         'exercisePlanSha256': 'plan', 'equipmentSha256': '', 'argumentsSha256': 'args'},
         'ranking': {'sourceRejectionReviewPolicyVersion': version},
         'exercises': [{'candidates': [{'status': status}]}]}))
+    if yield_mode:
+        payload = json.loads(candidate_path.read_text())
+        turn = {'budgetExhausted': True, 'reviewedThisTurn': 0, 'candidateBudget': 24}
+        if yield_mode == 'legacy':
+            (tmp_path / 'discovery_yield.request').write_text('Reconstruction ready')
+        else:
+            turn['stopReason'] = yield_mode
+        if yield_mode in ('old_camera', 'current_camera'):
+            payload['ranking']['poseCameraReviewPolicyVersion'] = 1
+            camera = {'passed': False, 'blockingIssues': ['camera_or_track_instability']}
+            if yield_mode == 'current_camera':
+                camera['cameraPolicyVersion'] = 1
+            payload['exercises'][0]['debugCandidates'] = [{'visionPayload': {'posePrefilter': camera}}]
+        elif yield_mode in ('pose_error', 'pose_incomplete'):
+            pose = ({'error': 'Could not open video', 'failureReason': 'pose_prefilter_failed'}
+                    if yield_mode == 'pose_error' else {'reviewStatus': 'incomplete'})
+            payload['exercises'][0]['debugCandidates'] = [{'visionPayload': {'posePrefilter': pose}}]
+        elif yield_mode in ('old_single_dumbbell', 'current_single_dumbbell'):
+            payload['exercises'][0]['exerciseName'] = 'Single Dumbbell Incline Press'
+            payload['ranking']['singleDumbbellNamingPolicyVersion'] = int(yield_mode == 'current_single_dumbbell')
+        elif yield_mode in ('old_hold', 'current_hold'):
+            payload['exercises'][0]['exerciseMotionContract'] = {'completionMode': 'stable_hold'}
+            payload['ranking']['staticHoldReviewPolicyVersion'] = int(yield_mode == 'current_hold')
+        else:
+            payload['exercises'][0]['candidateExpansion'] = {'discoveryTurn': turn}
+        candidate_path.write_text(json.dumps(payload))
     script = tmp_path / 'check.ps1'
     script.write_text('function Test-DiscoveryStageReady {' + function + '''
 $discoveryStagePolicyVersion = 5
@@ -98,3 +137,28 @@ Test-DiscoveryStageReady -WorkItem $item
 ''')
     result = subprocess.run([shell, '-NoProfile', '-File', str(script)], capture_output=True, text=True, check=True)
     assert result.stdout.strip().lower() == str(expected).lower()
+
+
+def test_static_hold_search_prefetch_does_not_require_completed_review_policy(tmp_path):
+    shell = shutil.which('pwsh')
+    if not shell:
+        pytest.skip('PowerShell required')
+    source = (Path(__file__).resolve().parents[1] /
+              'scripts/run_exercise_motion_workout_plan.ps1').read_text(encoding='utf-8-sig')
+    function = source.split('function Test-CandidatePrefetchReady {', 1)[1].split(
+        'function Test-DiscoveryStageReady', 1)[0]
+    (tmp_path / 'prefetch.json').write_text(json.dumps({
+        'kind': 'youtube_candidate_prefetch', 'sourcePlanSha256': 'plan',
+        'wrapperPrefetchSignature': {'schemaVersion': 1, 'argumentsSha256': 'args',
+            'exercisePlanSha256': 'plan', 'equipmentSha256': ''},
+        'exercises': [{'exerciseMotionContract': {'completionMode': 'stable_hold'}}],
+    }))
+    script = tmp_path / 'check.ps1'
+    script.write_text('function Test-CandidatePrefetchReady {' + function + '''
+$item = [pscustomobject]@{ prefetchPath = (Join-Path $PSScriptRoot 'prefetch.json');
+ exercisePlanSha256 = 'plan'; equipmentSha256 = ''; prefetchArgumentsSha256 = 'args' }
+Test-CandidatePrefetchReady -WorkItem $item
+''')
+    result = subprocess.run([shell, '-NoProfile', '-File', str(script)],
+                            capture_output=True, text=True, check=True)
+    assert result.stdout.strip().lower() == 'true'

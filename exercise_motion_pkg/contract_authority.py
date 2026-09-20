@@ -18,10 +18,10 @@ def contract_field_authority(exercise_name: str, generated: dict[str, Any]) -> d
     fields = {key: ContractField(value, "generated_expectation", False, "")
               for key, value in generated.items()}
     name = re.sub(r"[-_]", " ", exercise_name.lower())
-    # Implement count and acting limb count are different: one dumbbell may be held in two hands.
+    # Counts are independent except for the library owner's explicit Single Dumbbell convention.
     for key, pattern, value in (
         ("implementCount", r"\bsingle\s+(?:dumbbell|kettlebell)\b", 1),
-        ("actingArmCount", r"\b(?:single|one)\s+arm\b|\bone\s+handed\b", 1),
+        ("actingArmCount", r"\b(?:single|one)\s+arm\b|\bone\s+handed\b|\bsingle\s+dumbbell\b", 1),
     ):
         match = re.search(pattern, name)
         if match:

@@ -1,6 +1,7 @@
 """Project malformed observations onto the existing fixed rig before fitting."""
 from time import monotonic
 import hashlib
+import json
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -22,9 +23,22 @@ class _AnatomyFeasible(Exception):
         self.values = np.asarray(values, dtype=float)
 
 # Cap pathological pre-solve burn, but leave room for hard multi-frame repairs.
-# Unbounded runs were seen at ~700–1350 evals; keep a high-quality ceiling below that.
+# Short clips stay near the historical 480 floor. Long clips with widespread
+# source violations need ~12–15 evals per bad frame (measured); a fixed 480
+# budget left hundreds of independently solvable frames unrepaired.
 ANATOMY_REPAIR_MAX_EVALS_PER_FRAME = 60
 ANATOMY_REPAIR_MAX_TOTAL_EVALS = 480
+ANATOMY_REPAIR_EVALS_PER_BAD_FRAME = 16
+ANATOMY_REPAIR_MAX_TOTAL_EVALS_CEILING = 8000
+
+
+def anatomy_repair_evaluation_budget(bad_frame_count):
+    """Scale the eval ceiling with how many frames actually need projection."""
+    count = max(0, int(bad_frame_count))
+    return int(min(
+        ANATOMY_REPAIR_MAX_TOTAL_EVALS_CEILING,
+        max(ANATOMY_REPAIR_MAX_TOTAL_EVALS, count * ANATOMY_REPAIR_EVALS_PER_BAD_FRAME),
+    ))
 
 # These defects may reach projection; they still must pass final validation.
 # Degenerate bones and non-anatomical physical failures are not repair promises.
@@ -184,8 +198,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
                 fitted_length = np.clip(length, base_length*low, base_length*high)
                 rig.offsets[a] *= fitted_length/length
     initial_points = rig.decode(rig.initial)
-    violations, _ = repair_residuals(initial_points, names)
+    violations, _ = repair_residuals(initial_points, names, span_targets)
     bad = np.any(violations > 1e-6, axis=1)
+    evaluation_budget = anatomy_repair_evaluation_budget(int(bad.sum()))
     # Pelvis rotation must remain available: freezing it makes the solver
     # straighten a bent back by standing the upper body up instead of hinging
     # at the hips. Root translation remains fixed.
@@ -201,9 +216,10 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     free_column_frames = 0
     previous_correction = None
     cache = {}
+    span_target_key = json.dumps(span_targets, sort_keys=True, separators=(',', ':')).encode()
 
     for frame in np.flatnonzero(bad):
-        if evaluated >= ANATOMY_REPAIR_MAX_TOTAL_EVALS:
+        if evaluated >= evaluation_budget:
             break
         if monotonic() >= deadline:
             break
@@ -211,6 +227,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         target = initial_points[frame]-base[:3]
         torso_direction = observed_torso_directions[frame]
         key = hashlib.sha256(ANATOMICAL_REPAIR_STRATEGY.encode() + repr(names).encode()
+                             + span_target_key
                              + rig.offsets.tobytes() + np.float64(scale).tobytes()
                              + base[3:].tobytes() + target.tobytes() + torso_direction.tobytes()).hexdigest()
         if session is not None and key in session.repairs:
@@ -277,7 +294,13 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         full_initial = base[columns]
         if previous_correction is not None:
             proposed = full_initial + previous_correction
-            costs = np.sum(residual_batch(np.stack([pack(full_initial), pack(proposed)]))**2, axis=1)
+            try:
+                costs = np.sum(residual_batch(np.stack([pack(full_initial), pack(proposed)]))**2, axis=1)
+            except TimeoutError:
+                # Warm-start scoring uses the same deadline/priority guard as
+                # the solver. Return completed frames and their diagnostics
+                # even when the budget expires before this frame's solve.
+                break
             if costs[1] < costs[0]:
                 full_initial = proposed
                 seed_full = full_initial
@@ -292,7 +315,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             continue
         frame_budget = min(
             ANATOMY_REPAIR_MAX_EVALS_PER_FRAME,
-            ANATOMY_REPAIR_MAX_TOTAL_EVALS - evaluated,
+            evaluation_budget - evaluated,
         )
         if frame_budget < 1:
             break
@@ -332,7 +355,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         'feasibleSkipFrameCount': skipped_feasible,
         'averageFreeColumnCount': (
             float(free_column_total) / free_column_frames if free_column_frames else float(len(columns))),
-        'evaluationBudget': ANATOMY_REPAIR_MAX_TOTAL_EVALS,
+        'evaluationBudget': evaluation_budget,
         'unrepairedFrameCount': remaining_bad,
         'maximumCorrectionMeters': float(displacement.max()),
         'maximumTorsoDirectionChangeDegrees': float(lean_change.max()),

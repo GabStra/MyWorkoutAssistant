@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import gc
+import json
 import math
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any, Iterable
 from urllib.request import urlretrieve
 
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.kinematic_cut import contract_completion_mode
 from exercise_motion_pkg.target_motion import (
     TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
     observable_motion_spec_for_contract,
@@ -90,6 +92,7 @@ FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD = 0.060
 # tilts, zooms, or reframing are rejected.
 FRAME_LAYOUT_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.010
 FRAME_EDGE_SUSTAINED_CAMERA_MOTION_THRESHOLD = 0.008
+POSE_CAMERA_POLICY_VERSION = 1
 FULL_BODY_JOINT_SAFETY_THRESHOLD = 0.999
 FULL_BODY_SAFE_SAMPLE_RATIO = 0.95
 BODY_FRAME_CLEARANCE_MARGIN_RATIO = 0.01
@@ -158,6 +161,7 @@ class PoseSample:
     frame_signature: tuple[float, ...] | None = None
     frame_layout_signature: tuple[float, ...] | None = None
     frame_edge_signature: tuple[float, ...] | None = None
+    frame_background_mask: tuple[bool, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -229,6 +233,8 @@ def run_yolo_pose_prefilter(
     payload = dict(result.payload)
     payload["resolvedModelPath"] = model_path
     payload["scanStrategy"] = normalize_pose_scan_strategy(settings.scan_strategy)
+    payload["samplingPolicyVersion"] = 2
+    payload["cameraPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
     payload["sampledFrameCount"] = len(samples)
     payload["dominantPoseSamples"] = dominant_pose_samples_payload(samples, metadata=metadata)
     payload["dominantPoseSampleCoordinateSpace"] = "normalized_image_xy"
@@ -245,6 +251,44 @@ def run_yolo_pose_prefilter(
         reasons=result.reasons,
         payload=payload,
     )
+
+
+def pose_camera_review_is_stale(payload: dict[str, Any] | None) -> bool:
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("cameraPolicyVersion") != POSE_CAMERA_POLICY_VERSION
+        and payload.get("passed") is False
+        and "camera_or_track_instability" in (payload.get("blockingIssues") or [])
+    )
+
+
+def refresh_legacy_spread_pose_evidence(
+    payload: dict[str, Any] | None, *, video_path: Path, output_dir: Path,
+    exercise_name: str, contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Refresh hidden-1-FPS discovery evidence locally without rediscovery."""
+    if (not isinstance(payload, dict) or payload.get("samplingPolicyVersion") == 2
+            or normalize_pose_scan_strategy(payload.get("scanStrategy")) != "spread"
+            or float(payload.get("sampleFps") or 0.) <= 1.):
+        return payload
+    from .stage_cache import cache_key, cached_paths
+    settings = PosePrefilterSettings(
+        model=str(payload.get("model") or "yolo26x-pose.pt"),
+        sample_fps=float(payload["sampleFps"]),
+        max_seconds=float(payload.get("maxSeconds", 32.)), scan_strategy="spread",
+        target_exercise_name=exercise_name, target_motion_contract=contract,
+    )
+    key = cache_key(vars(settings), [video_path, Path(__file__)])
+    evidence_path = output_dir / "refreshed_discovery_pose.json"
+
+    def compute() -> list[Path]:
+        result = run_yolo_pose_prefilter(video_path=video_path, settings=settings)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(json.dumps(result.payload), encoding="utf-8")
+        return [evidence_path]
+
+    paths = cached_paths(output_dir / "refreshed_discovery_pose_checkpoint.json", key, compute)
+    return json.loads(paths[0].read_text(encoding="utf-8"))
 
 
 def dominant_pose_samples_payload(
@@ -415,6 +459,7 @@ def pose_samples_from_yolo_batch(
                 frame_signature=compute_frame_signature(frame),
                 frame_layout_signature=compute_frame_layout_signature(frame),
                 frame_edge_signature=compute_frame_edge_signature(frame),
+                frame_background_mask=background_signature_mask(detections, metadata=metadata),
             )
         )
     return samples
@@ -779,13 +824,9 @@ def build_pose_sample_plan(
         return frames, [{"startSeconds": 0.0, "endSeconds": end_seconds}]
 
     window_seconds = min(max(0.5, float(settings.window_seconds)), duration_seconds)
-    # For long videos, the bounded "spread" scan intentionally keeps the total
-    # number of sampled pose frames small (to bound YOLO/pose work). We cap
-    # the effective sampling rate so we don't accidentally sample every frame
-    # inside each spread window.
-    if float(settings.sample_fps) > 1.0:
-        effective_sample_fps = 1.0
-        sample_step = max(1, int(round(metadata.fps / max(effective_sample_fps, 0.1))))
+    # Bound coverage through the number of windows, preserving the requested
+    # temporal resolution within each window. A hidden 1 FPS cap here removed
+    # turning points needed by phase validation while reporting sampleFps=8.
     window_count = max(1, int(math.floor(budget_seconds / window_seconds)))
     max_non_overlapping_windows = max(1, int(math.ceil(duration_seconds / window_seconds)))
     window_count = min(window_count, max_non_overlapping_windows)
@@ -1031,7 +1072,8 @@ def score_pose_window(
     contract_target_motion_passed = bool(target_motion.get("required")) and bool(
         target_motion.get("passed")
     )
-    if motion_strength < 0.20 and not contract_target_motion_passed:
+    is_hold = contract_completion_mode(settings.target_motion_contract) == "stable_hold"
+    if motion_strength < 0.20 and not contract_target_motion_passed and not is_hold:
         blocking_issues.append("weak_body_joint_motion")
     if active_quality["activeJointVisibility"] < 0.72:
         blocking_issues.append("low_active_joint_visibility")
@@ -1444,11 +1486,54 @@ def frame_signature_jump_distances(samples: list[PoseSample]) -> list[float]:
     return distances
 
 
+def background_signature_mask(
+    detections: list[PoseDetection], *, metadata: BasicVideoMetadata,
+) -> tuple[bool, ...] | None:
+    """Exclude person boxes and adjacent signature cells from camera evidence."""
+    if not detections or metadata.width <= 0 or metadata.height <= 0:
+        return None
+    boxes = []
+    for detection in detections:
+        x0, y0, x1, y1 = detection.bbox
+        if not all(math.isfinite(value) for value in detection.bbox) or x1 <= x0 or y1 <= y0:
+            return None
+        boxes.append((x0 / metadata.width, y0 / metadata.height,
+                      x1 / metadata.width, y1 / metadata.height))
+    size = 24  # Same grid as the layout and edge signatures.
+    return tuple(
+        not any(
+            (x - 1) / size <= x1 and (x + 2) / size >= x0
+            and (y - 1) / size <= y1 and (y + 2) / size >= y0
+            for x0, y0, x1, y1 in boxes
+        )
+        for y in range(size) for x in range(size)
+    )
+
+
+def background_signature_difference(
+    left: PoseSample, right: PoseSample, attribute: str,
+) -> float | None:
+    """Compare only cells observed as background in both frames."""
+    left_values, right_values = getattr(left, attribute), getattr(right, attribute)
+    masks = (left.frame_background_mask, right.frame_background_mask)
+    if left_values is None or right_values is None or any(mask is None for mask in masks):
+        return None
+    if len(left_values) != 24 * 24 or any(len(mask) != len(left_values) for mask in masks) or len(right_values) != len(left_values):
+        return None
+    indices = [i for i, (a, b) in enumerate(zip(*masks)) if a and b]
+    # Fall back to the existing whole-image check when foreground fills the
+    # frame; a tiny clear patch is insufficient camera evidence.
+    if len(indices) < len(left_values) / 4:
+        return None
+    return sum(abs(left_values[i] - right_values[i]) for i in indices) / len(indices)
+
+
 def frame_visual_jump_metrics(samples: list[PoseSample]) -> dict[str, Any]:
     layout_jumps: list[float] = []
     edge_jumps: list[float] = []
     visual_cut_count = 0
     compared_pair_count = 0
+    background_pair_count = 0
     for left_sample, right_sample in consecutive_sample_pairs(samples):
         layout_jump = signature_mean_absolute_difference(
             left_sample.frame_layout_signature,
@@ -1458,6 +1543,11 @@ def frame_visual_jump_metrics(samples: list[PoseSample]) -> dict[str, Any]:
             left_sample.frame_edge_signature,
             right_sample.frame_edge_signature,
         )
+        background_layout = background_signature_difference(left_sample, right_sample, "frame_layout_signature")
+        background_edge = background_signature_difference(left_sample, right_sample, "frame_edge_signature")
+        if background_layout is not None and background_edge is not None:
+            layout_jump, edge_jump = background_layout, background_edge
+            background_pair_count += 1
         if layout_jump is not None:
             layout_jumps.append(layout_jump)
         if edge_jump is not None:
@@ -1491,6 +1581,7 @@ def frame_visual_jump_metrics(samples: list[PoseSample]) -> dict[str, Any]:
     return {
         "visualContinuityCutCount": visual_cut_count,
         "visualContinuityComparedPairs": compared_pair_count,
+        "backgroundComparedPairs": background_pair_count,
         "maxFrameLayoutJump": max(layout_jumps) if layout_jumps else 0.0,
         "maxFrameEdgeJump": max(edge_jumps) if edge_jumps else 0.0,
         "medianFrameLayoutJump": median_layout_jump,
@@ -1629,6 +1720,16 @@ def target_pose_motion_observability(
     exercise_name: str | None,
     contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if contract_completion_mode(contract) == "stable_hold":
+        # Identity/posture still require visual review. Joint travel is not
+        # evidence required of a hold; framing and visibility are checked above.
+        return {
+            "required": False,
+            "passed": True,
+            "profile": None,
+            "target": None,
+            "skippedReasons": ["stable_hold_does_not_require_joint_travel"],
+        }
     profile = target_motion_profile_for_exercise(exercise_name, contract=contract)
     observable_spec = observable_motion_spec_for_contract(contract)
     if profile is None and observable_spec is not None:

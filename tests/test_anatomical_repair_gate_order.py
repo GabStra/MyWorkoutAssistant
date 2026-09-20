@@ -29,10 +29,12 @@ def test_unowned_physical_failure_cannot_enter_anatomical_repair(extra):
 
 
 @pytest.mark.parametrize("remaining_failure", [None, "raw_wham_source_pose_joint_mismatch"])
-def test_generation_defers_only_anatomy_to_fitter_and_preserves_failed_validation(tmp_path, monkeypatch, remaining_failure):
+@pytest.mark.parametrize("physical_reason", ["anatomy_spine_deviation", "body_self_intersection"])
+def test_generation_defers_owned_physics_to_fitter_and_preserves_failed_validation(tmp_path, monkeypatch, remaining_failure, physical_reason):
     raw, cleaned = tmp_path / "raw.json", tmp_path / "cleaned.json"
     raw.touch()
     original = anatomical_gate()
+    original['kinematicPlausibilityMetrics']['physicalConstraints']['reasons'] = [physical_reason]
     cleaned_gate = copy.deepcopy(original)
     if remaining_failure:
         cleaned_gate["rejectionReasons"].append(remaining_failure)
@@ -54,9 +56,11 @@ def test_generation_defers_only_anatomy_to_fitter_and_preserves_failed_validatio
     assert result["cleanedRecovery"]["cleanedMotionGate"]["passed"] is False
     assert original["passed"] is False
     if remaining_failure is None:
-        assert result["pendingAnatomicalRepair"]["finalValidationRequired"] is True
+        assert result["pendingControlledRepair"]["finalValidationRequired"] is True
+        assert ("pendingAnatomicalRepair" in result) is (physical_reason != 'body_self_intersection')
     else:
         assert "pendingAnatomicalRepair" not in result
+        assert "pendingControlledRepair" not in result
 
 
 def test_unrepaired_temporal_noise_is_not_deferred_to_anatomical_projection():

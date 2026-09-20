@@ -70,14 +70,17 @@ def save_stage(path: Path, key: str, payload: dict[str, Any], outputs: list[Path
         temporary.unlink(missing_ok=True)
 
 
-def cached_paths(checkpoint: Path, key: str, compute: Any) -> list[Path]:
+def cached_paths(checkpoint: Path, key: str, compute: Any, *, supporting_outputs: Any = None) -> list[Path]:
+    """Reuse returned paths only while all consumer-required outputs are intact."""
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
         if cached is not None:
             return [Path(value) for value in cached["paths"]]
         paths = compute()
         if paths:
-            save_stage(checkpoint, key, {"paths": [str(path) for path in paths]}, paths)
+            outputs = [*paths, *(supporting_outputs() if supporting_outputs is not None else [])]
+            save_stage(checkpoint, key, {"paths": [str(path) for path in paths]},
+                       list(dict.fromkeys(outputs)))
         return paths
 
 

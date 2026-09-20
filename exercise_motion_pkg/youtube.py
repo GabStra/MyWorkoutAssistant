@@ -16,6 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any, Callable, Iterable
@@ -56,8 +57,10 @@ from exercise_motion_pkg.llama_defaults import (
 )
 from exercise_motion_pkg.pose_prefilter import (
     PosePrefilterSettings,
+    POSE_CAMERA_POLICY_VERSION,
     YoloDeviceUnavailableError,
     normalize_yolo_cuda_device,
+    pose_camera_review_is_stale,
     release_yolo_pose_cuda_memory,
     run_yolo_pose_prefilter,
 )
@@ -601,15 +604,39 @@ def youtube_preview_cache_stem(url: str) -> str:
     return f"{safe_id}-{digest}" if safe_id else f"preview-{digest}"
 
 
+@lru_cache(maxsize=256)
+def _preview_decodes(path: str, size: int, modified_ns: int) -> bool:
+    """Memoize successful reads by file identity, never failed reads."""
+    import cv2
+    capture = cv2.VideoCapture(path)
+    try:
+        opened = capture.isOpened()
+        ok, frame = capture.read() if opened else (False, None)
+        if not ok or frame is None or frame.size == 0:
+            # lru_cache does not retain exceptions: a transient read failure must
+            # not poison a file until its next modification.
+            raise ValueError('Preview has no decodable first frame')
+        return True
+    finally:
+        capture.release()
+
+
+def youtube_preview_is_readable(path: Path) -> bool:
+    if path.suffix.lower() not in {'.mp4', '.webm', '.mkv', '.mov', '.m4v', '.avi'}:
+        return False
+    try:
+        stat = path.stat()
+        return path.is_file() and stat.st_size > 0 and _preview_decodes(
+            str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+    except (OSError, ValueError):
+        return False
+
+
 def find_cached_youtube_preview(cache_dir: Path, cache_stem: str) -> Path | None:
     if not cache_dir.exists():
         return None
     for candidate in sorted(cache_dir.glob(f"{cache_stem}.*")):
-        if (
-            candidate.is_file()
-            and candidate.suffix.lower() != ".part"
-            and candidate.stat().st_size > 0
-        ):
+        if youtube_preview_is_readable(candidate):
             return candidate
     return None
 
@@ -618,8 +645,10 @@ def cache_youtube_preview(video_path: Path, cache_dir: Path, cache_stem: str) ->
     cache_dir.mkdir(parents=True, exist_ok=True)
     suffix = video_path.suffix if video_path.suffix else ".mp4"
     target = cache_dir / f"{cache_stem}{suffix}"
-    if target.exists() and target.stat().st_size > 0:
+    if youtube_preview_is_readable(target):
         return target
+    if not youtube_preview_is_readable(video_path):
+        raise ValueError(f"Downloaded preview has no readable video frame: {video_path}")
     temp_target = target.with_suffix(target.suffix + ".part")
     shutil.copy2(video_path, temp_target)
     temp_target.replace(target)
@@ -919,6 +948,9 @@ def youtube_candidate_exclusion_debug_payload(
 
 
 RETRYABLE_CANDIDATE_FAILURE_TEXT_MARKERS = (
+    "pose_prefilter_failed",
+    "pose_prefilter_review_incomplete",
+    "youtube_rate_limited",
     "preview download failed",
     "download failed",
     "sign in to confirm",
@@ -4286,6 +4318,15 @@ def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool
     return False
 
 
+def single_dumbbell_naming_requirement(exercise_name: str) -> str:
+    """The library owner's explicit convention, distinct from implement count alone."""
+    if normalize_exercise_name(exercise_name).startswith("single dumbbell "):
+        return ("Library naming requirement: Single Dumbbell means exactly one dumbbell and one working arm. "
+                "The working hand holds the dumbbell; a two-handed grip on that dumbbell is a different variant. "
+                "The free hand may provide support when appropriate to the movement.\n")
+    return ""
+
+
 def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     context_json = json.dumps(exercise.motion_context, ensure_ascii=True, sort_keys=True)
     primary_equipment = exercise.motion_context.get("primaryEquipment")
@@ -4327,6 +4368,7 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         f"{primary_equipment_line}\n"
         f"{required_accessories_line}\n"
         f"Motion context: {context_json}\n"
+        f"{single_dumbbell_naming_requirement(exercise.name)}"
         "Describe one complete visible movement for the exact named exercise.\n"
         "Use the normal exercise definition. Do not guess mechanics from separate words in the name. "
         "The normal definition is the common instructional/demo form, not an advanced progression, assistance variation, "
@@ -5760,6 +5802,13 @@ def exercise_motion_contract_quality_issues(
     ]
     posture_text = " ".join(posture_state_texts)
     issues = exercise_motion_contract_identity_issues(contract, exercise=exercise)
+    target_name = exercise.name if exercise is not None else str(contract.get("exerciseName") or "")
+    if single_dumbbell_naming_requirement(target_name) and re.search(
+        r"\bdumbbell\s+(?:with|in)\s+(?:(?:a|the)\s+)?(?:both|two)[ -]hands\b"
+        r"|\b(?:both|two)[ -]hands\s+(?:holding|gripping)\s+(?:a\s+|the\s+|single\s+)*dumbbell\b",
+        posture_text,
+    ):
+        issues.append("Single Dumbbell requires one working arm, not a two-handed dumbbell grip")
     if exercise_motion_contract_uses_candidate_evidence(contract):
         issues.append("candidate observations cannot define the requested exercise contract")
     issues += [
@@ -5955,10 +6004,12 @@ def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str
     authority = contract_field_authority(str(prompt_contract.get("exerciseName") or ""), structured)
     return (
         f"{advisory_text}\n"
+        f"{single_dumbbell_naming_requirement(str(prompt_contract.get('exerciseName') or ''))}"
         "Generated guidance is advisory, including carry position and endpoint expectations. "
         "Only explicit target requirements can establish a variant mismatch. "
         "Check equipment and implement count in the source video; the skeleton intentionally omits equipment. "
-        "An obscured implement count is uncertain, not a mismatch. One implement does not imply one acting arm.\n"
+        "An obscured implement count is uncertain, not a mismatch. Apart from explicit naming requirements, "
+        "one implement alone does not imply one acting arm.\n"
         "Field authority: " + json.dumps(authority, ensure_ascii=True, sort_keys=True) + "\n"
         "Structured movement contract: "
         + json.dumps(structured, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -6006,6 +6057,7 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
         "\"unrequestedVariantTerms\":[string],\"matchedExercise\":string,\"reason\":\"max 6 words\"}. "
         "Use score 0.0 to 1.0 for exact-target confidence; pass only when score >= 0.55 and wrongExercise is false.\n"
         f"Target exercise: {exercise.name}\n"
+        f"{single_dumbbell_naming_requirement(exercise.name)}"
         f"Motion context: {json.dumps(exercise.motion_context, ensure_ascii=True, sort_keys=True)}\n"
         f"Candidate title: {candidate.title}\n"
         f"Candidate channel: {candidate.channel or ''}\n"
@@ -6126,6 +6178,16 @@ def apply_pose_prefilter_score(
     pose_payload = dict(pose_payload) if isinstance(pose_payload, dict) else {}
     pose_payload.setdefault("enabled", True)
     pose_payload.setdefault("score", clamped_pose_score)
+    if pose_prefilter_review_incomplete(pose_payload):
+        pose_payload.update(passed=False, reviewStatus="incomplete")
+        payload["posePrefilter"] = pose_payload
+        return replace_candidate(
+            candidate, final_score=0.0, status="candidate", vision_payload=payload,
+            score_reasons=dedupe_reasons([
+                *[reason for reason in candidate.score_reasons if reason not in {
+                    "pose_prefilter_rejected", "pose_prefilter_below_threshold"}],
+                *pose_reasons, "pose_prefilter_review_incomplete",
+            ]))
     existing_quality_issues = pose_payload.get("qualityIssues")
     quality_issues = [str(item) for item in existing_quality_issues] if isinstance(existing_quality_issues, list) else []
     quality_issues = [issue for issue in quality_issues if issue != "frontal_or_back_view"]
@@ -6714,7 +6776,7 @@ def run_youtube_candidate_review_batches(
     reviewed_by_key: dict[str, YouTubeCandidate] = {
         key: candidate
         for key, candidate in debug_by_key.items()
-        if candidate_has_debug_review_payload(candidate)
+        if candidate_has_debug_review_payload(candidate, exercise=exercise)
     }
     if budget is not None:
         for key, payload in budget.reviewed.items():
@@ -6722,7 +6784,7 @@ def run_youtube_candidate_review_batches(
                 candidate = YouTubeCandidate(**payload)
             except (TypeError, ValueError):
                 continue
-            if vision_payload_has_legacy_boundary_override(candidate.vision_payload) or candidate_needs_contradiction_review(candidate):
+            if not candidate_has_debug_review_payload(candidate, exercise=exercise):
                 continue
             if not youtube_candidate_is_excluded(candidate, set(settings.excluded_candidate_keys)):
                 reviewed_by_key[key] = candidate
@@ -6761,6 +6823,11 @@ def run_youtube_candidate_review_batches(
         pose_elapsed += pass_result.pose_elapsed_seconds
         vision_elapsed += pass_result.vision_elapsed_seconds
         debug_by_key = pass_result.debug_candidates_by_key
+        # Stamp only this turn's reviewed inputs, never untouched historical reviews.
+        if single_dumbbell_naming_requirement(exercise.name):
+            for candidate in [*pass_result.ranked, *(debug_by_key.get(item.key()) for item in batch)]:
+                if candidate is not None and isinstance(candidate.vision_payload, dict):
+                    candidate.vision_payload["singleDumbbellNamingPolicyVersion"] = 1
         for candidate in pass_result.ranked:
             reviewed_by_key[candidate.key()] = candidate
             debug_by_key[candidate.key()] = candidate
@@ -8396,8 +8463,10 @@ def discover_and_rank_youtube_candidates(
                     "reviewedThisTurn": review_budget.consumed,
                     "reviewedTotal": len(review_budget.reviewed),
                     "budgetExhausted": review_budget.exhausted,
+                    "stopReason": review_budget.stop_reason,
                     "candidateBudget": review_budget.candidate_limit,
                     "timeBudgetSeconds": review_budget.seconds_limit,
+                    "remainingTimeSeconds": review_budget.remaining_seconds(ignore_scheduler_yield=True),
                 }
             final_suitable_count = youtube_suitable_candidate_count(
                 ranked,
@@ -8422,6 +8491,8 @@ def discover_and_rank_youtube_candidates(
                 )
                 if final_suitable_count > 0:
                     terminal_reason = "insufficient_reconstruction_ready_sources"
+                elif review_budget is not None and review_budget.stop_reason is not None:
+                    terminal_reason = "discovery_" + review_budget.stop_reason
                 elif settings.semantic_gate_enabled and semantic_pass_count <= 0:
                     terminal_reason = "semantic_candidates_exhausted"
                 elif settings.pose_prefilter_enabled and pose_reviewed_candidates and pose_pass_count <= 0:
@@ -8598,6 +8669,9 @@ def discover_and_rank_youtube_candidates(
     write_candidate_decisions_jsonl(decisions_path, manifest)
     manifest["ranking"]["candidateDecisionsJsonlPath"] = str(decisions_path)
     manifest["ranking"]["sourceRejectionReviewPolicyVersion"] = 1
+    manifest["ranking"]["staticHoldReviewPolicyVersion"] = 1
+    manifest["ranking"]["singleDumbbellNamingPolicyVersion"] = 1
+    manifest["ranking"]["poseCameraReviewPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     append_youtube_discovery_progress(
         progress_path,
@@ -8620,8 +8694,32 @@ def candidate_needs_contradiction_review(candidate: YouTubeCandidate) -> bool:
     return source_review_needs_contradiction_check(payload, evidence)
 
 
-def candidate_has_debug_review_payload(candidate: YouTubeCandidate) -> bool:
+def pose_prefilter_review_incomplete(payload: Any) -> bool:
+    """Operational failures are not completed observations of source quality."""
+    return isinstance(payload, dict) and bool(
+        payload.get("error") or payload.get("reviewStatus") == "incomplete"
+        or payload.get("failureReason") in {"pose_prefilter_failed", "youtube_rate_limited"})
+
+
+def candidate_has_debug_review_payload(
+    candidate: YouTubeCandidate, *, exercise: ExerciseEntry | None = None
+) -> bool:
     payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
+    if (exercise is not None and single_dumbbell_naming_requirement(exercise.name)
+            and payload.get("singleDumbbellNamingPolicyVersion") != 1):
+        return False
+    if pose_prefilter_review_incomplete(payload.get("posePrefilter")):
+        return False
+    if candidate.status != "recommended" and pose_camera_review_is_stale(payload.get("posePrefilter")):
+        return False
+    contract = payload.get("exerciseMotionContract") or {}
+    if (
+        isinstance(contract, dict)
+        and contract.get("completionMode") == "stable_hold"
+        and payload.get("staticHoldReviewPolicyVersion") != 1
+        and candidate.status != "recommended"
+    ):
+        return False
     if vision_payload_has_legacy_boundary_override(payload) or candidate_needs_contradiction_review(candidate):
         return False
     return (
@@ -10118,6 +10216,7 @@ def score_prepared_vision_review(
         valid_chunk_ratio_payload = 1.0
     compact_payload = dict(best_payload)
     compact_payload["sourceRejectionReviewPolicyVersion"] = 1
+    compact_payload["staticHoldReviewPolicyVersion"] = 1
     if prepared.exercise_motion_contract is not None:
         compact_payload["exerciseMotionContract"] = prepared.exercise_motion_contract
     best_chunk_start, best_chunk_end = (
@@ -11203,6 +11302,61 @@ def build_candidate_vision_prompt(
         if completion_mode == "distinct_end_state"
         else ""
     )
+    completeness_guidance = (
+        'Good chunks show the prescribed hold sustained across time with the required posture, support and equipment visibly maintained. A single still image is insufficient.\n'
+        if completion_mode == "stable_hold"
+        else 'Good chunks show continuous uninterrupted repetitions or at least one complete uninterrupted movement from the start posture, through the main action path, to the end posture.\n'
+    )
+    idle_rejection_guidance = (
+        'Reject setup, instruction, unrelated idle postures, talking, title cards and incomplete or incorrect holds. Do not classify the prescribed active hold as idle.\n'
+        if completion_mode == "stable_hold"
+        else 'Reject chunks that only show setup, instruction, hanging/holding/standing/lying idle, walking into position, talking to camera, a title card, or only a partial phase of the movement.\n'
+    )
+    boundary_guidance = (
+        'Judge the beginning and end of the sustained hold interval; entering and leaving the posture are not required for stable_hold completeness.\n'
+        if completion_mode == "stable_hold"
+        else 'Do not treat a natural start or finish posture as setup/idle merely because the athlete is briefly hanging, standing, lying, holding, or paused there; if that posture is directly connected to the visible movement, it is part of the exercise boundary.\n'
+    )
+    start_posture_guidance = (
+        'Set movement_start_posture_visible and movement_end_posture_visible true only when the prescribed hold posture is visibly maintained at the respective boundaries of the reviewed interval.\n'
+        if completion_mode == "stable_hold"
+        else 'Set movement_start_posture_visible true only if the chunk visibly includes the beginning posture of a full movement or repetition. Set it false for mid-rep starts, idle setup, or a person only preparing to move.\n'
+    )
+    effort_guidance = (
+        'Set primary_effort_phase_visible true only when the prescribed isometric effort is visibly sustained, with the required posture and support.\n'
+        if completion_mode == "stable_hold"
+        else 'Set primary_effort_phase_visible true only if the chunk visibly includes the main intended action of the requested exercise, not just the return, lowering, eccentric, negative, reset, or recovery phase. If the target exercise name explicitly requests a negative/eccentric/return-only variation, judge that requested phase as the primary effort.\n'
+    )
+    action_path_guidance = (
+        'For stable_hold, set movement_action_path_visible true when the required body configuration is maintained across time; joint travel is not required.\n'
+        if completion_mode == "stable_hold"
+        else 'Set movement_action_path_visible true only if the chunk visibly includes the main joint/body travel of the movement, not just the athlete holding the start/end position.\n'
+    )
+    end_posture_guidance = (
+        'For stable_hold, complete_repetition_visible, loopable_repetition_cycle and continuous_motion mean a sustained usable hold interval, not a dynamic repetition or a visible release.\n'
+        if completion_mode == "stable_hold"
+        else 'Set movement_end_posture_visible true only if the chunk visibly reaches the natural end posture of that same movement or repetition. Set it false for clips that stop mid-rep or before the movement resolves.\n'
+    )
+    contract_gate_guidance = (
+        'Verify the prescribed hold posture, support, equipment and all hold-defining requirements. Set contract_start_state_match, contract_end_state_match and all_required_phases_visible from the sustained hold interval; do not require entry or release transitions for stable_hold.\n'
+        if completion_mode == "stable_hold"
+        else 'Independently verify the exercise-specific contract: set contract_start_state_match and contract_end_state_match true only when the visible boundary postures match the described start and end states, and set all_required_phases_visible true only when every required phase in the guidance is visibly present in order. Do not substitute a nearby posture or infer an omitted phase. When no more-specific contract detail is supplied, apply these fields to the generic start/action/end movement definition above.\n'
+    )
+    setup_gate_guidance = (
+        'Set no_setup_or_talking_frames false for actual setup, talking, instruction, title cards or unrelated idle content. The prescribed active hold itself is exercise content.\n'
+        if completion_mode == "stable_hold"
+        else 'Set no_setup_or_talking_frames false when any attached sheet is primarily setup, talking, instruction, title-card, walking into position, idle hanging/standing/lying, or reset content rather than the exercise movement. Keep it true when brief boundary postures are directly attached to the full movement.\n'
+    )
+    completeness_score_guidance = (
+        '- complete_movement: how clearly this exact chunk contains the prescribed hold sustained across time, with correct posture and support.\n'
+        if completion_mode == "stable_hold"
+        else '- complete_movement: how clearly this exact chunk contains a full movement cycle with visible start posture, main action path, and end posture, not just exercise context or a partial transition.\n'
+    )
+    execution_score_guidance = (
+        '- execution_quality: how naturally and continuously the prescribed hold is maintained, without setup, talking, interruptions or instructional breakdown.\n'
+        if completion_mode == "stable_hold"
+        else '- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n'
+    )
     return (
         "Score this sampled video chunk for exercise motion extraction source suitability as part of a full-video scan.\n"
         f"Target exercise: {exercise_name}.\n"
@@ -11216,9 +11370,9 @@ def build_candidate_vision_prompt(
         "The reviewed chunk itself must be usable as the source window for motion extraction. Do not pass a chunk merely because the broader video may contain a good segment elsewhere.\n"
         "Ignore written labels, captions, arrows, diagrams, and instruction text when deciding whether the target movement is visible; use the visible human motion only.\n"
         "If the target exercise name combines actions with words such as 'and' or '/' or otherwise names multiple phases, this exact chunk must visibly include all named actions/phases in one continuous movement. A chunk showing only one named phase is partial_movement.\n"
-        "Good chunks show continuous uninterrupted repetitions or at least one complete uninterrupted movement from the start posture, through the main action path, to the end posture.\n"
-        "Reject chunks that only show setup, instruction, hanging/holding/standing/lying idle, walking into position, talking to camera, a title card, or only a partial phase of the movement.\n"
-        "Do not treat a natural start or finish posture as setup/idle merely because the athlete is briefly hanging, standing, lying, holding, or paused there; if that posture is directly connected to the visible movement, it is part of the exercise boundary.\n"
+        f"{completeness_guidance}"
+        f"{idle_rejection_guidance}"
+        f"{boundary_guidance}"
         "Extra non-exercise frames before or after the movement are a blocking issue for source selection; include setup_or_talking and lower source_score even if a partial rep is visible.\n"
         "Treat the target exercise name as the exact movement identity, not just a loose keyword match. Adjacent variations that share words but visibly change the required stance, support, equipment path, body position, or movement pattern are wrong for this target.\n"
         "If the requested exercise name contains qualifiers such as single-leg, split, incline, decline, seated, bent-over, front, back, lateral, supported, unsupported, dumbbell, barbell, cable, machine, or similar variant terms, the visible movement must satisfy those qualifiers.\n"
@@ -11227,12 +11381,12 @@ def build_candidate_vision_prompt(
         "Pose/camera suitability is handled by deterministic YOLO/pose filtering before and after this step. Do not return gates for camera cuts, camera stability, crop, body scale, joint visibility, obstruction, pose angle, or person count; those are not your responsibility.\n"
         "For source selection, prefer clean repeatable demo repetitions over records, personal records, max attempts, AMRAP tests, competitions, combines, meets, crowds, or event footage. Those event clips are lower-quality motion sources even when the exercise is technically correct.\n"
         "Reject step-by-step demonstrations, setup, talking, title cards, and slow instructional breakdowns.\n"
-        "Set movement_start_posture_visible true only if the chunk visibly includes the beginning posture of a full movement or repetition. Set it false for mid-rep starts, idle setup, or a person only preparing to move.\n"
-        "Set primary_effort_phase_visible true only if the chunk visibly includes the main intended action of the requested exercise, not just the return, lowering, eccentric, negative, reset, or recovery phase. If the target exercise name explicitly requests a negative/eccentric/return-only variation, judge that requested phase as the primary effort.\n"
-        "Set movement_action_path_visible true only if the chunk visibly includes the main joint/body travel of the movement, not just the athlete holding the start/end position.\n"
-        "Set movement_end_posture_visible true only if the chunk visibly reaches the natural end posture of that same movement or repetition. Set it false for clips that stop mid-rep or before the movement resolves.\n"
-        "Independently verify the exercise-specific contract: set contract_start_state_match and contract_end_state_match true only when the visible boundary postures match the described start and end states, and set all_required_phases_visible true only when every required phase in the guidance is visibly present in order. Do not substitute a nearby posture or infer an omitted phase. When no more-specific contract detail is supplied, apply these fields to the generic start/action/end movement definition above.\n"
-        "Set no_setup_or_talking_frames false when any attached sheet is primarily setup, talking, instruction, title-card, walking into position, idle hanging/standing/lying, or reset content rather than the exercise movement. Keep it true when brief boundary postures are directly attached to the full movement.\n"
+        f"{start_posture_guidance}"
+        f"{effort_guidance}"
+        f"{action_path_guidance}"
+        f"{end_posture_guidance}"
+        f"{contract_gate_guidance}"
+        f"{setup_gate_guidance}"
         "Prefer real camera footage of real people. Score the moving exercise subject with moving_subject_realism_score: 1.0 means a clearly real person captured by camera, 0.85 means the lowest acceptable confidence for a real camera-captured human, 0.7 means probably real but visually ambiguous and not strong enough as a source, 0.4 means mannequin-like or heavily synthetic-looking, and 0.0 means animated, CGI, rendered, game footage, motion-capture preview, skeleton-only demo, avatar, anatomy illustration, or synthetic humanoid.\n"
         "Judge realism only for the moving athlete/body performing the exercise. Animated text, timers, captions, title graphics, logos, or other overlays on top of real footage are not a subject-realism failure.\n"
         "Report moving_subject_realism_score independently from the visual evidence. Do not compensate for a low realism score by raising source_score, and do not include animation_or_synthetic in blocking_issues; ranking code will handle realism as its own hard suitability signal.\n"
@@ -11240,9 +11394,9 @@ def build_candidate_vision_prompt(
         "Use this scale: 1.0 excellent, 0.8 good, 0.6 flawed but maybe usable, 0.4 poor, 0.0 unusable.\n"
         "Score definitions:\n"
         "- target_match: how clearly this chunk shows the requested exercise.\n"
-        "- complete_movement: how clearly this exact chunk contains a full movement cycle with visible start posture, main action path, and end posture, not just exercise context or a partial transition.\n"
+        f"{completeness_score_guidance}"
         "- moving_subject_realism_score: how clearly the moving exercise subject is a real human body captured by a camera, ignoring text/graphics overlays that are not the subject.\n"
-        "- execution_quality: how naturally the exercise is performed: normal-speed, continuous, not paused, slow teaching, step-by-step, setup, talking, or title-card content.\n"
+        f"{execution_score_guidance}"
         "- source_score: overall semantic usefulness of this exact chunk as a target-exercise motion source, assuming deterministic pose/camera gates are handled elsewhere.\n"
         "Before scoring, list semantic blocking issues only. Use [] or [\"none\"] only if no semantic blocking issue is visible. Allowed semantic issues are wrong_exercise, wrong_variant, partial_movement, slow_instruction, setup_or_talking, and unclear.\n"
         "Return JSON only with these keys:\n"

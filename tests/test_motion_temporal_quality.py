@@ -123,6 +123,35 @@ def test_ik_rotation_keeps_orientation_attached_to_bone():
     assert side == pytest.approx([0, -1, 0])
 
 
+@pytest.mark.parametrize('contact_state', ['full_sole', 'heel_only'])
+def test_two_ground_plants_use_contact_plane_not_render_floor(contact_state):
+    frames = [{"joints": {"head": [0., 1.8, 0.], "pelvis": [0., 1., 0.],
+                          "left_ankle": [0., .2, 0.], "right_ankle": [.2, .2, 0.],
+                          "left_foot": [0., .2, .1], "right_foot": [.2, .2, .1]}}
+              for _ in range(20)]
+    if contact_state == 'heel_only':
+        for frame in frames:
+            for side in ('left', 'right'):
+                ankle = frame['joints'][f'{side}_ankle']
+                toe = frame['joints'][f'{side}_foot']
+                # Heel stays at y=.2 while the toe rises .25 m above it.
+                toe[1] = .45
+                ankle[1] = (.2 + b.HEEL_BEHIND_ANKLE_RATIO * toe[1]) / (1 + b.HEEL_BEHIND_ANKLE_RATIO)
+    evidence = {"contacts": [
+        {"jointName": "left_foot", "supportKind": "observed_foot_patch",
+         "contactState": contact_state, "contactMotion": "stationary",
+         "startRatio": 0., "endRatio": 1., "confidence": .9},
+        {"jointName": "right_foot", "supportKind": "observed_foot_patch",
+         "contactState": contact_state, "contactMotion": "stationary",
+         "startRatio": 0., "endRatio": 1., "confidence": .9},
+    ], "sharedSupportPlaneY": 0.8}
+    metrics = b.source_confirmed_support_stationarity_metrics(
+        {"frames": frames, "renderFloorY": 0.}, evidence)
+    assert metrics["passed"] is True
+    assert metrics["supportPlaneSource"] == "observed_ground_contacts"
+    assert "left_source_confirmed_support_off_floor" not in metrics["rejectionReasons"]
+
+
 def test_stationary_ground_patch_must_be_on_authoritative_floor():
     frames = [{"joints": {"pelvis": [0, 1, 0], "head": [0, 2, 0],
                "left_ankle": [0, .4, 0], "left_foot": [0, .4, .1]}} for _ in range(10)]

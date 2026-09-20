@@ -43,16 +43,26 @@ def test_anatomical_repair_stops_at_total_evaluation_budget(monkeypatch):
 
     monkeypatch.setattr(anatomical_repair, 'least_squares', counting_least_squares)
     _, report = repair_rig_anatomy(rig, points, deadline=monotonic() + 60.)
-    assert report['evaluations'] <= ANATOMY_REPAIR_MAX_TOTAL_EVALS
-    assert report.get('evaluationBudget') == ANATOMY_REPAIR_MAX_TOTAL_EVALS
+    assert report['evaluations'] <= report['evaluationBudget']
+    assert report.get('evaluationBudget') == anatomical_repair.anatomy_repair_evaluation_budget(
+        report['projectedFrameCount'])
     assert calls
     assert max(calls) <= anatomical_repair.ANATOMY_REPAIR_MAX_EVALS_PER_FRAME
-    # Pathological unbounded runs were 700–1350; the ceiling must stay below that
-    # while still allowing hard multi-frame repairs.
+    # Base floor stays in the historical band; long clips scale above it.
     assert ANATOMY_REPAIR_MAX_TOTAL_EVALS >= 400
     assert ANATOMY_REPAIR_MAX_TOTAL_EVALS < 700
     # Soft polishing must not consume the whole ceiling once frames are repairable.
-    assert report['evaluations'] < ANATOMY_REPAIR_MAX_TOTAL_EVALS // 2
+    assert report['evaluations'] < report['evaluationBudget'] // 2
+
+
+def test_anatomy_repair_budget_scales_with_bad_frame_count():
+    assert anatomical_repair.anatomy_repair_evaluation_budget(0) == ANATOMY_REPAIR_MAX_TOTAL_EVALS
+    assert anatomical_repair.anatomy_repair_evaluation_budget(12) == ANATOMY_REPAIR_MAX_TOTAL_EVALS
+    scaled = anatomical_repair.anatomy_repair_evaluation_budget(343)
+    assert scaled == 343 * anatomical_repair.ANATOMY_REPAIR_EVALS_PER_BAD_FRAME
+    assert scaled > ANATOMY_REPAIR_MAX_TOTAL_EVALS
+    assert anatomical_repair.anatomy_repair_evaluation_budget(10_000) == (
+        anatomical_repair.ANATOMY_REPAIR_MAX_TOTAL_EVALS_CEILING)
 
 
 def test_anatomical_repair_exits_once_geometry_and_lean_are_feasible():
@@ -74,7 +84,7 @@ def test_anatomical_repair_exits_once_geometry_and_lean_are_feasible():
     assert report['averageFreeColumnCount'] < rig.width - 3
 
 
-def test_observed_cycles_reuse_support_init_across_attempts(monkeypatch):
+def test_observed_cycles_reuse_support_calibration_across_attempts(monkeypatch):
     shared_seen = []
 
     def fake_fit(payload, **kwargs):
@@ -85,7 +95,6 @@ def test_observed_cycles_reuse_support_init_across_attempts(monkeypatch):
             shared['supportKey'] = ('left_foot',)
             shared['supportPose'] = np.zeros(3)
             shared['supportCalibration'] = {'passed': True}
-            shared['supportInitializedCoordinates'] = np.zeros((10, 9))
             return payload, {
                 'applied': False,
                 'reason': 'fit_validation_failed',
@@ -118,4 +127,5 @@ def test_observed_cycles_reuse_support_init_across_attempts(monkeypatch):
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=100.)
     assert len(shared_seen) >= 2
     assert shared_seen[0] is shared_seen[1]
-    assert report['reason'] == 'no_validated_loop_cycle'
+    assert report['reason'] == 'fit_validation_failed'
+    assert report['retainedIntervalFit'] is True

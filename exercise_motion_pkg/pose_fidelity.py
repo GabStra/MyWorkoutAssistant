@@ -45,7 +45,8 @@ PROJECTION_COARSE_ANGLE_STEP_DEGREES = 15.0
 PROJECTION_REFINEMENT_STEPS_DEGREES = (3.0, 0.5)
 
 
-def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, camera_reference=None):
+def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, camera_reference=None,
+                                            camera_orientation=None):
     """Fit one scaled orthographic camera using proximal joints, never each pose.
 
     Camera elevation and scene rotation are nuisance parameters. Distal joints
@@ -57,6 +58,12 @@ def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, c
 
     source = _pose_frames(source_payload, source=True)
     motion = _pose_frames(motion_payload, source=False)
+    retained = motion_payload.get('sourcePoseRegistration')
+    if camera_reference is None and isinstance(retained, dict):
+        evidence = retained.get('sourcePose', {})
+        if all(evidence.get(key) == source_payload.get(key)
+               for key in ('frames', 'coordinateSpace', 'imageWidth', 'imageHeight', 'sourceTimeOriginSec')):
+            camera_reference = retained.get('camera')
     if len(source) < 5 or len(motion) < 5:
         return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
                                     reason="insufficient_pose_frames")
@@ -71,6 +78,16 @@ def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, c
                                         reason="fixed_camera_image_transform_unavailable")
         return _registered_projection_metrics(source, motion, rotation,
                     camera_reference.get('bilateralAssignment') == 'swapped', image_transform=tuple(transform))
+    if camera_orientation is not None:
+        rotation = np.asarray(camera_orientation, dtype=float)
+        if (rotation.shape != (3, 3) or not np.isfinite(rotation).all()
+                or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6)
+                or not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-6)):
+            return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
+                                        reason="invalid_reconstruction_camera_orientation")
+        metrics = _registered_projection_metrics(source, motion, rotation, False)
+        metrics['cameraOrientationAuthority'] = 'reconstruction_camera_coordinates'
+        return metrics
     candidates = []
     for swap in (False, True):
         pairs = []

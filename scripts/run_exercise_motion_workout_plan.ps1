@@ -1,4 +1,4 @@
-[CmdletBinding(PositionalBinding = $false)]
+﻿[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $true)]
     [string]$WorkoutPlanJson,
@@ -1100,11 +1100,10 @@ function Start-WhamWarmWorker {
     $dockerArgs += @(
         "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_preflight.py')):/worker/wham_tracking_preflight.py:ro",
         "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_coverage.py')):/worker/wham_tracking_coverage.py:ro",
-        "-v", "$($resolvedWhamRepoPath):/code",
         "-v", "$($MountRoot):/workspace",
         "-v", "$($SessionDir):/worker_state",
         "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
-        "-w", "/code",
+        "-w", "/opt/wham-src",
         $WhamDockerImage,
         "python", "-u", "/worker/wham_warm_worker.py",
         "--state-dir", "/worker_state"
@@ -1326,6 +1325,40 @@ function Get-ExistingSelectedSummary {
         selectedCandidateDebugPath = if (Test-Path -LiteralPath $candidateDebugPath) { $candidateDebugPath } else { $null }
         selectedCandidateDecisionsPath = if (Test-Path -LiteralPath $candidateDecisionsPath) { $candidateDecisionsPath } else { $null }
     }
+}
+
+function Resume-YieldedDiscovery {
+    param([object]$WorkItem, [object]$PendingQueue)
+
+    $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+    $turn = @($payload.exercises)[0].candidateExpansion.discoveryTurn
+    if ($turn.stopReason -ne 'scheduler_yield') { return $false }
+
+    # Keep the original allowance across scheduler pauses. Starting a new
+    # process must not grant another full candidate or time budget.
+    $limits = @{
+        '--discovery-candidate-budget' = if ([int]$turn.candidateBudget -gt 0) {
+            [Math]::Max(0, [int]$turn.candidateBudget - [int]$turn.reviewedThisTurn)
+        } else { 0 }
+        '--discovery-time-budget-seconds' = if ([double]$turn.timeBudgetSeconds -gt 0) {
+            [double]$turn.remainingTimeSeconds
+        } else { 0 }
+    }
+    if (([int]$turn.candidateBudget -gt 0 -and $limits['--discovery-candidate-budget'] -le 0) -or
+        ([double]$turn.timeBudgetSeconds -gt 0 -and $limits['--discovery-time-budget-seconds'] -le 0)) {
+        return $false
+    }
+    $arguments = [string[]]@($WorkItem.discoveryArgs)
+    foreach ($name in $limits.Keys) {
+        $position = [Array]::IndexOf($arguments, $name)
+        if ($position -lt 0 -or $position + 1 -ge $arguments.Length) {
+            throw "Missing discovery budget argument: $name"
+        }
+        $arguments[$position + 1] = ([double]$limits[$name]).ToString('G', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    $WorkItem.discoveryArgs = $arguments
+    $PendingQueue.Enqueue($WorkItem)
+    return $true
 }
 
 function Start-InitialDiscoveryJob {
@@ -1654,10 +1687,55 @@ function Test-DiscoveryStageReady {
         if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
             return $false
         }
+        # The owner's naming convention changes target identity, so even an
+        # old recommended source needs review under the explicit one-arm rule.
+        $hasSingleDumbbellTarget = @($payload.exercises | Where-Object {
+            $_.exerciseName -match '^Single[\s_-]+Dumbbell[\s_-]'
+        }).Count -gt 0
+        if ($hasSingleDumbbellTarget -and [int]$payload.ranking.singleDumbbellNamingPolicyVersion -lt 1) {
+            return $false
+        }
         # Revisit old all-rejected discovery under the bounded contradiction
         # policy. Successful source sets and downstream artifacts remain reusable.
         $hasRecommendedCandidate = @($payload.exercises | ForEach-Object { $_.candidates } |
             Where-Object { $_.status -eq "recommended" }).Count -gt 0
+        $hasStaticHold = @($payload.exercises | Where-Object {
+            $_.exerciseMotionContract.completionMode -eq "stable_hold"
+        }).Count -gt 0
+        if (-not $hasRecommendedCandidate -and $hasStaticHold -and [int]$payload.ranking.staticHoldReviewPolicyVersion -lt 1) {
+            return $false
+        }
+        if (-not $hasRecommendedCandidate) {
+            # A decoder/network failure is unfinished discovery, including old
+            # manifests that mislabeled it as a pose-quality rejection.
+            $incompletePoseReviews = @($payload.exercises | ForEach-Object {
+                @($_.candidates) + @($_.debugCandidates)
+            } | Where-Object {
+                $pose = $_.visionPayload.posePrefilter
+                $pose.reviewStatus -eq 'incomplete' -or
+                -not [string]::IsNullOrWhiteSpace([string]$pose.error) -or
+                $pose.failureReason -in @('pose_prefilter_failed', 'youtube_rate_limited')
+            })
+            if ($incompletePoseReviews.Count -gt 0) { return $false }
+        }
+        $yieldRequestPath = Join-Path (Split-Path -Parent $WorkItem.exerciseCandidatesPath) 'discovery_yield.request'
+        $yieldedTurns = @($payload.exercises | Where-Object {
+            $turn = $_.candidateExpansion.discoveryTurn
+            $turn.stopReason -eq 'scheduler_yield' -or (
+                [string]::IsNullOrWhiteSpace([string]$turn.stopReason) -and
+                $turn.budgetExhausted -and (Test-Path -LiteralPath $yieldRequestPath) -and
+                ([int]$turn.candidateBudget -le 0 -or [int]$turn.reviewedThisTurn -lt [int]$turn.candidateBudget)
+            )
+        })
+        if (-not $hasRecommendedCandidate -and $yieldedTurns.Count -gt 0) { return $false }
+        if (-not $hasRecommendedCandidate) {
+            $staleCameraRejections = @($payload.exercises | ForEach-Object { $_.debugCandidates } | Where-Object {
+                $pose = $_.visionPayload.posePrefilter
+                $pose.passed -eq $false -and [int]$pose.cameraPolicyVersion -lt 1 -and
+                @($pose.blockingIssues) -contains 'camera_or_track_instability'
+            })
+            if ($staleCameraRejections.Count -gt 0) { return $false }
+        }
         if (-not $hasRecommendedCandidate -and [int]$payload.ranking.sourceRejectionReviewPolicyVersion -lt 1) {
             return $false
         }
@@ -4633,7 +4711,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             $workItem.hasFallbackSourceDownloads -and
                             $recommendedCount -gt 1
                         )
-                        if ($recommendedCount -eq 0 -and ($DiscoveryCandidateBudget -gt 0 -or $DiscoveryTimeBudgetSeconds -gt 0)) {
+                        if ($recommendedCount -eq 0 -and (Resume-YieldedDiscovery -WorkItem $workItem -PendingQueue $pendingDiscoveryItems)) {
+                            Write-Host ("Paused: {0} - discovery will resume after reconstruction with its remaining allowance." -f $workItem.exerciseName)
+                            Write-ProgressCheckpoint
+                            continue
+                        } elseif ($recommendedCount -eq 0 -and ($DiscoveryCandidateBudget -gt 0 -or $DiscoveryTimeBudgetSeconds -gt 0)) {
                             Write-Host ("Deferred: {0} - no suitable source in this discovery turn; saved reviews will be reused." -f $workItem.exerciseName)
                             $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "no_selection" -ErrorMessage "No suitable source within this discovery turn." -Stage "initial_discovery" -ExitCode 0
                             $completedCount += 1

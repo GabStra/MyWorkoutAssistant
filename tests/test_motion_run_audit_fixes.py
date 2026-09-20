@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +6,38 @@ import pytest
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import source_review_preflight as preflight
 from exercise_motion_pkg import wave_pipeline as wave
+
+
+def test_manual_review_fallback_is_exportable_from_a_staged_wave():
+    assert wave.wave_manifest_is_exportable({"selected": {"selectedWearSkeletonPath": "x"}})
+    assert wave.wave_manifest_is_exportable({
+        "selected": None,
+        "selectionStatus": "needs_manual_review",
+        "manualReviewFallback": {"selectedWearSkeletonPath": "x"},
+    })
+    assert not wave.wave_manifest_is_exportable({
+        "selected": None,
+        "selectionStatus": "needs_manual_review",
+    })
+    assert not wave.wave_manifest_is_exportable({
+        "selected": None,
+        "selectionStatus": "failed",
+        "manualReviewFallback": {"selectedWearSkeletonPath": "x"},
+    })
+    assert wave.wave_retry_disposition({"status": "completed"}) == "export_selected"
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("no_approved_discovery_candidates", "next_source"),
+    ("no_reconstruction_ready_source", "next_source"),
+    ("source_processing_failed", "retry_infrastructure"),
+    ("source_review_incomplete", "retry_review"),
+])
+def test_source_exhaustion_does_not_trigger_individual_infrastructure_retry(reason, expected):
+    state = {"status": "retry_required", "source": {
+        "status": "failed", "failureReason": reason, "attempts": [],
+    }}
+    assert wave.wave_retry_disposition(state) == expected
 
 
 @pytest.mark.parametrize("rotation,camera,passed", [
@@ -91,7 +124,7 @@ def test_complete_source_review_cache_tracks_video_contract_model_and_frames(tmp
     video.write_bytes(b"first")
     sheet = tmp_path / "frame.jpg"
     sheet.write_bytes(b"frame")
-    item = SimpleNamespace(exercise_name="Curl", candidate_workspace=tmp_path)
+    item = SimpleNamespace(exercise_name="Curl", candidate_workspace=tmp_path, candidate={})
     model = SimpleNamespace(llama_cpp_model="model-one")
     class Session:
         settings = model
@@ -102,10 +135,11 @@ def test_complete_source_review_cache_tracks_video_contract_model_and_frames(tmp
     passed = [True]
     def validate(*args, **kwargs):
         calls.append(1)
-        return {"passed": passed[0], "uniformContactSheetPaths": [str(sheet)], "motionContactSheetPaths": []}
+        return {"passed": passed[0], "uniformContactSheetPaths": [str(path) for path in kwargs['uniform_sheet_paths']],
+                "motionContactSheetPaths": []}
     monkeypatch.setattr(bake, "_validate_two_scale_source_uncached", validate)
-    def run(contract=None):
-        return bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[sheet],
+    def run(contract=None, sheets=None):
+        return bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=sheets or [sheet],
             output_dir=tmp_path / "review", caption_images=Session().caption_images,
             exercise_motion_contract=contract)
     run(); run()
@@ -117,6 +151,24 @@ def test_complete_source_review_cache_tracks_video_contract_model_and_frames(tmp
     passed[0] = False
     run({"policy": 3}); run({"policy": 3})
     assert len(calls) == 7  # Incomplete or rejected reviews never become accepted cache hits.
+    passed[0] = True
+    run(); run()
+    assert len(calls) == 8
+    item.candidate['exerciseMotionContract'] = {'advisoryText': 'Updated explicit loading requirement'}
+    run(); run()
+    assert len(calls) == 9  # The implicit candidate contract is the reviewed contract too.
+    alternative = tmp_path / 'other-frame.jpg'
+    alternative.write_bytes(b'other sampling of the same video')
+    run(sheets=[alternative]); run(sheets=[alternative])
+    assert len(calls) == 10  # Existing old sheets have not changed; the supplied evidence has.
+    detail = tmp_path / 'original.jpg'
+    detail.write_bytes(b'full-resolution implement')
+    (tmp_path / 'contact_sheet_crop.json').write_text(json.dumps({'framePaths': [str(detail)]}))
+    run(sheets=[alternative]); run(sheets=[alternative])
+    assert len(calls) == 11
+    detail.write_bytes(b'changed original implement')
+    run(sheets=[alternative])
+    assert len(calls) == 12
 
 
 @pytest.mark.parametrize("passed,review_status,expected_calls", [(True, "passed", 1), (False, "incomplete", 2), (False, "rejected", 1)])

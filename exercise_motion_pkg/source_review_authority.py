@@ -11,7 +11,9 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-SOURCE_REVIEW_AUTHORITY_VERSION = 1
+# Version 2 removes contradictory dynamic-phase requirements for holds and
+# ongoing actions. Reopen negative model judgments, preserving valid cuts.
+SOURCE_REVIEW_AUTHORITY_VERSION = 2
 SOURCE_REVIEW_REQUIRED = "source_cut_review_required"
 
 
@@ -122,7 +124,7 @@ def source_authority_replay_plan(library_workspace: Path) -> list[dict[str, str]
     """Read-only inventory; the running generator and its selected files are untouched."""
     return [
         {"exercise": path.parents[3].name, "candidateWorkspace": str(path.parent.parent),
-         "resumeStage": "source_review", "reason": "legacy_review_used_generated_requirements"}
+         "resumeStage": "source_review", "reason": "outdated_source_review_policy"}
         for path in sorted(library_workspace.glob("*/bake/*/segment_detection/segment_selection.json"))
         if candidate_needs_authority_replay(path.parent.parent)
         and not any((path.parents[3] / "selected").glob("*_wear_skeleton.json"))
