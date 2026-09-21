@@ -133,6 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run WHAM through Docker instead of the local Python environment.",
     )
     generate.add_argument(
+        "--motion-reconstructor",
+        choices=["wham", "gvhmr"],
+        default="wham",
+        help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
+    )
+    generate.add_argument(
         "--wham-docker-image",
         default=DEFAULT_WHAM_DOCKER_IMAGE,
         help="Docker image to use when --use-wham-docker is set.",
@@ -684,6 +690,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bake_and_rank.add_argument("--use-wham-docker", action="store_true")
     bake_and_rank.add_argument(
+        "--motion-reconstructor",
+        choices=["wham", "gvhmr"],
+        default="wham",
+        help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
+    )
+    bake_and_rank.add_argument(
         "--wham-docker-image",
         default=DEFAULT_WHAM_DOCKER_IMAGE,
     )
@@ -1120,6 +1132,26 @@ def build_parser() -> argparse.ArgumentParser:
     spinepose_wham.add_argument("--arm-counter-rotation", type=float, default=1.0)
     spinepose_wham.add_argument("--experimental-enable", action="store_true")
 
+    gvhmr_run = subparsers.add_parser(
+        "gvhmr-run",
+        help="Run GVHMR reconstruction in Docker and export a WHAM-schema wham_output.pkl.",
+    )
+    gvhmr_run.add_argument("--input-video", required=True)
+    gvhmr_run.add_argument("--output-root", required=True)
+    gvhmr_run.add_argument("--logs-dir", required=True)
+    gvhmr_run.add_argument(
+        "--docker-image",
+        default="myworkoutassistant/gvhmr:torch2.3-cu121",
+    )
+    gvhmr_run.add_argument("--gpus", default="all")
+    gvhmr_run.add_argument("--shm-size", default="8g")
+    gvhmr_run.add_argument("--timeout-seconds", type=float, default=0.0)
+    gvhmr_run.add_argument(
+        "--no-static-camera",
+        action="store_true",
+        help="Run SimpleVO camera estimation instead of assuming a static camera.",
+    )
+
     ground = subparsers.add_parser("ground-metadata", help="Generate motion/contact-derived render-ground metadata from a cleaned motion clip.")
     ground.add_argument("--video-path", required=True)
     ground.add_argument("--motion-json", required=True)
@@ -1212,6 +1244,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "use_warm_wham_worker": args.warm_wham_worker,
         "wham_estimate_local_only": args.estimate_local_only or not args.full_wham_camera_slam,
         "wham_run_smplify": not args.skip_smplify,
+        "motion_reconstruction_backend": args.motion_reconstructor,
         "spinepose_enabled": spinepose_enabled,
         "spinepose_json_dir": Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
         "spinepose_output_dir": Path(args.spinepose_output_dir) if args.spinepose_output_dir else None,
@@ -1266,6 +1299,7 @@ def main() -> None:
                 body_model_root=Path(args.body_model_root) if args.body_model_root else None,
                 wham_python_command=args.wham_python_command,
                 use_wham_docker=args.use_wham_docker,
+                motion_reconstruction_backend=args.motion_reconstructor,
                 wham_docker_image=args.wham_docker_image,
                 wham_docker_gpus=args.wham_docker_gpus,
                 wham_docker_shm_size=args.wham_docker_shm_size,
@@ -1740,6 +1774,26 @@ def main() -> None:
                 port=args.port,
             )
         )
+        return
+    if args.command == "gvhmr-run":
+        from exercise_motion_pkg.gvhmr_runner import (
+            DEFAULT_GVHMR_DOCKER_IMAGE,
+            DEFAULT_GVHMR_DOCKER_SHM_SIZE,
+            run_gvhmr_locally,
+        )
+
+        result = run_gvhmr_locally(
+            input_video=Path(args.input_video),
+            output_root=Path(args.output_root),
+            logs_dir=Path(args.logs_dir),
+            docker_image=args.docker_image,
+            docker_gpus=args.gpus,
+            docker_shm_size=args.shm_size,
+            static_camera=not args.no_static_camera,
+            timeout_seconds=args.timeout_seconds,
+        )
+        print(f"GVHMR results pkl: {result.results_pkl}")
+        print(f"Elapsed seconds: {result.elapsed_seconds:.1f}")
         return
     if args.command == "apply-spinepose-wham":
         if not args.experimental_enable:

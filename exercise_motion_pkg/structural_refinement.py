@@ -187,9 +187,11 @@ def reconstruction_camera_orientation(clip: MotionClip):
             transform = rotation @ transform
         normalization = clip.metadata.get('coordinateNormalization')
         if normalization:
-            if normalization.get('transform') != 'rotate_x_180_degrees':
+            transform_name = normalization.get('transform')
+            if transform_name == 'rotate_x_180_degrees':
+                transform = np.diag([1., -1., -1.]) @ transform
+            elif transform_name != 'identity_y_up_world':
                 return None
-            transform = np.diag([1., -1., -1.]) @ transform
         if (not np.isfinite(transform).all()
                 or not np.allclose(transform.T @ transform, np.eye(3), atol=1e-6)
                 or not np.isclose(np.linalg.det(transform), 1., atol=1e-6)):

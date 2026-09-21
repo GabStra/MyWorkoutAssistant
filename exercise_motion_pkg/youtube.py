@@ -8905,7 +8905,10 @@ class LlamaCppVisionRanker:
         try:
             if settings.llama_cpp_base_url is not None:
                 if self._uses_gpu():
-                    gpu_lock = GlobalGpuLock(stage="llama_cpp_server")
+                    gpu_lock = GlobalGpuLock(
+                        stage="llama_cpp_server",
+                        on_force_release=self._emergency_release_gpu,
+                    )
                     self.gpu_lock_wait_seconds = gpu_lock.__enter__()
                     self.gpu_lock = gpu_lock
                 self._ensure_server()
@@ -8949,6 +8952,16 @@ class LlamaCppVisionRanker:
         gpu_lock = self.gpu_lock
         self.gpu_lock = None
         gpu_lock.__exit__(None, None, None)
+
+    def _emergency_release_gpu(self) -> None:
+        # The global GPU lock force-released this ranker after it starved other
+        # GPU stages. Stop the owned server so it cannot keep GPU memory while
+        # the starved stage runs; in-flight requests fail and the client's
+        # recovery path restarts the server on the next caption call.
+        try:
+            self._stop_owned_llama_cpp_server(force=True)
+        except Exception:
+            pass
 
     def _stop_owned_llama_cpp_server(self, *, force: bool = False) -> None:
         if self.process is None:

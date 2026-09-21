@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "candidateId": "B",
+  "window": {
+    "startSeconds": 42.48,
+    "endSeconds": 46.48
+  },
+  "framePaths": [
+    "candidate_b.jpg"
+  ],
+  "boundaryAuditFramePaths": [],
+  "sampleFramePaths": [],
+  "requestKwargs": {},
+  "prompt": "Classify one candidate source-video cut for an exercise animation.\nThe target name supplies the requested exercise and explicit qualifiers. No generated posture description is authoritative. Assess identity separately from trimming: identityMatch must be match, mismatch, or uncertain, based on visible actions and explicit target qualifiers. A partial cut of the right exercise is a boundary failure, not wrong_exercise. Give identityEvidence for every identity decision, including approval; give boundaryEvidence for a partial/bad-boundary/setup rejection, and qualityEvidence for mechanics, visibility, or synthetic-footage rejection. Describe visible observations, not an expected pose invented for the exercise. If the necessary evidence is unclear, use unclear or low_confidence instead of asserting a definite defect. For a static hold or continuous travel exercise, a stable representative interval is complete without approach, exit, or an invented return phase. Target exercise: Bench Press.\nUse only the attached source-window frames as evidence. Ignore title, labels, captions, and outside context.\nThe candidate may have one or more chronological contact sheets. Read all sheets together in attachment order. Boundary audit sheets repeat the first or last frames at larger size; use them only to inspect whether the visible cut starts and ends cleanly. Read each contact sheet as an ordered frame sequence: follow the numbered frame badges from 1 upward, left to right across each row, then the next row. START marks the first sampled frame and END marks the last sampled frame. The badges are order cues only, not exercise evidence. Use only the visible body motion within that ordered sequence; do not infer missing motion before START or after END.\nAttachments are in this exact order:\n- Candidate B: 42.48s to 46.48s; attachment 1 is the full chronological sheet.\n\nClassify only this candidate. Ignore written labels, captions, arrows, diagrams, and instruction text; the visible body must perform all named actions/phases of the target movement. Ignore the meaning of source text and logos, but assess their visual obstruction. Reject low_source_quality when a source overlay hides the joints, grip, support contacts, or implement path needed to verify the movement, including at either required boundary. Do not infer the obscured pose from later unobstructed frames. Unobstructive watermarks and review frame badges are not rejection reasons. Every visible exercise-changing qualifier in the target name must be satisfied by the frames, not inferred from the title. Examples of qualifiers include load/weighted, equipment, support surface, stance, limb count, grip, body orientation, incline/decline, assisted/unsupported, and direction. If a qualifier such as weighted/load/equipment/support cannot be visually verified, reject as wrong_variant or unclear. When the target says weighted or loaded, a real external load/resistance must be visible as held, worn, attached, or connected to the moving person. Do not count bodyweight alone, a bench, floor, anchor strap, support belt, partner, or setup fixture as weighted unless an actual load or resistance is visibly attached or held. Required named equipment: bench. Set namedEquipmentEngagedStatus to engaged only when that exact equipment is visibly held, worn, attached, or connected to the moving performer throughout the exercise action. Use absent for bodyweight or different equipment, and unclear when image evidence cannot verify it. When the target requires multiple action phases, showing only one is partial_movement; do not invent extra phases for a hold or require an extra repetition after the normal finish. Use the candidate id exactly as shown in the attachment list, for example A, B, or C; do not write 'Candidate A'. The code owns timing and will choose among separately reviewed candidates after classification; do not select a winner and do not return timestamps. Determine completion from the target exercise and visible action. Apply the matching case below, not all cases. For a static hold, a sustained, visibly correct exercise posture is a complete useful interval. Do not require movement, a phase transition, entry into the posture, release, or a return; maintaining the target hold is exercise execution, not waiting or setup. For continuous travel or an ongoing activity, a representative interval of that activity is complete without approach, stopping, a destination, or an invented return. For a discrete execution, require its meaningful start, full exercise-defining action path, and natural finish. For a repetition exercise, require the visible turning points and return in order; a top-to-bottom-to-top or bottom-to-top-to-bottom cycle is complete. Do not infer a missing phase, or reject a legitimate boundary merely because it is a bottom, contracted, lockout, or end-range posture. In every case, the whole interval must show the requested exercise with readable real footage, correct explicit qualifiers, and no material setup, reset, unrelated waiting, equipment transitions, or changed grip/support relationships. Reject still footage when the target requires motion, but do not classify a requested static hold as partial_movement merely because it is static. For an exercise with a repetition cycle, require both directions of the main movement. If unsure, set approved false and use unclear or low_confidence. Do not invent frame numbers, timestamps, selected candidate IDs, or chain-of-thought. reject must use only these fixed tags: wrong_exercise, wrong_variant, partial_movement, mechanics_inconsistent, contact_changed, bad_boundary, setup_or_filler, low_source_quality, low_confidence, synthetic_subject, unclear. Use [] only when approved is true. completeMovement means the matching completion case above is visibly satisfied. For a static hold or ongoing activity, startBoundaryClean and finishBoundaryClean are true when both edges remain within the correct exercise action; starting or ending mid-hold or mid-travel is not a bad boundary. For a discrete execution or repetition, the boundaries must show its meaningful start and natural finish/return rather than cutting off a required phase. For every case, set the relevant boundary false for actual setup, unrelated waiting, cleanup, equipment transitions, or changed support/grip relationships at that edge. setupOrFiller must be true when material setup, unrelated waiting, adjustment, unrack/rerack, reset, or filler is inside the cut. Maintaining a requested static hold is not filler. Decision order: first set completeMovement, startBoundaryClean, finishBoundaryClean, and setupOrFiller from the visible frames; then set approved true only when completeMovement is true, both boundary fields are true, setupOrFiller is false, confidence is high, and reject is empty. If approved is false, reject must contain at least one matching tag. If approved is true, reject must be []. note must be one short sentence with at most 10 words.\nReturn JSON only with exactly one row in this schema: {\"candidates\": [{\"id\": string, \"approved\": boolean, \"confidence\": number_0_to_1, \"completeMovement\": boolean, \"startBoundaryClean\": boolean, \"finishBoundaryClean\": boolean, \"setupOrFiller\": boolean, \"namedEquipmentEngagedStatus\": \"engaged|absent|unclear|not_applicable\", \"reject\": [string], \"note\": string, \"identityMatch\": \"match|mismatch|uncertain\", \"identityEvidence\": string, \"boundaryEvidence\": string, \"qualityEvidence\": string}]}. Classify from visible evidence only; code applies thresholds, retries, and failure handling.",
+  "rawResponse": "{\"candidates\": [{\"id\": \"B\", \"exercise_match\": 0.96, \"full_movement\": 0.92, \"start_visible\": 0.9, \"finish_visible\": 0.9, \"mechanics_consistency\": 0.92, \"start_state_ready\": 0.92, \"start_boundary_clean\": 0.92, \"finish_boundary_clean\": 0.92, \"setup_or_filler\": 0.0, \"source_quality\": 0.92, \"confidence\": 0.95, \"reject\": [], \"note\": \"Complete.\"}]}",
+  "ranking": {
+    "score": 0.9,
+    "modelScore": 0.9,
+    "reasons": [
+      "Complete.",
+      "source_candidate_scorecard_passed",
+      "source_candidate_window_choice"
+    ],
+    "rawResponse": "{\"candidates\": [{\"id\": \"B\", \"exercise_match\": 0.96, \"full_movement\": 0.92, \"start_visible\": 0.9, \"finish_visible\": 0.9, \"mechanics_consistency\": 0.92, \"start_state_ready\": 0.92, \"start_boundary_clean\": 0.92, \"finish_boundary_clean\": 0.92, \"setup_or_filler\": 0.0, \"source_quality\": 0.92, \"confidence\": 0.95, \"reject\": [], \"note\": \"Complete.\"}]}",
+    "payload": {
+      "sourceCutScorecardSchemaVersion": 3,
+      "sourceCutScorecardThresholds": {
+        "confidence": 0.85
+      },
+      "sourceCutScorecardContractPresent": true,
+      "sourceCutScorecardCandidates": [
+        {
+          "id": "B",
+          "exercise_match": 0.96,
+          "full_movement": 0.92,
+          "start_visible": 0.9,
+          "finish_visible": 0.9,
+          "mechanics_consistency": 0.92,
+          "start_state_ready": 0.92,
+          "start_boundary_clean": 0.92,
+          "finish_boundary_clean": 0.92,
+          "setup_or_filler": 0.0,
+          "source_quality": 0.92,
+          "confidence": 0.95,
+          "reject": [],
+          "invalidRejectTags": [],
+          "note": "Complete.",
+          "score": 0.9,
+          "passed": true,
+          "rejectionReasons": [],
+          "missingFields": [],
+          "cameraStabilityClassification": "unknown"
+        }
+      ],
+      "sourceCutClassifierSchema": "approved_confidence_equipment_reject_note",
+      "sourceCutMovementTopologyRequired": false,
+      "sourceCutSelectionPolicy": "progressive_multiscale_stable_level_then_score",
+      "sourceCutCandidates": [
+        {
+          "candidateId": "B",
+          "startSeconds": 42.48,
+          "endSeconds": 46.48,
+          "framePaths": [
+            "candidate_b.jpg"
+          ],
+          "boundaryAuditFramePaths": [],
+          "sampleFramePaths": [],
+          "visualIntegrity": {},
+          "frameMotionRejectionReasons": [],
+          "posePrefilter": {}
+        }
+      ],
+      "score": 0.9,
+      "modelScore": 0.9,
+      "selectedCandidateId": "B",
+      "selected_section_start_seconds": 42.48,
+      "selected_section_end_seconds": 46.48,
+      "selectedScorecard": {
+        "id": "B",
+        "exercise_match": 0.96,
+        "full_movement": 0.92,
+        "start_visible": 0.9,
+        "finish_visible": 0.9,
+        "mechanics_consistency": 0.92,
+        "start_state_ready": 0.92,
+        "start_boundary_clean": 0.92,
+        "finish_boundary_clean": 0.92,
+        "setup_or_filler": 0.0,
+        "source_quality": 0.92,
+        "confidence": 0.95,
+        "reject": [],
+        "invalidRejectTags": [],
+        "note": "Complete.",
+        "score": 0.9,
+        "passed": true,
+        "rejectionReasons": [],
+        "missingFields": [],
+        "cameraStabilityClassification": "unknown"
+      }
+    }
+  }
+}

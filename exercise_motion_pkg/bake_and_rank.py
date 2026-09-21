@@ -2587,6 +2587,7 @@ class BakeAndRankRequest:
     require_wham_cache: bool = False
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
+    motion_reconstruction_backend: str = "wham"
     spinepose_enabled: bool = False
     spinepose_json_dir: Path | None = None
     spinepose_command: str | None = None
@@ -19562,6 +19563,7 @@ def generate_candidate_motion(
         require_wham_cache=request.require_wham_cache,
         wham_estimate_local_only=request.wham_estimate_local_only,
         wham_run_smplify=request.wham_run_smplify,
+        motion_reconstruction_backend=request.motion_reconstruction_backend,
         spinepose_enabled=request.spinepose_enabled,
         spinepose_json_dir=request.spinepose_json_dir,
         spinepose_command=request.spinepose_command,
@@ -21946,9 +21948,15 @@ def choose_pre_wham_source_cut_or_reject(
         else None
     )
     from .pose_prefilter import refresh_legacy_spread_pose_evidence
-    source_pose_prefilter_payload = refresh_legacy_spread_pose_evidence(
-        source_pose_prefilter_payload, video_path=source_video_path, output_dir=selection_dir,
-        exercise_name=ranked_candidate.exercise_name, contract=exercise_motion_contract,
+    # The refresh runs YOLO on the GPU; go through the exclusive handoff so the
+    # resident caption session releases the global GPU lock first instead of
+    # deadlocking the source lane behind it.
+    source_pose_prefilter_payload = run_with_caption_gpu_exclusive(
+        caption_images,
+        lambda: refresh_legacy_spread_pose_evidence(
+            source_pose_prefilter_payload, video_path=source_video_path, output_dir=selection_dir,
+            exercise_name=ranked_candidate.exercise_name, contract=exercise_motion_contract,
+        ),
     )
     expanded_detection = expand_detection_source_for_kinematic_cut(
         source_video_path=source_video_path,

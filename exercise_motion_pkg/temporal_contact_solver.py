@@ -186,6 +186,7 @@ def _authoritative_world_floor_normal(clip: MotionClip) -> Point3 | None:
     if (
         isinstance(coordinate_normalization, dict)
         and coordinate_normalization.get("target") == "canonical_y_up_world"
+        and coordinate_normalization.get("transform") == "rotate_x_180_degrees"
     ):
         normal = (normal[0], -normal[1], -normal[2])
     length = math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])

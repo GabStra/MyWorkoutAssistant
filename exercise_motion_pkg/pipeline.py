@@ -167,6 +167,7 @@ class GenerateRequest:
     require_wham_cache: bool = False
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
+    motion_reconstruction_backend: str = "wham"
     spinepose_enabled: bool = False
     spinepose_json_dir: Path | None = None
     spinepose_command: str | None = None
@@ -261,6 +262,7 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
             {
                 "estimateLocalOnly": request.wham_estimate_local_only,
                 "runSmplify": request.wham_run_smplify,
+                "motionReconstructionBackend": request.motion_reconstruction_backend,
                 "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
                 "outputRotationDegrees": request.wham_output_rotation_degrees,
                 "preprocessingEnvironment": wham_preprocessing_environment(),
@@ -524,33 +526,64 @@ def _run_generation_pipeline_uncached(
                 f"for {input_video_path}."
             )
         if wham_source.should_run_wham:
-            if request.wham_repo_path is None:
+            if (
+                request.motion_reconstruction_backend == "wham"
+                and request.wham_repo_path is None
+            ):
                 raise ValueError(
                     "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
                 )
             stage_started = time.perf_counter()
-            def invoke_wham() -> Any:
-                return run_wham_locally(
-                    wham_repo_path=request.wham_repo_path.expanduser().resolve(),
-                    input_video=input_video_path,
-                    output_root=wham_output_dir,
-                    logs_dir=paths.logs_dir,
-                    python_command=request.wham_python_command,
-                    estimate_local_only=request.wham_estimate_local_only,
-                    run_smplify=request.wham_run_smplify,
-                    use_docker=request.use_wham_docker,
-                    docker_image=request.wham_docker_image,
-                    docker_gpus=request.wham_docker_gpus,
-                    docker_shm_size=request.wham_docker_shm_size,
-                    use_warm_worker=request.use_warm_wham_worker,
-                    warm_worker_session_dir=request.wham_worker_session_dir,
-                    warm_worker_mount_root=request.wham_worker_mount_root,
-                    warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
-                    timeout_seconds=request.wham_timeout_seconds,
-                    tracking_preflight=request.wham_tracking_preflight,
-                    required_start_seconds=request.output_crop_start_seconds,
-                    required_end_seconds=request.output_crop_end_seconds,
+            if request.motion_reconstruction_backend == "gvhmr":
+                if not request.use_wham_docker:
+                    raise ValueError(
+                        "The GVHMR reconstruction backend currently requires Docker execution."
+                    )
+                if request.spinepose_enabled:
+                    raise ValueError(
+                        "SpinePose correction is WHAM-specific and cannot run with the GVHMR backend."
+                    )
+
+                def invoke_wham() -> Any:
+                    from exercise_motion_pkg.gvhmr_runner import run_gvhmr_locally
+
+                    return run_gvhmr_locally(
+                        input_video=input_video_path,
+                        output_root=wham_output_dir,
+                        logs_dir=paths.logs_dir,
+                        docker_image=request.wham_docker_image,
+                        docker_gpus=request.wham_docker_gpus,
+                        docker_shm_size=request.wham_docker_shm_size,
+                        timeout_seconds=request.wham_timeout_seconds,
+                    )
+            elif request.wham_repo_path is None:
+                raise ValueError(
+                    "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
                 )
+            else:
+
+                def invoke_wham() -> Any:
+                    return run_wham_locally(
+                        wham_repo_path=request.wham_repo_path.expanduser().resolve(),
+                        input_video=input_video_path,
+                        output_root=wham_output_dir,
+                        logs_dir=paths.logs_dir,
+                        python_command=request.wham_python_command,
+                        estimate_local_only=request.wham_estimate_local_only,
+                        run_smplify=request.wham_run_smplify,
+                        use_docker=request.use_wham_docker,
+                        docker_image=request.wham_docker_image,
+                        docker_gpus=request.wham_docker_gpus,
+                        docker_shm_size=request.wham_docker_shm_size,
+                        use_warm_worker=request.use_warm_wham_worker,
+                        warm_worker_session_dir=request.wham_worker_session_dir,
+                        warm_worker_mount_root=request.wham_worker_mount_root,
+                        warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+                        timeout_seconds=request.wham_timeout_seconds,
+                        tracking_preflight=request.wham_tracking_preflight,
+                        required_start_seconds=request.output_crop_start_seconds,
+                        required_end_seconds=request.output_crop_end_seconds,
+                    )
 
             wham_result = (
                 run_wham_exclusive(invoke_wham)
@@ -615,20 +648,37 @@ def _run_generation_pipeline_uncached(
         # WHAM frame_ids refer to decoded input frames. Their timestamps must
         # use that video's rate before trimming inference-only context.
         wham_source_fps = read_basic_video_metadata(input_video_path).fps
+        # GVHMR exports gravity-aligned world coordinates from its own
+        # gravity-view representation, so no post-hoc rotation applies.
+        motion_coordinate_space = (
+            "world"
+            if request.motion_reconstruction_backend == "gvhmr"
+            else WHAM_COORDINATE_SPACE
+        )
+        motion_output_rotation_degrees = (
+            0.0
+            if request.motion_reconstruction_backend == "gvhmr"
+            else request.wham_output_rotation_degrees
+        )
         normalize_wham_output(
             wham_results_pkl=wham_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
-            coordinate_space=WHAM_COORDINATE_SPACE,
-            output_rotation_degrees=request.wham_output_rotation_degrees,
+            coordinate_space=motion_coordinate_space,
+            output_rotation_degrees=motion_output_rotation_degrees,
             fps=wham_source_fps,
+            extractor=(
+                "GVHMR"
+                if request.motion_reconstruction_backend == "gvhmr"
+                else "WHAM"
+            ),
         )
         record_timing("normalizeWhamOutputSeconds", stage_started)
         stage_started = time.perf_counter()
         retarget_source_path = export_wham_retarget_source(
             wham_results_pkl=wham_results_pkl,
             output_json=paths.retarget_dir / "wham.retarget_source.json",
-            coordinate_space=WHAM_COORDINATE_SPACE,
+            coordinate_space=motion_coordinate_space,
             fps=wham_source_fps,
         )
         record_timing("exportWhamRetargetSourceSeconds", stage_started)
@@ -637,7 +687,7 @@ def _run_generation_pipeline_uncached(
             smpl_preview_sequence = load_wham_smpl_mesh_sequence(
                 wham_results_pkl=wham_results_pkl,
                 body_model_root=request.body_model_root.expanduser().resolve(),
-                coordinate_space=WHAM_COORDINATE_SPACE,
+                coordinate_space=motion_coordinate_space,
                 fps=wham_source_fps,
             )
             record_timing("loadWhamSmplMeshSeconds", stage_started)
@@ -788,7 +838,14 @@ def _run_generation_pipeline_uncached(
             }
             timings["videoWorldAlignment"] = video_alignment_metadata
         stage_started = time.perf_counter()
-        tuning_input_clip = canonicalize_camera_motion_clip(raw_clip)
+        tuning_input_clip = canonicalize_camera_motion_clip(
+            raw_clip,
+            source_basis=(
+                "gvhmr_gravity_world"
+                if request.motion_reconstruction_backend == "gvhmr"
+                else "wham_opencv_camera"
+            ),
+        )
         record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
         stage_started = time.perf_counter()
         cleaned_clip, cleanup_stats = cleanup_motion_clip(
@@ -1074,17 +1131,32 @@ def crop_motion_clip_to_input_window(
     )
 
 
-def canonicalize_camera_motion_clip(clip: MotionClip) -> MotionClip:
-    """Convert WHAM/OpenCV camera coordinates into the preview's Y-up world basis.
+def canonicalize_camera_motion_clip(
+    clip: MotionClip, *, source_basis: str = "wham_opencv_camera"
+) -> MotionClip:
+    """Convert reconstruction coordinates into the preview's Y-up world basis.
 
     WHAM camera coordinates use positive Y down and positive Z forward.  The
     renderer uses positive Y up and the opposite Z direction.  Converting the
     motion once during post-processing keeps world orientation out of preview
     settings and avoids camera-dependent scene inversion heuristics.
+    Gravity-aligned world reconstructions (GVHMR) already use this basis and
+    only record their normalization for downstream consumers.
     """
-    return replace(
-        clip,
-        frames=[
+    if source_basis == "gvhmr_gravity_world":
+        normalization = {
+            "source": source_basis,
+            "target": "canonical_y_up_world",
+            "transform": "identity_y_up_world",
+        }
+        frames = clip.frames
+    else:
+        normalization = {
+            "source": source_basis,
+            "target": "canonical_y_up_world",
+            "transform": "rotate_x_180_degrees",
+        }
+        frames = [
             MotionFrame(
                 time_sec=frame.time_sec,
                 joints={
@@ -1093,15 +1165,11 @@ def canonicalize_camera_motion_clip(clip: MotionClip) -> MotionClip:
                 },
             )
             for frame in clip.frames
-        ],
-        metadata={
-            **clip.metadata,
-            "coordinateNormalization": {
-                "source": "wham_opencv_camera",
-                "target": "canonical_y_up_world",
-                "transform": "rotate_x_180_degrees",
-            },
-        },
+        ]
+    return replace(
+        clip,
+        frames=frames,
+        metadata={**clip.metadata, "coordinateNormalization": normalization},
     )
 
 

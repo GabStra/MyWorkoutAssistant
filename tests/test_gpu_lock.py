@@ -9,6 +9,7 @@ import pytest
 
 from exercise_motion_pkg.gpu_lock import (
     GPU_LOCK_PATH_ENV_VAR,
+    GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR,
     GlobalGpuLock,
 )
 
@@ -125,3 +126,40 @@ def test_docker_lease_reader_does_not_mask_operation_failure(tmp_path, monkeypat
         if reader is not None:
             os.close(reader)
     assert not path.exists()
+
+
+def test_same_process_timeout_force_releases_pinned_holder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "gpu.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setenv(GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR, "1")
+    released: list[str] = []
+
+    holder = GlobalGpuLock(
+        stage="llama_cpp_server",
+        on_force_release=lambda: released.append("holder"),
+    )
+    holder.__enter__()
+    failures: list[BaseException] = []
+
+    def acquire_from_worker_thread() -> None:
+        try:
+            with GlobalGpuLock(stage="yolo_pose_prefilter"):
+                # The pinned holder was force-released, so the waiter acquired.
+                assert lock_path.exists()
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    started = time.perf_counter()
+    worker = threading.Thread(target=acquire_from_worker_thread)
+    worker.start()
+    worker.join(timeout=30.0)
+    holder.__exit__(None, None, None)
+
+    assert not worker.is_alive()
+    assert not failures
+    assert released == ["holder"]
+    assert time.perf_counter() - started < 30.0
+    assert not lock_path.exists()

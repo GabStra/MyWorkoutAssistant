@@ -17,6 +17,7 @@ def convert_wham_results_to_motion_clip(
     subject_id: int | str | None = None,
     output_rotation_degrees: float = 0.0,
     fps: float = 30.0,
+    extractor: str = "WHAM",
 ) -> MotionClip:
     fps = validate_wham_frame_rate(fps)
     ensure_legacy_smpl_runtime_compat()
@@ -104,14 +105,14 @@ def convert_wham_results_to_motion_clip(
         joint_names=list(SMPL_JOINT_NAMES),
         frames=frames,
         source={
-            "extractor": "WHAM",
+            "extractor": extractor,
             "whamResultsPkl": str(wham_results_pkl),
             "coordinateSpace": coordinate_space,
             "subjectId": str(resolved_subject_id),
             "outputRotationDegrees": output_rotation_degrees,
         },
         metadata={
-            "upstream": "wham",
+            "upstream": extractor.lower(),
             "wham": {
                 "coordinateSpace": coordinate_space,
                 "subjectId": str(resolved_subject_id),
@@ -131,6 +132,7 @@ def normalize_wham_output(
     subject_id: int | str | None = None,
     output_rotation_degrees: float = 0.0,
     fps: float = 30.0,
+    extractor: str = "WHAM",
 ) -> Path:
     from exercise_motion_pkg.motion_io import save_motion_json
 
@@ -141,6 +143,7 @@ def normalize_wham_output(
         subject_id=subject_id,
         output_rotation_degrees=output_rotation_degrees,
         fps=fps,
+        extractor=extractor,
     )
     save_motion_json(output_json, clip)
     return output_json

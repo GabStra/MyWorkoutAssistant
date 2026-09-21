@@ -9,6 +9,9 @@ param(
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
     [string]$WhamPython = "python",
+    [ValidateSet("wham", "gvhmr")]
+    [string]$MotionReconstructor = "wham",
+    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$UseWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [string]$WhamDockerGpus = "all",
@@ -394,7 +397,31 @@ else {
 $whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
 $whamResultsPkl = Join-Path $whamResultsPkl "wham_output.pkl"
 $whamCachedOutputDir = Split-Path -Parent $whamResultsPkl
-if ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
+if ($MotionReconstructor -eq "gvhmr") {
+    if ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
+        Write-Host "Reusing cached GVHMR output: $whamResultsPkl"
+    }
+    else {
+        Write-Host "Running GVHMR reconstruction via Docker."
+        $gvhmrArgs = @(
+            "-m", "exercise_motion_pkg.cli",
+            "gvhmr-run",
+            "--input-video", $resolvedInputVideoPath,
+            "--output-root", $rawWhamDir,
+            "--logs-dir", (Join-Path $Workspace "logs"),
+            "--docker-image", $GvhmrDockerImage,
+            "--timeout-seconds", "$WhamTimeoutSeconds"
+        )
+        & $pythonCommand @gvhmrArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "GVHMR stage failed with exit code $LASTEXITCODE."
+        }
+    }
+    if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
+        throw "GVHMR stage finished but did not produce wham_output.pkl at '$whamResultsPkl'."
+    }
+}
+elseif ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
     Write-Host "Reusing cached WHAM output: $whamResultsPkl"
 }
 else {
@@ -423,6 +450,9 @@ $generateArgs = @(
 )
 if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
     $generateArgs += @("--wham-repo-path", $resolvedWhamRepoPath)
+}
+if ($MotionReconstructor -eq "gvhmr") {
+    $generateArgs += @("--motion-reconstructor", "gvhmr")
 }
 if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
     $generateArgs += "--wham-estimate-local-only"

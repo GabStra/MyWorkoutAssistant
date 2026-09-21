@@ -3,21 +3,37 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import ctypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
 GPU_LOCK_PATH_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_PATH"
 GPU_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_TIMEOUT_SECONDS"
 DEFAULT_GPU_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
+GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR = (
+    "EXERCISE_MOTION_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS"
+)
+# A same-process holder is a resident model session, not another job; if it
+# starves the rest of the pipeline for this long something is pinned, so the
+# wait must fail (and repair) long before the cross-process timeout.
+DEFAULT_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS = 15 * 60
+GPU_LOCK_WAIT_LOG_SECONDS = 60.0
 LEGACY_GPU_LOCK_GRACE_SECONDS = 60.0
 _LOCAL_GPU_LOCK_RELEASED = threading.Condition()
 _LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
+
+_HOLDER_REGISTRY: dict[int, list["GlobalGpuLock"]] = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def _gpu_lock_log(message: str) -> None:
+    print(f"[gpu-lock] {message}", file=sys.stderr, flush=True)
 
 
 def _windows_file_handle(path: Path, *, create: bool) -> int:
@@ -64,19 +80,64 @@ def close_lock_lease(handle: int, path: Path) -> None:
 
 
 class GlobalGpuLock:
-    def __init__(self, *, stage: str, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        stage: str,
+        enabled: bool = True,
+        on_force_release: Callable[[], None] | None = None,
+    ) -> None:
         self.stage = stage
         self.enabled = enabled and gpu_lock_enabled()
         self.path = gpu_lock_path()
         self.timeout_seconds = gpu_lock_timeout_seconds()
+        self.same_process_timeout_seconds = gpu_lock_same_process_timeout_seconds()
         self.wait_seconds = 0.0
         self._handle: int | None = None
+        self._force_released = False
+        self.on_force_release = on_force_release
+
+    def _acquired(self) -> float:
+        with _REGISTRY_LOCK:
+            _HOLDER_REGISTRY.setdefault(os.getpid(), []).append(self)
+        return self.wait_seconds
+
+    def _release_lease(self) -> None:
+        if self._handle is None:
+            return
+        handle, self._handle = self._handle, None
+        close_lock_lease(handle, self.path)
+        with _REGISTRY_LOCK:
+            holders = _HOLDER_REGISTRY.get(os.getpid())
+            if holders and self in holders:
+                holders.remove(self)
+                if not holders:
+                    _HOLDER_REGISTRY.pop(os.getpid(), None)
+
+    def force_release(self, reason: str) -> bool:
+        """Last-resort repair: drop this holder's lease so starvation ends."""
+        if self._handle is None:
+            return False
+        self._force_released = True
+        _gpu_lock_log(
+            f"force-releasing GPU lock holder stage={self.stage} "
+            f"threadId={threading.get_ident()}: {reason}"
+        )
+        self._release_lease()
+        callback = self.on_force_release
+        if callback is not None:
+            try:
+                callback()
+            except Exception as error:  # The lease is already gone; keep going.
+                _gpu_lock_log(f"force-release callback failed for stage={self.stage}: {error}")
+        return True
 
     def __enter__(self) -> float:
         if not self.enabled:
             return 0.0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
+        last_wait_log = 0.0
         while True:
             try:
                 self._handle = open_lock_lease(self.path)
@@ -89,6 +150,7 @@ class GlobalGpuLock:
                 }
                 os.write(self._handle, json.dumps(payload).encode("utf-8"))
                 self.wait_seconds = time.perf_counter() - started
+                self._acquired()
                 return self.wait_seconds
             except OSError as error:
                 if self._handle is not None:
@@ -98,10 +160,11 @@ class GlobalGpuLock:
                 if not lock_open_is_contention(error):
                     raise
                 active_payload = lock_payload(self.path)
-                if (
+                same_process = (
                     isinstance(active_payload, dict)
                     and active_payload.get("pid") == os.getpid()
-                ):
+                )
+                if same_process:
                     current_thread_id = threading.get_ident()
                     if active_payload.get("threadId") == current_thread_id:
                         raise RuntimeError(
@@ -118,13 +181,31 @@ class GlobalGpuLock:
                     except OSError:
                         pass
                 elapsed = time.perf_counter() - started
-                if elapsed >= self.timeout_seconds:
+                if elapsed - last_wait_log >= GPU_LOCK_WAIT_LOG_SECONDS:
+                    last_wait_log = elapsed
+                    holder_stage = active_payload.get("stage") if isinstance(active_payload, dict) else None
+                    holder_pid = active_payload.get("pid") if isinstance(active_payload, dict) else None
+                    _gpu_lock_log(
+                        f"waiting for global GPU lock: requestedStage={self.stage} "
+                        f"waited={elapsed:.0f}s holderStage={holder_stage} "
+                        f"holderPid={holder_pid} sameProcess={same_process}"
+                    )
+                effective_timeout = (
+                    min(self.timeout_seconds, self.same_process_timeout_seconds)
+                    if same_process
+                    else self.timeout_seconds
+                )
+                if elapsed >= effective_timeout:
+                    if same_process and force_release_gpu_lock_holders(
+                        self.path,
+                        reason=(
+                            f"same-process holder starved {self.stage} for {elapsed:.0f}s"
+                        ),
+                    ):
+                        continue
                     raise TimeoutError(f"Timed out waiting for global GPU lock: {self.path}")
-                if (
-                    isinstance(active_payload, dict)
-                    and active_payload.get("pid") == os.getpid()
-                ):
-                    remaining_seconds = self.timeout_seconds - elapsed
+                if same_process:
+                    remaining_seconds = effective_timeout - elapsed
                     with _LOCAL_GPU_LOCK_RELEASED:
                         _LOCAL_GPU_LOCK_RELEASED.wait(
                             timeout=min(_LOCAL_GPU_LOCK_WAIT_SECONDS, remaining_seconds)
@@ -139,12 +220,28 @@ class GlobalGpuLock:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         try:
-            if self._handle is not None:
-                handle, self._handle = self._handle, None
-                close_lock_lease(handle, self.path)
+            self._release_lease()
         finally:
             with _LOCAL_GPU_LOCK_RELEASED:
                 _LOCAL_GPU_LOCK_RELEASED.notify_all()
+
+
+def force_release_gpu_lock_holders(lock_path: Path, *, reason: str) -> bool:
+    """Force-release live holders owned by this process (crashed or pinned)."""
+    payload = lock_payload(lock_path)
+    if not isinstance(payload, dict) or payload.get("pid") != os.getpid():
+        return False
+    with _REGISTRY_LOCK:
+        holders = list(_HOLDER_REGISTRY.get(os.getpid(), []))
+    released = False
+    for holder in holders:
+        if holder.force_release(reason):
+            released = True
+    if not released:
+        _gpu_lock_log(
+            f"cannot force-release same-process GPU lock holder: no registered holder. {reason}"
+        )
+    return released
 
 
 def gpu_stage_lock(*, stage: str, enabled: bool = True) -> GlobalGpuLock:
@@ -173,6 +270,16 @@ def gpu_lock_timeout_seconds() -> float:
         return max(1.0, float(raw))
     except ValueError:
         return float(DEFAULT_GPU_LOCK_TIMEOUT_SECONDS)
+
+
+def gpu_lock_same_process_timeout_seconds() -> float:
+    raw = os.environ.get(GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is None:
+        return float(DEFAULT_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS)
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return float(DEFAULT_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS)
 
 
 def gpu_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
