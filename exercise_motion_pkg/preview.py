@@ -1094,14 +1094,12 @@ def _build_wear_transformed_frames(
                 "timeSec": frame.time_sec - active_start_time,
                 "sourceTimeSec": frame.time_sec,
                 "rootTranslationApplied": _point_to_list(translation),
-                # Preserve the pre-preview coordinates so deterministic output
-                # validation can compare the baked animation with the exact
-                # same WHAM frames. Rigid transforms do not affect the paired-
-                # hand distance/correlation metrics used by that validator.
-                "sourceJoints": {
-                    joint_name: _point_to_list(point)
-                    for joint_name, point in frame.joints.items()
-                },
+                # Pre-IK reference in the SAME export world frame as "joints":
+                # the controlled fit and the pre-fit fidelity probe compare the
+                # two fields directly, and the placement registration restores
+                # this shared frame. Paired-hand metrics used by the raw-WHAM
+                # validator are invariant to these rigid transforms.
+                "sourceJoints": dict(transformed_joints),
                 "joints": transformed_joints,
             }
         )
@@ -1226,27 +1224,49 @@ def _bounds_center(bounds: dict[str, float]) -> tuple[float, float, float]:
     )
 
 
+def _map_frame_joint_fields(
+    frame: dict[str, object],
+    transform,
+    fields: tuple[str, ...] = ("joints", "sourceJoints"),
+) -> dict[str, object]:
+    """Apply one rigid point transform to every exported per-frame joint field.
+
+    ``sourceJoints`` must stay in the same world frame as ``joints``: the
+    pre-fit fidelity probe and the controlled fit retarget compare them, and
+    the placement registration restores that shared frame from
+    ``cameraPlacementReferenceJoints``. Keeping raw pre-preview coordinates
+    there silently desynchronizes the fields whenever alignment applies a
+    yaw (GVHMR gravity-world headings make this large), which corrupts every
+    cross-field comparison downstream.
+    """
+    mapped = dict(frame)
+    for field in fields:
+        joints = frame.get(field)
+        if isinstance(joints, dict):
+            mapped[field] = {
+                joint_name: _point_to_list(transform(point))
+                for joint_name, point in joints.items()
+                if _is_serialized_point(point)
+            }
+    return mapped
+
+
 def _subtract_scene_origin_from_frames(
     frames: list[dict[str, object]],
     scene_origin: tuple[float, float, float],
 ) -> list[dict[str, object]]:
     centered_frames: list[dict[str, object]] = []
     for frame in frames:
-        joints = frame.get("joints")
-        centered_joints = {}
-        if isinstance(joints, dict):
-            centered_joints = {
-                joint_name: [
+        centered_frames.append(
+            _map_frame_joint_fields(
+                frame,
+                lambda point: (
                     float(point[0]) - scene_origin[0],
                     float(point[1]) - scene_origin[1],
                     float(point[2]) - scene_origin[2],
-                ]
-                for joint_name, point in joints.items()
-                if _is_serialized_point(point)
-            }
-        centered_frame = dict(frame)
-        centered_frame["joints"] = centered_joints
-        centered_frames.append(centered_frame)
+                ),
+            )
+        )
     return centered_frames
 
 
@@ -1265,21 +1285,12 @@ def _normalize_wear_skeleton_export_coordinates(
 
     normalized_frames: list[dict[str, object]] = []
     for frame in frames:
-        joints = frame.get("joints")
-        normalized_joints = {}
-        if isinstance(joints, dict):
-            normalized_joints = {
-                joint_name: [
-                    float(point[0]),
-                    -float(point[1]),
-                    -float(point[2]),
-                ]
-                for joint_name, point in joints.items()
-                if _is_serialized_point(point)
-            }
-        normalized_frame = dict(frame)
-        normalized_frame["joints"] = normalized_joints
-        normalized_frames.append(normalized_frame)
+        normalized_frames.append(
+            _map_frame_joint_fields(
+                frame,
+                lambda point: (float(point[0]), -float(point[1]), -float(point[2])),
+            )
+        )
 
     return normalized_frames, {
         "canonicalWorldUp": True,
@@ -1351,40 +1362,34 @@ def _align_baked_sagittal_plane_to_grid_axis(
         if _is_serialized_point(pivot_value)
         else (0.0, 0.0, 0.0)
     )
+    def _rotate_point_around_pivot(point):
+        centered = (
+            float(point[0]) - pivot[0],
+            float(point[1]) - pivot[1],
+            float(point[2]) - pivot[2],
+        )
+        rotated = centered
+        for rotation_step in rotation_sequence:
+            axis_value = rotation_step.get("axis")
+            axis = (
+                (float(axis_value[0]), float(axis_value[1]), float(axis_value[2]))
+                if _is_serialized_point(axis_value)
+                else (0.0, 1.0, 0.0)
+            )
+            rotated = _rotate_point(
+                rotated,
+                axis=axis,
+                angle=float(rotation_step.get("radians", 0.0)),
+            )
+        return (
+            rotated[0] + pivot[0],
+            rotated[1] + pivot[1],
+            rotated[2] + pivot[2],
+        )
+
     rotated_frames: list[dict[str, object]] = []
     for frame in frames:
-        joints = frame.get("joints")
-        rotated_joints = {}
-        if isinstance(joints, dict):
-            for joint_name, point in joints.items():
-                if not _is_serialized_point(point):
-                    continue
-                centered = (
-                    float(point[0]) - pivot[0],
-                    float(point[1]) - pivot[1],
-                    float(point[2]) - pivot[2],
-                )
-                rotated = centered
-                for rotation_step in rotation_sequence:
-                    axis_value = rotation_step.get("axis")
-                    axis = (
-                        (float(axis_value[0]), float(axis_value[1]), float(axis_value[2]))
-                        if _is_serialized_point(axis_value)
-                        else (0.0, 1.0, 0.0)
-                    )
-                    rotated = _rotate_point(
-                        rotated,
-                        axis=axis,
-                        angle=float(rotation_step.get("radians", 0.0)),
-                    )
-                rotated_joints[joint_name] = [
-                    rotated[0] + pivot[0],
-                    rotated[1] + pivot[1],
-                    rotated[2] + pivot[2],
-                ]
-        rotated_frame = dict(frame)
-        rotated_frame["joints"] = rotated_joints
-        rotated_frames.append(rotated_frame)
+        rotated_frames.append(_map_frame_joint_fields(frame, _rotate_point_around_pivot))
     return rotated_frames, alignment
 
 
@@ -1403,26 +1408,26 @@ def _level_baked_travel_roll(
     pivot = _bounds_center(_compute_transformed_joint_bounds(frames))
     rotated_frames: list[dict[str, object]] = []
     for frame in frames:
-        joints = frame.get("joints")
-        rotated_joints: dict[str, list[float]] = {}
-        if isinstance(joints, dict):
-            for joint_name, point in joints.items():
-                if not _is_serialized_point(point):
-                    continue
-                centered = (
-                    float(point[0]) - pivot[0],
-                    float(point[1]) - pivot[1],
-                    float(point[2]) - pivot[2],
-                )
-                rotated = _rotate_point(centered, axis=(1.0, 0.0, 0.0), angle=roll_radians)
-                rotated_joints[joint_name] = [
-                    rotated[0] + pivot[0],
-                    rotated[1] + pivot[1],
-                    rotated[2] + pivot[2],
-                ]
-        rotated_frame = dict(frame)
-        rotated_frame["joints"] = rotated_joints
-        rotated_frames.append(rotated_frame)
+        rotated_frames.append(
+            _map_frame_joint_fields(
+                frame,
+                lambda point: tuple(
+                    value + offset
+                    for value, offset in zip(
+                        _rotate_point(
+                            (
+                                float(point[0]) - pivot[0],
+                                float(point[1]) - pivot[1],
+                                float(point[2]) - pivot[2],
+                            ),
+                            axis=(1.0, 0.0, 0.0),
+                            angle=roll_radians,
+                        ),
+                        pivot,
+                    )
+                ),
+            )
+        )
     return rotated_frames, {
         "applied": True,
         "strategy": "rigid_median_torso_roll_leveling",
@@ -8920,6 +8925,8 @@ def _build_html(
           : null;
         const joints = {{}};
         const cameraPlacementReferenceJoints = {{}};
+        const sourceJoints = {{}};
+        const rawSourceJoints = (sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints) ?? null;
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
           if (!Array.isArray(point) || point.length < 3) {{
@@ -8930,6 +8937,15 @@ def _build_html(
           // Preserve rigid camera placement before joint-specific contact IK.
           const reference = toBaseWorldPoint(point, translation, true, null, selectedPreviewSettings.fixedRoot);
           cameraPlacementReferenceJoints[jointName] = [reference.x, reference.y, reference.z];
+          // Map the pre-IK articulation target through the SAME world
+          // placement: sourceJoints must share the exact frame (rotation
+          // AND translation) of the placement reference, or the retained-
+          // camera restoration applies the wrong constant origin.
+          const sourcePoint = rawSourceJoints?.[jointName];
+          if (Array.isArray(sourcePoint) && sourcePoint.length >= 3) {{
+            const sourceReference = toBaseWorldPoint(sourcePoint, translation, true, null, selectedPreviewSettings.fixedRoot);
+            sourceJoints[jointName] = [sourceReference.x, sourceReference.y, sourceReference.z];
+          }}
         }}
         const boneSides = {{}};
         for (const spec of smplPoseSource?.twistSpecs ?? []) {{
@@ -8950,7 +8966,7 @@ def _build_html(
           sourceTimeSec: frame.timeSec ?? 0,
           syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
           rootTranslationApplied: translation,
-          sourceJoints: sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints ?? null,
+          sourceJoints: Object.keys(sourceJoints).length > 0 ? sourceJoints : (rawSourceJoints ?? null),
           joints,
           cameraPlacementReferenceJoints,
           boneSides,

@@ -25518,6 +25518,52 @@ def apply_source_contact_sequence_correction(
                 )
             frame["rootTranslationApplied"] = updated_root_translation
 
+    # A rigid translation removes common drift but not limb-owned slide: a
+    # planted foot can still wander around its anchor. Pin still-sliding
+    # source-confirmed contact chains with exact-length two-bone IK so the
+    # support gates verify a repaired limb instead of rejecting a drifting one.
+    from .contact_constraints import is_observed_ground_contact
+    pinning_intervals = [
+        {
+            **interval,
+            # Only observed ground contacts may be anchored to the support
+            # plane; elevated supports keep their own observed anchor height.
+            "isObservedGroundContact": is_observed_ground_contact(
+                interval, source_support_evidence
+            ),
+        }
+        for interval in interval_metrics
+        if interval.get("usedForCorrection") and is_point3(interval.get("anchor"))
+    ]
+    pinning_report = {"applied": False, "joints": {}}
+    if pinning_intervals:
+        pinning_body_spans = [
+            body_span_for_frame(frame) for frame in frames if isinstance(frame, dict)
+        ]
+        positive_pinning_spans = [
+            span for span in pinning_body_spans if span > 1e-6
+        ]
+        pinning_body_span = (
+            statistics.median(positive_pinning_spans) if positive_pinning_spans else 0.0
+        )
+        if pinning_body_span > 1e-6:
+            from .contact_pinning import pin_stationary_contact_chains
+            pinning_plane_y, _plane_source = observed_ground_support_plane_y(
+                frames,
+                [interval for interval in pinning_intervals
+                 if str(interval.get("supportKind") or "foot") in {"foot", "observed_foot_patch"}],
+                source_support_evidence,
+                corrected_payload.get("renderFloorY"),
+            )
+            pinning_report = pin_stationary_contact_chains(
+                frames,
+                pinning_intervals,
+                body_span=pinning_body_span,
+                slide_threshold_ratio=SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD,
+                joint_names=corrected_payload.get("jointNames"),
+                support_plane_y=pinning_plane_y,
+            )
+
     loop_closure = {
         "applied": False,
         "reason": (
@@ -25612,11 +25658,15 @@ def apply_source_contact_sequence_correction(
     metrics = {
         "schemaVersion": 1,
         "applied": (
-            any(value > 1e-8 for value in translation_magnitudes)
-            and corrected_rms_contact_error + 1e-9 < baseline_rms_contact_error
+            (
+                any(value > 1e-8 for value in translation_magnitudes)
+                and corrected_rms_contact_error + 1e-9 < baseline_rms_contact_error
+            )
+            or bool(pinning_report.get("applied"))
         ),
         "reason": "source_contact_rigid_sequence_correction",
         "contactIntervals": interval_metrics,
+        "stationaryContactPinning": pinning_report,
         "maxTranslation": max(translation_magnitudes, default=0.0),
         "maxFrameTranslationStep": max(frame_steps, default=0.0),
         "baselineRmsContactError": baseline_rms_contact_error,

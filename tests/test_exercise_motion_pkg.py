@@ -6877,11 +6877,35 @@ def test_wear_preview_payload_preserves_source_joints_for_relative_validation() 
     assert all(len(point) == 3 for point in source_joints.values())
 
 
+def test_wear_preview_source_joints_share_export_world_frame() -> None:
+    """sourceJoints must live in the aligned export frame, not the raw input frame.
+
+    The pre-fit fidelity probe and the controlled fit compare sourceJoints with
+    joints/cameraPlacementReferenceJoints and assume one shared world frame. A
+    large alignment yaw (GVHMR gravity-world headings) used to desynchronize
+    the fields and corrupt every downstream comparison.
+    """
+    from exercise_motion_pkg.preview import build_wear_skeleton_payload
+
+    clip = build_fixture_clip()
+    payload = build_wear_skeleton_payload(clip, title="frame-consistent")
+
+    assert payload["frames"]
+    frame = payload["frames"][0]
+    for name, point in frame["joints"].items():
+        reference = frame["sourceJoints"][name]
+        assert all(abs(a - b) < 1e-9 for a, b in zip(point, reference)), name
+
+
 def test_browser_bake_recovers_source_joints_from_original_payload() -> None:
     source = inspect.getsource(preview_module._build_html)
 
     assert "payload.frames[sourceFrameIndex]" in source
-    assert "sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints ?? null" in source
+    # The pre-IK articulation target is recovered from the original payload and
+    # mapped through the same world placement as the camera placement
+    # reference so every exported per-frame joint field shares one frame.
+    assert "rawSourceJoints" in source
+    assert "toBaseWorldPoint(sourcePoint, translation, true, null" in source
 
 
 def test_staged_wave_preserves_unlimited_final_output_rejections() -> None:
@@ -7093,6 +7117,7 @@ def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering()
     assert payload["bakedPreviewConfiguration"] == {
         "autoWorldAlignment": True,
         "lockGlobalRootDrift": True,
+        "preserveAuthoritativeHorizontalTravel": False,
         "lockYDrift": False,
         "invertScene": False,
         "canonicalWorldUp": True,
@@ -48654,6 +48679,109 @@ def test_contact_sequence_correction_scores_drift_not_absolute_anchor_shift() ->
         corrected,
         evidence,
     )["passed"] is True
+
+
+def test_contact_sequence_correction_pins_floating_stationary_foot_to_support_plane() -> None:
+    """A planted foot that floats and slides gets leg-chain pinned, not just translated.
+
+    The whole-body translation owns common drift; limb-owned slide and a foot
+    floating above the source-confirmed support plane require exact-length
+    two-bone IK pinning. Bone lengths must be preserved exactly and a
+    traveling foot must stay untouched.
+    """
+    frames = []
+    left_hip = (-0.2, 1.0, 0.0)
+    segment_length = 0.6
+    for index in range(24):
+        drift = index * 0.01
+        floating_ankle = (-0.2 + drift, 0.18, 0.0)
+        # Exact-length bent leg reaching the floating ankle (bends in -x).
+        direction = [floating_ankle[i] - left_hip[i] for i in range(3)]
+        distance = math.dist(left_hip, floating_ankle)
+        axis = [value / distance for value in direction]
+        pole = [-axis[1], axis[0], 0.0]
+        height = math.sqrt(max(0.0, segment_length**2 - (distance / 2) ** 2))
+        knee = [
+            left_hip[i] + axis[i] * distance / 2 - pole[i] * height
+            for i in range(3)
+        ]
+        joints = {
+            "head": [0.0, 1.8, 0.0],
+            "left_shoulder": [-0.2, 1.6, 0.0],
+            "right_shoulder": [0.2, 1.6, 0.0],
+            "pelvis": [0.0, 1.0, 0.0],
+            "left_hip": list(left_hip),
+            "right_hip": [0.2, 1.0, 0.0],
+            "left_knee": knee,
+            "right_knee": [0.2, 0.55, 0.0],
+            # Planted left foot: drifts laterally and floats above the floor.
+            "left_ankle": list(floating_ankle),
+            "left_foot": [floating_ankle[0], floating_ankle[1] - 0.05, 0.1],
+            # Right leg steps: genuine travel, must never be pinned.
+            "right_ankle": [0.2 + index * 0.03, 0.0, 0.0],
+            "right_foot": [0.2 + index * 0.03, -0.05, 0.1],
+        }
+        frames.append({"frameIndex": index, "timeSec": index / 30, "joints": joints})
+    baseline = {"frames": frames, "renderFloorY": -0.05}
+    evidence = {
+        "sharedSupportPlaneY": -0.05,
+        "contacts": [
+            {
+                "jointName": "left_foot",
+                "startFrame": 0,
+                "endFrame": 23,
+                "contactState": "full_sole",
+                "confidence": 0.9,
+                "surfaceKind": "ground",
+            }
+        ],
+    }
+
+    corrected, metrics = bake_and_rank_module.apply_source_contact_sequence_correction(
+        baseline,
+        evidence,
+    )
+
+    pinning = metrics.get("stationaryContactPinning") or {}
+    left_entries = (pinning.get("joints") or {}).get("left_foot") or []
+    assert any(entry.get("applied") for entry in left_entries)
+    corrected_frames = corrected["frames"]
+    left_foot_y = [frame["joints"]["left_foot"][1] for frame in corrected_frames[6:18]]
+    median_y = sorted(left_foot_y)[len(left_foot_y) // 2]
+    assert abs(median_y - (-0.05)) < 0.02
+    left_foot_x = [frame["joints"]["left_foot"][0] for frame in corrected_frames[6:18]]
+    assert max(left_foot_x) - min(left_foot_x) < 0.03
+    # Exact bone-length preservation through the pinned interval.
+    for frame_index in (6, 12, 18):
+        joints = corrected_frames[frame_index]["joints"]
+        assert math.dist(joints["left_hip"], joints["left_knee"]) == pytest.approx(
+            segment_length, abs=1e-6
+        )
+        assert math.dist(joints["left_knee"], joints["left_ankle"]) == pytest.approx(
+            segment_length, abs=1e-6
+        )
+        assert math.dist(joints["left_ankle"], joints["left_foot"]) == pytest.approx(
+            math.dist(
+                frames[frame_index]["joints"]["left_ankle"],
+                frames[frame_index]["joints"]["left_foot"],
+            ),
+            abs=1e-6,
+        )
+    # The traveling right foot keeps its root-relative trajectory: only the
+    # whole-body translation (which moves every joint alike) may shift it.
+    for index in (0, 10, 23):
+        for joint in ("right_ankle", "right_foot"):
+            offset_corrected = [
+                corrected_frames[index]["joints"][joint][axis]
+                - corrected_frames[index]["joints"]["pelvis"][axis]
+                for axis in range(3)
+            ]
+            offset_baseline = [
+                frames[index]["joints"][joint][axis]
+                - frames[index]["joints"]["pelvis"][axis]
+                for axis in range(3)
+            ]
+            assert offset_corrected == pytest.approx(offset_baseline, abs=1e-9)
 
 
 def test_contact_sequence_correction_preserves_locomotion_across_contact_intervals() -> None:

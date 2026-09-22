@@ -878,50 +878,6 @@ def _run_generation_pipeline_uncached(
             preserve_temporal_extent=isinstance(source_pose_payload, dict),
         )
         record_timing("cleanupMotionSeconds", stage_started)
-        if request.motion_reconstruction_backend == "gvhmr":
-            # GVHMR joints come from regression on posed SMPL-X meshes and carry
-            # pose-dependent bilateral span jitter; exact-rigidity reference
-            # checks downstream reject it. Shoulders/hips are anatomically
-            # rigid, so project them onto their temporal median span. Promote
-            # to all backends once WHAM artifact identity is re-baselined.
-            import numpy as np
-
-            from .anatomical_repair import (
-                enforce_bilateral_chain_symmetry,
-                enforce_bilateral_span_rigidity,
-                enforce_socket_centering,
-            )
-
-            joint_names = list(cleaned_clip.joint_names)
-            stage_started = time.perf_counter()
-            points = np.asarray(
-                [[frame.joints[name] for name in joint_names] for frame in cleaned_clip.frames],
-                dtype=float,
-            )
-            corrected, socket_report = enforce_socket_centering(points, joint_names)
-            corrected, symmetry_report = enforce_bilateral_chain_symmetry(corrected, joint_names)
-            corrected, span_report = enforce_bilateral_span_rigidity(corrected, joint_names)
-            # Spans move shoulders/hips; a second chain pass restores symmetry.
-            corrected, symmetry_pass2 = enforce_bilateral_chain_symmetry(corrected, joint_names)
-            corrected, span_pass2 = enforce_bilateral_span_rigidity(corrected, joint_names)
-            symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
-            span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report}
-            span_report = {**span_report, 'bilateralChains': symmetry_report}
-            cleaned_clip = replace(
-                cleaned_clip,
-                frames=[
-                    MotionFrame(
-                        time_sec=frame.time_sec,
-                        joints={name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)},
-                    )
-                    for frame, row in zip(cleaned_clip.frames, corrected)
-                ],
-                metadata={
-                    **cleaned_clip.metadata,
-                    "bilateralSpanRigidity": span_report,
-                },
-            )
-            record_timing("bilateralSpanRigiditySeconds", stage_started)
         stage_started = time.perf_counter()
         from .structural_refinement import retain_camera_through_cleanup
         cleaned_clip = retain_camera_through_cleanup(tuning_input_clip, cleaned_clip, source_pose_payload)
@@ -946,6 +902,59 @@ def _run_generation_pipeline_uncached(
         else:
             # Fast profile: skip the repair pass; deterministic gates still run.
             timings["structuralRefinement"] = {"enabled": False, "reason": "skipped_by_request"}
+        if request.motion_reconstruction_backend == "gvhmr":
+            # GVHMR joints carry pose-dependent bilateral span jitter and a
+            # systematic neck socket offset, and structural refinement's
+            # source-guided steps re-introduce both, so this consistency pass
+            # must run AFTER refinement. Shoulders/hips are anatomically rigid
+            # and socket centers belong on their pair's bisector plane.
+            # Promote to all backends once WHAM identity is re-baselined.
+            import numpy as np
+
+            from .anatomical_repair import (
+                enforce_bilateral_chain_symmetry,
+                enforce_bilateral_span_rigidity,
+                enforce_socket_centering,
+                stabilize_stationary_contact_wobble,
+            )
+
+            joint_names = list(cleaned_clip.joint_names)
+            stage_started = time.perf_counter()
+            points = np.asarray(
+                [[frame.joints[name] for name in joint_names] for frame in cleaned_clip.frames],
+                dtype=float,
+            )
+            corrected, socket_report = enforce_socket_centering(points, joint_names)
+            corrected, symmetry_report = enforce_bilateral_chain_symmetry(corrected, joint_names)
+            corrected, span_report = enforce_bilateral_span_rigidity(corrected, joint_names)
+            # Spans move shoulders/hips; a second chain pass restores symmetry.
+            corrected, symmetry_pass2 = enforce_bilateral_chain_symmetry(corrected, joint_names)
+            corrected, span_pass2 = enforce_bilateral_span_rigidity(corrected, joint_names)
+            # Wobble-dominated planted feet (returns to start, small total
+            # range) are reconstruction jitter; smooth them. Traveling feet
+            # keep their trajectory.
+            corrected, wobble_report = stabilize_stationary_contact_wobble(
+                corrected, joint_names, fps=float(getattr(cleaned_clip, "fps", 30.0) or 30.0)
+            )
+            symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
+            span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report,
+                           'stationaryContactStabilization': wobble_report}
+            span_report = {**span_report, 'bilateralChains': symmetry_report}
+            cleaned_clip = replace(
+                cleaned_clip,
+                frames=[
+                    MotionFrame(
+                        time_sec=frame.time_sec,
+                        joints={name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)},
+                    )
+                    for frame, row in zip(cleaned_clip.frames, corrected)
+                ],
+                metadata={
+                    **cleaned_clip.metadata,
+                    "bilateralSpanRigidity": span_report,
+                },
+            )
+            record_timing("bilateralSpanRigiditySeconds", stage_started)
         assert_equipment_supported_orientation(
             cleaned_clip,
             support_mode_hint=request.support_mode_hint,

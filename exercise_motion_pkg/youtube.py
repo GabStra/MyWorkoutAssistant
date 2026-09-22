@@ -1131,6 +1131,7 @@ class YouTubeRankingSettings:
     llama_cpp_batch_size: int | None = DEFAULT_LLAMA_CPP_BATCH_SIZE
     llama_cpp_ubatch_size: int | None = DEFAULT_LLAMA_CPP_UBATCH_SIZE
     llama_cpp_flash_attn: str | None = DEFAULT_LLAMA_CPP_FLASH_ATTN
+    llama_cpp_kv_unified: bool = False
     llama_cpp_cache_type_k: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_K
     llama_cpp_cache_type_v: str | None = DEFAULT_LLAMA_CPP_CACHE_TYPE_V
     llama_cpp_parallel: int | None = DEFAULT_LLAMA_CPP_PARALLEL
@@ -9081,6 +9082,8 @@ class LlamaCppVisionRanker:
             args.extend(["--ubatch-size", str(max(1, self.settings.llama_cpp_ubatch_size))])
         if self.settings.llama_cpp_flash_attn is not None:
             args.extend(["--flash-attn", self.settings.llama_cpp_flash_attn])
+        if self.settings.llama_cpp_kv_unified:
+            args.append("--kv-unified")
         if self.settings.llama_cpp_cache_type_k is not None:
             args.extend(["--cache-type-k", self.settings.llama_cpp_cache_type_k])
         if self.settings.llama_cpp_cache_type_v is not None:

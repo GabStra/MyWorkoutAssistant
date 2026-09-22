@@ -90,6 +90,60 @@ SOCKET_CENTER_TRIPLES = (
 )
 
 
+STATIONARY_CONTACT_JOINTS = ('left_foot', 'right_foot')
+STATIONARY_CONTACT_MAX_RANGE_RATIO = 0.15
+STATIONARY_CONTACT_ENDPOINT_RATIO = 0.4
+STATIONARY_CONTACT_SMOOTH_SECONDS = 0.5
+
+
+def stabilize_stationary_contact_wobble(points, names, *, fps: float = 30.0):
+    """Suppress jitter around planted contact joints without freezing travel.
+
+    A foot that stays planted should hold still; reconstruction noise makes it
+    scatter around its plant point while returning near where it started.
+    A traveling foot (step, lunge) ends far from where it began. Distinguish
+    them by endpoint-vs-range: only joints whose excursion is dominated by
+    scatter (endpoint << range, range below a stationary ceiling) get their
+    trajectory replaced by a heavily smoothed version. Genuine travel keeps
+    the original trajectory untouched.
+    """
+    corrected = points.copy()
+    report = {}
+    body_span = float(np.median(np.linalg.norm(np.ptp(points, axis=1), axis=-1)))
+    window = max(3, int(round(STATIONARY_CONTACT_SMOOTH_SECONDS * fps)) | 1)
+    kernel = np.ones(window) / window
+    for name in STATIONARY_CONTACT_JOINTS:
+        if name not in names:
+            continue
+        j = names.index(name)
+        trajectory = corrected[:, j]
+        span = float(np.sqrt(np.sum(np.ptp(trajectory, axis=0) ** 2)))
+        endpoint = float(np.linalg.norm(trajectory[-1] - trajectory[0]))
+        range_ratio = span / max(body_span, 1e-9)
+        if (
+            range_ratio > STATIONARY_CONTACT_MAX_RANGE_RATIO
+            or endpoint > STATIONARY_CONTACT_ENDPOINT_RATIO * max(span, 1e-9)
+        ):
+            report[name] = {"applied": False, "rangeRatio": round(range_ratio, 4),
+                            "endpointRatio": round(endpoint / max(span, 1e-9), 4)}
+            continue
+        smoothed = np.stack(
+            [np.convolve(np.pad(trajectory[:, ax], (window // 2, window // 2), mode="edge"),
+                         kernel, mode="valid")
+             for ax in range(3)], axis=-1)
+        # Keep the overall plant position: re-center on the original median.
+        smoothed += np.median(trajectory, axis=0) - np.median(smoothed, axis=0)
+        corrected[:, j] = smoothed
+        report[name] = {
+            "applied": True,
+            "rangeBeforeRatio": round(range_ratio, 4),
+            "rangeAfterRatio": round(
+                float(np.sqrt(np.sum(np.ptp(corrected[:, j], axis=0) ** 2))) / max(body_span, 1e-9), 4),
+            "endpointRatio": round(endpoint / max(span, 1e-9), 4),
+        }
+    return corrected, report
+
+
 def enforce_socket_centering(points, names):
     """Recenter socket joints onto their bilateral pair's bisector plane.
 

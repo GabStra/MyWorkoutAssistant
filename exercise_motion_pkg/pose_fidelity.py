@@ -137,11 +137,48 @@ def _registered_projection_metrics(source, motion, rotation, swap, *, image_tran
     if image_transform is None:
         return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
                                     reason='camera_image_alignment_unavailable')
+    image_transform = _recenter_constant_image_offset(
+        source, transformed, swap, tuple(image_transform))
     metrics = _projection_metrics(source, transformed, horizontal_vector=(1., 0.), mirror=False,
                                    swap_bilateral=swap, image_transform=image_transform)
     return {**metrics, 'cameraModel': 'fixed_scaled_orthographic', 'cameraRotation': rotation.tolist(),
             'cameraImageTransform': list(image_transform),
             'available': True, 'sourceFrameCount': len(source), 'motionFrameCount': len(motion)}
+
+
+def _recenter_constant_image_offset(source, transformed, swap, image_transform):
+    """Absorb one constant whole-body image offset estimated from proximal joints.
+
+    A retained camera is registered before scene placement and support-driven
+    whole-body corrections, so the baked clip can sit at a constant offset in
+    the camera frame. That offset is placement, not pose error: pose, angles,
+    and the SHAPE of root travel remain fully measured without it. Only the
+    translation component is re-fit here (never scale or rotation), and only
+    from torso/proximal joints, so time-varying drift stays measurable.
+    """
+    import numpy as np
+    residuals = ([], [])
+    for source_frame in source:
+        motion_frame = _motion_frame_at_time(transformed, source_frame['time'])
+        if motion_frame is None:
+            continue
+        for name in ALIGNMENT_JOINTS:
+            source_point = source_frame['joints'].get(name)
+            mapped = _bilateral_name(name, swap=swap)
+            motion_point = motion_frame['joints'].get(mapped)
+            if source_point is None or motion_point is None:
+                continue
+            projected = _apply_similarity(
+                (motion_point[0], -motion_point[1]), image_transform)
+            residuals[0].append(projected[0] - source_point[0])
+            residuals[1].append(projected[1] - source_point[1])
+    if len(residuals[0]) < 6:
+        return image_transform
+    offset = (float(np.median(residuals[0])), float(np.median(residuals[1])))
+    transform = list(image_transform)
+    transform[4] -= offset[0]
+    transform[5] -= offset[1]
+    return tuple(transform)
 
 
 def source_pose_reference_for_motion(source_payload: dict[str, Any], motion_payload: dict[str, Any]) -> dict[str, Any]:
