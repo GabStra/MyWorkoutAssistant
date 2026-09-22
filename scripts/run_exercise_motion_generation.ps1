@@ -9,6 +9,7 @@ param(
     [string]$WhamRepoPath,
     [string]$BodyModelRoot,
     [string]$WhamPython = "python",
+    [switch]$FastProfile,
     [ValidateSet("wham", "gvhmr")]
     [string]$MotionReconstructor = "wham",
     [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
@@ -368,6 +369,11 @@ elseif (-not $SkipSegmentDetection) {
     $resolvedInputVideoPath = [System.IO.Path]::GetFullPath($trimmedInputVideoPath)
 }
 
+if ($FastProfile) {
+    # Fast profile: gravity-aligned GVHMR reconstruction, no refinement pass.
+    $MotionReconstructor = "gvhmr"
+}
+
 $whamRunnerArgs = @(
     "-WhamRepoPath", $resolvedWhamRepoPath,
     "-InputVideo", $resolvedInputVideoPath,
@@ -453,6 +459,11 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
 }
 if ($MotionReconstructor -eq "gvhmr") {
     $generateArgs += @("--motion-reconstructor", "gvhmr")
+}
+if ($FastProfile) {
+    # GVHMR + refinement reduced to the source-guided vertical trajectory
+    # repair (moon-gravity fix); the deterministic gates still run.
+    $generateArgs += "--structural-refinement-vertical-only"
 }
 if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
     $generateArgs += "--wham-estimate-local-only"

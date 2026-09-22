@@ -779,6 +779,38 @@ def preserve_terminal_bone_lengths(clip, reference_clip, *, source_pose_payload=
     return clip, report
 
 
+def _refine_source_vertical_trajectory_only(
+    clip: MotionClip,
+    *,
+    source_pose_payload: dict[str, Any] | None,
+) -> MotionClip:
+    """Fast-profile subset: only the source-guided vertical trajectory repair.
+
+    The full refinement chain is skipped, but the one repair that corrects a
+    physics-level defect (reconstructed moon gravity on ballistic phases) is
+    kept: it re-times the root to the source video's 2D pose evidence and
+    self-gates to intermittent-support movements.
+    """
+    vertical_candidate, source_vertical_metadata = _align_intermittent_vertical_trajectory_to_source_pose(
+        clip,
+        source_pose_payload=source_pose_payload,
+    )
+    clip, source_vertical_transaction = _accept_source_preserving_refinement_step(
+        clip,
+        vertical_candidate,
+        source_pose_payload=source_pose_payload,
+        step_name="source_guided_vertical_trajectory",
+    )
+    source_vertical_metadata["transaction"] = source_vertical_transaction
+    metadata = dict(clip.metadata)
+    metadata["structuralRefinement"] = {
+        **(clip.metadata.get("structuralRefinement") or {}),
+        "stages": "source_vertical_only",
+        "sourceGuidedVerticalTrajectory": source_vertical_metadata,
+    }
+    return replace(clip, metadata=metadata)
+
+
 def refine_motion_clip_structurally(
     clip: MotionClip,
     *,
@@ -788,9 +820,15 @@ def refine_motion_clip_structurally(
     dominant_chain_ratio: float = NON_DOMINANT_CHAIN_RATIO,
     non_dominant_damping: float = 1.0,
     non_dominant_radius_scale: float = 1.0,
+    stages: str = "full",
 ) -> MotionClip:
     if clip.frame_count < 3:
         return clip
+    if stages == "source_vertical_only":
+        return _refine_source_vertical_trajectory_only(
+            clip,
+            source_pose_payload=source_pose_payload,
+        )
     clip, source_contact_timing_metadata = _align_terminal_contact_to_source_pose(
         clip,
         source_pose_payload=source_pose_payload,

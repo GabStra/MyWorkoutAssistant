@@ -37,7 +37,28 @@ def test_export_gvhmr_results_pkl_matches_wham_world_schema(tmp_path: Path) -> N
     assert pose.shape == (frames, 72)
     assert trans.shape == (frames, 3)
     assert betas.shape == (10,)
+    assert torch.all(betas == 0)  # neutral SMPL betas by default
+    assert payload.get("betasSource") == "neutral_smpl"
     assert list(payload["frame_ids"]) == list(range(frames))
+
+
+def test_export_gvhmr_results_pkl_keep_source_betas(tmp_path: Path) -> None:
+    frames = 4
+    pred = {
+        "smpl_params_global": {
+            "global_orient": torch.zeros(frames, 3),
+            "body_pose": torch.zeros(frames, 63),
+            "betas": torch.ones(frames, 10),
+            "transl": torch.zeros(frames, 3),
+        }
+    }
+    results_pt = tmp_path / "hmr4d_results.pt"
+    torch.save(pred, results_pt)
+    output_pkl = tmp_path / "wham_output.pkl"
+    export_gvhmr_results_pkl(results_pt, output_pkl, keep_source_betas=True)
+    payload = joblib.load(output_pkl)[0]
+    assert torch.all(torch.as_tensor(payload["betas"]) == 1)
+    assert payload.get("betasSource") == "gvhmr_smplx_betas"
 
 
 def test_build_gvhmr_command_static_camera(tmp_path: Path) -> None:

@@ -168,6 +168,8 @@ class GenerateRequest:
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     motion_reconstruction_backend: str = "wham"
+    structural_refinement_enabled: bool = True
+    structural_refinement_vertical_only: bool = False
     spinepose_enabled: bool = False
     spinepose_json_dir: Path | None = None
     spinepose_command: str | None = None
@@ -263,6 +265,11 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
                 "estimateLocalOnly": request.wham_estimate_local_only,
                 "runSmplify": request.wham_run_smplify,
                 "motionReconstructionBackend": request.motion_reconstruction_backend,
+                "gvhmrBetasExport": (
+                    "neutral_smpl_v2"
+                    if request.motion_reconstruction_backend == "gvhmr"
+                    else None
+                ),
                 "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
                 "outputRotationDegrees": request.wham_output_rotation_degrees,
                 "preprocessingEnvironment": wham_preprocessing_environment(),
@@ -469,7 +476,11 @@ def _run_generation_pipeline_uncached(
     # video-based world alignment stages. This keeps the post-processing
     # pipeline consistent with the “normalized-only” contract.
     video_world_alignment_should_run = (
-        request.video_world_alignment_enabled and request.normalized_motion_json is None
+        request.video_world_alignment_enabled
+        and request.normalized_motion_json is None
+        # Gravity-aligned reconstructions already provide the world basis the
+        # alignment stage would estimate from video pose evidence.
+        and request.motion_reconstruction_backend != "gvhmr"
     )
     stage_started = time.perf_counter()
     three_module_path = ensure_three_module_asset()
@@ -822,6 +833,11 @@ def _run_generation_pipeline_uncached(
             video_alignment_metadata = alignment_result.to_metadata()
             record_timing("videoWorldAlignmentSeconds", stage_started)
             timings["videoWorldAlignment"] = video_alignment_metadata
+        elif request.motion_reconstruction_backend == "gvhmr":
+            video_alignment_metadata = {
+                "applied": False,
+                "reason": "gvhmr_gravity_aligned_input",
+            }
         elif video_world_alignment_should_run:
             video_alignment_metadata = {
                 "applied": False,
@@ -862,25 +878,78 @@ def _run_generation_pipeline_uncached(
             preserve_temporal_extent=isinstance(source_pose_payload, dict),
         )
         record_timing("cleanupMotionSeconds", stage_started)
+        if request.motion_reconstruction_backend == "gvhmr":
+            # GVHMR joints come from regression on posed SMPL-X meshes and carry
+            # pose-dependent bilateral span jitter; exact-rigidity reference
+            # checks downstream reject it. Shoulders/hips are anatomically
+            # rigid, so project them onto their temporal median span. Promote
+            # to all backends once WHAM artifact identity is re-baselined.
+            import numpy as np
+
+            from .anatomical_repair import (
+                enforce_bilateral_chain_symmetry,
+                enforce_bilateral_span_rigidity,
+                enforce_socket_centering,
+            )
+
+            joint_names = list(cleaned_clip.joint_names)
+            stage_started = time.perf_counter()
+            points = np.asarray(
+                [[frame.joints[name] for name in joint_names] for frame in cleaned_clip.frames],
+                dtype=float,
+            )
+            corrected, socket_report = enforce_socket_centering(points, joint_names)
+            corrected, symmetry_report = enforce_bilateral_chain_symmetry(corrected, joint_names)
+            corrected, span_report = enforce_bilateral_span_rigidity(corrected, joint_names)
+            # Spans move shoulders/hips; a second chain pass restores symmetry.
+            corrected, symmetry_pass2 = enforce_bilateral_chain_symmetry(corrected, joint_names)
+            corrected, span_pass2 = enforce_bilateral_span_rigidity(corrected, joint_names)
+            symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
+            span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report}
+            span_report = {**span_report, 'bilateralChains': symmetry_report}
+            cleaned_clip = replace(
+                cleaned_clip,
+                frames=[
+                    MotionFrame(
+                        time_sec=frame.time_sec,
+                        joints={name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)},
+                    )
+                    for frame, row in zip(cleaned_clip.frames, corrected)
+                ],
+                metadata={
+                    **cleaned_clip.metadata,
+                    "bilateralSpanRigidity": span_report,
+                },
+            )
+            record_timing("bilateralSpanRigiditySeconds", stage_started)
         stage_started = time.perf_counter()
         from .structural_refinement import retain_camera_through_cleanup
         cleaned_clip = retain_camera_through_cleanup(tuning_input_clip, cleaned_clip, source_pose_payload)
         record_timing("cleanupCameraRegistrationSeconds", stage_started)
-        stage_started = time.perf_counter()
-        cleaned_clip = refine_motion_clip_structurally(
-            cleaned_clip,
-            source_pose_payload=source_pose_payload,
-            rigid_paired_hands_required=request.rigid_paired_hands_required,
-            horizontal_torso_required=request.horizontal_torso_required,
-            dominant_chain_ratio=request.dominant_chain_ratio,
-            non_dominant_damping=request.non_dominant_damping,
-            non_dominant_radius_scale=request.non_dominant_radius_scale,
-        )
+        if request.structural_refinement_enabled or request.structural_refinement_vertical_only:
+            stage_started = time.perf_counter()
+            cleaned_clip = refine_motion_clip_structurally(
+                cleaned_clip,
+                source_pose_payload=source_pose_payload,
+                rigid_paired_hands_required=request.rigid_paired_hands_required,
+                horizontal_torso_required=request.horizontal_torso_required,
+                dominant_chain_ratio=request.dominant_chain_ratio,
+                non_dominant_damping=request.non_dominant_damping,
+                non_dominant_radius_scale=request.non_dominant_radius_scale,
+                stages=(
+                    "full"
+                    if request.structural_refinement_enabled
+                    else "source_vertical_only"
+                ),
+            )
+            record_timing("structuralRefinementSeconds", stage_started)
+        else:
+            # Fast profile: skip the repair pass; deterministic gates still run.
+            timings["structuralRefinement"] = {"enabled": False, "reason": "skipped_by_request"}
         assert_equipment_supported_orientation(
             cleaned_clip,
             support_mode_hint=request.support_mode_hint,
         )
-        record_timing("structuralRefinementSeconds", stage_started)
         ground_metadata_path = paths.cleaned_dir / "ground.metadata.json"
         stage_started = time.perf_counter()
         ground_metadata: GroundMetadata | None = generate_ground_metadata(

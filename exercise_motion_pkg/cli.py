@@ -210,6 +210,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pass raw camera-space WHAM motion through as the final artifact without cleanup, grounding, or structural tuning.",
     )
     generate.add_argument(
+        "--skip-structural-refinement",
+        action="store_true",
+        help="Skip the structural refinement repair pass (terminal contacts, root yaw, source-guided articulation). Deterministic gates still run.",
+    )
+    generate.add_argument(
+        "--structural-refinement-vertical-only",
+        action="store_true",
+        help="Skip the full refinement pass but keep the source-guided vertical trajectory repair (fixes reconstructed moon gravity on jump/step movements).",
+    )
+    generate.add_argument(
         "--export-wham-smpl-preview",
         action="store_true",
         help="Also export the legacy baked WHAM SMPL mesh preview JSON. Disabled by default because the main preview and Wear output use the custom skeleton.",
@@ -748,6 +758,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pass raw camera-space WHAM motion through before preview baking and review ranking.",
     )
     bake_and_rank.add_argument(
+        "--skip-structural-refinement",
+        action="store_true",
+        help="Skip the structural refinement repair pass (terminal contacts, root yaw, source-guided articulation). Deterministic gates still run.",
+    )
+    bake_and_rank.add_argument(
+        "--structural-refinement-vertical-only",
+        action="store_true",
+        help="Skip the full refinement pass but keep the source-guided vertical trajectory repair (fixes reconstructed moon gravity on jump/step movements).",
+    )
+    bake_and_rank.add_argument(
         "--export-wham-smpl-preview",
         action="store_true",
         help="Also export the legacy baked WHAM SMPL mesh preview JSON for debug comparisons. Disabled by default.",
@@ -1260,6 +1280,8 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         ),
         "two_scale_source_validation": args.two_scale_source_validation,
         "motion_tuning_enabled": not args.skip_motion_tuning,
+        "structural_refinement_enabled": not args.skip_structural_refinement,
+        "structural_refinement_vertical_only": args.structural_refinement_vertical_only,
         "classify_support_dominance": not args.no_classify_support_dominance,
         "llama_cpp_mmproj_offload": not args.no_llama_cpp_mmproj_offload,
         "llama_cpp_mtp_model": None if args.no_llama_cpp_mtp else args.llama_cpp_mtp_model,
@@ -1331,6 +1353,8 @@ def main() -> None:
                 non_dominant_damping=args.non_dominant_damping,
                 non_dominant_radius_scale=args.non_dominant_radius_scale,
                 motion_tuning_enabled=not args.skip_motion_tuning,
+                structural_refinement_enabled=not args.skip_structural_refinement,
+                structural_refinement_vertical_only=args.structural_refinement_vertical_only,
                 export_wham_smpl_preview=args.export_wham_smpl_preview,
                 source_start_seconds=args.source_start_seconds,
                 source_end_seconds=args.source_end_seconds,

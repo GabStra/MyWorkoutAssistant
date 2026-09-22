@@ -32,6 +32,131 @@ ANATOMY_REPAIR_EVALS_PER_BAD_FRAME = 16
 ANATOMY_REPAIR_MAX_TOTAL_EVALS_CEILING = 8000
 
 
+RIGID_BILATERAL_SPAN_PAIRS = (
+    ('left_shoulder', 'right_shoulder'),
+    ('left_hip', 'right_hip'),
+)
+
+BILATERAL_CHAINS = (
+    ('collar', 'shoulder', 'elbow', 'wrist', 'hand'),
+    ('hip', 'knee', 'ankle', 'foot'),
+)
+
+
+def enforce_bilateral_chain_symmetry(points, names):
+    """Project left/right chain bone lengths onto their per-frame mean.
+
+    Per-joint denoising preserves independent jitter on each side, leaving a
+    small systematic bilateral length asymmetry. Limbs are anatomically
+    mirror-symmetric, so each bone pair is rescaled symmetrically onto its
+    mean length (proximal to distal, so each adjustment starts fixed bones).
+    """
+    corrected = points.copy()
+    report = {}
+    for chain in BILATERAL_CHAINS:
+        for parent, child in zip(chain[:-1], chain[1:]):
+            lp, rp = f'left_{parent}', f'right_{parent}'
+            lc, rc = f'left_{child}', f'right_{child}'
+            if not all(name in names for name in (lp, rp, lc, rc)):
+                continue
+            li, ri = names.index(lp), names.index(rp)
+            lj, rj = names.index(lc), names.index(rc)
+            lvec = corrected[:, lj] - corrected[:, li]
+            rvec = corrected[:, rj] - corrected[:, ri]
+            llen = np.linalg.norm(lvec, axis=-1)
+            rlen = np.linalg.norm(rvec, axis=-1)
+            target = 0.5 * (llen + rlen)
+            ldir = lvec / np.maximum(llen, 1e-12)[:, None]
+            rdir = rvec / np.maximum(rlen, 1e-12)[:, None]
+            corrected[:, lj] = corrected[:, li] + ldir * target[:, None]
+            corrected[:, rj] = corrected[:, ri] + rdir * target[:, None]
+            asymmetry = np.abs(llen - rlen)
+            report[f'{lp}-{lc}'] = {
+                'meanBoneMeters': round(float(target.mean()), 6),
+                'maxAsymmetryBeforeMeters': round(float(asymmetry.max()), 6),
+                'maxAsymmetryAfterMeters': round(
+                    float(np.abs(
+                        np.linalg.norm(corrected[:, lj] - corrected[:, li], axis=-1)
+                        - np.linalg.norm(corrected[:, rj] - corrected[:, ri], axis=-1)
+                    ).max()), 9),
+            }
+    return corrected, report
+
+
+SOCKET_CENTER_TRIPLES = (
+    ('left_hip', 'right_hip', 'pelvis'),
+    ('left_collar', 'right_collar', 'spine3'),
+    ('left_collar', 'right_collar', 'neck'),
+)
+
+
+def enforce_socket_centering(points, names):
+    """Recenter socket joints onto their bilateral pair's bisector plane.
+
+    Joint regression on posed SMPL-X meshes leaves a small systematic lateral
+    offset (e.g. the neck sits ~2-3cm off the collar midpoint, always the same
+    sign). Skeletons built by rigid transforms keep these centers on the
+    bisector by construction; the anatomy checks enforce that, and a fit that
+    starts several times over tolerance cannot project it away. Remove the
+    along-span component of each center's displacement from its pair midpoint.
+    """
+    corrected = points.copy()
+    report = {}
+    for left, right, center in SOCKET_CENTER_TRIPLES:
+        if not all(name in names for name in (left, right, center)):
+            continue
+        li, ri, ci = names.index(left), names.index(right), names.index(center)
+        span = corrected[:, ri] - corrected[:, li]
+        width_sq = np.sum(span * span, axis=-1)
+        midpoint = (corrected[:, li] + corrected[:, ri]) * 0.5
+        displacement = corrected[:, ci] - midpoint
+        along = np.sum(displacement * span, axis=-1) / np.maximum(width_sq, 1e-12)
+        corrected[:, ci] = corrected[:, ci] - span * along[:, None]
+        ratio = np.abs(along)
+        report[center] = {
+            'maxRatioBefore': round(float(ratio.max()), 4),
+            'maxRatioAfter': round(float(np.max(np.abs(
+                np.sum((corrected[:, ci] - midpoint) * span, axis=-1) / np.maximum(width_sq, 1e-12)
+            ))), 9),
+            'meanLateralMetersBefore': round(
+                float(np.mean(ratio * np.sqrt(width_sq))), 4),
+        }
+    return corrected, report
+
+
+def enforce_bilateral_span_rigidity(points, names):
+    """Project bilateral bone spans (shoulders, hips) to constant length.
+
+    Skeletons produced by joint regression on posed meshes carry a small
+    pose-dependent span jitter. Those spans are anatomically rigid; per-joint
+    smoothing preserves the jitter instead of removing it, and downstream
+    exact-rigidity reference checks reject it. Symmetric rescaling onto the
+    temporal median distance removes it with minimal displacement.
+    """
+    corrected = points.copy()
+    report = {}
+    for left, right in RIGID_BILATERAL_SPAN_PAIRS:
+        if left not in names or right not in names:
+            continue
+        li, ri = names.index(left), names.index(right)
+        delta = corrected[:, ri] - corrected[:, li]
+        lengths = np.linalg.norm(delta, axis=-1)
+        median = float(np.median(lengths))
+        if median <= 1e-6:
+            continue
+        direction = delta / np.maximum(lengths, 1e-12)[:, None]
+        offset = (direction * (median - lengths)[:, None]) * 0.5
+        corrected[:, li] -= offset
+        corrected[:, ri] += offset
+        report[f'{left}:{right}'] = {
+            'medianMeters': round(median, 6),
+            'maxVariationBeforeMeters': round(float(np.ptp(lengths)), 6),
+            'maxVariationAfterMeters': round(
+                float(np.ptp(np.linalg.norm(corrected[:, ri] - corrected[:, li], axis=-1))), 9),
+        }
+    return corrected, report
+
+
 def anatomy_repair_evaluation_budget(bad_frame_count):
     """Scale the eval ceiling with how many frames actually need projection."""
     count = max(0, int(bad_frame_count))

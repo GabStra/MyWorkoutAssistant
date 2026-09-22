@@ -98,6 +98,10 @@ param(
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
+    [ValidateSet("wham", "gvhmr")]
+    [string]$MotionReconstructor = "wham",
+    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
+    [switch]$FastProfile,
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
     [bool]$WarmWhamWorker = $false,
@@ -4055,6 +4059,14 @@ foreach ($exercise in $exerciseList.exercises) {
         $bakeArgs += @("--llama-cpp-parallel", "$LlamaCppParallel")
     }
     $bakeArgs = Add-LlamaCppTuningArgs -Arguments $bakeArgs
+    if ($FastProfile) {
+        # Single baseline bake + no final VLM; refinement keeps the
+        # source-guided vertical trajectory repair. Deterministic gates intact.
+        $SkipAdaptivePreviewSettings = $true
+        $RankPreviewVariants = $false
+        $FinalOutputValidation = $false
+        $SkipFinalOutputValidation = $true
+    }
     if ($null -ne $LlamaCppReasoningBudget) {
         $bakeArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
     }
@@ -4097,10 +4109,16 @@ foreach ($exercise in $exerciseList.exercises) {
     if (-not $NoWhamDocker) {
         $bakeArgs += @(
             "--use-wham-docker",
-            "--wham-docker-image", $WhamDockerImage,
+            "--wham-docker-image", $(if ($MotionReconstructor -eq "gvhmr") { $GvhmrDockerImage } else { $WhamDockerImage }),
             "--wham-docker-gpus", $WhamDockerGpus,
             "--wham-docker-shm-size", $WhamDockerShmSize
         )
+    }
+    if ($MotionReconstructor -eq "gvhmr") {
+        $bakeArgs += @("--motion-reconstructor", "gvhmr")
+    }
+    if ($FastProfile) {
+        $bakeArgs += @("--structural-refinement-vertical-only")
     }
     if ($effectiveWarmWhamWorker) {
         $bakeArgs += @(

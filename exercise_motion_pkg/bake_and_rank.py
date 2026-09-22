@@ -2588,6 +2588,8 @@ class BakeAndRankRequest:
     wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
     wham_run_smplify: bool = True
     motion_reconstruction_backend: str = "wham"
+    structural_refinement_enabled: bool = True
+    structural_refinement_vertical_only: bool = False
     spinepose_enabled: bool = False
     spinepose_json_dir: Path | None = None
     spinepose_command: str | None = None
@@ -19564,6 +19566,8 @@ def generate_candidate_motion(
         wham_estimate_local_only=request.wham_estimate_local_only,
         wham_run_smplify=request.wham_run_smplify,
         motion_reconstruction_backend=request.motion_reconstruction_backend,
+        structural_refinement_enabled=request.structural_refinement_enabled,
+        structural_refinement_vertical_only=request.structural_refinement_vertical_only,
         spinepose_enabled=request.spinepose_enabled,
         spinepose_json_dir=request.spinepose_json_dir,
         spinepose_command=request.spinepose_command,

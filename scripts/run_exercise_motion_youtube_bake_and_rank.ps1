@@ -83,6 +83,10 @@ param(
     [switch]$SkipSmplify,
     [switch]$NoReuseWhamCache,
     [switch]$SkipMotionTuning,
+    [switch]$FastProfile,
+    [ValidateSet("wham", "gvhmr")]
+    [string]$MotionReconstructor = "wham",
+    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$ExportWhamSmplPreview,
     [switch]$SkipSpinePose,
     [string]$SpinePoseJsonDir,
@@ -1074,6 +1078,14 @@ if ($null -ne $LlamaCppTopP) {
 if ($null -ne $LlamaCppTopK) {
     $bakeArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
 }
+if ($FastProfile) {
+    # GVHMR + skip structural refinement + single baseline bake + no final VLM.
+    $MotionReconstructor = "gvhmr"
+    $SkipAdaptivePreviewSettings = $true
+    $RankPreviewVariants = $false
+    $FinalOutputValidation = $false
+    $SkipFinalOutputValidation = $true
+}
 if ($RankPreviewVariants -and -not $SkipPreviewVariantRanking) {
     $bakeArgs += "--rank-preview-variants"
 }
@@ -1127,12 +1139,19 @@ if ($null -ne $SegmentFramesPerWindow) {
     $bakeArgs += @("--segment-frames-per-window", "$SegmentFramesPerWindow")
 }
 if (-not $NoWhamDocker) {
+    $effectiveDockerImage = if ($MotionReconstructor -eq "gvhmr") { $GvhmrDockerImage } else { $WhamDockerImage }
     $bakeArgs += @(
         "--use-wham-docker",
-        "--wham-docker-image", $WhamDockerImage,
+        "--wham-docker-image", $effectiveDockerImage,
         "--wham-docker-gpus", $WhamDockerGpus,
         "--wham-docker-shm-size", $WhamDockerShmSize
     )
+}
+if ($MotionReconstructor -eq "gvhmr") {
+    $bakeArgs += @("--motion-reconstructor", "gvhmr")
+}
+if ($FastProfile) {
+    $bakeArgs += "--structural-refinement-vertical-only"
 }
 if ($effectiveWarmWhamWorker) {
     $bakeArgs += @(

@@ -8,6 +8,9 @@ param(
     [string]$WhamPython = "python",
     [switch]$UseWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
+    [ValidateSet("wham", "gvhmr")]
+    [string]$MotionReconstructor = "wham",
+    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",
     [bool]$WarmWhamWorker = $false,
@@ -501,12 +504,16 @@ if ($KeepLlamaCppServer) {
     $argsList += "--keep-llama-cpp-server"
 }
 if ($UseWhamDocker) {
+    $effectiveBakeDockerImage = if ($MotionReconstructor -eq "gvhmr") { $GvhmrDockerImage } else { $WhamDockerImage }
     $argsList += @(
         "--use-wham-docker",
-        "--wham-docker-image", $WhamDockerImage,
+        "--wham-docker-image", $effectiveBakeDockerImage,
         "--wham-docker-gpus", $WhamDockerGpus,
         "--wham-docker-shm-size", $WhamDockerShmSize
     )
+}
+if ($MotionReconstructor -eq "gvhmr") {
+    $argsList += @("--motion-reconstructor", "gvhmr")
 }
 if ($effectiveWarmWhamWorker) {
     $argsList += @(

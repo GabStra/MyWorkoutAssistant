@@ -128,6 +128,28 @@ def embed_ground_metadata_in_clip(
     return enriched_clip
 
 
+def _floor_anchored_ground_y(support_heights: list[float], measured_ground_y: float) -> float:
+    """Anchor the ground to the floor when contacts span multiple surfaces.
+
+    Movements onto a box/step produce contacts at the floor and at the raised
+    surface. A plain median parks the render plane between the two, so floor
+    contacts penetrate and raised landings float. When the contact-height
+    spread clearly exceeds single-surface noise, use the lowest cluster.
+    """
+    if len(support_heights) < 6:
+        return measured_ground_y
+    sorted_heights = sorted(support_heights)
+    low_percentile = percentile(sorted_heights, 0.10)
+    high_percentile = percentile(sorted_heights, 0.90)
+    if high_percentile - low_percentile <= 0.15:
+        return measured_ground_y
+    floor_ceiling = percentile(sorted_heights, 0.10) + 0.08
+    floor_cluster = [value for value in sorted_heights if value <= floor_ceiling]
+    if len(floor_cluster) < 3:
+        return measured_ground_y
+    return _median(floor_cluster)
+
+
 def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
     cleanup_metadata = clip.metadata.get("cleanup") if isinstance(clip.metadata, dict) else None
     support_ground_y = None
@@ -176,7 +198,7 @@ def estimate_motion_ground_plane(clip: MotionClip) -> PlaneEstimate:
         elif support_ground_y is not None and abs(support_ground_y - measured_ground_y) <= 0.05:
             ground_y = support_ground_y
         else:
-            ground_y = measured_ground_y
+            ground_y = _floor_anchored_ground_y(support_heights, measured_ground_y)
 
         rms_error = math.sqrt(
             sum((value - ground_y) ** 2 for value in support_heights) / len(support_heights)
