@@ -48681,6 +48681,329 @@ def test_contact_sequence_correction_scores_drift_not_absolute_anchor_shift() ->
     )["passed"] is True
 
 
+def test_return_phase_expansion_extends_the_truncated_boundary() -> None:
+    """A one-way-partial cut is repaired by extending its failing boundary.
+
+    A window that finishes at a movement extreme truncated the return, so the
+    candidates extend the end by bounded offsets. A window that starts
+    mid-rep can never satisfy return-to-start, so its start moves earlier.
+    Wrong signatures and already-expanded candidates produce nothing.
+    """
+    from exercise_motion_pkg import bake_and_rank
+
+    candidate = {"candidateId": "CUT-01", "startSeconds": 17.65, "endSeconds": 23.66}
+    validation = {
+        "reason": "source_pose_one_way_partial_repetition_phase",
+        "startValue": -0.02,
+        "endValue": -0.117,
+        "minValue": -0.117,
+        "maxValue": 0.005,
+        "finishAtExtreme": True,
+    }
+    proposals = bake_and_rank.source_cut_return_phase_expansion_candidates(
+        candidate, validation
+    )
+    assert [p["endSeconds"] for p in proposals] == [24.41, 25.16, 26.16]
+    assert all(p["startSeconds"] == 17.65 for p in proposals)
+    assert all(p["exactBoundaryExpansionDepth"] == 1 for p in proposals)
+    assert proposals[0]["chunking"]["expandedBoundary"] == "end"
+
+    start_partial = {
+        "reason": "source_pose_one_way_partial_repetition_phase",
+        "startValue": -0.05,
+        "endValue": -0.117,
+        "minValue": -0.117,
+        "maxValue": 0.005,
+        "finishAtExtreme": True,
+    }
+    start_proposals = bake_and_rank.source_cut_return_phase_expansion_candidates(
+        candidate, start_partial
+    )
+    assert [p["startSeconds"] for p in start_proposals] == [16.9, 16.15, 15.15]
+    assert all(p["endSeconds"] == 23.66 for p in start_proposals)
+    assert start_proposals[0]["chunking"]["expandedBoundary"] == "start"
+
+    assert bake_and_rank.source_cut_return_phase_expansion_candidates(
+        candidate, {"reason": "source_cut_pose_contract_mismatch"}
+    ) == []
+    expanded = {**candidate, "exactBoundaryExpansionDepth": 1}
+    assert bake_and_rank.source_cut_return_phase_expansion_candidates(
+        expanded, validation
+    ) == []
+
+
+def test_materialized_fidelity_no_longer_skips_on_unresolved_pose_audit() -> None:
+    """The pose evidence audit cleans data; it never fails a window.
+
+    A reference whose audit could not fully recover a limb collapse is still
+    evaluated honestly (its untrustworthy joints were removed) — the audit
+    must not inject its own unavailable/unsupported verdict.
+    """
+    from exercise_motion_pkg.bake_and_rank import materialized_source_pose_fidelity_metrics
+
+    source = {
+        "coordinateSpace": "normalized_image_xy",
+        "imageWidth": 1.0,
+        "imageHeight": 1.0,
+        "frames": [{"joints": {"pelvis": [0.5, 0.5]}} for _ in range(6)],
+        "sourcePoseEvidenceAudit": {
+            "policyVersion": 1,
+            "unresolved": True,
+            "events": [{"status": "unknown", "joints": ["left_foot"]}],
+        },
+    }
+    output = {"frames": [{"joints": {}} for _ in range(6)]}
+    result = materialized_source_pose_fidelity_metrics(
+        source_pose_payload=source, output_motion_payload=output, required=True
+    )
+    assert result.get("skippedReason") != "source_pose_reference_unreliable"
+    assert "source_pose_reference_unreliable" not in (
+        result.get("rejectionReasons") or []
+    )
+
+
+def test_pre_fit_support_drift_alone_reaches_repair_other_fidelity_codes_stay_blocking() -> None:
+    """The zero-yield-run regression: a support-only pre-fit failure must not
+    hard-block the bake before the contact-sequence correction can run, while
+    mismatch codes no correction can repair keep blocking."""
+    assert bake_and_rank_module.pre_fit_failure_is_support_repairable(
+        ["materialized_source_support_posture_mismatch"]
+    )
+    assert not bake_and_rank_module.pre_fit_failure_is_support_repairable(
+        ["materialized_source_support_posture_mismatch", "materialized_source_endpoint_pose_mismatch"]
+    )
+    assert not bake_and_rank_module.pre_fit_failure_is_support_repairable(
+        ["materialized_source_endpoint_pose_mismatch"]
+    )
+    assert not bake_and_rank_module.pre_fit_failure_is_support_repairable(
+        ["materialized_source_joint_angle_mismatch"]
+    )
+    assert not bake_and_rank_module.pre_fit_failure_is_support_repairable([])
+
+
+def test_distal_chain_depth_correction_recovers_misplaced_leg_and_leaves_clean_chains() -> None:
+    """A depth-misplaced leg chain rotates back into source-2D agreement.
+
+    The supine-pose failure mode: proximal joints project correctly while a
+    distal chain extends into camera depth. Detection must fire only on that
+    signature, preserve bone lengths exactly, and leave clean chains and the
+    clip's other joints untouched.
+    """
+    from exercise_motion_pkg.chain_depth_correction import correct_distal_chain_depth
+
+    camera_right = np.array([0.5, 0.0, 0.866])
+    camera_up = np.array([0.0, 1.0, 0.0])
+    forward = np.cross(camera_right, camera_up)
+    forward /= np.linalg.norm(forward)
+    rotation = np.stack([camera_right, -camera_up, forward])
+
+    def project(point):
+        camera_point = (rotation @ np.asarray(point)) * np.array([1.0, -1.0, -1.0])
+        return np.array([camera_point[0], -camera_point[1]])
+
+    def true_pose() -> dict[str, tuple[float, float, float]]:
+        return {
+            "pelvis": (0.0, 0.2, 0.0),
+            "left_hip": (-0.15, 0.2, 0.0), "right_hip": (0.15, 0.2, 0.0),
+            "left_knee": (-0.15, 0.45, 0.35), "right_knee": (0.15, 0.45, 0.35),
+            "left_ankle": (-0.15, 0.75, 0.35), "right_ankle": (0.15, 0.75, 0.35),
+            "left_foot": (-0.15, 0.78, 0.42), "right_foot": (0.15, 0.78, 0.42),
+            "left_shoulder": (-0.15, 0.25, -0.4), "right_shoulder": (0.15, 0.25, -0.4),
+            "left_elbow": (-0.15, 0.3, -0.7), "right_elbow": (0.15, 0.3, -0.7),
+            "left_wrist": (-0.15, 0.32, -0.95), "right_wrist": (0.15, 0.32, -0.95),
+            "left_hand": (-0.15, 0.32, -1.05), "right_hand": (0.15, 0.32, -1.05),
+        }
+
+    def rotate_about(axis, degrees, point, pivot):
+        axis = np.asarray(axis, dtype=float)
+        axis /= np.linalg.norm(axis)
+        vector = np.asarray(point) - np.asarray(pivot)
+        angle = math.radians(degrees)
+        return (
+            np.asarray(pivot)
+            + vector * math.cos(angle)
+            + np.cross(axis, vector) * math.sin(angle)
+            + axis * np.dot(axis, vector) * (1 - math.cos(angle))
+        )
+
+    def defective_pose() -> dict[str, tuple[float, float, float]]:
+        pose = true_pose()
+        for side in ("left", "right"):
+            hip = pose[f"{side}_hip"]
+            for joint in ("knee", "ankle", "foot"):
+                pose[f"{side}_{joint}"] = tuple(
+                    float(value)
+                    for value in rotate_about((1, 0, 0), 60, pose[f"{side}_{joint}"], hip)
+                )
+        return pose
+
+    registration = {
+        "available": True,
+        "cameraRotation": rotation.tolist(),
+        "cameraImageTransform": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "bilateralAssignment": "identity",
+    }
+
+    def build_clip(pose_fn):
+        frames = []
+        source_frames = []
+        for index in range(30):
+            time = index / 30.0
+            pose = pose_fn()
+            frames.append(
+                MotionFrame(time, {name: tuple(map(float, point)) for name, point in pose.items()})
+            )
+            if index % 2 == 0:
+                source_frames.append({
+                    "sourceTimeSec": time,
+                    "joints": {
+                        name: [float(value) for value in project(point)]
+                        for name, point in true_pose().items()
+                    },
+                })
+        clip = MotionClip(
+            fps=30.0,
+            frames=frames,
+            joint_names=sorted(frames[0].joints),
+            metadata={"structuralRefinement": {"sourceGuidedArticulation": {
+                "cameraRegistration": registration,
+            }}},
+        )
+        return clip, {"frames": source_frames}
+
+    clip, source_payload = build_clip(defective_pose)
+    corrected, report = correct_distal_chain_depth(clip, source_payload)
+
+    assert report["applied"] is True
+    legs = report["chains"]["left_leg"], report["chains"]["right_leg"]
+    for chain in legs:
+        assert chain["applied"] is True
+        assert chain["distalErrorBodyRatioBefore"] > 0.2
+        assert chain["distalErrorBodyRatioAfter"] <= 0.4 * chain["distalErrorBodyRatioBefore"]
+        assert chain["distalErrorBodyRatioAfter"] <= 0.25
+    # Arms were clean: untouched.
+    assert report["chains"]["left_arm"]["applied"] is False
+    assert report["chains"]["right_arm"]["applied"] is False
+    # Bone lengths preserved exactly through the corrected chains.
+    for index in (0, 15, 29):
+        for side in ("left", "right"):
+            for a, b in (("hip", "knee"), ("knee", "ankle"), ("ankle", "foot")):
+                before = math.dist(
+                    clip.frames[index].joints[f"{side}_{a}"],
+                    clip.frames[index].joints[f"{side}_{b}"],
+                )
+                after = math.dist(
+                    corrected.frames[index].joints[f"{side}_{a}"],
+                    corrected.frames[index].joints[f"{side}_{b}"],
+                )
+                assert after == pytest.approx(before, abs=1e-9)
+    # Joints outside the corrected chains keep their exact positions.
+    for index in (0, 15):
+        assert corrected.frames[index].joints["pelvis"] == pytest.approx(
+            clip.frames[index].joints["pelvis"], abs=1e-12
+        )
+        assert corrected.frames[index].joints["left_wrist"] == pytest.approx(
+            clip.frames[index].joints["left_wrist"], abs=1e-12
+        )
+
+    # A clean clip must come back untouched.
+    clean_clip, clean_source = build_clip(true_pose)
+    clean_corrected, clean_report = correct_distal_chain_depth(clean_clip, clean_source)
+    assert clean_report["applied"] is False
+    assert all(
+        clean_corrected.frames[index].joints == clean_clip.frames[index].joints
+        for index in range(len(clean_clip.frames))
+    )
+
+    # Without a camera registration nothing happens.
+    unregistered, _ = build_clip(defective_pose)
+    unregistered = MotionClip(
+        fps=unregistered.fps,
+        frames=unregistered.frames,
+        joint_names=unregistered.joint_names,
+        metadata={},
+    )
+    unchanged, no_camera_report = correct_distal_chain_depth(unregistered, source_payload)
+    assert no_camera_report["applied"] is False
+    assert unchanged.frames == unregistered.frames
+
+
+def test_stationary_contact_wobble_smoothing_preserves_rigid_foot_bone() -> None:
+    """Smoothing a planted foot must not bend its parent bone.
+
+    Raw SMPL foot bones are rigid, so planted-foot wobble is purely angular
+    around the ankle. The stabilizer smooths only the direction and
+    re-imposes the original per-frame bone length; a traveling foot stays
+    bit-identical.
+    """
+    import numpy as np
+
+    from exercise_motion_pkg import anatomical_repair
+
+    names = ["pelvis", "left_ankle", "left_foot"]
+    rng = np.random.default_rng(7)
+    frames = 40
+    points = np.zeros((frames, len(names), 3))
+    points[:, 0] = [0.0, 1.0, 0.0]
+    points[:, 1] = [0.0, 0.05, 0.0]
+    bone_length = 0.13
+    # Planted foot: small angular scatter around one plant direction, at
+    # rigid bone length (raw SMPL bones do not stretch).
+    nominal = np.array([0.3, 0.1, 0.95])
+    nominal = nominal / np.linalg.norm(nominal)
+    offsets = nominal * bone_length + rng.normal(scale=0.008, size=(frames, 3))
+    offsets = offsets / np.linalg.norm(offsets, axis=-1, keepdims=True) * bone_length
+    points[:, 2] = points[:, 1] + offsets
+    before = points.copy()
+
+    corrected, report = anatomical_repair.stabilize_stationary_contact_wobble(
+        points, names, fps=30.0
+    )
+
+    assert report["left_foot"]["applied"] is True
+    length_before = np.linalg.norm(before[:, 2] - before[:, 1], axis=-1)
+    length_after = np.linalg.norm(corrected[:, 2] - corrected[:, 1], axis=-1)
+    assert length_after == pytest.approx(length_before)
+    range_before = float(np.sqrt(np.sum(np.ptp(before[:, 2], axis=0) ** 2)))
+    range_after = float(np.sqrt(np.sum(np.ptp(corrected[:, 2], axis=0) ** 2)))
+    assert range_after < range_before
+
+
+def test_spine_axis_alignment_clamps_only_past_tolerance_frames() -> None:
+    """Spine curvature past the anatomy gate's bound is clamped inside it.
+
+    Frames already inside the tolerance stay bit-identical, and a clamped
+    joint keeps its along-axis progress so the torso pose is preserved.
+    """
+    import numpy as np
+
+    from exercise_motion_pkg import anatomical_repair
+
+    names = ["pelvis", "spine1", "spine2", "spine3", "neck"]
+    frames = 12
+    points = np.zeros((frames, len(names), 3))
+    points[:, 0] = [0.0, 0.0, 0.0]  # pelvis
+    points[:, 4] = [0.0, 1.0, 0.0]  # neck: torso axis is +Y, height 1.0
+    # spine1 leans 0.20 off-axis on every frame (past the 0.15 bound);
+    # spine2 stays at 0.05 (inside).
+    points[:, 1, 0] = 0.20
+    points[:, 1, 1] = 0.25
+    points[:, 2, 0] = 0.05
+    points[:, 2, 1] = 0.50
+    points[:, 3, 1] = 0.75
+
+    corrected, report = anatomical_repair.enforce_spine_axis_alignment(points, names)
+
+    assert report["applied"] is True
+    assert report["joints"]["spine1"]["clampedFrameCount"] == frames
+    assert report["joints"]["spine2"]["clampedFrameCount"] == 0
+    deviation_after = float(np.max(np.abs(corrected[:, 1, 0])))
+    assert deviation_after == pytest.approx(0.135)
+    assert corrected[:, 1, 1] == pytest.approx(points[:, 1, 1])
+    assert np.array_equal(corrected[:, 2], points[:, 2])
+    assert np.array_equal(corrected[:, 3], points[:, 3])
+
+
 def test_contact_sequence_correction_pins_floating_stationary_foot_to_support_plane() -> None:
     """A planted foot that floats and slides gets leg-chain pinned, not just translated.
 

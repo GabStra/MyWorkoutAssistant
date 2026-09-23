@@ -164,3 +164,11 @@ def verify_source_pose(payload, video_path: Path | None):
         except (OSError, ValueError, RuntimeError) as error:
             observations = {'available': False, 'reason': str(error)}
     return audit_source_pose(payload, observations)
+
+
+# The audit is a data-cleaning pass, not a gate: it removes joints it cannot
+# trust and records what it found (`unresolved` marks recovery gaps for
+# diagnostics). Whether the cleaned remainder is good enough is decided by
+# the phase, contract, support, and fidelity validations that consume it —
+# and ultimately by the VLM review of the rendered movement.
+

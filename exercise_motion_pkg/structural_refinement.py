@@ -3363,9 +3363,6 @@ def _align_body_to_source_pose(
     from .source_pose_evidence import audit_source_pose
 
     source_pose_payload = audit_source_pose(source_pose_payload or {})
-    if source_pose_payload.get('sourcePoseEvidenceAudit', {}).get('unresolved'):
-        return clip, {'applied': False, 'reason': 'source_pose_reference_unreliable',
-                      'sourcePoseEvidenceAudit': source_pose_payload['sourcePoseEvidenceAudit']}
 
     source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 5:

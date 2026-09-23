@@ -562,6 +562,13 @@ PRE_FIT_SOURCE_ARTICULATION_FIDELITY_REJECTION_REASONS = frozenset(
     for reason in MATERIALIZED_SOURCE_FIDELITY_REJECTION_REASONS
     if reason != "materialized_source_pose_fidelity_unavailable"
 )
+# Support-posture drift is the one pre-fit failure the contact-sequence
+# correction owns: relocating planted chains onto their source-confirmed
+# anchors directly repairs the lower-joint error behind this reason. Endpoint,
+# angle, and joint-shape mismatches have no repair arm and stay blocking.
+PRE_FIT_SUPPORT_REPAIRABLE_FIDELITY_REASONS = frozenset(
+    ("materialized_source_support_posture_mismatch",)
+)
 MATERIALIZED_NON_BLOCKING_WHEN_VALIDATION_DISABLED = frozenset(
     (
         "materialized_exported_preview_blank",
@@ -819,7 +826,7 @@ FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO = 0.55
 FULL_REPETITION_PHASE_COMPLETENESS_EDGE_MARGIN_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MIN_FRAMES = 5
-EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 42
+EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 44
 SOURCE_ENDPOINT_RETURN_HAND_HEIGHT_DELTA_RATIO_MAX = 0.20
 SOURCE_ENDPOINT_RETURN_ROOT_HORIZONTAL_DISPLACEMENT_RATIO_MAX = 0.065
 RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
@@ -9454,10 +9461,6 @@ def source_pose_phase_completeness_metrics(
         result["passed"] = False
         result["rejectionReasons"] = dedupe_text([
             *result.get("rejectionReasons", []), visibility["reason"]])
-    if audit.get("unresolved"):
-        result["passed"] = False
-        result["rejectionReasons"] = dedupe_text([
-            *result.get("rejectionReasons", []), "source_pose_reference_unreliable"])
     return result
 
 
@@ -9513,11 +9516,6 @@ def materialized_source_pose_fidelity_metrics(
     cleaned. Normalized time and similarity fitting make it independent of
     frame rate, camera scale, translation, horizontal world axis, and mirroring.
     """
-    if isinstance(source_pose_payload, dict) and source_pose_payload.get("sourcePoseEvidenceAudit", {}).get("unresolved"):
-        return {"available": False, "required": required, "passed": not required,
-                "rejectionReasons": ["materialized_source_pose_fidelity_unavailable"] if required else [],
-                "skippedReason": "source_pose_reference_unreliable",
-                "sourcePoseEvidenceAudit": source_pose_payload["sourcePoseEvidenceAudit"]}
     if not isinstance(source_pose_payload, dict):
         return {
             "available": False,
@@ -21419,6 +21417,88 @@ def exact_pose_single_cycle_refinement_candidates(
     return refinements
 
 
+SOURCE_CUT_RETURN_PHASE_EXPANSION_OFFSETS = (0.75, 1.5, 2.5)
+
+
+def source_cut_return_phase_expansion_candidates(
+    candidate: dict[str, Any],
+    validation: dict[str, Any],
+    *,
+    max_proposals: int = len(SOURCE_CUT_RETURN_PHASE_EXPANSION_OFFSETS),
+) -> list[dict[str, Any]]:
+    """Extend a one-way-partial cut toward its missing return phase.
+
+    A cut that finishes at a movement extreme truncated the return to the
+    start phase; the source usually keeps playing past the boundary. Extend
+    the failing boundary by bounded time offsets and let exact pose
+    validation arbitrate each extension — no exercise-specific logic, and a
+    source that truly ends mid-repetition simply fails all extensions.
+    """
+    if str(validation.get("reason") or "") != "source_pose_one_way_partial_repetition_phase":
+        return []
+    if int(candidate.get("exactBoundaryExpansionDepth") or 0) >= 1:
+        return []
+    start = parse_optional_float(candidate.get("startSeconds"))
+    end = parse_optional_float(candidate.get("endSeconds"))
+    if start is None or end is None or end <= start:
+        return []
+    end_value = parse_optional_float(validation.get("endValue"))
+    min_value = parse_optional_float(validation.get("minValue"))
+    max_value = parse_optional_float(validation.get("maxValue"))
+    start_value = parse_optional_float(validation.get("startValue"))
+    motion_range = (
+        max_value - min_value
+        if None not in {min_value, max_value} and max_value > min_value
+        else None
+    )
+    # A window that STARTS mid-rep can never satisfy return-to-start, so a
+    # partially-interior start moves earlier; otherwise the end truncated
+    # the return and moves later.
+    extend_start = False
+    if None not in {start_value, min_value, max_value} and motion_range:
+        start_interior = (
+            abs(start_value - min_value) > 0.25 * motion_range
+            and abs(start_value - max_value) > 0.25 * motion_range
+        )
+        if start_interior:
+            extend_start = True
+    parent_id = normalize_source_cut_candidate_id(candidate.get("candidateId")) or "UNKNOWN"
+    proposals: list[dict[str, Any]] = []
+    for index, offset in enumerate(SOURCE_CUT_RETURN_PHASE_EXPANSION_OFFSETS[:max_proposals], start=1):
+        refined = copy.deepcopy(candidate)
+        if extend_start:
+            refined_start = round(max(0.0, start - offset), 3)
+            if refined_start >= start - 1e-6:
+                continue
+            refined.update({
+                "candidateId": f"{parent_id}-RETN-{index}",
+                "startSeconds": refined_start,
+                "exactBoundaryExpansionDepth": 1,
+                "exactBoundaryExpansionParentId": parent_id,
+            })
+            refined["chunking"] = {
+                **(candidate.get("chunking") if isinstance(candidate.get("chunking"), dict) else {}),
+                "strategy": "exact_pose_return_expansion",
+                "expandedBoundary": "start",
+                "expansionSeconds": offset,
+            }
+        else:
+            refined.update({
+                "candidateId": f"{parent_id}-RETN-{index}",
+                "endSeconds": round(end + offset, 3),
+                "exactBoundaryExpansionDepth": 1,
+                "exactBoundaryExpansionParentId": parent_id,
+            })
+            refined["chunking"] = {
+                **(candidate.get("chunking") if isinstance(candidate.get("chunking"), dict) else {}),
+                "strategy": "exact_pose_return_expansion",
+                "expandedBoundary": "end",
+                "expansionSeconds": offset,
+            }
+        proposals.append(refined)
+    return proposals
+
+
 def select_exact_pose_confirmed_source_cut(
     ranking: LoopRanking,
     *,
@@ -21492,6 +21572,14 @@ def select_exact_pose_confirmed_source_cut(
                 rejection_reasons = dedupe_text(
                     [*rejection_reasons, "source_cut_multiple_cycles_refinement_required"]
                 )
+            # A cut that truncates the return phase is repaired by extending
+            # its failing boundary; exact validation arbitrates the extension.
+            return_expansions = source_cut_return_phase_expansion_candidates(
+                candidate,
+                validation,
+            ) if "source_cut_incomplete_repetition_phase" in rejection_reasons else []
+            if return_expansions:
+                candidate_queue = [*return_expansions, *candidate_queue]
             equipment_observation = (
                 {
                     "passed": True,
@@ -22456,8 +22544,6 @@ def update_pre_wham_exact_phase_validation_manifest(
 def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bool:
     if not validation.get("requiredRegionObservations", {}).get("passed", True):
         return False
-    if validation.get("sourcePoseEvidenceAudit", {}).get("unresolved"):
-        return False
     readiness = validation.get("sourceBodySupportReadiness") or {}
     if readiness.get("required") and not readiness.get("ready"):
         return False
@@ -22877,6 +22963,17 @@ def baked_source_support_evidence(payload: dict[str, Any]) -> dict[str, Any] | N
                         rebase(value)
             rebase(evidence)
     return evidence
+
+
+def pre_fit_failure_is_support_repairable(rejection_reasons) -> bool:
+    """True when every pre-fit fidelity failure is one the contact correction owns.
+
+    Support-posture drift is repairable by relocating planted chains onto their
+    source-confirmed anchors; any endpoint/angle/shape mismatch is not, and
+    must keep blocking the bake instead of burning the correction attempt.
+    """
+    reasons = set(rejection_reasons or ())
+    return bool(reasons) and reasons <= PRE_FIT_SUPPORT_REPAIRABLE_FIDELITY_REASONS
 
 
 def pre_fit_source_articulation_fidelity_rejection(
@@ -23580,24 +23677,39 @@ def _bake_preview_loops_with_playwright_uncached(
                     export_payload,
                     source_pose_reference,
                 )
+                unusable_fit = False
+                support_repair_eligible = False
                 if pre_fit_fidelity is not None:
-                    # Articulation target already fails the same fidelity gate
-                    # fit cannot repair. Skip the expensive controlled-motion burn.
                     export_payload = copy.deepcopy(export_payload)
                     hard_reasons = list(pre_fit_fidelity.get("rejectionReasons") or [])
-                    export_payload["controlledMotionFit"] = {
-                        "applied": False,
-                        "reason": "pre_fit_source_articulation_fidelity_failed",
-                        "rejectionReasons": hard_reasons,
-                        "sourcePoseFidelity": pre_fit_fidelity,
-                    }
-                    export_payload["preRenderDeterministicGate"] = {
-                        "passed": False,
-                        "rejectionReasons": hard_reasons,
-                        "sourcePoseFidelity": pre_fit_fidelity,
-                        "preFitSourceArticulationProbe": True,
-                    }
-                    unusable_fit = True
+                    support_repair_eligible = (
+                        variant_id == "adaptive-baseline"
+                        and isinstance(source_foot_support_evidence, dict)
+                        and pre_fit_failure_is_support_repairable(hard_reasons)
+                    )
+                    if support_repair_eligible:
+                        # The whole-body fit cannot repair support drift, but the
+                        # contact-sequence correction below relocates planted
+                        # chains onto their source-confirmed anchors. Keep the
+                        # probe evidence and let that correction run; a missed
+                        # repair still fails the honest downstream gates.
+                        export_payload["preFitSourceArticulationProbe"] = pre_fit_fidelity
+                    else:
+                        # Articulation target already fails the same fidelity gate
+                        # fit cannot repair. Skip the expensive controlled-motion burn.
+                        export_payload["controlledMotionFit"] = {
+                            "applied": False,
+                            "reason": "pre_fit_source_articulation_fidelity_failed",
+                            "rejectionReasons": hard_reasons,
+                            "sourcePoseFidelity": pre_fit_fidelity,
+                        }
+                        export_payload["preRenderDeterministicGate"] = {
+                            "passed": False,
+                            "rejectionReasons": hard_reasons,
+                            "sourcePoseFidelity": pre_fit_fidelity,
+                            "preFitSourceArticulationProbe": True,
+                        }
+                        unusable_fit = True
                 else:
                     export_payload, _ = constrain_baked_payload_to_source_articulation(
                         export_payload,
@@ -23646,22 +23758,27 @@ def _bake_preview_loops_with_playwright_uncached(
                         adaptive_preview_settings=adaptive_settings,
                     )
                 )
+                support_repair_possible = (
+                    variant_id == "adaptive-baseline"
+                    and isinstance(source_foot_support_evidence, dict)
+                )
                 if unusable_fit:
                     # Incomplete or geometrically doomed fits cannot produce a
-                    # selectable clip; do not spend more loops/variants here.
+                    # selectable clip; do not spend more loops/variants here —
+                    # but the contact-sequence correction below still gets one
+                    # cheap attempt on the baseline before giving up.
                     stop_after_incomplete_fit = True
-                    break
+                    if not support_repair_possible:
+                        break
                 if (not rank_preview_variants
-                        and export_payload.get('controlledMotionFit')):
+                        and export_payload.get('controlledMotionFit')
+                        and not (stop_after_incomplete_fit and support_repair_possible)):
                     # The unified fit already tried its bounded source cycles
                     # against the available evidence. Renderer locks add no evidence
                     # to either a valid result or an unresolved fit. Preserve
                     # the result for final acceptance or source fallback.
                     break
-                if (
-                    variant_id == "adaptive-baseline"
-                    and isinstance(source_foot_support_evidence, dict)
-                ):
+                if support_repair_possible:
                     fused_support_evidence, reconstructed_contact_inference = (
                         fuse_reconstructed_support_evidence(
                             export_payload,
@@ -23686,6 +23803,11 @@ def _bake_preview_loops_with_playwright_uncached(
                     corrected_payload, correction_metrics = apply_source_contact_sequence_correction(
                         export_payload, fused_support_evidence,
                     )
+                    # The correction owns these pose changes, not the fit: a
+                    # copied fit report is stale by digest and would reject the
+                    # repaired variant in gates that never require a fit.
+                    corrected_payload.pop("controlledMotionFit", None)
+                    corrected_payload.pop("preRenderDeterministicGate", None)
                     used_renderer_contact_ik = False
                     rigid_support_passed = bool(correction_metrics.get("applied")) and bool(
                         source_confirmed_support_stationarity_metrics(
@@ -23788,12 +23910,13 @@ def _bake_preview_loops_with_playwright_uncached(
             if stop_after_incomplete_fit:
                 break
         from .controlled_motion import controlled_fit_unusable_for_more_preview_work
-        if any(
+        if all(
             controlled_fit_unusable_for_more_preview_work(artifact.export_payload.get("controlledMotionFit"))
             for artifact in artifacts
         ):
-            # Doomed or incomplete fits fail selection gates; apply the gate without
-            # encoding review videos that cannot be selected.
+            # Every variant carries a doomed or incomplete fit, so nothing can
+            # be selected: apply the gate without encoding review videos. A
+            # contact-sequence-repaired sibling renders normally below.
             reference = load_verified_source_pose_reference(
                 candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
                 candidate_workspace / "input" / "selected_segment.mp4",

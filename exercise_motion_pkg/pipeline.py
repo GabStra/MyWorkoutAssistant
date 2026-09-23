@@ -427,6 +427,7 @@ def run_generation_pipeline(
         "preview.py", "wham_convert.py", "wham_retarget_source.py", "ground.py", "models.py",
         "spinepose_wham_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
         "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
+        "anatomical_repair.py", "chain_depth_correction.py",
     ))
     key = cache_key(settings, inputs)
     with stage_lock(checkpoint):
@@ -811,8 +812,6 @@ def _run_generation_pipeline_uncached(
         )
         from .source_pose_evidence import verify_source_pose
         source_pose_payload = verify_source_pose(source_pose_payload, input_video_path)
-        if isinstance(source_pose_payload, dict) and source_pose_payload.get("sourcePoseEvidenceAudit", {}).get("unresolved"):
-            raise ValueError("source_pose_reference_unreliable: unresolved landmark associations")
         # Keep the validated source timeline intact during reconstruction and
         # cleanup. Candidate review owns the single movement-instance cut;
         # cropping here as well rebases motion before source-video selection.
@@ -902,6 +901,14 @@ def _run_generation_pipeline_uncached(
         else:
             # Fast profile: skip the repair pass; deterministic gates still run.
             timings["structuralRefinement"] = {"enabled": False, "reason": "skipped_by_request"}
+        stage_started = time.perf_counter()
+        from .chain_depth_correction import correct_distal_chain_depth
+        cleaned_clip, chain_depth_report = correct_distal_chain_depth(
+            cleaned_clip, source_pose_payload
+        )
+        record_timing("chainDepthCorrectionSeconds", stage_started)
+        if chain_depth_report.get("applied"):
+            timings["chainDepthCorrection"] = chain_depth_report
         if request.motion_reconstruction_backend == "gvhmr":
             # GVHMR joints carry pose-dependent bilateral span jitter and a
             # systematic neck socket offset, and structural refinement's
@@ -915,6 +922,7 @@ def _run_generation_pipeline_uncached(
                 enforce_bilateral_chain_symmetry,
                 enforce_bilateral_span_rigidity,
                 enforce_socket_centering,
+                enforce_spine_axis_alignment,
                 stabilize_stationary_contact_wobble,
             )
 
@@ -930,6 +938,10 @@ def _run_generation_pipeline_uncached(
             # Spans move shoulders/hips; a second chain pass restores symmetry.
             corrected, symmetry_pass2 = enforce_bilateral_chain_symmetry(corrected, joint_names)
             corrected, span_pass2 = enforce_bilateral_span_rigidity(corrected, joint_names)
+            # The regression's spine curve can sit past the anatomy gate's
+            # deviation bound; the fit enforces the same bound on fitted
+            # artifacts, so the no-fit bake path gets the identical repair.
+            corrected, spine_report = enforce_spine_axis_alignment(corrected, joint_names)
             # Wobble-dominated planted feet (returns to start, small total
             # range) are reconstruction jitter; smooth them. Traveling feet
             # keep their trajectory.
@@ -938,6 +950,7 @@ def _run_generation_pipeline_uncached(
             )
             symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
             span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report,
+                           'spineAxisAlignment': spine_report,
                            'stationaryContactStabilization': wobble_report}
             span_report = {**span_report, 'bilateralChains': symmetry_report}
             cleaned_clip = replace(

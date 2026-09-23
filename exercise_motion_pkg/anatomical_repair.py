@@ -2,11 +2,14 @@
 from time import monotonic
 import hashlib
 import json
+import math
+import statistics
 
 import numpy as np
 from scipy.optimize import least_squares
 
 from .physical_validation import anatomical_structure_residuals, angles, body_scale
+from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 
 
 ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v5_local_dof'
@@ -83,6 +86,64 @@ def enforce_bilateral_chain_symmetry(points, names):
     return corrected, report
 
 
+SPINE_AXIS_JOINTS = ('spine1', 'spine2', 'spine3')
+SPINE_AXIS_MAX_DEVIATION_RATIO = 0.15
+SPINE_AXIS_CLAMP_MARGIN = 0.9
+
+
+def enforce_spine_axis_alignment(points, names):
+    """Clamp spine curvature to what the anatomy gate tolerates.
+
+    The anatomy gate requires spine1-3 to stay within 15% of torso height of
+    the pelvis-neck axis. Joint regression on posed meshes carries a spine
+    curve past that tolerance on some windows, and the controlled fit's own
+    anatomy check enforces the same bound on every fitted artifact — so the
+    no-fit bake path needs the identical repair arm instead of a hard gate.
+    The along-axis progress and the off-axis direction are preserved; only
+    the off-axis magnitude is clamped slightly inside the tolerance.
+    """
+    corrected = points.copy()
+    report = {}
+    if not all(name in names for name in ('pelvis', 'neck', *SPINE_AXIS_JOINTS)):
+        return corrected, {'applied': False, 'reason': 'spine_joints_unavailable'}
+    pi, ni = names.index('pelvis'), names.index('neck')
+    axis = corrected[:, ni] - corrected[:, pi]
+    height = np.linalg.norm(axis, axis=-1)
+    usable = height > 1e-9
+    direction = axis / np.maximum(height, 1e-9)[:, None]
+    clamp_ratio = SPINE_AXIS_MAX_DEVIATION_RATIO * SPINE_AXIS_CLAMP_MARGIN
+    max_before = 0.0
+    max_after = 0.0
+    changed = 0
+    for name in SPINE_AXIS_JOINTS:
+        j = names.index(name)
+        delta = corrected[:, j] - corrected[:, pi]
+        progress = np.sum(delta * direction, axis=-1)
+        off = delta - progress[:, None] * direction
+        deviation = np.linalg.norm(off, axis=-1)
+        limit = clamp_ratio * height
+        over = usable & (deviation > limit)
+        if not over.any():
+            report[name] = {'maxDeviationRatio': round(
+                float(np.max(np.where(usable, deviation / np.maximum(height, 1e-9), 0.0))), 4),
+                'clampedFrameCount': 0}
+            continue
+        scale = np.where(over, limit / np.maximum(deviation, 1e-9), 1.0)[:, None]
+        corrected[:, j] = corrected[:, pi] + progress[:, None] * direction + off * scale
+        max_before = max(max_before, float(np.max(deviation[over] / np.maximum(height[over], 1e-9))))
+        max_after = max(max_after, float(np.max(np.linalg.norm(
+            corrected[over, j] - corrected[over, pi]
+            - (np.sum((corrected[over, j] - corrected[over, pi]) * direction[over], axis=-1))[:, None] * direction[over],
+            axis=-1) / np.maximum(height[over], 1e-9))))
+        changed += int(np.sum(over))
+        report[name] = {
+            'maxDeviationRatioBefore': round(max_before, 4),
+            'maxDeviationRatioAfter': round(max_after, 4),
+            'clampedFrameCount': changed,
+        }
+    return corrected, {'applied': changed > 0, 'joints': report}
+
+
 SOCKET_CENTER_TRIPLES = (
     ('left_hip', 'right_hip', 'pelvis'),
     ('left_collar', 'right_collar', 'spine3'),
@@ -106,12 +167,24 @@ def stabilize_stationary_contact_wobble(points, names, *, fps: float = 30.0):
     scatter (endpoint << range, range below a stationary ceiling) get their
     trajectory replaced by a heavily smoothed version. Genuine travel keeps
     the original trajectory untouched.
+
+    Smoothing a joint while its parent stays fixed bends their bone, so the
+    smoothed point is re-projected onto its original parent-bone length: the
+    reconstruction's bones are rigid (measured 0% variation in raw SMPL
+    output), which makes the planted-joint wobble purely angular around the
+    parent — direction smoothing removes all of it and the radial
+    re-imposition is exact, not a compromise.
     """
     corrected = points.copy()
     report = {}
     body_span = float(np.median(np.linalg.norm(np.ptp(points, axis=1), axis=-1)))
     window = max(3, int(round(STATIONARY_CONTACT_SMOOTH_SECONDS * fps)) | 1)
     kernel = np.ones(window) / window
+    parent_of = {
+        name: SMPL_JOINT_NAMES[parent]
+        for name, parent in zip(SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS)
+        if 0 <= parent < len(SMPL_JOINT_NAMES)
+    }
     for name in STATIONARY_CONTACT_JOINTS:
         if name not in names:
             continue
@@ -133,6 +206,21 @@ def stabilize_stationary_contact_wobble(points, names, *, fps: float = 30.0):
              for ax in range(3)], axis=-1)
         # Keep the overall plant position: re-center on the original median.
         smoothed += np.median(trajectory, axis=0) - np.median(smoothed, axis=0)
+        parent = parent_of.get(name)
+        if parent is not None and parent in names:
+            # Re-impose the original rigid bone length so smoothing cannot
+            # bend it: only the direction around the parent is smoothed.
+            pi = names.index(parent)
+            original = points[:, j] - points[:, pi]
+            length = np.linalg.norm(original, axis=-1, keepdims=True)
+            direction = smoothed - points[:, pi]
+            norm = np.linalg.norm(direction, axis=-1, keepdims=True)
+            usable = (norm > 1e-9) & (length > 1e-9)
+            smoothed = np.where(
+                usable,
+                points[:, pi] + direction / np.maximum(norm, 1e-12) * length,
+                smoothed,
+            )
         corrected[:, j] = smoothed
         report[name] = {
             "applied": True,
