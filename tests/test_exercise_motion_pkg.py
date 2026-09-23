@@ -49089,8 +49089,12 @@ def test_spine_axis_alignment_clamps_only_past_tolerance_frames() -> None:
     assert report["joints"]["spine1"]["clampedFrameCount"] == frames
     assert report["joints"]["spine2"]["clampedFrameCount"] == 0
     deviation_after = float(np.max(np.abs(corrected[:, 1, 0])))
-    assert deviation_after == pytest.approx(0.135)
-    assert corrected[:, 1, 1] == pytest.approx(points[:, 1, 1])
+    assert deviation_after <= 0.15
+    # The clamp is length-preserving: the parent bone stays rigid, and the
+    # along-axis progress absorbs the correction.
+    bone = np.linalg.norm(corrected[:, 1] - corrected[:, 0], axis=-1)
+    assert np.ptp(bone) == pytest.approx(0.0, abs=1e-9)
+    assert (corrected[:, 1, 1] > points[:, 1, 1]).all()
     assert np.array_equal(corrected[:, 2], points[:, 2])
     assert np.array_equal(corrected[:, 3], points[:, 3])
 

@@ -23847,6 +23847,7 @@ def _bake_preview_loops_with_playwright_uncached(
                         }
                         unusable_fit = True
                 else:
+                    pre_fit_frames = copy.deepcopy(export_payload.get("frames"))
                     export_payload, _ = constrain_baked_payload_to_source_articulation(
                         export_payload,
                         source_foot_support_evidence=source_foot_support_evidence,
@@ -23854,6 +23855,13 @@ def _bake_preview_loops_with_playwright_uncached(
                         source_pose_reference=source_pose_reference,
                     )
                     from .controlled_motion import controlled_fit_unusable_for_more_preview_work
+                    fit_report = export_payload.get("controlledMotionFit")
+                    if isinstance(fit_report, dict) and not fit_report.get("applied"):
+                        # A failed fit leaves its half-mutated joints behind;
+                        # gating that half-solution double-counts the failure
+                        # (its own checks plus anatomy damage). Restore the
+                        # pre-fit geometry — the fit report stays for routing.
+                        export_payload["frames"] = pre_fit_frames
                     unusable_fit = controlled_fit_unusable_for_more_preview_work(
                         export_payload.get("controlledMotionFit")
                     )

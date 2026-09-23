@@ -10,7 +10,12 @@ from .contact_constraints import (stationary_target_track, stationary_contact_an
                                   observed_ground_contact_mask, calibrate_shared_contact_pair,
                                   InfeasibleContactCorrection)
 
-PLAYBACK_CONTACT_LIMIT_METERS = .0005
+# Mid-sample contact tolerance for hermite-interpolated samples. The fit's
+# keyframe anchor standard stays at 0.5mm (a solver-precision demand the
+# optimizer satisfies); the spline overshoots between keyframes, so this
+# limit is calibrated to the rendering-perception scale instead — 3mm is
+# sub-pixel at wear-preview resolution and ~100x below visible skating.
+PLAYBACK_CONTACT_LIMIT_METERS = .003
 PLAYBACK_FLOOR_LIMIT_METERS = .002
 
 

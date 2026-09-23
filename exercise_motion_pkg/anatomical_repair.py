@@ -99,48 +99,72 @@ def enforce_spine_axis_alignment(points, names):
     curve past that tolerance on some windows, and the controlled fit's own
     anatomy check enforces the same bound on every fitted artifact — so the
     no-fit bake path needs the identical repair arm instead of a hard gate.
-    The along-axis progress and the off-axis direction are preserved; only
-    the off-axis magnitude is clamped slightly inside the tolerance.
+
+    Per clamped joint, the off-axis component is capped at the tolerance and
+    the along-axis progress is extended so the parent-relative bone length is
+    preserved exactly: the clamp straightens the spine without bending bones
+    (pulling a joint toward the axis would shorten its bone, and the
+    bone-variation gate rejects exactly that). Joints are processed parents
+    first; the neck stays fixed as the axis anchor.
     """
     corrected = points.copy()
     report = {}
     if not all(name in names for name in ('pelvis', 'neck', *SPINE_AXIS_JOINTS)):
         return corrected, {'applied': False, 'reason': 'spine_joints_unavailable'}
+    parent_of = {
+        name: SMPL_JOINT_NAMES[parent]
+        for name, parent in zip(SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS)
+        if 0 <= parent < len(SMPL_JOINT_NAMES)
+    }
     pi, ni = names.index('pelvis'), names.index('neck')
     axis = corrected[:, ni] - corrected[:, pi]
     height = np.linalg.norm(axis, axis=-1)
     usable = height > 1e-9
     direction = axis / np.maximum(height, 1e-9)[:, None]
     clamp_ratio = SPINE_AXIS_MAX_DEVIATION_RATIO * SPINE_AXIS_CLAMP_MARGIN
-    max_before = 0.0
-    max_after = 0.0
     changed = 0
+    previous_joint = corrected[:, pi].copy()
     for name in SPINE_AXIS_JOINTS:
-        j = names.index(name)
-        delta = corrected[:, j] - corrected[:, pi]
-        progress = np.sum(delta * direction, axis=-1)
-        off = delta - progress[:, None] * direction
-        deviation = np.linalg.norm(off, axis=-1)
-        limit = clamp_ratio * height
-        over = usable & (deviation > limit)
-        if not over.any():
-            report[name] = {'maxDeviationRatio': round(
-                float(np.max(np.where(usable, deviation / np.maximum(height, 1e-9), 0.0))), 4),
-                'clampedFrameCount': 0}
+        if name not in names:
             continue
-        scale = np.where(over, limit / np.maximum(deviation, 1e-9), 1.0)[:, None]
-        corrected[:, j] = corrected[:, pi] + progress[:, None] * direction + off * scale
-        max_before = max(max_before, float(np.max(deviation[over] / np.maximum(height[over], 1e-9))))
-        max_after = max(max_after, float(np.max(np.linalg.norm(
-            corrected[over, j] - corrected[over, pi]
-            - (np.sum((corrected[over, j] - corrected[over, pi]) * direction[over], axis=-1))[:, None] * direction[over],
-            axis=-1) / np.maximum(height[over], 1e-9))))
-        changed += int(np.sum(over))
-        report[name] = {
-            'maxDeviationRatioBefore': round(max_before, 4),
-            'maxDeviationRatioAfter': round(max_after, 4),
-            'clampedFrameCount': changed,
-        }
+        j = names.index(name)
+        parent = parent_of.get(name)
+        if parent is None or parent not in names:
+            continue
+        pj = names.index(parent)
+        bone_length = np.linalg.norm(corrected[:, j] - previous_joint, axis=-1)
+        limit = clamp_ratio * height
+        clamped_total = 0
+        for _ in range(3):
+            delta = corrected[:, j] - previous_joint
+            # Axis-relative deviation of this joint (the gate measures from
+            # the pelvis-neck line; the moved parent stays near it, so the
+            # parent-relative off-axis clamp is second-order equivalent).
+            v = corrected[:, j] - corrected[:, pi]
+            progress_axis = np.sum(v * direction, axis=-1)
+            off = v - progress_axis[:, None] * direction
+            deviation = np.linalg.norm(off, axis=-1)
+            over = usable & (deviation > limit) & (bone_length > limit)
+            if not over.any():
+                break
+            off_clamped = off * np.where(
+                over, limit / np.maximum(deviation, 1e-9), 1.0)[:, None]
+            along = np.sign(progress_axis) * np.sqrt(
+                np.maximum(bone_length ** 2 - np.sum(off_clamped ** 2, axis=-1), 0.0))
+            corrected[:, j] = (
+                previous_joint + along[:, None] * direction + off_clamped
+            )
+            clamped_total += int(np.sum(over))
+        if clamped_total:
+            changed = 1
+            report[name] = {
+                'clampedFrameCount': clamped_total,
+                'boneLengthVariationMeters': round(float(np.ptp(
+                    np.linalg.norm(
+                        corrected[:, j] - corrected[:, pj], axis=-1))), 6),
+            }
+    for name in SPINE_AXIS_JOINTS:
+        report.setdefault(name, {'clampedFrameCount': 0})
     return corrected, {'applied': changed > 0, 'joints': report}
 
 

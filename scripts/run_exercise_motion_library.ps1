@@ -359,8 +359,28 @@ function Write-MovementPackage {
 
 }
 
+function Invoke-AutoResetDiscoveryRejections {
+    # Discovery reviews accumulate per-candidate rejections in the candidates
+    # manifests, and same-workspace resumes never re-attempt them. Re-eligible
+    # them at every run start so candidates rejected under older review logic
+    # are re-reviewed under the current one (identity rejections stay
+    # permanent). Mirrors scripts/reset_exercise_motion_candidate_rejections.py.
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $resetScript = Join-Path $repoRoot "scripts/reset_exercise_motion_candidate_rejections.py"
+    $resetArguments = @(
+        $resetScript,
+        "--workspace-root", $resolvedWorkspaceRoot
+    )
+    Write-MotionLibraryMessage "Re-enabling discovery-rejected candidates for re-review under the current review logic."
+    $resetExitCode = Invoke-MotionLibraryLoggedCommand -Command $PythonCommand -Arguments $resetArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
+    if ($resetExitCode -ne 0) {
+        Write-MotionLibraryMessage "Discovery rejection reset exited with code $resetExitCode; continuing."
+    }
+}
+
 $skipFirstPass = $false
 $script:CompletedRevalidationReportPath = $null
+Invoke-AutoResetDiscoveryRejections
 Invoke-ExistingSelectionRevalidation
 if (-not [string]::IsNullOrWhiteSpace($script:CompletedRevalidationReportPath)) {
     # Publish the newly audited set before starting expensive regeneration. If the
