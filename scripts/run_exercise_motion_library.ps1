@@ -69,7 +69,7 @@ trap {
 
 . (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
 $SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
-$RetainedSelectedRevalidationVersion = 12
+$RetainedSelectedRevalidationVersion = 14
 
 if (-not $DisableStagedWaves -and $StagedWaveSize -lt 1) {
     throw "StagedWaveSize must be at least 1 when staged waves are enabled."

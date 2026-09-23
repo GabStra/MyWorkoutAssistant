@@ -4322,9 +4322,10 @@ def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool
 def single_dumbbell_naming_requirement(exercise_name: str) -> str:
     """The library owner's explicit convention, distinct from implement count alone."""
     if normalize_exercise_name(exercise_name).startswith("single dumbbell "):
-        return ("Library naming requirement: Single Dumbbell means exactly one dumbbell and one working arm. "
-                "The working hand holds the dumbbell; a two-handed grip on that dumbbell is a different variant. "
-                "The free hand may provide support when appropriate to the movement.\n")
+        return ("Library naming requirement: Single Dumbbell means exactly one dumbbell is used. "
+                "The grip may be one-handed or two-handed as the movement requires — a two-handed grip on "
+                "the single dumbbell is a valid form of this variant, not a different exercise. "
+                "Only 'Single-Arm' naming means one working arm.\n")
     return ""
 
 
@@ -5804,12 +5805,6 @@ def exercise_motion_contract_quality_issues(
     posture_text = " ".join(posture_state_texts)
     issues = exercise_motion_contract_identity_issues(contract, exercise=exercise)
     target_name = exercise.name if exercise is not None else str(contract.get("exerciseName") or "")
-    if single_dumbbell_naming_requirement(target_name) and re.search(
-        r"\bdumbbell\s+(?:with|in)\s+(?:(?:a|the)\s+)?(?:both|two)[ -]hands\b"
-        r"|\b(?:both|two)[ -]hands\s+(?:holding|gripping)\s+(?:a\s+|the\s+|single\s+)*dumbbell\b",
-        posture_text,
-    ):
-        issues.append("Single Dumbbell requires one working arm, not a two-handed dumbbell grip")
     if exercise_motion_contract_uses_candidate_evidence(contract):
         issues.append("candidate observations cannot define the requested exercise contract")
     issues += [
@@ -6828,7 +6823,7 @@ def run_youtube_candidate_review_batches(
         if single_dumbbell_naming_requirement(exercise.name):
             for candidate in [*pass_result.ranked, *(debug_by_key.get(item.key()) for item in batch)]:
                 if candidate is not None and isinstance(candidate.vision_payload, dict):
-                    candidate.vision_payload["singleDumbbellNamingPolicyVersion"] = 1
+                    candidate.vision_payload["singleDumbbellNamingPolicyVersion"] = 2
         for candidate in pass_result.ranked:
             reviewed_by_key[candidate.key()] = candidate
             debug_by_key[candidate.key()] = candidate
@@ -8671,7 +8666,7 @@ def discover_and_rank_youtube_candidates(
     manifest["ranking"]["candidateDecisionsJsonlPath"] = str(decisions_path)
     manifest["ranking"]["sourceRejectionReviewPolicyVersion"] = 1
     manifest["ranking"]["staticHoldReviewPolicyVersion"] = 1
-    manifest["ranking"]["singleDumbbellNamingPolicyVersion"] = 1
+    manifest["ranking"]["singleDumbbellNamingPolicyVersion"] = 2
     manifest["ranking"]["poseCameraReviewPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     append_youtube_discovery_progress(
@@ -8707,7 +8702,7 @@ def candidate_has_debug_review_payload(
 ) -> bool:
     payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
     if (exercise is not None and single_dumbbell_naming_requirement(exercise.name)
-            and payload.get("singleDumbbellNamingPolicyVersion") != 1):
+            and payload.get("singleDumbbellNamingPolicyVersion") != 2):
         return False
     if pose_prefilter_review_incomplete(payload.get("posePrefilter")):
         return False

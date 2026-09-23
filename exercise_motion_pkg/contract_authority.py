@@ -18,10 +18,12 @@ def contract_field_authority(exercise_name: str, generated: dict[str, Any]) -> d
     fields = {key: ContractField(value, "generated_expectation", False, "")
               for key, value in generated.items()}
     name = re.sub(r"[-_]", " ", exercise_name.lower())
-    # Counts are independent except for the library owner's explicit Single Dumbbell convention.
+    # "Single Dumbbell/Kettlebell" constrains the implement count only: the
+    # grip may be one-handed or two-handed as the movement requires, so the
+    # acting arm count comes from explicit arm wording alone.
     for key, pattern, value in (
         ("implementCount", r"\bsingle\s+(?:dumbbell|kettlebell)\b", 1),
-        ("actingArmCount", r"\b(?:single|one)\s+arm\b|\bone\s+handed\b|\bsingle\s+dumbbell\b", 1),
+        ("actingArmCount", r"\b(?:single|one)[ -]arm\b|\bone[ -]handed\b", 1),
     ):
         match = re.search(pattern, name)
         if match:

@@ -83,7 +83,19 @@ def selected_artifact_identity(
     context: dict[str, Any] | None = None, contract: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Paths are not identity; exactly one retained source and skeleton are."""
-    sources = [*directory.glob("*_selected_input.mp4"), *directory.glob("*_selected_input.webm")]
+    source_groups: dict[str, list[Path]] = {}
+    for path in (
+        *directory.glob("*_selected_input.mp4"),
+        *directory.glob("*_selected_input.webm"),
+    ):
+        # The webm is a re-containered copy of the mp4 input, not a second
+        # source: one retained stem is one source regardless of containers.
+        source_groups.setdefault(path.stem, []).append(path)
+    if len(source_groups) != 1:
+        return None
+    sources = [
+        min(next(iter(source_groups.values())), key=lambda path: path.suffix != ".mp4")
+    ]
     skeletons = list(directory.glob("*_wear_skeleton.json"))
     selected = manifest.get("selected")
     if len(sources) != 1 or len(skeletons) != 1 or not isinstance(selected, dict):

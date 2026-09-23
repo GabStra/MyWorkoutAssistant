@@ -48732,6 +48732,31 @@ def test_return_phase_expansion_extends_the_truncated_boundary() -> None:
     ) == []
 
 
+def test_selected_artifact_identity_treats_webm_copy_as_one_source(tmp_path) -> None:
+    """A re-containered webm copy of the retained mp4 is not a second source.
+
+    Retained selections carry both containers; the identity must hash the
+    canonical mp4 so the selection stays trusted instead of collapsing into
+    manual review for an ambiguous-source error.
+    """
+    from exercise_motion_pkg.acceptance import selected_artifact_identity
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    (selected / "ex_selected_input.mp4").write_bytes(b"mp4-bytes")
+    (selected / "ex_selected_input.webm").write_bytes(b"webm-bytes")
+    (selected / "ex_wear_skeleton.json").write_text("{}")
+    manifest = {"selected": {"ranking": {}, "candidate": {}}}
+    dual = selected_artifact_identity(selected, manifest, policies={"p": 1})
+    assert dual is not None
+    (selected / "ex_selected_input.webm").unlink()
+    single = selected_artifact_identity(selected, manifest, policies={"p": 1})
+    assert single is not None and single == dual
+    # Two genuinely different retained sources stay ambiguous.
+    (selected / "ex2_selected_input.mp4").write_bytes(b"other")
+    assert selected_artifact_identity(selected, manifest, policies={"p": 1}) is None
+
+
 def test_materialized_fidelity_no_longer_skips_on_unresolved_pose_audit() -> None:
     """The pose evidence audit cleans data; it never fails a window.
 
@@ -48760,6 +48785,72 @@ def test_materialized_fidelity_no_longer_skips_on_unresolved_pose_audit() -> Non
     assert "source_pose_reference_unreliable" not in (
         result.get("rejectionReasons") or []
     )
+
+
+def test_scorecard_fallback_sends_completeness_rejections_to_pose_confirmation() -> None:
+    """A scorecard that passes nothing must not dead-end the source.
+
+    Candidates disapproved only for partial movement / boundary judgments go
+    to exact pose confirmation (the completeness authority), sorted by
+    score. Identity and equipment rejections, low scores, and visually
+    empty candidates stay out.
+    """
+    from exercise_motion_pkg import bake_and_rank
+
+    payload = {
+        "sourceCutCandidates": [
+            {"candidateId": "A", "startSeconds": 2.5, "endSeconds": 7.4},
+            {"candidateId": "B", "startSeconds": 8.0, "endSeconds": 12.0,
+             "visualIntegrity": {"passed": False}},
+            {"candidateId": "C", "startSeconds": 12.0, "endSeconds": 16.0},
+            {"candidateId": "D", "startSeconds": 16.0, "endSeconds": 20.0},
+        ],
+    }
+    scorecards = {
+        "A": {"id": "A", "passed": False, "score": 0.95,
+              "rejectionReasons": ["source_cut_model_rejected",
+                                   "source_cut_partial_movement",
+                                   "source_cut_scorecard_reject_partial_movement"]},
+        "B": {"id": "B", "passed": False, "score": 0.97,
+              "rejectionReasons": ["source_cut_model_rejected",
+                                   "source_cut_partial_movement"]},
+        "C": {"id": "C", "passed": False, "score": 0.93,
+              "rejectionReasons": ["source_cut_model_rejected",
+                                   "source_cut_scorecard_reject_wrong_exercise"]},
+        "D": {"id": "D", "passed": False, "score": 0.2,
+              "rejectionReasons": ["source_cut_model_rejected",
+                                   "source_cut_partial_movement"]},
+    }
+    fallback = bake_and_rank.source_cut_scorecard_fallback_candidates(
+        payload, scorecards=scorecards
+    )
+    assert [c["candidateId"] for c in fallback] == ["A"]
+
+    # A passing scorecard row is handled by the normal path, not the fallback.
+    scorecards["A"]["passed"] = True
+    assert bake_and_rank.source_cut_scorecard_fallback_candidates(
+        payload, scorecards=scorecards
+    ) == []
+
+
+def test_single_dumbbell_constrains_implement_count_not_arm_count() -> None:
+    """'Single Dumbbell' means one implement, not one working arm.
+
+    The grip may be two-handed as the movement requires; only explicit arm
+    wording ('Single-Arm', 'one handed') forces the acting arm count.
+    """
+    from exercise_motion_pkg.contract_authority import contract_field_authority
+    from exercise_motion_pkg.youtube import single_dumbbell_naming_requirement
+
+    fields = contract_field_authority("Single Dumbbell Romanian Deadlift", {})
+    assert fields["implementCount"]["value"] == 1
+    assert "actingArmCount" not in fields
+
+    arm_fields = contract_field_authority("Single-Arm Dumbbell Row", {})
+    assert arm_fields["actingArmCount"]["value"] == 1
+
+    requirement = single_dumbbell_naming_requirement("Single Dumbbell Clean and Press")
+    assert "two-handed grip on the single dumbbell is a valid" in requirement
 
 
 def test_pre_fit_support_drift_alone_reaches_repair_other_fidelity_codes_stay_blocking() -> None:

@@ -541,7 +541,7 @@ SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
 SELECTION_VALIDATION_POLICY_VERSION = 119
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 81
-RETAINED_SELECTED_REVALIDATION_VERSION = 12
+RETAINED_SELECTED_REVALIDATION_VERSION = 14
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
 )
@@ -16700,7 +16700,21 @@ def revalidate_library_workspace(
             )) - review_reasons
             if final_review.get("failureOwner") == "review" and not independent_rejections:
                 return "needs_manual_review", payload_string_list(final_review.get("rejectionReasons"))
-            return "invalid", materialized_rejection_reason_tags(validated) or [
+            # Report the CURRENT gate verdict, not the retained ranking's
+            # historical provenance tags: ranking.reasons carries source
+            # pipeline bookkeeping that was never a quality rejection, and
+            # sweeping it here makes actionable invalids unreadable.
+            gate_reasons = (
+                payload_string_list(acceptance_metrics.get("rejectionReasons"))
+                if isinstance(acceptance_metrics, dict) else []
+            )
+            reasons = dedupe_text([
+                *payload_string_list(acceptance_decision.get("reasons")),
+                *review_reasons,
+                *independent_rejections,
+                *gate_reasons,
+            ])
+            return "invalid", reasons or [
                 "retained_selected_artifact_rejected_under_current_policy"
             ]
 
@@ -16823,7 +16837,13 @@ def revalidate_library_workspace(
         marker["previewRuntimeSignature"] = preview_runtime_signature()
         ending_identity = current_artifact_identity(exercise_workspace)
         marker["artifactIdentity"] = ending_identity
-        if ending_identity is None or starting_identity != ending_identity:
+        if ending_identity is None:
+            # Workspaces queued from their bake manifest but holding no
+            # retained selection simply have nothing to revalidate; the run
+            # re-attempts them. Manual review is reserved for retained
+            # artifacts that actually changed during review.
+            marker.update(status="invalid", reasons=["retained_selection_artifacts_missing"], retryable=True)
+        elif starting_identity != ending_identity:
             marker.update(status="needs_manual_review", reasons=["reviewed_artifacts_changed_or_missing"], retryable=True)
         if validation_diagnostics is not None:
             marker["validationDiagnostics"] = validation_diagnostics
@@ -21059,6 +21079,66 @@ def source_cut_is_boundary_expansion(
     return contains_selected and shares_one_boundary and materially_wider
 
 
+SOURCE_CUT_SCORECARD_COMPLETENESS_ONLY_REJECT_REASONS = frozenset((
+    "source_cut_model_rejected",
+    "source_cut_partial_movement",
+    "source_cut_scorecard_reject_partial_movement",
+    "source_cut_start_boundary_bad",
+    "source_cut_finish_boundary_bad",
+    "source_cut_scorecard_reject_bad_boundary",
+    "source_cut_scorecard_reject_start_boundary_bad",
+    "source_cut_scorecard_reject_finish_boundary_bad",
+    "source_cut_scorecard_reject_contact_changed",
+    "source_cut_contact_changed",
+))
+
+
+def source_cut_scorecard_rejections_are_completeness_only(row: dict[str, Any]) -> bool:
+    """True when every scorecard objection is a completeness/boundary judgment.
+
+    The scorecard reviews sampled frames; its partial-movement and boundary
+    verdicts are exactly what the exact pose confirmation measures on the
+    whole cut. Identity, equipment, and source-quality rejections stay hard.
+    """
+    reasons = {str(reason) for reason in row.get("rejectionReasons") or []}
+    return bool(reasons) and reasons <= SOURCE_CUT_SCORECARD_COMPLETENESS_ONLY_REJECT_REASONS
+
+
+def source_cut_scorecard_fallback_candidates(
+    payload: dict[str, Any],
+    *,
+    scorecards: dict[str, dict[str, Any]],
+    max_candidates: int = 3,
+) -> list[dict[str, Any]]:
+    """Fall back to scorecard-disapproved cuts whose only objections are completeness.
+
+    When the scorecard passes no candidate, completeness rejections must not
+    dead-end the source: the pose confirmation is the authority on whether a
+    complete repetition is present. Only candidates the scorecard still scored
+    at or above the selection threshold, with no hard objection, are eligible;
+    the confirmation arbitrates each one.
+    """
+    scored: list[tuple[float, str, dict[str, Any]]] = []
+    for candidate in payload.get("sourceCutCandidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId"))
+        row = scorecards.get(candidate_id)
+        if not isinstance(row, dict) or bool(row.get("passed")):
+            continue
+        if not source_cut_scorecard_rejections_are_completeness_only(row):
+            continue
+        score = parse_optional_float(row.get("score"))
+        if score is None or score < SOURCE_CUT_MIN_SELECTED_SCORE:
+            continue
+        visual_integrity = candidate.get("visualIntegrity")
+        if isinstance(visual_integrity, dict) and visual_integrity.get("passed") is False:
+            continue
+        scored.append((-score, candidate_id or "", candidate))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [candidate for _, _, candidate in scored[:max_candidates]]
+
+
 def source_cut_deterministic_confirmation_candidates(
     ranking: LoopRanking,
     *,
@@ -21108,7 +21188,10 @@ def source_cut_deterministic_confirmation_candidates(
         # establish exercise identity.
         selected = next(iter(passed_candidates), None)
         if selected is None:
-            return []
+            # A scorecard that passes nothing on completeness grounds does not
+            # dead-end the source: its disapproved cuts still go to exact pose
+            # confirmation, which is the authority on cycle completeness.
+            return source_cut_scorecard_fallback_candidates(payload, scorecards=scorecards)
         selected_id = normalize_source_cut_candidate_id(selected.get("candidateId"))
     alternatives: list[dict[str, Any]] = []
     seen_windows = {

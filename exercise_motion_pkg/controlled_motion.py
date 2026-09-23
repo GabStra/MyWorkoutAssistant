@@ -3444,6 +3444,46 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     target, _, placement_report = contact_consistent_target(target, pinned, contact_targets)
     evidence['placement'] = placement_report
     evidence['placementRegistration'] = registration
+    # Distinguish the three ways a fit can become unsatisfiable: a bent input
+    # skeleton, a target that is anatomically impossible for the rig, or
+    # anchors that conflict with the pose. Without these numbers a failed fit
+    # cannot be root-caused from its report alone.
+    initial_points = rig.decode(rig.initial)
+    from .smpl_joint_names import SMPL_JOINT_NAMES as _SMPL_NAMES, SMPL_JOINT_PARENTS as _SMPL_PARENTS
+    _bones = [
+        (child, _SMPL_NAMES[parent])
+        for child, parent in zip(_SMPL_NAMES, _SMPL_PARENTS)
+        if 0 <= parent < len(_SMPL_NAMES) and child in names and _SMPL_NAMES[parent] in names
+    ]
+
+    def _bone_medians(track):
+        return {
+            f'{child}<-{parent}': float(
+                np.median(np.linalg.norm(
+                    track[:, names.index(child)] - track[:, names.index(parent)], axis=-1)))
+            for child, parent in _bones
+        }
+
+    initial_bones = _bone_medians(initial_points)
+    target_bones = _bone_medians(target)
+    input_bone_variation = max(
+        (float(np.ptp(np.linalg.norm(
+            initial_points[:, names.index(child)] - initial_points[:, names.index(parent)],
+            axis=-1)))
+         for child, parent in _bones),
+        default=0.0)
+    target_mismatch = max(
+        (abs(target_bones[bone] - initial_bones[bone])
+         for bone in target_bones if bone in initial_bones),
+        default=0.0)
+    worst_bone = (
+        max(target_bones, key=lambda bone: abs(target_bones[bone] - initial_bones.get(bone, 0.0)))
+        if target_bones else None)
+    evidence['fitInputEvidence'] = {
+        'maximumInputBoneVariationMeters': round(float(input_bone_variation), 6),
+        'maximumTargetBoneMismatchMeters': round(float(target_mismatch), 6),
+        'worstTargetBone': worst_bone,
+    }
     # Initialize placement from the same contact evidence, retaining all local
     # rotations and the immutable original source used for articulation checks.
     _, initial_shift, _ = contact_consistent_target(initialized_points, pinned, contact_targets)

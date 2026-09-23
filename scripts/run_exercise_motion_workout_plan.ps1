@@ -191,7 +191,7 @@ param(
 
 . (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
 $SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
-$RetainedSelectedRevalidationVersion = 12
+$RetainedSelectedRevalidationVersion = 14
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
