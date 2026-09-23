@@ -21,6 +21,11 @@ from .rig_interpolation import INTERPOLATION
 from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
 
 CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v54_preserve_grip_during_playback_repair'
+# Feasibility pre-flight threshold, calibrated from fit reports: every
+# successful fit's target bones matched the rig within ~0.002m, while
+# structurally conflicted fits measured 0.05-0.15m before burning their
+# whole budget on an unsolvable problem.
+FIT_INPUT_MAX_TARGET_BONE_MISMATCH_METERS = 0.04
 # Soft temporal penalties compete with pose/contact fitting. Target below the
 # acceptance boundary so a finite solver budget does not settle just outside it.
 TEMPORAL_FIT_TARGET_RATIO = .8
@@ -2513,6 +2518,32 @@ def temporal_fit_scales(reference, names, fps):
             TEMPORAL_FIT_TARGET_RATIO*rotation_limit*np.sqrt(count*2))
 
 
+def project_track_to_reference_bone_lengths(track, index, bones, reference_lengths):
+    """Re-impose reference bone lengths on a joint track, parents first.
+
+    Smoothing and deviation attenuation bend bones: the fit target must stay
+    anatomically possible for the fixed rig, so each child is re-projected
+    onto its bone's reference length along its current direction from the
+    (already projected) parent. ``bones`` must be in topological
+    (parent-before-child) order. Returns the projected track copy.
+    """
+    projected = np.array(track, dtype=float, copy=True)
+    for child, parent in bones:
+        ci, pi = index[child], index[parent]
+        target_length = reference_lengths.get(f'{child}<-{parent}')
+        if target_length is None:
+            continue
+        delta = projected[:, ci] - projected[:, pi]
+        norm = np.linalg.norm(delta, axis=-1, keepdims=True)
+        usable = norm > 1e-9
+        projected[:, ci] = np.where(
+            usable,
+            projected[:, pi] + delta / np.maximum(norm, 1e-12) * target_length,
+            projected[:, ci],
+        )
+    return projected
+
+
 def controlled_target(points, names, fps):
     """Positive-kernel smoothing plus bounded local deviation attenuation.
 
@@ -3450,6 +3481,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     # cannot be root-caused from its report alone.
     initial_points = rig.decode(rig.initial)
     from .smpl_joint_names import SMPL_JOINT_NAMES as _SMPL_NAMES, SMPL_JOINT_PARENTS as _SMPL_PARENTS
+    _index = {name: position for position, name in enumerate(names)}
     _bones = [
         (child, _SMPL_NAMES[parent])
         for child, parent in zip(_SMPL_NAMES, _SMPL_PARENTS)
@@ -3460,7 +3492,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         return {
             f'{child}<-{parent}': float(
                 np.median(np.linalg.norm(
-                    track[:, names.index(child)] - track[:, names.index(parent)], axis=-1)))
+                    track[:, _index[child]] - track[:, _index[parent]], axis=-1)))
             for child, parent in _bones
         }
 
@@ -3484,6 +3516,36 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         'maximumTargetBoneMismatchMeters': round(float(target_mismatch), 6),
         'worstTargetBone': worst_bone,
     }
+    if target_mismatch > FIT_INPUT_MAX_TARGET_BONE_MISMATCH_METERS:
+        # Feasibility by construction: smoothing and deviation attenuation
+        # bend the target's bones, and the rig cannot honor bone lengths it
+        # does not have — an infeasible target makes the whole solve
+        # unreachable no matter how long it runs. Re-impose the rig's median
+        # bone lengths on the target (parents first) and re-seat the contact
+        # anchors, so the solve starts from a provably feasible target.
+        reference_lengths = {
+            bone: length for bone, length in initial_bones.items()
+        }
+        target = project_track_to_reference_bone_lengths(
+            target, _index, _bones, reference_lengths
+        )
+        target, _, placement_report = contact_consistent_target(
+            target, pinned, contact_targets
+        )
+        evidence['placement'] = placement_report
+        projected_bones = _bone_medians(target)
+        projected_mismatch = max(
+            (
+                abs(projected_bones[bone] - initial_bones[bone])
+                for bone in projected_bones
+                if bone in initial_bones
+            ),
+            default=0.0,
+        )
+        evidence['fitInputEvidence'].update(
+            projectedToRigBones=True,
+            mismatchAfterProjectionMeters=round(float(projected_mismatch), 6),
+        )
     # Initialize placement from the same contact evidence, retaining all local
     # rotations and the immutable original source used for articulation checks.
     _, initial_shift, _ = contact_consistent_target(initialized_points, pinned, contact_targets)

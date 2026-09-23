@@ -10138,6 +10138,8 @@ def prefer_kinematically_safe_baked_artifacts(
 def support_lock_baseline_safety_metrics(
     baseline_payload: dict[str, Any],
     corrected_payload: dict[str, Any],
+    *,
+    source_pose_reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     baseline_frames = motion_frames_from_export_payload(baseline_payload)
     corrected_frames = motion_frames_from_export_payload(corrected_payload)
@@ -10301,6 +10303,47 @@ def support_lock_baseline_safety_metrics(
         and not is_per_frame_rigid_translation
     ):
         rejection_reasons.append("support_lock_pelvis_trajectory_changed")
+    source_waiver: dict[str, Any] = {"applied": False}
+    if rejection_reasons and source_pose_reference is not None:
+        # The baseline itself can be the defect: when the repair moves the pose
+        # measurably closer to the source, an upstream pose or pelvis change is
+        # a correction, not a distortion. Geometric sanity checks (side
+        # crossing, lateral instability) stay unconditional.
+        baseline_agreement = materialized_source_pose_fidelity_metrics(
+            source_pose_payload=source_pose_reference,
+            output_motion_payload=baseline_payload,
+            required=False,
+        )
+        corrected_agreement = materialized_source_pose_fidelity_metrics(
+            source_pose_payload=source_pose_reference,
+            output_motion_payload=corrected_payload,
+            required=False,
+        )
+        baseline_error = parse_optional_float(
+            baseline_agreement.get("medianJointErrorBodyRatio"))
+        corrected_error = parse_optional_float(
+            corrected_agreement.get("medianJointErrorBodyRatio"))
+        source_waiver = {
+            "applied": False,
+            "baselineMedianJointErrorBodyRatio": baseline_error,
+            "correctedMedianJointErrorBodyRatio": corrected_error,
+        }
+        if (
+            baseline_error is not None
+            and corrected_error is not None
+            and corrected_error < baseline_error
+        ):
+            waived = [
+                reason for reason in rejection_reasons
+                if reason.startswith("support_lock_")
+                and reason.endswith(("upstream_leg_pose_changed", "pelvis_trajectory_changed"))
+            ]
+            if waived:
+                rejection_reasons = [
+                    reason for reason in rejection_reasons if reason not in waived
+                ]
+                source_waiver["applied"] = True
+                source_waiver["waivedReasons"] = waived
     return {
         "passed": not rejection_reasons,
         "rejectionReasons": dedupe_text(rejection_reasons),
@@ -10312,6 +10355,7 @@ def support_lock_baseline_safety_metrics(
         "maxAllowedPelvisDeviation": max_allowed_pelvis_deviation,
         "maxRigidTranslationResidual": max_rigid_translation_residual,
         "isPerFrameRigidTranslation": is_per_frame_rigid_translation,
+        "sourceAgreementWaiver": source_waiver,
     }
 
 
@@ -10744,6 +10788,7 @@ def prefer_baseline_safe_support_lock_artifacts(
     *,
     source_foot_support_evidence: dict[str, Any] | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
+    source_pose_reference: dict[str, Any] | None = None,
 ) -> list[BakedLoopArtifact]:
     baseline = next(
         (
@@ -10796,6 +10841,7 @@ def prefer_baseline_safe_support_lock_artifacts(
             metrics = support_lock_baseline_safety_metrics(
                 baseline.export_payload,
                 artifact.export_payload,
+                source_pose_reference=source_pose_reference,
             )
         support_repair_metrics = source_confirmed_support_stationarity_metrics(
             artifact.export_payload,
@@ -19072,6 +19118,12 @@ def process_ranked_candidate(
                 break
         record_timing_seconds(result_payload, "previewBakeSeconds", stage_started)
         active_stage = "baked_motion_validation"
+        # The support-repair safety waiver judges repairs against the source,
+        # so the retained reference must be available to the gate.
+        source_pose_reference = load_verified_source_pose_reference(
+            source_pose_reference_path,
+            candidate_workspace / "input" / "selected_segment.mp4",
+        )
         review_item_started = time.perf_counter()
         stage_started = review_item_started
         for eligible_loop in eligible:
@@ -19085,6 +19137,7 @@ def process_ranked_candidate(
                 loop_artifacts,
                 source_foot_support_evidence=source_foot_support_evidence,
                 exercise_motion_contract=preview_exercise_motion_contract,
+                source_pose_reference=source_pose_reference,
             )
             baseline_artifact = next(
                 (
