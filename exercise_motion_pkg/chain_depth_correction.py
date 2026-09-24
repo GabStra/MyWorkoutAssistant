@@ -51,6 +51,15 @@ DISTAL_OVER_ROOT_FACTOR = 2.0
 MAX_ROOT_ERROR_RATIO = 0.20
 MIN_RELATIVE_IMPROVEMENT = 0.4
 MAX_ACCEPTED_DISTAL_ERROR_RATIO = 0.25
+# Second detection arm: a travel-compressed leg (monocular depth ambiguity in
+# the movement direction) projects a moderate error whose root shares the same
+# displacement, so it fails the supine signature's distal-over-root dominance
+# while a rigid chain rotation is still exactly the right repair. The solve is
+# a cheap bounded grid search, so attempt it on any chain with meaningful
+# error; acceptance then demands near-perfect agreement so a rotation cannot
+# chase root displacement or projection noise into a distortion.
+MIN_MODERATE_DISTAL_ERROR_RATIO = 0.03
+MODERATE_MAX_AFTER_RATIO = 0.01
 
 MAX_ROTATION_RADIANS = math.radians(75.0)
 GRID_STEP_RADIANS = math.radians(15.0)
@@ -293,7 +302,11 @@ def correct_distal_chain_depth(
             and root_before <= MAX_ROOT_ERROR_RATIO
             and distal_before >= root_before * DISTAL_OVER_ROOT_FACTOR
         )
-        if not detected:
+        moderate = (
+            distal_before >= MIN_MODERATE_DISTAL_ERROR_RATIO
+            and root_before <= MAX_ROOT_ERROR_RATIO
+        )
+        if not detected and not moderate:
             chain_report["applied"] = False
             chain_report["reason"] = "signature_not_detected"
             report["chains"][label] = chain_report
@@ -304,11 +317,19 @@ def correct_distal_chain_depth(
         chain_report["distalErrorBodyRatioAfter"] = round(distal_after, 4)
         # The rotation pivots on the root, so the root's own projected error
         # is unchanged by construction; no separate degradation check exists.
-        accepted = (
-            matrix is not None
-            and distal_after <= (1.0 - MIN_RELATIVE_IMPROVEMENT) * distal_before
-            and distal_after <= MAX_ACCEPTED_DISTAL_ERROR_RATIO
-        )
+        if detected:
+            accepted = (
+                matrix is not None
+                and distal_after <= (1.0 - MIN_RELATIVE_IMPROVEMENT) * distal_before
+                and distal_after <= MAX_ACCEPTED_DISTAL_ERROR_RATIO
+            )
+        else:
+            accepted = (
+                matrix is not None
+                and distal_after <= (1.0 - MIN_RELATIVE_IMPROVEMENT) * distal_before
+                and distal_after <= MODERATE_MAX_AFTER_RATIO
+            )
+        chain_report["detection"] = "dominant_distal" if detected else "moderate_decisive"
         if not accepted:
             chain_report["applied"] = False
             chain_report["reason"] = "correction_not_decisive"

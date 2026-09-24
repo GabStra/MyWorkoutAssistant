@@ -49019,6 +49019,124 @@ def test_distal_chain_depth_correction_recovers_misplaced_leg_and_leaves_clean_c
     assert unchanged.frames == unregistered.frames
 
 
+def test_distal_chain_depth_moderate_arm_recovers_travel_compressed_legs() -> None:
+    """A moderate chain error without distal-over-root dominance still gets repaired.
+
+    A travel-compressed leg (monocular depth ambiguity along the movement
+    direction) projects a small error whose root shares the displacement, so
+    the supine signature's dominance requirement never fires. The moderate
+    arm attempts the same bounded rotation and accepts only near-perfect
+    agreement; a clean clip still comes back untouched.
+    """
+    from exercise_motion_pkg.chain_depth_correction import (
+        MODERATE_MAX_AFTER_RATIO,
+        correct_distal_chain_depth,
+    )
+
+    camera_right = np.array([0.5, 0.0, 0.866])
+    camera_up = np.array([0.0, 1.0, 0.0])
+    forward = np.cross(camera_right, camera_up)
+    forward /= np.linalg.norm(forward)
+    rotation = np.stack([camera_right, -camera_up, forward])
+
+    def project(point):
+        camera_point = (rotation @ np.asarray(point)) * np.array([1.0, -1.0, -1.0])
+        return np.array([camera_point[0], -camera_point[1]])
+
+    def true_pose() -> dict[str, tuple[float, float, float]]:
+        return {
+            "pelvis": (0.0, 0.2, 0.0),
+            "left_hip": (-0.15, 0.2, 0.0), "right_hip": (0.15, 0.2, 0.0),
+            "left_knee": (-0.15, 0.45, 0.35), "right_knee": (0.15, 0.45, 0.35),
+            "left_ankle": (-0.15, 0.75, 0.35), "right_ankle": (0.15, 0.75, 0.35),
+            "left_foot": (-0.15, 0.78, 0.42), "right_foot": (0.15, 0.78, 0.42),
+            "left_shoulder": (-0.15, 0.25, -0.4), "right_shoulder": (0.15, 0.25, -0.4),
+            "left_elbow": (-0.15, 0.3, -0.7), "right_elbow": (0.15, 0.3, -0.7),
+            "left_wrist": (-0.15, 0.32, -0.95), "right_wrist": (0.15, 0.32, -0.95),
+            "left_hand": (-0.15, 0.32, -1.05), "right_hand": (0.15, 0.32, -1.05),
+        }
+
+    registration = {
+        "available": True,
+        "cameraRotation": rotation.tolist(),
+        "cameraImageTransform": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "bilateralAssignment": "identity",
+    }
+
+    def build_clip(pose_fn):
+        frames = []
+        source_frames = []
+        for index in range(30):
+            time = index / 30.0
+            pose = pose_fn()
+            frames.append(
+                MotionFrame(time, {name: tuple(map(float, point)) for name, point in pose.items()})
+            )
+            if index % 2 == 0:
+                source_frames.append({
+                    "sourceTimeSec": time,
+                    "joints": {
+                        name: [float(value) for value in project(point)]
+                        for name, point in true_pose().items()
+                    },
+                })
+        clip = MotionClip(
+            fps=30.0,
+            frames=frames,
+            joint_names=sorted(frames[0].joints),
+            metadata={"structuralRefinement": {"sourceGuidedArticulation": {
+                "cameraRegistration": registration,
+            }}},
+        )
+        return clip, {"frames": source_frames}
+
+    def mildly_defective_pose():
+        pose = true_pose()
+        for side in ("left", "right"):
+            hip = np.asarray(pose[f"{side}_hip"])
+            for joint in ("knee", "ankle", "foot"):
+                vector = np.asarray(pose[f"{side}_{joint}"]) - hip
+                angle = math.radians(12.0)
+                axis = np.array([1.0, 0.0, 0.0])
+                rotated = (
+                    vector * math.cos(angle)
+                    + np.cross(axis, vector) * math.sin(angle)
+                    + axis * np.dot(axis, vector) * (1 - math.cos(angle))
+                )
+                pose[f"{side}_{joint}"] = tuple(float(value) for value in hip + rotated)
+        return pose
+
+    clip, source_payload = build_clip(mildly_defective_pose)
+    corrected, report = correct_distal_chain_depth(clip, source_payload)
+
+    assert report["applied"] is True
+    for side in ("left", "right"):
+        chain = report["chains"][f"{side}_leg"]
+        assert chain["applied"] is True
+        assert chain["detection"] == "moderate_decisive"
+        assert 0.03 <= chain["distalErrorBodyRatioBefore"] < 0.15
+        assert chain["distalErrorBodyRatioAfter"] <= MODERATE_MAX_AFTER_RATIO
+    for index in (0, 15, 29):
+        for side in ("left", "right"):
+            for a, b in (("hip", "knee"), ("knee", "ankle"), ("ankle", "foot")):
+                before = math.dist(
+                    clip.frames[index].joints[f"{side}_{a}"],
+                    clip.frames[index].joints[f"{side}_{b}"],
+                )
+                after = math.dist(
+                    corrected.frames[index].joints[f"{side}_{a}"],
+                    corrected.frames[index].joints[f"{side}_{b}"],
+                )
+                assert after == pytest.approx(before, abs=1e-9)
+    assert corrected.frames[0].joints["pelvis"] == pytest.approx(
+        clip.frames[0].joints["pelvis"], abs=1e-12
+    )
+
+    clean_clip, clean_source = build_clip(true_pose)
+    clean_corrected, clean_report = correct_distal_chain_depth(clean_clip, clean_source)
+    assert clean_report["applied"] is False
+
+
 def test_stationary_contact_wobble_smoothing_preserves_rigid_foot_bone() -> None:
     """Smoothing a planted foot must not bend its parent bone.
 
