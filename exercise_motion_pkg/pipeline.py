@@ -921,6 +921,7 @@ def _run_generation_pipeline_uncached(
             from .anatomical_repair import (
                 enforce_bilateral_chain_symmetry,
                 enforce_bilateral_span_rigidity,
+                enforce_rigid_bone_lengths,
                 enforce_socket_centering,
                 enforce_spine_axis_alignment,
                 stabilize_stationary_contact_wobble,
@@ -947,6 +948,12 @@ def _run_generation_pipeline_uncached(
             # keep their trajectory.
             corrected, wobble_report = stabilize_stationary_contact_wobble(
                 corrected, joint_names, fps=float(getattr(cleaned_clip, "fps", 30.0) or 30.0)
+            )
+            # Final rigidity: the joint regressor's pose-dependent bone drift
+            # (and any residual from the passes above) is rescaled away along
+            # each bone's own direction, parents first.
+            corrected = enforce_rigid_bone_lengths(
+                corrected, joint_names
             )
             symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
             span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report,

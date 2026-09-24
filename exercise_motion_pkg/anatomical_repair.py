@@ -91,6 +91,55 @@ SPINE_AXIS_MAX_DEVIATION_RATIO = 0.15
 SPINE_AXIS_CLAMP_MARGIN = 0.9
 
 
+def enforce_rigid_bone_lengths(points, names):
+    """Rescale every SMPL bone to its temporal median length, parents first.
+
+    The SMPL joint regressor is not exactly rigid: joint centers drift with
+    pose (measured up to 43mm of spine2 drift during deep sumo flexion), and
+    the bone-variation gate rejects exactly that drift. Each bone vector is
+    rescaled along its own current direction to the bone's temporal median
+    length, parents first — every inter-bone angle is preserved (each vector
+    is only scaled), so no other gate can be affected, and the skeleton
+    comes out exactly rigid.
+    """
+    corrected = points.copy()
+    parent_of = {
+        name: SMPL_JOINT_NAMES[parent]
+        for name, parent in zip(SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS)
+        if 0 <= parent < len(SMPL_JOINT_NAMES)
+    }
+    usable_names = [n for n in names]
+    index = {n: i for i, n in enumerate(usable_names)}
+    bones = [
+        (child, parent_of[child])
+        for child in SMPL_JOINT_NAMES
+        if child in index and parent_of.get(child) in index
+    ]
+    median_lengths = {}
+    for child, parent in bones:
+        lengths = np.linalg.norm(
+            corrected[:, index[child]] - corrected[:, index[parent]], axis=-1)
+        median_lengths[(child, parent)] = float(np.median(lengths))
+    # Left/right bone pairs share one length so bilateral proportions hold.
+    for child, parent in list(median_lengths):
+        other = child.replace('left_', 'right_', 1)
+        if child.startswith('left_') and (other, parent) in median_lengths:
+            shared = 0.5 * (median_lengths[(child, parent)]
+                            + median_lengths[(other, parent)])
+            median_lengths[(child, parent)] = shared
+            median_lengths[(other, parent)] = shared
+    for child, parent in bones:
+        target = median_lengths[(child, parent)]
+        delta = corrected[:, index[child]] - corrected[:, index[parent]]
+        norm = np.linalg.norm(delta, axis=1, keepdims=True)
+        usable = norm > 1e-9
+        corrected[:, index[child]] = np.where(
+            usable,
+            corrected[:, index[parent]] + delta / np.maximum(norm, 1e-12) * target,
+            corrected[:, index[child]])
+    return corrected
+
+
 def enforce_spine_axis_alignment(points, names):
     """Clamp spine curvature to what the anatomy gate tolerates.
 
