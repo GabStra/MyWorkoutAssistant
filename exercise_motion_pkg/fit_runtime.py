@@ -20,6 +20,18 @@ _PRIORITY_WORKSPACES: set[str] = set()
 _ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
 _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
 
+# Threads inside prioritize_fit_workspaces must never block on the priority
+# gate: two finalizations can otherwise deadlock (one holds the WHAM-exclusive
+# section and waits for a fit slot, the other holds its priority context open
+# and waits for the exclusive section). Priority reorders work; it must not
+# gate correctness.
+_PRIORITY_DEPTH = threading.local()
+
+# A stale priority registration (a thread that died between enter and exit,
+# or any future leak) must not wedge the pipeline permanently. Priority
+# preemption only reorders work, so after this grace a blocked fit proceeds.
+PRIORITY_BLOCK_GRACE_SECONDS = 120.0
+
 
 class SpeculativePrefetchAbandoned(Exception):
     """Speculative prefetch yielded because final validation owns the workspace."""
@@ -97,6 +109,10 @@ def fit_should_yield_for_priority() -> bool:
         speculative = bool(_SPECULATIVE_FIT.get())
         if not speculative:
             return False
+        if getattr(_PRIORITY_DEPTH, 'value', 0) > 0:
+            # This thread's own finalization owns the priority: yielding to it
+            # would abort the fit that finalization is waiting for.
+            return False
         return bool(_PRIORITY_WORKSPACES) or (
             workspace is not None and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
         )
@@ -107,18 +123,23 @@ def prioritize_fit_workspaces(workspaces):
     """Prefer CPU fitting for candidates about to enter final validation."""
     keys = {_workspace_key(workspace) for workspace in workspaces}
     keys.discard(None)
-    if not keys:
-        yield
-        return
-    with _FIT_GUARD:
-        _PRIORITY_WORKSPACES.update(keys)
-        _FIT_GUARD.notify_all()
+    depth = getattr(_PRIORITY_DEPTH, 'value', 0)
+    _PRIORITY_DEPTH.value = depth + 1
     try:
-        yield
-    finally:
+        if not keys:
+            yield
+            return
         with _FIT_GUARD:
-            _PRIORITY_WORKSPACES.difference_update(keys)
+            _PRIORITY_WORKSPACES.update(keys)
             _FIT_GUARD.notify_all()
+        try:
+            yield
+        finally:
+            with _FIT_GUARD:
+                _PRIORITY_WORKSPACES.difference_update(keys)
+                _FIT_GUARD.notify_all()
+    finally:
+        _PRIORITY_DEPTH.value = depth
 
 
 @contextmanager
@@ -133,7 +154,13 @@ def cpu_fit_slot():
         speculative = bool(_SPECULATIVE_FIT.get())
         # Limited concurrent fits (coding headroom). Speculative work yields the
         # whole fit pool while any final validation is prioritized. Abandoned
-        # speculative workspaces must not reacquire.
+        # speculative workspaces must not reacquire. A fit running inside its
+        # own prioritize_fit_workspaces context is exempt: two concurrent
+        # finalizations would otherwise deadlock (one holds the WHAM-exclusive
+        # section and waits for a slot, the other holds priority open and waits
+        # for that section).
+        own_priority = getattr(_PRIORITY_DEPTH, 'value', 0) > 0
+        wait_started = monotonic()
         while True:
             if (
                 speculative
@@ -141,14 +168,23 @@ def cpu_fit_slot():
                 and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
             ):
                 raise SpeculativePrefetchAbandoned()
-            blocked_for_priority = (
-                speculative and bool(_PRIORITY_WORKSPACES)
-            ) or (
-                not speculative
-                and _PRIORITY_WORKSPACES
-                and (workspace is None or workspace not in _PRIORITY_WORKSPACES)
+            priority_blocked = (
+                not own_priority
+                and (
+                    (speculative and bool(_PRIORITY_WORKSPACES))
+                    or (
+                        not speculative
+                        and _PRIORITY_WORKSPACES
+                        and (workspace is None or workspace not in _PRIORITY_WORKSPACES)
+                    )
+                )
             )
-            if _FIT_IN_USE < slot_limit and not blocked_for_priority:
+            if priority_blocked and monotonic() - wait_started > PRIORITY_BLOCK_GRACE_SECONDS:
+                # Priority preemption is an ordering optimization; a stale
+                # registration must never wedge the pipeline permanently.
+                print(f"[fit-runtime] priority block exceeded {PRIORITY_BLOCK_GRACE_SECONDS:.0f}s; proceeding", flush=True)
+                priority_blocked = False
+            if _FIT_IN_USE < slot_limit and not priority_blocked:
                 break
             _FIT_GUARD.wait(timeout=0.25)
         _FIT_IN_USE += 1

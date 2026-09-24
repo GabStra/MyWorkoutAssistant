@@ -50458,3 +50458,61 @@ def test_kinematic_cut_distinct_end_uses_first_extreme_when_pose_labels_fail() -
     assert proposals[0].policy == "distinct_end_state_signal_extreme"
     assert proposals[0].start_seconds < 3.0
     assert 3.5 <= proposals[0].end_seconds <= 4.5
+
+
+def test_cpu_fit_slot_does_not_deadlock_on_priority_from_concurrent_finalize() -> None:
+    """The live deadlock: one finalize holds priority open while blocked on the
+    WHAM-exclusive section, another finalize holds that section and waits for a
+    fit slot. The second finalization's own fit must never block on the
+    priority gate (thread-local exemption), and a fit outside any priority
+    context must proceed after the bounded grace instead of wedging forever.
+    """
+    import threading
+    import time as time_module
+
+    from exercise_motion_pkg import fit_runtime
+
+    started = threading.Event()
+    release = threading.Event()
+    holder_acquired = threading.Event()
+
+    def holder() -> None:
+        # Simulates finalize A: priority open, then blocked on the exclusive
+        # WHAM section while holding priority (it never acquires a slot).
+        with fit_runtime.prioritize_fit_workspaces(["/workspace/a/bake/candidate-a"]):
+            holder_acquired.set()
+            release.wait(10)
+
+    holder_thread = threading.Thread(target=holder, daemon=True)
+    holder_thread.start()
+    assert holder_acquired.wait(5)
+
+    # Finalization B: its own fit (session None, so no workspace key) must
+    # acquire immediately despite A's priority being open.
+    def own_priority_fit() -> None:
+        with fit_runtime.prioritize_fit_workspaces(["/workspace/b/bake/candidate-b"]):
+            started.set()
+            with fit_runtime.cpu_fit_slot() as _waited:
+                release.set()
+
+    fit_thread = threading.Thread(target=own_priority_fit, daemon=True)
+    fit_thread.start()
+    assert started.wait(5), "own-priority fit deadlocked on the priority gate"
+
+    # A non-priority fit (speculative prefetch class) proceeds after the grace
+    # even though A's priority registration leaked (holder never exits).
+    grace = fit_runtime.PRIORITY_BLOCK_GRACE_SECONDS
+    fit_runtime.PRIORITY_BLOCK_GRACE_SECONDS = 0.5
+    try:
+        def foreign_fit() -> None:
+            with fit_runtime.cpu_fit_slot() as _waited:
+                release.set()
+
+        foreign_thread = threading.Thread(target=foreign_fit, daemon=True)
+        foreign_thread.start()
+        assert release.wait(10), "grace expiry did not unblock the foreign fit"
+    finally:
+        fit_runtime.PRIORITY_BLOCK_GRACE_SECONDS = grace
+        release.set()
+        holder_thread.join(5)
+        fit_thread.join(5)
