@@ -41,7 +41,12 @@ DISTAL_CHAINS = (
 )
 
 # Detection and acceptance, in body-span ratios of projected error.
-MIN_DISTAL_ERROR_RATIO = 0.20
+# Detection floor, calibrated against live rejections: a supine bench-press
+# window with 0.188/0.196 body-span projected leg error (30cm+ of source-2D
+# disagreement — unambiguously misplaced) was missed by the original 0.20
+# floor. The distal-over-root factor and the decisive-improvement acceptance
+# still protect against false detections.
+MIN_DISTAL_ERROR_RATIO = 0.15
 DISTAL_OVER_ROOT_FACTOR = 2.0
 MAX_ROOT_ERROR_RATIO = 0.20
 MIN_RELATIVE_IMPROVEMENT = 0.4
