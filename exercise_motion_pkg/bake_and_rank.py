@@ -25863,7 +25863,7 @@ def apply_source_contact_sequence_correction(
         if bool(spine_repair_report.get("applied")):
             # Only folded frames move; the rigid pass restores temporal bone
             # consistency for the neighbors (neck) the clamp did not touch.
-            spine_points, _bone_report = enforce_rigid_bone_lengths(
+            spine_points = enforce_rigid_bone_lengths(
                 spine_points, spine_joint_names)
             for frame, row in zip(frames, spine_points):
                 joints = frame["joints"]
