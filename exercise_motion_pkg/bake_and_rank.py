@@ -25757,6 +25757,144 @@ def fill_contact_translation_gaps(
     return filled
 
 
+YAW_SOLVABILITY_MIN_SEPARATION = 0.10
+YAW_SMOOTHING_WINDOW = 9
+YAW_DEGENERATE_RADIANS = 1e-6
+
+
+def _solve_yaw_translation_track(
+    frame_constraints: dict[int, list[tuple[float, list[float], list[float]]]],
+    frame_count: int,
+    body_span: float,
+) -> tuple[list[float], list[list[float]], list[float]] | None:
+    """Fit a per-frame vertical-axis rotation + translation to contact anchors.
+
+    Monocular reconstruction accumulates yaw as well as translation; a
+    translation-only correction cannot undo a rotated body (measured: both
+    feet drift in different directions while their separation stays constant).
+    Each frame solves the closed-form weighted 2D Procrustes about a constant
+    pivot (the anchor centroid) for the yaw that best brings every
+    source-confirmed contact onto its anchor, then the translation absorbs the
+    residual mean offset. Frames with no anchors, and anchors too close for a
+    stable rotation (separation under ``body_span * threshold``), fall back to
+    yaw 0 with the translation-only compromise; unsolved spans interpolate
+    linearly so the track stays continuous.
+
+    Rotation preserves every bone length and joint angle; only the horizontal
+    placement of the whole body changes.
+    """
+    if body_span <= 1e-6 or not frame_constraints:
+        return None
+    anchors = [
+        tuple(round(coordinate, 3) for coordinate in anchor)
+        for constraints in frame_constraints.values()
+        for _, anchor, _ in constraints
+    ]
+    distinct: list[tuple[float, float, float]] = []
+    for anchor in anchors:
+        candidate = (anchor[0], anchor[1], anchor[2])
+        if all(math.dist(candidate, chosen) > 0.01 for chosen in distinct):
+            distinct.append(candidate)
+    if len(distinct) < 2:
+        return None
+    required = max(body_span * YAW_SOLVABILITY_MIN_SEPARATION, 0.02)
+    for i in range(len(distinct)):
+        for j in range(i + 1, len(distinct)):
+            if math.dist(distinct[i], distinct[j]) < required:
+                return None
+    pivot = [
+        statistics.mean(anchor[axis] for anchor in distinct)
+        for axis in range(3)
+    ]
+    yaws: list[float | None] = [None] * frame_count
+    translations: list[list[float]] = [[0.0, 0.0, 0.0] for _ in range(frame_count)]
+    for frame_index, constraints in frame_constraints.items():
+        weight_sum = 0.0
+        cross = 0.0
+        dot = 0.0
+        for weight, anchor, point in constraints:
+            px, pz = point[0] - pivot[0], point[2] - pivot[2]
+            ax, az = anchor[0] - pivot[0], anchor[2] - pivot[2]
+            weight_sum += weight
+            cross += weight * (ax * pz - az * px)
+            dot += weight * (ax * px + az * pz)
+        if weight_sum <= 1e-8:
+            continue
+        # The application rotates (x, z) by (cos*dz-form): a point is mapped to
+        # its anchor by the angle atan2(cross, dot) about the pivot; the sign
+        # is verified by the exact recovery of a synthetic rigid yaw.
+        yaws[frame_index] = math.atan2(cross, dot)
+    solved = [index for index, yaw in enumerate(yaws) if yaw is not None]
+    if not solved:
+        return None
+
+    def translation_for(frame_index, yaw):
+        cos, sin = math.cos(yaw), math.sin(yaw)
+        constraints = frame_constraints[frame_index]
+        weight_sum = sum(weight for weight, _, _ in constraints)
+        result = [0.0, 0.0, 0.0]
+        for axis in range(3):
+            weighted = 0.0
+            for weight, anchor, point in constraints:
+                if axis == 1:
+                    # Rotation is horizontal-only: the height residual has no
+                    # pivot term.
+                    weighted += weight * (anchor[1] - point[1])
+                    continue
+                rotated_x = cos * (point[0] - pivot[0]) + sin * (point[2] - pivot[2])
+                rotated_z = -sin * (point[0] - pivot[0]) + cos * (point[2] - pivot[2])
+                rotated = [rotated_x, point[1], rotated_z]
+                weighted += weight * (anchor[axis] - (rotated[axis] + pivot[axis]))
+            result[axis] = weighted / weight_sum
+        return result
+
+    # Smooth the yaw track before solving translations: per-frame solves near
+    # the degenerate condition are noisy, and a noisy yaw wobbles the whole
+    # body laterally. The physical drift is a smooth accumulation, so a
+    # low-degree polynomial over the solved frames is the track; per-frame
+    # translations are then re-solved against the smoothed yaw so the applied
+    # transform stays self-consistent.
+    smoothed = list(yaws)
+    try:
+        import numpy
+
+        sample_frames = numpy.asarray(solved, dtype=float)
+        sample_yaws = numpy.asarray([yaws[index] for index in solved], dtype=float)
+        degree = min(3, len(solved) - 1)
+        coefficients = numpy.polyfit(sample_frames, sample_yaws, degree)
+        fitted = numpy.polyval(coefficients, numpy.arange(frame_count, dtype=float))
+        if numpy.isfinite(fitted).all():
+            smoothed = [float(value) for value in fitted]
+    except (ValueError, TypeError):
+        pass
+    translations = [None] * frame_count
+    for index in solved:
+        translations[index] = translation_for(index, smoothed[index])
+    first, last = solved[0], solved[-1]
+    for index in range(frame_count):
+        if smoothed[index] is not None:
+            continue
+        if index < first:
+            smoothed[index] = smoothed[first]
+            translations[index] = list(translations[first])
+        elif index > last:
+            smoothed[index] = smoothed[last]
+            translations[index] = list(translations[last])
+        else:
+            previous = max(left for left in solved if left < index)
+            following = min(right for right in solved if right > index)
+            ratio = (index - previous) / (following - previous)
+            smoothed[index] = smoothed[previous] * (1.0 - ratio) + smoothed[following] * ratio
+            translations[index] = [
+                translations[previous][axis] * (1.0 - ratio) + translations[following][axis] * ratio
+                for axis in range(3)
+            ]
+    yaws = [float(yaw) for yaw in smoothed]
+    if max(abs(yaw) for yaw in yaws) <= YAW_DEGENERATE_RADIANS:
+        return None
+    return yaws, translations, pivot
+
+
 def apply_source_contact_sequence_correction(
     export_payload: dict[str, Any],
     source_support_evidence: dict[str, Any] | None,
@@ -25799,6 +25937,7 @@ def apply_source_contact_sequence_correction(
 
     desired = [[0.0, 0.0, 0.0] for _ in frames]
     active_weights = [0.0 for _ in frames]
+    frame_constraints: dict[int, list[tuple[float, list[float], list[float]]]] = {}
     interval_metrics: list[dict[str, Any]] = []
     observed_anchors: dict[tuple[str, str], list[float]] = {}
     for interval in intervals:
@@ -25853,6 +25992,9 @@ def apply_source_contact_sequence_correction(
                 for axis in range(3):
                     desired[frame_index][axis] += delta[axis] * confidence
                 active_weights[frame_index] += confidence
+                frame_constraints.setdefault(frame_index, []).append(
+                    (confidence, list(anchor), list(point))
+                )
             before_distances.append(math.dist(point, anchor))
         interval_metrics.append(
             {
@@ -25878,38 +26020,78 @@ def apply_source_contact_sequence_correction(
     # Interpolate only released spans below, never the constrained samples.
     translations = [list(translation) for translation in desired]
 
-    # Preserve the original world-space origin. Only relative drift is owned by
-    # contact correction; absolute placement remains owned by the bake.
-    first_active = next((index for index, weight in enumerate(active_weights) if weight > 0.0), None)
-    if first_active is not None:
-        origin_offset = translations[first_active]
-        translations = [
-            [translation[axis] - origin_offset[axis] for axis in range(3)]
-            if active_weights[index] > 0.0
-            else [0.0, 0.0, 0.0]
-            for index, translation in enumerate(translations)
-        ]
-        translations = fill_contact_translation_gaps(translations, active_weights)
+    # A multi-anchor stance can also carry accumulated yaw, which no
+    # translation can undo (feet drift in different directions while their
+    # separation stays constant). Solve a rotation-aware track when the
+    # anchors are distinct enough to determine a rotation; single-anchor
+    # contacts keep the translation-only path unchanged.
+    positive_spans = [
+        span for span in (body_span_for_frame(frame) for frame in frames if isinstance(frame, dict))
+        if span > 1e-6
+    ]
+    median_span = statistics.median(positive_spans) if positive_spans else 0.0
+    yaw_result = _solve_yaw_translation_track(frame_constraints, len(frames), median_span)
+    yaws: list[float] | None = None
+    yaw_pivot: list[float] | None = None
+    if yaw_result is not None:
+        yaws, translations, yaw_pivot = yaw_result
+    else:
+        # Preserve the original world-space origin. Only relative drift is owned
+        # by contact correction; absolute placement remains owned by the bake.
+        first_active = next((index for index, weight in enumerate(active_weights) if weight > 0.0), None)
+        if first_active is not None:
+            origin_offset = translations[first_active]
+            translations = [
+                [translation[axis] - origin_offset[axis] for axis in range(3)]
+                if active_weights[index] > 0.0
+                else [0.0, 0.0, 0.0]
+                for index, translation in enumerate(translations)
+            ]
+            translations = fill_contact_translation_gaps(translations, active_weights)
 
-    for frame, translation in zip(frames, translations):
-        joints = frame.get("joints")
-        if not isinstance(joints, dict):
-            continue
-        for joint_name, point in list(joints.items()):
-            if not is_point3(point):
+    if yaws is not None and yaw_pivot is not None:
+        for frame, yaw, translation in zip(frames, yaws, translations):
+            joints = frame.get("joints")
+            if not isinstance(joints, dict):
                 continue
-            translated = list(point)
-            for axis in range(3):
-                translated[axis] = float(translated[axis]) + translation[axis]
-            joints[joint_name] = translated
-        root_translation = frame.get("rootTranslationApplied")
-        if is_point3(root_translation):
-            updated_root_translation = list(root_translation)
-            for axis in range(3):
-                updated_root_translation[axis] = (
-                    float(updated_root_translation[axis]) + translation[axis]
-                )
-            frame["rootTranslationApplied"] = updated_root_translation
+            cos, sin = math.cos(yaw), math.sin(yaw)
+            root_before = joints.get("pelvis") if is_point3(joints.get("pelvis")) else None
+            for joint_name, point in list(joints.items()):
+                if not is_point3(point):
+                    continue
+                point = [float(value) for value in point[:3]]
+                dx, dz = point[0] - yaw_pivot[0], point[2] - yaw_pivot[2]
+                point[0] = yaw_pivot[0] + cos * dx + sin * dz + translation[0]
+                point[2] = yaw_pivot[2] - sin * dx + cos * dz + translation[2]
+                joints[joint_name] = point
+            if root_before is not None and is_point3(joints.get("pelvis")):
+                root_after = joints["pelvis"]
+                root_translation = frame.get("rootTranslationApplied")
+                updated = list(root_translation) if is_point3(root_translation) else [0.0, 0.0, 0.0]
+                updated[0] += root_after[0] - root_before[0]
+                updated[1] += root_after[1] - root_before[1]
+                updated[2] += root_after[2] - root_before[2]
+                frame["rootTranslationApplied"] = updated
+    else:
+        for frame, translation in zip(frames, translations):
+            joints = frame.get("joints")
+            if not isinstance(joints, dict):
+                continue
+            for joint_name, point in list(joints.items()):
+                if not is_point3(point):
+                    continue
+                translated = list(point)
+                for axis in range(3):
+                    translated[axis] = float(translated[axis]) + translation[axis]
+                joints[joint_name] = translated
+            root_translation = frame.get("rootTranslationApplied")
+            if is_point3(root_translation):
+                updated_root_translation = list(root_translation)
+                for axis in range(3):
+                    updated_root_translation[axis] = (
+                        float(updated_root_translation[axis]) + translation[axis]
+                    )
+                frame["rootTranslationApplied"] = updated_root_translation
 
     # A rigid translation removes common drift but not limb-owned slide: a
     # planted foot can still wander around its anchor. Pin still-sliding
@@ -26094,6 +26276,7 @@ def apply_source_contact_sequence_correction(
                 any(value > 1e-8 for value in translation_magnitudes)
                 and corrected_rms_contact_error + 1e-9 < baseline_rms_contact_error
             )
+            or bool(yaws and max(abs(yaw) for yaw in yaws) > 1e-4)
             or bool(pinning_report.get("applied"))
         ),
         "reason": "source_contact_rigid_sequence_correction",
@@ -26101,6 +26284,11 @@ def apply_source_contact_sequence_correction(
         "stationaryContactPinning": pinning_report,
         "maxTranslation": max(translation_magnitudes, default=0.0),
         "maxFrameTranslationStep": max(frame_steps, default=0.0),
+        "maxFrameYawDegrees": (
+            max(abs(math.degrees(yaws[index + 1] - yaws[index])) for index in range(len(yaws) - 1))
+            if yaws else 0.0
+        ),
+        "yawTrackDegrees": [math.degrees(yaw) for yaw in yaws] if yaws else [],
         "baselineRmsContactError": baseline_rms_contact_error,
         "correctedRmsContactError": corrected_rms_contact_error,
         "translationTrack": translations,

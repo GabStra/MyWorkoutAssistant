@@ -48599,6 +48599,93 @@ def test_contact_sequence_correction_preserves_pose_and_elevated_supports() -> N
     assert safety["isPerFrameRigidTranslation"] is True
 
 
+def test_contact_sequence_correction_resolves_accumulated_yaw_with_two_anchors() -> None:
+    """Opposite-direction foot drift is yaw, and only rotation can undo it.
+
+    The reconstruction slowly yaws about the stance midpoint, so the two
+    planted feet drift in opposite horizontal directions while their
+    separation stays constant. A translation-only compromise must leave a
+    residual; the rotation-aware track recovers both anchors exactly while
+    keeping every bone length and joint angle intact. A single-anchor clip
+    keeps the translation-only path (no invented rotation).
+    """
+    import numpy as np
+
+    def build_frames(with_yaw: bool):
+        rest = {
+            "head": [0.0, 1.8, 0.5],
+            "left_shoulder": [-0.2, 1.6, 0.5],
+            "right_shoulder": [0.2, 1.6, 0.5],
+            "pelvis": [0.0, 1.0, 0.5],
+            "left_hip": [-0.2, 1.0, 0.5],
+            "right_hip": [0.2, 1.0, 0.5],
+            "left_knee": [-0.2, 0.5, 0.5],
+            "right_knee": [0.2, 0.5, 0.5],
+            "left_ankle": [-0.05, 0.0, 0.0],
+            "right_ankle": [0.05, 0.0, 1.0],
+            "left_foot": [-0.05, -0.05, 0.1],
+            "right_foot": [0.05, -0.05, 1.1],
+        }
+        frames = []
+        for index in range(15):
+            yaw = index * 0.012 if with_yaw else 0.0
+            cos, sin = np.cos(yaw), np.sin(yaw)
+            joints = {
+                name: [
+                    point[0] * cos + point[2] * sin,
+                    point[1],
+                    -point[0] * sin + point[2] * cos,
+                ]
+                for name, point in rest.items()
+            }
+            frames.append({"frameIndex": index, "timeSec": index / 30, "joints": joints})
+        return frames
+
+    evidence = {
+        "feet": {
+            "left": {"jointName": "left_ankle", "continuousSupport": True},
+            "right": {"jointName": "right_ankle", "continuousSupport": True},
+        }
+    }
+    baseline = {"frames": build_frames(with_yaw=True)}
+    corrected, metrics = bake_and_rank_module.apply_source_contact_sequence_correction(
+        baseline, evidence,
+    )
+
+    assert metrics["maxFrameYawDegrees"] > 0.5
+    assert bake_and_rank_module.source_confirmed_support_stationarity_metrics(
+        corrected, evidence,
+    )["passed"] is True
+    for side in ("left", "right"):
+        before_ankle = np.asarray(
+            [frame["joints"][f"{side}_ankle"] for frame in baseline["frames"]])
+        after_ankle = np.asarray(
+            [frame["joints"][f"{side}_ankle"] for frame in corrected["frames"]])
+        before_knee = np.asarray(
+            [frame["joints"][f"{side}_knee"] for frame in baseline["frames"]])
+        after_knee = np.asarray(
+            [frame["joints"][f"{side}_knee"] for frame in corrected["frames"]])
+        # The correction is rigid: each frame's shin length is preserved
+        # exactly against that same frame's own knee.
+        shin_change = (
+            np.linalg.norm(after_ankle - after_knee, axis=-1)
+            - np.linalg.norm(before_ankle - before_knee, axis=-1))
+        assert float(np.max(np.abs(shin_change))) < 1e-9
+        # The anchored foot returns to its first-frame anchor within 1cm.
+        anchor_drift = float(np.linalg.norm(after_ankle[-1] - after_ankle[0]))
+        assert anchor_drift < 0.01
+
+    single_anchor = {"frames": build_frames(with_yaw=True), "jointNames": []}
+    single_evidence = {
+        "feet": {"left": {"jointName": "left_ankle", "continuousSupport": True}}
+    }
+    _, single_metrics = bake_and_rank_module.apply_source_contact_sequence_correction(
+        single_anchor, single_evidence,
+    )
+    assert single_metrics["maxFrameYawDegrees"] == 0.0
+    assert single_metrics["yawTrackDegrees"] == []
+
+
 def test_contact_sequence_correction_balances_simultaneous_rigid_anchors() -> None:
     frames = []
     for index in range(15):
