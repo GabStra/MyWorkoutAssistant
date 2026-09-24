@@ -44,6 +44,12 @@ SUPPORT_INIT_TIME_FRACTION = .3
 SUPPORT_INIT_MIN_SECONDS = 60.
 # Support placement is calibrated per trajectory; each crop keeps its own poses.
 SUPPORT_INIT_COLD_EVALUATIONS = 80
+
+# Candidate-session fits below this remaining window cannot converge (measured
+# converge times: ~113s for an easy clip, 160-360s budgets for typical ones),
+# so starting one only burns wall time and labels the variant with a garbage
+# fit. Mirrors the wave pipeline's MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS.
+MIN_USEFUL_FIT_SECONDS = 30.
 # Cold support LS on retained long cycles: ~0.015s per (frame × eval).
 # 129 frames × 80 evals ≈ 146s; a flat 90s stage cap aborted finishable work.
 SUPPORT_INIT_SECONDS_PER_FRAME_EVAL = .015
@@ -2757,6 +2763,15 @@ def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None
     if remaining <= 0:
         return payload, {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
                          'reason': 'fit_timeout', 'budgetOwner': 'candidate', 'elapsedSeconds': 0.}
+    if remaining < MIN_USEFUL_FIT_SECONDS and timeout_seconds is None:
+        # Later variants inherit session scraps once earlier fits consumed the
+        # candidate deadline (measured: a variant started with 1.45s left and
+        # burned a guaranteed-failure fit). Skip below the useful floor; explicit
+        # caller deadlines stay hard caps and keep full ownership.
+        return payload, {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
+                         'reason': 'fit_timeout', 'budgetOwner': 'candidate', 'elapsedSeconds': 0.,
+                         'skippedBelowUsefulFloor': True,
+                         'remainingSeconds': remaining}
     session.fit_calls += 1
     try:
         # Cycle attempts share one deadline. When using the frame-scaled default,

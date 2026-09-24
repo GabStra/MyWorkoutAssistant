@@ -50516,3 +50516,22 @@ def test_cpu_fit_slot_does_not_deadlock_on_priority_from_concurrent_finalize() -
         release.set()
         holder_thread.join(5)
         fit_thread.join(5)
+
+
+def test_candidate_fit_session_skips_doomed_small_remaining_fit() -> None:
+    """A variant fit starting with session scraps (measured: 1.45s left) is a
+    guaranteed failure; below the useful floor the session reports fit_timeout
+    without burning wall time."""
+    from exercise_motion_pkg import controlled_motion, fit_runtime
+
+    session = fit_runtime.CandidateFitSession(budget_seconds=1.0)
+    token = fit_runtime._CURRENT.set(session)
+    try:
+        result, report = controlled_motion._fit_candidate_motion(
+            {'frames': [], 'jointNames': [], 'loop': {'enabled': False}})
+        assert report['reason'] == 'fit_timeout'
+        assert report.get('skippedBelowUsefulFloor') is True
+        assert report.get('remainingSeconds') is not None
+        assert session.fit_calls == 0
+    finally:
+        fit_runtime._CURRENT.reset(token)
