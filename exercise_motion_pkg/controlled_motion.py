@@ -155,6 +155,13 @@ EVIDENCE_TERMINATIONS = frozenset({
 })
 
 
+# A fit this far past the distortion band while failing contacts and anatomy
+# cannot simultaneously hold its anchors and reach the source pose (measured:
+# reverse lunge 13.1-13.9 deg, bench dips 34.8 deg — polish burned its budget
+# and re-weighed the same conflict).
+UNREACHABLE_ARTICULATION_DEGREES = 12.0
+
+
 def unreachable_without_polish(report):
     """Conflicts that more soft LS will not repair — stop without burning budget."""
     if not isinstance(report, dict):
@@ -165,6 +172,20 @@ def unreachable_without_polish(report):
     failed = set(failed_check_names(checks))
     reasons = set(report.get('physicalReasons') or [])
     if {'anatomy', 'sourceArticulation'} <= failed and 'repair_articulation_distortion' in reasons:
+        return True
+    # The fit satisfied its target articulation and its contacts, but the
+    # reaching pose breaks hard body structure: matching the source and
+    # keeping the skeleton valid are conflicting objectives. Polish can only
+    # re-weigh them (measured: chest-attachment conflict survived the full
+    # refinement budget with contacts and sourceArticulation both passing).
+    if 'anatomy' in failed and 'contacts' not in failed and 'sourceArticulation' not in failed:
+        return True
+    # Contacts and anatomy failed together while the articulation is already
+    # displaced past the distortion band: the anchors and the source pose are
+    # mutually unreachable.
+    if {'anatomy', 'contacts'} <= failed and 'sourceArticulation' not in failed and (
+            float(report.get('maximumArticulationChangeDegrees') or 0.)
+            >= UNREACHABLE_ARTICULATION_DEGREES):
         return True
     return False
 

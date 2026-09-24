@@ -50535,3 +50535,45 @@ def test_candidate_fit_session_skips_doomed_small_remaining_fit() -> None:
         assert session.fit_calls == 0
     finally:
         fit_runtime._CURRENT.reset(token)
+
+
+def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
+    """Two live failure classes burned their full refinement budget before
+    terminating with identical checks: (1) the fit matched the source
+    articulation and held contacts but broke body structure (chest-attachment
+    conflict), and (2) contacts and anatomy failed together with the
+    articulation displaced past the distortion band. Both are pose conflicts
+    polish can only re-weigh, so they must terminate before refinement. The
+    temporal-quality failures (jerk/shake on an otherwise-converging fit) must
+    keep their polish path."""
+    from exercise_motion_pkg.controlled_motion import unreachable_without_polish
+
+    conflict_matched_targets = {
+        'checks': {'anatomy': False, 'contacts': True, 'sourceArticulation': True,
+                   'trajectoryFit': True, 'rootTravel': True},
+        'physicalReasons': ['anatomy_chest_attachment'],
+        'maximumArticulationChangeDegrees': 10.0,
+    }
+    assert unreachable_without_polish(conflict_matched_targets) is True
+
+    conflict_unreachable_anchors = {
+        'checks': {'anatomy': False, 'contacts': False, 'sourceArticulation': True,
+                   'trajectoryFit': True, 'rootTravel': True},
+        'maximumArticulationChangeDegrees': 13.1,
+    }
+    assert unreachable_without_polish(conflict_unreachable_anchors) is True
+
+    still_polishable = {
+        'checks': {'anatomy': True, 'contacts': True, 'sourceArticulation': True,
+                   'trajectoryFit': True, 'rootTravel': True,
+                   'jerk': False, 'jointShake': False, 'settling': False},
+        'maximumArticulationChangeDegrees': 2.4,
+    }
+    assert unreachable_without_polish(still_polishable) is False
+
+    anatomy_repairable_with_articulation_headroom = {
+        'checks': {'anatomy': False, 'contacts': True, 'sourceArticulation': False,
+                   'trajectoryFit': True, 'rootTravel': True},
+        'maximumArticulationChangeDegrees': 5.0,
+    }
+    assert unreachable_without_polish(anatomy_repairable_with_articulation_headroom) is False

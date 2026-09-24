@@ -12,8 +12,11 @@ CODING_HEADROOM_LOGICAL_CORES = 4
 # value of 2 left the dominant stage half idle.
 DEFAULT_CPU_FIT_SLOTS = 4
 DEFAULT_BROWSER_WORKER_CAP = 4
-# Overlap WHAM CPU prep while the GPU lock still serializes extraction.
-DEFAULT_STAGED_GENERATION_CPU_WORKERS = 3
+# Overlap WHAM CPU prep while the GPU lock still serializes extraction. Four
+# workers match the measured 4-lane fit pool: with three, one fit slot idles
+# whenever a worker is inside the GPU-serialized WHAM stage, and the fit is
+# the long pole (113-360s vs ~30-60s of WHAM per candidate).
+DEFAULT_STAGED_GENERATION_CPU_WORKERS = 4
 
 
 def logical_core_count() -> int:
