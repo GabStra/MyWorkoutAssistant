@@ -6,8 +6,11 @@ import os
 
 # Keep Cursor/IDE/Chrome usable on the same machine as library generation.
 CODING_HEADROOM_LOGICAL_CORES = 4
-# Two concurrent fits on a 16-core box; smaller machines fall back to 1.
-DEFAULT_CPU_FIT_SLOTS = 2
+# Measured 2026-09-24 on 16 logical cores: 4 concurrent deadline-bound fits
+# run each fit only ~13% slower while tripling throughput, with identical
+# accept/reject decisions (scripts/bench_refine_concurrency.py). The previous
+# value of 2 left the dominant stage half idle.
+DEFAULT_CPU_FIT_SLOTS = 4
 DEFAULT_BROWSER_WORKER_CAP = 4
 # Overlap WHAM CPU prep while the GPU lock still serializes extraction.
 DEFAULT_STAGED_GENERATION_CPU_WORKERS = 3
@@ -23,6 +26,16 @@ def usable_logical_cores() -> int:
 
 def cpu_fit_slot_limit() -> int:
     # Each fit is Python-heavy; keep spare cores for browser workers + coding.
+    # EXERCISE_MOTION_FIT_LANES overrides for machines with more/less spare
+    # capacity than the defaults assume.
+    override = os.environ.get("EXERCISE_MOTION_FIT_LANES")
+    if override:
+        try:
+            value = int(override)
+        except ValueError:
+            value = 0
+        if value >= 1:
+            return value
     return max(1, min(DEFAULT_CPU_FIT_SLOTS, usable_logical_cores() // 3))
 
 

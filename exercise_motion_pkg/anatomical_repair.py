@@ -89,6 +89,10 @@ def enforce_bilateral_chain_symmetry(points, names):
 SPINE_AXIS_JOINTS = ('spine1', 'spine2', 'spine3')
 SPINE_AXIS_MAX_DEVIATION_RATIO = 0.15
 SPINE_AXIS_CLAMP_MARGIN = 0.9
+# The anatomy gate rejects a spine segment whose direction leaves a 60-degree
+# cone around the pelvis-neck axis (anatomy_spine_fold). Clamp to a cone with
+# margin so the repaired pose is not sitting on the gate boundary.
+SPINE_FOLD_MIN_COSINE = math.cos(math.radians(55.))
 
 
 def enforce_rigid_bone_lengths(points, names):
@@ -206,7 +210,48 @@ def enforce_spine_axis_alignment(points, names):
             clamped_total += int(np.sum(over))
         if clamped_total:
             changed = 1
+        # Fold pass: the deviation bound alone cannot see a segment that stays
+        # near the axis line but points backwards along it (deep hinges fold
+        # spine2->spine3 past the gate's 60-degree cone with small deviation).
+        # Rotate the segment into the fold cone around the parent, preserving
+        # its length exactly: the along/off resplit keeps the bone rigid.
+        parent_points = corrected[:, pj]
+        segment = corrected[:, j] - parent_points
+        length = np.linalg.norm(segment, axis=-1)
+        along_axis = np.sum(segment * direction, axis=-1)
+        cosine = along_axis / np.maximum(length, 1e-9)
+        folded = usable & (length > 1e-9) & (cosine < SPINE_FOLD_MIN_COSINE)
+        if folded.any():
+            new_along = (SPINE_FOLD_MIN_COSINE * length)[:, None]
+            off_vector = segment - along_axis[:, None] * direction
+            off_length = np.linalg.norm(off_vector, axis=-1)
+            # Perpendicular direction of the resplit plane: the segment's own
+            # off-axis direction where it has one; otherwise (a segment
+            # collinear with the spine axis) the world axis least aligned
+            # with the spine direction.
+            perpendicular = np.zeros_like(direction)
+            lateral = off_length > 1e-9
+            perpendicular[lateral] = (
+                off_vector[lateral] / off_length[lateral, None])
+            helper = np.eye(3)[np.argmin(np.abs(direction.mean(axis=0)))]
+            fallback = np.cross(direction, helper)
+            fallback_norm = np.linalg.norm(fallback, axis=-1)
+            usable_fallback = fallback_norm > 1e-9
+            perpendicular[~lateral & usable_fallback] = (
+                fallback[~lateral & usable_fallback]
+                / fallback_norm[~lateral & usable_fallback, None])
+            new_off = np.sqrt(np.maximum(length ** 2 - new_along[:, 0] ** 2, 0.0))[:, None]
+            corrected[:, j] = np.where(
+                folded[:, None],
+                parent_points + new_along * direction + new_off * perpendicular,
+                corrected[:, j])
+            changed = 1
+            report.setdefault(name, {})['foldClampedFrameCount'] = int(np.sum(folded))
+        if changed and name not in report:
+            report[name] = {'clampedFrameCount': 0}
+        if clamped_total:
             report[name] = {
+                **report.get(name, {}),
                 'clampedFrameCount': clamped_total,
                 'boneLengthVariationMeters': round(float(np.ptp(
                     np.linalg.norm(

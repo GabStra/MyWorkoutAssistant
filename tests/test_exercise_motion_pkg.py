@@ -49099,6 +49099,47 @@ def test_spine_axis_alignment_clamps_only_past_tolerance_frames() -> None:
     assert np.array_equal(corrected[:, 3], points[:, 3])
 
 
+def test_spine_axis_alignment_unfolds_segment_past_anatomy_fold_cone() -> None:
+    """A spine segment folded past the gate's 60-degree cone is rotated inside it.
+
+    The deviation bound cannot see a fold that stays near the axis line, so the
+    clamp also enforces the fold cone. The folded bone keeps its length exactly
+    and frames already inside the cone stay untouched.
+    """
+    import numpy as np
+
+    from exercise_motion_pkg import anatomical_repair
+
+    names = ["pelvis", "spine1", "spine2", "spine3", "neck"]
+    frames = 10
+    points = np.zeros((frames, len(names), 3))
+    points[:, 0] = [0.0, 0.0, 0.0]  # pelvis
+    points[:, 4] = [0.0, 1.0, 0.0]  # neck: torso axis +Y
+    # spine1/spine2 hug the axis; spine3 folds backward-down on the second
+    # half only (deep-hinge shape): the segment direction opposes the axis.
+    points[:, 1, 1] = 0.25
+    points[:, 2, 1] = 0.50
+    points[: 5, 3, 1] = 0.75
+    points[5:, 3, 1] = 0.50
+    points[5:, 3, 2] = -0.09  # spine3 behind spine2 along -Z, folded vs +Y
+
+    corrected, report = anatomical_repair.enforce_spine_axis_alignment(points, names)
+
+    assert report["applied"] is True
+    assert report["joints"]["spine3"].get("foldClampedFrameCount") == 5
+    direction = points[:, 4] - points[:, 0]
+    for half in (corrected[:5], corrected[5:]):
+        segment = half[:, 3] - half[:, 2]
+        cosine = np.sum(segment * direction[:5], axis=-1) / np.linalg.norm(segment, axis=-1)
+        assert float(cosine.min()) >= anatomical_repair.SPINE_FOLD_MIN_COSINE - 1e-9
+    # Folded frames keep the spine2->spine3 bone rigid; untouched half is
+    # bit-identical.
+    assert np.allclose(
+        np.linalg.norm(corrected[5:, 3] - corrected[5:, 2], axis=-1),
+        np.linalg.norm(points[5:, 3] - points[5:, 2], axis=-1), atol=1e-9)
+    assert np.array_equal(corrected[:5], points[:5])
+
+
 def test_contact_sequence_correction_pins_floating_stationary_foot_to_support_plane() -> None:
     """A planted foot that floats and slides gets leg-chain pinned, not just translated.
 

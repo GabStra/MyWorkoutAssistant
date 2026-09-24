@@ -7,6 +7,8 @@ from dataclasses import replace
 from statistics import median
 from typing import Any
 
+import numpy as np
+
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
 from exercise_motion_pkg.bilateral_evidence import source_arm_symmetry_evidence
 from exercise_motion_pkg.kinematic_policy import (
@@ -121,9 +123,10 @@ TEMPORAL_POLISH_FIDELITY_TOLERANCES = {
     "p90JointAngleErrorDegrees": 0.5,
 }
 SOURCE_FIDELITY_MAX_RELATIVE_METRIC_REGRESSION = 0.10
-# These sparse solves spend substantial time in Python residual evaluation.
-# Concurrent threads contend on the GIL and exhaust each other's wall budgets.
-_SOURCE_BODY_FIT_LOCK = threading.Lock()
+# The body fit shares the controlled fit's cpu_fit_slot pool instead of a
+# dedicated gate: separate pools let refinement lanes and controlled fits
+# oversubscribe the CPU together, starving deadline-bound solves into
+# exhausting their candidate fit budgets (observed 2026-09-24 as fit_timeout).
 SOURCE_ARTICULATION_ENVELOPE_TOLERANCE_DEGREES = 1.0
 SOURCE_PRESERVED_ARTICULATION_CHAINS = (
     (
@@ -3414,9 +3417,9 @@ def _align_body_to_source_pose(
         targets.append(MotionFrame(frame.time_sec, joints))
         weights.append(frame_weights)
     core = ('left_shoulder', 'right_shoulder', 'left_hip', 'right_hip')
+    from .fit_runtime import cpu_fit_slot
     queued_at = monotonic()
-    with _SOURCE_BODY_FIT_LOCK:
-        queue_seconds = monotonic() - queued_at
+    with cpu_fit_slot() as queue_seconds:
         fitted, report = fit_pose_and_temporal_trajectories(
             camera_clip, replace(camera_clip, frames=targets), tuple(edges),
             observation_weights=weights, projected_observations=True,
@@ -5344,6 +5347,42 @@ def _zero_phase_smooth_points(points: list[Point3], *, radius: int) -> list[Poin
 
 
 def _motion_noise_metrics(
+    clip: MotionClip,
+    *,
+    body_height: float,
+) -> dict[str, float]:
+    # Same triangular zero-phase smoothing as _zero_phase_smooth_points,
+    # evaluated for every joint at once on a frames x joints x 3 array.
+    present = [
+        [joint_name in frame.joints for joint_name in clip.joint_names]
+        for frame in clip.frames
+    ]
+    if not all(all(row) for row in present) or clip.frame_count == 0:
+        return _motion_noise_metrics_reference(clip, body_height=body_height)
+    values = np.array(
+        [[frame.joints[name] for name in clip.joint_names] for frame in clip.frames],
+        dtype=float,
+    )
+    radius = 2
+    size = clip.frame_count
+    weights = np.zeros((size, size))
+    for offset in range(-radius, radius + 1):
+        for index in range(size):
+            neighbor = index + offset
+            if 0 <= neighbor < size:
+                weights[index, neighbor] = float(radius + 1 - abs(offset))
+    smoothed = np.einsum("ij,jka->ika", weights, values) / weights.sum(axis=1)[:, None, None]
+    residuals = np.linalg.norm(values - smoothed, axis=-1).ravel()
+    ordered = np.sort(residuals)
+    p90_index = min(len(ordered) - 1, int(0.90 * (len(ordered) - 1)))
+    return {
+        "medianResidual": float(np.median(ordered)),
+        "p90Residual": float(ordered[p90_index]),
+        "bodyScale": body_height,
+    }
+
+
+def _motion_noise_metrics_reference(
     clip: MotionClip,
     *,
     body_height: float,

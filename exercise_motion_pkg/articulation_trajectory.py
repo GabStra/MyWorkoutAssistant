@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import threading
+from collections import OrderedDict
 from dataclasses import replace
 from time import monotonic
 
@@ -9,6 +12,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from .models import MotionClip, MotionFrame
+
+
+def _norm(vectors: np.ndarray) -> np.ndarray:
+    """Row-wise Euclidean length without np.linalg.norm's dispatch overhead."""
+    return np.sqrt(np.einsum('...i,...i->...', vectors, vectors))
 
 
 def fit_pose_and_temporal_trajectories(
@@ -127,38 +135,41 @@ def fit_pose_and_temporal_trajectories(
 
     best = [float('inf'), np.zeros(count * width)]
     objective_terms = {}
+    # Invariant across evaluations; hoisted out of the hot residual path.
+    observation_scale = np.sqrt(weights[..., None])
+    pose_scale = scale * .02
     def residual(values, enforce_deadline=True):
         if enforce_deadline and monotonic() - started > timeout_seconds:
             raise TimeoutError('pose_temporal_fit_budget_exhausted')
         points = decode(values)
         velocity, acceleration, jerk = derivatives(points[:, moved] - (
             reference_root if reference_root is not None else points[:, root:root + 1]))
-        pose_residual = (points[:, moved] - target[:, moved]) * np.sqrt(weights[..., None]) / (scale * .02)
+        pose_residual = (points[:, moved] - target[:, moved]) * observation_scale / pose_scale
         if projected_observations:
             # Image observations constrain camera X/Y only. Depth is a weak
             # reconstruction prior, not a fabricated measured 3D target.
-            pose_residual[:, :, 2] = .05 * (points[:, moved, 2] - original[:, moved, 2]) / (scale * .02)
+            pose_residual[:, :, 2] = .05 * (points[:, moved, 2] - original[:, moved, 2]) / pose_scale
         blocks = [pose_residual.ravel(),
                   (.03 * values).ravel(),
-                  (100 * np.maximum(np.linalg.norm(velocity, axis=-1) - speed_limit, 0) / (scale * .03 * 30)).ravel(),
-                  (100 * np.maximum(np.linalg.norm(acceleration, axis=-1) - acceleration_limit, 0) / (scale * .012 * 30**2)).ravel(),
-                  (np.maximum(np.linalg.norm(jerk, axis=-1) - jerk_limit[None, :], 0) / jerk_limit[None, :]).ravel()]
-        blocks.append((100 * np.maximum(np.linalg.norm(jerk, axis=-1)-local_jerk_limit, 0)/local_jerk_limit).ravel())
+                  (100 * np.maximum(_norm(velocity) - speed_limit, 0) / (scale * .03 * 30)).ravel(),
+                  (100 * np.maximum(_norm(acceleration) - acceleration_limit, 0) / (scale * .012 * 30**2)).ravel(),
+                  (np.maximum(_norm(jerk) - jerk_limit[None, :], 0) / jerk_limit[None, :]).ravel()]
+        blocks.append((100 * np.maximum(_norm(jerk)-local_jerk_limit, 0)/local_jerk_limit).ravel())
         if pair:
-            blocks.append((10 * (np.linalg.norm(points[:, pair[0]] - points[:, pair[1]], axis=-1) - pair_distance) / max(.005, pair_distance * .02)).ravel())
+            blocks.append((10 * (_norm(points[:, pair[0]] - points[:, pair[1]]) - pair_distance) / max(.005, pair_distance * .02)).ravel())
         if pair_reference:
             axis = points[:, pair_reference[1]] - points[:, pair_reference[0]]
-            axis /= np.maximum(np.linalg.norm(axis, axis=-1)[:, None], 1e-9)
+            axis /= np.maximum(_norm(axis)[:, None], 1e-9)
             separation = points[:, pair[1]] - points[:, pair[0]]
             center_delta = (points[:, pair[1]] + points[:, pair[0]]
                             - points[:, pair_reference[1]] - points[:, pair_reference[0]]) / 2
-            blocks.append((10 * (separation - pair_distance * axis) / (scale * .02)).ravel())
-            blocks.append((10 * np.sum(center_delta * axis, axis=-1) / (scale * .02)).ravel())
+            blocks.append((10 * (separation - pair_distance * axis) / pose_scale).ravel())
+            blocks.append((10 * np.sum(center_delta * axis, axis=-1) / pose_scale).ravel())
         for (a, b), reference in zip(distance_pairs, reference_distances):
-            blocks.append((20 * (np.linalg.norm(points[:, a] - points[:, b], axis=-1) - reference) / (scale * .02)).ravel())
+            blocks.append((20 * (_norm(points[:, a] - points[:, b]) - reference) / pose_scale).ravel())
         for a, b, direction, evidence in observed_segments:
             vector = points[:, b, :2] - points[:, a, :2]
-            unit = vector / np.maximum(np.linalg.norm(vector, axis=-1, keepdims=True), 1e-12)
+            unit = vector / np.maximum(_norm(vector)[:, None], 1e-12)
             blocks.append(((unit - direction) * evidence[:, None] / .2).ravel())
         labels = ['pose', 'rotationPrior', 'speed', 'acceleration', 'jerkRms', 'localJerk']
         labels += ((['rigidPair'] if pair else [])
@@ -326,6 +337,19 @@ def fit_chain_rotations(
     return replace(source, frames=frames)
 
 
+_TEMPORAL_BASELINE_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+_TEMPORAL_BASELINE_CACHE_LIMIT = 64
+_TEMPORAL_BASELINE_CACHE_LOCK = threading.Lock()
+
+
+def _clip_payload_digest(clip) -> str:
+    from .pose_fidelity import _payload_digest
+    payload = {'jointNames': clip.joint_names, 'fps': clip.fps, 'frames': [
+        {'timeSec': frame.time_sec, 'joints': {name: list(point) for name, point in frame.joints.items()}}
+        for frame in clip.frames]}
+    return _payload_digest(payload)
+
+
 def temporal_quality_comparison(before: MotionClip, proposed: MotionClip) -> dict:
     """Protect local failures, not only average jerk, at one physical scale."""
     from .bake_and_rank import compute_kinematic_plausibility_metrics_from_payload
@@ -339,7 +363,25 @@ def temporal_quality_comparison(before: MotionClip, proposed: MotionClip) -> dic
                 frame['sourceJoints'] = {name: list(point) for name, point in original.joints.items()}
         return compute_kinematic_plausibility_metrics_from_payload(payload, comparison_body_height=body_height)
 
-    baseline = metrics(before)
+    # The refinement chain compares every proposal against the same baseline
+    # clip; the kinematic plausibility pass is the second dominant repeat cost.
+    baseline = None
+    try:
+        baseline_key = _clip_payload_digest(before)
+        with _TEMPORAL_BASELINE_CACHE_LOCK:
+            cached_baseline = _TEMPORAL_BASELINE_CACHE.get(baseline_key)
+            if cached_baseline is not None:
+                _TEMPORAL_BASELINE_CACHE.move_to_end(baseline_key)
+                baseline = copy.deepcopy(cached_baseline)
+    except (TypeError, ValueError):
+        baseline_key = None
+    if baseline is None:
+        baseline = metrics(before)
+        if baseline_key is not None:
+            with _TEMPORAL_BASELINE_CACHE_LOCK:
+                _TEMPORAL_BASELINE_CACHE[baseline_key] = copy.deepcopy(baseline)
+                while len(_TEMPORAL_BASELINE_CACHE) > _TEMPORAL_BASELINE_CACHE_LIMIT:
+                    _TEMPORAL_BASELINE_CACHE.popitem(last=False)
     candidate = metrics(proposed, baseline.get('bodyHeight'), before)
     degraded = [name for name in ('distalStep', 'jointAngleStep', 'boneLength')
                 if candidate[name].get('severe')

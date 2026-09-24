@@ -25831,6 +25831,45 @@ def apply_source_contact_sequence_correction(
                 support_plane_y=pinning_plane_y,
             )
 
+    # The controlled fit can finish past its deadline with a folded spine;
+    # its own fold residual only converges on unbounded budgets. The repaired
+    # variant gets the same bone-preserving spine clamp the no-fit bake path
+    # applies, so the gates re-judge a repaired pose instead of a deadline
+    # artifact. Rigid translation and limb pinning cannot reintroduce a fold.
+    spine_repair_report = {"applied": False, "reason": "skipped"}
+    spine_joint_names = corrected_payload.get("jointNames")
+    if (
+        isinstance(spine_joint_names, list)
+        and all(name in set(spine_joint_names) for name in ("pelvis", "neck", "spine1", "spine2", "spine3"))
+        and frames
+        and all(isinstance(frame.get("joints"), dict) for frame in frames)
+    ):
+        import numpy as _np
+
+        from .anatomical_repair import enforce_rigid_bone_lengths, enforce_spine_axis_alignment
+
+        spine_points = _np.asarray(
+            [
+                [
+                    [float(frame["joints"][name][axis]) for axis in range(3)]
+                    for name in spine_joint_names
+                ]
+                for frame in frames
+            ],
+            dtype=float,
+        )
+        spine_points, spine_repair_report = enforce_spine_axis_alignment(
+            spine_points, spine_joint_names)
+        if bool(spine_repair_report.get("applied")):
+            # Only folded frames move; the rigid pass restores temporal bone
+            # consistency for the neighbors (neck) the clamp did not touch.
+            spine_points, _bone_report = enforce_rigid_bone_lengths(
+                spine_points, spine_joint_names)
+            for frame, row in zip(frames, spine_points):
+                joints = frame["joints"]
+                for name, point in zip(spine_joint_names, row):
+                    joints[name] = [float(point[axis]) for axis in range(3)]
+
     loop_closure = {
         "applied": False,
         "reason": (
@@ -25942,6 +25981,7 @@ def apply_source_contact_sequence_correction(
         "posePreservation": "per_frame_rigid_translation",
         "reconstructedContactInference": reconstructed_contact_inference,
         "loopClosure": loop_closure,
+        "spineAxisAlignment": spine_repair_report,
     }
     corrected_payload["sourceContactSequenceCorrection"] = metrics
     # A rigid translation preserves every joint angle but can still jerk the

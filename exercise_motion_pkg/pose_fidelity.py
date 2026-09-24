@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import math
 import statistics
+import threading
 from bisect import bisect_left
+from collections import OrderedDict
 from typing import Any, Iterable
 
 
@@ -45,8 +50,59 @@ PROJECTION_COARSE_ANGLE_STEP_DEGREES = 15.0
 PROJECTION_REFINEMENT_STEPS_DEGREES = (3.0, 0.5)
 
 
+_CAMERA_FIDELITY_CACHE: "OrderedDict[tuple[str, str, str | None, str | None], dict[str, Any]]" = OrderedDict()
+_CAMERA_FIDELITY_CACHE_LIMIT = 256
+_CAMERA_FIDELITY_CACHE_LOCK = threading.Lock()
+
+
+def _payload_digest(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=float)
+    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
+
+
 def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, camera_reference=None,
                                             camera_orientation=None):
+    """Fit one scaled orthographic camera using proximal joints, never each pose.
+
+    Camera elevation and scene rotation are nuisance parameters. Distal joints
+    are held out of registration so their errors cannot steer the camera fit.
+    """
+    # The refinement chain re-evaluates the unchanged baseline clip once per
+    # proposal; the camera registration (a least_squares fit per bilateral
+    # swap) dominates that repeat cost. Results are pure functions of the
+    # payloads, so they memoize safely.
+    cache_key = None
+    if camera_orientation is None or isinstance(camera_orientation, list):
+        try:
+            reference_digest = _payload_digest(camera_reference) if camera_reference is not None else None
+            orientation_digest = (
+                _payload_digest(list(camera_orientation)) if camera_orientation is not None else None)
+            cache_key = (
+                _payload_digest(source_payload), _payload_digest(motion_payload),
+                reference_digest, orientation_digest)
+        except (TypeError, ValueError):
+            cache_key = None
+    if cache_key is not None:
+        with _CAMERA_FIDELITY_CACHE_LOCK:
+            cached = _CAMERA_FIDELITY_CACHE.get(cache_key)
+            if cached is not None:
+                _CAMERA_FIDELITY_CACHE.move_to_end(cache_key)
+                cached = copy.deepcopy(cached)
+        if cached is not None:
+            return cached
+    metrics = _registered_camera_pose_fidelity_metrics_uncached(
+        source_payload, motion_payload,
+        camera_reference=camera_reference, camera_orientation=camera_orientation)
+    if cache_key is not None and metrics.get("available") is not None:
+        with _CAMERA_FIDELITY_CACHE_LOCK:
+            _CAMERA_FIDELITY_CACHE[cache_key] = copy.deepcopy(metrics)
+            while len(_CAMERA_FIDELITY_CACHE) > _CAMERA_FIDELITY_CACHE_LIMIT:
+                _CAMERA_FIDELITY_CACHE.popitem(last=False)
+    return metrics
+
+
+def _registered_camera_pose_fidelity_metrics_uncached(source_payload, motion_payload, *,
+                                                      camera_reference=None, camera_orientation=None):
     """Fit one scaled orthographic camera using proximal joints, never each pose.
 
     Camera elevation and scene rotation are nuisance parameters. Distal joints
