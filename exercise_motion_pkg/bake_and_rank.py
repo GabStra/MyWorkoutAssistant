@@ -23946,6 +23946,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     # rigid solver preserves every joint angle and bone length.
                     corrected_payload, correction_metrics = apply_source_contact_sequence_correction(
                         export_payload, fused_support_evidence,
+                        source_pose_reference=source_pose_reference,
                     )
                     # The correction owns these pose changes, not the fit: a
                     # copied fit report is stale by digest and would reject the
@@ -25208,6 +25209,18 @@ DETERMINISTIC_SUPPORT_STATIONARY_RATIO_THRESHOLD = 0.08
 DETERMINISTIC_SUPPORT_LOCK_TRIAL_RATIO_THRESHOLD = 0.35
 SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD = 0.12
 SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD = 0.08
+
+# A full-sole ground contact that never lifts can still be classified
+# "unknown" by the image-space patch tracker when perspective inflates its
+# anchor spread past the per-foot threshold (measured: a foot planted within
+# 2.1cm in world space produced a 0.013 spread against a 0.005 floor). The
+# registered source pose reference observes that same joint independently in
+# world space; when it confirms the joint stays within the established
+# endpoint-displacement body ratio across the episode, the episode is
+# stationary for anchoring. A sliding foot fails this check because the
+# reference sees it travel.
+SOURCE_REFERENCE_STATIONARITY_BODY_RATIO = SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD
+SOURCE_REFERENCE_CONTIGUOUS_GAP_RATIO = 0.10
 SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD = 0.055
 SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD = 0.10
 SOURCE_POSE_FOREFOOT_REACH_RATIO = 0.25
@@ -25464,10 +25477,119 @@ def motion_frames_from_export_payload(export_payload: dict[str, Any]) -> list[di
     return [frame for frame in frames_value if isinstance(frame, dict)]
 
 
+def _reference_confirms_stationary_ankle(
+    source_pose_reference: dict[str, Any] | None,
+    joint_name: str,
+    start_ratio: float,
+    end_ratio: float,
+) -> bool:
+    """True when the source pose reference shows the joint staying planted.
+
+    The reference and the episode live in the same source-window fraction
+    space, so no time remapping is needed. Displacement is measured against
+    the reference's own body scale so image/world coordinate conventions do
+    not matter.
+    """
+    if not isinstance(source_pose_reference, dict):
+        return False
+    pose = source_pose_reference.get("pose") or source_pose_reference
+    frames = pose.get("frames") or []
+    if len(frames) < 3:
+        return False
+    ankle_name = joint_name.removesuffix("_foot") + "_ankle"
+    scale_joints = [
+        name for name in ("left_ankle", "right_ankle", "left_knee", "right_knee",
+                          "left_hip", "right_hip", "left_shoulder", "right_shoulder")
+        if name in frames[0].get("joints", {})
+    ]
+    if ankle_name not in frames[0].get("joints", {}) or len(scale_joints) < 2:
+        return False
+    start_index = max(0, round(start_ratio * (len(frames) - 1)))
+    end_index = min(len(frames) - 1, round(end_ratio * (len(frames) - 1)))
+    samples = []
+    scales = []
+    for frame in frames[start_index:end_index + 1]:
+        joints = frame.get("joints") or {}
+        point = joints.get(ankle_name)
+        if not is_point3(point):
+            continue
+        samples.append([float(value) for value in point[:3]])
+        available = [joints[name] for name in scale_joints if is_point3(joints.get(name))]
+        if len(available) >= 2:
+            pairwise = [
+                math.dist(
+                    [float(value) for value in available[i][:3]],
+                    [float(value) for value in available[j][:3]],
+                )
+                for i in range(len(available)) for j in range(i + 1, len(available))
+            ]
+            scales.append(max(pairwise))
+    if len(samples) < 3 or not scales:
+        return False
+    scale = statistics.median(scales)
+    if scale <= 1e-6:
+        return False
+    origin = samples[0]
+    return max(math.dist(point, origin) for point in samples) / scale <= SOURCE_REFERENCE_STATIONARITY_BODY_RATIO
+
+
+def _resolve_unknown_contact_motion(
+    intervals: list[dict[str, Any]],
+    source_pose_reference: dict[str, Any] | None,
+    frame_count: int,
+) -> list[dict[str, Any]]:
+    """Upgrade full-sole zero-lift "unknown" episodes the reference confirms.
+
+    Only classification confidence changes: a foot that stayed full-sole with
+    zero lift and whose world-space reference trajectory is stationary is the
+    same physical contact as an explicitly "stationary" episode, so it may
+    share that episode's anchor identity when they are contiguous.
+    """
+    if source_pose_reference is None or frame_count <= 1:
+        return intervals
+
+    def ratio(interval, key):
+        bound = float(interval[key]) / (frame_count - 1)
+        return max(0.0, min(1.0, bound))
+
+    stationary_by_joint: dict[str, dict[str, Any]] = {}
+    for interval in intervals:
+        joint_name = str(interval.get("jointName") or "")
+        lift_ratio = parse_optional_float(interval.get("minimumLiftRatio"))
+        if (str(interval.get("contactMotion") or "").casefold() == "unknown"
+                and str(interval.get("contactState") or "").casefold() == "full_sole"
+                and lift_ratio is not None and lift_ratio <= 1e-9
+                and _reference_confirms_stationary_ankle(
+                    source_pose_reference, joint_name,
+                    ratio(interval, "startFrame"), ratio(interval, "endFrame"),
+                )):
+            interval["contactMotion"] = "stationary"
+    # A stationary episode contiguous with an already-stationary same-joint
+    # episode is the same stance: share the anchor so the whole span locks to
+    # one observed surface point instead of freezing its own drifted start.
+    for interval in sorted(
+        [i for i in intervals if str(i.get("contactMotion") or "").casefold() == "stationary"],
+        key=lambda i: int(i.get("startFrame") or 0),
+    ):
+        joint_name = str(interval.get("jointName") or "")
+        group = interval.get("anchorGroupId")
+        if group is None and joint_name in stationary_by_joint:
+            previous = stationary_by_joint[joint_name]
+            gap_frames = (int(interval.get("startFrame") or 0)
+                          - int(previous.get("endFrame") or 0))
+            if (0 <= gap_frames <= SOURCE_REFERENCE_CONTIGUOUS_GAP_RATIO * (frame_count - 1)
+                    and interval.get("contactState") == previous.get("contactState")):
+                interval["anchorGroupId"] = previous.get("anchorGroupId")
+        if interval.get("anchorGroupId") is not None:
+            stationary_by_joint[joint_name] = interval
+    return intervals
+
+
 def source_contact_intervals_from_evidence(
     source_support_evidence: dict[str, Any] | None,
     *,
     frame_count: int,
+    source_pose_reference: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Normalize source support evidence into frame-bounded contact intervals.
 
@@ -25525,6 +25647,7 @@ def source_contact_intervals_from_evidence(
                     "contactMotion": contact.get("contactMotion"),
                     "allowSliding": bool(contact.get("allowSliding")),
                     "contactState": contact.get("contactState"),
+                    "minimumLiftRatio": parse_optional_float(contact.get("minimumLiftRatio")),
                     "anchorGroupId": contact.get("anchorGroupId"),
                 }
             )
@@ -25570,7 +25693,7 @@ def source_contact_intervals_from_evidence(
             if str(interval.get("supportKind") or "contact") != "foot"
             or str(interval.get("jointName") or "") in continuous_foot_joints
         ]
-    return intervals
+    return _resolve_unknown_contact_motion(intervals, source_pose_reference, frame_count)
 
 
 def smooth_translation_track(
@@ -25637,6 +25760,8 @@ def fill_contact_translation_gaps(
 def apply_source_contact_sequence_correction(
     export_payload: dict[str, Any],
     source_support_evidence: dict[str, Any] | None,
+    *,
+    source_pose_reference: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Reduce source-confirmed contact drift using rigid whole-body offsets.
 
@@ -25663,6 +25788,7 @@ def apply_source_contact_sequence_correction(
     intervals = source_contact_intervals_from_evidence(
         fused_support_evidence,
         frame_count=len(frames),
+        source_pose_reference=source_pose_reference,
     )
     if len(frames) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT or not intervals:
         return corrected_payload, {
