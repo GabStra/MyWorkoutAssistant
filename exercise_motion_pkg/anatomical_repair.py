@@ -778,26 +778,47 @@ def repair_rig_anatomy(rig, observed, *, deadline):
 
     # Temporal coherence: a per-frame projection near a constraint boundary can
     # flip between rotation branches, so a smooth observation yields a jumping
-    # repair. For isolated spikes, the neighbor-parameter midpoint is already
-    # temporal-consistent by construction; accept it only when it stays
-    # anatomy feasible and actually removes the local contrast.
+    # repair. The observation's own roughness is the reference: any repaired
+    # frame region that is far rougher than the observation at the same span is
+    # a projection artifact, whether it is an isolated spike or a sustained
+    # multi-frame burst. Midpoint candidates stay anatomy feasible and must
+    # reduce the local roughness; bursts cascade frame by frame across passes.
     coherence_frames = 0
-    preview = rig.decode(rig.initial)
-    second_differences = _body_axis_second_differences(preview, names)
-    for frame in _spike_frames(second_differences):
-        if frame < 1 or frame + 1 >= len(rig.initial) or monotonic() >= deadline:
-            continue
-        proposed = rig.initial[frame].copy()
-        proposed[columns] = 0.5 * (rig.initial[frame - 1, columns] + rig.initial[frame + 1, columns])
-        if not _frame_feasible(frame, proposed[columns]):
-            continue
-        trial = rig.initial.copy()
-        trial[frame] = proposed
-        trial_differences = _body_axis_second_differences(rig.decode(trial), names)
-        if trial_differences is None or trial_differences[frame - 1] >= second_differences[frame - 1]:
-            continue
-        rig.initial[frame] = proposed
-        coherence_frames += 1
+    observed_differences = _body_axis_second_differences(observed, names)
+
+    def _artifact_frames(points):
+        differences = _body_axis_second_differences(points, names)
+        if differences is None or observed_differences is None:
+            return []
+        floor = np.maximum(ANATOMY_SPIKE_FLOOR_DEGREES, ANATOMY_SPIKE_CONTRAST * observed_differences)
+        return [index + 1 for index in np.flatnonzero(differences > floor)]
+
+    for _pass in range(4):
+        preview = rig.decode(rig.initial)
+        artifact_frames = _artifact_frames(preview)
+        if not artifact_frames or monotonic() >= deadline:
+            break
+        repaired_this_pass = 0
+        for frame in artifact_frames:
+            if frame < 1 or frame + 1 >= len(rig.initial) or monotonic() >= deadline:
+                continue
+            before_differences = _body_axis_second_differences(rig.decode(rig.initial), names)
+            if before_differences is None:
+                break
+            proposed = rig.initial[frame].copy()
+            proposed[columns] = 0.5 * (rig.initial[frame - 1, columns] + rig.initial[frame + 1, columns])
+            if not _frame_feasible(frame, proposed[columns]):
+                continue
+            trial = rig.initial.copy()
+            trial[frame] = proposed
+            trial_differences = _body_axis_second_differences(rig.decode(trial), names)
+            if trial_differences is None or trial_differences[frame - 1] >= before_differences[frame - 1]:
+                continue
+            rig.initial[frame] = proposed
+            coherence_frames += 1
+            repaired_this_pass += 1
+        if repaired_this_pass == 0:
+            break
 
     corrected = rig.decode(rig.initial)
     after, _ = repair_residuals(corrected, names, span_targets)
