@@ -89,13 +89,14 @@ Write-Host "Filtered library written: $filteredPath"
 
 if ($BuildLibraryOnly) { return }
 
-$arguments = @(
-    "-ExerciseLibraryJson", $filteredPath,
-    "-WorkspaceRoot", $WorkspaceRoot,
-    "-OutputJson", $OutputJson,
-    "-MotionReconstructor", $MotionReconstructor
-) + $RemainingArguments
 
-Write-Host "Invoking: pwsh ./scripts/run_exercise_motion_library.ps1 $($arguments -join ' ')"
-& (Join-Path $PSScriptRoot "run_exercise_motion_library.ps1") @arguments
+Write-Host "Invoking: pwsh ./scripts/run_exercise_motion_library.ps1 -ExerciseLibraryJson $filteredPath -WorkspaceRoot $WorkspaceRoot -OutputJson $OutputJson -MotionReconstructor $MotionReconstructor $($RemainingArguments -join ' ')"
+# Named parameters must be passed individually: array splatting binds
+# positionally and the library runner disables positional binding.
+& (Join-Path $PSScriptRoot "run_exercise_motion_library.ps1") `
+    -ExerciseLibraryJson $filteredPath `
+    -WorkspaceRoot $WorkspaceRoot `
+    -OutputJson $OutputJson `
+    -MotionReconstructor $MotionReconstructor `
+    @RemainingArguments
 exit $LASTEXITCODE
