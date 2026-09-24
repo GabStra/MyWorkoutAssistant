@@ -22,6 +22,13 @@ param(
     # without starting GPU/CPU work.
     [switch]$BuildLibraryOnly,
 
+    # Workspace root to seed per-exercise discovery review checkpoints from
+    # (e.g. the live run's "build/exercise_motion/exercise-library"). The
+    # checkpoints are signature-gated: stale entries are ignored by the
+    # discovery budget, so seeding already-reviewed candidates only skips
+    # re-running identical VLM reviews.
+    [string]$SeedDiscoveryCacheFrom = "build/exercise_motion/exercise-library",
+
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
 )
@@ -86,6 +93,32 @@ if (-not (Test-Path -LiteralPath $filteredDir)) {
 }
 $filtered | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $filteredPath -Encoding UTF8
 Write-Host "Filtered library written: $filteredPath"
+
+# Seed discovery review checkpoints so already-reviewed source windows are not
+# re-reviewed in the fresh verify workspace. Copy only when the target has no
+# checkpoint yet so the verify workspace's own newer history always wins.
+$seeded = 0
+if (-not [string]::IsNullOrWhiteSpace($SeedDiscoveryCacheFrom)) {
+    foreach ($exercise in $selected) {
+        $slug = ([string]$exercise.name).ToLowerInvariant() -replace '[^a-z0-9]+', '-'
+        $slug = $slug.Trim('-')
+        $sourceDir = Join-Path $SeedDiscoveryCacheFrom $slug
+        $targetDir = Join-Path $WorkspaceRoot $slug
+        if (-not (Test-Path -LiteralPath $sourceDir)) { continue }
+        if (-not (Test-Path -LiteralPath $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        foreach ($checkpoint in (Get-ChildItem -LiteralPath $sourceDir -Filter "discovery_review_*.json" -File -ErrorAction SilentlyContinue)) {
+            $target = Join-Path $targetDir $checkpoint.Name
+            if (Test-Path -LiteralPath $target) { continue }
+            Copy-Item -LiteralPath $checkpoint.FullName -Destination $target
+            $seeded += 1
+        }
+    }
+}
+if ($seeded -gt 0) {
+    Write-Host "Seeded $seeded discovery review checkpoint(s) from $SeedDiscoveryCacheFrom"
+}
 
 if ($BuildLibraryOnly) { return }
 

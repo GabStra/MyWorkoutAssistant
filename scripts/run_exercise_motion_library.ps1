@@ -43,6 +43,14 @@ param(
 
     [switch]$DisableStagedWaves,
 
+    # Discovery/bake overlap on staged waves. "allow" lets the next wave's
+    # source discovery run while the current wave bakes: the global GPU lock
+    # serializes actual GPU compute, discovery yield requests keep discovery
+    # from running away, and the persistent VLM server residency is unchanged
+    # from the avoid path. Pass "avoid" to restore strict stage alternation.
+    [ValidateSet("auto", "allow", "avoid")]
+    [string]$GpuDiscoveryBakeOverlap = "allow",
+
     [ValidateRange(1, 10)]
     [int]$PassRestartAttempts = 3,
 
@@ -239,7 +247,7 @@ function Invoke-MovementPass {
     if (-not $DisableStagedWaves) {
         $runnerArguments += @(
             "-StagedWaveSize", "$StagedWaveSize",
-            "-GpuDiscoveryBakeOverlap", "avoid",
+            "-GpuDiscoveryBakeOverlap", $GpuDiscoveryBakeOverlap,
             "-WarmWhamWorker:`$true",
             "-KeepLlamaCppServer:`$true"
         )
