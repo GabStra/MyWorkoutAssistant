@@ -25,6 +25,42 @@ class _AnatomyFeasible(Exception):
     def __init__(self, values):
         self.values = np.asarray(values, dtype=float)
 
+
+def _body_axis_second_differences(points, names):
+    """Degree-equivalent per-frame roughness of the pelvis→neck body axis."""
+    if not all(name in names for name in ('left_hip', 'right_hip', 'pelvis', 'neck')):
+        return None
+    index = {name: names.index(name) for name in ('left_hip', 'right_hip', 'pelvis', 'neck')}
+    lateral = points[:, index['right_hip']] - points[:, index['left_hip']]
+    lateral /= np.maximum(np.linalg.norm(lateral, axis=1, keepdims=True), 1e-12)
+    up = points[:, index['neck']] - points[:, index['pelvis']]
+    up -= lateral * np.sum(up * lateral, axis=1, keepdims=True)
+    up /= np.maximum(np.linalg.norm(up, axis=1, keepdims=True), 1e-12)
+    axes = np.stack([lateral, up], axis=1)
+    differences = np.diff(axes, n=2, axis=0)
+    return np.rad2deg(np.sqrt(np.sum(differences ** 2, axis=(-2, -1))))
+
+
+def _spike_frames(second_differences):
+    """Frames whose axis jump is both locally isolated and absolutely large.
+
+    Returns middle-frame indices (the second-difference alignment), sorted
+    worst first. Legitimate fast motion raises the neighborhood too, so its
+    contrast test never fires.
+    """
+    if second_differences is None or len(second_differences) < 3:
+        return []
+    spikes = []
+    for i in range(1, len(second_differences) - 1):
+        neighbors = max(second_differences[i - 1], second_differences[i + 1])
+        if (second_differences[i] > ANATOMY_SPIKE_FLOOR_DEGREES
+                and second_differences[i] > ANATOMY_SPIKE_CONTRAST * neighbors):
+            spikes.append(i)
+    spikes.sort(key=lambda i: second_differences[i], reverse=True)
+    # Middle-frame index -> frame index in the points array.
+    return [i + 1 for i in spikes]
+
+
 # Cap pathological pre-solve burn, but leave room for hard multi-frame repairs.
 # Short clips stay near the historical 480 floor. Long clips with widespread
 # source violations need ~12–15 evals per bad frame (measured); a fixed 480
@@ -33,6 +69,15 @@ ANATOMY_REPAIR_MAX_EVALS_PER_FRAME = 60
 ANATOMY_REPAIR_MAX_TOTAL_EVALS = 480
 ANATOMY_REPAIR_EVALS_PER_BAD_FRAME = 16
 ANATOMY_REPAIR_MAX_TOTAL_EVALS_CEILING = 8000
+
+# Per-frame projections near a constraint boundary can land on different
+# rotation branches in neighboring frames; the observation is smooth but the
+# repair output jumps. A spike is judged against its immediate neighbors so
+# legitimate fast motion (high absolute second difference everywhere) is never
+# touched, and a candidate replacement is accepted only if it stays anatomy
+# feasible AND reduces the spike.
+ANATOMY_SPIKE_FLOOR_DEGREES = 1.0
+ANATOMY_SPIKE_CONTRAST = 4.0
 
 
 RIGID_BILATERAL_SPAN_PAIRS = (
@@ -722,6 +767,38 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         if session is not None and repair_feasible(solved_x):
             session.repairs[key] = np.asarray(solved_x, dtype=float).tolist()
 
+    def _frame_feasible(frame, values):
+        current = np.asarray(rig.initial[frame], dtype=float).copy()
+        current[columns] = values
+        candidate = rig.decode(current[None])
+        if np.max(repair_residuals(candidate, names, span_targets)[0], initial=0.) > 1e-6:
+            return False
+        lean = torso_directions(candidate, names) - observed_torso_directions[frame]
+        return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
+
+    # Temporal coherence: a per-frame projection near a constraint boundary can
+    # flip between rotation branches, so a smooth observation yields a jumping
+    # repair. For isolated spikes, the neighbor-parameter midpoint is already
+    # temporal-consistent by construction; accept it only when it stays
+    # anatomy feasible and actually removes the local contrast.
+    coherence_frames = 0
+    preview = rig.decode(rig.initial)
+    second_differences = _body_axis_second_differences(preview, names)
+    for frame in _spike_frames(second_differences):
+        if frame < 1 or frame + 1 >= len(rig.initial) or monotonic() >= deadline:
+            continue
+        proposed = rig.initial[frame].copy()
+        proposed[columns] = 0.5 * (rig.initial[frame - 1, columns] + rig.initial[frame + 1, columns])
+        if not _frame_feasible(frame, proposed[columns]):
+            continue
+        trial = rig.initial.copy()
+        trial[frame] = proposed
+        trial_differences = _body_axis_second_differences(rig.decode(trial), names)
+        if trial_differences is None or trial_differences[frame - 1] >= second_differences[frame - 1]:
+            continue
+        rig.initial[frame] = proposed
+        coherence_frames += 1
+
     corrected = rig.decode(rig.initial)
     after, _ = repair_residuals(corrected, names, span_targets)
     displacement = np.linalg.norm(corrected-observed, axis=-1)
@@ -742,6 +819,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             float(free_column_total) / free_column_frames if free_column_frames else float(len(columns))),
         'evaluationBudget': evaluation_budget,
         'unrepairedFrameCount': remaining_bad,
+        'temporalCoherenceRepairedFrameCount': coherence_frames,
         'maximumCorrectionMeters': float(displacement.max()),
         'maximumTorsoDirectionChangeDegrees': float(lean_change.max()),
     }
