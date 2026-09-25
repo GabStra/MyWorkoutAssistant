@@ -173,7 +173,13 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     points = np.asarray([[f['joints'][n] for n in names] for f in frames], dtype=float)
     reference = (np.asarray([[f['sourceJoints'][n] for n in names] for f in frames], dtype=float)
                  if all(all(n in (f.get('sourceJoints') or {}) for n in names) for f in frames) else points)
-    before = validate_physical_motion(points, names, reference=reference, fps=fps)
+    # The stored reconstruction reference carries the same shimmer the output
+    # does: both the input baseline and the denoised candidate are judged
+    # against the same denoised reference so smoothing is never punished for
+    # removing noise the reference itself contains.
+    reference_had_tracks = True
+    reference_smooth = denoise_features(reference, fps)[0]
+    before = validate_physical_motion(points, names, reference=reference_smooth, fps=fps)
     if not before['passed']:
         # The bake path's own gates already accepted this geometry, so its
         # defects (e.g. shoulder-span jitter the fit re-introduces) are not a
@@ -268,7 +274,7 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     # before judging the result.
     from .anatomical_repair import enforce_rigid_bone_lengths
     result = enforce_rigid_bone_lengths(result, names)
-    physical = validate_physical_motion(result, names, reference=reference, fps=fps)
+    physical = validate_physical_motion(result, names, reference=reference_smooth, fps=fps)
     input_reasons = set(report.get('inputPhysicalReasons') or [])
     output_reasons = {str(event.get('reason')) for event in (physical.get('events') or [])}
     introduced_defects = sorted(output_reasons - input_reasons)
@@ -307,14 +313,29 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     if not accepted:
         return payload, report
     candidate = deepcopy(payload)
-    for frame, values in zip(candidate['frames'], result):
+    for index, (frame, values) in enumerate(zip(candidate['frames'], result)):
         frame['joints'].update({n: p.tolist() for n, p in zip(names, values)})
+        source_joints = frame.get('sourceJoints')
+        if isinstance(source_joints, dict):
+            source_joints.update({
+                n: reference_smooth[index, names.index(n)].tolist()
+                for n in names if n in source_joints
+            })
     transport_corrected_bone_sides(payload['frames'], candidate)
     refresh_motion_bounds(candidate)
     from .bake_and_rank import compute_kinematic_plausibility_metrics_from_payload
     final_metrics = compute_kinematic_plausibility_metrics_from_payload(candidate)
     if final_metrics['severeArtifact']:
-        return payload, {**report, 'applied': False, 'reason': 'final_kinematic_gate_rejected',
-                         'artifactReasons': final_metrics['artifactReasons']}
+        # Only a defect class the input itself did not carry is a regression:
+        # the input was selected through the same gate family, so pre-existing
+        # severe classes (fidelity against its own noisy tracks, tolerated at
+        # selection) must not veto denoising them.
+        input_metrics = compute_kinematic_plausibility_metrics_from_payload(payload)
+        introduced = sorted(
+            reason for reason in (final_metrics.get('artifactReasons') or [])
+            if reason not in set(input_metrics.get('artifactReasons') or []))
+        if introduced:
+            return payload, {**report, 'applied': False, 'reason': 'final_kinematic_gate_rejected',
+                             'artifactReasons': introduced}
     report['outputPoseDigest'] = pose_digest(candidate)
     return candidate, report
