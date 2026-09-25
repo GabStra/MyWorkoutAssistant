@@ -61,4 +61,6 @@ def browser_worker_limit() -> int:
 
 
 def staged_generation_cpu_workers() -> int:
-    return max(1, min(DEFAULT_STAGED_GENERATION_CPU_WORKERS, usable_logical_cores() // 3))
+    # Workers exist to feed the CPU fit pool, so they follow any
+    # EXERCISE_MOTION_FIT_LANES override; with the defaults this is unchanged.
+    return max(1, min(cpu_fit_slot_limit(), usable_logical_cores() // 2))
