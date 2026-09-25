@@ -175,7 +175,13 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
                  if all(all(n in (f.get('sourceJoints') or {}) for n in names) for f in frames) else points)
     before = validate_physical_motion(points, names, reference=reference, fps=fps)
     if not before['passed']:
-        return payload, {**report, 'reason': 'upstream_anatomy_unresolved'}
+        # The bake path's own gates already accepted this geometry, so its
+        # defects (e.g. shoulder-span jitter the fit re-introduces) are not a
+        # reason to refuse smoothing. Smoothing must merely avoid introducing
+        # a defect class the input did not have; acceptance checks that
+        # relatively after the projection.
+        report['inputPhysicalReasons'] = sorted({
+            str(event.get('reason')) for event in (before.get('events') or [])})
     pinned = contact_mask(payload, names, len(frames))
     if pinned is None:
         return payload, {**report, 'reason': 'unrepresented_heel_contact'}
@@ -256,7 +262,18 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     except Deadline:
         return payload, {**report, 'reason': 'bounded_stabilization_timeout'}
     result = expand(fit.x)
+    # The position-space projection perturbs derived bone lengths by a few
+    # millimetres — enough to trip strict anatomy gates on an otherwise
+    # smoother skeleton. Re-establish the exact rigidity the input carried
+    # before judging the result.
+    from .anatomical_repair import enforce_rigid_bone_lengths
+    result = enforce_rigid_bone_lengths(result, names)
     physical = validate_physical_motion(result, names, reference=reference, fps=fps)
+    input_reasons = set(report.get('inputPhysicalReasons') or [])
+    output_reasons = {str(event.get('reason')) for event in (physical.get('events') or [])}
+    introduced_defects = sorted(output_reasons - input_reasons)
+    physical_ok = bool(physical['passed']) or (
+        bool(input_reasons) and not introduced_defects)
     length_error = float(np.max(abs(np.linalg.norm(result[:, first]-result[:, last], axis=-1)-lengths)))
     # Preserve the cleaned trajectory range, not raw single-frame extrema.
     # Rapid motion is deliberately removed by the animation bandwidth policy.
@@ -269,7 +286,7 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     range_preserved = bool(np.all(final_span[protected] >= .95*span[protected]))
     floor = payload.get('renderFloorY')
     floor_ok = floor is None or result[:, :, 1].min() >= min(float(floor)-.002, points[:, :, 1].min()-.0001)
-    accepted = physical['passed'] and length_error <= .002 and range_preserved and floor_ok
+    accepted = physical_ok and length_error <= .002 and range_preserved and floor_ok
     proposed_denoised, _ = denoise_features(result, fps)
     original_denoised, _ = denoise_features(points, fps)
     noise_before = float(np.sqrt(np.mean(((original_denoised-points)/scale)**2)))

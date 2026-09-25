@@ -5891,8 +5891,45 @@ def _build_html(
       return activeFrames;
     }}
 
+    function smoothJointTracks(frames, loopable) {{
+      // Display-only shimmer damping: a wrapped [0.25, 0.5, 0.25] temporal
+      // filter per joint track. Neighbour steps beyond 0.10 are cuts or
+      // missing-track fallbacks and stay untouched.
+      if (!Array.isArray(frames) || frames.length < 3) {{
+        return frames;
+      }}
+      const count = frames.length;
+      const maxStep = 0.10;
+      const neighbour = (index) => frames[loopable
+        ? ((index % count) + count) % count
+        : Math.max(0, Math.min(count - 1, index))];
+      return frames.map((frame, index) => {{
+        const previous = neighbour(index - 1);
+        const next = neighbour(index + 1);
+        const joints = {{}};
+        for (const [jointName, point] of Object.entries(frame.joints ?? {{}})) {{
+          const before = previous.joints?.[jointName];
+          const after = next.joints?.[jointName];
+          if (!Array.isArray(before) || !Array.isArray(after) || before.length < 3 || after.length < 3) {{
+            joints[jointName] = point;
+            continue;
+          }}
+          const stepBefore = Math.hypot(before[0] - point[0], before[1] - point[1], before[2] - point[2]);
+          const stepAfter = Math.hypot(after[0] - point[0], after[1] - point[1], after[2] - point[2]);
+          joints[jointName] = stepBefore > maxStep || stepAfter > maxStep
+            ? point
+            : [
+                before[0] * 0.25 + point[0] * 0.5 + after[0] * 0.25,
+                before[1] * 0.25 + point[1] * 0.5 + after[1] * 0.25,
+                before[2] * 0.25 + point[2] * 0.5 + after[2] * 0.25,
+              ];
+        }}
+        return {{ ...frame, joints }};
+      }});
+    }}
+
     function buildPlaybackState(frames, loop) {{
-      const activeFrames = buildPlaybackFrames(frames, loop);
+      const activeFrames = smoothJointTracks(buildPlaybackFrames(frames, loop), Boolean(loop));
       return {{
         frames: activeFrames,
         boundsFrames: activeFrames,
@@ -11150,7 +11187,27 @@ def _build_html(
         const torsoHeadAxis = neckSourceJoint && upperSpineJoint
           ? neckSourceJoint.clone().sub(upperSpineJoint)
           : measuredHeadAxis;
-        const headAxis = measuredHeadAxis.lengthSq() > 1e-8 ? measuredHeadAxis : torsoHeadAxis;
+        // SMPL regressors put the head joint ~30 degrees forward of the neck
+        // axis as a rest offset, which reads as a permanent bow. Re-ground the
+        // pitch on the upper-spine axis and keep only the deviation from that
+        // neutral as genuine head motion.
+        const rawHeadAxis = measuredHeadAxis.lengthSq() > 1e-8 ? measuredHeadAxis : torsoHeadAxis;
+        let headAxis = rawHeadAxis;
+        if (neckSourceJoint && upperSpineJoint
+            && rawHeadAxis.lengthSq() > 1e-8 && torsoHeadAxis.lengthSq() > 1e-8) {{
+          const headDirection = rawHeadAxis.clone().normalize();
+          const torsoDirection = torsoHeadAxis.clone().normalize();
+          const measuredPitch = headDirection.angleTo(torsoDirection);
+          const deviation = Math.max(-0.44, Math.min(0.44, measuredPitch - Math.PI / 6));
+          if (Math.abs(deviation) > 0.03) {{
+            const rotationAxis = new THREE.Vector3().crossVectors(headDirection, torsoDirection);
+            if (rotationAxis.lengthSq() > 1e-8) {{
+              headAxis = headDirection
+                .applyAxisAngle(rotationAxis.normalize(), deviation)
+                .multiplyScalar(rawHeadAxis.length());
+            }}
+          }}
+        }}
         const headDistance = neckSourceJoint ? headJoint.distanceTo(neckSourceJoint) : 0.135;
         const headScale = neckSourceJoint
             ? Math.max(0.115, Math.min(0.165, headDistance * 0.68))

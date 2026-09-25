@@ -23323,6 +23323,14 @@ def constrain_baked_payload_to_source_articulation(
         # An unsuccessful initialization/fit must not replace the caller's pose.
         result = fitted if fit_report.get("applied") else copy.deepcopy(payload)
         result["controlledMotionFit"] = fit_report
+        if fit_report.get("applied"):
+            # The fit path returns here, so the animation-bandwidth smoothing
+            # that the no-fit path applies below must run before this return:
+            # the fitter re-introduces reconstruction shimmer that otherwise
+            # ships in every approved movement.
+            from .sequence_stabilization import stabilize_exported_sequence
+            result, sequence_report = stabilize_exported_sequence(result)
+            result["sequenceStabilization"] = sequence_report
         return result, metadata
     constrained_clip, post_ik_spike_metadata = suppress_post_ik_anatomical_spikes(
         constrained_clip

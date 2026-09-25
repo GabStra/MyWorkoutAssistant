@@ -56,6 +56,7 @@ import com.google.android.filament.Texture
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.UiHelper
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.nio.ByteBuffer
@@ -64,6 +65,7 @@ import java.nio.FloatBuffer
 import java.nio.ShortBuffer
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
@@ -1929,7 +1931,8 @@ private fun buildSingleLowPolyMesh(
 ): GeneratedLowPolyMesh? {
     val pelvis = joints["pelvis"] ?: return null
     val neck = joints["neck"] ?: return null
-    val head = joints["head"] ?: return null
+    val rawHead = joints["head"] ?: return null
+    val head = neutralHeadPitchJoint(neck, rawHead, joints["spine3"] ?: joints["spine2"]) ?: rawHead
     val leftHip = joints["left_hip"] ?: return null
     val rightHip = joints["right_hip"] ?: return null
     val leftShoulder = joints["left_shoulder"] ?: return null
@@ -1961,6 +1964,9 @@ private fun buildSingleLowPolyMesh(
     val footScale = max(hipWidth * 0.98f, shoulderWidth * 0.58f)
     val down = bodyAxes.up * -1f
     val resolvedJoints = joints.toMutableMap()
+    if (head != rawHead) {
+        resolvedJoints["head"] = head
+    }
     fun ensureJoint(name: String, fallback: WearSkeletonVec3) {
         if (resolvedJoints[name] == null) {
             resolvedJoints[name] = fallback
@@ -2485,7 +2491,10 @@ private fun ankleCapCenter(
     if (shinLength <= 0.0001f) return ankle
     val clearance = min(jointCapClearance("left_ankle", lowerLegEndWidth), shinLength * 0.15f)
     val shinEnd = ankle - shin * (clearance / shinLength)
-    return shinEnd.lerp(footSurface ?: ankle, 0.5f)
+    // Weight the cap toward the shin end: the visible ankle ball must stay at
+    // the joint the foot pivots around instead of sliding halfway to the shoe
+    // surface every time the foot rotates.
+    return shinEnd.lerp(footSurface ?: ankle, 0.25f)
 }
 
 private fun addJointCapAtNames(
@@ -3066,6 +3075,112 @@ private fun buildStableLimbSides(
     return corrected
 }
 
+/** Damp residual per-keyframe shimmer: a wrapped [0.25, 0.5, 0.25] temporal
+ *  filter over each joint track. Neighbour steps above [PLAYBACK_SMOOTHING_MAX_STEP]
+ *  are cuts or missing-track fallbacks and are left untouched. Display-only:
+ *  the payload itself is never modified. */
+private const val PLAYBACK_SMOOTHING_MAX_STEP = 0.10f
+
+private fun smoothJointTracks(frames: List<WearSkeletonFrame>, wrap: Boolean): List<WearSkeletonFrame> {
+    if (frames.size < 3) return frames
+    val count = frames.size
+    fun neighbour(index: Int, step: Int): WearSkeletonFrame {
+        val raw = index + step
+        val bounded = if (wrap) (raw + count) % count else raw.coerceIn(0, count - 1)
+        return frames[bounded]
+    }
+    return frames.mapIndexed { index, frame ->
+        val previous = neighbour(index, -1)
+        val next = neighbour(index, +1)
+        val joints = frame.joints.mapValues { (name, point) ->
+            val before = previous.joints[name] ?: return@mapValues point
+            val after = next.joints[name] ?: return@mapValues point
+            if ((before - point).length() > PLAYBACK_SMOOTHING_MAX_STEP ||
+                (after - point).length() > PLAYBACK_SMOOTHING_MAX_STEP) {
+                point
+            } else {
+                before * 0.25f + point * 0.5f + after * 0.25f
+            }
+        }
+        WearSkeletonFrame(joints = joints, boneSides = frame.boneSides)
+    }
+}
+
+/** SMPL regressors place the head joint ~30 degrees forward of the neck axis
+ *  as a rest offset, so a head volume drawn along the neck->head vector reads
+ *  as a permanent bow. Rotate the head point about the pitch axis back to the
+ *  model-neutral offset relative to the upper spine; the measured deviation
+ *  from that neutral stays visible as genuine head motion. */
+private const val SMPL_NEUTRAL_HEAD_PITCH_RADIANS = 0.52f
+private const val HEAD_PITCH_CORRECTION_LIMIT_RADIANS = 0.44f
+
+private fun neutralHeadPitchJoint(
+    neck: WearSkeletonVec3,
+    head: WearSkeletonVec3,
+    upperSpine: WearSkeletonVec3?,
+): WearSkeletonVec3? {
+    if (upperSpine == null) return null
+    val torso = neck - upperSpine
+    val torsoLength = torso.length()
+    if (torsoLength < 1e-4f) return null
+    val torsoAxis = torso * (1f / torsoLength)
+    val headDelta = head - neck
+    val length = headDelta.length()
+    if (length < 1e-4f) return null
+    val headAxis = headDelta * (1f / length)
+    val measured = acos(headAxis.dot(torsoAxis).coerceIn(-1f, 1f))
+    val deviation = (measured - SMPL_NEUTRAL_HEAD_PITCH_RADIANS)
+        .coerceIn(-HEAD_PITCH_CORRECTION_LIMIT_RADIANS, HEAD_PITCH_CORRECTION_LIMIT_RADIANS)
+    if (abs(deviation) < 0.03f) return null
+    val rotationAxisRaw = headAxis.cross(torsoAxis)
+    val rotationAxisLength = rotationAxisRaw.length()
+    if (rotationAxisLength < 1e-6f) return null
+    val rotationAxis = rotationAxisRaw * (1f / rotationAxisLength)
+    val cos = cos(deviation)
+    val sin = sin(deviation)
+    val rotated = headAxis * cos + rotationAxis.cross(headAxis) * sin +
+        rotationAxis * (rotationAxis.dot(headAxis) * (1f - cos))
+    return neck + rotated * length
+}
+
+/** Damp per-keyframe shimmer in the rig coordinate tracks at load time with a
+ *  wrapped [0.25, 0.5, 0.25] filter. Applied outside FixedRigPlayback.parse so
+ *  the playback math keeps its exact cross-implementation parity contract.
+ *  Rows whose neighbours moved further than [RIG_SMOOTHING_MAX_STEP] are cuts
+ *  or teleports and stay untouched. */
+private const val RIG_SMOOTHING_MAX_STEP = 0.35
+
+private fun smoothRigCoordinateJson(rig: JsonObject, frameCount: Int, wrap: Boolean): JsonObject {
+    val rows = rig.getAsJsonArray("coordinates") ?: return rig
+    if (rows.size() < 3) return rig
+    fun row(index: Int): List<Float> {
+        val bounded = if (wrap) (index % frameCount + frameCount) % frameCount else index.coerceIn(0, frameCount - 1)
+        return rows.get(bounded).asJsonArray.map { it.asFloat }
+    }
+    val smoothed = JsonArray()
+    for (index in 0 until rows.size()) {
+        val current = row(index)
+        val previous = row(index - 1)
+        val next = row(index + 1)
+        val cut = current.indices.any { component ->
+            abs(previous[component] - current[component]) > RIG_SMOOTHING_MAX_STEP ||
+                abs(next[component] - current[component]) > RIG_SMOOTHING_MAX_STEP
+        }
+        val out = JsonArray()
+        if (cut) {
+            current.forEach { out.add(it) }
+        } else {
+            for (component in current.indices) {
+                out.add(previous[component] * 0.25f + current[component] * 0.5f + next[component] * 0.25f)
+            }
+        }
+        smoothed.add(out)
+    }
+    val result = rig.deepCopy()
+    result.add("coordinates", smoothed)
+    return result
+}
+
 private fun buildStableBodyAxes(
     frames: List<WearSkeletonFrame>,
 ): List<BodyAxes> {
@@ -3188,15 +3303,19 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
             }?.toMap().orEmpty(),
         )
     }
+    val loopable = root.optionalJsonObject("loop")?.optionalBoolean("enabled") ?: true
+    val smoothedFrames = smoothJointTracks(frames, loopable)
     return WearSkeleton(
         fps = root.get("fps")?.asFloat ?: 30f,
-        loopable = root.optionalJsonObject("loop")?.optionalBoolean("enabled") ?: true,
+        loopable = loopable,
         bounds = displayCoordinateTransform.apply(boundsObject.toWearSkeletonBounds()),
-        frames = frames,
+        frames = smoothedFrames,
         display = root.toWearSkeletonDisplay(),
-        limbSidesByFrame = buildStableLimbSides(frames, root.optionalJsonObject("loop")?.optionalBoolean("enabled") ?: true),
-        bodyAxesByFrame = buildStableBodyAxes(frames),
-        fixedRig = root.optionalJsonObject("fixedRig")?.let { FixedRigPlayback.parse(it, frames.size) },
+        limbSidesByFrame = buildStableLimbSides(smoothedFrames, loopable),
+        bodyAxesByFrame = buildStableBodyAxes(smoothedFrames),
+        fixedRig = root.optionalJsonObject("fixedRig")?.let {
+            FixedRigPlayback.parse(smoothRigCoordinateJson(it, frames.size, loopable), frames.size)
+        },
         displayTransform = displayCoordinateTransform,
     )
 }
