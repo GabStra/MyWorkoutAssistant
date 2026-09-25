@@ -18,6 +18,8 @@ import math
 import statistics
 from typing import Any
 
+from .foot_kinematics import HEEL_BEHIND_ANKLE_RATIO
+
 LEG_CHAIN_JOINTS = {
     "left": ("left_hip", "left_knee", "left_ankle", "left_foot"),
     "right": ("right_hip", "right_knee", "right_ankle", "right_foot"),
@@ -118,7 +120,9 @@ def pin_stationary_contact_chains(
     ``frames`` are export-payload frames (mutated in place) after the
     whole-body translation correction. ``intervals`` are stationary contact
     intervals with ``startFrame``/``endFrame``/``anchor``/``evaluatedJointName``
-    as produced by the contact correction. When ``support_plane_y`` is known,
+    as produced by the contact correction. Heel-only intervals evaluate the
+    shoe's derived heel point, so the ankle solves for the heel target while
+    the toe keeps its freedom to rise. When ``support_plane_y`` is known,
     an anchor whose contact floats above or sinks below the plane is projected
     onto it, mirroring the stationarity gate's floor check. Returns a
     per-joint report for the correction metrics; frames without a full leg
@@ -133,7 +137,7 @@ def pin_stationary_contact_chains(
     for interval in intervals:
         joint_name = str(
             interval.get("evaluatedJointName") or interval.get("jointName") or "")
-        if not joint_name.endswith(("_foot", "_ankle")):
+        if not joint_name.endswith(("_foot", "_ankle", "_heel")):
             continue
         side = joint_name.split("_", 1)[0]
         chain = LEG_CHAIN_JOINTS.get(side)
@@ -154,11 +158,22 @@ def pin_stationary_contact_chains(
             report.setdefault(joint_name, []).append(
                 {"applied": False, "reason": "insufficient_samples"})
             continue
-        contact_joint = chain[3] if joint_name.endswith("_foot") else chain[2]
-        before_points = [
-            [float(frame["joints"][contact_joint][i]) for i in range(3)]
-            for frame in interval_frames
-        ]
+
+        def _contact_point(frame: dict[str, Any]) -> list[float] | None:
+            # Heel-only contacts evaluate the derived heel point; the other
+            # contact joints are payload joints at the end of the leg chain.
+            joints = frame["joints"]
+            if joint_name.endswith("_heel"):
+                ankle, foot = joints[chain[2]], joints[chain[3]]
+                return [
+                    ankle[axis] - HEEL_BEHIND_ANKLE_RATIO * (foot[axis] - ankle[axis])
+                    for axis in range(3)
+                ]
+            contact_joint = chain[3] if joint_name.endswith("_foot") else chain[2]
+            point = joints[contact_joint]
+            return [float(point[i]) for i in range(3)]
+
+        before_points = [_contact_point(frame) for frame in interval_frames]
         before_ratio = _chain_range_ratio(before_points, body_span)
         floor_error_ratio = None
         if (
@@ -210,16 +225,26 @@ def pin_stationary_contact_chains(
             knee = [float(value) for value in joints[chain[1]]]
             ankle = [float(value) for value in joints[chain[2]]]
             foot = [float(value) for value in joints[chain[3]]]
-            # Keep the ankle->foot direction; pin the contact joint exactly,
+            # Keep the ankle->foot direction; pin the contact point exactly,
             # ramped at the boundaries so the limb travels instead of jumps.
             foot_offset = [foot[i] - ankle[i] for i in range(3)]
-            contact_point = foot if joint_name.endswith("_foot") else ankle
+            contact_point = _contact_point(frame)
+            if contact_point is None:
+                continue
             target = [
                 contact_point[i] + weight * (anchor[i] - contact_point[i])
                 for i in range(3)
             ]
             if joint_name.endswith("_foot"):
                 ankle_target = [target[i] - foot_offset[i] for i in range(3)]
+            elif joint_name.endswith("_heel"):
+                # Place the derived heel at the target: heel = ankle -
+                # ratio*(foot - ankle) and foot moves with the ankle, so the
+                # ankle target picks up ratio * foot_offset.
+                ankle_target = [
+                    target[i] + HEEL_BEHIND_ANKLE_RATIO * foot_offset[i]
+                    for i in range(3)
+                ]
             else:
                 ankle_target = target
             solved = _solve_leg_chain(hip, knee, ankle, ankle_target)
@@ -231,10 +256,7 @@ def pin_stationary_contact_chains(
             joints[chain[2]] = new_ankle
             joints[chain[3]] = new_foot
             corrected_count += 1
-        after_points = [
-            [float(frame["joints"][contact_joint][i]) for i in range(3)]
-            for frame in interval_frames
-        ]
+        after_points = [_contact_point(frame) for frame in interval_frames]
         report.setdefault(joint_name, []).append({
             "applied": corrected_count > 0,
             "correctedFrameCount": corrected_count,

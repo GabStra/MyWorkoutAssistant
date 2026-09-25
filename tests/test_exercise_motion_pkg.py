@@ -48599,6 +48599,120 @@ def test_contact_sequence_correction_preserves_pose_and_elevated_supports() -> N
     assert safety["isPerFrameRigidTranslation"] is True
 
 
+def test_contact_sequence_correction_floors_floating_supine_contacts() -> None:
+    """Gate-evaluable floats must be repairable: heel-only and short episodes.
+
+    A supine reconstruction floats its planted left foot above the render
+    floor. The confirmed contacts are one short full-sole episode (below the
+    bake-stage sample minimum but gate-evaluable) and one heel-only episode
+    evaluated at the derived heel point. The scene-level vertical gauge moves
+    the whole body down without pushing any joint through the plane, so the
+    stationarity and baseline-safety gates pass on a rigid translation.
+    """
+    import numpy as np
+
+    render_floor_y = -0.45
+    float_ratio = 0.12
+    span = 1.8
+    float_height = float_ratio * span
+
+    def build_frames():
+        frames = []
+        for index in range(60):
+            joints = {
+                "head": [0.0, 0.35, 0.0],
+                "left_shoulder": [-0.7, 0.4, 0.0],
+                "right_shoulder": [0.7, 0.4, 0.0],
+                "pelvis": [0.0, 0.2, 0.0],
+                "left_hip": [-0.1, 0.15, 0.0],
+                "right_hip": [0.1, 0.15, 0.0],
+                "left_knee": [-0.1, 0.02, 0.0],
+                "right_knee": [0.1, 0.02, 0.0],
+                # The right leg is raised (single-leg variant, no confirmed
+                # contact): its clearance stays above the left foot's float,
+                # so the scene gauge completes without clamping.
+                "left_ankle": [-0.6, render_floor_y + float_height + 0.1, 0.0],
+                "right_ankle": [0.4, render_floor_y + 0.5, 0.0],
+                "left_foot": [-0.68, render_floor_y + float_height + 0.15, 0.1],
+                "right_foot": [0.48, render_floor_y + 0.55, 0.1],
+            }
+            frames.append({"frameIndex": index, "timeSec": index / 30, "joints": joints})
+        return frames
+
+    baseline = {
+        "frames": build_frames(),
+        "renderFloorY": render_floor_y,
+    }
+    evidence = {
+        "sharedSupportPlaneY": 0.0,
+        "contacts": [
+            {
+                "jointName": "left_foot",
+                "contactState": "full_sole",
+                "contactMotion": "stationary",
+                "supportKind": "observed_foot_patch",
+                "startRatio": 38 / 59,
+                "endRatio": 41 / 59,
+                "confidence": 0.8,
+                "minimumLiftRatio": 0.0,
+            },
+            {
+                "jointName": "left_foot",
+                "contactState": "heel_only",
+                "contactMotion": "stationary",
+                "supportKind": "observed_foot_patch",
+                "verticalOnly": True,
+                "startRatio": 45 / 59,
+                "endRatio": 59 / 59,
+                "confidence": 0.8,
+                "minimumLiftRatio": 0.14,
+            },
+        ],
+    }
+
+    corrected, metrics = bake_and_rank_module.apply_source_contact_sequence_correction(
+        baseline, evidence,
+    )
+
+    assert metrics["applied"] is True
+    intervals = {
+        interval["evaluatedJointName"]: interval
+        for interval in metrics["contactIntervals"]
+    }
+    # The heel-only episode is evaluated and anchored at the derived heel
+    # point, matching the gate's evaluated joint.
+    assert "left_heel" in intervals
+    assert intervals["left_heel"]["usedForCorrection"] is True
+
+    # The scene gauge lowers the body, clamped per frame so the translation
+    # itself never pushes the lowest baseline joint through the plane.
+    track = metrics["translationTrack"]
+    baseline_frames = baseline["frames"]
+    for frame, translation in zip(baseline_frames, track):
+        lowest = min(point[1] for point in frame["joints"].values())
+        assert translation[1] >= render_floor_y - 0.002 * span - lowest
+
+    assert bake_and_rank_module.source_confirmed_support_stationarity_metrics(
+        corrected, evidence,
+    )["passed"] is True
+    safety = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline, corrected,
+    )
+    assert safety["passed"] is True, safety["rejectionReasons"]
+    assert safety["isPerFrameRigidTranslation"] is True
+
+    # The repair is rigid: bone lengths and the ankle->foot offset survive.
+    for before, after in zip(baseline_frames, corrected["frames"]):
+        for side in ("left", "right"):
+            before_shin = np.linalg.norm(
+                np.asarray(before["joints"][f"{side}_knee"])
+                - np.asarray(before["joints"][f"{side}_ankle"]))
+            after_shin = np.linalg.norm(
+                np.asarray(after["joints"][f"{side}_knee"])
+                - np.asarray(after["joints"][f"{side}_ankle"]))
+            assert abs(after_shin - before_shin) < 1e-9
+
+
 def test_contact_sequence_correction_resolves_accumulated_yaw_with_two_anchors() -> None:
     """Opposite-direction foot drift is yaw, and only rotation can undo it.
 
@@ -48733,21 +48847,23 @@ def test_contact_sequence_correction_balances_simultaneous_rigid_anchors() -> No
 
 
 def test_contact_sequence_correction_scores_drift_not_absolute_anchor_shift() -> None:
-    frames = []
-    for index in range(15):
-        # A noisy first sample makes the corrected rigid body's preserved world
-        # origin differ from the baseline interval's median anchor.
-        initial_noise = -0.08 if index == 0 else 0.0
-        drift = index * 0.012
-        joints = {
-            "head": [drift, 1.8, 0.0],
-            "pelvis": [drift, 1.0, 0.0],
-            "left_ankle": [-0.2 + drift + initial_noise, 0.0, 0.0],
-            "right_ankle": [0.2 + drift + initial_noise, 0.0, 0.0],
-            "left_foot": [-0.2 + drift + initial_noise, -0.05, 0.1],
-            "right_foot": [0.2 + drift + initial_noise, -0.05, 0.1],
-        }
-        frames.append({"frameIndex": index, "joints": joints})
+    def build_frames(offset: float, drift: bool) -> list[dict]:
+        frames = []
+        for index in range(15):
+            # A constant world offset moves every sample equally: the origin
+            # strip preserves it, so only the relative drift is correctable.
+            travel = index * 0.012 if drift else 0.0
+            joints = {
+                "head": [travel, 1.8, 0.0],
+                "pelvis": [travel, 1.0, 0.0],
+                "left_ankle": [-0.2 + travel + offset, 0.0, 0.0],
+                "right_ankle": [0.2 + travel + offset, 0.0, 0.0],
+                "left_foot": [-0.2 + travel + offset, -0.05, 0.1],
+                "right_foot": [0.2 + travel + offset, -0.05, 0.1],
+            }
+            frames.append({"frameIndex": index, "joints": joints})
+        return frames
+
     evidence = {
         "feet": {
             "left": {"jointName": "left_ankle", "continuousSupport": True},
@@ -48756,16 +48872,28 @@ def test_contact_sequence_correction_scores_drift_not_absolute_anchor_shift() ->
     }
 
     corrected, metrics = bake_and_rank_module.apply_source_contact_sequence_correction(
-        {"frames": frames},
+        {"frames": build_frames(0.0, drift=True)},
         evidence,
     )
 
+    # Relative drift is the correction's target: it is removed and scored.
     assert metrics["applied"] is True
     assert metrics["correctedRmsContactError"] < metrics["baselineRmsContactError"]
     assert bake_and_rank_module.source_confirmed_support_stationarity_metrics(
         corrected,
         evidence,
     )["passed"] is True
+
+    shifted, shift_metrics = (
+        bake_and_rank_module.apply_source_contact_sequence_correction(
+            {"frames": build_frames(-0.08, drift=False)},
+            evidence,
+        )
+    )
+
+    # A pure absolute anchor shift survives the origin strip unchanged and
+    # must not be scored as a correction.
+    assert shift_metrics["applied"] is False
 
 
 def test_return_phase_expansion_extends_the_truncated_boundary() -> None:

@@ -38,7 +38,7 @@ from urllib.parse import urlencode
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.bilateral_evidence import exported_arm_symmetry_metrics, source_arm_symmetry_evidence
 from exercise_motion_pkg.contact_sheet_crop import persistent_border_crop
-from exercise_motion_pkg.contact_constraints import is_stationary_contact
+from exercise_motion_pkg.contact_constraints import is_observed_ground_contact, is_stationary_contact
 from exercise_motion_pkg.foot_contact_observation import add_observed_foot_contacts, observe_foot_landmarks
 from exercise_motion_pkg.foot_kinematics import HEEL_BEHIND_ANKLE_RATIO, source_knee_angle_bounds
 from exercise_motion_pkg.kinematic_cut import (
@@ -10456,6 +10456,33 @@ def paired_joint_radial_trajectory_deviations(
         )
         for baseline_point, corrected_point in zip(baseline_points, corrected_points)
     ]
+
+
+def evaluated_support_contact_point(
+    joints: Any,
+    evaluated_joint_name: str,
+) -> list[float] | None:
+    """Contact point for a gate-evaluated support joint.
+
+    ``{side}_heel`` has no payload joint: it is the shoe's heel point derived
+    from the rigid ankle->foot offset, matching the stationarity gate's
+    evaluated joint for heel-only contacts.
+    """
+    if not isinstance(joints, dict):
+        return None
+    if evaluated_joint_name.endswith("_heel"):
+        side = evaluated_joint_name.removesuffix("_heel")
+        ankle, toe = joints.get(f"{side}_ankle"), joints.get(f"{side}_foot")
+        if not is_point3(ankle) or not is_point3(toe):
+            return None
+        ankle = [float(value) for value in ankle[:3]]
+        toe = [float(value) for value in toe[:3]]
+        return [
+            ankle[axis] - HEEL_BEHIND_ANKLE_RATIO * (toe[axis] - ankle[axis])
+            for axis in range(3)
+        ]
+    point = joints.get(evaluated_joint_name)
+    return [float(value) for value in point[:3]] if is_point3(point) else None
 
 
 def joint_points_from_frames(
@@ -25209,6 +25236,11 @@ DETERMINISTIC_SUPPORT_STATIONARY_RATIO_THRESHOLD = 0.08
 DETERMINISTIC_SUPPORT_LOCK_TRIAL_RATIO_THRESHOLD = 0.35
 SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD = 0.12
 SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD = 0.08
+# Repair arms must be able to act on every interval the support gate
+# evaluates, so their eligibility floor matches the gate's (>=3 samples at
+# >=60% coverage) instead of the denser bake-stage sample minimum.
+SUPPORT_REPAIR_MIN_INTERVAL_SAMPLES = 3
+SUPPORT_REPAIR_MIN_INTERVAL_COVERAGE = 0.60
 
 # A full-sole ground contact that never lifts can still be classified
 # "unknown" by the image-space patch tracker when perspective inflates its
@@ -25940,16 +25972,26 @@ def apply_source_contact_sequence_correction(
     frame_constraints: dict[int, list[tuple[float, list[float], list[float]]]] = {}
     interval_metrics: list[dict[str, Any]] = []
     observed_anchors: dict[tuple[str, str], list[float]] = {}
+    support_plane_y, _support_plane_source = observed_ground_support_plane_y(
+        frames,
+        [interval for interval in intervals
+         if str(interval.get("supportKind") or "foot") in {"foot", "observed_foot_patch"}],
+        fused_support_evidence,
+        corrected_payload.get("renderFloorY"),
+    )
     for interval in intervals:
-        # A normal-only constraint is not evidence of a stationary surface
-        # point. Its height remains owned by the surface/limb solver.
-        if not is_stationary_contact(interval) or interval.get("contactState") == "heel_only":
+        if not is_stationary_contact(interval):
             continue
         start = int(interval["startFrame"])
         end = int(interval["endFrame"])
         source_joint_name = str(interval["jointName"])
         joint_name = source_joint_name
-        if source_joint_name.endswith("_ankle"):
+        if interval.get("contactState") == "heel_only":
+            # The gate evaluates heel-only contacts at the shoe's derived heel
+            # point, so the correction anchors the same point. The toe stays
+            # free: the ankle->foot offset is preserved by every repair below.
+            joint_name = source_joint_name.removesuffix("_ankle").removesuffix("_foot") + "_heel"
+        elif source_joint_name.endswith("_ankle"):
             foot_joint_name = source_joint_name.removesuffix("_ankle") + "_foot"
             foot_sample_count = sum(
                 1
@@ -25966,10 +26008,14 @@ def apply_source_contact_sequence_correction(
         samples: list[tuple[int, list[float]]] = []
         for frame_index in range(start, end + 1):
             joints = frames[frame_index].get("joints")
-            point = joints.get(joint_name) if isinstance(joints, dict) else None
+            point = evaluated_support_contact_point(joints, joint_name)
             if is_point3(point):
                 samples.append((frame_index, [float(value) for value in point[:3]]))
-        if len(samples) < DETERMINISTIC_SUPPORT_MIN_SAMPLE_COUNT:
+        if len(samples) < SUPPORT_REPAIR_MIN_INTERVAL_SAMPLES or (
+            len(samples) / max(1, end - start + 1)
+        ) < SUPPORT_REPAIR_MIN_INTERVAL_COVERAGE:
+            # Match the stationarity gate's evaluability floor so every
+            # interval the gate judges is one the repair arms can act on.
             continue
         anchor_sample_count = max(3, min(len(samples), math.ceil(len(samples) * 0.10)))
         anchor_samples = [point for _, point in samples[:anchor_sample_count]]
@@ -25979,23 +26025,6 @@ def apply_source_contact_sequence_correction(
             # Only source-observed identity may connect episodes. A gap alone
             # is not evidence that a travelling foot returned to the same spot.
             anchor = observed_anchors.setdefault((joint_name, str(group_id)), anchor)
-        confidence = float(interval["confidence"])
-        # Simultaneous supports share the rigid-body correction. Giving a
-        # full-clip contact exclusive ownership can move another confirmed
-        # contact outside its limb's reachable workspace; the renderer then
-        # cannot remove the residual slide without stretching the limb.
-        used_for_correction = True
-        before_distances: list[float] = []
-        for frame_index, point in samples:
-            delta = [anchor[axis] - point[axis] for axis in range(3)]
-            if used_for_correction:
-                for axis in range(3):
-                    desired[frame_index][axis] += delta[axis] * confidence
-                active_weights[frame_index] += confidence
-                frame_constraints.setdefault(frame_index, []).append(
-                    (confidence, list(anchor), list(point))
-                )
-            before_distances.append(math.dist(point, anchor))
         interval_metrics.append(
             {
                 **interval,
@@ -26004,10 +26033,93 @@ def apply_source_contact_sequence_correction(
                 "anchor": anchor,
                 "sampleCount": len(samples),
                 "anchorSampleCount": anchor_sample_count,
-                "usedForCorrection": used_for_correction,
-                "baselineMaxDistanceFromAnchor": max(before_distances, default=0.0),
+                "usedForCorrection": True,
+                "samples": samples,
+                "baselineMaxDistanceFromAnchor": max(
+                    (math.dist(point, anchor) for _, point in samples), default=0.0
+                ),
             }
         )
+    # The support plane is a scene-level vertical gauge: the reconstruction's
+    # height bias is global, not per limb. Grounded contacts anchor exactly on
+    # the plane (mirroring the fit's ground registration and the pinning
+    # repair's floor snap); every other anchor carries the same offset, so
+    # relative anchor geometry — and with it the yaw solve — stays unchanged.
+    gauge_y = 0.0
+    if support_plane_y is not None:
+        grounded_offsets = [
+            float(support_plane_y) - metric["anchor"][1]
+            for metric in interval_metrics
+            if is_observed_ground_contact(metric, fused_support_evidence)
+        ]
+        if grounded_offsets:
+            gauge_y = statistics.median(grounded_offsets)
+    # Contiguous stationary episodes of one contact are detection dropout, not
+    # travel: they share the first episode's anchor so the correction cannot
+    # step where one segment's snapshot hands over to the next.
+    contiguous_gap_frames = max(
+        1, int(SOURCE_REFERENCE_CONTIGUOUS_GAP_RATIO * len(frames))
+    )
+    contiguous_anchors: dict[str, list[float]] = {}
+    last_end_by_joint: dict[str, int] = {}
+    for metric in interval_metrics:
+        evaluated_joint = str(metric["evaluatedJointName"])
+        start = int(metric["startFrame"])
+        end = int(metric["endFrame"])
+        previous_end = last_end_by_joint.get(evaluated_joint)
+        if (
+            previous_end is not None
+            and start - previous_end <= contiguous_gap_frames
+        ):
+            metric["anchor"] = contiguous_anchors[evaluated_joint]
+        else:
+            contiguous_anchors[evaluated_joint] = metric["anchor"]
+        last_end_by_joint[evaluated_joint] = end
+    adjusted_anchors: set[int] = set()
+    for metric in interval_metrics:
+        anchor = metric["anchor"]
+        if id(anchor) in adjusted_anchors:
+            continue
+        adjusted_anchors.add(id(anchor))
+        if support_plane_y is not None and is_observed_ground_contact(
+                metric, fused_support_evidence):
+            anchor[1] = float(support_plane_y)
+        elif gauge_y != 0.0:
+            anchor[1] = float(anchor[1] + gauge_y)
+    for metric in interval_metrics:
+        interval = metric
+        anchor = metric["anchor"]
+        samples = metric["samples"]
+        confidence = float(interval["confidence"])
+        # Simultaneous supports share the rigid-body correction. Giving a
+        # full-clip contact exclusive ownership can move another confirmed
+        # contact outside its limb's reachable workspace; the renderer then
+        # cannot remove the residual slide without stretching the limb.
+        grounded = (
+            support_plane_y is not None
+            and is_observed_ground_contact(metric, fused_support_evidence)
+        )
+        for frame_index, point in samples:
+            constraint_anchor = anchor
+            if grounded:
+                # The vertical gauge is one scene-level constant. Flooring the
+                # contact exactly per frame would alternate anchor heights
+                # wherever episodes switch between toe and heel points and
+                # inject translation steps at their boundaries; the constant
+                # gauge keeps the track smooth and the pinning repair floors
+                # each limb's residual with its own blend ramps.
+                constraint_anchor = [anchor[0], point[1] + gauge_y, anchor[2]]
+            delta = [constraint_anchor[axis] - point[axis] for axis in range(3)]
+            for axis in range(3):
+                desired[frame_index][axis] += delta[axis] * confidence
+            active_weights[frame_index] += confidence
+            frame_constraints.setdefault(frame_index, []).append(
+                (confidence, list(constraint_anchor), list(point))
+            )
+        metric["baselineMaxDistanceFromAnchor"] = max(
+            (math.dist(point, anchor) for _, point in samples), default=0.0
+        )
+        del metric["samples"]
     for frame_index, weight in enumerate(active_weights):
         if weight > 0.0:
             desired[frame_index] = [value / weight for value in desired[frame_index]]
@@ -26037,7 +26149,9 @@ def apply_source_contact_sequence_correction(
         yaws, translations, yaw_pivot = yaw_result
     else:
         # Preserve the original world-space origin. Only relative drift is owned
-        # by contact correction; absolute placement remains owned by the bake.
+        # by contact correction; absolute horizontal placement remains owned by
+        # the bake. The vertical gauge is the exception: grounded contacts
+        # defined it, so the scene-level offset survives the origin strip.
         first_active = next((index for index, weight in enumerate(active_weights) if weight > 0.0), None)
         if first_active is not None:
             origin_offset = translations[first_active]
@@ -26048,6 +26162,31 @@ def apply_source_contact_sequence_correction(
                 for index, translation in enumerate(translations)
             ]
             translations = fill_contact_translation_gaps(translations, active_weights)
+            if gauge_y != 0.0:
+                for translation in translations:
+                    translation[1] += gauge_y
+
+    if support_plane_y is not None:
+        # The gauge and every relative correction move the whole scene; neither
+        # may push unconfirmed geometry through the support plane. Clamp each
+        # frame's vertical translation to the lowest joint's clearance — a
+        # confirmed contact the clamp leaves above the plane fails its gate
+        # honestly instead of hiding a penetration defect.
+        penetration_tolerance = 0.002 * median_span
+        for frame, translation in zip(frames, translations):
+            joints = frame.get("joints")
+            if not isinstance(joints, dict):
+                continue
+            heights = [
+                float(point[1]) for point in joints.values() if is_point3(point)
+            ]
+            if not heights:
+                continue
+            floor_bound = (
+                float(support_plane_y) - penetration_tolerance - min(heights)
+            )
+            if translation[1] < floor_bound:
+                translation[1] = floor_bound
 
     if yaws is not None and yaw_pivot is not None:
         for frame, yaw, translation in zip(frames, yaws, translations):
@@ -26062,6 +26201,10 @@ def apply_source_contact_sequence_correction(
                 point = [float(value) for value in point[:3]]
                 dx, dz = point[0] - yaw_pivot[0], point[2] - yaw_pivot[2]
                 point[0] = yaw_pivot[0] + cos * dx + sin * dz + translation[0]
+                # The rotation itself is horizontal-only, but the track's
+                # vertical component (drift plus the floor gauge) applies to
+                # every joint exactly like the translation-only path.
+                point[1] += translation[1]
                 point[2] = yaw_pivot[2] - sin * dx + cos * dz + translation[2]
                 joints[joint_name] = point
             if root_before is not None and is_point3(joints.get("pelvis")):
@@ -26097,7 +26240,6 @@ def apply_source_contact_sequence_correction(
     # planted foot can still wander around its anchor. Pin still-sliding
     # source-confirmed contact chains with exact-length two-bone IK so the
     # support gates verify a repaired limb instead of rejecting a drifting one.
-    from .contact_constraints import is_observed_ground_contact
     pinning_intervals = [
         {
             **interval,
@@ -26191,41 +26333,14 @@ def apply_source_contact_sequence_correction(
     corrected_weighted_squared_error = 0.0
     weighted_error_sample_count = 0.0
     for interval_metric in interval_metrics:
+        # Both sides score against the same correction anchor so the
+        # improvement measures what the correction changed — relative drift
+        # and the vertical gauge — not each side's own re-derived median.
         baseline_anchor = interval_metric["anchor"]
         confidence = float(interval_metric["confidence"])
         joint_name = str(
             interval_metric.get("evaluatedJointName")
             or interval_metric["jointName"]
-        )
-        corrected_samples: list[list[float]] = []
-        for frame_index in range(
-            int(interval_metric["startFrame"]),
-            int(interval_metric["endFrame"]) + 1,
-        ):
-            corrected_joints = frames[frame_index].get("joints")
-            corrected_point = (
-                corrected_joints.get(joint_name)
-                if isinstance(corrected_joints, dict)
-                else None
-            )
-            if is_point3(corrected_point):
-                corrected_samples.append(
-                    [float(value) for value in corrected_point[:3]]
-                )
-        corrected_anchor_sample_count = min(
-            len(corrected_samples),
-            int(interval_metric["anchorSampleCount"]),
-        )
-        corrected_anchor = (
-            [
-                statistics.median(
-                    point[axis]
-                    for point in corrected_samples[:corrected_anchor_sample_count]
-                )
-                for axis in range(3)
-            ]
-            if corrected_anchor_sample_count > 0
-            else baseline_anchor
         )
         for frame_index in range(
             int(interval_metric["startFrame"]),
@@ -26233,16 +26348,8 @@ def apply_source_contact_sequence_correction(
         ):
             baseline_joints = export_payload["frames"][frame_index].get("joints")
             corrected_joints = frames[frame_index].get("joints")
-            baseline_point = (
-                baseline_joints.get(joint_name)
-                if isinstance(baseline_joints, dict)
-                else None
-            )
-            corrected_point = (
-                corrected_joints.get(joint_name)
-                if isinstance(corrected_joints, dict)
-                else None
-            )
+            baseline_point = evaluated_support_contact_point(baseline_joints, joint_name)
+            corrected_point = evaluated_support_contact_point(corrected_joints, joint_name)
             if not is_point3(baseline_point) or not is_point3(corrected_point):
                 continue
             baseline_weighted_squared_error += (
@@ -26254,7 +26361,7 @@ def apply_source_contact_sequence_correction(
             corrected_weighted_squared_error += (
                 math.dist(
                     [float(value) for value in corrected_point[:3]],
-                    corrected_anchor,
+                    baseline_anchor,
                 ) ** 2
             ) * confidence
             weighted_error_sample_count += confidence
