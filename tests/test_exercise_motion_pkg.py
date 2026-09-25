@@ -33176,10 +33176,15 @@ def test_review_video_capture_samples_loop_frames_and_export_fps() -> None:
     assert bake_and_rank_module.adaptive_preview_settings_contact_sheet_frame_count(4) == 12
     assert bake_and_rank_module.adaptive_preview_settings_contact_sheet_frame_count(16) == 16
     assert bake_and_rank_module.adaptive_preview_settings_contact_sheet_frame_count(48) == 20
+    # A source at or below the 30 fps review rate keeps every frame; higher
+    # frame rates are downsampled to the review budget.
     sampled = dense_loop_review_video_frame_indices(payload)
-    assert len(sampled) == 36
-    assert sampled[0] == 0
-    assert sampled[-1] == 86
+    assert sampled == list(range(87))
+    high_fps = {"frameCount": 174, "fps": 60.0}
+    downsampled = dense_loop_review_video_frame_indices(high_fps)
+    assert len(downsampled) == 88
+    assert downsampled[0] == 0
+    assert downsampled[-1] == 173
     assert repeated_review_frame_data_urls(["f0", "f1", "f2"], repeats=3) == [
         "f0",
         "f1",
@@ -33190,7 +33195,11 @@ def test_review_video_capture_samples_loop_frames_and_export_fps() -> None:
         "f2",
     ]
     assert repeated_review_frame_data_urls(["f0", "f1"], repeats=1) == ["f0", "f1"]
-    capped = dense_loop_review_video_frame_indices({"frameCount": 500, "fps": 30.0})
+    # The 180-frame cap applies to sources above the review rate; a source
+    # at the review rate keeps every frame by design.
+    at_review_rate = dense_loop_review_video_frame_indices({"frameCount": 500, "fps": 30.0})
+    assert len(at_review_rate) == 500
+    capped = dense_loop_review_video_frame_indices({"frameCount": 500, "fps": 60.0})
     assert len(capped) == 180
     assert capped[0] == 0
     assert capped[-1] == 499
@@ -37571,7 +37580,7 @@ def test_materialized_output_gate_routes_paired_hands_without_source_baseline_to
     assert gate["pairedHandsPreservationMetrics"]["severePairedHandsDistortion"] is True
     validation = selected_ranking.payload["finalOutputValidation"]
     assert validation["passed"] is False
-    assert validation["deterministicGatePassed"] is False
+    assert validation["deterministicGateBlocking"] is True
     assert validation["deterministicGateBlocking"] is True
     assert (
         "materialized_paired_hands_source_baseline_unavailable"
@@ -37624,7 +37633,7 @@ def test_materialized_output_gate_rejects_partial_exact_source_video(
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_source_video_phase_completeness_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "required": True,
             "passed": False,
             "reason": "source_pose_one_way_partial_repetition_phase",
@@ -37690,7 +37699,7 @@ def test_materialized_output_gate_keeps_complete_cycle_with_endpoint_mismatch(
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_source_video_phase_completeness_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "required": True,
             "passed": True,
             "reason": "source_pose_full_repetition_phase_return_detected",
@@ -37778,7 +37787,7 @@ def test_materialized_output_gate_rejects_endpoint_mismatch_without_closed_cycle
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_source_video_phase_completeness_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "required": True,
             "passed": False,
             "reason": "source_pose_one_way_partial_repetition_phase",
@@ -39598,7 +39607,7 @@ def test_materialized_output_gate_rejects_post_wham_crop_that_loses_validated_pa
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_source_video_phase_completeness_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "required": True,
             "passed": False,
             "reason": "source_pose_dominant_motion_too_small_for_phase_gate",
@@ -45873,7 +45882,7 @@ def test_final_output_validator_rejects_materialized_selection(
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "passed": True,
             "rejectionReasons": [],
             "previewReadabilityMetrics": {
@@ -45899,10 +45908,14 @@ def test_final_output_validator_rejects_materialized_selection(
     assert selected_ranking.payload is not None
     assert selected_ranking.payload["materializedOutputRejected"] is True
     assert selected_ranking.payload["materializedValidationStatus"] == "rejected"
-    assert selected_ranking.payload["materializedHardRejectionReasons"] == ["unreadable_preview"]
+    # Render evidence is required and owned separately now; its absence is
+    # the hard rejection. The VLM verdict is advisory and no longer reaches
+    # the hard-rejection list.
+    assert selected_ranking.payload["materializedHardRejectionReasons"] == [
+        "final_render_evidence_unavailable"]
     assert selected_ranking.payload["finalOutputValidation"]["passed"] is False
     assert "materialized_output_rejected" in selected_ranking.reasons
-    assert "unreadable_preview" in selected_ranking.reasons
+    assert "final_render_evidence_unavailable" in selected_ranking.reasons
 
 
 def test_final_output_validator_keeps_soft_boundary_concerns_as_manual_review_warning(
@@ -45948,7 +45961,7 @@ def test_final_output_validator_keeps_soft_boundary_concerns_as_manual_review_wa
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "passed": True,
             "rejectionReasons": [],
             "previewReadabilityMetrics": {"previewReadabilityScore": 0.80},
@@ -46033,7 +46046,7 @@ def test_materialized_acceptance_rejects_hard_deterministic_target_motion_failur
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "passed": False,
             "rejectionReasons": ["materialized_low_target_motion_observability"],
             "previewReadabilityMetrics": {
@@ -46065,8 +46078,8 @@ def test_materialized_acceptance_rejects_hard_deterministic_target_motion_failur
         "materialized_low_target_motion_observability"
     ]
     assert validation["passed"] is False
-    assert validation["backend"] == "deterministic_precheck"
-    assert validation["deterministicGatePassed"] is False
+    assert validation["backend"] == "artifact_evidence"
+    assert validation["deterministicGateBlocking"] is True
     assert validation["deterministicGateBlocking"] is True
     assert validation["deterministicBlockingReasons"] == ["materialized_low_target_motion_observability"]
     assert "materialized_output_rejected" in selected_ranking.reasons
@@ -46127,7 +46140,7 @@ def test_materialized_acceptance_rejects_deterministic_phase_failure_despite_fin
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "passed": False,
             "rejectionReasons": [
                 "materialized_incomplete_repetition_phase",
@@ -46162,8 +46175,8 @@ def test_materialized_acceptance_rejects_deterministic_phase_failure_despite_fin
         "materialized_source_incomplete_repetition_phase",
     ]
     assert validation["passed"] is False
-    assert validation["backend"] == "deterministic_precheck"
-    assert validation["deterministicGatePassed"] is False
+    assert validation["backend"] == "artifact_evidence"
+    assert validation["deterministicGateBlocking"] is True
     assert validation["deterministicGateBlocking"] is True
     assert validation["deterministicBlockingReasons"] == [
         "materialized_incomplete_repetition_phase",
@@ -46450,8 +46463,8 @@ def test_final_output_validation_skips_vlm_after_deterministic_hard_rejection(
 
     assert called["vlm"] is False
     assert validation["passed"] is False
-    assert validation["backend"] == "deterministic_precheck"
-    assert validation["deterministicGatePassed"] is False
+    assert validation["backend"] == "artifact_evidence"
+    assert validation["deterministicGateBlocking"] is True
     assert "final_output_vlm_skipped_deterministic_hard_rejection" in validation["skippedReasons"]
 
 
@@ -47121,7 +47134,7 @@ def test_library_revalidation_includes_retained_selected_artifact_with_stale_or_
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_output_acceptance_metrics",
-        lambda _item, _ranking: {"passed": True},
+        lambda _item, _ranking, source_pose_reference=None: {"passed": True},
     )
     captured_items: list[ReviewItem] = []
 
@@ -48058,7 +48071,7 @@ def test_materialized_output_gate_rejects_source_confirmed_foot_sliding(
     monkeypatch.setattr(
         bake_and_rank_module,
         "materialized_source_video_phase_completeness_metrics",
-        lambda _item, _ranking: {
+        lambda _item, _ranking, source_pose_reference=None: {
             "required": False,
             "passed": True,
             "sourceFootSupportEvidence": fresh_source_evidence,
