@@ -501,57 +501,63 @@ class FixedRig:
                 ancestor = self.parents[ancestor]
         row_indices, column_indices, entries = [], [], []
         joints_count = len(self.names)
-        for frame in range(count):
-            base_row = frame * joints_count * 3
-            base_col = frame * self.width
-            matrices = {}
-            points_frame = np.empty((joints_count, 3))
-            frame_clamped = clamped[frame]
-            frame_rotations = rotations[frame]
-            identity = np.eye(3)
-            for j in self.order:
-                parent = self.parents[j]
-                local = (frame_rotations[(self.slots[j] - 3) // 3]
-                         if j in self.slots else identity)
-                matrices[j] = local if parent < 0 else matrices[parent] @ local
-                if parent < 0:
-                    points_frame[j] = frame_clamped[:3]
-                else:
-                    points_frame[j] = points_frame[parent] + matrices[j] @ self.offsets[j]
-            for j in self.active:
-                parent = self.parents[j]
-                matrix_parent = identity if parent < 0 else matrices[parent]
-                d_rot = d_rotations[frame, (self.slots[j] - 3) // 3]
-                slot = self.slots[j]
-                for i in descendants[j]:
-                    if i == j and parent < 0:
-                        continue  # the root point is translation-only
-                    # The joint's own position rides on its bone from the
-                    # parent (p_j = p_parent + Mp R_j o_j), so the chain that
-                    # ω_j rotates spans from the parent attachment: o_j plus
-                    # the joint-to-point offset in j's frame.
-                    chain = (
-                        self.offsets[j] + matrices[j].T @ (points_frame[i] - points_frame[j])
-                        if i != j else np.asarray(self.offsets[j], dtype=float)
-                    )
-                    # derivative[axis, component] = ∂p_i[axis]/∂ω_j[component]
-                    derivative = matrix_parent @ np.einsum('ijk,j->ik', d_rot, chain)
-                    for axis in range(3):
-                        row = base_row + i * 3 + axis
-                        for component in range(3):
-                            row_indices.append(row)
-                            column_indices.append(base_col + slot + component)
-                            entries.append(derivative[axis, component])
-            for i in self.order:
-                for axis in range(3):
-                    row = base_row + i * 3 + axis
-                    for component in range(3):
-                        row_indices.append(row)
-                        column_indices.append(base_col + component)
-                        entries.append(1.0 if component == axis else 0.0)
+        # Vectorized over frames: one einsum chain per (active joint,
+        # descendant) pair, with index grids assembled as numpy arrays.
+        identity = np.eye(3)
+        matrices = {}
+        points_all = np.empty((count, joints_count, 3))
+        points_all[:, self.root] = clamped[:, :3]
+        for j in self.order:
+            parent = self.parents[j]
+            local = (rotations[:, (self.slots[j] - 3) // 3]
+                     if j in self.slots else identity[None, :, :])
+            matrices[j] = local if parent < 0 else matrices[parent] @ local
+            if parent >= 0:
+                points_all[:, j] = (points_all[:, parent]
+                                    + np.einsum('fij,j->fi', matrices[j], self.offsets[j]))
+        frame_base_rows = np.arange(count)[:, None] * joints_count * 3
+        frame_base_cols = np.arange(count)[:, None] * self.width
+        axis_grid = np.arange(3)
+        for j in self.active:
+            parent = self.parents[j]
+            matrix_parent = (identity if parent < 0 else matrices[parent])
+            if matrix_parent.shape[0] != count:
+                matrix_parent = np.broadcast_to(matrix_parent, (count, 3, 3))
+            d_rot = d_rotations[:, (self.slots[j] - 3) // 3]
+            slot = self.slots[j]
+            moved = [i for i in descendants[j] if not (i == j and parent < 0)]
+            if not moved:
+                continue
+            moved_index = np.asarray(moved)
+            # chain[f, i] = o_j + M_j^T (p_i - p_j) for descendants; exactly
+            # o_j for i == j (the joint's own point rides on its bone).
+            delta = (points_all[:, moved_index] - points_all[:, j][:, None, :])
+            local_chain = np.einsum('fmi,fdm->fdi', matrices[j], delta)
+            local_chain += self.offsets[j]
+            # derivative[f, i, axis, comp] = Mp @ dR[..., comp] @ chain
+            derivative = np.einsum(
+                'fij,fjmc,fdm->fdic', matrix_parent, d_rot, local_chain)
+            rows = (frame_base_rows[:, :, None] + moved_index[None, :, None] * 3 + axis_grid[None, None, :])
+            cols = (frame_base_cols.reshape(count, 1, 1) + slot + axis_grid.reshape(1, 1, 3))
+            rows = rows[:, :, :, None]
+            cols = cols[:, :, None, :]
+            row_indices.append(np.broadcast_to(rows, (count, len(moved), 3, 3)).ravel())
+            column_indices.append(np.broadcast_to(cols, (count, len(moved), 3, 3)).ravel())
+            entries.append(derivative.ravel())
+        joint_index = np.asarray(self.order)
+        rows = (frame_base_rows[:, :, None] + (joint_index[None, :, None] * 3 + axis_grid[None, None, :]))
+        cols = (frame_base_cols.reshape(count, 1, 1) + axis_grid.reshape(1, 1, 3))
+        eye = (axis_grid[None, None, :] == axis_grid[None, :, None]).astype(float)
+        rows = rows[:, :, :, None]
+        cols = cols[:, :, None, :]
+        row_indices.append(np.broadcast_to(rows, (count, len(joint_index), 3, 3)).ravel())
+        column_indices.append(np.broadcast_to(cols, (count, len(joint_index), 3, 3)).ravel())
+        entries.append(np.broadcast_to(eye, (count, len(joint_index), 3, 3)).ravel())
         shape = (count * joints_count * 3, count * self.width)
         jacobian = coo_matrix(
-            (entries, (row_indices, column_indices)), shape=shape).tocsr()
+            (np.concatenate(entries),
+             (np.concatenate(row_indices), np.concatenate(column_indices))),
+            shape=shape).tocsr()
         if not np.any(clamp_active) or not project_socket:
             return jacobian
         # Frames with an engaged neck clamp differentiate the clamp itself:
