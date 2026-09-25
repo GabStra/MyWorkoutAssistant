@@ -3867,17 +3867,16 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         # room to compete with pose/contact before Stage-A polish.
         grip_fit_weight = GRIP_FIT_WEIGHT_WHEN_REFERENCE_FAILS
         report['gripFitWeight'] = float(grip_fit_weight)
-    def residual(values):
-        nonlocal best_coordinates, best_cost, best_feasible_coordinates, best_feasible_cost
-        if fit_should_yield_for_priority() or monotonic() > optimization_deadline:
-            raise TimeoutError
-        coordinates = values.reshape(count,rig.width)
-        candidate = rig.decode(coordinates)
-        # A clipped socket hides its violation from the optimizer and creates
-        # velocity corners where the interpolated path enters the clamp. Score
-        # the underlying geometry so fitting can remove the need for clipping.
-        unconstrained_candidate = rig.decode(coordinates, project_socket=False)
-        rotation_prior = .01*(initial_rotations.inv()*Rotation.from_rotvec(coordinates[:,3:].reshape(-1,3))).as_rotvec().reshape(count,-1)
+    def point_rows(candidate, unconstrained_candidate, subframe, unconstrained_subframe,
+                   contact_weight, grip_weight):
+        """Every residual row that is a function of decoded points.
+
+        ``candidate``/``unconstrained_candidate`` are the keyframe point
+        arrays; the subframe pair likewise. ``rotation_prior`` and the seam
+        rows depend on raw coordinates and stay in ``residual``. Splitting
+        these out lets the Jacobian probe points directly and chain through
+        the analytic FK Jacobian instead of grouped coordinate differences.
+        """
         current_angles = np.stack([angles(*(candidate[:,i] for i in cols)) for _,cols,_ in specs],axis=1)
         artic_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT if body_support.get('required') else 500.)
         articulation = artic_weight*(np.minimum(current_angles-low,0.)+np.maximum(current_angles-high,0.))
@@ -3892,56 +3891,44 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         current_parent, current_bend, current_sine = hinge_coordinates(candidate,names)
         branch_dot = transported_hinge_dots(source_parent,source_bend,current_parent,current_bend)
         branch_penalty = 20.*np.minimum(branch_dot-.2,0.)*branch_supported*np.clip(current_sine/np.sin(np.deg2rad(15.)),0.,1.)
-        contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
-        grip_weight = grip_fit_weight * equipment_polish_weight
         pose_error = 2. * (candidate - target) / scale
         if body_support.get('required'):
-            # Pull toward a continuous supported root track. The raw support
-            # reference can itself carry source root spikes; smoothing the
-            # prior target prevents soft LS from re-locking those jumps.
             root_track = reference[:, rig.root]
             if not root_motion_quality(root_track, fps, scale)['passed']:
                 root_track = gaussian_filter1d(
                     root_track, max(.5, fps * .08), axis=0, mode='nearest')
             pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - root_track) / scale
-        per_frame = np.concatenate([pose_error.reshape(count,-1),
-                                    (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
-                                    articulation, floor_error, head_penalty, rotation_prior,
-                                    100.*np.minimum(collision_clearances(candidate,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
-                                    excursion_penalty,branch_penalty,
-                                    ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
-                                        unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-                                        reference=reference)[0],
-                                    grip_weight*grip_residual(candidate,names,equipment)/scale,
-                                    2000.*geometry_errors(candidate,names,body_support)/scale,
-                                    10.*alignment_constraint_errors(candidate,source_alignment,names,body_support)/scale,
-                                    (contact_weight * heel_contacts.residual(candidate)).reshape(count, -1)],axis=1)
-        # Penalize output acceleration and jerk, rather than preserving the
-        # input noise through a correction-relative temporal objective.
+        keyframe_pre = np.concatenate([pose_error.reshape(count,-1),
+                                       (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
+                                       articulation, floor_error, head_penalty],axis=1)
+        keyframe_mid = np.concatenate([
+            100.*np.minimum(collision_clearances(candidate,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
+            excursion_penalty,branch_penalty],axis=1)
+        anatomy = ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
+            unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
+            reference=reference)[0]
+        keyframe_post = np.concatenate([
+            grip_weight*grip_residual(candidate,names,equipment)/scale,
+            2000.*geometry_errors(candidate,names,body_support)/scale,
+            10.*alignment_constraint_errors(candidate,source_alignment,names,body_support)/scale,
+            (contact_weight * heel_contacts.residual(candidate)).reshape(count, -1)],axis=1)
         root_relative = (candidate-candidate[:,rig.root:rig.root+1])/scale
         acceleration = (d2@(candidate-candidate[:,rig.root:rig.root+1]).reshape(count,-1)).reshape(-1,joints,3)
         acceleration = (10.*acceleration/acceleration_fit_scale[None,:,None]).reshape(-1,joints*3)
         jerk = (d3@root_relative.reshape(count,-1))*(fps*.10)**3
         relative = body_relative_points(candidate,names)
-        # Keep quiet holds near the settling baseline. Underweighted settling
-        # loses to stiff support/contact terms and injects hold motion that
-        # later fails acceptance after burning the full candidate budget.
         settling_weight = 150. if body_support.get('required') else 50.
         settling = (settling_weight*np.diff(relative,axis=0)*hold_weights*fps
                     / (settling_limit*np.sqrt(max(np.sum(hold_weights)*3, 1.))))
-        # Root-relative coordinates remove translation noise without coupling
-        # every limb's temporal derivatives to the moving neck basis. Body-axis
-        # acceleration below constrains torso rotation independently.
         root_acceleration = (d2@(candidate[:,rig.root]/scale))*(fps*.10)**2*np.sqrt(joints)
         root_jerk = (d3@(candidate[:,rig.root]/scale))*(fps*.07)**3*np.sqrt(joints)
         if body_support.get('required'):
             root_acceleration = 4. * root_acceleration
             root_jerk = 4. * root_jerk
         orientation_acceleration = 10.*(d2@body_orientation_axes(candidate,names).reshape(count,-1))/rotation_fit_scale
-        subframe_coordinates = sample_rig_coordinates(
-            {**playback_rig,'coordinates':coordinates},subframe_cursors,wrap=cyclic)
-        subframe = rig.decode(subframe_coordinates)
-        unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
+        temporal = np.r_[acceleration.ravel(),jerk.ravel(),settling.ravel(),
+                         root_acceleration.ravel(),root_jerk.ravel(),
+                         orientation_acceleration.ravel()]
         subframe_contacts = contact_weight*(subframe-subframe_targets)*subframe_pinned[:,:,None]
         subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(subframe[:,:,1]-float(floor),0.)
         subframe_rows = np.concatenate([subframe_contacts.reshape(subframe_count,-1),subframe_floor,
@@ -3955,6 +3942,32 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                                         10.*alignment_constraint_errors(subframe,subframe_alignment,names,body_support)/scale,
                                         (contact_weight * heel_contacts.residual(
                                             subframe, subframe_first, subframe_last)).reshape(subframe_count, -1)],axis=1)
+        return {'keyframe_pre': keyframe_pre, 'keyframe_mid': keyframe_mid,
+                'anatomy': anatomy, 'keyframe_post': keyframe_post,
+                'temporal': temporal, 'subframe': subframe_rows}
+
+    def residual(values):
+        nonlocal best_coordinates, best_cost, best_feasible_coordinates, best_feasible_cost
+        if fit_should_yield_for_priority() or monotonic() > optimization_deadline:
+            raise TimeoutError
+        coordinates = values.reshape(count,rig.width)
+        candidate = rig.decode(coordinates)
+        # A clipped socket hides its violation from the optimizer and creates
+        # velocity corners where the interpolated path enters the clamp. Score
+        # the underlying geometry so fitting can remove the need for clipping.
+        unconstrained_candidate = rig.decode(coordinates, project_socket=False)
+        rotation_prior = .01*(initial_rotations.inv()*Rotation.from_rotvec(coordinates[:,3:].reshape(-1,3))).as_rotvec().reshape(count,-1)
+        contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
+        grip_weight = grip_fit_weight * equipment_polish_weight
+        subframe_coordinates = sample_rig_coordinates(
+            {**playback_rig,'coordinates':coordinates},subframe_cursors,wrap=cyclic)
+        subframe = rig.decode(subframe_coordinates)
+        unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
+        rows = point_rows(candidate, unconstrained_candidate, subframe, unconstrained_subframe,
+                          contact_weight, grip_weight)
+        per_frame = np.concatenate([rows['keyframe_pre'], rotation_prior,
+                                    rows['keyframe_mid'], rows['anatomy'],
+                                    rows['keyframe_post']],axis=1)
         # The final sample precedes the first by one frame. Equal endpoint
         # positions would impose a stop; match the incoming/outgoing increments.
         closure, seam_excess, seam_velocity_excess = np.empty(0), np.empty(0), np.empty(0)
@@ -3979,9 +3992,8 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             seam_velocity_excess = velocity_weight * np.maximum(
                 np.linalg.norm(increments, axis=-1) - .8 * velocity_step_limit, 0.) / scale
             closure = (150. * seam_polish_weight) * increments / scale
-        errors = np.r_[per_frame.ravel(),acceleration.ravel(),jerk.ravel(),settling.ravel(),
-                     root_acceleration.ravel(),root_jerk.ravel(),orientation_acceleration.ravel(),
-                     subframe_rows.ravel(),closure.ravel(),seam_excess.ravel(),seam_velocity_excess.ravel()]
+        errors = np.r_[per_frame.ravel(),rows['temporal'],
+                     rows['subframe'].ravel(),closure.ravel(),seam_excess.ravel(),seam_velocity_excess.ravel()]
         # Normalize by the same RMS bound used at acceptance, independently of
         # clip size or the amount of noise introduced by a preview variant.
         world_jerk = world_d3 @ candidate.reshape(count, -1)
