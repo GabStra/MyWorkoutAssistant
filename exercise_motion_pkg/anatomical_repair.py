@@ -641,10 +641,12 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     residual_batches = 0
     residual_points = 0
     warm_starts = 0
+    continuity_seeded = 0
     skipped_feasible = 0
     free_column_total = 0
     free_column_frames = 0
-    previous_correction = None
+    previous_solved = None
+    previous_solved_frame = None
     cache = {}
     span_target_key = json.dumps(span_targets, sort_keys=True, separators=(',', ':')).encode()
 
@@ -667,6 +669,8 @@ def repair_rig_anatomy(rig, observed, *, deadline):
                 session.reused_frames += 1
         if key in cache:
             rig.initial[frame, columns] = cache[key]
+            previous_solved = np.asarray(cache[key], dtype=float)
+            previous_solved_frame = frame
             continue
 
         active_labels = [labels[index] for index in np.flatnonzero(violations[frame] > 1e-6)]
@@ -722,26 +726,25 @@ def repair_rig_anatomy(rig, observed, *, deadline):
                                    10000.*geometry, 10000.*lean], axis=1)
 
         full_initial = base[columns]
-        if previous_correction is not None:
-            proposed = full_initial + previous_correction
-            try:
-                costs = np.sum(residual_batch(np.stack([pack(full_initial), pack(proposed)]))**2, axis=1)
-            except TimeoutError:
-                # Warm-start scoring uses the same deadline/priority guard as
-                # the solver. Return completed frames and their diagnostics
-                # even when the budget expires before this frame's solve.
-                break
-            if costs[1] < costs[0]:
-                full_initial = proposed
-                seed_full = full_initial
-                warm_starts += 1
-        if repair_feasible(full_initial):
-            rig.initial[frame, columns] = full_initial
-            cache[key] = np.asarray(full_initial, dtype=float)
-            previous_correction = full_initial - base[columns]
+        # Continuity seeding: the immediately preceding repaired frame's
+        # solution is this frame's projection basin. Solving from it keeps the
+        # rotation branch continuous by construction; the fidelity pull moves
+        # the solve toward this frame's own observation. The raw observation
+        # stays the fallback because a flip means the raw seed lands in the
+        # wrong basin — scoring the two seeds against the observation always
+        # favored the raw one and let the flip through.
+        continuity_seed = None
+        if previous_solved is not None and previous_solved_frame == frame - 1:
+            continuity_seed = np.asarray(previous_solved, dtype=float)
+        if continuity_seed is not None and repair_feasible(continuity_seed):
+            rig.initial[frame, columns] = continuity_seed
+            cache[key] = continuity_seed.copy()
+            previous_solved = continuity_seed
+            previous_solved_frame = frame
+            warm_starts += 1
             skipped_feasible += 1
             if session is not None:
-                session.repairs[key] = np.asarray(full_initial, dtype=float).tolist()
+                session.repairs[key] = continuity_seed.tolist()
             continue
         frame_budget = min(
             ANATOMY_REPAIR_MAX_EVALS_PER_FRAME,
@@ -749,6 +752,35 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         )
         if frame_budget < 1:
             break
+        solved_x = None
+        if continuity_seed is not None:
+            try:
+                solved = least_squares(
+                    lambda values: residual_batch(values[None])[0], pack(continuity_seed),
+                    jac=lambda values: batched_forward_jacobian(residual_batch, values),
+                    max_nfev=frame_budget, ftol=1e-8, xtol=1e-8, gtol=1e-8)
+                solved_x = unpack(solved.x, continuity_seed)
+                evaluated += solved.nfev
+            except _AnatomyFeasible as done:
+                solved_x = done.values
+                evaluated += max(frame_nfev, 1)
+            except TimeoutError:
+                break
+            if solved_x is not None and repair_feasible(solved_x):
+                rig.initial[frame, columns] = solved_x
+                cache[key] = solved_x
+                previous_solved = solved_x
+                previous_solved_frame = frame
+                warm_starts += 1
+                continuity_seeded += 1
+                if session is not None:
+                    session.repairs[key] = np.asarray(solved_x, dtype=float).tolist()
+                continue
+            # The continuity seed could not reach a feasible pose: fall back
+            # to the raw observation seed for the remaining frame budget.
+            solved_x = None
+            if evaluated >= evaluation_budget or monotonic() >= deadline:
+                break
         try:
             solved = least_squares(
                 lambda values: residual_batch(values[None])[0], pack(seed_full),
@@ -763,7 +795,8 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             break
         rig.initial[frame, columns] = solved_x
         cache[key] = solved_x
-        previous_correction = solved_x-base[columns]
+        previous_solved = solved_x
+        previous_solved_frame = frame
         if session is not None and repair_feasible(solved_x):
             session.repairs[key] = np.asarray(solved_x, dtype=float).tolist()
 
@@ -835,6 +868,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         'projectedFrameCount': int(bad.sum()), 'evaluations': evaluated,
         'residualBatchCount': residual_batches, 'residualPointCount': residual_points,
         'warmStartedFrameCount': warm_starts,
+        'continuitySeededFrameCount': continuity_seeded,
         'feasibleSkipFrameCount': skipped_feasible,
         'averageFreeColumnCount': (
             float(free_column_total) / free_column_frames if free_column_frames else float(len(columns))),
