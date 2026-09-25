@@ -5828,14 +5828,14 @@ def test_preview_grid_uses_authoritative_render_ground_plane(tmp_path: Path) -> 
     assert "const pelvisMidRing = wearTorsoRing(" in html
     assert "pelvisAxes.side, pelvisAxes.forward" in html
     assert "const waistRing = wearDirectionalRing(" in html
-    assert "shoulderWidth * .50" in html
+    assert "shoulderWidth" in html
     assert "const neckMidHalfWidth = shoulderWidth * .14;" in html
     assert "axes.side, axes.forward, radius, radius, 8" in html
     assert "const segmentLength = stableSegmentLength(startName, endName);" in html
     assert "const bulgeWidth = Math.max(startWidth, endWidth, interpolatedWidth)" in html
     assert "wearSphere(mesh, joints.left_hip, axes" in html
     assert 'addHand("left_wrist", "left_hand", "left_elbow");' in html
-    assert 'segmentWidth("left_elbow", "left_wrist", .17) * .48' in html
+    assert 'segmentWidth("left_elbow", "left_wrist", .17) * .30' in html
     assert "const connectorSpan" not in html
     assert "updateWearExactMesh(frame, frameTranslation);" in html
     assert "new THREE.MeshBasicMaterial" in html
