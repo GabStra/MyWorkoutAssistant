@@ -458,6 +458,147 @@ class FixedRig:
                 points[:, j] = points[:, parent]+np.einsum('fij,j->fi', matrices[j], self.offsets[j])
         return points
 
+    def fk_jacobian(self, values, *, project_socket=True):
+        """Exact ∂decoded points/∂rig coordinates as a frame-block-diagonal
+        sparse matrix.
+
+        The chain recursion is the decode itself differentiated: a rotation
+        vector ω_j moves every point in joint j's subtree by
+        M_parent @ (∂R_j/∂ω_j) @ c where c is the point's offset in joint j's
+        frame. ∂R_j/∂ω_j uses central differences on the 3x3 rotation matrices
+        (three cheap batched conversions per joint - exact to ~1e-9 and
+        decoupled from rotvec convention pitfalls). The neck socket clamp is
+        piecewise; frames where it engages differentiate the clamp itself.
+        """
+        from scipy.sparse import coo_matrix
+        from .physical_validation import SOCKET_ALIGNMENT_MAX_LATERAL_RATIO
+        values = np.asarray(values, dtype=float)
+        count = len(values)
+        clamp_limit = SOCKET_ALIGNMENT_MAX_LATERAL_RATIO - ANATOMY_FIT_MARGIN
+        clamped = values
+        if project_socket:
+            clamped = project_neck_attachment_values(
+                values, self.offsets, self.names, self.active, clamp_limit)
+        clamp_active = np.any(clamped != values, axis=1) if project_socket else np.zeros(count, dtype=bool)
+        step = 1e-6
+        rotations = Rotation.from_rotvec(clamped[:, 3:].reshape(-1, 3)).as_matrix().reshape(count, len(self.active), 3, 3)
+        rotvecs = clamped[:, 3:].reshape(count, len(self.active), 3)
+        d_rotations = np.zeros((count, len(self.active), 3, 3, 3))
+        for k in range(3):
+            plus = rotvecs.copy()
+            minus = rotvecs.copy()
+            plus[:, :, k] += step
+            minus[:, :, k] -= step
+            d_plus = Rotation.from_rotvec(plus.reshape(-1, 3)).as_matrix().reshape(count, len(self.active), 3, 3)
+            d_minus = Rotation.from_rotvec(minus.reshape(-1, 3)).as_matrix().reshape(count, len(self.active), 3, 3)
+            d_rotations[:, :, :, :, k] = (d_plus - d_minus) / (2. * step)
+        descendants = {j: [] for j in self.order}
+        for j in self.order:
+            ancestor = j
+            while ancestor >= 0:
+                if ancestor in self.slots:
+                    descendants[ancestor].append(j)
+                ancestor = self.parents[ancestor]
+        row_indices, column_indices, entries = [], [], []
+        joints_count = len(self.names)
+        for frame in range(count):
+            base_row = frame * joints_count * 3
+            base_col = frame * self.width
+            matrices = {}
+            points_frame = np.empty((joints_count, 3))
+            frame_clamped = clamped[frame]
+            frame_rotations = rotations[frame]
+            identity = np.eye(3)
+            for j in self.order:
+                parent = self.parents[j]
+                local = (frame_rotations[(self.slots[j] - 3) // 3]
+                         if j in self.slots else identity)
+                matrices[j] = local if parent < 0 else matrices[parent] @ local
+                if parent < 0:
+                    points_frame[j] = frame_clamped[:3]
+                else:
+                    points_frame[j] = points_frame[parent] + matrices[j] @ self.offsets[j]
+            for j in self.active:
+                parent = self.parents[j]
+                matrix_parent = identity if parent < 0 else matrices[parent]
+                d_rot = d_rotations[frame, (self.slots[j] - 3) // 3]
+                slot = self.slots[j]
+                for i in descendants[j]:
+                    if i == j and parent < 0:
+                        continue  # the root point is translation-only
+                    # The joint's own position rides on its bone from the
+                    # parent (p_j = p_parent + Mp R_j o_j), so the chain that
+                    # ω_j rotates spans from the parent attachment: o_j plus
+                    # the joint-to-point offset in j's frame.
+                    chain = (
+                        self.offsets[j] + matrices[j].T @ (points_frame[i] - points_frame[j])
+                        if i != j else np.asarray(self.offsets[j], dtype=float)
+                    )
+                    # derivative[axis, component] = ∂p_i[axis]/∂ω_j[component]
+                    derivative = matrix_parent @ np.einsum('ijk,j->ik', d_rot, chain)
+                    for axis in range(3):
+                        row = base_row + i * 3 + axis
+                        for component in range(3):
+                            row_indices.append(row)
+                            column_indices.append(base_col + slot + component)
+                            entries.append(derivative[axis, component])
+            for i in self.order:
+                for axis in range(3):
+                    row = base_row + i * 3 + axis
+                    for component in range(3):
+                        row_indices.append(row)
+                        column_indices.append(base_col + component)
+                        entries.append(1.0 if component == axis else 0.0)
+        shape = (count * joints_count * 3, count * self.width)
+        jacobian = coo_matrix(
+            (entries, (row_indices, column_indices)), shape=shape).tocsr()
+        if not np.any(clamp_active) or not project_socket:
+            return jacobian
+        # Frames with an engaged neck clamp differentiate the clamp itself:
+        # jacobian(original) = jacobian(clamped path) @ clamp_jacobian, where
+        # clamp_jacobian is the identity with the active frames' neck/head
+        # entries replaced by the clamp's own derivative (it only reads and
+        # writes the neck/head rotation vectors).
+        neck_slot = self.slots[self.names.index('neck')]
+        head_slot = self.slots[self.names.index('head')]
+        clamp_columns = list(range(neck_slot, neck_slot + 3)) + list(range(head_slot, head_slot + 3))
+        clamp_map = {}
+        for frame in np.flatnonzero(clamp_active):
+            frame_base = frame * self.width
+            base = clamped[frame]
+            frame_block = {}
+            for column in clamp_columns:
+                probe = values[frame].copy()
+                probe[column] += step
+                moved = project_neck_attachment_values(
+                    probe[None], self.offsets, self.names, self.active, clamp_limit)[0]
+                difference = (moved - base).reshape(-1)
+                # difference.reshape(-1, 3) rows are [root, active joints in
+                # active order] — map each row back to its joint index before
+                # looking up the slot.
+                for changed_row in np.flatnonzero(
+                        np.any(difference.reshape(-1, 3) != 0., axis=1)):
+                    changed = (self.root if changed_row == 0
+                               else self.active[int(changed_row) - 1])
+                    if changed not in self.slots:
+                        continue
+                    changed_slot = self.slots[changed]
+                    for axis in range(3):
+                        frame_block[(changed_slot + axis, column)] = (
+                            float(difference[int(changed_row) * 3 + axis]) / step)
+            for row_offset in range(self.width):
+                for column_offset in range(self.width):
+                    out = frame_base + row_offset
+                    inp = frame_base + column_offset
+                    clamp_map[(out, inp)] = frame_block.get(
+                        (row_offset, column_offset),
+                        1.0 if row_offset == column_offset else 0.0)
+        clamp_jacobian = coo_matrix(
+            (list(clamp_map.values()),
+             (tuple(out for out, _ in clamp_map), tuple(inp for _, inp in clamp_map))),
+            shape=(shape[1], shape[1])).tocsr()
+        return jacobian @ clamp_jacobian
+
 
 def project_neck_attachment_values(coordinates, offsets, names, active, maximum_lateral_ratio):
     """Clamp neck lateral socket on rig coordinates; keep bone lengths and head direction."""
