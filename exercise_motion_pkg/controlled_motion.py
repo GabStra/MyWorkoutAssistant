@@ -5,7 +5,7 @@ import os
 from collections import defaultdict
 from copy import deepcopy
 from functools import partial
-from time import monotonic
+from time import monotonic, perf_counter
 from types import SimpleNamespace
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -4101,6 +4101,11 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         one perturbed column per probe.
         """
         fd_step = np.sqrt(np.finfo(float).eps)
+        _t = [perf_counter()]
+        _names = []
+        def _mark(n):
+            _names.append((n, perf_counter() - _t[-1]))
+            _t.append(perf_counter())
         coordinates = np.asarray(values, dtype=float).reshape(count, rig.width)
         candidate = rig.decode(coordinates)
         unconstrained_candidate = rig.decode(coordinates, project_socket=False)
@@ -4284,16 +4289,16 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         base_rp = rotation_prior_rows(coordinates)
         n_rot = len(rig.active)
         rp_rows, rp_columns, rp_entries = [], [], []
-        for jr in range(n_rot):
-            slot = 3 + 3 * jr
-            for comp in range(3):
-                probes = coordinates.copy()
-                probes[:, slot + comp] += fd_step
-                diff = (rotation_prior_rows(probes) - base_rp) / fd_step
-                fr, out = np.nonzero(diff)
-                rp_rows.append(fr * (3 * n_rot) + out)
-                rp_columns.append(fr * rig.width + slot + comp)
-                rp_entries.append(diff[fr, out])
+        # SO(3) log rows of a joint read only that joint's rotation vector,
+        # so one probe per component covers every joint exactly.
+        for comp in range(3):
+            probes = coordinates.copy()
+            probes[:, 3 + comp::3] += fd_step
+            diff = (rotation_prior_rows(probes) - base_rp) / fd_step
+            fr, out = np.nonzero(diff)
+            rp_rows.append(fr * (3 * n_rot) + out)
+            rp_columns.append(fr * rig.width + 3 + 3 * (out // 3) + comp)
+            rp_entries.append(diff[fr, out])
         J_rp = sparse_from(rp_entries, rp_rows, rp_columns, (count * 3 * n_rot, count * rig.width))
 
         wrp = base_rp.shape[1]
@@ -4401,32 +4406,44 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         subframe_samples = base_sub.shape[0]
         sub_rows = np.arange(subframe_samples * w_sub_total).reshape(subframe_samples, w_sub_total)
         J_hermite_rows, J_hermite_columns, J_hermite_entries = [], [], []
-        probe_groups = [(comp,) for comp in range(3)] + [
-            (3 + 3 * jr + comp,) for jr in range(n_rot) for comp in range(3)]
+        def collect_hermite(diff, c, columns_of):
+            ir, out = np.nonzero(diff)
+            if not ir.size:
+                return
+            # The responding frame is the cursor stencil frame in this shift
+            # class; boundary cursors with duplicate/missing stencil frames
+            # are resolved per row and rows without a match drop out.
+            stencil_frames = neighbors[ir]
+            match = stencil_frames % 4 == c
+            keep = np.flatnonzero(match.any(axis=1))
+            if not keep.size:
+                return
+            ir, out = ir[keep], out[keep]
+            frames_hit = stencil_frames[keep, match[keep].argmax(axis=1)]
+            J_hermite_rows.append(ir * rig.width + out)
+            J_hermite_columns.append(frames_hit * rig.width + columns_of(out))
+            J_hermite_entries.append(diff[ir, out])
+
         for c in range(4):
             frames = np.arange(c, count, 4)
-            for group in probe_groups:
+            for comp in range(3):
                 probes = coordinates.copy()
-                probes[frames, group[0]] += fd_step
+                probes[frames, comp] += fd_step
                 diff = (sample_rig_coordinates(
                     {**playback_rig, 'coordinates': probes}, subframe_cursors, wrap=cyclic)
                     - subframe_coordinates) / fd_step
-                ir, out = np.nonzero(diff)
-                if not ir.size:
-                    continue
-                # The responding frame is the cursor stencil frame in this
-                # shift class; boundary cursors with duplicate/missing stencil
-                # frames are resolved per row and rows without a match drop out.
-                stencil_frames = neighbors[ir]
-                match = stencil_frames % 4 == c
-                keep = np.flatnonzero(match.any(axis=1))
-                if not keep.size:
-                    continue
-                ir, out = ir[keep], out[keep]
-                frames_hit = stencil_frames[keep, match[keep].argmax(axis=1)]
-                J_hermite_rows.append(ir * rig.width + out)
-                J_hermite_columns.append(frames_hit * rig.width + group[0])
-                J_hermite_entries.append(diff[ir, out])
+                collect_hermite(diff, c, lambda out, comp=comp: np.full(out.shape, comp))
+            # Rotation joints are per-joint decoupled in the interpolant, so
+            # all joints batch per component; each responding output row maps
+            # back to its own joint's perturbed column.
+            for comp in range(3):
+                probes = coordinates.copy()
+                probes[frames[:, None], (3 + comp + 3 * np.arange(n_rot))[None, :]] += fd_step
+                diff = (sample_rig_coordinates(
+                    {**playback_rig, 'coordinates': probes}, subframe_cursors, wrap=cyclic)
+                    - subframe_coordinates) / fd_step
+                collect_hermite(diff, c, lambda out, comp=comp: np.where(
+                    out < 3, 3 + comp, 3 + 3 * ((out - 3) // 3) + comp))
         J_hermite = sparse_from(J_hermite_entries, J_hermite_rows, J_hermite_columns,
                                 (subframe_count * rig.width, count * rig.width))
         fk_sub = rig.fk_jacobian(subframe_coordinates)
