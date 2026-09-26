@@ -5929,9 +5929,15 @@ def _build_html(
     }}
 
     function buildPlaybackState(frames, loop) {{
-      const activeFrames = smoothJointTracks(buildPlaybackFrames(frames, loop), Boolean(loop));
+      const baseFrames = buildPlaybackFrames(frames, loop);
+      const activeFrames = smoothJointTracks(baseFrames, Boolean(loop));
       return {{
         frames: activeFrames,
+        // Raw geometry for the export path: the placement-reference arrays
+        // must stay an exact rigid map of the retained source, and the
+        // stabilizer/validators judge the payload itself. Smoothing is
+        // display-only.
+        rawFrames: baseFrames,
         boundsFrames: activeFrames,
         loopable: Boolean(loop),
       }};
@@ -8930,7 +8936,11 @@ def _build_html(
     }}
 
     function buildBakedWearSkeletonPayload() {{
-      const activeFrames = playbackState.frames ?? [];
+      // Export the raw geometry: the placement-reference arrays must remain
+      // an exact rigid map of the retained source (the rigidity gate checks
+      // them at 1e-5), and validators judge the payload itself. The visual
+      // smoothing stays in the display path only.
+      const activeFrames = playbackState.rawFrames ?? playbackState.frames ?? [];
       const lockYDrift = Boolean(lockYRootInput.checked);
       const exportPlaybackSpeed = sanitizedPlaybackSpeed(speed);
       const exportFps = Math.max(1, Number(payload.fps) * exportPlaybackSpeed);
