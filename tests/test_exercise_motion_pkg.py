@@ -50745,3 +50745,76 @@ def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
         'maximumArticulationChangeDegrees': 5.0,
     }
     assert unreachable_without_polish(anatomy_repairable_with_articulation_headroom) is False
+
+
+def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
+    """Regression guard for the three fk_jacobian defects, in isolation.
+
+    (1) the chain vector must include the joint's own bone offset (the joint
+    position itself rides on R_j); (2) the derivative block layout must be
+    (moved, axis, component); (3) clamp-active frames must map FD rows back
+    through the active-joint index before the slot lookup.
+    """
+    import numpy as np
+
+    from exercise_motion_pkg.controlled_motion import FixedRig
+    from exercise_motion_pkg.smpl_joint_names import (
+        SMPL_JOINT_NAMES,
+        SMPL_JOINT_PARENTS,
+    )
+
+    rng = np.random.default_rng(20260926)
+    frame_count = 6
+    joint_names = list(SMPL_JOINT_NAMES)
+    name_index = {name: index for index, name in enumerate(joint_names)}
+    offsets = {
+        name: np.array([0.03 * ((index % 5) - 2), 0.12, 0.02 * (index % 3)])
+        for index, name in enumerate(joint_names)
+    }
+    offsets["pelvis"] = np.zeros(3)
+    frames = []
+    for frame in range(frame_count):
+        positions = {}
+        for name in joint_names:
+            parent_index = SMPL_JOINT_PARENTS[name_index[name]]
+            if parent_index < 0:
+                positions[name] = np.array([0.0, 1.0, 0.0])
+            else:
+                parent = joint_names[parent_index]
+                sway = 0.02 * math.sin(frame * 0.9 + name_index[name])
+                positions[name] = positions[parent] + offsets[name] * (1.0 + 0.1 * sway)
+        frames.append({
+            "timeSec": frame / 30.0,
+            "joints": {name: point.tolist() for name, point in positions.items()},
+        })
+    points = np.asarray([
+        [frame["joints"][name] for name in joint_names] for frame in frames
+    ], dtype=float)
+
+    rig = FixedRig(points, joint_names)
+    coordinates = rig.initial + rng.normal(0.0, 0.06, rig.initial.shape)
+
+    for project_socket in (False, True):
+        jacobian = rig.fk_jacobian(coordinates, project_socket=project_socket)
+        def decode(flat: np.ndarray) -> np.ndarray:
+            return rig.decode(
+                np.asarray(flat).reshape(frame_count, rig.width),
+                project_socket=project_socket,
+            ).reshape(-1)
+        flat = coordinates.reshape(-1)
+        step = 1e-6
+        max_relative = 0.0
+        for column in range(0, coordinates.size, 9):
+            plus = flat.copy()
+            plus[column] += step
+            minus = flat.copy()
+            minus[column] -= step
+            reference = (decode(plus) - decode(minus)) / (2 * step)
+            analytic = np.asarray(jacobian[:, column].todense()).ravel()
+            scale = max(1.0, float(np.max(np.abs(reference))))
+            max_relative = max(
+                max_relative, float(np.max(np.abs(reference - analytic))) / scale)
+        assert max_relative < 1e-5, (
+            f"fk_jacobian diverges from finite differences "
+            f"(project_socket={project_socket}): {max_relative:.2e}"
+        )
