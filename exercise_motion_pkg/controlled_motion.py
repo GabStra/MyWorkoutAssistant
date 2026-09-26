@@ -5,7 +5,7 @@ import os
 from collections import defaultdict
 from copy import deepcopy
 from functools import partial
-from time import monotonic, perf_counter
+from time import monotonic
 from types import SimpleNamespace
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -4085,8 +4085,15 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     and cost < best_feasible_cost):
                 best_feasible_cost, best_feasible_coordinates = cost, values.copy()
         return errors
-    hybrid_jacobian_enabled = os.environ.get(
-        'EXERCISE_MOTION_HYBRID_JACOBIAN', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    # The hybrid Jacobian is parity-verified on acyclic clips; cyclic clips
+    # keep grouped FD until its seam/wrap path passes the same gate. An
+    # explicit EXERCISE_MOTION_HYBRID_JACOBIAN=0/1 overrides the default.
+    raw_flag = os.environ.get('EXERCISE_MOTION_HYBRID_JACOBIAN')
+    if raw_flag is None:
+        hybrid_jacobian_enabled = not cyclic
+    else:
+        hybrid_jacobian_enabled = (raw_flag.strip().lower() in ('1', 'true', 'yes', 'on')
+                                   and not cyclic)
 
     pattern_support_cache = {}
 
@@ -4101,11 +4108,6 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         one perturbed column per probe.
         """
         fd_step = np.sqrt(np.finfo(float).eps)
-        _t = [perf_counter()]
-        _names = []
-        def _mark(n):
-            _names.append((n, perf_counter() - _t[-1]))
-            _t.append(perf_counter())
         coordinates = np.asarray(values, dtype=float).reshape(count, rig.width)
         candidate = rig.decode(coordinates)
         unconstrained_candidate = rig.decode(coordinates, project_socket=False)
@@ -4331,13 +4333,18 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         J_root_jerk_pt = kron(d3, csr_matrix(
             (np.full(3, root_factor * (fps * .07) ** 3 * np.sqrt(joints) / scale),
              (np.arange(3), rig.root * 3 + np.arange(3))), shape=(3, J3)))
-        world_gain = 10. / (TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt((count - 3) * J3))
+        world_gain = 10. / (TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt(world_d3.shape[0] * J3))
         J_world_pt = kron(world_d3, csr_matrix(np.diag(np.full(J3, world_gain))))
 
         base_so = np.r_[settling_rows(candidate), orientation_rows(candidate)]
         L_s = settling_rows(candidate).size
         X_s = max(L_s // max(count - 1, 1), 1)
-        X_o = max((base_so.size - L_s) // max(count - 2, 1), 1)
+        # d2/d3 are wrap stencils on cyclic clips (count rows); settling's
+        # plain diff always has count-1 rows.
+        orient_rows = d2.shape[0]
+        X_o = max((base_so.size - L_s) // max(orient_rows, 1), 1)
+        if (base_so.size - L_s) % max(orient_rows, 1) or L_s % max(count - 1, 1):
+            raise RuntimeError(f'settle/orient layout mismatch: L_s {L_s} L_o {base_so.size - L_s} count {count} d2 {d2.shape} d3 {d3.shape} cyclic {cyclic}')
         # residual temporal layout: [accel | jerk | settling | root_acc | root_jerk | orient]
         so_row0 = (count * wp_stride + J_accel_pt.shape[0] + J_jerk_pt.shape[0])
         so_pattern = pattern_joint_support(so_row0 + np.arange(base_so.size))
@@ -4366,9 +4373,9 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                         # settling row k reads frames k, k+1 and orientation row
                         # k reads k, k+1, k+2: this shift class perturbed exactly
                         # one frame of each stencil.
-                        frames_hit[settle_mask] = ks + (ks % 3 != c)
+                        frames_hit[settle_mask] = (ks + (ks % 3 != c)) % count
                         ko = (hit[~settle_mask] - L_s) // X_o
-                        frames_hit[~settle_mask] = ko + (c - ko) % 3
+                        frames_hit[~settle_mask] = (ko + (c - ko) % 3) % count
                         so_rows.append(hit)
                         so_cols.append((frames_hit * joints + j) * 3 + comp)
                         so_entries.append(diff[hit])
@@ -4481,7 +4488,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                         seam_cols_idx.append(np.full(dr.size, (frame * joints + j) * 3 + comp))
                         seam_entries.append(diff[dr])
             parts.append(sparse_from(seam_entries, seam_rows_idx, seam_cols_idx,
-                                     (base_seam.size, count * rig.width)) @ fk)
+                                     (base_seam.size, count * joints * 3)) @ fk)
         parts.append(J_world)
         return vstack(parts, format='csr')
 
