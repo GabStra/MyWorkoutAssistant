@@ -4088,6 +4088,8 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     hybrid_jacobian_enabled = os.environ.get(
         'EXERCISE_MOTION_HYBRID_JACOBIAN', '').strip().lower() in ('1', 'true', 'yes', 'on')
 
+    pattern_support_cache = {}
+
     def hybrid_jacobian(values):
         """Point-space Jacobian: each residual section is finite-differenced
         over decoded points and chained with the exact analytic FK Jacobian
@@ -4135,28 +4137,68 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     colors.append([j])
             return colors
 
-        def colored_composite_probe(evaluate, base_rows, bases, ownership, shifts):
+        def pattern_joint_support(row_indices):
+            """Sound per-joint row masks from the solver dependency pattern: a
+            row can read joint j's points only if the pattern ties it to a
+            rotation slot of j or an ancestor (every point-reading row also
+            reads that point's rotation inputs, so this is a superset).
+            Directional probes cannot be used here: difference rows such as
+            bone-length contrasts cancel along a (1,1,1) probe direction and
+            would silently drop true dependencies."""
+            key = np.asarray(row_indices).tobytes()
+            cached = pattern_support_cache.get(key)
+            if cached is not None:
+                return cached
+            csc = pattern.tocsc()
+            masks = np.zeros((len(row_indices), joints), dtype=bool)
+            for j in range(joints):
+                slots = set()
+                ancestor = j
+                while ancestor >= 0:
+                    if ancestor in rig.slots:
+                        slots.add(rig.slots[ancestor])
+                    ancestor = rig.parents[ancestor]
+                cols = (np.arange(count)[:, None] * rig.width
+                        + np.fromiter(sorted(slots), dtype=int)[None, :]).ravel()
+                rows_nz = np.unique(csc[:, cols].indices)
+                full = np.zeros(pattern.shape[0], dtype=bool)
+                full[rows_nz] = True
+                masks[:, j] = full[row_indices]
+            pattern_support_cache[key] = masks
+            return masks
+
+        def colored_composite_probe(evaluate, base_rows, bases, ownership, shifts,
+                                    col_offsets, row0, stride):
             """FD of a per-sample section composite w.r.t. decoded points.
 
             ``bases`` are the point arrays the sections read (constrained and
             unconstrained decodes); ``ownership`` maps each column range to
             the array it reads. Rows read one sample (shifts=1) or a stencil
-            of ``shifts`` consecutive samples.
+            of ``shifts`` consecutive samples. ``col_offsets`` maps each
+            composite column to its offset inside the residual's per-sample
+            row layout, so supports come from the residual pattern rows
+            ``row0 + sample * stride + offset``.
             """
             n_frames = len(bases[0])
             width_total = base_rows.shape[1]
-            column_mask = np.zeros(width_total, dtype=bool)
+            flat = np.arange(n_frames * width_total)
+            residual_rows = (row0 + (flat // width_total) * stride
+                             + np.asarray(col_offsets)[flat % width_total])
+            pattern_masks = pattern_joint_support(residual_rows)
             supports = {}
             for start, end, array_index in ownership:
-                column_mask[:] = False
-                column_mask[start:end] = True
-                sample_mask = np.tile(column_mask, n_frames)
                 for j in range(joints):
+                    # Neither source alone is sound: the pattern can
+                    # under-declare an anatomy row's endpoint joints (which
+                    # breaks the exact translation-invariance cancellations),
+                    # and directional probes cancel on difference rows.
+                    directional = np.zeros(n_frames * width_total, dtype=bool)
                     probes = [base.copy() for base in bases]
                     for base in probes:
                         base[:, j, :] += fd_step
                     diff = (evaluate(*probes) - base_rows).ravel() != 0.
-                    supports[(array_index, j)] = diff & sample_mask
+                    np.copyto(directional, diff)
+                    supports[(array_index, j)] = pattern_masks[:, j] | directional
             rows, columns, entries = [], [], []
             for start, end, array_index in ownership:
                 sup = [supports[(array_index, j)] for j in range(joints)]
@@ -4212,15 +4254,29 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                                    keyframe_post_rows(points, grip_weight, contact_weight),
                                    anatomy_rows(unconstrained)], axis=1)
         base_key = keyframe_composite(candidate, unconstrained_candidate)
+        wrp = 3 * len(rig.active)
+        wp_stride = w_key + wan + wrp
         J_key_mixed = colored_composite_probe(
             keyframe_composite, base_key, [candidate, unconstrained_candidate],
-            [(0, w_key, 0), (w_key, w_key_total, 1)], 1)
+            [(0, w_key, 0), (w_key, w_key_total, 1)], 1,
+            # residual per-frame layout: [pre | rotation_prior | mid | anatomy | post]
+            np.concatenate([np.arange(w_pre),
+                            w_pre + wrp + np.arange(w_mid),
+                            w_pre + wrp + w_mid + wan + np.arange(w_post),
+                            w_pre + wrp + w_mid + np.arange(wan)]),
+            0, wp_stride)
         keyframe_samples = base_key.shape[0]
         sample_rows = np.arange(keyframe_samples * w_key_total).reshape(keyframe_samples, w_key_total)
         # Chain constrained-decode rows through fk and unconstrained rows
-        # (anatomy) through fk_unc: split by the composite's column ranges.
-        J_key_pts = J_key_mixed[sample_rows[:, :w_key].ravel()] @ fk
-        J_key_anat = J_key_mixed[sample_rows[:, w_key:].ravel()] @ fk_unc
+        # (anatomy) through fk_unc, splitting by the composite's column
+        # ranges and restoring each row to its composite position (the two
+        # row sets partition every composite row).
+        key_point_rows = sample_rows[:, :w_key].ravel()
+        key_anat_rows = sample_rows[:, w_key:].ravel()
+        J_key_chain = vstack([
+            J_key_mixed[key_point_rows] @ fk,
+            J_key_mixed[key_anat_rows] @ fk_unc], format='csr')[
+                np.argsort(np.concatenate([key_point_rows, key_anat_rows]))]
 
         def rotation_prior_rows(point_coordinates):
             return .01*(initial_rotations.inv()*Rotation.from_rotvec(
@@ -4241,13 +4297,13 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         J_rp = sparse_from(rp_entries, rp_rows, rp_columns, (count * 3 * n_rot, count * rig.width))
 
         wrp = base_rp.shape[1]
-        J_pf = vstack([J_key_pts, J_key_anat, J_rp], format='csr')[np.concatenate([
+        J_pf = vstack([J_key_chain, J_rp], format='csr')[np.concatenate([
             interleave_rows((
-                (w_pre, 0, 0, w_key),
-                (wrp, None, count * (w_key + wan), None),
-                (w_mid, w_pre, 0, w_key),
-                (wan, None, count * w_key, None),
-                (w_post, w_pre + w_mid, 0, w_key),
+                (w_pre, 0, 0, w_key_total),
+                (wrp, None, count * w_key_total, None),
+                (w_mid, w_pre, 0, w_key_total),
+                (wan, w_key, 0, w_key_total),
+                (w_post, w_pre + w_mid, 0, w_key_total),
             ), count)])]
 
         # The linear temporal rows are exact stencils over points: row
@@ -4276,13 +4332,17 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         base_so = np.r_[settling_rows(candidate), orientation_rows(candidate)]
         L_s = settling_rows(candidate).size
         X_s = max(L_s // max(count - 1, 1), 1)
+        X_o = max((base_so.size - L_s) // max(count - 2, 1), 1)
+        # residual temporal layout: [accel | jerk | settling | root_acc | root_jerk | orient]
+        so_row0 = (count * wp_stride + J_accel_pt.shape[0] + J_jerk_pt.shape[0])
+        so_pattern = pattern_joint_support(so_row0 + np.arange(base_so.size))
         supports_so = []
         for j in range(joints):
             probes = candidate.copy()
             probes[:, j, :] += fd_step
-            supports_so.append((np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) != 0.)
+            directional = (np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) != 0.
+            supports_so.append(so_pattern[:, j] | directional)
         so_rows, so_cols, so_entries = [], [], []
-        X_o = max((base_so.size - L_s) // max(count - 2, 1), 1)
         for group in joint_colors(supports_so):
             for comp in range(3):
                 for c in range(3):
@@ -4325,9 +4385,19 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             return np.concatenate([subframe_point_rows(points, contact_weight, grip_weight),
                                    subframe_anatomy_rows(unconstrained)], axis=1)
         base_sub = subframe_composite(subframe, unconstrained_subframe)
+        # residual per-cursor layout: [contacts, floor, collision, anatomy,
+        # grip, geometry, alignment, heel] — anatomy sits fourth.
+        w_contacts_floor = sub_sections_list[0].shape[1] + sub_sections_list[1].shape[1]
+        sub_col_offsets = np.concatenate([
+            np.arange(w_first3),
+            w_first3 + np.arange(w_sub_anat),
+            w_first3 + w_sub_anat + np.arange(w_sub_pts - w_first3)])
+        row_t = (J_accel_pt.shape[0] + J_jerk_pt.shape[0] + L_s
+                 + J_root_acc_pt.shape[0] + J_root_jerk_pt.shape[0] + base_so.size - L_s)
         J_sub_mixed = colored_composite_probe(
             subframe_composite, base_sub, [subframe, unconstrained_subframe],
-            [(0, w_sub_pts, 0), (w_sub_pts, w_sub_total, 1)], 1)
+            [(0, w_sub_pts, 0), (w_sub_pts, w_sub_total, 1)], 1,
+            sub_col_offsets, count * wp_stride + row_t, w_sub_total)
         subframe_samples = base_sub.shape[0]
         sub_rows = np.arange(subframe_samples * w_sub_total).reshape(subframe_samples, w_sub_total)
         J_hermite_rows, J_hermite_columns, J_hermite_entries = [], [], []
@@ -4361,9 +4431,15 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                                 (subframe_count * rig.width, count * rig.width))
         fk_sub = rig.fk_jacobian(subframe_coordinates)
         fk_sub_unc = rig.fk_jacobian(subframe_coordinates, project_socket=False)
-        J_sub_src = vstack([J_sub_mixed[sub_rows[:, :w_sub_pts].ravel()] @ fk_sub,
-                            J_sub_mixed[sub_rows[:, w_sub_pts:].ravel()] @ fk_sub_unc],
-                           format='csr') @ J_hermite
+        # Same split-and-restore as the keyframe composite: the two row sets
+        # partition every composite row, so argsort restores the residual's
+        # per-cursor interleaving exactly.
+        sub_point_rows = sub_rows[:, :w_sub_pts].ravel()
+        sub_anat_rows = sub_rows[:, w_sub_pts:].ravel()
+        J_sub_src = vstack([
+            J_sub_mixed[sub_point_rows] @ fk_sub,
+            J_sub_mixed[sub_anat_rows] @ fk_sub_unc], format='csr')[
+                np.argsort(np.concatenate([sub_point_rows, sub_anat_rows]))] @ J_hermite
         # point_rows appends subframe anatomy after the point sections, so the
         # composite row order already matches the residual exactly.
         J_sub = J_sub_src
