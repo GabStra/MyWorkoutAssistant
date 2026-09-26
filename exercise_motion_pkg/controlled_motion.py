@@ -1,15 +1,17 @@
 """Default final-bake fixed-rig trajectory fit; legacy output remains available."""
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from copy import deepcopy
+from functools import partial
 from time import monotonic
 from types import SimpleNamespace
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import least_squares
 from scipy.optimize._numdiff import approx_derivative, group_columns
-from scipy.sparse import csr_matrix, eye, kron, lil_matrix, vstack
+from scipy.sparse import coo_matrix, csr_matrix, eye, kron, lil_matrix, vstack
 from scipy.spatial.transform import Rotation
 
 from .sequence_stabilization import contact_mask, frame_basis, pose_digest, unit
@@ -569,6 +571,12 @@ class FixedRig:
         head_slot = self.slots[self.names.index('head')]
         clamp_columns = list(range(neck_slot, neck_slot + 3)) + list(range(head_slot, head_slot + 3))
         clamp_map = {}
+        # Frames without an engaged clamp pass through untouched; only the
+        # clamped frames' blocks are overridden below.
+        for frame in range(count):
+            frame_base = frame * self.width
+            for row_offset in range(self.width):
+                clamp_map[(frame_base + row_offset, frame_base + row_offset)] = 1.0
         for frame in np.flatnonzero(clamp_active):
             frame_base = frame * self.width
             base = clamped[frame]
@@ -3867,6 +3875,128 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         # room to compete with pose/contact before Stage-A polish.
         grip_fit_weight = GRIP_FIT_WEIGHT_WHEN_REFERENCE_FAILS
         report['gripFitWeight'] = float(grip_fit_weight)
+    def keyframe_pre_rows(candidate, contact_weight):
+        current_angles = np.stack([angles(*(candidate[:,i] for i in cols)) for _,cols,_ in specs],axis=1)
+        artic_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT if body_support.get('required') else 500.)
+        articulation = artic_weight*(np.minimum(current_angles-low,0.)+np.maximum(current_angles-high,0.))
+        floor_error = np.zeros((count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(candidate[:,:,1]-float(floor),0.)
+        current_head = body_local_head_direction(candidate,names)
+        head_angle = np.arccos(np.clip(np.sum(source_head*current_head,axis=1),-1.,1.))
+        head_weight = (SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT if body_support.get('required')
+                       else HEAD_ARTICULATION_FIT_WEIGHT)
+        head_penalty = head_weight*np.maximum(head_angle-np.deg2rad(14.),0.)[:,None]
+        pose_error = 2. * (candidate - target) / scale
+        if body_support.get('required'):
+            root_track = reference[:, rig.root]
+            if not root_motion_quality(root_track, fps, scale)['passed']:
+                root_track = gaussian_filter1d(
+                    root_track, max(.5, fps * .08), axis=0, mode='nearest')
+            pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - root_track) / scale
+        return np.concatenate([pose_error.reshape(count,-1),
+                               (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
+                               articulation, floor_error, head_penalty],axis=1)
+
+    def keyframe_mid_rows(candidate):
+        excursion_projection = np.sum((candidate-candidate[:,rig.root:rig.root+1]-excursion_center)*excursion_direction,axis=-1)
+        excursion_penalty = 20.*np.minimum(excursion_projection-excursion_minimum,0.)*excursion_active/scale
+        current_parent, current_bend, current_sine = hinge_coordinates(candidate,names)
+        branch_dot = transported_hinge_dots(source_parent,source_bend,current_parent,current_bend)
+        branch_penalty = 20.*np.minimum(branch_dot-.2,0.)*branch_supported*np.clip(current_sine/np.sin(np.deg2rad(15.)),0.,1.)
+        return np.concatenate([
+            100.*np.minimum(collision_clearances(candidate,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
+            excursion_penalty,branch_penalty],axis=1)
+
+    def anatomy_rows(unconstrained_candidate):
+        return ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
+            unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
+            reference=reference)[0]
+
+    def keyframe_post_rows(candidate, grip_weight, contact_weight):
+        return np.concatenate([
+            grip_weight*grip_residual(candidate,names,equipment)/scale,
+            2000.*geometry_errors(candidate,names,body_support)/scale,
+            10.*alignment_constraint_errors(candidate,source_alignment,names,body_support)/scale,
+            (contact_weight * heel_contacts.residual(candidate)).reshape(count, -1)],axis=1)
+
+    def acceleration_jerk_rows(candidate):
+        root_relative = (candidate-candidate[:,rig.root:rig.root+1])/scale
+        acceleration = (d2@(candidate-candidate[:,rig.root:rig.root+1]).reshape(count,-1)).reshape(-1,joints,3)
+        acceleration = (10.*acceleration/acceleration_fit_scale[None,:,None]).reshape(-1,joints*3)
+        jerk = (d3@root_relative.reshape(count,-1))*(fps*.10)**3
+        return np.r_[acceleration.ravel(),jerk.ravel()]
+
+    def settling_rows(candidate):
+        relative = body_relative_points(candidate,names)
+        settling_weight = 150. if body_support.get('required') else 50.
+        settling = (settling_weight*np.diff(relative,axis=0)*hold_weights*fps
+                    / (settling_limit*np.sqrt(max(np.sum(hold_weights)*3, 1.))))
+        return settling.ravel()
+
+    def root_temporal_rows(candidate):
+        root_acceleration = (d2@(candidate[:,rig.root]/scale))*(fps*.10)**2*np.sqrt(joints)
+        root_jerk = (d3@(candidate[:,rig.root]/scale))*(fps*.07)**3*np.sqrt(joints)
+        if body_support.get('required'):
+            root_acceleration = 4. * root_acceleration
+            root_jerk = 4. * root_jerk
+        return np.r_[root_acceleration.ravel(),root_jerk.ravel()]
+
+    def orientation_rows(candidate):
+        return (10.*(d2@body_orientation_axes(candidate,names).reshape(count,-1))/rotation_fit_scale).ravel()
+
+    def temporal_rows(candidate):
+        return np.r_[acceleration_jerk_rows(candidate),settling_rows(candidate),
+                     root_temporal_rows(candidate),orientation_rows(candidate)]
+
+    def world_jerk_rows(candidate):
+        world_jerk = world_d3 @ candidate.reshape(count, -1)
+        # Normalize by the same RMS bound used at acceptance, independently of
+        # clip size or the amount of noise introduced by a preview variant.
+        return (10. * world_jerk / (
+            TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt(world_jerk.size))).ravel()
+
+    def subframe_point_sections(subframe, contact_weight, grip_weight):
+        subframe_contacts = contact_weight*(subframe-subframe_targets)*subframe_pinned[:,:,None]
+        subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(subframe[:,:,1]-float(floor),0.)
+        return [subframe_contacts.reshape(subframe_count,-1),subframe_floor,
+                100.*np.minimum(collision_clearances(subframe,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
+                grip_weight*grip_residual(subframe,names,equipment)/scale,
+                2000.*geometry_errors(subframe,names,body_support)/scale,
+                10.*alignment_constraint_errors(subframe,subframe_alignment,names,body_support)/scale,
+                (contact_weight * heel_contacts.residual(
+                    subframe, subframe_first, subframe_last)).reshape(subframe_count, -1)]
+
+    def subframe_point_rows(subframe, contact_weight, grip_weight):
+        return np.concatenate(subframe_point_sections(subframe, contact_weight, grip_weight), axis=1)
+
+    def subframe_anatomy_rows(unconstrained_subframe):
+        return ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
+            unconstrained_subframe,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
+            reference=(reference[subframe_first]*(1.-subframe_alpha)
+                       +reference[subframe_last]*subframe_alpha))[0]
+
+    def seam_rows(candidate):
+        from .loop_seam import seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO
+        _, excess, increments = seam_errors(candidate)
+        # Optimize the actual playback step bound as well as velocity
+        # matching. A small least-squares velocity error can still leave
+        # a visibly oversized restart step, especially in slow movement.
+        limit = MAX_STEP_EXCESS_BODY_RATIO * scale
+        # Use body-normalized meters, as for contact/grip residuals.
+        # Dividing by the millimeter acceptance limit makes this term
+        # dominate anatomy and contact fitting by orders of magnitude.
+        # Stage-B polish raises seam_polish_weight so soft LS prioritizes
+        # restart continuity once body/contact terms are already good.
+        seam_excess = (2000. * seam_polish_weight) * np.maximum(
+            excess - .8 * limit, 0.) / scale
+        velocity_step_limit = MAX_VELOCITY_MISMATCH_BODY_RATIO * scale / fps
+        # Stage-B near-misses are often velocity-limited after step is close;
+        # weight wrap increments above step excess so LS closes the hitch.
+        velocity_weight = 3500. * seam_polish_weight if seam_polish_weight > 1. else 2000. * seam_polish_weight
+        seam_velocity_excess = velocity_weight * np.maximum(
+            np.linalg.norm(increments, axis=-1) - .8 * velocity_step_limit, 0.) / scale
+        closure = (150. * seam_polish_weight) * increments / scale
+        return closure, seam_excess, seam_velocity_excess
+
     def point_rows(candidate, unconstrained_candidate, subframe, unconstrained_subframe,
                    contact_weight, grip_weight):
         """Every residual row that is a function of decoded points.
@@ -3877,71 +4007,14 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         these out lets the Jacobian probe points directly and chain through
         the analytic FK Jacobian instead of grouped coordinate differences.
         """
-        current_angles = np.stack([angles(*(candidate[:,i] for i in cols)) for _,cols,_ in specs],axis=1)
-        artic_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT if body_support.get('required') else 500.)
-        articulation = artic_weight*(np.minimum(current_angles-low,0.)+np.maximum(current_angles-high,0.))
-        floor_error = np.zeros((count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(candidate[:,:,1]-float(floor),0.)
-        current_head = body_local_head_direction(candidate,names)
-        head_angle = np.arccos(np.clip(np.sum(source_head*current_head,axis=1),-1.,1.))
-        head_weight = (SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT if body_support.get('required')
-                       else HEAD_ARTICULATION_FIT_WEIGHT)
-        head_penalty = head_weight*np.maximum(head_angle-np.deg2rad(14.),0.)[:,None]
-        excursion_projection = np.sum((candidate-candidate[:,rig.root:rig.root+1]-excursion_center)*excursion_direction,axis=-1)
-        excursion_penalty = 20.*np.minimum(excursion_projection-excursion_minimum,0.)*excursion_active/scale
-        current_parent, current_bend, current_sine = hinge_coordinates(candidate,names)
-        branch_dot = transported_hinge_dots(source_parent,source_bend,current_parent,current_bend)
-        branch_penalty = 20.*np.minimum(branch_dot-.2,0.)*branch_supported*np.clip(current_sine/np.sin(np.deg2rad(15.)),0.,1.)
-        pose_error = 2. * (candidate - target) / scale
-        if body_support.get('required'):
-            root_track = reference[:, rig.root]
-            if not root_motion_quality(root_track, fps, scale)['passed']:
-                root_track = gaussian_filter1d(
-                    root_track, max(.5, fps * .08), axis=0, mode='nearest')
-            pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - root_track) / scale
-        keyframe_pre = np.concatenate([pose_error.reshape(count,-1),
-                                       (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
-                                       articulation, floor_error, head_penalty],axis=1)
-        keyframe_mid = np.concatenate([
-            100.*np.minimum(collision_clearances(candidate,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
-            excursion_penalty,branch_penalty],axis=1)
-        anatomy = ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
-            unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=reference)[0]
-        keyframe_post = np.concatenate([
-            grip_weight*grip_residual(candidate,names,equipment)/scale,
-            2000.*geometry_errors(candidate,names,body_support)/scale,
-            10.*alignment_constraint_errors(candidate,source_alignment,names,body_support)/scale,
-            (contact_weight * heel_contacts.residual(candidate)).reshape(count, -1)],axis=1)
-        root_relative = (candidate-candidate[:,rig.root:rig.root+1])/scale
-        acceleration = (d2@(candidate-candidate[:,rig.root:rig.root+1]).reshape(count,-1)).reshape(-1,joints,3)
-        acceleration = (10.*acceleration/acceleration_fit_scale[None,:,None]).reshape(-1,joints*3)
-        jerk = (d3@root_relative.reshape(count,-1))*(fps*.10)**3
-        relative = body_relative_points(candidate,names)
-        settling_weight = 150. if body_support.get('required') else 50.
-        settling = (settling_weight*np.diff(relative,axis=0)*hold_weights*fps
-                    / (settling_limit*np.sqrt(max(np.sum(hold_weights)*3, 1.))))
-        root_acceleration = (d2@(candidate[:,rig.root]/scale))*(fps*.10)**2*np.sqrt(joints)
-        root_jerk = (d3@(candidate[:,rig.root]/scale))*(fps*.07)**3*np.sqrt(joints)
-        if body_support.get('required'):
-            root_acceleration = 4. * root_acceleration
-            root_jerk = 4. * root_jerk
-        orientation_acceleration = 10.*(d2@body_orientation_axes(candidate,names).reshape(count,-1))/rotation_fit_scale
-        temporal = np.r_[acceleration.ravel(),jerk.ravel(),settling.ravel(),
-                         root_acceleration.ravel(),root_jerk.ravel(),
-                         orientation_acceleration.ravel()]
-        subframe_contacts = contact_weight*(subframe-subframe_targets)*subframe_pinned[:,:,None]
-        subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(subframe[:,:,1]-float(floor),0.)
-        subframe_rows = np.concatenate([subframe_contacts.reshape(subframe_count,-1),subframe_floor,
-                                        100.*np.minimum(collision_clearances(subframe,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
-                                        ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
-                                            unconstrained_subframe,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-                                            reference=(reference[subframe_first]*(1.-subframe_alpha)
-                                                       +reference[subframe_last]*subframe_alpha))[0],
-                                        grip_weight*grip_residual(subframe,names,equipment)/scale,
-                                        2000.*geometry_errors(subframe,names,body_support)/scale,
-                                        10.*alignment_constraint_errors(subframe,subframe_alignment,names,body_support)/scale,
-                                        (contact_weight * heel_contacts.residual(
-                                            subframe, subframe_first, subframe_last)).reshape(subframe_count, -1)],axis=1)
+        keyframe_pre = keyframe_pre_rows(candidate, contact_weight)
+        keyframe_mid = keyframe_mid_rows(candidate)
+        anatomy = anatomy_rows(unconstrained_candidate)
+        keyframe_post = keyframe_post_rows(candidate, grip_weight, contact_weight)
+        temporal = temporal_rows(candidate)
+        subframe_rows = np.concatenate([
+            subframe_point_rows(subframe, contact_weight, grip_weight),
+            subframe_anatomy_rows(unconstrained_subframe)],axis=1)
         return {'keyframe_pre': keyframe_pre, 'keyframe_mid': keyframe_mid,
                 'anatomy': anatomy, 'keyframe_post': keyframe_post,
                 'temporal': temporal, 'subframe': subframe_rows}
@@ -3972,33 +4045,12 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         # positions would impose a stop; match the incoming/outgoing increments.
         closure, seam_excess, seam_velocity_excess = np.empty(0), np.empty(0), np.empty(0)
         if cyclic:
-            from .loop_seam import seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO
-            _, excess, increments = seam_errors(candidate)
-            # Optimize the actual playback step bound as well as velocity
-            # matching. A small least-squares velocity error can still leave
-            # a visibly oversized restart step, especially in slow movement.
-            limit = MAX_STEP_EXCESS_BODY_RATIO * scale
-            # Use body-normalized meters, as for contact/grip residuals.
-            # Dividing by the millimeter acceptance limit makes this term
-            # dominate anatomy and contact fitting by orders of magnitude.
-            # Stage-B polish raises seam_polish_weight so soft LS prioritizes
-            # restart continuity once body/contact terms are already good.
-            seam_excess = (2000. * seam_polish_weight) * np.maximum(
-                excess - .8 * limit, 0.) / scale
-            velocity_step_limit = MAX_VELOCITY_MISMATCH_BODY_RATIO * scale / fps
-            # Stage-B near-misses are often velocity-limited after step is close;
-            # weight wrap increments above step excess so LS closes the hitch.
-            velocity_weight = 3500. * seam_polish_weight if seam_polish_weight > 1. else 2000. * seam_polish_weight
-            seam_velocity_excess = velocity_weight * np.maximum(
-                np.linalg.norm(increments, axis=-1) - .8 * velocity_step_limit, 0.) / scale
-            closure = (150. * seam_polish_weight) * increments / scale
+            # The final sample precedes the first by one frame. Equal endpoint
+            # positions would impose a stop; match the incoming/outgoing increments.
+            closure, seam_excess, seam_velocity_excess = seam_rows(candidate)
         errors = np.r_[per_frame.ravel(),rows['temporal'],
                      rows['subframe'].ravel(),closure.ravel(),seam_excess.ravel(),seam_velocity_excess.ravel()]
-        # Normalize by the same RMS bound used at acceptance, independently of
-        # clip size or the amount of noise introduced by a preview variant.
-        world_jerk = world_d3 @ candidate.reshape(count, -1)
-        errors = np.r_[errors, (10. * world_jerk / (
-            TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt(world_jerk.size))).ravel()]
+        errors = np.r_[errors, world_jerk_rows(candidate)]
         if support_articulation_tracks:
             # Soft floor slightly above the 0.85 acceptance ratio so the solver
             # has margin instead of landing on the hard fail boundary. Weight
@@ -4033,13 +4085,322 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     and cost < best_feasible_cost):
                 best_feasible_cost, best_feasible_coordinates = cost, values.copy()
         return errors
-    trajectory_solver = solve_trajectory
+    hybrid_jacobian_enabled = os.environ.get(
+        'EXERCISE_MOTION_HYBRID_JACOBIAN', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+    def hybrid_jacobian(values):
+        """Point-space Jacobian: each residual section is finite-differenced
+        over decoded points and chained with the exact analytic FK Jacobian
+        (and, for subframe rows, the coordinate interpolator), instead of
+        probing the whole residual through grouped coordinate differences.
+        Row order mirrors ``residual`` exactly so the solver sees a
+        consistent (residual, jacobian) pair. Probes are separated by joint
+        color, component, and frame-shift class so every row reads exactly
+        one perturbed column per probe.
+        """
+        fd_step = np.sqrt(np.finfo(float).eps)
+        coordinates = np.asarray(values, dtype=float).reshape(count, rig.width)
+        candidate = rig.decode(coordinates)
+        unconstrained_candidate = rig.decode(coordinates, project_socket=False)
+        subframe_coordinates = sample_rig_coordinates(
+            {**playback_rig, 'coordinates': coordinates}, subframe_cursors, wrap=cyclic)
+        subframe = rig.decode(subframe_coordinates)
+        unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
+        contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
+        grip_weight = grip_fit_weight * equipment_polish_weight
+        fk = rig.fk_jacobian(coordinates)
+        fk_unc = rig.fk_jacobian(coordinates, project_socket=False)
+
+        def sparse_from(entries, rows, columns, shape):
+            if not entries:
+                return csr_matrix(shape)
+            return coo_matrix((np.concatenate(entries),
+                               (np.concatenate(rows), np.concatenate(columns))),
+                              shape=shape).tocsr()
+
+        def joint_colors(supports):
+            # Greedy coloring of the joint conflict graph. Supports are
+            # directional-probe response masks - a conservative superset of
+            # true dependencies - so joints sharing a color never co-occur in
+            # any row and their component probes are exact.
+            order = sorted(range(len(supports)),
+                           key=lambda j: int(np.count_nonzero(supports[j])), reverse=True)
+            colors = []
+            for j in order:
+                for group in colors:
+                    if all(not (supports[j] & supports[other]).any() for other in group):
+                        group.append(j)
+                        break
+                else:
+                    colors.append([j])
+            return colors
+
+        def colored_composite_probe(evaluate, base_rows, bases, ownership, shifts):
+            """FD of a per-sample section composite w.r.t. decoded points.
+
+            ``bases`` are the point arrays the sections read (constrained and
+            unconstrained decodes); ``ownership`` maps each column range to
+            the array it reads. Rows read one sample (shifts=1) or a stencil
+            of ``shifts`` consecutive samples.
+            """
+            n_frames = len(bases[0])
+            width_total = base_rows.shape[1]
+            column_mask = np.zeros(width_total, dtype=bool)
+            supports = {}
+            for start, end, array_index in ownership:
+                column_mask[:] = False
+                column_mask[start:end] = True
+                sample_mask = np.tile(column_mask, n_frames)
+                for j in range(joints):
+                    probes = [base.copy() for base in bases]
+                    for base in probes:
+                        base[:, j, :] += fd_step
+                    diff = (evaluate(*probes) - base_rows).ravel() != 0.
+                    supports[(array_index, j)] = diff & sample_mask
+            rows, columns, entries = [], [], []
+            for start, end, array_index in ownership:
+                sup = [supports[(array_index, j)] for j in range(joints)]
+                for group in joint_colors(sup):
+                    for comp in range(3):
+                        for c in range(shifts):
+                            frames = np.arange(c, n_frames, shifts)
+                            probes = [base.copy() for base in bases]
+                            for j in group:
+                                if shifts == 1:
+                                    probes[array_index][:, j, comp] += fd_step
+                                else:
+                                    probes[array_index][frames, j, comp] += fd_step
+                            diff = ((evaluate(*probes) - base_rows) / fd_step).ravel()
+                            for j in group:
+                                hit = np.nonzero(np.where(sup[j], diff, 0.))[0]
+                                if not hit.size:
+                                    continue
+                                rows.append(hit)
+                                columns.append((hit // width_total * joints + j) * 3 + comp)
+                                entries.append(diff[hit])
+            return sparse_from(entries, rows, columns,
+                               (n_frames * width_total, n_frames * joints * 3))
+
+        def interleave_rows(blocks, n_samples):
+            # Reorder section-stacked rows into the residual's per-sample
+            # interleaved layout. Blocks are (width, offset inside a composite
+            # section, source base, composite per-sample width).
+            total = sum(width for width, _, _, _ in blocks)
+            order = np.empty((n_samples, total), dtype=int)
+            off = 0
+            for width, inside, base, source_width in blocks:
+                sample = np.arange(n_samples, dtype=int)[:, None]
+                if inside is None:
+                    order[:, off:off + width] = base + sample * width + np.arange(width)[None, :]
+                else:
+                    order[:, off:off + width] = base + sample * source_width + inside + np.arange(width)[None, :]
+                off += width
+            return order.ravel()
+
+        pre = keyframe_pre_rows(candidate, contact_weight)
+        mid = keyframe_mid_rows(candidate)
+        post = keyframe_post_rows(candidate, grip_weight, contact_weight)
+        base_anat = anatomy_rows(unconstrained_candidate)
+        w_pre, w_mid, w_post = pre.shape[1], mid.shape[1], post.shape[1]
+        w_key = w_pre + w_mid + w_post
+        wan = base_anat.shape[1]
+        w_key_total = w_key + wan
+
+        def keyframe_composite(points, unconstrained):
+            return np.concatenate([keyframe_pre_rows(points, contact_weight),
+                                   keyframe_mid_rows(points),
+                                   keyframe_post_rows(points, grip_weight, contact_weight),
+                                   anatomy_rows(unconstrained)], axis=1)
+        base_key = keyframe_composite(candidate, unconstrained_candidate)
+        J_key_mixed = colored_composite_probe(
+            keyframe_composite, base_key, [candidate, unconstrained_candidate],
+            [(0, w_key, 0), (w_key, w_key_total, 1)], 1)
+        keyframe_samples = base_key.shape[0]
+        sample_rows = np.arange(keyframe_samples * w_key_total).reshape(keyframe_samples, w_key_total)
+        # Chain constrained-decode rows through fk and unconstrained rows
+        # (anatomy) through fk_unc: split by the composite's column ranges.
+        J_key_pts = J_key_mixed[sample_rows[:, :w_key].ravel()] @ fk
+        J_key_anat = J_key_mixed[sample_rows[:, w_key:].ravel()] @ fk_unc
+
+        def rotation_prior_rows(point_coordinates):
+            return .01*(initial_rotations.inv()*Rotation.from_rotvec(
+                point_coordinates[:, 3:].reshape(-1, 3))).as_rotvec().reshape(count, -1)
+        base_rp = rotation_prior_rows(coordinates)
+        n_rot = len(rig.active)
+        rp_rows, rp_columns, rp_entries = [], [], []
+        for jr in range(n_rot):
+            slot = 3 + 3 * jr
+            for comp in range(3):
+                probes = coordinates.copy()
+                probes[:, slot + comp] += fd_step
+                diff = (rotation_prior_rows(probes) - base_rp) / fd_step
+                fr, out = np.nonzero(diff)
+                rp_rows.append(fr * (3 * n_rot) + out)
+                rp_columns.append(fr * rig.width + slot + comp)
+                rp_entries.append(diff[fr, out])
+        J_rp = sparse_from(rp_entries, rp_rows, rp_columns, (count * 3 * n_rot, count * rig.width))
+
+        wrp = base_rp.shape[1]
+        J_pf = vstack([J_key_pts, J_key_anat, J_rp], format='csr')[np.concatenate([
+            interleave_rows((
+                (w_pre, 0, 0, w_key),
+                (wrp, None, count * (w_key + wan), None),
+                (w_mid, w_pre, 0, w_key),
+                (wan, None, count * w_key, None),
+                (w_post, w_pre + w_mid, 0, w_key),
+            ), count)])]
+
+        # The linear temporal rows are exact stencils over points: row
+        # (k, joint, comp) is a frame-stencil gain times the root-relative
+        # (or root-only) point components. Settling and orientation are
+        # nonlinear (body axes mix components), so they stay on probes whose
+        # frames are recoverable arithmetically from the row index.
+        J3 = joints * 3
+        point_idx = np.arange(J3)
+        root_cols = rig.root * 3 + (point_idx % 3)
+        root_removed = eye(J3, format='csr') - csr_matrix(
+            (np.ones(J3), (point_idx, root_cols)), shape=(J3, J3))
+        accel_gain = 10. / np.repeat(acceleration_fit_scale, 3)
+        root_factor = 4. if body_support.get('required') else 1.
+        J_accel_pt = kron(d2, csr_matrix(np.diag(accel_gain)) @ root_removed)
+        J_jerk_pt = kron(d3, csr_matrix(np.diag(np.full(J3, (fps * .10) ** 3 / scale))) @ root_removed)
+        J_root_acc_pt = kron(d2, csr_matrix(
+            (np.full(3, root_factor * (fps * .10) ** 2 * np.sqrt(joints) / scale),
+             (np.arange(3), rig.root * 3 + np.arange(3))), shape=(3, J3)))
+        J_root_jerk_pt = kron(d3, csr_matrix(
+            (np.full(3, root_factor * (fps * .07) ** 3 * np.sqrt(joints) / scale),
+             (np.arange(3), rig.root * 3 + np.arange(3))), shape=(3, J3)))
+        world_gain = 10. / (TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt((count - 3) * J3))
+        J_world_pt = kron(world_d3, csr_matrix(np.diag(np.full(J3, world_gain))))
+
+        base_so = np.r_[settling_rows(candidate), orientation_rows(candidate)]
+        L_s = settling_rows(candidate).size
+        X_s = max(L_s // max(count - 1, 1), 1)
+        supports_so = []
+        for j in range(joints):
+            probes = candidate.copy()
+            probes[:, j, :] += fd_step
+            supports_so.append((np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) != 0.)
+        so_rows, so_cols, so_entries = [], [], []
+        X_o = max((base_so.size - L_s) // max(count - 2, 1), 1)
+        for group in joint_colors(supports_so):
+            for comp in range(3):
+                for c in range(3):
+                    frames = np.arange(c, count, 3)
+                    probes = candidate.copy()
+                    for j in group:
+                        probes[frames, j, comp] += fd_step
+                    diff = (np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) / fd_step
+                    for j in group:
+                        hit = np.nonzero(np.where(supports_so[j], diff, 0.))[0]
+                        if not hit.size:
+                            continue
+                        frames_hit = np.empty(hit.size, dtype=int)
+                        settle_mask = hit < L_s
+                        ks = hit[settle_mask] // X_s
+                        # settling row k reads frames k, k+1 and orientation row
+                        # k reads k, k+1, k+2: this shift class perturbed exactly
+                        # one frame of each stencil.
+                        frames_hit[settle_mask] = ks + (ks % 3 != c)
+                        ko = (hit[~settle_mask] - L_s) // X_o
+                        frames_hit[~settle_mask] = ko + (c - ko) % 3
+                        so_rows.append(hit)
+                        so_cols.append((frames_hit * joints + j) * 3 + comp)
+                        so_entries.append(diff[hit])
+        J_settle_orient = sparse_from(so_entries, so_rows, so_cols,
+                                      (base_so.size, count * joints * 3))
+        J_temporal = vstack([J_accel_pt, J_jerk_pt, J_settle_orient[:L_s],
+                             J_root_acc_pt, J_root_jerk_pt, J_settle_orient[L_s:]],
+                            format='csr') @ fk
+        J_world = J_world_pt @ fk
+
+        sub_sections_list = subframe_point_sections(subframe, contact_weight, grip_weight)
+        base_sub_anat = subframe_anatomy_rows(unconstrained_subframe)
+        w_first3 = sum(section.shape[1] for section in sub_sections_list[:3])
+        w_sub_pts = sum(section.shape[1] for section in sub_sections_list)
+        w_sub_anat = base_sub_anat.shape[1]
+        w_sub_total = w_sub_pts + w_sub_anat
+
+        def subframe_composite(points, unconstrained):
+            return np.concatenate([subframe_point_rows(points, contact_weight, grip_weight),
+                                   subframe_anatomy_rows(unconstrained)], axis=1)
+        base_sub = subframe_composite(subframe, unconstrained_subframe)
+        J_sub_mixed = colored_composite_probe(
+            subframe_composite, base_sub, [subframe, unconstrained_subframe],
+            [(0, w_sub_pts, 0), (w_sub_pts, w_sub_total, 1)], 1)
+        subframe_samples = base_sub.shape[0]
+        sub_rows = np.arange(subframe_samples * w_sub_total).reshape(subframe_samples, w_sub_total)
+        J_hermite_rows, J_hermite_columns, J_hermite_entries = [], [], []
+        probe_groups = [(comp,) for comp in range(3)] + [
+            (3 + 3 * jr + comp,) for jr in range(n_rot) for comp in range(3)]
+        for c in range(4):
+            frames = np.arange(c, count, 4)
+            for group in probe_groups:
+                probes = coordinates.copy()
+                probes[frames, group[0]] += fd_step
+                diff = (sample_rig_coordinates(
+                    {**playback_rig, 'coordinates': probes}, subframe_cursors, wrap=cyclic)
+                    - subframe_coordinates) / fd_step
+                ir, out = np.nonzero(diff)
+                if not ir.size:
+                    continue
+                # The responding frame is the cursor stencil frame in this
+                # shift class; boundary cursors with duplicate/missing stencil
+                # frames are resolved per row and rows without a match drop out.
+                stencil_frames = neighbors[ir]
+                match = stencil_frames % 4 == c
+                keep = np.flatnonzero(match.any(axis=1))
+                if not keep.size:
+                    continue
+                ir, out = ir[keep], out[keep]
+                frames_hit = stencil_frames[keep, match[keep].argmax(axis=1)]
+                J_hermite_rows.append(ir * rig.width + out)
+                J_hermite_columns.append(frames_hit * rig.width + group[0])
+                J_hermite_entries.append(diff[ir, out])
+        J_hermite = sparse_from(J_hermite_entries, J_hermite_rows, J_hermite_columns,
+                                (subframe_count * rig.width, count * rig.width))
+        fk_sub = rig.fk_jacobian(subframe_coordinates)
+        fk_sub_unc = rig.fk_jacobian(subframe_coordinates, project_socket=False)
+        J_sub_src = vstack([J_sub_mixed[sub_rows[:, :w_sub_pts].ravel()] @ fk_sub,
+                            J_sub_mixed[sub_rows[:, w_sub_pts:].ravel()] @ fk_sub_unc],
+                           format='csr') @ J_hermite
+        # point_rows appends subframe anatomy after the point sections, so the
+        # composite row order already matches the residual exactly.
+        J_sub = J_sub_src
+
+        parts = [J_pf, J_temporal, J_sub]
+        if cyclic:
+            def seam_flat(points):
+                closure, excess, velocity = seam_rows(points)
+                return np.r_[closure.ravel(), excess.ravel(), velocity.ravel()]
+            base_seam = seam_flat(candidate)
+            seam_rows_idx, seam_cols_idx, seam_entries = [], [], []
+            for frame in (0, 1, count - 2, count - 1):
+                for j in range(joints):
+                    for comp in range(3):
+                        probes = candidate.copy()
+                        probes[frame, j, comp] += fd_step
+                        diff = (seam_flat(probes) - base_seam) / fd_step
+                        dr = np.nonzero(diff)[0]
+                        if not dr.size:
+                            continue
+                        seam_rows_idx.append(dr)
+                        seam_cols_idx.append(np.full(dr.size, (frame * joints + j) * 3 + comp))
+                        seam_entries.append(diff[dr])
+            parts.append(sparse_from(seam_entries, seam_rows_idx, seam_cols_idx,
+                                     (base_seam.size, count * rig.width)) @ fk)
+        parts.append(J_world)
+        return vstack(parts, format='csr')
+
+    solver_options = {}
+    if hybrid_jacobian_enabled:
+        solver_options['local_jacobian'] = hybrid_jacobian
+        report['hybridJacobian'] = True
     if support_articulation_tracks:
-        from functools import partial
-        trajectory_solver = partial(
-            solve_trajectory,
-            tail_jacobian=lambda values: support_range_jacobian(
-                values, rig, support_articulation_tracks))
+        solver_options['tail_jacobian'] = lambda values: support_range_jacobian(
+            values, rig, support_articulation_tracks)
+
+    trajectory_solver = partial(solve_trajectory, **solver_options) if solver_options else solve_trajectory
     try:
         if fit_should_yield_for_priority() or monotonic()-started > timeout_seconds:
             raise TimeoutError
