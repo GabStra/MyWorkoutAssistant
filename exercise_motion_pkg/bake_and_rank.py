@@ -497,7 +497,7 @@ FIRST_ATTEMPT_MEDIUM_TRACKABILITY = 0.65
 FIRST_ATTEMPT_HIGH_RECONSTRUCTION_PRIORITY = 0.70
 KINEMATIC_CUT_STRATEGY = "kinematic_cycle"
 KINEMATIC_CUT_MAX_PROPOSALS = 2
-SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 15
+SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 16
 SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS = 8
 SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS = 3
 PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
@@ -21261,6 +21261,40 @@ def source_cut_deterministic_confirmation_candidates(
             selected_scorecard.get("passed")
         ):
             selected = None
+    def unreviewed_tier(candidates_so_far: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Scorecard-unreviewed eligible candidates are the last tier: the VLM
+        # sometimes scores only its favorite cut, and if that cut then fails
+        # exact pose confirmation the source would dead-end even when a
+        # complete candidate was discovered. Exact pose review owns
+        # completeness, and an unreviewed candidate carries no rejection.
+        seen = {
+            (
+                round(float(candidate.get("startSeconds") or 0.0), 3),
+                round(float(candidate.get("endSeconds") or 0.0), 3),
+            )
+            for candidate in candidates_so_far
+        }
+        tier = []
+        for candidate in all_candidates:
+            candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId"))
+            if not candidate_id or candidate_id in scorecards:
+                continue
+            window_key = (
+                round(float(candidate.get("startSeconds") or 0.0), 3),
+                round(float(candidate.get("endSeconds") or 0.0), 3),
+            )
+            if window_key in seen:
+                continue
+            seen.add(window_key)
+            tier.append(candidate)
+        tier.sort(
+            key=lambda candidate: -(
+                float(candidate.get("endSeconds") or 0.0)
+                - float(candidate.get("startSeconds") or 0.0)
+            )
+        )
+        return tier[:SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS]
+
     if selected is None:
         # Deterministic pose can confirm an approved semantic window, but it
         # cannot recover a window explicitly rejected for the wrong movement,
@@ -21271,7 +21305,8 @@ def source_cut_deterministic_confirmation_candidates(
             # A scorecard that passes nothing on completeness grounds does not
             # dead-end the source: its disapproved cuts still go to exact pose
             # confirmation, which is the authority on cycle completeness.
-            return source_cut_scorecard_fallback_candidates(payload, scorecards=scorecards)
+            fallback = source_cut_scorecard_fallback_candidates(payload, scorecards=scorecards)
+            return (fallback + unreviewed_tier(fallback))[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
         selected_id = normalize_source_cut_candidate_id(selected.get("candidateId"))
     alternatives: list[dict[str, Any]] = []
     seen_windows = {
@@ -21364,6 +21399,7 @@ def source_cut_deterministic_confirmation_candidates(
         selected,
         *alternatives,
         *repair_expansions[:SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS],
+        *unreviewed_tier([selected, *alternatives]),
     ]
     if max_candidates is None:
         return ordered_candidates[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
