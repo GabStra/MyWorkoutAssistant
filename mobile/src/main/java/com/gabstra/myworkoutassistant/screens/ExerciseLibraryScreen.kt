@@ -350,7 +350,11 @@ fun ExerciseLibraryScreen(
                                     onLongClick = onItemLongClick,
                                 ),
                         ) {
-                        Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -364,7 +368,7 @@ fun ExerciseLibraryScreen(
                                     },
                                     modifier = Modifier.size(72.dp),
                                 )
-                                Spacer(Modifier.width(Spacing.md))
+                                Spacer(Modifier.width(Spacing.sm))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = family.name,

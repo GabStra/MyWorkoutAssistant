@@ -198,6 +198,7 @@ internal class BottomPaddedStartVerticalAxis(
     size = size,
     titleComponent = titleComponent,
     title = title,
+    titlePosition = BaseAxis.TitlePosition.Side,
     tickPosition = tickPosition,
     lineDrawingOrder = lineDrawingOrder,
 ) {
