@@ -38,6 +38,8 @@ PARTIAL_BODYWEIGHT_NAME_HINTS = (
     "body row",
 )
 
+CONTRACT_REPAIR_MAX_WORKERS = 4
+
 
 def _extract_exercise_library_from_messages(messages):
     marker = "EXERCISE LIBRARY (schema v2):\n"
@@ -840,42 +842,60 @@ def execute_workout_generation(
             step_start_time = time.time()
             _gen_print("Step 3: Emitting exercise definitions...")
             exercise_entries = [ex for ex in plan_index.get("exercises", []) if ex.get("id")]
-            # Prepare equipment subsets for each exercise
-            exercise_items_list = []
-            for ex_entry in exercise_entries:
-                ex_id = ex_entry.get("id")
+            exercise_entry_by_id = {
+                ex["id"]: ex for ex in exercise_entries if ex.get("id")
+            }
+
+            def exercise_emitter_args(
+                ex_id,
+                *,
+                contract_error_context=None,
+                max_attempts=None,
+            ):
+                ex_entry = exercise_entry_by_id.get(ex_id, {})
                 equipment_id = ex_entry.get("equipmentId")
                 equipment_subset = []
-                if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
+                if (
+                    equipment_id
+                    and equipment_id in equipment_items
+                    and isinstance(equipment_items[equipment_id], dict)
+                ):
                     equipment_subset = [equipment_items[equipment_id]]
-                accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
                 accessory_subset = [
                     accessory_items[acc_id]
-                    for acc_id in accessory_ids
-                    if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
+                    for acc_id in ex_entry.get("requiredAccessoryEquipmentIds") or []
+                    if acc_id in accessory_items
+                    and isinstance(accessory_items[acc_id], dict)
                 ]
-                
-                exercise_items_list.append((
-                    ex_id,
-                    {
-                        "client": client,
-                        "context_summary": context_summary,
-                        "plan_index": plan_index,
-                        "equipment_subset": equipment_subset,
-                        "accessory_subset": accessory_subset if accessory_subset else None,
-                        "use_reasoner": use_reasoner_for_emitting,
-                        "provided_equipment": provided_equipment,
-                        "allow_educated_load_guesses": allow_educated_load_guesses,
-                        "logger": logger
-                    }
-                ))
+                args = {
+                    "client": client,
+                    "context_summary": context_summary,
+                    "plan_index": plan_index,
+                    "equipment_subset": equipment_subset,
+                    "accessory_subset": accessory_subset or None,
+                    "use_reasoner": use_reasoner_for_emitting,
+                    "provided_equipment": provided_equipment,
+                    "allow_educated_load_guesses": allow_educated_load_guesses,
+                    "logger": logger,
+                }
+                if contract_error_context is not None:
+                    args["contract_error_context"] = contract_error_context
+                if max_attempts is not None:
+                    args["max_attempts"] = max_attempts
+                return args
+
+            # Prepare equipment subsets for each exercise
+            exercise_items_list = [
+                (ex_id, exercise_emitter_args(ex_id))
+                for ex_id in exercise_entry_by_id
+            ]
             try:
                 exercise_results, exercise_convs = parallel_emit_items(
                     exercise_items_list,
                     emit_exercise_definition,
                     "Step 3: Emitting exercises",
                     logger=logger,
-                    fail_fast=True,
+                    fail_fast=False,
                 )
             except Exception as e:
                 _log_step_error("Step 3", e)
@@ -884,44 +904,6 @@ def execute_workout_generation(
             # Filter out None results (cancelled/failed items)
             exercise_definitions = {k: v for k, v in exercise_results.items() if v is not None}
 
-            # LLM-only retry pass for failed/missing exercises (no deterministic auto-fix).
-            expected_exercise_ids = [ex.get("id") for ex in exercise_entries if ex.get("id")]
-            missing_exercise_ids = [ex_id for ex_id in expected_exercise_ids if ex_id not in exercise_definitions]
-            if missing_exercise_ids:
-                _gen_print(f"  → Retrying {len(missing_exercise_ids)} failed exercise(s) with LLM...")
-                exercise_entry_by_id = {ex.get("id"): ex for ex in exercise_entries if ex.get("id")}
-                for ex_id in missing_exercise_ids:
-                    ex_entry = exercise_entry_by_id.get(ex_id, {})
-                    equipment_id = ex_entry.get("equipmentId")
-                    equipment_subset = []
-                    if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
-                        equipment_subset = [equipment_items[equipment_id]]
-                    accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
-                    accessory_subset = [
-                        accessory_items[acc_id]
-                        for acc_id in accessory_ids
-                        if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
-                    ]
-                    try:
-                        retry_result, retry_conv = emit_exercise_definition(
-                            ex_id,
-                            client=client,
-                            context_summary=context_summary,
-                            plan_index=plan_index,
-                            equipment_subset=equipment_subset,
-                            accessory_subset=accessory_subset if accessory_subset else None,
-                            use_reasoner=use_reasoner_for_emitting,
-                            provided_equipment=provided_equipment,
-                            allow_educated_load_guesses=allow_educated_load_guesses,
-                            logger=logger,
-                        )
-                        if retry_conv is not None:
-                            aggregated_emitter_conversations.append(retry_conv)
-                        if retry_result is not None:
-                            exercise_definitions[ex_id] = retry_result
-                    except Exception:
-                        # Keep missing; contract validation below will report exact failures.
-                        pass
             contract_retry_budget = 2
             contract_retry_count = 0
             while True:
@@ -953,46 +935,42 @@ def execute_workout_generation(
                         f"  → Contract retry {contract_retry_count}/{contract_retry_budget}: "
                         f"re-emitting {len(retry_ids)} exercise(s) due to Step 3 mismatches..."
                     )
-                    exercise_entry_by_id = {ex.get("id"): ex for ex in exercise_entries if ex.get("id")}
+                    exercise_retry_items = []
                     for ex_id in sorted(retry_ids):
-                        ex_entry = exercise_entry_by_id.get(ex_id, {})
                         per_ex_error_lines = [
                             line.strip()
                             for line in err_text.splitlines()
                             if ex_id in line
                         ]
                         per_ex_error_context = "\n".join(per_ex_error_lines) if per_ex_error_lines else err_text
-                        equipment_id = ex_entry.get("equipmentId")
-                        equipment_subset = []
-                        if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
-                            equipment_subset = [equipment_items[equipment_id]]
-                        accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
-                        accessory_subset = [
-                            accessory_items[acc_id]
-                            for acc_id in accessory_ids
-                            if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
-                        ]
-                        try:
-                            retry_result, retry_conv = emit_exercise_definition(
+                        exercise_retry_items.append(
+                            (
                                 ex_id,
-                                client=client,
-                                context_summary=context_summary,
-                                plan_index=plan_index,
-                                equipment_subset=equipment_subset,
-                                accessory_subset=accessory_subset if accessory_subset else None,
-                                use_reasoner=use_reasoner_for_emitting,
-                                provided_equipment=provided_equipment,
-                                allow_educated_load_guesses=allow_educated_load_guesses,
-                                logger=logger,
-                                contract_error_context=per_ex_error_context,
+                                exercise_emitter_args(
+                                    ex_id,
+                                    contract_error_context=per_ex_error_context,
+                                    max_attempts=1,
+                                ),
                             )
-                            if retry_conv is not None:
-                                aggregated_emitter_conversations.append(retry_conv)
-                            if retry_result is not None:
-                                exercise_definitions[ex_id] = retry_result
-                        except Exception:
-                            # Keep previous value; next contract validation reports unresolved issues.
-                            pass
+                        )
+                    retry_results, retry_conversations = parallel_emit_items(
+                        exercise_retry_items,
+                        emit_exercise_definition,
+                        "Step 3: Repairing exercise definitions",
+                        max_workers=min(
+                            CONTRACT_REPAIR_MAX_WORKERS, len(exercise_retry_items)
+                        ),
+                        logger=logger,
+                        fail_fast=False,
+                    )
+                    aggregated_emitter_conversations.extend(retry_conversations)
+                    exercise_definitions.update(
+                        {
+                            ex_id: result
+                            for ex_id, result in retry_results.items()
+                            if result is not None
+                        }
+                    )
             step_time = time.time() - step_start_time
             timing_data["step_times"][3] = step_time
             timing_data["total_time_seconds"] += step_time
@@ -1068,7 +1046,10 @@ def execute_workout_generation(
                         f"  → Contract retry {contract_retry_count}/{contract_retry_budget}: "
                         f"re-emitting {len(retry_ids)} workout structure(s) due to Step 4 mismatches..."
                     )
-                    workout_entry_by_id = {wo.get("id"): wo for wo in workout_entries if wo.get("id")}
+                    workout_entry_by_id = {
+                        wo["id"]: wo for wo in workout_entries if wo.get("id")
+                    }
+                    workout_retry_items = []
                     for wo_id in sorted(retry_ids):
                         wo_entry = workout_entry_by_id.get(wo_id, {})
                         wo_name = wo_entry.get("name")
@@ -1078,23 +1059,38 @@ def execute_workout_generation(
                             if wo_id in line or (wo_name and wo_name in line)
                         ]
                         per_wo_error_context = "\n".join(per_wo_error_lines) if per_wo_error_lines else err_text
-                        try:
-                            retry_result, retry_conv = emit_workout_structure(
+                        workout_retry_items.append(
+                            (
                                 wo_id,
-                                client=client,
-                                context_summary=context_summary,
-                                plan_index=plan_index,
-                                exercise_index=exercise_definitions,
-                                use_reasoner=use_reasoner_for_emitting,
-                                logger=logger,
-                                contract_error_context=per_wo_error_context,
+                                {
+                                    "client": client,
+                                    "context_summary": context_summary,
+                                    "plan_index": plan_index,
+                                    "exercise_index": exercise_definitions,
+                                    "use_reasoner": use_reasoner_for_emitting,
+                                    "logger": logger,
+                                    "contract_error_context": per_wo_error_context,
+                                },
                             )
-                            if retry_conv is not None:
-                                aggregated_emitter_conversations.append(retry_conv)
-                            if retry_result is not None:
-                                workout_structures[wo_id] = retry_result
-                        except Exception:
-                            pass
+                        )
+                    retry_results, retry_conversations = parallel_emit_items(
+                        workout_retry_items,
+                        emit_workout_structure,
+                        "Step 4: Repairing workout structures",
+                        max_workers=min(
+                            CONTRACT_REPAIR_MAX_WORKERS, len(workout_retry_items)
+                        ),
+                        logger=logger,
+                        fail_fast=False,
+                    )
+                    aggregated_emitter_conversations.extend(retry_conversations)
+                    workout_structures.update(
+                        {
+                            wo_id: result
+                            for wo_id, result in retry_results.items()
+                            if result is not None
+                        }
+                    )
             step_time = time.time() - step_start_time
             timing_data["step_times"][4] = step_time
             timing_data["total_time_seconds"] += step_time

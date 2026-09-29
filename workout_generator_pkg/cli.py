@@ -949,6 +949,7 @@ def emit_exercise_definition(
     logger=None,
     contract_error_context=None,
     allow_educated_load_guesses=True,
+    max_attempts=4,
 ):
     """
     Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
@@ -964,10 +965,14 @@ def emit_exercise_definition(
                      If False, use chat model (faster, 8K max tokens).
         provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
         logger: Optional ConversationLogger for debug logging
+        max_attempts: Maximum emissions before returning a validation/parsing error
     
     Returns:
         dict: Single ExerciseDefinition with placeholder IDs, or None if cancelled
     """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least one")
+
     exercise_entry = None
     for ex in plan_index.get("exercises", []):
         if ex.get("id") == exercise_id:
@@ -1062,7 +1067,6 @@ def emit_exercise_definition(
         "Output only the exercise object JSON, not a wrapper."
     )
 
-    max_attempts = 4
     attempt = 1
     last_error = None
     last_content = None
