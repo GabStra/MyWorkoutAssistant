@@ -193,6 +193,13 @@ fun CustomHorizontalPager(
                 }
             }
         } else {
+            val hasMovingPlaceholder = movingPlaceholder != null
+            val isMoving by remember(pagerState, hasMovingPlaceholder) {
+                derivedStateOf {
+                    hasMovingPlaceholder &&
+                        (pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f)
+                }
+            }
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier
@@ -202,15 +209,13 @@ fun CustomHorizontalPager(
                 userScrollEnabled = userScrollEnabled,
                 beyondViewportPageCount = beyondViewportPageCount,
             ) { page ->
-                val isMoving = movingPlaceholder != null &&
-                    (pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
                     if (isMoving) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            movingPlaceholder.invoke(this)
+                            movingPlaceholder?.invoke(this)
                         }
                     } else if (animatePages) {
                         CustomAnimatedPage(

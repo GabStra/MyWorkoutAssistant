@@ -1065,17 +1065,17 @@ internal fun buildExercisesPagePreparedRows(
             )
         } else {
             val displayRow = slot.displayRow
-                buildExercisesPageRowModel(
-                    viewModel = viewModel,
-                    displayRow = displayRow,
-                    rowIndex = expandedRowIndex,
-                    sideBadge = unilateralSideBadgeByRowIndex[slot.sourceRowIndex],
-                    hasUnconfirmedLoadSelectionForExercise = (displayRow as? ExerciseSetDisplayRow.SetRow)
-                        ?.state
-                        ?.exerciseId
-                        ?.let { hasUnconfirmedLoadByExerciseId[it] }
-                        ?: false
-                )
+            buildExercisesPageRowModel(
+                viewModel = viewModel,
+                displayRow = displayRow,
+                rowIndex = expandedRowIndex,
+                sideBadge = unilateralSideBadgeByRowIndex[slot.sourceRowIndex],
+                hasUnconfirmedLoadSelectionForExercise = (displayRow as? ExerciseSetDisplayRow.SetRow)
+                    ?.state
+                    ?.exerciseId
+                    ?.let { hasUnconfirmedLoadByExerciseId[it] }
+                    ?: false
+            )
         }
     }
 
