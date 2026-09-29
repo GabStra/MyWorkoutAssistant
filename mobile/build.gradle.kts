@@ -147,14 +147,12 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.8")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
 
     // AndroidX core
-    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.concurrent:concurrent-futures:1.3.0")
-    implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
@@ -170,10 +168,10 @@ dependencies {
     // Accompanist (permissions only; system UI controller replaced by enableEdgeToEdge)
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
 
-    implementation("androidx.room:room-runtime:2.8.4")
-    ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
-    implementation("com.openai:openai-java:4.50.0")
+    implementation("androidx.room:room-runtime:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.1")
+    implementation("com.openai:openai-java:4.70.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Polar SDK + Rx
@@ -182,7 +180,7 @@ dependencies {
 
     // Misc
     implementation("com.google.code.gson:gson:2.14.0")
-    implementation("com.patrykandpatrick.vico:compose:3.2.3")
+    implementation("com.patrykandpatrick.vico:compose:3.3.1")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")

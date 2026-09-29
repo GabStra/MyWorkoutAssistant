@@ -59,21 +59,20 @@ android {
 
 dependencies {
     implementation("androidx.compose.runtime:runtime")
-    implementation("androidx.compose.ui:ui-graphics:1.12.0")
-    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.compose.ui:ui-graphics:1.12.1")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
-    ksp("androidx.room:room-compiler:2.8.4")
-    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
 
     // Test dependencies
     testImplementation("junit:junit:4.13.2")
-    testImplementation("androidx.room:room-testing:2.8.4")
+    testImplementation("androidx.room:room-testing:2.8.5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
-    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("org.robolectric:robolectric:4.17")
 }
