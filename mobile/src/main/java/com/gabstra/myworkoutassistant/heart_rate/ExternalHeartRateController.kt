@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattConnectionSettings
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
@@ -15,8 +16,10 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
@@ -112,12 +115,13 @@ abstract class StandardBleHeartRateViewModel(
                 mutableConnectionState.value = ExternalHeartRateConnectionState.Connecting(
                     "Connecting to $label…",
                 )
-                val pendingGatt = result.device.connectGatt(
-                    context,
-                    false,
-                    createGattCallback(label),
-                    BluetoothDevice.TRANSPORT_LE,
-                )
+                val pendingGatt = connectGatt(result.device, context, createGattCallback(label))
+                    ?: run {
+                        mutableConnectionState.value = ExternalHeartRateConnectionState.Error(
+                            "Couldn't connect to $label.",
+                        )
+                        return
+                    }
                 bluetoothGatt = pendingGatt
                 mainHandler.postDelayed({
                     if (
@@ -235,6 +239,44 @@ abstract class StandardBleHeartRateViewModel(
     }
 
     @SuppressLint("MissingPermission")
+    private fun connectGatt(
+        device: BluetoothDevice,
+        context: Context,
+        callback: BluetoothGattCallback,
+    ): BluetoothGatt? = if (Build.VERSION.SDK_INT >= GattConnectionSettingsApi) {
+        connectGattWithConnectionSettings(device, context, callback)
+    } else {
+        connectGattLegacy(device, context, callback)
+    }
+
+    @RequiresApi(GattConnectionSettingsApi)
+    @SuppressLint("MissingPermission")
+    private fun connectGattWithConnectionSettings(
+        device: BluetoothDevice,
+        context: Context,
+        callback: BluetoothGattCallback,
+    ): BluetoothGatt? {
+        val settings = BluetoothGattConnectionSettings.Builder()
+            .setAutoConnectEnabled(false)
+            .setTransport(BluetoothDevice.TRANSPORT_LE)
+            .build()
+        return device.connectGatt(settings, context.mainExecutor, callback)
+    }
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission")
+    private fun connectGattLegacy(
+        device: BluetoothDevice,
+        context: Context,
+        callback: BluetoothGattCallback,
+    ): BluetoothGatt? = device.connectGatt(
+        context,
+        false,
+        callback,
+        BluetoothDevice.TRANSPORT_LE,
+    )
+
+    @SuppressLint("MissingPermission")
     private fun matchesConfiguredDevice(
         result: ScanResult,
         config: ExternalHeartRateConfig,
@@ -267,6 +309,7 @@ abstract class StandardBleHeartRateViewModel(
     }
 
     private companion object {
+        const val GattConnectionSettingsApi = 37
         const val ScanTimeoutMillis = 15_000L
         const val ConnectionTimeoutMillis = 15_000L
         val HeartRateServiceUuid: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
