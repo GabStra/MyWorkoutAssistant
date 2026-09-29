@@ -61,10 +61,10 @@ def test_definition_contract_still_reuses_cache_and_top_level_seed(tmp_path, tar
     assert module.load_seed_exercise_motion_contract_from_candidates_json(seed, target)
 
 
-def test_single_dumbbell_rule_reaches_prompts_and_invalidates_two_hand_cache(tmp_path):
+def test_single_dumbbell_rule_reaches_prompts_and_invalidates_two_arm_cache(tmp_path):
     target = module.ExerciseEntry(exercise_id="press", slug="press", name="Single Dumbbell Incline Press")
     contract = {"status": "generated", "source": "llm", "exerciseName": target.name,
-                "advisoryText": "Press and return. Reject holding the dumbbell with both hands.",
+                "advisoryText": "Press the single dumbbell with controlled range.",
                 "validStartState": "Hold the dumbbell in one hand; free hand supports the bench.",
                 "youtubeQueryAliases": [target.name]}
     settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
@@ -78,12 +78,17 @@ def test_single_dumbbell_rule_reaches_prompts_and_invalidates_two_hand_cache(tmp
                    module.build_candidate_semantic_gate_prompt(target, candidate),
                    module.exercise_motion_contract_prompt_body(contract)):
         assert "exactly one dumbbell and one working arm" in prompt
+        assert "Set handRelationship to single" in prompt
+        assert "A two-handed grip or bilateral dumbbell action is a different movement" in prompt
     saved = json.loads(cache_path.read_text())
-    saved["contract"]["validStartState"] = "Hold the dumbbell with both hands."
+    saved["contract"]["validStartState"] = "Grip the dumbbell with both hands."
     cache_path.write_text(json.dumps(saved), encoding="utf-8")
     assert module.load_cached_exercise_motion_contract(target, settings) is None
     assert not module.exercise_motion_contract_is_usable(saved["contract"])
-    assert any("one working arm" in issue for issue in
+    assert any("more than one working arm" in issue for issue in
+               module.exercise_motion_contract_quality_issues(saved["contract"], exercise=target))
+    saved["contract"]["handRelationship"] = "rigid_pair"
+    assert any("more than one working arm" in issue for issue in
                module.exercise_motion_contract_quality_issues(saved["contract"], exercise=target))
 
 
@@ -92,7 +97,8 @@ def test_single_dumbbell_discovery_rechecks_legacy_reviews_once():
     candidate = module.YouTubeCandidate(url="https://example.test/demo", video_id="demo",
         title=target.name, channel=None, duration_seconds=20, view_count=None,
         upload_date=None, description_snippet=None, thumbnail=None,
-        vision_payload={"semanticGate": {"passed": False}}, status="rejected")
+        vision_payload={"singleDumbbellNamingPolicyVersion": 2,
+                        "semanticGate": {"passed": False}}, status="rejected")
     settings = module.YouTubeRankingSettings(semantic_gate_enabled=True,
         pose_prefilter_enabled=False, rank_with_vision=False)
     calls = []
@@ -104,6 +110,8 @@ def test_single_dumbbell_discovery_rechecks_legacy_reviews_once():
                   semantic_gate=gate, pose_ranker=None, vision_ranker=None)
     result = module.run_youtube_candidate_review_batches(**kwargs)
     assert calls == ["demo"]
+    reviewed = result.debug_candidates_by_key[candidate.key()]
+    assert reviewed.vision_payload["singleDumbbellNamingPolicyVersion"] == 3
     kwargs["debug_candidates_by_key"] = result.debug_candidates_by_key
     module.run_youtube_candidate_review_batches(**kwargs)
     assert calls == ["demo"]

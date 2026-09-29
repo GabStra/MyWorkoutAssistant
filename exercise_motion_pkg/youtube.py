@@ -4320,12 +4320,12 @@ def callable_accepts_keyword(callback: Callable[..., Any], keyword: str) -> bool
 
 
 def single_dumbbell_naming_requirement(exercise_name: str) -> str:
-    """The library owner's explicit convention, distinct from implement count alone."""
+    """The library owner's explicit one-implement, one-working-arm convention."""
     if normalize_exercise_name(exercise_name).startswith("single dumbbell "):
-        return ("Library naming requirement: Single Dumbbell means exactly one dumbbell is used. "
-                "The grip may be one-handed or two-handed as the movement requires — a two-handed grip on "
-                "the single dumbbell is a valid form of this variant, not a different exercise. "
-                "Only 'Single-Arm' naming means one working arm.\n")
+        return ("Library naming requirement: Single Dumbbell means exactly one dumbbell and one working arm. "
+                "Only one hand grips and moves the dumbbell; the other arm is not a second working arm and may "
+                "support the body only when needed. Set handRelationship to single. A two-handed grip or bilateral "
+                "dumbbell action is a different movement and is not valid for this target.\n")
     return ""
 
 
@@ -4377,6 +4377,10 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "or harder support of the same movement. Do not choose standing, seated, single-arm, band-assisted, or similar "
         "qualifiers unless the exercise name or motion context names that qualifier. If support cannot be uniquely "
         "determined from the name and context, set supportMode to any rather than guessing.\n"
+        "Treat a named support or surface qualifier as part of the target movement. When the name specifies a bench, "
+        "box, wall, rings, incline, decline, or similar support, describe how the body contacts or uses that support; "
+        "do not silently replace it with the common floor or standing form. For each required accessory, determine "
+        "whether it supports the body, anchors the movement, or is held as an implement from the target name and context.\n"
         "validStartState is the posture before the first exercise-defining movement. requiredPhases lists every visible "
         "phase in time order through the natural finish. Choose completionMode return_to_start only when one normal "
         "execution visibly returns to the same posture. Choose distinct_end_state when one normal execution ends in a "
@@ -4446,6 +4450,7 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "a lowering phase as extension when it visibly closes the elbow or knee angle.\n"
         "Equipment and accessory context is part of the exact movement identity. Use it to distinguish seated, standing, supported, machine, and other adjacent variants, but do not invent a qualifier unsupported by the context. "
         "Every item in requiredAccessories is required by this exercise definition, not optional background context. The described posture and phases must actually use each required accessory; do not choose a same-named movement variant that does not use it.\n"
+        "A required accessory may be held, anchored, or used to support the body. Do not infer suspension, hanging, or a body-support posture from the accessory name alone. Determine its role from the normal execution of the named exercise; if that role or posture is not established, use supportMode any and avoid adding a posture requirement.\n"
     )
 
 
@@ -5334,7 +5339,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 25
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 28
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 13
 
 
@@ -5805,6 +5810,23 @@ def exercise_motion_contract_quality_issues(
     posture_text = " ".join(posture_state_texts)
     issues = exercise_motion_contract_identity_issues(contract, exercise=exercise)
     target_name = exercise.name if exercise is not None else str(contract.get("exerciseName") or "")
+    single_dumbbell_target = normalize_exercise_name(target_name).startswith("single dumbbell ")
+    if single_dumbbell_target and re.search(
+        r"\b(?:two|2)\s+dumbbells?\b|\bdumbbells?\s+in\s+(?:each|both)\s+hands\b|"
+        r"\bone\s+dumbbell\s+in\s+each\s+hand\b|\b(?:each|both)\s+hands?\s+(?:holds?|holding)\s+(?:a|one)\s+dumbbell\b",
+        contract_text,
+    ):
+        issues.append("Single Dumbbell contract describes more than one implement")
+    if single_dumbbell_target and (
+        re.search(
+            r"\b(?:two[ -]handed|both hands?|each hand)\b.{0,60}\b(?:grip|hold|use|move|press|row|curl|raise|extend|pull)\b.{0,40}\bdumbbell\b|"
+            r"\b(?:grip|hold|use|move|press|row|curl|raise|extend|pull)\b.{0,40}\bdumbbell\b.{0,60}\b(?:with|in)\s+(?:both|two)\s+hands\b|"
+            r"\bbilateral\b.{0,60}\bdumbbell\b|\bboth arms?\b.{0,60}\bdumbbell\b",
+            contract_text,
+        )
+        or str(contract.get("handRelationship") or "").casefold() in {"rigid_pair", "independent"}
+    ):
+        issues.append("Single Dumbbell contract requires more than one working arm")
     if exercise_motion_contract_uses_candidate_evidence(contract):
         issues.append("candidate observations cannot define the requested exercise contract")
     issues += [
@@ -6823,7 +6845,7 @@ def run_youtube_candidate_review_batches(
         if single_dumbbell_naming_requirement(exercise.name):
             for candidate in [*pass_result.ranked, *(debug_by_key.get(item.key()) for item in batch)]:
                 if candidate is not None and isinstance(candidate.vision_payload, dict):
-                    candidate.vision_payload["singleDumbbellNamingPolicyVersion"] = 2
+                    candidate.vision_payload["singleDumbbellNamingPolicyVersion"] = 3
         for candidate in pass_result.ranked:
             reviewed_by_key[candidate.key()] = candidate
             debug_by_key[candidate.key()] = candidate
@@ -7229,12 +7251,34 @@ def prefetch_youtube_candidate_previews(
             if settings.single_exercise_name_query and exercise.name.strip()
             else build_youtube_queries_with_contract_aliases(exercise.name, cached_motion_contract)
         )
+        # Prefetch is speculative. Searching every generated query before any
+        # candidate has been reviewed duplicates discovery work and can spend
+        # minutes warming sources that are never considered. Warm the first
+        # review batch; discovery still has the remaining queries when that
+        # batch does not yield a suitable source.
+        prefetch_query_limit = 4
+        prefetch_queries = list(queries[:prefetch_query_limit])
+        contract_aliases = youtube_query_aliases_from_contract(cached_motion_contract)
+        alias_query = next((
+            query for query in queries
+            if any(quote_youtube_search_term(alias).casefold() in query.casefold()
+                   for alias in contract_aliases)
+        ), None)
+        if alias_query and alias_query not in prefetch_queries:
+            if len(prefetch_queries) >= prefetch_query_limit:
+                prefetch_queries[-1] = alias_query
+            else:
+                prefetch_queries.append(alias_query)
         search_result = collect_youtube_search_candidates(
-            queries=queries,
+            queries=prefetch_queries,
             settings=settings,
             search_fn=effective_search_fn,
             allow_transient_search_errors=True,
         )
+        attempted_query_keys = {
+            str(item.get("query") or "").casefold()
+            for item in [*search_result.search_attempts, *search_result.search_errors]
+        }
         prepared = [
             prepare_candidate_for_review(
                 exercise,
@@ -7252,6 +7296,11 @@ def prefetch_youtube_candidate_previews(
             else 0,
             settings.vision_candidates_per_exercise if settings.rank_with_vision else 0,
         )
+        # Preview downloads are speculative: discovery initially reviews one
+        # candidate batch and fetches later candidates on demand if needed.
+        # Warming the full pose/vision pool can download 24 videos before the
+        # first four are reviewed, even when one of those four is sufficient.
+        prefetch_limit = min(prefetch_limit, settings.resolved_candidate_review_batch_size())
         prefetched_candidates = ranked[: max(1, prefetch_limit)]
         preview_prefetcher(prefetched_candidates, settings)
         exercise_payloads.append(
@@ -7268,6 +7317,9 @@ def prefetch_youtube_candidate_previews(
                     str(attempt["query"])
                     for attempt in search_result.search_attempts
                     if str(attempt.get("query") or "").strip()
+                ],
+                "deferredQueries": [
+                    query for query in queries if query.casefold() not in attempted_query_keys
                 ],
                 "searchErrors": search_result.search_errors,
                 "searchAttempts": search_result.search_attempts,
@@ -8666,7 +8718,7 @@ def discover_and_rank_youtube_candidates(
     manifest["ranking"]["candidateDecisionsJsonlPath"] = str(decisions_path)
     manifest["ranking"]["sourceRejectionReviewPolicyVersion"] = 1
     manifest["ranking"]["staticHoldReviewPolicyVersion"] = 1
-    manifest["ranking"]["singleDumbbellNamingPolicyVersion"] = 2
+    manifest["ranking"]["singleDumbbellNamingPolicyVersion"] = 3
     manifest["ranking"]["poseCameraReviewPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     append_youtube_discovery_progress(
@@ -8702,7 +8754,7 @@ def candidate_has_debug_review_payload(
 ) -> bool:
     payload = candidate.vision_payload if isinstance(candidate.vision_payload, dict) else {}
     if (exercise is not None and single_dumbbell_naming_requirement(exercise.name)
-            and payload.get("singleDumbbellNamingPolicyVersion") != 2):
+            and payload.get("singleDumbbellNamingPolicyVersion") != 3):
         return False
     if pose_prefilter_review_incomplete(payload.get("posePrefilter")):
         return False

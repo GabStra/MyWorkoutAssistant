@@ -52,6 +52,30 @@ def review_prepared_source(candidate: bake.RankedCandidate, *, request: bake.Bak
             if repair.get("resolved") is True:
                 bake.cache_repaired_source_review(validation, repair)
                 return
+            if repair.get("valid") is True:
+                # A complete repair can resolve the disagreement negatively as
+                # well as positively. A categorical refutation of any required
+                # source claim is sufficient to reject this window; repeating
+                # the full multi-gate review cannot make that window usable.
+                refuted_reasons = []
+                origin_groups = repair.get("evidenceOriginGroups")
+                for claim in repair.get("evidenceClaims") or []:
+                    if not isinstance(claim, dict) or claim.get("valid") is not True:
+                        continue
+                    if str(claim.get("result") or "").casefold() != "refuted":
+                        continue
+                    claim_id = str(claim.get("id") or "")
+                    reasons = origin_groups.get(claim_id) if isinstance(origin_groups, dict) else None
+                    if isinstance(reasons, list):
+                        refuted_reasons.extend(str(reason) for reason in reasons if str(reason))
+                refuted_reasons = bake.dedupe_text(refuted_reasons)
+                if refuted_reasons:
+                    raise bake.SourceCandidateRejected(
+                        "Source disagreement review confirmed rejection: "
+                        + ", ".join(refuted_reasons),
+                        reason_tags=refuted_reasons,
+                        evidence={"validation": validation, "repair": repair},
+                    )
         incomplete = validation.get("reviewStatus") == "incomplete" or any(
             reason in {"two_scale_source_frame_generation_failed", "two_scale_source_frames_missing"}
             for reason in reasons)

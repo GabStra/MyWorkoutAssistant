@@ -246,6 +246,16 @@ def test_materialized_support_uses_final_rig_and_still_rejects_penetration(tmp_p
     assert materialized_cleanup_support_metrics(tmp_path, skeleton_path=skeleton)['supportContactContradiction']
 
 
+def test_materialized_support_missing_output_uses_cleanup_fallback(tmp_path):
+    from exercise_motion_pkg.bake_and_rank import materialized_cleanup_support_metrics
+    metrics = materialized_cleanup_support_metrics(
+        tmp_path,
+        skeleton_path=tmp_path / 'not-yet-written-skeleton.json',
+    )
+    assert metrics['supportContactContradiction'] is False
+    assert metrics['reason'] == 'cleaned_motion_missing'
+
+
 def test_scene_placement_preserves_fractional_articulation_travel_and_reuse():
     from exercise_motion_pkg.scene_placement import normalize_scene_placement
     rig = rig_payload()

@@ -35,6 +35,93 @@ def test_timeout_blocks_export_without_calling_unchanged_pose_a_kinematic_defect
         after["kinematics"], source_corroborated_joint_angle_step=False)
 
 
+def test_pre_render_gate_rejects_invalid_confirmed_support_geometry():
+    payload = {
+        "fps": 30,
+        "jointNames": ["pelvis", "left_ankle"],
+        "frames": [
+            {"timeSec": 0.0, "joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.0, 0.0, 0.0]}},
+            {"timeSec": 1.0, "joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.02, 0.0, 0.0]}},
+        ],
+        "sourceFootSupportEvidence": {
+            "bodySupport": {
+                "required": True,
+                "status": "confirmed",
+                "stationaryJoints": ["left_ankle"],
+            }
+        },
+    }
+
+    gate = bake.pre_render_deterministic_gate(payload, None)
+
+    assert not gate["passed"]
+    assert gate["supportGeometry"]["rejectionReasons"] == ["supported_body_moves"]
+    assert "supported_body_moves" in gate["rejectionReasons"]
+
+
+def test_preview_renderer_skips_artifact_with_invalid_confirmed_support(tmp_path, monkeypatch):
+    payload = {
+        "fps": 30,
+        "jointNames": ["pelvis", "left_ankle"],
+        "frames": [
+            {"timeSec": 0.0, "joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.0, 0.0, 0.0]}},
+            {"timeSec": 1.0, "joints": {"pelvis": [0.0, 1.0, 0.0], "left_ankle": [0.02, 0.0, 0.0]}},
+        ],
+        "sourceFootSupportEvidence": {
+            "bodySupport": {"required": True, "status": "confirmed", "stationaryJoints": ["left_ankle"]}
+        },
+    }
+    artifact = bake.BakedLoopArtifact(
+        0, tmp_path / "skeleton.json", tmp_path / "review.webm", payload,
+    )
+    monkeypatch.setattr(bake, "compute_kinematic_plausibility_metrics_from_payload", lambda *_: {
+        "artifactReasons": [], "processingIncompleteReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_source_pose_fidelity_metrics", lambda **_: {
+        "rejectionReasons": [],
+    })
+    monkeypatch.setattr(bake, "render_baked_wear_frames_with_playwright", lambda *a, **k: pytest.fail(
+        "Invalid support geometry must be rejected before browser rendering."))
+
+    bake.render_prechecked_baked_artifacts(object(), [artifact], tmp_path)
+
+    assert not artifact.review_video_path.exists()
+    assert "supported_body_moves" in payload["preRenderDeterministicGate"]["rejectionReasons"]
+
+
+def test_pre_render_gate_rejects_cleanup_support_and_required_loop_bridge(tmp_path, monkeypatch):
+    payload = {"fps": 30, "jointNames": ["pelvis"], "frames": [
+        {"timeSec": 0.0, "joints": {"pelvis": [0.0, 1.0, 0.0]}},
+        {"timeSec": 1.0, "joints": {"pelvis": [0.0, 1.0, 0.0]}},
+    ]}
+    monkeypatch.setattr(bake, "compute_kinematic_plausibility_metrics_from_payload", lambda *_: {
+        "artifactReasons": [], "processingIncompleteReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_source_pose_fidelity_metrics", lambda **_: {
+        "rejectionReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_cleanup_support_metrics", lambda *a, **k: {
+        "supportContactContradiction": True,
+        "unsupportedElevatedSupportGeometry": False,
+    })
+    monkeypatch.setattr(bake, "compute_loop_bridge_quality_metrics_from_payload", lambda *_: {
+        "severeLoopMismatch": True,
+    })
+
+    gate = bake.pre_render_deterministic_gate(
+        payload,
+        None,
+        exercise_motion_contract={"exerciseName": "Bench Press", "requiresReturnToStart": True},
+        candidate_workspace=tmp_path,
+        skeleton_path=tmp_path / "skeleton.json",
+    )
+
+    assert gate["rejectionReasons"] == [
+        "materialized_support_contact_contradiction",
+        "materialized_loop_bridge_pose_mismatch",
+    ]
+
+
 def test_incomplete_processing_preserves_source_and_resumes_processing(tmp_path):
     candidate = {"status": "needs_motion_processing", "candidate": {"videoId": "good-source"},
                  "reconstructionAttempted": True,
@@ -123,6 +210,10 @@ def test_bounded_processing_retry_refits_after_incomplete_prefetch(monkeypatch):
     assert attempts[0] == initial_attempt
     assert attempts[1] != initial_attempt
     assert stage_cache.PROCESSING_ATTEMPT_ID == attempts[1]
+    assert [item["attemptNumber"] for item in manifest["processingAttempts"]] == [1, 2]
+    assert manifest["processingAttempts"][0]["candidateResults"][0]["status"] == "needs_motion_processing"
+    assert manifest["processingAttempts"][0]["retryDisposition"] == "retry_processing"
+    assert manifest["processingAttempts"][1]["status"] == "selected"
 
 
 def test_bounded_processing_retry_skips_exhausted_candidate_session(monkeypatch):
@@ -155,6 +246,8 @@ def test_bounded_processing_retry_skips_exhausted_candidate_session(monkeypatch)
     assert manifest["processingRetrySkippedReason"] == "candidate_fit_session_exhausted"
     assert attempts == [initial_attempt]
     assert stage_cache.PROCESSING_ATTEMPT_ID == initial_attempt
+    assert len(manifest["processingAttempts"]) == 1
+    assert manifest["processingAttempts"][0]["candidateResults"][0]["controlledMotionFit"]["reason"] == "no_validated_loop_cycle"
 
 
 def test_bounded_processing_retry_skips_near_exhausted_candidate_session(monkeypatch):
@@ -250,7 +343,7 @@ def test_incomplete_controlled_fit_skips_adaptive_planner_and_review_encode(tmp_
     monkeypatch.setattr(
         bake,
         "pre_render_deterministic_gate",
-        lambda payload, reference: {
+        lambda payload, reference, **kwargs: {
             "passed": False,
             "rejectionReasons": ["controlled_motion_processing_incomplete"],
         },
@@ -332,7 +425,10 @@ def test_failed_validation_fit_stops_extra_preview_loops(tmp_path, monkeypatch):
     monkeypatch.setattr(
         bake,
         "pre_render_deterministic_gate",
-        lambda payload, reference: {"passed": False, "rejectionReasons": ["fit_validation_failed"]},
+        lambda payload, reference, **kwargs: {
+            "passed": False,
+            "rejectionReasons": ["fit_validation_failed"],
+        },
     )
     monkeypatch.setattr(bake, "load_verified_source_pose_reference", lambda *args, **kwargs: None)
     (tmp_path / "preview.html").write_text("html")

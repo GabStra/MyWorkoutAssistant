@@ -44,6 +44,85 @@ def test_source_confirmed_cycle_precedes_full_interval_with_shared_budget(monkey
     assert result is payload and not report['applied']
 
 
+def test_source_incomplete_cycle_preflight_skips_optimizer(monkeypatch):
+    choice = {'startFrame': 10, 'stopFrameExclusive': 50}
+    payload = {
+        'frames': [None] * 100,
+        'loop': {'enabled': True},
+        'observedCycleProposals': [],
+        'sourceCyclePreflight': [{
+            'selection': choice,
+            'passed': False,
+            'sourcePhase': {
+                'required': True,
+                'passed': False,
+                'reason': 'source_pose_no_complete_repetition_cycle',
+            },
+            'outputPhase': {'required': True, 'passed': True},
+        }],
+    }
+
+    def unexpected_fit(*args, **kwargs):
+        raise AssertionError('source-incomplete cycles should not enter trajectory fitting')
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', unexpected_fit)
+    result, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
+
+    assert result is payload
+    assert report['reason'] == 'source_cycle_preflight_rejected'
+    assert report['retainedIntervalFit'] is False
+    assert report['cycleSelectionAttempts'] == []
+    assert report['sourceCyclePreflight'] == payload['sourceCyclePreflight']
+
+
+def test_repeated_unreachable_support_conflict_reserves_retained_interval(monkeypatch):
+    from exercise_motion_pkg import loop_cycles
+
+    choices = [
+        {'startFrame': start, 'stopFrameExclusive': start + 40}
+        for start in (10, 20, 30)
+    ]
+    payload = {
+        'frames': [None] * 100,
+        'loop': {'enabled': True},
+        'observedCycleProposals': choices,
+        'sourceCyclePreflight': [{'selection': choices[0], 'passed': True}],
+    }
+    now = [0.]
+    calls = []
+    monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda source, choice: {**source, 'loopCycleSelection': choice},
+    )
+
+    def fit(candidate, **kwargs):
+        selection = candidate.get('loopCycleSelection')
+        calls.append(selection)
+        now[0] += 10.
+        return candidate, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'termination': 'unreachable_conflict' if selection == choices[1] else 'time_budget',
+            'checks': {
+                'anatomy': False,
+                'contacts': False,
+                'bodySupport': False,
+                'trajectoryFit': False,
+                'rootTravel': True,
+            },
+            'elapsedSeconds': 10.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
+
+    assert calls == [choices[0], choices[1], None]
+    assert report['cycleRetryStopReason'] == 'repeated_unreachable_support_conflict'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+
+
 def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypatch):
     now = [0.]
     monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
@@ -89,7 +168,9 @@ def test_observed_cycle_attempts_prefer_top_cycle_budget(monkeypatch):
     # the remaining 45 seconds on one crop instead of stranding that budget.
     assert received == [55., 45.]
     assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 2
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+    assert report['cycleSelectionAttempts'][-1]['reason'] == (
+        'retained_interval_skipped_insufficient_validation_budget')
 
 
 def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch):
@@ -129,9 +210,9 @@ def test_observed_cycle_skips_later_cycles_after_seam_only_near_miss(monkeypatch
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [310.]
-    assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 1
+    assert received == [120., 395.]
+    assert report['reason'] == 'loop_requires_cycle_repair'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
 
 
 def test_observed_cycle_tries_next_when_seam_excess_far_from_limit(monkeypatch):
@@ -174,9 +255,9 @@ def test_observed_cycle_tries_next_when_seam_excess_far_from_limit(monkeypatch):
                                                  'fps': payload.get('fps')})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert len(received) == 2
-    assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 2
+    assert received == [120., 120., 390.]
+    assert report['reason'] == 'loop_requires_cycle_repair'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
 
 
 def test_observed_cycle_tries_next_when_seam_velocity_far_from_limit(monkeypatch):
@@ -219,8 +300,8 @@ def test_observed_cycle_tries_next_when_seam_velocity_far_from_limit(monkeypatch
                                                  'fps': payload.get('fps')})
     payload = {'frames': [None] * 60, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert len(received) == 2
-    assert len(report['cycleSelectionAttempts']) == 2
+    assert received == [120., 120., 390.]
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
 
 
 def test_observed_cycle_tries_next_when_non_seam_failure_leaves_budget(monkeypatch):
@@ -247,9 +328,9 @@ def test_observed_cycle_tries_next_when_non_seam_failure_leaves_budget(monkeypat
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [310., 395.]
-    assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 2
+    assert received == [120., 120., 390.]
+    assert report['reason'] == 'fit_validation_failed'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
 
 
 def test_observed_cycle_skips_later_cycles_after_hard_trajectory_root_failure(monkeypatch):
@@ -276,9 +357,9 @@ def test_observed_cycle_skips_later_cycles_after_hard_trajectory_root_failure(mo
                                                  'frames': payload.get('frames')})
     payload = {'frames': [None] * 12, 'loop': {'enabled': True}, 'fps': 30.0}
     _, report = motion._fit_observed_cycles(payload, timeout_seconds=400.)
-    assert received == [310.]
-    assert report['reason'] == 'no_validated_loop_cycle'
-    assert len(report['cycleSelectionAttempts']) == 1
+    assert received == [120., 395.]
+    assert report['reason'] == 'fit_validation_failed'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
 
 
 def test_controlled_fit_unusable_for_more_preview_work():
@@ -369,6 +450,29 @@ def test_finalization_priority_allows_every_listed_candidate_workspace(tmp_path,
                 entered.append('second')
 
     assert entered == ['first', 'second']
+
+
+def test_unowned_finalization_fit_is_not_held_behind_priority_gate(tmp_path, monkeypatch):
+    """A fit without workspace identity cannot be classified as lower priority."""
+    import threading
+
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot_limit', lambda: 1)
+    monkeypatch.setattr(fit_runtime, 'PRIORITY_BLOCK_GRACE_SECONDS', 5.0)
+    entered = threading.Event()
+    waited = []
+
+    def run_unowned_fit():
+        with fit_runtime.cpu_fit_slot() as queue_wait:
+            waited.append(queue_wait)
+            entered.set()
+
+    with fit_runtime.prioritize_fit_workspaces([tmp_path / 'finalizing-candidate']):
+        worker = threading.Thread(target=run_unowned_fit, daemon=True)
+        worker.start()
+        assert entered.wait(0.5), 'unowned finalization fit stalled behind workspace priority'
+        worker.join(1)
+
+    assert waited and waited[0] < 0.5
 
 
 def test_speculative_fit_yields_when_any_final_is_prioritized(tmp_path, monkeypatch):
@@ -526,6 +630,25 @@ def test_browser_fit_cancellation_is_owned_by_task_not_workspace(tmp_path):
                     workers.run(fit)
             with fit_runtime.prioritize_fit_workspaces([tmp_path]):
                 assert workers.run(fit) == 'finalized'
+    finally:
+        workers.close()
+
+
+def test_browser_worker_inherits_finalization_priority_exemption(tmp_path, monkeypatch):
+    """Nested worker fits must inherit the priority context even if their
+    workspace key differs from the outer finalization's candidate list."""
+    from exercise_motion_pkg.browser_workers import BrowserWorkers
+
+    workers = BrowserWorkers(workers=1)
+    monkeypatch.setattr(fit_runtime, 'PRIORITY_BLOCK_GRACE_SECONDS', 0.1)
+    try:
+        with fit_runtime.prioritize_fit_workspaces([tmp_path / 'prioritized']):
+            def fit():
+                with fit_runtime.candidate_fit_session(tmp_path / 'nested-workspace'):
+                    with fit_runtime.cpu_fit_slot() as waited:
+                        return waited
+
+            assert workers.run(fit) < 0.5
     finally:
         workers.close()
 

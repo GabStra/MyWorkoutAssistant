@@ -6,6 +6,7 @@ pkl so the generation pipeline can consume either backend unchanged.
 """
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,6 +36,8 @@ class GvhmrRunResult:
     docker_image: str
     gpu_lock_wait_seconds: float
     docker_lock_wait_seconds: float
+    phase_timings: dict[str, dict[str, float]]
+    unattributed_runner_seconds: float
     timeout_seconds: float | None
 
     def timing_payload(self) -> dict[str, Any]:
@@ -53,7 +56,38 @@ class GvhmrRunResult:
             "demoOutputDir": str(self.demo_output_dir),
             "dockerLockWaitSeconds": round(self.docker_lock_wait_seconds, 3),
             "gpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
+            "phaseTimings": self.phase_timings,
+            "unattributedRunnerSeconds": round(self.unattributed_runner_seconds, 3),
         }
+
+
+def _read_phase_timing_markers(log_path: Path) -> dict[str, dict[str, float]]:
+    markers = {
+        "GVHMR_PHASE_TIMINGS_JSON:": "inference",
+        "GVHMR_EXPORT_TIMINGS_JSON:": "export",
+    }
+    timings: dict[str, dict[str, float]] = {}
+    if not log_path.is_file():
+        return timings
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for prefix, phase_name in markers.items():
+            if not line.startswith(prefix):
+                continue
+            try:
+                payload = json.loads(line[len(prefix):])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            numeric = {
+                str(key): float(value)
+                for key, value in payload.items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+            if numeric:
+                timings[phase_name] = numeric
+            break
+    return timings
 
 
 def build_gvhmr_command(
@@ -73,9 +107,10 @@ def build_gvhmr_command(
     container_stem = input_video.stem
     demo_results = f"/output/demo/{container_stem}/hmr4d_results.pt"
     output_pkl = f"/output/{container_stem}/wham_output.pkl"
+    bridge_script = export_script.with_name("gvhmr_inference.py")
     demo_command = [
         "python",
-        "tools/demo/demo.py",
+        f"/mwa/{bridge_script.name}",
         "--video",
         f"/input/{input_video.name}",
         "--output_root",
@@ -101,7 +136,7 @@ def build_gvhmr_command(
             "-v",
             f"{output_root.resolve()}:/output",
             "-v",
-            f"{export_script.parent.resolve()}:/mwa",
+            f"{bridge_script.parent.resolve()}:/mwa",
             "-w",
             GVHMR_DOCKER_SOURCE_ROOT,
             docker_image,
@@ -174,6 +209,13 @@ def run_gvhmr_locally(
             "GVHMR run completed but no wham_output.pkl was found.\n"
             f"Expected: {results_pkl}\nLogs:\n- {stdout_log}\n- {stderr_log}"
         )
+    phase_timings = _read_phase_timing_markers(stdout_log)
+    inference_total = phase_timings.get("inference", {}).get("scriptTotalSeconds", 0.0)
+    export_total = phase_timings.get("export", {}).get("processTotalSeconds", 0.0)
+    unattributed_runner_seconds = (
+        elapsed - inference_total - export_total
+        - gpu_lock_wait_seconds - lock_wait_seconds
+    )
     return GvhmrRunResult(
         output_dir=sequence_dir,
         results_pkl=results_pkl,
@@ -186,5 +228,7 @@ def run_gvhmr_locally(
         docker_image=docker_image,
         gpu_lock_wait_seconds=gpu_lock_wait_seconds,
         docker_lock_wait_seconds=lock_wait_seconds,
+        phase_timings=phase_timings,
+        unattributed_runner_seconds=unattributed_runner_seconds,
         timeout_seconds=timeout,
     )

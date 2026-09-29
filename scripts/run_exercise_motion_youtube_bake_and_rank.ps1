@@ -85,7 +85,7 @@ param(
     [switch]$SkipMotionTuning,
     [switch]$FastProfile,
     [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "wham",
+    [string]$MotionReconstructor = "gvhmr",
     [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$ExportWhamSmplPreview,
     [switch]$SkipSpinePose,

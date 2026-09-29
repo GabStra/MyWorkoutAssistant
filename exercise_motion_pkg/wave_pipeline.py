@@ -225,6 +225,93 @@ def exhausted_candidate_fit_session(manifest: dict[str, Any]) -> bool:
     return False
 
 
+def _processing_attempt_diagnostics(manifest: dict[str, Any], *, attempt_number: int) -> dict[str, Any]:
+    """Keep the small set of fit and timing evidence needed to audit a retry."""
+    from .stage_cache import PROCESSING_ATTEMPT_ID
+
+    candidate_attempts = []
+    for candidate_result in manifest.get("candidateResults") or []:
+        if not isinstance(candidate_result, dict):
+            continue
+        controlled = _controlled_motion_report_from_result(candidate_result) or {}
+        timings = candidate_result.get("timings")
+        timings = {
+            key: value
+            for key, value in (timings.items() if isinstance(timings, dict) else [])
+            if key.endswith("Seconds") and isinstance(value, (int, float))
+        }
+        cycle_attempts = []
+        for cycle_attempt in controlled.get("cycleSelectionAttempts") or []:
+            if not isinstance(cycle_attempt, dict):
+                continue
+            fit_report = cycle_attempt.get("fitReport")
+            cycle_attempts.append({
+                "selection": cycle_attempt.get("selection"),
+                "reason": cycle_attempt.get("reason"),
+                "elapsedSeconds": cycle_attempt.get("elapsedSeconds"),
+                "failedChecks": cycle_attempt.get("failedChecks"),
+                "termination": cycle_attempt.get("termination"),
+                "optimizerTermination": cycle_attempt.get("optimizerTermination"),
+                "fitCandidateBudget": (
+                    fit_report.get("candidateFitBudget")
+                    if isinstance(fit_report, dict)
+                    else None
+                ),
+            })
+        candidate_attempts.append({
+            "candidateKey": candidate_result.get("candidateKey"),
+            "candidateWorkspace": candidate_result.get("candidateWorkspace"),
+            "videoId": (candidate_result.get("candidate") or {}).get("videoId")
+            if isinstance(candidate_result.get("candidate"), dict)
+            else candidate_result.get("videoId"),
+            "status": candidate_result.get("status"),
+            "timings": timings,
+            "candidateFitBudget": (
+                _candidate_fit_budget_from_result(candidate_result)
+            ),
+            "controlledMotionFit": {
+                key: controlled.get(key)
+                for key in (
+                    "applied",
+                    "reason",
+                    "elapsedSeconds",
+                    "availableBudgetSeconds",
+                    "requiredBudgetSeconds",
+                    "optimizerTermination",
+                    "cycleRetryStopReason",
+                )
+                if key in controlled
+            },
+            "cycleSelectionAttempts": cycle_attempts,
+            "rejectionReasons": [
+                reason
+                for failure in candidate_result.get("failures") or []
+                if isinstance(failure, dict)
+                for reason in (
+                    failure.get("rejectionReasons")
+                    or ([failure["reason"]] if failure.get("reason") else [])
+                )
+                if isinstance(reason, str)
+            ],
+        })
+
+    disposition_state = {
+        "finalValidation": {
+            "status": "selected" if manifest.get("selected") else "no_selection",
+            **final_processing_diagnostics(manifest),
+        }
+    }
+    return {
+        "attemptNumber": attempt_number,
+        "processingAttemptId": PROCESSING_ATTEMPT_ID,
+        "processingSeconds": (manifest.get("timings") or {}).get("totalSeconds"),
+        "reviewAttemptCount": manifest.get("reviewAttemptCount"),
+        "status": final_validation_outcome_status(manifest),
+        "retryDisposition": wave_retry_disposition(disposition_state),
+        "candidateResults": candidate_attempts,
+    }
+
+
 def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Refit incomplete controlled-motion once on retained source/WHAM inputs.
 
@@ -235,6 +322,7 @@ def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any
     """
     from .stage_cache import advance_processing_attempt
 
+    processing_attempts: list[dict[str, Any]] = []
     for attempt in range(2):
         if attempt > 0:
             advance_processing_attempt()
@@ -246,11 +334,17 @@ def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any
                 **final_processing_diagnostics(manifest),
             }
         }
-        if wave_retry_disposition(state) != "retry_processing":
+        retry_disposition = wave_retry_disposition(state)
+        processing_attempts.append(_processing_attempt_diagnostics(
+            manifest,
+            attempt_number=attempt + 1,
+        ))
+        if retry_disposition != "retry_processing":
             break
         if exhausted_candidate_fit_session(manifest):
             manifest["processingRetrySkippedReason"] = "candidate_fit_session_exhausted"
             break
+    manifest["processingAttempts"] = processing_attempts
     return manifest
 
 
@@ -401,6 +495,7 @@ def _wave_candidates(request: BakeAndRankRequest) -> list[RankedCandidate]:
     candidates = load_ranked_candidates_manifest(
         request.candidates_json,
         include_fallback_candidates=True,
+        source_outcome_index=request.source_outcome_index,
     )
     candidates = limit_bake_fallback_candidates(candidates, request.fallback_candidates)
     candidates = prioritize_ranked_candidates_for_reconstruction(candidates)

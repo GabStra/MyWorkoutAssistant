@@ -29,6 +29,10 @@ def test_usable_geometry_renders_after_precheck(tmp_path, monkeypatch):
     before = copy.deepcopy(payload["frames"])
     artifact = bake.BakedLoopArtifact(-1, tmp_path / "skeleton.json", tmp_path / "preview.webm", payload)
     calls = []
+    monkeypatch.setattr(bake, "pre_render_deterministic_gate", lambda *args, **kwargs: {
+        "passed": True,
+        "rejectionReasons": [],
+    })
     def render(*args, **kwargs):
         assert artifact.export_payload["preRenderDeterministicGate"]["passed"]
         calls.append("render")

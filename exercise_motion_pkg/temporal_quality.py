@@ -144,8 +144,19 @@ def refresh_motion_bounds(payload: dict[str, Any]) -> None:
 
 
 def _unit(value: np.ndarray) -> np.ndarray | None:
-    length = float(np.linalg.norm(value))
-    return value / length if math.isfinite(length) and length > 1e-8 else None
+    # These hot paths only operate on 3D vectors. Avoid NumPy's general
+    # dimensionality/axis handling for each vector in every rendered frame.
+    x, y, z = float(value[0]), float(value[1]), float(value[2])
+    length = math.sqrt(x * x + y * y + z * z)
+    if not math.isfinite(length) or length <= 1e-8:
+        return None
+    return np.array((x / length, y / length, z / length))
+
+
+def _cross3(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    ax, ay, az = float(first[0]), float(first[1]), float(first[2])
+    bx, by, bz = float(second[0]), float(second[1]), float(second[2])
+    return np.array((ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx))
 
 
 def transport_side(side: np.ndarray, old_axis: np.ndarray, new_axis: np.ndarray) -> np.ndarray | None:
@@ -153,8 +164,9 @@ def transport_side(side: np.ndarray, old_axis: np.ndarray, new_axis: np.ndarray)
     cosine = float(np.clip(np.dot(old_axis, new_axis), -1, 1))
     if cosine < -0.999999:
         return None  # Antiparallel swing has no unique minimal transport axis.
-    cross = np.cross(old_axis, new_axis)
-    transported = side + np.cross(cross, side) + np.cross(cross, np.cross(cross, side)) / (1 + cosine)
+    cross = _cross3(old_axis, new_axis)
+    cross_side = _cross3(cross, side)
+    transported = side + cross_side + _cross3(cross, cross_side) / (1 + cosine)
     return _unit(transported - new_axis * np.dot(transported, new_axis))
 
 
@@ -187,7 +199,7 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
             normal = np.asarray(contact['normal'], dtype=float)
             for frame in payload.get('frames', []):
                 forward = np.asarray(frame['joints'][toe])-frame['joints'][ankle]
-                side = _unit(np.cross(forward, normal))
+                side = _unit(_cross3(forward, normal))
                 if side is not None:
                     frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
 
@@ -225,7 +237,7 @@ def bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:
             if previous is not None:
                 transported = transport_side(previous[1], previous[0], axis)
                 if transported is not None:
-                    angle = math.degrees(math.atan2(float(np.dot(axis, np.cross(transported, side))),
+                    angle = math.degrees(math.atan2(float(np.dot(axis, _cross3(transported, side))),
                                                    float(np.dot(transported, side))))
                     steps[index] = angle
                     maximum = max(maximum, abs(angle))
@@ -271,9 +283,9 @@ def rendered_leg_sides(frames: list[dict[str, Any]]) -> list[dict[str, list[floa
             old = previous.get(shin_key)
             reference = _unit(old - shin * np.dot(old, shin)) if old is not None else None
             if reference is None:
-                reference = _unit(np.cross(foot, -shin))
-            knee_side = np.cross(thigh, shin)
-            bend = float(np.linalg.norm(knee_side))
+                reference = _unit(_cross3(foot, -shin))
+            knee_side = _cross3(thigh, shin)
+            bend = math.sqrt(float(np.dot(knee_side, knee_side)))
             side = knee_side / bend if bend > .342 else reference
             if side is None:
                 continue

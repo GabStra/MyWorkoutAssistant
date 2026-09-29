@@ -176,6 +176,43 @@ def test_source_coverage_requires_locomotion_only_for_active_travel(monkeypatch,
         completion_mode == 'active_travel')
 
 
+def test_source_cut_coverage_reports_required_region_absence(monkeypatch):
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.segment_detection import DetectionWindow
+
+    joints = {
+        'head': [0., 1.8, 0.],
+        'pelvis': [0., 1., 0.],
+        'left_shoulder': [-.2, 1.5, 0.],
+        'right_shoulder': [.2, 1.5, 0.],
+        'left_wrist': [-.3, 1.2, 0.],
+        'right_wrist': [.3, 1.2, 0.],
+    }
+    payload = {
+        'jointNames': list(joints),
+        'rootJoint': 'pelvis',
+        'frames': [{'timeSec': i / 4., 'joints': dict(joints)} for i in range(8)],
+    }
+    contract = {
+        'completionMode': 'representative_cycle',
+        'requiresReturnToStart': False,
+        'observableMotionSpec': {'mustBeVisibleRegions': ['hands', 'shoulders', 'torso', 'feet']},
+    }
+    monkeypatch.setattr(bake, 'source_pose_skeleton_payload_for_window', lambda *args, **kwargs: payload)
+
+    metrics = bake.source_cut_candidate_motion_coverage_metrics(
+        candidate_window=DetectionWindow(0, 0., 2.),
+        pose_payload={},
+        exercise_name='Exercise',
+        chunk_estimate=None,
+        exercise_motion_contract=contract,
+    )
+
+    assert metrics['requiredRegionObservations']['available']
+    assert metrics['requiredRegionObservations']['missingRegions'] == ['feet']
+    assert 'source_cut_required_region_unobserved' in metrics['rejectionReasons']
+
+
 @pytest.mark.parametrize('verified_fit', [False, True])
 def test_support_invariant_uses_verified_fit_ownership(tmp_path, monkeypatch, verified_fit):
     from exercise_motion_pkg import bake_and_rank as bake, controlled_motion

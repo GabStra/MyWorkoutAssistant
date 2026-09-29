@@ -23,6 +23,7 @@ def contract_field_authority(exercise_name: str, generated: dict[str, Any]) -> d
     # acting arm count comes from explicit arm wording alone.
     for key, pattern, value in (
         ("implementCount", r"\bsingle\s+(?:dumbbell|kettlebell)\b", 1),
+        ("actingArmCount", r"\bsingle\s+dumbbell\b", 1),
         ("actingArmCount", r"\b(?:single|one)[ -]arm\b|\bone[ -]handed\b", 1),
     ):
         match = re.search(pattern, name)

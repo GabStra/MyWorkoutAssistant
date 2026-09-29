@@ -6,7 +6,11 @@ import torch
 from pathlib import Path
 
 from exercise_motion_pkg.gvhmr_pkl_export import export_gvhmr_results_pkl
-from exercise_motion_pkg.gvhmr_runner import build_gvhmr_command
+from exercise_motion_pkg.gvhmr_inference import _time_method
+from exercise_motion_pkg.gvhmr_runner import (
+    _read_phase_timing_markers,
+    build_gvhmr_command,
+)
 
 torch = pytest.importorskip("torch")
 
@@ -76,8 +80,36 @@ def test_build_gvhmr_command_static_camera(tmp_path: Path) -> None:
         static_camera=True,
     )
     joined = " ".join(command)
-    assert "tools/demo/demo.py" in joined
+    assert "/mwa/gvhmr_inference.py" in joined
+    assert "tools/demo/demo.py" not in joined
     assert " -s" in joined
     assert "gvhmr_pkl_export.py --results /output/demo/clip/hmr4d_results.pt" in joined
     assert "--output-pkl /output/clip/wham_output.pkl" in joined
     assert "mwa-gvhmr-job-test" in joined
+
+
+def test_read_gvhmr_phase_timing_markers(tmp_path: Path) -> None:
+    log = tmp_path / "gvhmr.stdout.log"
+    log.write_text(
+        "noise\n"
+        'GVHMR_PHASE_TIMINGS_JSON:{"preprocessSeconds":47.2,"scriptTotalSeconds":51.0}\n'
+        'GVHMR_EXPORT_TIMINGS_JSON:{"moduleImportSeconds":2.0,"processTotalSeconds":3.0}\n',
+        encoding="utf-8",
+    )
+
+    assert _read_phase_timing_markers(log) == {
+        "inference": {"preprocessSeconds": 47.2, "scriptTotalSeconds": 51.0},
+        "export": {"moduleImportSeconds": 2.0, "processTotalSeconds": 3.0},
+    }
+
+
+def test_time_method_preserves_return_value_and_records_elapsed_time() -> None:
+    class Example:
+        def calculate(self, value: int) -> int:
+            return value * 2
+
+    timings: dict[str, float] = {}
+    _time_method(Example, "calculate", "calculateSeconds", timings)
+
+    assert Example().calculate(4) == 8
+    assert timings["calculateSeconds"] >= 0.0

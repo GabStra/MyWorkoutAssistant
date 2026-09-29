@@ -5,9 +5,12 @@ import math
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
+from scipy.sparse import diags, csr_matrix, kron, vstack
+from scipy.optimize._numdiff import group_columns
 
 from exercise_motion_pkg.articulation_trajectory import (
-    fit_chain_rotations, fit_pose_and_temporal_trajectories, temporal_quality_comparison,
+    _natural_jacobian_column_groups, fit_chain_rotations,
+    fit_pose_and_temporal_trajectories, temporal_quality_comparison,
 )
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg import structural_refinement as refinement
@@ -31,6 +34,36 @@ def arm_clip(angles):
 CHAIN = ('left_shoulder', 'left_elbow', 'left_wrist', 'left_hand')
 
 
+def test_natural_sparse_jacobian_coloring_reduces_banded_frame_colors():
+    frame_count = 12
+    frame_dependencies = csr_matrix(np.array([
+        [1, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 0, 0, 0, 0, 0],
+        [0, 0, 1, 1, 1, 0, 0, 0],
+        [0, 0, 0, 1, 1, 1, 0, 0],
+        [0, 0, 0, 0, 0, 1, 1, 0],
+        [0, 0, 0, 0, 0, 1, 1, 1],
+    ], dtype=float))
+    patterns = []
+    for temporal_order in range(4):
+        temporal = diags(
+            [np.ones(frame_count - temporal_order)] * (temporal_order + 1),
+            range(temporal_order + 1),
+            shape=(frame_count - temporal_order, frame_count),
+        )
+        patterns.append(kron(temporal, frame_dependencies))
+    pattern = vstack(patterns, format='csr')
+
+    groups = _natural_jacobian_column_groups(pattern)
+    default_group_count = int(group_columns(pattern, order=0).max() + 1)
+
+    assert int(groups.max() + 1) == 12
+    assert int(groups.max() + 1) < default_group_count
+    for row_index in range(pattern.shape[0]):
+        columns = pattern.getrow(row_index).indices
+        assert len(set(groups[columns])) == len(columns)
+
+
 def test_rotational_smoothing_preserves_each_bone_length_and_root():
     source = arm_clip([0., 0., 0., 45., 0., 0., 0.])
     result = fit_chain_rotations(source, CHAIN)
@@ -42,6 +75,38 @@ def test_rotational_smoothing_preserves_each_bone_length_and_root():
     # Pipeline metadata and coordinates must remain serializable without a
     # custom encoder for numpy scalars.
     json.dumps([frame.joints for frame in result.frames])
+
+
+def test_trajectory_fit_capture_records_replayable_exact_solver_inputs(monkeypatch, tmp_path):
+    source = arm_clip([0., 10., 20., 30., 20., 10.])
+    proposal = arm_clip([0., 12., 23., 32., 22., 11.])
+    destination = tmp_path / 'trajectory-fit.json'
+    monkeypatch.setenv('EXERCISE_MOTION_TRAJECTORY_FIT_CAPTURE', str(destination))
+
+    refinement._capture_trajectory_fit_replay(
+        source,
+        proposal,
+        (CHAIN,),
+        observation_weights=np.ones((source.frame_count, len(CHAIN) - 1)),
+        projected_observations=True,
+        rigid_pair=('left_wrist', 'left_hand'),
+        timeout_seconds=120.,
+        max_evaluations=400,
+    )
+
+    payload = json.loads(destination.read_text(encoding='utf-8'))
+    assert payload['schema'] == 'trajectory_fit_replay_v1'
+    assert payload['source']['frames'][0]['joints'] == json.loads(
+        json.dumps(source.frames[0].joints)
+    )
+    assert payload['proposal']['frames'][-1]['joints'] == json.loads(
+        json.dumps(proposal.frames[-1].joints)
+    )
+    assert payload['chains'] == [list(CHAIN)]
+    assert payload['solver_options']['observation_weights'] == np.ones(
+        (source.frame_count, len(CHAIN) - 1)
+    ).tolist()
+    assert payload['solver_options']['rigid_pair'] == ['left_wrist', 'left_hand']
 
 
 def test_fitting_constant_correction_preserves_real_source_motion():
@@ -93,6 +158,11 @@ def test_joint_pose_temporal_fit_improves_target_without_accepting_a_snap():
     assert not temporal_quality_comparison(source, target)['passed']
     result, report = fit_pose_and_temporal_trajectories(source, target, (CHAIN,))
     assert report['applied']
+    assert report['objectiveProgress']
+    assert report['objectiveProgress'][0]['bestObjective'] <= report['initialObjective']
+    assert report['objectiveProgress'][-1]['bestObjective'] == pytest.approx(report['finalObjective'])
+    assert 0 < report['residualEvaluationSeconds'] <= report['elapsedSeconds']
+    assert 0 < report['residualEvaluationShare'] <= 1
     assert report['poseTargetRmsAfter'] < report['poseTargetRmsBefore'] * .65
     assert temporal_quality_comparison(source, result)['passed']
     for before, after in zip(source.frames, result.frames):

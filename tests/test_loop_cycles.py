@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from exercise_motion_pkg.loop_cycles import rank_loop_cycles, slice_loop_cycle
+from exercise_motion_pkg.pose_fidelity import source_pose_reference_for_motion
 from exercise_motion_pkg.sequence_stabilization import contact_mask
 
 
@@ -39,6 +40,25 @@ def test_cycle_preserves_excursion_and_direction_without_duplicate_endpoint():
     assert payload['frameCount'] == 100
 
 
+def test_rank_loop_cycles_can_end_at_the_last_observed_frame():
+    payload = repeated_motion()
+    payload['frames'] = payload['frames'][:60]
+    payload['frameCount'] = len(payload['frames'])
+
+    choices = rank_loop_cycles(payload, max_candidates=5)
+
+    full_clip_cycle = next(
+        (choice for choice in choices
+         if choice['startFrame'] == 0
+         and choice['stopFrameExclusive'] == len(payload['frames'])),
+        None,
+    )
+    assert full_clip_cycle is not None
+    sliced = slice_loop_cycle(payload, full_clip_cycle)
+    assert len(sliced['frames']) == 60
+    assert sliced['frames'][-1]['sourceFrameIndex'] == 259
+
+
 def test_rank_loop_cycles_prefers_lower_source_wrap_ratio():
     payload = repeated_motion()
     # Corrupt one mid-clip wrap so a worse window exists; ranking must still
@@ -47,6 +67,22 @@ def test_rank_loop_cycles_prefers_lower_source_wrap_ratio():
     assert choices
     wraps = [c['sourceWrapOverLimitRatio'] for c in choices]
     assert wraps == sorted(wraps)
+
+
+def test_rank_loop_cycles_deduplicates_boundary_shifts_of_same_repetition():
+    choices = rank_loop_cycles(repeated_motion(), max_candidates=5)
+    for index, left in enumerate(choices):
+        for right in choices[index + 1:]:
+            overlap = max(
+                0,
+                min(left['stopFrameExclusive'], right['stopFrameExclusive'])
+                - max(left['startFrame'], right['startFrame']),
+            )
+            shorter_window = min(
+                left['stopFrameExclusive'] - left['startFrame'],
+                right['stopFrameExclusive'] - right['startFrame'],
+            )
+            assert overlap / shorter_window < .9
 
 
 @pytest.mark.parametrize('status,valid_geometry', [('confirmed', True), ('unknown', True), ('confirmed', False)])
@@ -171,6 +207,24 @@ def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
     assert result['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left']['states'] == ['unknown']*60
 
 
+def test_source_pose_reference_uses_cycle_source_timestamps_after_slicing():
+    payload = repeated_motion()
+    for frame in payload['frames']:
+        frame.pop('sourceTimeSec', None)
+    source_pose = {
+        'sourceTimeOriginSec': 200.0,
+        'frames': [{'sourceTimeSec': 200.0 + i / 30, 'joints': {}} for i in range(100)],
+    }
+
+    cycle = slice_loop_cycle(payload, {'startFrame': 10, 'stopFrameExclusive': 70})
+    reference = source_pose_reference_for_motion(source_pose, cycle)
+
+    assert len(reference['frames']) == 60
+    assert reference['frames'][0]['sourceTimeSec'] == pytest.approx(200.0 + 10 / 30)
+    assert reference['frames'][-1]['sourceTimeSec'] == pytest.approx(200.0 + 69 / 30)
+    assert reference['sourceTimeOriginSec'] == pytest.approx(200.0 + 10 / 30)
+
+
 def test_net_travel_and_stationary_holds_are_not_misidentified_as_cycles():
     payload = repeated_motion()
     for i, frame in enumerate(payload['frames']):
@@ -228,6 +282,7 @@ def test_failed_cycle_attempts_return_the_entire_original_payload(monkeypatch):
     assert not report['applied']
     assert report['reason'] == 'no_validated_loop_cycle'
     assert 1 <= len(seen)
-    assert len(seen[0]['frames']) == len(payload['frames'])
-    assert all(len(p['frames']) < len(payload['frames']) for p in seen[1:])
+    attempted_lengths = [len(candidate['frames']) for candidate in seen]
+    assert any(length < len(payload['frames']) for length in attempted_lengths)
+    assert all(length <= len(payload['frames']) for length in attempted_lengths)
     assert len(payload['frames']) == 100

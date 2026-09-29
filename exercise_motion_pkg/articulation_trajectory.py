@@ -10,6 +10,7 @@ from time import monotonic
 
 import numpy as np
 from scipy.spatial.transform import Rotation
+from scipy.optimize._numdiff import approx_derivative, group_columns
 
 from .models import MotionClip, MotionFrame
 
@@ -17,6 +18,11 @@ from .models import MotionClip, MotionFrame
 def _norm(vectors: np.ndarray) -> np.ndarray:
     """Row-wise Euclidean length without np.linalg.norm's dispatch overhead."""
     return np.sqrt(np.einsum('...i,...i->...', vectors, vectors))
+
+
+def _natural_jacobian_column_groups(pattern) -> np.ndarray:
+    """Color a frame-major sparse Jacobian in its temporal locality order."""
+    return group_columns(pattern, order=np.arange(pattern.shape[1]))
 
 
 def fit_pose_and_temporal_trajectories(
@@ -33,6 +39,9 @@ def fit_pose_and_temporal_trajectories(
     fit_root_translation: bool = False,
     projection_segments: tuple[tuple[str, str], ...] = (),
     rigid_pair_reference: tuple[str, str] | None = None,
+    lsmr_max_iterations: int = 100,
+    lsmr_tolerance: float | None = None,
+    x_scale: str | float = 1.0,
 ) -> tuple[MotionClip, dict[str, object]]:
     """Fit observed pose targets and temporal limits in one rigid-chain solve.
 
@@ -48,7 +57,8 @@ def fit_pose_and_temporal_trajectories(
     edges = list(dict.fromkeys(edge for chain in chains for edge in zip(chain, chain[1:])))
     count = source.frame_count
     report = {'applied': False, 'strategy': 'joint_pose_temporal_trajectory_v1'}
-    if timeout_seconds <= 0 or max_evaluations < 1:
+    if (timeout_seconds <= 0 or max_evaluations < 1 or lsmr_max_iterations < 1
+            or (lsmr_tolerance is not None and lsmr_tolerance <= 0)):
         return source, {**report, 'reason': 'fit_budget_exhausted'}
     if count < 5 or not edges or proposal.frame_count != count:
         return source, {**report, 'reason': 'insufficient_matching_trajectory'}
@@ -125,7 +135,9 @@ def fit_pose_and_temporal_trajectories(
 
     def decode(values):
         parameters = values.reshape(count, width)
-        rotated = Rotation.from_rotvec(parameters[:, :bone_width].reshape(-1, 3)).apply(bones.reshape(-1, 3)).reshape(bones.shape)
+        rotated = Rotation.from_rotvec(parameters[:, :bone_width].reshape(-1, 3)).apply(
+            bones.reshape(-1, 3)
+        ).reshape(bones.shape)
         points = original.copy()
         if fit_root_translation:
             points[:, root] += parameters[:, bone_width:]
@@ -134,29 +146,55 @@ def fit_pose_and_temporal_trajectories(
         return points
 
     best = [float('inf'), np.zeros(count * width)]
-    objective_terms = {}
+    best_terms = {}
+    initial_terms = {}
+    objective_progress = []
+    residual_evaluations = 0
+    residual_evaluation_seconds = 0.0
+    next_progress_at = 0.0
     # Invariant across evaluations; hoisted out of the hot residual path.
     observation_scale = np.sqrt(weights[..., None])
     pose_scale = scale * .02
+    labels = ['pose', 'rotationPrior', 'speed', 'acceleration', 'jerkRms', 'localJerk']
+    labels += ((['rigidPair'] if pair else [])
+               + (['rigidPairOrientation', 'rigidPairCenter'] if pair_reference else [])
+               + ['coreDistance'] * len(distance_pairs)
+               + ['projectedDirection'] * len(observed_segments))
+
+    def terms_for_blocks(blocks):
+        terms = {}
+        for label, block in zip(labels, blocks):
+            terms[label] = terms.get(label, 0.) + float(np.sum(block ** 2))
+        return terms
+
     def residual(values, enforce_deadline=True):
+        nonlocal residual_evaluations, residual_evaluation_seconds, next_progress_at
         if enforce_deadline and monotonic() - started > timeout_seconds:
             raise TimeoutError('pose_temporal_fit_budget_exhausted')
+        evaluation_started = monotonic()
+        residual_evaluations += 1
         points = decode(values)
-        velocity, acceleration, jerk = derivatives(points[:, moved] - (
-            reference_root if reference_root is not None else points[:, root:root + 1]))
+        velocity, acceleration, jerk = derivatives(
+            points[:, moved] - (
+                reference_root if reference_root is not None else points[:, root:root + 1]
+            )
+        )
         pose_residual = (points[:, moved] - target[:, moved]) * observation_scale / pose_scale
         if projected_observations:
             # Image observations constrain camera X/Y only. Depth is a weak
             # reconstruction prior, not a fabricated measured 3D target.
-            pose_residual[:, :, 2] = .05 * (points[:, moved, 2] - original[:, moved, 2]) / pose_scale
+            pose_residual[:, :, 2] = .05 * (
+                points[:, moved, 2] - original[:, moved, 2]
+            ) / pose_scale
         blocks = [pose_residual.ravel(),
                   (.03 * values).ravel(),
                   (100 * np.maximum(_norm(velocity) - speed_limit, 0) / (scale * .03 * 30)).ravel(),
                   (100 * np.maximum(_norm(acceleration) - acceleration_limit, 0) / (scale * .012 * 30**2)).ravel(),
                   (np.maximum(_norm(jerk) - jerk_limit[None, :], 0) / jerk_limit[None, :]).ravel()]
-        blocks.append((100 * np.maximum(_norm(jerk)-local_jerk_limit, 0)/local_jerk_limit).ravel())
+        blocks.append((100 * np.maximum(_norm(jerk) - local_jerk_limit, 0) / local_jerk_limit).ravel())
         if pair:
-            blocks.append((10 * (_norm(points[:, pair[0]] - points[:, pair[1]]) - pair_distance) / max(.005, pair_distance * .02)).ravel())
+            blocks.append((10 * (_norm(points[:, pair[0]] - points[:, pair[1]]) - pair_distance)
+                           / max(.005, pair_distance * .02)).ravel())
         if pair_reference:
             axis = points[:, pair_reference[1]] - points[:, pair_reference[0]]
             axis /= np.maximum(_norm(axis)[:, None], 1e-9)
@@ -171,17 +209,23 @@ def fit_pose_and_temporal_trajectories(
             vector = points[:, b, :2] - points[:, a, :2]
             unit = vector / np.maximum(_norm(vector)[:, None], 1e-12)
             blocks.append(((unit - direction) * evidence[:, None] / .2).ravel())
-        labels = ['pose', 'rotationPrior', 'speed', 'acceleration', 'jerkRms', 'localJerk']
-        labels += ((['rigidPair'] if pair else [])
-                   + (['rigidPairOrientation', 'rigidPairCenter'] if pair_reference else [])
-                   + ['coreDistance'] * len(distance_pairs) + ['projectedDirection'] * len(observed_segments))
-        objective_terms.clear()
-        for label, block in zip(labels, blocks):
-            objective_terms[label] = objective_terms.get(label, 0.) + float(np.sum(block ** 2))
         result = np.concatenate(blocks)
         cost = float(result @ result)
+        if not initial_terms:
+            initial_terms.update(terms_for_blocks(blocks))
         if cost < best[0]:
             best[:] = [cost, values.copy()]
+            best_terms.clear()
+            best_terms.update(terms_for_blocks(blocks))
+        elapsed = monotonic() - started
+        if enforce_deadline and elapsed >= next_progress_at:
+            objective_progress.append({'elapsedSeconds': elapsed,
+                                       'evaluations': residual_evaluations,
+                                       'bestObjective': best[0],
+                                       'residualEvaluationSeconds': residual_evaluation_seconds,
+                                       'bestObjectiveTerms': dict(best_terms)})
+            next_progress_at = elapsed + 10.0
+        residual_evaluation_seconds += monotonic() - evaluation_started
         return result
 
     # A joint depends only on rotations along its own ancestor path. A dense
@@ -217,9 +261,21 @@ def fit_pose_and_temporal_trajectories(
     for a, b, _, _ in observed_segments:
         mask = np.maximum(joint_dependency(names[a]), joint_dependency(names[b]))
         patterns.append(dependency(0, np.tile(mask, (2, 1))))
+    jacobian_pattern = vstack(patterns, format='csr')
+    variable_count = count * width
+    # SciPy's default greedy coloring randomizes columns before visiting them.
+    # This residual pattern is temporal and frame-major, so natural ordering
+    # reuses colors across independent frame/joint blocks more effectively.
+    jacobian_groups = _natural_jacobian_column_groups(jacobian_pattern)
+    # Preserve the old SciPy seed-0 ordering as a coordinate permutation. This
+    # keeps the sparse solve deterministic while allowing the explicit natural
+    # coloring above to reduce finite-difference residual evaluations.
+    solver_permutation = np.argsort(np.random.RandomState(0).permutation(variable_count))
+    inverse_solver_permutation = np.argsort(solver_permutation)
+    solver_jacobian_pattern = jacobian_pattern[:, solver_permutation]
+    solver_jacobian_groups = jacobian_groups[solver_permutation]
     baseline_residual = residual(np.zeros(count * width), enforce_deadline=False)
     initial_cost = float(baseline_residual @ baseline_residual)
-    initial_terms = dict(objective_terms)
     initial_rotations = []
     for edge_index, (parent, child) in enumerate(edges):
         target_bone = target[:, indices[child]] - target[:, indices[parent]]
@@ -244,10 +300,34 @@ def fit_pose_and_temporal_trajectories(
         candidate_residual = residual(initial, enforce_deadline=False)
         if float(candidate_residual @ candidate_residual) > initial_cost:
             initial = np.zeros(count * width)
+    last_residual = {'values': None, 'result': None}
+
+    def permuted_residual(values):
+        result = residual(values[inverse_solver_permutation])
+        last_residual['values'] = values.copy()
+        last_residual['result'] = result
+        return result
+
+    def jacobian(values):
+        baseline = last_residual['result']
+        if (last_residual['values'] is None
+                or not np.array_equal(last_residual['values'], values)):
+            baseline = permuted_residual(values)
+        return approx_derivative(
+            permuted_residual,
+            values,
+            method='2-point',
+            f0=baseline,
+            sparsity=(solver_jacobian_pattern, solver_jacobian_groups),
+        )
+
     try:
-        solved = least_squares(residual, initial, jac_sparsity=vstack(patterns, format='csr'),
+        tr_options = {'maxiter': int(lsmr_max_iterations)}
+        if lsmr_tolerance is not None:
+            tr_options.update(atol=float(lsmr_tolerance), btol=float(lsmr_tolerance))
+        solved = least_squares(permuted_residual, initial[solver_permutation], jac=jacobian,
                                max_nfev=max_evaluations, ftol=1e-5, xtol=None, gtol=1e-5,
-                               tr_options={'maxiter': 100})
+                               tr_options=tr_options, x_scale=x_scale)
         status, evaluations = 'converged' if solved.success else 'evaluation_limit', solved.nfev
     except TimeoutError:
         status, evaluations = 'time_limit', None
@@ -258,10 +338,27 @@ def fit_pose_and_temporal_trajectories(
                **{name: tuple(float(v) for v in points[i, indices[name]]) for name in corrected_names}})
               for i, frame in enumerate(source.frames)]
     fitted = replace(source, frames=frames)
+    finished_elapsed = monotonic() - started
+    if (not objective_progress
+            or objective_progress[-1]['elapsedSeconds'] < finished_elapsed - 1e-3):
+        objective_progress.append({'elapsedSeconds': finished_elapsed,
+                                   'evaluations': residual_evaluations,
+                                   'bestObjective': best[0],
+                                   'residualEvaluationSeconds': residual_evaluation_seconds,
+                                   'bestObjectiveTerms': dict(best_terms)})
     report.update(applied=best[0] < initial_cost, reason=status, evaluations=evaluations,
-                  elapsedSeconds=monotonic() - started, initialObjective=initial_cost,
+                  elapsedSeconds=finished_elapsed, initialObjective=initial_cost,
                   finalObjective=best[0], correctedJoints=corrected_names, rigidPair=rigid_pair,
-                  initialObjectiveTerms=initial_terms, finalObjectiveTerms=dict(objective_terms),
+                  initialObjectiveTerms=initial_terms, finalObjectiveTerms=dict(best_terms),
+                  objectiveProgress=objective_progress,
+                  jacobianColorGroups=int(jacobian_groups.max() + 1),
+                  jacobianVariableCount=variable_count,
+                  lsmrMaxIterations=int(lsmr_max_iterations),
+                  lsmrTolerance=lsmr_tolerance,
+                  xScale=x_scale,
+                  jacobianMethod="scipy_sparse_2_point",
+                  residualEvaluationSeconds=residual_evaluation_seconds,
+                  residualEvaluationShare=(residual_evaluation_seconds / max(finished_elapsed, 1e-9)),
                   poseTargetRmsBefore=float(np.sqrt(np.mean((original[:, moved] - target[:, moved])**2))),
                   poseTargetRmsAfter=float(np.sqrt(np.mean((points[:, moved] - target[:, moved])**2))))
     if pair:
@@ -352,7 +449,13 @@ def _clip_payload_digest(clip) -> str:
 
 def temporal_quality_comparison(before: MotionClip, proposed: MotionClip) -> dict:
     """Protect local failures, not only average jerk, at one physical scale."""
-    from .bake_and_rank import compute_kinematic_plausibility_metrics_from_payload
+    from .bake_and_rank import (
+        compute_bone_length_instability_metrics,
+        compute_distal_step_spike_metrics,
+        compute_joint_angle_step_metrics,
+        skeleton_joint_tracks_and_body_height,
+    )
+    from .temporal_quality import introduced_joint_spikes
 
     def metrics(clip, body_height=None, reference=None):
         payload = {'jointNames': clip.joint_names, 'fps': clip.fps, 'frames': [
@@ -361,7 +464,41 @@ def temporal_quality_comparison(before: MotionClip, proposed: MotionClip) -> dic
         if reference is not None:
             for frame, original in zip(payload['frames'], reference.frames):
                 frame['sourceJoints'] = {name: list(point) for name, point in original.joints.items()}
-        return compute_kinematic_plausibility_metrics_from_payload(payload, comparison_body_height=body_height)
+        joint_tracks, measured_body_height = skeleton_joint_tracks_and_body_height(
+            payload['frames'], payload['jointNames'],
+        )
+        resolved_body_height = (
+            body_height if body_height is not None and body_height > 1e-6
+            else measured_body_height
+        )
+        if resolved_body_height <= 1e-6:
+            return {
+                'bodyHeight': 0.0,
+                'distalStep': {'severe': False, 'score': 1.0},
+                'jointAngleStep': {'severe': False, 'score': 1.0},
+                'boneLength': {'severe': False, 'score': 1.0},
+                'introducedJointSpikes': {'events': [], 'severe': False},
+            }
+        root_joint = next(
+            (name for name in ('pelvis', 'hips', 'root') if name in joint_tracks),
+            '',
+        )
+        result = {
+            'bodyHeight': resolved_body_height,
+            'distalStep': compute_distal_step_spike_metrics(
+                joint_tracks,
+                root_joint=root_joint,
+                body_height=resolved_body_height,
+                fps=float(clip.fps or 30.0),
+            ),
+            'jointAngleStep': compute_joint_angle_step_metrics(joint_tracks),
+            'boneLength': compute_bone_length_instability_metrics(
+                joint_tracks, body_height=resolved_body_height,
+            ),
+        }
+        if reference is not None:
+            result['introducedJointSpikes'] = introduced_joint_spikes(payload)
+        return result
 
     # The refinement chain compares every proposal against the same baseline
     # clip; the kinematic plausibility pass is the second dominant repeat cost.

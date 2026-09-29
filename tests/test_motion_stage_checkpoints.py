@@ -57,6 +57,50 @@ def test_processed_motion_reuse_skips_gpu_but_rechecks_current_raw_gate(tmp_path
     assert calls[-1] == "generate"
 
 
+def test_generation_checkpoint_and_reconstruction_cache_track_gvhmr_runtime_code(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    dependency = tmp_path / "gvhmr_inference.py"
+    dependency.write_text("bridge version one")
+    monkeypatch.setattr(pipeline, "gvhmr_runtime_dependency_paths", lambda: (dependency,))
+    monkeypatch.setattr(pipeline, "gvhmr_source_tree_identity", lambda: "source-revision")
+    request = pipeline.GenerateRequest(
+        "exercise",
+        tmp_path / "work",
+        video_path=source,
+        motion_reconstruction_backend="gvhmr",
+    )
+    calls = []
+
+    def generate(_request, **_kwargs):
+        calls.append("generate")
+        values = {}
+        for field in fields(pipeline.GenerateResult):
+            if "Path" in str(field.type):
+                path = tmp_path / (field.name + ".json")
+                path.write_text("{}")
+                values[field.name] = path
+        values.update(cleanup_stats=CleanupStats(10, 10, 0, 0, 1, 1), motion_tuning_enabled=True)
+        return pipeline.GenerateResult(**values)
+
+    monkeypatch.setattr(pipeline, "_run_generation_pipeline_uncached", generate)
+    pipeline.run_generation_pipeline(request)
+    first_gvhmr_cache_key = pipeline.wham_content_cache_key(request, source)
+    dependency.write_text("bridge version two")
+    pipeline.run_generation_pipeline(request)
+
+    assert calls == ["generate", "generate"]
+    assert pipeline.wham_content_cache_key(request, source) != first_gvhmr_cache_key
+
+    wham_request = replace(request, motion_reconstruction_backend="wham")
+    first_wham_cache_key = pipeline.wham_content_cache_key(wham_request, source)
+    dependency.write_text("bridge version three")
+    assert pipeline.wham_content_cache_key(wham_request, source) == first_wham_cache_key
+
+
 @pytest.mark.parametrize("state,expected", [
     ({"status": "completed"}, "export_selected"),
     ({"finalValidation": {"status": "no_selection", "candidateDiagnostics": [{"status": "ready_for_selection"}]}}, "next_source"),

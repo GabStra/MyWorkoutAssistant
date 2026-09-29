@@ -25,7 +25,7 @@ _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
 # section and waits for a fit slot, the other holds its priority context open
 # and waits for the exclusive section). Priority reorders work; it must not
 # gate correctness.
-_PRIORITY_DEPTH = threading.local()
+_PRIORITY_DEPTH = ContextVar('fit_priority_depth', default=0)
 
 # A stale priority registration (a thread that died between enter and exit,
 # or any future leak) must not wedge the pipeline permanently. Priority
@@ -109,7 +109,7 @@ def fit_should_yield_for_priority() -> bool:
         speculative = bool(_SPECULATIVE_FIT.get())
         if not speculative:
             return False
-        if getattr(_PRIORITY_DEPTH, 'value', 0) > 0:
+        if _PRIORITY_DEPTH.get() > 0:
             # This thread's own finalization owns the priority: yielding to it
             # would abort the fit that finalization is waiting for.
             return False
@@ -123,8 +123,7 @@ def prioritize_fit_workspaces(workspaces):
     """Prefer CPU fitting for candidates about to enter final validation."""
     keys = {_workspace_key(workspace) for workspace in workspaces}
     keys.discard(None)
-    depth = getattr(_PRIORITY_DEPTH, 'value', 0)
-    _PRIORITY_DEPTH.value = depth + 1
+    token = _PRIORITY_DEPTH.set(_PRIORITY_DEPTH.get() + 1)
     try:
         if not keys:
             yield
@@ -139,7 +138,7 @@ def prioritize_fit_workspaces(workspaces):
                 _PRIORITY_WORKSPACES.difference_update(keys)
                 _FIT_GUARD.notify_all()
     finally:
-        _PRIORITY_DEPTH.value = depth
+        _PRIORITY_DEPTH.reset(token)
 
 
 @contextmanager
@@ -159,7 +158,7 @@ def cpu_fit_slot():
         # finalizations would otherwise deadlock (one holds the WHAM-exclusive
         # section and waits for a slot, the other holds priority open and waits
         # for that section).
-        own_priority = getattr(_PRIORITY_DEPTH, 'value', 0) > 0
+        own_priority = _PRIORITY_DEPTH.get() > 0
         wait_started = monotonic()
         while True:
             if (
@@ -175,7 +174,8 @@ def cpu_fit_slot():
                     or (
                         not speculative
                         and _PRIORITY_WORKSPACES
-                        and (workspace is None or workspace not in _PRIORITY_WORKSPACES)
+                        and workspace is not None
+                        and workspace not in _PRIORITY_WORKSPACES
                     )
                 )
             )

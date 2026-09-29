@@ -91,11 +91,11 @@ from exercise_motion_pkg.wave_pipeline import StagedWaveItem, run_staged_bake_wa
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="exercise-motion",
-        description="Generate a cleaned, previewable exercise motion clip from a video and WHAM output.",
+        description="Generate a cleaned, previewable exercise motion clip from a video and reconstructed pose output.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    generate = subparsers.add_parser("generate", help="Run the video -> WHAM -> cleanup -> preview pipeline.")
+    generate = subparsers.add_parser("generate", help="Run the video -> motion reconstruction -> cleanup -> preview pipeline.")
     generate.add_argument("--exercise-slug", required=True, help="Stable slug for the output workspace.")
     generate.add_argument(
         "--workspace",
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument(
         "--motion-reconstructor",
         choices=["wham", "gvhmr"],
-        default="wham",
+        default="gvhmr",
         help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
     )
     generate.add_argument(
@@ -702,7 +702,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--motion-reconstructor",
         choices=["wham", "gvhmr"],
-        default="wham",
+        default="gvhmr",
         help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
     )
     bake_and_rank.add_argument(

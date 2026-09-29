@@ -13,10 +13,14 @@ the default export (poses are unchanged, only the shape basis).
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+from time import perf_counter
 
+_MODULE_IMPORT_STARTED = perf_counter()
 import joblib
 import torch
+_MODULE_IMPORT_SECONDS = perf_counter() - _MODULE_IMPORT_STARTED
 
 
 def export_gvhmr_results_pkl(results_pt: Path, output_pkl: Path, *, keep_source_betas: bool = False) -> dict[str, object]:
@@ -65,8 +69,17 @@ def main() -> None:
         help="Export GVHMR's SMPL-X betas instead of neutral SMPL betas.",
     )
     args = parser.parse_args()
+    started = perf_counter()
     summary = export_gvhmr_results_pkl(args.results, args.output_pkl, keep_source_betas=args.keep_source_betas)
+    timing = {
+        "moduleImportSeconds": round(_MODULE_IMPORT_SECONDS, 3),
+        "conversionAndWriteSeconds": round(perf_counter() - started, 3),
+    }
+    timing["processTotalSeconds"] = round(
+        timing["moduleImportSeconds"] + timing["conversionAndWriteSeconds"], 3
+    )
     print(f"GVHMR pkl export complete: {summary}")
+    print(f"GVHMR_EXPORT_TIMINGS_JSON:{json.dumps(timing, sort_keys=True)}", flush=True)
 
 
 if __name__ == "__main__":

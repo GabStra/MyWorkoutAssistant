@@ -84,6 +84,24 @@ def test_reconstruction_queue_preserves_observability_ranking():
         'clear-evidence', 'persistent-occlusion']
 
 
+def test_reconstruction_queue_keeps_source_outcome_history_in_priority():
+    from test_exercise_motion_pkg import _first_attempt_readiness_candidate
+    from exercise_motion_pkg.bake_and_rank import prioritize_ranked_candidates_for_reconstruction
+
+    poor_history = _first_attempt_readiness_candidate(completion_mode='return_to_start')
+    good_history = _first_attempt_readiness_candidate(completion_mode='return_to_start')
+    poor_history.candidate['videoId'] = 'repeatedly-failing-channel'
+    good_history.candidate['videoId'] = 'no-negative-history'
+    poor_history.candidate['visionPayload']['sourceOutcomePrior'] = {
+        'score': -.5, 'channelAttempts': 66, 'channelAccepts': 0}
+    good_history.candidate['visionPayload']['sourceOutcomePrior'] = {
+        'score': 0., 'channelAttempts': 0, 'channelAccepts': 0}
+
+    ranked = prioritize_ranked_candidates_for_reconstruction([poor_history, good_history])
+    assert [item.candidate['videoId'] for item in ranked] == [
+        'no-negative-history', 'repeatedly-failing-channel']
+
+
 def test_view_diversity_does_not_promote_an_ineligible_source():
     from test_exercise_motion_pkg import _first_attempt_readiness_candidate
     from exercise_motion_pkg.bake_and_rank import (

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import json
+import os
 import threading
-from time import monotonic
+from time import monotonic, time_ns
 from dataclasses import replace
 from statistics import median
 from typing import Any
@@ -89,6 +91,7 @@ MAX_SUPPRESSION_CORRECTION_METERS = 0.035
 MAX_TORSO_CORRECTION_METERS = 0.025
 MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(15.0)
 MAX_PLAUSIBLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(30.0)
+SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS = 60.0
 SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
@@ -3420,6 +3423,24 @@ def _align_body_to_source_pose(
     from .fit_runtime import cpu_fit_slot
     queued_at = monotonic()
     with cpu_fit_slot() as queue_seconds:
+        _capture_trajectory_fit_replay(
+            camera_clip,
+            replace(camera_clip, frames=targets),
+            tuple(edges),
+            observation_weights=weights,
+            projected_observations=True,
+            fit_root_translation=fit_root_translation,
+            rigid_pair=('left_hand', 'right_hand') if rigid_paired_hands_required else None,
+            rigid_pair_reference=(('left_shoulder', 'right_shoulder')
+                                  if rigid_paired_hands_required and horizontal_torso_required else None),
+            rigid_distances=tuple(combinations(core, 2)),
+            projection_segments=tuple(dict.fromkeys(
+                edge for chain in pose_fidelity.ANGLE_CHAINS.values()
+                for edge in zip(chain, chain[1:])
+            )),
+            timeout_seconds=SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS,
+            max_evaluations=400,
+        )
         fitted, report = fit_pose_and_temporal_trajectories(
             camera_clip, replace(camera_clip, frames=targets), tuple(edges),
             observation_weights=weights, projected_observations=True,
@@ -3430,13 +3451,61 @@ def _align_body_to_source_pose(
             rigid_distances=tuple(combinations(core, 2)),
             projection_segments=tuple(dict.fromkeys(edge for chain in pose_fidelity.ANGLE_CHAINS.values()
                                                    for edge in zip(chain, chain[1:]))),
-            timeout_seconds=120., max_evaluations=400,
+            timeout_seconds=SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS,
+            max_evaluations=400,
         )
     report['queueSeconds'] = queue_seconds
     return rotate(fitted, matrix.T) if report.get('applied') else clip, {
         'applied': report.get('applied', False), 'strategy': 'joint_body_source_projection_temporal_fit',
         'cameraRegistration': camera, 'trajectoryFit': report, 'frozenSupportAncestors': sorted(frozen),
     }
+
+
+def _capture_trajectory_fit_replay(
+    source: MotionClip,
+    proposal: MotionClip,
+    chains: tuple[tuple[str, str], ...],
+    **solver_options: Any,
+) -> None:
+    """Optionally persist exact optimizer inputs for bounded local replay."""
+    import numpy as np
+
+    output_path = os.environ.get("EXERCISE_MOTION_TRAJECTORY_FIT_CAPTURE")
+    if not output_path:
+        return
+
+    def clip_payload(clip: MotionClip) -> dict[str, Any]:
+        return {
+            "fps": clip.fps,
+            "joint_names": clip.joint_names,
+            "frames": [
+                {"time_sec": frame.time_sec, "joints": frame.joints}
+                for frame in clip.frames
+            ],
+            "source": clip.source,
+            "metadata": clip.metadata,
+        }
+
+    normalized_options = dict(solver_options)
+    weights = normalized_options.get("observation_weights")
+    if weights is not None:
+        normalized_options["observation_weights"] = np.asarray(weights).tolist()
+    payload = {
+        "schema": "trajectory_fit_replay_v1",
+        "source": clip_payload(source),
+        "proposal": clip_payload(proposal),
+        "chains": chains,
+        "solver_options": normalized_options,
+    }
+    destination = os.path.abspath(output_path)
+    if os.path.isdir(destination) or not os.path.splitext(destination)[1]:
+        os.makedirs(destination, exist_ok=True)
+        destination = os.path.join(destination, f"trajectory-fit-{time_ns()}.json")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    temporary_path = destination + ".tmp"
+    with open(temporary_path, "w", encoding="utf-8") as artifact:
+        json.dump(payload, artifact, separators=(",", ":"), allow_nan=False)
+    os.replace(temporary_path, destination)
 
 
 def _align_hinge_articulation_to_source_pose(

@@ -240,9 +240,27 @@ def _recenter_constant_image_offset(source, transformed, swap, image_transform):
 def source_pose_reference_for_motion(source_payload: dict[str, Any], motion_payload: dict[str, Any]) -> dict[str, Any]:
     """Select parent-video observations using explicit retained source timestamps."""
     frames = motion_payload.get("frames") or []
-    if not frames or any("sourceTimeSec" not in frame for frame in frames):
+    if not frames:
         return {**source_payload, "frames": []}
-    start, end = float(frames[0]["sourceTimeSec"]), float(frames[-1]["sourceTimeSec"])
+    timestamp_key = next((key for key in ("sourceTimeSec", "cycleSourceTimeSec")
+                          if all(isinstance(frame, dict) and key in frame for frame in frames)), None)
+    if timestamp_key is None:
+        return {**source_payload, "frames": []}
+    try:
+        source_times = [float(frame[timestamp_key]) for frame in frames]
+    except (TypeError, ValueError, OverflowError):
+        return {**source_payload, "frames": []}
+    if not all(math.isfinite(value) for value in source_times):
+        return {**source_payload, "frames": []}
+    if timestamp_key == "cycleSourceTimeSec":
+        try:
+            source_origin = float(source_payload.get("sourceTimeOriginSec", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            return {**source_payload, "frames": []}
+        if not math.isfinite(source_origin):
+            return {**source_payload, "frames": []}
+        source_times = [source_origin + value for value in source_times]
+    start, end = source_times[0], source_times[-1]
     return {**source_payload, "sourceTimeOriginSec": start - float(frames[0].get("timeSec", 0.0)),
             "frames": [frame for frame in source_payload.get("frames", [])
                        if start <= float(frame.get("sourceTimeSec", -math.inf)) <= end]}

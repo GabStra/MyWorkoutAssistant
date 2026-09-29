@@ -43,13 +43,12 @@ param(
 
     [switch]$DisableStagedWaves,
 
-    # Discovery/bake overlap on staged waves. "allow" lets the next wave's
-    # source discovery run while the current wave bakes: the global GPU lock
-    # serializes actual GPU compute, discovery yield requests keep discovery
-    # from running away, and the persistent VLM server residency is unchanged
-    # from the avoid path. Pass "avoid" to restore strict stage alternation.
+    # Discovery/bake overlap on staged waves. "auto" avoids overlap when
+    # discovery uses CUDA, preventing VLM and reconstruction workers from
+    # competing for the same GPU lock; CPU-only discovery can still overlap.
+    # Pass "allow" to explicitly overlap GPU discovery and bake stages.
     [ValidateSet("auto", "allow", "avoid")]
-    [string]$GpuDiscoveryBakeOverlap = "allow",
+    [string]$GpuDiscoveryBakeOverlap = "auto",
 
     [ValidateRange(1, 10)]
     [int]$PassRestartAttempts = 3,

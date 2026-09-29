@@ -144,6 +144,52 @@ def test_failed_controlled_fit_keeps_original_pose(monkeypatch):
     assert payload == original
 
 
+def test_controlled_fit_receives_remaining_exercise_timeout(monkeypatch):
+    from exercise_motion_pkg import controlled_motion
+
+    payload = accepted_payload()
+    payload.pop('fixedRig')
+    payload.pop('controlledMotionFit')
+    monkeypatch.setattr(
+        bake_and_rank,
+        'constrain_to_source_articulation_envelope',
+        lambda source, proposed, **kwargs: (proposed, {'applied': False}),
+    )
+    captured = {}
+
+    def fit(working, **kwargs):
+        captured.update(kwargs)
+        return working, {'applied': False, 'reason': 'fit_timeout'}
+
+    monkeypatch.setattr(controlled_motion, 'fit_controlled_motion', fit)
+    bake_and_rank.constrain_baked_payload_to_source_articulation(
+        payload,
+        timeout_seconds=17.5,
+    )
+    assert captured == {'timeout_seconds': 17.5}
+
+
+def test_controlled_fit_queue_wait_uses_exercise_timeout(monkeypatch):
+    from contextlib import contextmanager
+    from exercise_motion_pkg import fit_runtime
+    from exercise_motion_pkg import controlled_motion
+
+    captured = {}
+
+    @contextmanager
+    def delayed_slot():
+        yield 4.0
+
+    def fit(payload, **kwargs):
+        captured.update(kwargs)
+        return payload, {'applied': False, 'reason': 'fit_timeout'}
+
+    monkeypatch.setattr(fit_runtime, 'cpu_fit_slot', delayed_slot)
+    monkeypatch.setattr(controlled_motion, '_fit_candidate_motion', fit)
+    controlled_motion.fit_controlled_motion({}, timeout_seconds=10.0)
+    assert captured == {'max_evaluations': None, 'timeout_seconds': 6.0}
+
+
 def test_global_translation_jitter_cannot_mask_an_introduced_limb_spike():
     from exercise_motion_pkg.controlled_motion import relative_motion_quality
 

@@ -87,12 +87,17 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                    if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
     complete_proposals = []
     for start in range(count-minimum_frames):
-        for stop in range(start+minimum_frames, count):
+        # The final observed sample can be the return point of a complete
+        # cycle. ``stop == count`` is an exclusive bound over every frame; use
+        # the last observed frame as its endpoint evidence because no next-
+        # cycle sample exists in the clip.
+        for stop in range(start+minimum_frames, count + 1):
             counts['intervalPairs'] += 1
-            if not np.array_equal(contacts[start], contacts[stop]):
+            endpoint_index = stop if stop < count else count - 1
+            if not np.array_equal(contacts[start], contacts[endpoint_index]):
                 continue
             counts['contactCompatible'] += 1
-            jump = float(np.max(np.linalg.norm(points[start]-points[stop], axis=-1)))
+            jump = float(np.max(np.linalg.norm(points[start]-points[endpoint_index], axis=-1)))
             # Bounded fit feasibility, not permission to accept a final seam.
             if jump > max(.08, 2*endpoint_correction_ratio)*scale:
                 continue
@@ -106,11 +111,12 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
             # Extreme-to-extreme returns reverse phase velocity at the apex by
             # construction. Hard-reject opposite motion only for incomplete
             # windows (eccentric/concentric pose crossings and half-reps).
-            phase_left, phase_right = float(phase_velocity[start]), float(phase_velocity[stop])
+            phase_left = float(phase_velocity[start])
+            phase_right = float(phase_velocity[endpoint_index])
             phase_opposite = (abs(phase_left) > phase_speed_floor
                               and abs(phase_right) > phase_speed_floor
                               and phase_left * phase_right < 0)
-            left, right = velocity[start].ravel(), velocity[stop].ravel()
+            left, right = velocity[start].ravel(), velocity[endpoint_index].ravel()
             magnitude = np.linalg.norm(left)*np.linalg.norm(right)
             body_opposite = bool(magnitude > (.05*scale)**2 and np.dot(left, right) < 0)
             if not complete and (phase_opposite or body_opposite):
@@ -167,10 +173,29 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
         if np.any(retained[moving_basis] < .9 * range_basis[moving_basis]):
             continue
         counts['rangePreserved'] += 1
-        # Do not spend every bounded fit attempt on the adjacent sample of the
-        # same proposed phase. Keep alternatives separated in phase or duration.
-        if any(abs(start-c['startFrame']) < max(2, round(fps*.1))
-               and abs(stop-c['stopFrameExclusive']) < max(2, round(fps*.1)) for c in accepted):
+        # Nearby boundary shifts of the same repetition are not useful fit
+        # alternatives: they preserve nearly all the same frames and tend to
+        # produce the same support/root-travel failure. Deduplicate by interval
+        # overlap so candidates separated by just over 100 ms do not consume
+        # another expensive controlled-motion solve.
+        candidate_length = stop - start
+        duplicate_overlap = any(
+            (overlap := max(
+                0,
+                min(stop, candidate['stopFrameExclusive'])
+                - max(start, candidate['startFrame']),
+            ))
+            / max(
+                min(
+                    candidate_length,
+                    candidate['stopFrameExclusive'] - candidate['startFrame'],
+                ),
+                1,
+            )
+            >= .9
+            for candidate in accepted
+        )
+        if duplicate_overlap:
             continue
         accepted.append({'startFrame': start, 'stopFrameExclusive': stop,
                          'score': score, 'endpointGapMeters': jump,

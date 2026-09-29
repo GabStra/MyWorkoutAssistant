@@ -12,6 +12,7 @@ import time
 import uuid
 from dataclasses import asdict, fields, replace
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -293,10 +294,55 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
             except OSError:
                 continue
             digest.update(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}\n".encode("utf-8"))
+    if request.motion_reconstruction_backend == "gvhmr":
+        for path in gvhmr_runtime_dependency_paths():
+            digest.update(str(path).encode("utf-8"))
+            if path.is_file():
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+        digest.update(gvhmr_source_tree_identity().encode("utf-8"))
     with input_video_path.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def gvhmr_runtime_dependency_paths() -> tuple[Path, ...]:
+    repository_root = Path(__file__).resolve().parents[1]
+    return (
+        repository_root / "exercise_motion_pkg" / "gvhmr_runner.py",
+        repository_root / "exercise_motion_pkg" / "gvhmr_inference.py",
+        repository_root / "exercise_motion_pkg" / "gvhmr_pkl_export.py",
+        repository_root / "docker" / "gvhmr" / "Dockerfile",
+    )
+
+
+@lru_cache(maxsize=1)
+def gvhmr_source_tree_identity() -> str:
+    source_root = Path(__file__).resolve().parents[1] / "third_party" / "GVHMR"
+    try:
+        revision = subprocess.run(
+            ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5.0,
+        )
+        if revision.returncode != 0:
+            return "unavailable"
+        status = subprocess.run(
+            ["git", "-C", str(source_root), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+    if status.returncode != 0:
+        return revision.stdout.strip()
+    return f"{revision.stdout.strip()}\n{status.stdout.strip()}"
 
 
 def global_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path:
@@ -417,6 +463,8 @@ def run_generation_pipeline(
     """Reuse finished processing independently of later rendering/review policy."""
     checkpoint = request.workspace / request.exercise_slug / "generation_checkpoint.json"
     settings = asdict(request)
+    if request.motion_reconstruction_backend == "gvhmr":
+        settings["gvhmrSourceTreeIdentity"] = gvhmr_source_tree_identity()
     for name in ("require_wham_cache", "reuse_wham_cache", "wham_tracking_preflight",
                  "wham_timeout_seconds", "wham_worker_timeout_seconds"):
         settings.pop(name, None)
@@ -429,6 +477,8 @@ def run_generation_pipeline(
         "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
         "anatomical_repair.py", "chain_depth_correction.py",
     ))
+    if request.motion_reconstruction_backend == "gvhmr":
+        inputs.extend(gvhmr_runtime_dependency_paths())
     key = cache_key(settings, inputs)
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key) if request.reuse_wham_cache else None

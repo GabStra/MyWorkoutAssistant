@@ -99,7 +99,7 @@ param(
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "wham",
+    [string]$MotionReconstructor = "gvhmr",
     [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$FastProfile,
     [string]$WhamDockerGpus = "all",
@@ -1494,10 +1494,23 @@ function Start-InitialDiscoveryJob {
             }
             $logTail = (Get-Content -LiteralPath $LogPath -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
             $isTransientServerStartupFailure = $logTail -match "llama-server did not become healthy"
-            if (-not $isTransientServerStartupFailure -or $attemptIndex -ge $maxTransientServerAttempts) {
+            $isTransientPythonSourceLoadFailure = $logTail -match "(?m)(SyntaxError|IndentationError):"
+            $maximumAttemptsForFailure = if ($isTransientServerStartupFailure) {
+                $maxTransientServerAttempts
+            } elseif ($isTransientPythonSourceLoadFailure) {
+                2
+            } else {
+                1
+            }
+            if ($attemptIndex -ge $maximumAttemptsForFailure) {
                 break
             }
-            "[$(Get-Date -Format o)] retrying initial discovery after transient llama-server startup failure" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            $retryReason = if ($isTransientServerStartupFailure) {
+                "transient llama-server startup failure"
+            } else {
+                "transient Python source-load failure"
+            }
+            "[$(Get-Date -Format o)] retrying initial discovery after $retryReason" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             Start-Sleep -Seconds 5
         }
         [pscustomobject]@{
@@ -1696,13 +1709,13 @@ function Test-DiscoveryStageReady {
         $hasSingleDumbbellTarget = @($payload.exercises | Where-Object {
             $_.exerciseName -match '^Single[\s_-]+Dumbbell[\s_-]'
         }).Count -gt 0
-        if ($hasSingleDumbbellTarget -and [int]$payload.ranking.singleDumbbellNamingPolicyVersion -lt 1) {
+        if ($hasSingleDumbbellTarget -and [int]$payload.ranking.singleDumbbellNamingPolicyVersion -lt 3) {
             return $false
         }
         # Revisit old all-rejected discovery under the bounded contradiction
         # policy. Successful source sets and downstream artifacts remain reusable.
-        $hasRecommendedCandidate = @($payload.exercises | ForEach-Object { $_.candidates } |
-            Where-Object { $_.status -eq "recommended" }).Count -gt 0
+        $hasRecommendedCandidate = Test-HasIdentityReviewedRecommendedCandidate `
+            -CandidatesPath $WorkItem.exerciseCandidatesPath
         $hasStaticHold = @($payload.exercises | Where-Object {
             $_.exerciseMotionContract.completionMode -eq "stable_hold"
         }).Count -gt 0
@@ -1856,6 +1869,72 @@ function Test-SelectionHasNeedsMotionProcessing {
     }
 }
 
+function Test-CandidateIdentityEvidenceComplete {
+    param([object]$Candidate)
+
+    if ($null -eq $Candidate -or "$($Candidate.status)" -ne 'recommended') {
+        return $false
+    }
+    $reasons = @($Candidate.scoreReasons | ForEach-Object { "$_" })
+    if ($reasons -contains 'vision_review_not_completed') { return $false }
+
+    $vision = $Candidate.visionPayload
+    if ($null -eq $vision) { return $true }
+    if ($vision -isnot [pscustomobject] -and $vision -isnot [System.Collections.IDictionary]) {
+        return $true
+    }
+    if ($vision.sourceObservedBoundaryAuthoritative) { return $false }
+
+    $identityMatch = $vision.target_identity_match
+    if ($null -ne $identityMatch) {
+        if ($identityMatch -is [bool]) { return $identityMatch }
+        switch ("$identityMatch".Trim().ToLowerInvariant()) {
+            { $_ -in @('true', '1', 'yes', 'y') } { return $true }
+            { $_ -in @('false', '0', 'no', 'n') } { return $false }
+        }
+    }
+
+    foreach ($score in @($vision.source_score, $Candidate.visionScore)) {
+        if ($null -eq $score) { continue }
+        $parsedScore = 0.0
+        if ([double]::TryParse(
+            "$score",
+            [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsedScore
+        )) {
+            return $true
+        }
+    }
+    $fallbackType = "$($vision.deterministicSourceFallback.type)"
+    return (
+        $fallbackType -eq 'semantic_pose_short_demo' -or
+        $reasons -contains 'semantic_pose_short_demo_source_fallback'
+    )
+}
+
+function Test-HasIdentityReviewedRecommendedCandidate {
+    param([string]$CandidatesPath)
+
+    if ([string]::IsNullOrWhiteSpace($CandidatesPath) -or
+        -not (Test-Path -LiteralPath $CandidatesPath)) {
+        return $false
+    }
+    try {
+        $payload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json
+        foreach ($exercise in @($payload.exercises)) {
+            foreach ($candidate in @($exercise.candidates)) {
+                if (Test-CandidateIdentityEvidenceComplete -Candidate $candidate) {
+                    return $true
+                }
+            }
+        }
+    } catch {
+        return $false
+    }
+    return $false
+}
+
 function Test-MotionProcessingResumeReady {
     param([object]$WorkItem)
 
@@ -1866,6 +1945,13 @@ function Test-MotionProcessingResumeReady {
         return $false
     }
     if (Test-BakeStageReady -WorkItem $WorkItem) {
+        return $false
+    }
+    # A retained fit is useful only if its discovery manifest can still supply
+    # a candidate accepted by bake_and_rank's identity-review gate. Otherwise
+    # resuming skips discovery and deterministically fails with
+    # no_approved_discovery_candidates.
+    if (-not (Test-HasIdentityReviewedRecommendedCandidate -CandidatesPath $WorkItem.exerciseCandidatesPath)) {
         return $false
     }
     $manifestPaths = @(
@@ -3646,11 +3732,17 @@ if ($llamaCppDiscoveryUsesGpu) {
 $discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
 $gpuLockSetting = "$env:EXERCISE_MOTION_GPU_LOCK".Trim().ToLowerInvariant()
 $globalGpuLockEnabled = [string]::IsNullOrWhiteSpace($gpuLockSetting) -or $gpuLockSetting -notin @("0", "false", "off", "no")
-$effectiveGpuDiscoveryBakeOverlap = if ($GpuDiscoveryBakeOverlap -eq "auto") {
-    # A persistent llama.cpp process can retain CUDA residency while another
-    # process waits on the shared lock. In that state neither the discovery VLM
-    # nor the bake-side source/final validator can make forward progress. Keep
-    # CPU-only discovery overlapped, but never overlap CUDA discovery with bake.
+$effectiveGpuDiscoveryBakeOverlap = if ($discoveryUsesGpu -and $globalGpuLockEnabled) {
+    # The shared GPU lock serializes CUDA model residency across processes.
+    # Scheduling both lanes together only makes one side wait while retaining
+    # a resident llama.cpp session, which blocks the bake-side pose/source work.
+    # Once a staged wave is ready, request a discovery checkpoint and let that
+    # worker exit before launching the bake. CPU-only discovery can overlap.
+    if ($GpuDiscoveryBakeOverlap -eq "allow") {
+        Write-Warning "GPU discovery/bake overlap was requested, but the shared GPU lock is enabled. Serializing these stages avoids lock contention and model handoff stalls."
+    }
+    "avoid"
+} elseif ($GpuDiscoveryBakeOverlap -eq "auto") {
     if ($discoveryUsesGpu) { "avoid" } else { "allow" }
 } else {
     $GpuDiscoveryBakeOverlap
@@ -3712,7 +3804,15 @@ $resolvedSourceOutcomeIndexJson = if ([System.IO.Path]::IsPathRooted($SourceOutc
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SourceOutcomeIndexJson))
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOutcomeIndexJson) | Out-Null
-$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and -not $NoWhamDocker
+# The persistent worker imports WHAM's demo/network directly. Do not start it
+# for GVHMR runs: it loads an unrelated WHAM model onto the same GPU and cannot
+# serve GVHMR extraction jobs.
+$effectiveWarmWhamWorker = (
+    $WarmWhamWorker -and
+    -not $SkipWarmWhamWorker -and
+    -not $NoWhamDocker -and
+    $MotionReconstructor -eq "wham"
+)
 $resolvedWhamWorkerSessionDir = $null
 $whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
 if ($effectiveWarmWhamWorker) {
@@ -4232,31 +4332,56 @@ $contractPrefetchSummary = [ordered]@{
     elapsedSeconds = 0.0
     counts = $null
 }
+$existingSelectedSummaryByIndex = @{}
+$existingSelectedSummaryChecked = @{}
+if ($ReuseExistingSelected) {
+    foreach ($workItem in $workItems) {
+        $indexKey = [string]$workItem.index
+        $existingSelectedSummaryChecked[$indexKey] = $true
+        $existingSummary = Get-ExistingSelectedSummary -WorkItem $workItem
+        if ($existingSummary) {
+            $existingSelectedSummaryByIndex[$indexKey] = $existingSummary
+        }
+    }
+}
 if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipExerciseMotionContractPrefetch) {
     $contractPrefetchReportPath = Join-Path $resolvedWorkspaceRoot "exercise_motion_contract_prefetch_report.json"
-    $contractPrefetchArgs = [string[]](@(
-        $youtubeBaseArgs
-        "--workout-plan-json", $resolvedWorkoutPlanJson,
-        "--out-json", $contractPrefetchReportPath,
-        "--contract-prefetch-only",
-        "--contract-prefetch-workers", "$llamaParallelSlots"
-    ))
-    if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
-        $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
+    $contractPrefetchWorkItems = @($workItems | Where-Object {
+        -not $existingSelectedSummaryByIndex.ContainsKey([string]$_.index)
+    })
+    if ($StagedWaveSize -gt 0 -and $contractPrefetchWorkItems.Count -gt $StagedWaveSize) {
+        # Contract generation can make many VLM requests. Prefetching every
+        # exercise here blocks the first source wave for the whole library;
+        # later exercises generate or reuse their contract when discovery starts.
+        $contractPrefetchWorkItems = @($contractPrefetchWorkItems | Select-Object -First $StagedWaveSize)
     }
-    foreach ($workItem in $workItems) {
-        $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
-    }
-    Write-Host ("Preparing {0} missing exercise motion contract(s) with one persistent llama.cpp server." -f $workItems.Count)
-    $contractPrefetchStarted = Get-Date
-    Invoke-PythonModule -Arguments $contractPrefetchArgs
-    $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
-    Write-Host ("Contracts ready: {0} reused, {1} generated, {2} failed" -f $contractPrefetchReport.counts.reused, $contractPrefetchReport.counts.generated, $contractPrefetchReport.counts.failed)
-    $contractPrefetchSummary = [ordered]@{
-        enabled = $true
-        reportPath = $contractPrefetchReportPath
-        elapsedSeconds = [Math]::Round(((Get-Date) - $contractPrefetchStarted).TotalSeconds, 3)
-        counts = $contractPrefetchReport.counts
+    if ($contractPrefetchWorkItems.Count -gt 0) {
+        $contractPrefetchArgs = [string[]](@(
+            $youtubeBaseArgs
+            "--workout-plan-json", $resolvedWorkoutPlanJson,
+            "--out-json", $contractPrefetchReportPath,
+            "--contract-prefetch-only",
+            "--contract-prefetch-workers", "$llamaParallelSlots"
+        ))
+        if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
+        }
+        foreach ($workItem in $contractPrefetchWorkItems) {
+            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
+        }
+        Write-Host ("Preparing contracts for the first {0} unselected exercise(s) with one persistent llama.cpp server; later contracts are generated on demand." -f $contractPrefetchWorkItems.Count)
+        $contractPrefetchStarted = Get-Date
+        Invoke-PythonModule -Arguments $contractPrefetchArgs
+        $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
+        Write-Host ("Contracts ready: {0} reused, {1} generated, {2} failed" -f $contractPrefetchReport.counts.reused, $contractPrefetchReport.counts.generated, $contractPrefetchReport.counts.failed)
+        $contractPrefetchSummary = [ordered]@{
+            enabled = $true
+            reportPath = $contractPrefetchReportPath
+            elapsedSeconds = [Math]::Round(((Get-Date) - $contractPrefetchStarted).TotalSeconds, 3)
+            counts = $contractPrefetchReport.counts
+        }
+    } else {
+        Write-Host "No new exercise contracts need prefetching."
     }
 }
 
@@ -4351,7 +4476,14 @@ $readyWaveSince = $null
 $pendingLegacyBakeItems = [System.Collections.Queue]::new()
 $pendingCompletionItems = [System.Collections.Queue]::new()
 foreach ($workItem in $workItems) {
-    $existingSummary = if ($ReuseExistingSelected) { Get-ExistingSelectedSummary -WorkItem $workItem } else { $null }
+    $indexKey = [string]$workItem.index
+    $existingSummary = if ($ReuseExistingSelected -and $existingSelectedSummaryChecked.ContainsKey($indexKey)) {
+        $existingSelectedSummaryByIndex[$indexKey]
+    } elseif ($ReuseExistingSelected) {
+        Get-ExistingSelectedSummary -WorkItem $workItem
+    } else {
+        $null
+    }
     if ($existingSummary) {
         $summaryByIndex[$workItem.index] = $existingSummary
         $completedCount += 1

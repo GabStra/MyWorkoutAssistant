@@ -17,6 +17,7 @@ from exercise_motion_pkg.bake_and_rank import (
     compute_motion_strength_metrics,
     evaluate_baked_motion_gate,
     evaluate_raw_wham_motion_gate,
+    exercise_motion_contract_requires_rigid_paired_hands,
     materialized_output_acceptance_metrics,
     ranking_from_manifest,
     review_item_from_manifest,
@@ -71,6 +72,36 @@ def discover_source_references(candidate_dir: Path) -> list[Path]:
         )
     )
     return ([exact] if exact.exists() else []) + [path for path in candidates if path != exact]
+
+
+def exercise_contract_for_candidate(candidate_dir: Path) -> dict[str, Any] | None:
+    """Load the contract retained beside a candidate or materialized selection."""
+    resolved_candidate = candidate_dir.resolve()
+    manifest_paths = (
+        candidate_dir.parent / "selection_manifest.json",
+        candidate_dir / "selection_manifest.json",
+    )
+    for manifest_path in manifest_paths:
+        if not manifest_path.is_file():
+            continue
+        manifest = load_json(manifest_path)
+        results = manifest.get("candidateResults", [])
+        if not isinstance(results, list):
+            continue
+        matching_results = [
+            result
+            for result in results
+            if isinstance(result, dict)
+            and Path(str(result.get("candidateWorkspace") or ".")).resolve() == resolved_candidate
+        ]
+        if not matching_results and len(results) == 1 and isinstance(results[0], dict):
+            matching_results = [results[0]]
+        for result in matching_results:
+            candidate = result.get("candidate")
+            contract = candidate.get("exerciseMotionContract") if isinstance(candidate, dict) else None
+            if isinstance(contract, dict):
+                return contract
+    return None
 
 
 def structural_transactions(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -364,6 +395,7 @@ def rerun_structural_refinement(candidate_dir: Path, cleaned_path: Path, output:
     source_pose = source_document.get("pose", source_document) if source_document else None
     metadata = dict(document.get("metadata", {}))
     metadata.pop("structuralRefinement", None)
+    exercise_contract = exercise_contract_for_candidate(candidate_dir)
     clip = MotionClip(
         fps=float(document["fps"]),
         joint_names=[str(name) for name in document["jointNames"]],
@@ -379,7 +411,18 @@ def rerun_structural_refinement(candidate_dir: Path, cleaned_path: Path, output:
     )
     save_motion_json(
         output,
-        refine_motion_clip_structurally(clip, source_pose_payload=source_pose),
+        refine_motion_clip_structurally(
+            clip,
+            source_pose_payload=source_pose,
+            rigid_paired_hands_required=exercise_motion_contract_requires_rigid_paired_hands(
+                exercise_contract,
+                exercise_name=(
+                    str(exercise_contract.get("exerciseName") or "")
+                    if isinstance(exercise_contract, dict)
+                    else candidate_dir.name
+                ),
+            ),
+        ),
     )
 
 

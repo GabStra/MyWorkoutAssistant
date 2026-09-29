@@ -7,6 +7,624 @@ from scipy.spatial.transform import Rotation
 from exercise_motion_pkg.controlled_motion import FixedRig, body_relative_points, controlled_target, fit_controlled_motion
 
 
+def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    monkeypatch.delenv('EXERCISE_MOTION_HYBRID_JACOBIAN', raising=False)
+    assert motion._hybrid_jacobian_enabled()
+    monkeypatch.setenv('EXERCISE_MOTION_HYBRID_JACOBIAN', '0')
+    assert not motion._hybrid_jacobian_enabled()
+    monkeypatch.setenv('EXERCISE_MOTION_HYBRID_JACOBIAN', '1')
+    assert motion._hybrid_jacobian_enabled()
+
+
+def test_cyclic_frame_probe_colors_are_unique_across_wrapped_three_frame_stencils():
+    from exercise_motion_pkg.controlled_motion import _cyclic_frame_probe_colors
+
+    for frame_count in range(3, 40):
+        colors, color_count = _cyclic_frame_probe_colors(frame_count)
+        assert set(colors) == set(range(color_count))
+        for start in range(frame_count):
+            stencil = [colors[(start + offset) % frame_count] for offset in range(3)]
+            assert len(set(stencil)) == 3
+
+    colors, color_count = _cyclic_frame_probe_colors(201)
+    assert color_count == 3
+    np.testing.assert_array_equal(colors, np.arange(201) % 3)
+
+
+def test_root_rotation_smoothing_encodes_contact_compensation_in_fit_coordinates():
+    from exercise_motion_pkg.controlled_motion import _smooth_root_rotation_candidate
+
+    class RootAndFootRig:
+        @staticmethod
+        def decode(coordinates):
+            points = np.zeros((len(coordinates), 2, 3))
+            points[:, 0] = coordinates[:, :3]
+            points[:, 1] = coordinates[:, :3]
+            points[:, 1, 0] += coordinates[:, 3]
+            return points
+
+    coordinates = np.zeros((7, 6))
+    coordinates[:, 3] = [0., .1, .3, .6, .3, .1, 0.]
+    original = RootAndFootRig.decode(coordinates)
+
+    smoothed_coordinates, smoothed_pose = _smooth_root_rotation_candidate(
+        RootAndFootRig(), coordinates, original, [1], sigma=1.0)
+
+    np.testing.assert_allclose(smoothed_pose, RootAndFootRig.decode(smoothed_coordinates))
+    np.testing.assert_allclose(smoothed_pose[:, 1], original[:, 1], atol=1e-12)
+
+
+def test_observed_cycle_fits_run_before_retained_open_seam_fallback(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposals = [
+        {'id': 'cycle-a'},
+        {'id': 'cycle-b'},
+        {'id': 'cycle-c'},
+    ]
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 200,
+               'observedCycleProposals': proposals}
+    calls = []
+    fake_time = [0.]
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def reject_fit(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        selection = fit_payload.get('cycleSelection')
+        calls.append((selection or {'kind': 'retained_interval'}, timeout_seconds,
+                      fit_payload['loop']['enabled']))
+        fake_time[0] += timeout_seconds
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'trajectoryFit': False},
+            'elapsedSeconds': timeout_seconds,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', reject_fit)
+
+    _, report = motion._fit_observed_cycles(current)
+
+    assert [call[0] for call in calls] == [*proposals[:2], {'kind': 'retained_interval'}]
+    assert [call[1] for call in calls] == [120., 120., 120.]
+    assert [call[2] for call in calls] == [True, True, False]
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+    retained_attempt = report['cycleSelectionAttempts'][-1]
+    assert retained_attempt['reason'] == 'fit_validation_failed'
+    assert retained_attempt['fitReport']['elapsedSeconds'] == 120.
+
+
+def test_observed_cycle_scheduler_skips_retained_fit_without_validation_budget(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposals = [{'id': f'cycle-{index}'} for index in range(3)]
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': proposals}
+    calls = []
+    fake_time = [0.]
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def reject_fit(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        selection = fit_payload.get('cycleSelection') or {'kind': 'retained_interval'}
+        calls.append((selection, timeout_seconds, fit_payload['loop']['enabled']))
+        fake_time[0] += timeout_seconds
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'trajectoryFit': False},
+            'elapsedSeconds': timeout_seconds,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', reject_fit)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=180.)
+
+    assert [call[0] for call in calls] == [proposals[0], {'kind': 'retained_interval'}]
+    assert [call[1] for call in calls] == [60., 120.]
+    retained_attempt = report['cycleSelectionAttempts'][-1]
+    assert retained_attempt['selection'] == {'kind': 'retained_interval'}
+    assert retained_attempt['reason'] == 'fit_validation_failed'
+    assert retained_attempt['fitReport']['elapsedSeconds'] == 120.
+
+
+def test_observed_cycle_scheduler_runs_retained_fit_with_validation_budget(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    choice = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [choice]}
+    calls = []
+    fake_time = [0.]
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def reject_fit(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        selection = fit_payload.get('cycleSelection') or {'kind': 'retained_interval'}
+        calls.append((selection, timeout_seconds))
+        fake_time[0] += timeout_seconds
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'trajectoryFit': False},
+            'elapsedSeconds': timeout_seconds,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', reject_fit)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
+
+    assert [call[0] for call in calls] == [choice, {'kind': 'retained_interval'}]
+    assert [call[1] for call in calls] == [120., 120.]
+    assert report['cycleSelectionAttempts'][-1]['reason'] == 'fit_validation_failed'
+
+
+def test_cycle_attempt_wall_timing_includes_early_fit_phases(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    fake_time = [0.]
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def early_support_reject(fit_payload, **kwargs):
+        fake_time[0] += 17.
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'supportReferenceGeometry': False},
+            'supportInitializationSeconds': 17.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', early_support_reject)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=180.)
+
+    cycle_attempt = report['cycleSelectionAttempts'][0]
+    assert cycle_attempt['elapsedSeconds'] == 17.
+    assert cycle_attempt['reportedFitElapsedSeconds'] is None
+    assert cycle_attempt['fitReport']['supportInitializationSeconds'] == 17.
+
+
+def test_unreachable_core_cycle_failure_skips_unproductive_retained_fit(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def reject_unreachable_core(fit_payload, **kwargs):
+        calls.append(fit_payload.get('cycleSelection'))
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'termination': 'unreachable_conflict',
+            'checks': {'contacts': False, 'trajectoryFit': False},
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', reject_unreachable_core)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [{'id': 'cycle-a'}]
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+    assert report['cycleSelectionAttempts'][-1]['reason'] == (
+        'retained_interval_skipped_after_unreachable_core_cycle_failure'
+    )
+    assert report['cycleSelectionAttempts'][-1]['fitReport']['skipReason'] == (
+        'unreachable_core_cycle_failure'
+    )
+    assert report['retainedIntervalFit'] is False
+
+
+def test_unreachable_noncore_cycle_failure_keeps_retained_recovery(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fit_cycle_then_retain(fit_payload, **kwargs):
+        selection = fit_payload.get('cycleSelection')
+        calls.append(selection or {'kind': 'retained_interval'})
+        if selection:
+            return fit_payload, {
+                'applied': False,
+                'reason': 'fit_validation_failed',
+                'termination': 'unreachable_conflict',
+                'checks': {'anatomy': False, 'playback': False, 'loopSeam': False},
+                'elapsedSeconds': 12.,
+            }
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {},
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit_cycle_then_retain)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposal, {'kind': 'retained_interval'}]
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+
+
+def test_source_spine_fold_ratio_counts_distinct_frames(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    residuals = np.zeros((5, 1))
+    residuals[[1, 3], 0] = 0.1
+    monkeypatch.setattr(
+        motion,
+        'anatomical_structure_residuals',
+        lambda _points, _names: (residuals, ['anatomy_spine_fold:spine2']),
+    )
+    payload = {
+        'jointNames': ['pelvis'],
+        'frames': [{'joints': {'pelvis': [0., float(i), 0.]}} for i in range(5)],
+    }
+
+    assert motion.source_spine_fold_frame_ratio(payload) == 0.4
+
+
+def test_persistent_source_spine_fold_skips_only_retained_fallback(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+    fake_time = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(motion, 'source_spine_fold_frame_ratio', lambda _payload: 0.32)
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fail_cycle_anatomy(fit_payload, **kwargs):
+        calls.append(fit_payload.get('cycleSelection'))
+        fake_time[0] += 12.
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'termination': 'unreachable_conflict',
+            'checks': {'anatomy': False, 'playback': False, 'loopSeam': False},
+            'physicalReasons': ['anatomy_spine_fold'],
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fail_cycle_anatomy)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposal]
+    skipped = report['cycleSelectionAttempts'][-1]
+    assert skipped['selection'] == {'kind': 'retained_interval'}
+    assert skipped['reason'] == 'retained_interval_skipped_after_persistent_source_spine_fold'
+    assert skipped['fitReport']['sourceSpineFoldFrameRatio'] == 0.32
+    assert report['cycleRetryStopReason'] == (
+        'persistent_source_spine_fold_after_cycle_anatomy_failure'
+    )
+    assert report['retainedIntervalFit'] is False
+
+
+def test_source_spine_fold_cutoff_preserves_lower_fold_retained_recovery(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+    fake_time = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(motion, 'source_spine_fold_frame_ratio', lambda _payload: 0.1875)
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fail_cycle_then_recover(fit_payload, **kwargs):
+        selection = fit_payload.get('cycleSelection')
+        calls.append(selection or {'kind': 'retained_interval'})
+        fake_time[0] += 12.
+        if selection:
+            return fit_payload, {
+                'applied': False,
+                'reason': 'fit_validation_failed',
+                'termination': 'unreachable_conflict',
+                'checks': {'anatomy': False, 'playback': False, 'loopSeam': False},
+                'physicalReasons': ['anatomy_spine_fold'],
+                'elapsedSeconds': 12.,
+            }
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {},
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fail_cycle_then_recover)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposal, {'kind': 'retained_interval'}]
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+
+
+def test_repeated_root_travel_failure_skips_only_overlapping_cycle_family(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposals = [
+        {'startFrame': 2, 'stopFrameExclusive': 83},
+        {'startFrame': 5, 'stopFrameExclusive': 83},
+        {'startFrame': 8, 'stopFrameExclusive': 83},
+    ]
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 100,
+               'observedCycleProposals': proposals}
+    calls = []
+    fake_time = [0.]
+    fit_durations = iter((108., 161.))
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def reject_root_travel(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        selection = fit_payload['cycleSelection']
+        elapsed = next(fit_durations)
+        calls.append(selection)
+        fake_time[0] += elapsed
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'trajectoryFit': True, 'rootTravel': False},
+            'elapsedSeconds': elapsed,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', reject_root_travel)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == proposals[:2]
+    assert report['cycleRetryStopReason'] == 'repeated_unreachable_root_travel'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+
+
+def test_repeated_root_travel_failure_does_not_skip_distinct_cycle():
+    from exercise_motion_pkg.controlled_motion import repeated_unreachable_root_travel
+
+    attempts = [
+        {
+            'selection': {'startFrame': 2, 'stopFrameExclusive': 83},
+            'checks': {'trajectoryFit': True, 'rootTravel': False},
+        },
+        {
+            'selection': {'startFrame': 5, 'stopFrameExclusive': 83},
+            'checks': {'trajectoryFit': True, 'rootTravel': False},
+        },
+    ]
+
+    assert repeated_unreachable_root_travel(
+        attempts,
+        [{'startFrame': 8, 'stopFrameExclusive': 83}],
+    ) is True
+    assert repeated_unreachable_root_travel(
+        attempts,
+        [{'startFrame': 35, 'stopFrameExclusive': 83}],
+    ) is False
+
+
+def test_repeated_anatomical_cycle_failure_skips_near_duplicate_after_valid_fallback(
+    monkeypatch,
+):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposals = [
+        {'startFrame': 9, 'stopFrameExclusive': 95},
+        {'startFrame': 12, 'stopFrameExclusive': 95},
+        {'startFrame': 17, 'stopFrameExclusive': 91},
+    ]
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 100,
+               'observedCycleProposals': proposals}
+    calls = []
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, 'pose_digest', lambda _payload: 'retained-digest')
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fit_repeated_anatomical_failure(fit_payload, **_kwargs):
+        selection = fit_payload.get('cycleSelection')
+        calls.append(selection or {'kind': 'retained_interval'})
+        if selection is None:
+            return fit_payload, {
+                'applied': True,
+                'reason': 'validated_controlled_motion',
+                'checks': {'anatomy': True, 'trajectoryFit': True},
+                'elapsedSeconds': 20.,
+            }
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'anatomy': False, 'contacts': True, 'playback': False},
+            'physicalReasons': ['anatomy_torso_bend'],
+            'elapsedSeconds': 110.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit_repeated_anatomical_failure)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposals[0], proposals[1], {'kind': 'retained_interval'}]
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+    assert report['cycleRetryStopReason'] == 'repeated_anatomical_cycle_failure'
+
+
+def test_repeated_anatomical_cycle_failure_keeps_distinct_later_cycle_available(
+    monkeypatch,
+):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposals = [
+        {'startFrame': 2, 'stopFrameExclusive': 60},
+        {'startFrame': 12, 'stopFrameExclusive': 59},
+        {'startFrame': 5, 'stopFrameExclusive': 60},
+    ]
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': proposals}
+    calls = []
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, 'pose_digest', lambda _payload: 'open-cycle-digest')
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def later_cycle_passes(fit_payload, **_kwargs):
+        selection = fit_payload.get('cycleSelection')
+        calls.append(selection or {'kind': 'retained_interval'})
+        if selection == proposals[2]:
+            return fit_payload, {
+                'applied': True,
+                'reason': 'validated_controlled_motion_open_seam',
+                'checks': {'anatomy': True, 'playback': True},
+                'loopSeamOpen': True,
+                'elapsedSeconds': 105.,
+            }
+        return fit_payload, {
+            'applied': False,
+            'reason': 'fit_validation_failed',
+            'checks': {'anatomy': True, 'jerk': False, 'loopSeam': False},
+            'physicalReasons': [],
+            'elapsedSeconds': 100.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', later_cycle_passes)
+
+    result, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [*proposals, {'kind': 'retained_interval'}]
+    assert result['cycleSelection'] == proposals[2]
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+    assert report.get('cycleRetryStopReason') is None
+
+
+def test_no_observed_cycle_fits_retained_interval_open_for_seam_repair(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': []}
+    calls = []
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, 'pose_digest', lambda _payload: 'digest')
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle', lambda payload, selection: payload)
+
+    def accept_open_fit(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        calls.append((fit_payload['loop']['enabled'], timeout_seconds))
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {'trajectoryFit': True},
+            'elapsedSeconds': 120.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', accept_open_fit)
+
+    result, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
+
+    assert calls == [(False, 240.)]
+    assert result['loop']['enabled'] is True
+    assert result['loop']['transition'] == 'requires_cycle_repair'
+    assert report['loopSeamOpen'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+
+
+def test_rejected_source_cycle_preflight_skips_open_seam_fit(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current = {
+        'loop': {'enabled': True},
+        'frames': [{}] * 80,
+        'observedCycleProposals': [],
+        'sourceCyclePreflight': [{
+            'passed': False,
+            'reason': 'no_feasible_observed_cycle',
+            'proposalDiagnostics': {
+                'counts': {
+                    'completePhase': 10,
+                    'rangePreserved': 0,
+                    'wrapFeasible': 0,
+                },
+            },
+        }],
+    }
+
+    def fail_if_fit_runs(*_args, **_kwargs):
+        raise AssertionError('source-rejected loop must not enter optimizer fallback')
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fail_if_fit_runs)
+
+    result, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
+
+    assert result is current
+    assert report['applied'] is False
+    assert report['reason'] == 'source_cycle_preflight_rejected'
+    assert report['retainedIntervalFit'] is False
+
+
 def stance(count=45):
     fixture=json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
     names=list(fixture['joints'])
@@ -280,6 +898,12 @@ def test_supported_geometry_ready_skips_when_plants_and_grip_hold():
         anchored=False, playback_anchored=True, floor_clear=True,
         points=points, names=names, equipment=equipment, payload=payload,
         support_strategy='plant_projection')
+    supported_payload = {'sourceFootSupportEvidence': {'bodySupport': {
+        'required': True, 'status': 'confirmed', 'stationaryJoints': ['pelvis']}}}
+    assert not supported_geometry_ready_for_skip_soft_solve(
+        anchored=True, playback_anchored=True, floor_clear=True,
+        points=points, names=names, equipment=equipment, payload=supported_payload,
+        support_strategy='plant_projection', playback_support_geometry_passed=False)
     payload.update(fps=30., loop={'enabled': True})
     stationary = np.repeat(points[:1], len(points), axis=0)
     assert supported_geometry_ready_for_skip_soft_solve(
@@ -1210,6 +1834,33 @@ def test_support_init_watchdog_continues_to_acceptance(monkeypatch):
     assert not motion.controlled_fit_processing_incomplete(report)
 
 
+def test_support_reference_gross_failure_is_only_early_rejected_beyond_margin():
+    from exercise_motion_pkg import controlled_motion as motion
+    reference = {
+        'supportReferenceGeometry': {
+            'toleranceMeters': .01,
+            'maximumStationaryJointRangeMeters': .049,
+            'maximumSurfaceErrorMeters': .01,
+        },
+        'supportReferenceContacts': {'maximumErrorMeters': .0005},
+    }
+    assert not motion.support_reference_grossly_invalid(reference)
+    reference['supportReferenceGeometry']['maximumSurfaceErrorMeters'] = .051
+    assert motion.support_reference_grossly_invalid(reference)
+    reference['supportReferenceGeometry']['maximumSurfaceErrorMeters'] = .01
+    reference['supportReferenceGeometry']['maximumStationaryJointRangeMeters'] = .01
+    reference['supportReferenceContacts']['maximumErrorMeters'] = .0026
+    assert motion.support_reference_grossly_invalid(reference)
+
+
+def test_support_reference_near_miss_reaches_fit_but_stays_below_playback_limit():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    assert motion.support_reference_contacts_pass(.000796)
+    assert not motion.support_reference_contacts_pass(.0012)
+    assert motion.SUPPORT_REFERENCE_CONTACT_LIMIT_METERS < motion.PLAYBACK_CONTACT_LIMIT_METERS
+
+
 def test_small_monotonic_motion_is_not_a_hold():
     names,points=stance(90)
     joint=names.index('head')
@@ -1400,6 +2051,28 @@ def test_global_range_derivative_does_not_force_full_clip_difference_groups():
     solved = solve_trajectory(residual, initial, pattern, 5, tail_jacobian=tail_jacobian)
     assert np.ptp(solved.x) > 1.9
     assert len(calls) < 30
+
+
+def test_solver_accepts_a_precomputed_local_jacobian_with_tail_rows():
+    from scipy.sparse import csr_matrix, eye, vstack
+    from exercise_motion_pkg.controlled_motion import solve_trajectory
+
+    target = np.array([1., -2.])
+    residual = lambda values: np.r_[values - target, 0.]
+    local_calls = []
+    def local_jacobian(values):
+        local_calls.append(values.copy())
+        return eye(2, format='csr')
+    def tail_jacobian(values):
+        return csr_matrix([[0., 0.]])
+
+    pattern = vstack([eye(2), csr_matrix([[1., 1.]])], format='csr')
+    solved = solve_trajectory(
+        residual, np.zeros(2), pattern, 5,
+        local_jacobian=local_jacobian, tail_jacobian=tail_jacobian)
+
+    np.testing.assert_allclose(solved.x, target, atol=1e-8)
+    assert local_calls
 
 
 def test_solver_can_move_a_tiny_nonzero_rotation():

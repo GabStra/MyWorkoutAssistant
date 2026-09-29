@@ -9,7 +9,7 @@ param(
     [switch]$UseWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "wham",
+    [string]$MotionReconstructor = "gvhmr",
     [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [string]$WhamDockerGpus = "all",
     [string]$WhamDockerShmSize = "16g",

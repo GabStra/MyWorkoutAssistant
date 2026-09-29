@@ -196,3 +196,70 @@ def test_preflight_review_defers_uncertain_evidence_before_reconstruction(tmp_pa
         error = preflight.SourceReviewIncomplete if review_status == "incomplete" else bake.SourceCandidateRejected
         with pytest.raises(error): run()
     assert len(calls) == expected_calls
+
+
+def test_preflight_rejects_window_after_repair_refutes_required_claim(tmp_path, monkeypatch):
+    candidate = bake.RankedCandidate(0, 1, "calf-raise", "Barbell Calf Raise", "calf-raise",
+        {"videoId": "id", "title": "Barbell Calf Raise"})
+    request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
+    monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
+    monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
+    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
+    for name in ("small_motion", "completeness", "identity", "topology"):
+        monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
+    monkeypatch.setattr(bake, "two_scale_source_validation_needs_repair", lambda validation: True)
+    validation_calls = []
+    monkeypatch.setattr(bake, "validate_two_scale_source_with_caption_images", lambda *a, **k: (
+        validation_calls.append(1) or {
+            "passed": False,
+            "reviewStatus": "incomplete",
+            "rejectionReasons": ["two_scale_source_identity_failed", "two_scale_source_motion_not_verified"],
+        }
+    ))
+    monkeypatch.setattr(bake, "repair_two_scale_source_disagreement", lambda *a, **k: {
+        "valid": True,
+        "resolved": False,
+        "evidenceClaims": [{"id": "target_identity", "result": "refuted", "valid": True}],
+        "evidenceOriginGroups": {"target_identity": ["two_scale_source_identity_failed"]},
+    })
+
+    with pytest.raises(bake.SourceCandidateRejected) as raised:
+        preflight.review_prepared_source(candidate, request=request, selected_video=tmp_path / "source.mp4",
+            contract=None, caption_images=lambda: "")
+
+    assert raised.value.reason_tags == ["two_scale_source_identity_failed"]
+    assert len(validation_calls) == 1
+
+
+def test_preflight_keeps_bounded_retry_when_repair_remains_uncertain(tmp_path, monkeypatch):
+    candidate = bake.RankedCandidate(0, 1, "curl", "Curl", "curl", {"videoId": "id", "title": "Curl"})
+    request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
+    monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
+    monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
+    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
+    for name in ("small_motion", "completeness", "identity", "topology"):
+        monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
+    monkeypatch.setattr(bake, "two_scale_source_validation_needs_repair", lambda validation: True)
+    validation_calls = []
+    monkeypatch.setattr(bake, "validate_two_scale_source_with_caption_images", lambda *a, **k: (
+        validation_calls.append(1) or {
+            "passed": False,
+            "reviewStatus": "incomplete",
+            "rejectionReasons": ["two_scale_source_target_blind_motion_observation_inconsistent"],
+        }
+    ))
+    monkeypatch.setattr(bake, "repair_two_scale_source_disagreement", lambda *a, **k: {
+        "valid": True,
+        "resolved": False,
+        "evidenceClaims": [{"id": "complete_action", "result": "uncertain", "valid": True}],
+        "evidenceOriginGroups": {"complete_action": [
+            "two_scale_source_target_blind_motion_observation_inconsistent"]},
+    })
+
+    with pytest.raises(preflight.SourceReviewIncomplete):
+        preflight.review_prepared_source(candidate, request=request, selected_video=tmp_path / "source.mp4",
+            contract=None, caption_images=lambda: "")
+
+    assert len(validation_calls) == 2

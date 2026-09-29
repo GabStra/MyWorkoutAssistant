@@ -22,7 +22,12 @@ from .motion_placement import contact_consistent_target, root_motion_quality, re
 from .rig_interpolation import INTERPOLATION
 from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v54_preserve_grip_during_playback_repair'
+SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
+    0.001,
+    PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
+)
+
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v56_open_fallback_without_observed_cycle'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -52,6 +57,13 @@ SUPPORT_INIT_COLD_EVALUATIONS = 80
 # so starting one only burns wall time and labels the variant with a garbage
 # fit. Mirrors the wave pipeline's MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS.
 MIN_USEFUL_FIT_SECONDS = 30.
+# Retained-interval validation took ~80s on a failed cyclic repair; reserve
+# headroom for that validation before allowing a minimum useful solve window.
+RETAINED_INTERVAL_VALIDATION_RESERVE_SECONDS = 90.
+# In a saved 50-case cycle-anatomy audit, no retained fit applied at or above
+# this boundary; all seven applied recoveries were below it (closest: 0.1875).
+# Use this only after cycle fits themselves have failed the anatomy gate.
+SOURCE_SPINE_FOLD_RETAINED_FIT_SKIP_FRAME_RATIO = 0.20
 # Cold support LS on retained long cycles: ~0.015s per (frame × eval).
 # 129 frames × 80 evals ≈ 146s; a flat 90s stage cap aborted finishable work.
 SUPPORT_INIT_SECONDS_PER_FRAME_EVAL = .015
@@ -69,6 +81,21 @@ POLISH_RESERVE_MIN_SECONDS = 12.
 REQUIRED_FIT_CHECKS = ('anatomy', 'contacts', 'sourceArticulation', 'trajectoryFit',
                        'rootTravel', 'jointRange', 'jointShake', 'settling', 'jerk',
                        'fixedRig', 'playback', 'relativeJointShake', 'bodyRotation', 'rootContinuity', 'equipment', 'motionDiscontinuity', 'bodySupport', 'supportAlignment')
+
+
+def _hermite_probe_collision_cursors(neighbors, *, probe_period=4):
+    """Find stencils where one modulo probe class names distinct frames."""
+    collisions = np.zeros(len(neighbors), dtype=bool)
+    for cursor_index, stencil_frames in enumerate(neighbors):
+        seen_by_class: dict[int, int] = {}
+        for frame in stencil_frames:
+            frame = int(frame)
+            probe_class = frame % probe_period
+            previous_frame = seen_by_class.setdefault(probe_class, frame)
+            if previous_frame != frame:
+                collisions[cursor_index] = True
+                break
+    return collisions
 
 
 def controlled_fit_processing_incomplete(report):
@@ -106,10 +133,180 @@ def hard_trajectory_and_root_failure(checks):
     return checks.get('trajectoryFit') is False and checks.get('rootTravel') is False
 
 
+def repeated_unreachable_support_conflict(attempts):
+    """Detect a repeated hard support conflict before spending another crop fit."""
+    if not isinstance(attempts, list) or len(attempts) < 2:
+        return False
+    previous = attempts[-2].get('fitReport') if isinstance(attempts[-2], dict) else None
+    current = attempts[-1].get('fitReport') if isinstance(attempts[-1], dict) else None
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return False
+    termination = current.get('termination') or current.get('optimizerTermination')
+    if termination != 'unreachable_conflict':
+        termination = (current.get('boundedRefinement') or {}).get('stopReason')
+    if termination != 'unreachable_conflict':
+        return False
+    previous_checks = previous.get('checks')
+    current_checks = current.get('checks')
+    if not isinstance(previous_checks, dict) or not isinstance(current_checks, dict):
+        return False
+    persistent_support_conflicts = ('anatomy', 'contacts', 'bodySupport')
+    return all(
+        previous_checks.get(name) is False and current_checks.get(name) is False
+        for name in persistent_support_conflicts
+    )
+
+
+def cycle_selection_overlap_ratio(left, right):
+    """Return frame-range overlap divided by union for two cycle proposals."""
+    def interval(selection):
+        if not isinstance(selection, dict):
+            return None
+        start = selection.get('startFrame')
+        stop = selection.get('stopFrameExclusive')
+        if not isinstance(start, int) or not isinstance(stop, int) or stop <= start:
+            return None
+        return start, stop
+
+    left_interval, right_interval = interval(left), interval(right)
+    if left_interval is None or right_interval is None:
+        return 0.0
+    intersection = max(
+        0,
+        min(left_interval[1], right_interval[1])
+        - max(left_interval[0], right_interval[0]),
+    )
+    union = max(left_interval[1], right_interval[1]) - min(
+        left_interval[0], right_interval[0]
+    )
+    return intersection / max(union, 1)
+
+
+def repeated_unreachable_root_travel(attempts, remaining_choices):
+    """Skip near-identical cycle fits after repeated independent root-travel failure."""
+    if not isinstance(attempts, list) or len(attempts) < 2 or not remaining_choices:
+        return False
+    previous, current = attempts[-2:]
+    for attempt in (previous, current):
+        checks = attempt.get('checks') if isinstance(attempt, dict) else None
+        selection = attempt.get('selection') if isinstance(attempt, dict) else None
+        if (
+            not isinstance(checks, dict)
+            or checks.get('rootTravel') is not False
+            or checks.get('trajectoryFit') is not True
+            or not isinstance(selection, dict)
+        ):
+            return False
+    first, second = previous['selection'], current['selection']
+    if cycle_selection_overlap_ratio(first, second) < 0.90:
+        return False
+    return all(
+        max(
+            cycle_selection_overlap_ratio(choice, first),
+            cycle_selection_overlap_ratio(choice, second),
+        ) >= 0.90
+        for choice in remaining_choices
+    )
+
+
+def repeated_anatomical_cycle_failure(attempts, remaining_choices):
+    """Skip a near-duplicate cycle family after repeated same-anatomy failure."""
+    if not isinstance(attempts, list) or len(attempts) < 2 or not remaining_choices:
+        return False
+    previous, current = attempts[-2:]
+    selections = [attempt.get('selection') for attempt in (previous, current)
+                  if isinstance(attempt, dict)]
+    reports = [attempt.get('fitReport') for attempt in (previous, current)
+               if isinstance(attempt, dict)]
+    if len(selections) != 2 or len(reports) != 2:
+        return False
+    if any(not isinstance(report, dict) for report in reports):
+        return False
+    if any(
+        not isinstance(attempt.get('checks'), dict)
+        or attempt['checks'].get('anatomy') is not False
+        for attempt in (previous, current)
+    ):
+        return False
+    physical_reasons = [
+        {
+            str(reason)
+            for reason in report.get('physicalReasons', [])
+            if str(reason).startswith('anatomy_')
+        }
+        for report in reports
+    ]
+    if not physical_reasons[0] & physical_reasons[1]:
+        return False
+    first, second = selections
+    if cycle_selection_overlap_ratio(first, second) < 0.90:
+        return False
+    # Keep less-overlapping alternatives available. The 0.85 bound is used
+    # only after two very similar candidates failed the same physical check.
+    return all(
+        min(
+            cycle_selection_overlap_ratio(choice, first),
+            cycle_selection_overlap_ratio(choice, second),
+        ) >= 0.85
+        for choice in remaining_choices
+    )
+
+
+def source_spine_fold_frame_ratio(payload):
+    """Measure how much of the original motion violates the shared spine-fold invariant."""
+    frames = payload.get('frames') if isinstance(payload, dict) else None
+    names = payload.get('jointNames') if isinstance(payload, dict) else None
+    if not isinstance(frames, list) or not frames or not isinstance(names, list) or not names:
+        return None
+    try:
+        points = np.asarray(
+            [[frame['joints'][name] for name in names] for frame in frames],
+            dtype=float,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if points.ndim != 3 or not np.isfinite(points).all():
+        return None
+    residuals, labels = anatomical_structure_residuals(points, names)
+    spine_fold_columns = [
+        index for index, label in enumerate(labels)
+        if str(label).startswith('anatomy_spine_fold:')
+    ]
+    if not spine_fold_columns:
+        return None
+    violating_frames = np.any(residuals[:, spine_fold_columns] > 1e-6, axis=1)
+    return float(np.mean(violating_frames))
+
+
 def failed_check_names(checks):
     if not isinstance(checks, dict):
         return []
     return [key for key, passed in checks.items() if not passed]
+
+
+def support_reference_grossly_invalid(report, *, tolerance_multiplier=5.):
+    """Identify timed-out support references far beyond repair tolerance."""
+    geometry = report.get('supportReferenceGeometry', {})
+    tolerance = float(geometry.get('toleranceMeters', 0.) or 0.)
+    if tolerance <= 0.:
+        return False
+    if (float(geometry.get('maximumStationaryJointRangeMeters', 0.) or 0.)
+            > tolerance * tolerance_multiplier
+            or float(geometry.get('maximumSurfaceErrorMeters', 0.) or 0.)
+            > tolerance * tolerance_multiplier):
+        return True
+    contacts = report.get('supportReferenceContacts', {})
+    contact_tolerance = .0005
+    return float(contacts.get('maximumErrorMeters', 0.) or 0.) > contact_tolerance * tolerance_multiplier
+
+
+def support_reference_contacts_pass(maximum_error_meters):
+    """Allow a near-miss initializer to reach the strict trajectory fit.
+
+    The supported reference only seeds the solver. Final keyframe and playback
+    contact checks remain stricter than this initializer tolerance.
+    """
+    return float(maximum_error_meters or 0.) < SUPPORT_REFERENCE_CONTACT_LIMIT_METERS
 
 
 POLISH_STAGE_A = frozenset({'contacts', 'equipment', 'bodySupport', 'supportAlignment'})
@@ -939,7 +1136,7 @@ def polish_reserve_seconds(timeout_seconds, *, cyclic):
 
 def supported_geometry_ready_for_skip_soft_solve(
         *, anchored, playback_anchored, floor_clear, points, names, equipment, payload,
-        support_strategy=None):
+        support_strategy=None, playback_support_geometry_passed=True):
     """Skip supported geometry only when any required loop seam also passes.
 
     Long plant-only clips were burning ~150s of soft LS after plants were under
@@ -947,7 +1144,7 @@ def supported_geometry_ready_for_skip_soft_solve(
     grip leftovers belong to Stage-A hard projection, not soft LS.
     """
     del playback_anchored, equipment
-    if not (anchored and floor_clear):
+    if not (anchored and floor_clear and playback_support_geometry_passed):
         return False
     if support_strategy == 'plant_projection':
         if (payload.get('loop') or {}).get('enabled'):
@@ -1149,6 +1346,22 @@ def _playback_contact_sample_error(coordinates, rig, pinned, contact_targets, *,
         return 0.
     sampled = sample_rig(_sampling_payload(rig, coords), cursors, wrap=cyclic)
     return float(np.max(np.linalg.norm((sampled - targets[first])[active], axis=-1), initial=0.))
+
+
+def _playback_support_geometry_passed(coordinates, rig, payload, *, cyclic=False):
+    """Check stationary support across interpolated frames before skipping fit."""
+    from .support_geometry import support_evidence, validate_support_geometry
+
+    if not support_evidence(payload).get('required'):
+        return True
+    count = len(coordinates)
+    if count < 2:
+        return False
+    from .rig_playback import sample_rig
+    interval_count = count if cyclic else count - 1
+    cursors = (np.arange(interval_count)[:, None] + np.array([.25, .5, .75])).ravel()
+    sampled = sample_rig(_sampling_payload(rig, coordinates), cursors, wrap=cyclic)
+    return bool(validate_support_geometry(payload, sampled, rig.names)['passed'])
 
 
 def _playback_floor_penetration(coordinates, rig, *, cyclic=False, floor=None):
@@ -2880,7 +3093,8 @@ def support_range_jacobian(values, rig, tracks):
     return csr_matrix((derivatives, (rows, columns)), shape=(len(tracks), len(values)))
 
 
-def solve_trajectory(residual, initial, pattern, max_evaluations, *, tail_jacobian=None):
+def solve_trajectory(residual, initial, pattern, max_evaluations, *,
+                     local_jacobian=None, tail_jacobian=None):
     # Use an absolute perturbation throughout the solve. Relative steps shrink
     # toward cancellation at tiny rotations, especially under stiff penalties.
     # Reuse the coloring; one-sided grouped differences avoid doubling all FK
@@ -2892,6 +3106,9 @@ def solve_trajectory(residual, initial, pattern, max_evaluations, *, tail_jacobi
         errors = residual(values)
         return errors[:-tail_rows] if tail_rows else errors
     def jacobian(values):
+        if local_jacobian is not None:
+            local = local_jacobian(values)
+            return vstack([local, tail_jacobian(values)], format='csr') if tail_rows else local
         local = approx_derivative(local_residual, values, method='2-point',
             abs_step=np.sqrt(np.finfo(float).eps), sparsity=(local_pattern, groups))
         return vstack([local, tail_jacobian(values)], format='csr') if tail_rows else local
@@ -2916,10 +3133,32 @@ def fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None
     """Schedule numerical fitting separately from concurrent browser/review work."""
     from .fit_runtime import cpu_fit_slot
     with cpu_fit_slot() as waited:
+        fit_timeout = (
+            None if timeout_seconds is None
+            else max(0.0, float(timeout_seconds) - float(waited))
+        )
         result, report = _fit_candidate_motion(
-            payload, max_evaluations=max_evaluations, timeout_seconds=timeout_seconds)
+            payload, max_evaluations=max_evaluations, timeout_seconds=fit_timeout)
     report['cpuFitQueueWaitSeconds'] = waited
     return result, report
+
+
+def _hybrid_jacobian_enabled():
+    raw_flag = os.environ.get('EXERCISE_MOTION_HYBRID_JACOBIAN')
+    if raw_flag is None:
+        return True
+    return raw_flag.strip().lower() in ('force', '1', 'true', 'yes', 'on')
+
+
+def _cyclic_frame_probe_colors(frame_count):
+    """Color cyclic three-frame stencils so wrapped rows never collide."""
+    if frame_count < 3:
+        raise ValueError('cyclic frame probes require at least three frames')
+    colors = np.arange(frame_count, dtype=int) % 3
+    remainder = frame_count % 3
+    if remainder:
+        colors[-remainder:] = np.arange(3, 3 + remainder, dtype=int)
+    return colors, int(3 + remainder)
 
 
 def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None):
@@ -2984,18 +3223,76 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
     shared_support = {}
     attempts = []
     open_cycle_fallback = None
+    cycle_retry_stop_reason = None
+
+    def fit_attempt(candidate_payload, attempt_timeout):
+        attempt_started = monotonic()
+        fitted_payload, fit_report = _fit_controlled_motion(
+            candidate_payload,
+            max_evaluations=max_evaluations,
+            timeout_seconds=attempt_timeout,
+            shared_support=shared_support,
+        )
+        return fitted_payload, fit_report, monotonic() - attempt_started
+
+    source_preflight = [
+        entry for entry in payload.get('sourceCyclePreflight', [])
+        if isinstance(entry, dict)
+    ]
+    required_source_phases = [
+        entry.get('sourcePhase')
+        for entry in source_preflight
+        if isinstance(entry.get('sourcePhase'), dict)
+        and entry['sourcePhase'].get('required') is True
+    ]
+    rejected_source_cycle_preflight = any(
+        entry.get('passed') is False
+        and entry.get('reason') == 'no_feasible_observed_cycle'
+        and isinstance(entry.get('proposalDiagnostics'), dict)
+        for entry in source_preflight
+    )
+    if not choices and (
+        rejected_source_cycle_preflight
+        or (required_source_phases and all(
+            phase.get('passed') is False for phase in required_source_phases
+        ))
+    ):
+        # The cycle optimizer cannot make a source-incomplete repetition
+        # source-complete. A populated preflight rejection means every observed
+        # cycle failed the source phase/range/wrap constraints. Avoid spending
+        # the remaining fit budget on an open-seam interval that cannot satisfy
+        # the required loop contract.
+        return payload, {
+            'applied': False,
+            'strategy': CONTROLLED_MOTION_STRATEGY,
+            'reason': 'source_cycle_preflight_rejected',
+            'retainedIntervalFit': False,
+            'cycleSelectionAttempts': attempts,
+            'sourceCyclePreflight': source_preflight,
+            'elapsedSeconds': monotonic() - started,
+        }
     source_confirmed_first = bool(choices) and any(
         entry.get('passed') is True and entry.get('selection') == choices[0]
-        for entry in payload.get('sourceCyclePreflight', []) if isinstance(entry, dict))
-    if source_confirmed_first and timeout_seconds >= 110.:
+        for entry in source_preflight)
+    retained_interval_minimum_budget = (
+        RETAINED_INTERVAL_VALIDATION_RESERVE_SECONDS + MIN_USEFUL_FIT_SECONDS
+    )
+    preserve_retained_interval = (
+        timeout_seconds >= retained_interval_minimum_budget + MIN_USEFUL_FIT_SECONDS
+    )
+    if source_confirmed_first and timeout_seconds >= 110. + retained_interval_minimum_budget:
         choice, choices = choices[0], choices[1:]
-        candidate, report = _fit_controlled_motion(
-            slice_loop_cycle(payload, choice), max_evaluations=max_evaluations,
-            timeout_seconds=min(120., max(55., .3 * timeout_seconds)),
-            shared_support=shared_support)
+        remaining = max(0., timeout_seconds - (monotonic() - started))
+        source_confirmed_budget = min(
+            120., max(55., .3 * float(timeout_seconds)),
+            max(0., remaining - retained_interval_minimum_budget),
+        )
+        candidate, report, attempt_elapsed = fit_attempt(
+            slice_loop_cycle(payload, choice), source_confirmed_budget)
         attempts.append({'selection': choice, 'reason': report.get('reason'),
                          'checks': report.get('checks', {}),
-                         'elapsedSeconds': report.get('elapsedSeconds', 0.),
+                         'elapsedSeconds': attempt_elapsed,
+                         'reportedFitElapsedSeconds': report.get('elapsedSeconds'),
                          'fitReport': deepcopy(report), 'sourceConfirmedFirst': True})
         if report.get('applied'):
             if (report.get('loopSeamOpen') or report.get('checks', {}).get('loopSeam') is False
@@ -3006,93 +3303,33 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
                 report['elapsedSeconds'] = monotonic() - started
                 report['sourceCyclePreflight'] = payload.get('sourceCyclePreflight', [])
                 return candidate, report
-    remaining_before_retained = max(0., timeout_seconds - (monotonic() - started))
-    wrap_reserve = 0.
-    if choices:
-        wrap_reserve = min(90., max(55., 0.3 * float(timeout_seconds)))
-        wrap_reserve = min(wrap_reserve, 0.45 * remaining_before_retained)
-    retained_timeout = max(0., remaining_before_retained - wrap_reserve)
-    if retained_timeout < min(55., remaining_before_retained):
-        retained_timeout = remaining_before_retained
-        wrap_reserve = 0.
-    retained_request = payload
-    defer_retained_seam = bool(choices) and wrap_reserve > 0
-    if defer_retained_seam:
-        # Defer closure only when a cropped wrap has an actual reserved turn.
-        # With no proposals, the retained interval is the only loop candidate;
-        # disabling its seam would bypass closure entirely.
-        retained_request = {
-            **payload,
-            'loop': {**(payload.get('loop') or {}), 'enabled': False},
-        }
-    retained, retained_report = _fit_controlled_motion(
-        retained_request,
-        max_evaluations=max_evaluations,
-        timeout_seconds=retained_timeout,
-        shared_support=shared_support,
-    )
-    if retained_report.get('applied') and defer_retained_seam:
-        retained = deepcopy(retained)
-        retained['loop'] = {
-            **(retained.get('loop') or {}),
-            'enabled': True,
-            'transition': 'requires_cycle_repair',
-            'restartFadeMillis': 0,
-        }
-        retained_report = {
-            **retained_report,
-            'loopSeamOpen': True,
-            'reason': 'validated_controlled_motion_open_seam',
-        }
-        retained.pop('sequenceStabilization', None)
-        retained_report['outputPoseDigest'] = pose_digest(retained)
-        retained['controlledMotionFit'] = retained_report
-    retained_report = {
-        **retained_report,
-        'retainedIntervalFit': True,
-        'sourceCyclePreflight': payload.get('sourceCyclePreflight', []),
-    }
-    if retained_report.get('applied'):
-        retained['controlledMotionFit'] = retained_report
-        retained_report['outputPoseDigest'] = pose_digest(retained)
-        retained['controlledMotionFit'] = retained_report
-    attempts.append({
-        'selection': {'kind': 'retained_interval'},
-        'reason': retained_report.get('reason'),
-        'checks': retained_report.get('checks', {}),
-        'elapsedSeconds': retained_report.get('elapsedSeconds', 0.),
-        'fitReport': deepcopy(retained_report),
-    })
-    if retained_report.get('applied') and (not choices or wrap_reserve <= 0):
-        retained_report['cycleSelectionAttempts'] = attempts
-        retained_report['elapsedSeconds'] = monotonic() - started
-        return retained, retained_report
-    # Do not reserve time for wraps that cannot receive even the minimum turn.
-    # With 95 s left and several proposals, the old allocation gave the first
-    # 55 s, then skipped every later proposal and stranded the remaining 40 s.
-    available_wrap_seconds = max(0., timeout_seconds - (monotonic() - started))
-    choices = choices[:max(1, int(available_wrap_seconds // 55.))]
+    # Ranked cycles can directly produce the required closed loop. Try them
+    # before spending most of the budget on the retained interval, which is
+    # deliberately fitted open-seam whenever a cycle proposal is available.
+    remaining_before_cycles = max(0., timeout_seconds - (monotonic() - started))
+    cycle_slots = max(0, int((remaining_before_cycles + 54.) // 55.))
+    choices = choices[:cycle_slots]
     for index, choice in enumerate(choices):
         remaining = timeout_seconds - (monotonic() - started)
-        if remaining <= 0:
-            break
         later = len(choices) - index - 1
-        reserve = later * min(90., max(55., 0.3 * float(timeout_seconds)))
-        attempt_timeout = remaining - reserve if later else remaining
-        attempt_timeout = max(min(remaining, 55.), attempt_timeout) if later else remaining
-        if index > 0 and remaining < 55.:
+        if preserve_retained_interval:
+            # Keep enough time for a useful retained-interval validation.
+            # Without this reserve, overlapping crops can consume the full
+            # budget and guarantee that the fallback is skipped.
+            attempt_timeout = min(120., remaining - retained_interval_minimum_budget)
+        else:
+            # A short budget cannot support retained-interval validation. Use
+            # the older crop allowance so otherwise useful time is not stranded.
+            next_cycle_reserve = min(90., max(45., 0.3 * float(timeout_seconds)))
+            attempt_timeout = remaining - next_cycle_reserve if later else remaining
+        if remaining < MIN_USEFUL_FIT_SECONDS or attempt_timeout < MIN_USEFUL_FIT_SECONDS:
             break
-        if attempt_timeout <= 0:
-            break
-        candidate, report = _fit_controlled_motion(
-            slice_loop_cycle(payload, choice),
-            max_evaluations=max_evaluations,
-            timeout_seconds=attempt_timeout,
-            shared_support=shared_support,
-        )
+        candidate, report, attempt_elapsed = fit_attempt(
+            slice_loop_cycle(payload, choice), attempt_timeout)
         attempts.append({'selection': choice, 'reason': report['reason'],
                          'checks': report.get('checks', {}),
-                         'elapsedSeconds': report.get('elapsedSeconds', 0.),
+                         'elapsedSeconds': attempt_elapsed,
+                         'reportedFitElapsedSeconds': report.get('elapsedSeconds'),
                          'fitReport': deepcopy(report)})
         if report['applied']:
             if (report.get('loopSeamOpen') or report.get('checks', {}).get('loopSeam') is False
@@ -3111,6 +3348,151 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             break
         if seam_near_miss_for_cycle_skip(report):
             break
+        if repeated_anatomical_cycle_failure(attempts, choices[index + 1:]):
+            # Similar cycle crops failing the same physical anatomy invariant
+            # are not promising a different repair path. Keep the retained
+            # interval validation budget and avoid repeating that fit family.
+            cycle_retry_stop_reason = 'repeated_anatomical_cycle_failure'
+            break
+        if repeated_unreachable_support_conflict(attempts):
+            # Another crop fit would repeat the same hard support blockers.
+            # Preserve the remaining candidate budget for the retained
+            # interval, which can still be repaired by the separate seam pass.
+            cycle_retry_stop_reason = 'repeated_unreachable_support_conflict'
+            break
+        if repeated_unreachable_root_travel(attempts, choices[index + 1:]):
+            # The two most recent, highly overlapping cycles both fit their
+            # trajectories but failed the independent root-travel check. Do
+            # not spend the remaining cycle budget on the same crop family.
+            cycle_retry_stop_reason = 'repeated_unreachable_root_travel'
+            break
+    remaining_before_retained = max(0., timeout_seconds - (monotonic() - started))
+    retained_request = payload
+    # When no source-supported cycle was found, forcing the full interval into
+    # a closed loop can distort it for the seam the later bridge stage owns.
+    defer_retained_seam = remaining_before_retained >= retained_interval_minimum_budget
+    retained_attempt_elapsed = 0.
+    core_unreachable_checks = {
+        'contacts', 'sourceArticulation', 'trajectoryFit', 'equipment', 'bodySupport'
+    }
+    cycle_attempts = [
+        attempt for attempt in attempts
+        if isinstance(attempt.get('selection'), dict)
+        and attempt['selection'].get('kind') != 'retained_interval'
+    ]
+    core_unreachable_failures = []
+    for attempt in cycle_attempts:
+        fit_report = attempt.get('fitReport')
+        checks = fit_report.get('checks') if isinstance(fit_report, dict) else None
+        if not isinstance(fit_report, dict) or fit_report.get('termination') != 'unreachable_conflict':
+            core_unreachable_failures = []
+            break
+        failed_core_checks = sorted(
+            name for name in core_unreachable_checks
+            if isinstance(checks, dict) and checks.get(name) is False
+        )
+        if not failed_core_checks:
+            core_unreachable_failures = []
+            break
+        core_unreachable_failures.append(failed_core_checks)
+    skip_retained_after_core_failure = bool(cycle_attempts) and (
+        len(core_unreachable_failures) == len(cycle_attempts)
+    )
+    failed_anatomy_cycle_attempts = [
+        attempt for attempt in cycle_attempts
+        if isinstance(attempt.get('checks'), dict)
+        and attempt['checks'].get('anatomy') is False
+    ]
+    skip_retained_after_persistent_source_fold = False
+    source_spine_fold_ratio = None
+    if (
+        cycle_attempts
+        and len(failed_anatomy_cycle_attempts) == len(cycle_attempts)
+        and remaining_before_retained >= retained_interval_minimum_budget
+    ):
+        source_spine_fold_ratio = source_spine_fold_frame_ratio(payload)
+        skip_retained_after_persistent_source_fold = (
+            source_spine_fold_ratio is not None
+            and source_spine_fold_ratio >= SOURCE_SPINE_FOLD_RETAINED_FIT_SKIP_FRAME_RATIO
+        )
+    if skip_retained_after_persistent_source_fold:
+        cycle_retry_stop_reason = 'persistent_source_spine_fold_after_cycle_anatomy_failure'
+        retained, retained_report = payload, {
+            'applied': False,
+            'reason': 'retained_interval_skipped_after_persistent_source_spine_fold',
+            'skipReason': 'persistent_source_spine_fold_after_cycle_anatomy_failure',
+            'sourceSpineFoldFrameRatio': source_spine_fold_ratio,
+            'sourceSpineFoldSkipThreshold': SOURCE_SPINE_FOLD_RETAINED_FIT_SKIP_FRAME_RATIO,
+            'availableBudgetSeconds': remaining_before_retained,
+            'retainedIntervalFit': False,
+            'checks': {},
+        }
+    elif skip_retained_after_core_failure:
+        # Recent artifact replay found no retained-interval passes after all
+        # cycle proposals ended in unreachable conflicts on these core checks
+        # (24 cases); less fundamental failures still keep the fallback because
+        # it has recovered valid open-seam movements in retained artifacts.
+        retained, retained_report = payload, {
+            'applied': False,
+            'reason': 'retained_interval_skipped_after_unreachable_core_cycle_failure',
+            'skipReason': 'unreachable_core_cycle_failure',
+            'coreCycleFailureChecks': core_unreachable_failures,
+            'availableBudgetSeconds': remaining_before_retained,
+            'retainedIntervalFit': False,
+            'checks': {},
+        }
+    else:
+        if defer_retained_seam:
+            retained_request = {
+                **payload,
+                'loop': {**(payload.get('loop') or {}), 'enabled': False},
+            }
+        if remaining_before_retained >= retained_interval_minimum_budget:
+            retained, retained_report, retained_attempt_elapsed = fit_attempt(
+                retained_request, remaining_before_retained)
+        else:
+            retained, retained_report = payload, {
+                'applied': False,
+                'reason': 'retained_interval_skipped_insufficient_validation_budget',
+                'availableBudgetSeconds': remaining_before_retained,
+                'requiredBudgetSeconds': retained_interval_minimum_budget,
+                'checks': {},
+            }
+    if retained_report.get('applied') and defer_retained_seam:
+        retained = deepcopy(retained)
+        retained['loop'] = {
+            **(retained.get('loop') or {}),
+            'enabled': True,
+            'transition': 'requires_cycle_repair',
+            'restartFadeMillis': 0,
+        }
+        retained_report = {
+            **retained_report,
+            'loopSeamOpen': True,
+            'reason': 'validated_controlled_motion_open_seam',
+        }
+        retained.pop('sequenceStabilization', None)
+        retained_report['outputPoseDigest'] = pose_digest(retained)
+        retained['controlledMotionFit'] = retained_report
+    retained_report = {
+        **retained_report,
+        'sourceCyclePreflight': payload.get('sourceCyclePreflight', []),
+    }
+    retained_report.setdefault('retainedIntervalFit', True)
+    if cycle_retry_stop_reason is not None:
+        retained_report['cycleRetryStopReason'] = cycle_retry_stop_reason
+    if retained_report.get('applied'):
+        retained['controlledMotionFit'] = retained_report
+        retained_report['outputPoseDigest'] = pose_digest(retained)
+        retained['controlledMotionFit'] = retained_report
+    attempts.append({
+        'selection': {'kind': 'retained_interval'},
+        'reason': retained_report.get('reason'),
+        'checks': retained_report.get('checks', {}),
+        'elapsedSeconds': retained_attempt_elapsed,
+        'reportedFitElapsedSeconds': retained_report.get('elapsedSeconds'),
+        'fitReport': deepcopy(retained_report),
+    })
     if retained_report.get('applied'):
         retained_report['cycleSelectionAttempts'] = attempts
         retained_report['elapsedSeconds'] = monotonic() - started
@@ -3130,11 +3512,22 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         **retained_report,
         'applied': False,
         'reason': reason,
-        'retainedIntervalFit': True,
         'cycleSelectionAttempts': attempts,
         'sourceCyclePreflight': payload.get('sourceCyclePreflight', []),
         'elapsedSeconds': monotonic() - started,
     }
+
+
+def _smooth_root_rotation_candidate(rig, coordinates, original, pinned_joints, sigma):
+    """Smooth root rotation while encoding pinned-joint compensation in root travel."""
+    candidate = coordinates.copy()
+    candidate[:, 3:6] = gaussian_filter1d(
+        candidate[:, 3:6], sigma, axis=0, mode='nearest')
+    trial = rig.decode(candidate)
+    delta = np.mean(
+        (original - trial)[:, pinned_joints], axis=1, keepdims=True)
+    candidate[:, :3] += delta[:, 0, :]
+    return candidate, rig.decode(candidate)
 
 
 def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None, shared_support=None):
@@ -3426,8 +3819,11 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         report['supportReferenceEquipment'] = validate_grip(initialized_points, names, equipment)
         reference_contact_error = float(np.max(
             np.linalg.norm((initialized_points-contact_targets)[pinned], axis=-1), initial=0.))
-        report['supportReferenceContacts'] = {'passed': reference_contact_error < .0005,
-                                             'maximumErrorMeters': reference_contact_error}
+        report['supportReferenceContacts'] = {
+            'passed': support_reference_contacts_pass(reference_contact_error),
+            'maximumErrorMeters': reference_contact_error,
+            'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
+        }
         reference_errors, reference_labels = repair_residuals(initialized_points, names)
         failed_reference_features = np.max(reference_errors, axis=0) > 1e-6
         report['supportReferenceAnatomy'] = {
@@ -3499,14 +3895,26 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                 reference_contact_error = float(np.max(
                     np.linalg.norm((initialized_points - contact_targets)[pinned], axis=-1), initial=0.))
                 report['supportReferenceContacts'] = {
-                    'passed': reference_contact_error < .0005,
+                    'passed': support_reference_contacts_pass(reference_contact_error),
                     'maximumErrorMeters': reference_contact_error,
+                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
                 }
                 if report.get('supportReferenceContactPolish'):
                     report['supportReferenceContactPolish']['maximumErrorMetersAfter'] = (
                         reference_contact_error)
             except TimeoutError:
                 report['supportReferenceAnatomyPolish'] = {'passed': False, 'reason': 'time_budget'}
+        if (report.get('supportInitializationTimedOut')
+                and support_reference_grossly_invalid(report)):
+            failed_support_gates = {
+                key: bool(report[key].get('passed')) for key in support_gates
+            }
+            report['supportReferenceEarlyReject'] = {
+                'reason': 'gross_failure_after_support_initialization_timeout',
+                'toleranceMultiplier': 5.,
+            }
+            report['checks'] = failed_support_gates
+            return payload, {**report, 'applied': False, 'reason': 'fit_validation_failed'}
         if not all(report[key]['passed'] for key in support_gates):
             if (report.get('supportInitializationTimedOut')
                     or report.get('supportInitializationStrategy') == 'plant_projection'):
@@ -3535,14 +3943,18 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             support_ok = validate_support_geometry(payload, candidate_points, names)['passed']
             root_ok = root_motion_quality(
                 candidate_points[:, root_index], fps, support_scale)['passed']
-            if contact_err < 0.0005 and anatomy_ok and support_ok and root_ok:
+            if (support_reference_contacts_pass(contact_err)
+                    and anatomy_ok and support_ok and root_ok):
                 rig.initial[:] = continuous
                 initialized_points = candidate_points
                 report['supportReferenceRootContinuity'] = {'applied': True, 'passed': True}
                 report['supportReferenceGeometry'] = validate_support_geometry(
                     payload, initialized_points, names)
                 report['supportReferenceContacts'] = {
-                    'passed': True, 'maximumErrorMeters': contact_err}
+                    'passed': True,
+                    'maximumErrorMeters': contact_err,
+                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
+                }
             else:
                 report['supportReferenceRootContinuity'] = {
                     'applied': False, 'passed': False,
@@ -3600,8 +4012,9 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                 reference_contact_error = float(np.max(
                     np.linalg.norm((reference - contact_targets)[pinned], axis=-1), initial=0.))
                 report['supportReferenceContacts'] = {
-                    'passed': reference_contact_error < .0005,
+                    'passed': support_reference_contacts_pass(reference_contact_error),
                     'maximumErrorMeters': reference_contact_error,
+                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
                 }
         # One playback-plant pass after keyframe plants (+ optional grip). Soft LS
         # cannot close mid-sample bows; do not pay for this twice around grip.
@@ -3624,8 +4037,9 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                 reference_contact_error = float(np.max(
                     np.linalg.norm((reference - contact_targets)[pinned], axis=-1), initial=0.))
                 report['supportReferenceContacts'] = {
-                    'passed': reference_contact_error < .0005,
+                    'passed': support_reference_contacts_pass(reference_contact_error),
                     'maximumErrorMeters': reference_contact_error,
+                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
                 }
                 if equipment.get('handRelationship') == 'rigid_pair':
                     report['supportReferenceEquipment'] = validate_grip(
@@ -3836,6 +4250,15 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     subframe_pattern = np.vstack([subframe_pattern, heel_pattern])
     neighbors = np.column_stack([subframe_first-1, subframe_first, subframe_last, subframe_last+1])
     neighbors = neighbors % count if cyclic else np.clip(neighbors, 0, count-1)
+    # Cyclic stencils can contain distinct frames in the same modulo-4
+    # probe class when count is not divisible by four (for example
+    # [199, 200, 0, 1] at a 201-frame seam). A class probe then perturbs
+    # both frames and the response cannot be assigned to either column.
+    # Route only those cursor rows through exact single-frame probes.
+    hermite_collision_cursors = (
+        _hermite_probe_collision_cursors(neighbors) if cyclic
+        else np.zeros(subframe_count, dtype=bool)
+    )
     pair_pattern = csr_matrix((np.ones(4*subframe_count),
                                (np.repeat(np.arange(subframe_count),4), neighbors.ravel())),
                               shape=(subframe_count,count))
@@ -4012,14 +4435,19 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         anatomy = anatomy_rows(unconstrained_candidate)
         keyframe_post = keyframe_post_rows(candidate, grip_weight, contact_weight)
         temporal = temporal_rows(candidate)
-        subframe_rows = np.concatenate([
-            subframe_point_rows(subframe, contact_weight, grip_weight),
-            subframe_anatomy_rows(unconstrained_subframe)],axis=1)
+        subframe_sections = subframe_point_sections(subframe, contact_weight, grip_weight)
+        subframe_anatomy = subframe_anatomy_rows(unconstrained_subframe)
+        subframe_rows = np.concatenate([*subframe_sections, subframe_anatomy], axis=1)
         return {'keyframe_pre': keyframe_pre, 'keyframe_mid': keyframe_mid,
                 'anatomy': anatomy, 'keyframe_post': keyframe_post,
-                'temporal': temporal, 'subframe': subframe_rows}
+                'temporal': temporal, 'subframe': subframe_rows,
+                'subframeSectionWidths': tuple(section.shape[1] for section in subframe_sections),
+                'subframeAnatomy': subframe_anatomy}
+
+    last_residual_state = None
 
     def residual(values):
+        nonlocal last_residual_state
         nonlocal best_coordinates, best_cost, best_feasible_coordinates, best_feasible_cost
         if fit_should_yield_for_priority() or monotonic() > optimization_deadline:
             raise TimeoutError
@@ -4038,6 +4466,22 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
         rows = point_rows(candidate, unconstrained_candidate, subframe, unconstrained_subframe,
                           contact_weight, grip_weight)
+        # least_squares evaluates fun(x) immediately before jac(x). Retain its
+        # baseline arrays and point-space sections so the hybrid Jacobian can
+        # probe from this exact state without decoding and evaluating the
+        # unperturbed residual a second time.
+        last_residual_state = {
+            'values': np.asarray(values, dtype=float).copy(),
+            'coordinates': coordinates,
+            'candidate': candidate,
+            'unconstrainedCandidate': unconstrained_candidate,
+            'subframeCoordinates': subframe_coordinates,
+            'subframe': subframe,
+            'unconstrainedSubframe': unconstrained_subframe,
+            'contactWeight': contact_weight,
+            'gripWeight': grip_weight,
+            'rows': rows,
+        }
         per_frame = np.concatenate([rows['keyframe_pre'], rotation_prior,
                                     rows['keyframe_mid'], rows['anatomy'],
                                     rows['keyframe_post']],axis=1)
@@ -4085,15 +4529,7 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     and cost < best_feasible_cost):
                 best_feasible_cost, best_feasible_coordinates = cost, values.copy()
         return errors
-    # The hybrid Jacobian is parity-verified on acyclic clips; cyclic clips
-    # keep grouped FD until its seam/wrap path passes the same gate. An
-    # explicit EXERCISE_MOTION_HYBRID_JACOBIAN=0/1 overrides the default.
-    raw_flag = os.environ.get('EXERCISE_MOTION_HYBRID_JACOBIAN')
-    if raw_flag is None:
-        hybrid_jacobian_enabled = not cyclic
-    else:
-        hybrid_jacobian_enabled = (raw_flag.strip().lower() in ('1', 'true', 'yes', 'on')
-                                   and not cyclic)
+    hybrid_jacobian_enabled = _hybrid_jacobian_enabled()
 
     pattern_support_cache = {}
 
@@ -4108,15 +4544,29 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         one perturbed column per probe.
         """
         fd_step = np.sqrt(np.finfo(float).eps)
-        coordinates = np.asarray(values, dtype=float).reshape(count, rig.width)
-        candidate = rig.decode(coordinates)
-        unconstrained_candidate = rig.decode(coordinates, project_socket=False)
-        subframe_coordinates = sample_rig_coordinates(
-            {**playback_rig, 'coordinates': coordinates}, subframe_cursors, wrap=cyclic)
-        subframe = rig.decode(subframe_coordinates)
-        unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
-        contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
-        grip_weight = grip_fit_weight * equipment_polish_weight
+        cached = last_residual_state
+        if (cached is not None
+                and np.array_equal(np.asarray(values, dtype=float), cached['values'])):
+            coordinates = cached['coordinates']
+            candidate = cached['candidate']
+            unconstrained_candidate = cached['unconstrainedCandidate']
+            subframe_coordinates = cached['subframeCoordinates']
+            subframe = cached['subframe']
+            unconstrained_subframe = cached['unconstrainedSubframe']
+            contact_weight = cached['contactWeight']
+            grip_weight = cached['gripWeight']
+            cached_rows = cached['rows']
+        else:
+            coordinates = np.asarray(values, dtype=float).reshape(count, rig.width)
+            candidate = rig.decode(coordinates)
+            unconstrained_candidate = rig.decode(coordinates, project_socket=False)
+            subframe_coordinates = sample_rig_coordinates(
+                {**playback_rig, 'coordinates': coordinates}, subframe_cursors, wrap=cyclic)
+            subframe = rig.decode(subframe_coordinates)
+            unconstrained_subframe = rig.decode(subframe_coordinates, project_socket=False)
+            contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
+            grip_weight = grip_fit_weight * equipment_polish_weight
+            cached_rows = None
         fk = rig.fk_jacobian(coordinates)
         fk_unc = rig.fk_jacobian(coordinates, project_socket=False)
 
@@ -4246,10 +4696,14 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                 off += width
             return order.ravel()
 
-        pre = keyframe_pre_rows(candidate, contact_weight)
-        mid = keyframe_mid_rows(candidate)
-        post = keyframe_post_rows(candidate, grip_weight, contact_weight)
-        base_anat = anatomy_rows(unconstrained_candidate)
+        pre = (cached_rows['keyframe_pre'] if cached_rows is not None
+               else keyframe_pre_rows(candidate, contact_weight))
+        mid = (cached_rows['keyframe_mid'] if cached_rows is not None
+               else keyframe_mid_rows(candidate))
+        post = (cached_rows['keyframe_post'] if cached_rows is not None
+                else keyframe_post_rows(candidate, grip_weight, contact_weight))
+        base_anat = (cached_rows['anatomy'] if cached_rows is not None
+                     else anatomy_rows(unconstrained_candidate))
         w_pre, w_mid, w_post = pre.shape[1], mid.shape[1], post.shape[1]
         w_key = w_pre + w_mid + w_post
         wan = base_anat.shape[1]
@@ -4260,7 +4714,9 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                                    keyframe_mid_rows(points),
                                    keyframe_post_rows(points, grip_weight, contact_weight),
                                    anatomy_rows(unconstrained)], axis=1)
-        base_key = keyframe_composite(candidate, unconstrained_candidate)
+        base_key = (np.concatenate([pre, mid, post, base_anat], axis=1)
+                    if cached_rows is not None
+                    else keyframe_composite(candidate, unconstrained_candidate))
         wrp = 3 * len(rig.active)
         wp_stride = w_key + wan + wrp
         J_key_mixed = colored_composite_probe(
@@ -4355,10 +4811,14 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             directional = (np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) != 0.
             supports_so.append(so_pattern[:, j] | directional)
         so_rows, so_cols, so_entries = [], [], []
+        orientation_frame_colors, orientation_color_count = (
+            _cyclic_frame_probe_colors(count) if cyclic
+            else (np.arange(count, dtype=int) % 3, 3)
+        )
         for group in joint_colors(supports_so):
             for comp in range(3):
-                for c in range(3):
-                    frames = np.arange(c, count, 3)
+                for c in range(orientation_color_count):
+                    frames = np.flatnonzero(orientation_frame_colors == c)
                     probes = candidate.copy()
                     for j in group:
                         probes[frames, j, comp] += fd_step
@@ -4370,12 +4830,20 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                         frames_hit = np.empty(hit.size, dtype=int)
                         settle_mask = hit < L_s
                         ks = hit[settle_mask] // X_s
-                        # settling row k reads frames k, k+1 and orientation row
-                        # k reads k, k+1, k+2: this shift class perturbed exactly
-                        # one frame of each stencil.
-                        frames_hit[settle_mask] = (ks + (ks % 3 != c)) % count
+                        # Select the unique probed frame from each stencil.
+                        # Cyclic color classes reserve distinct colors for the
+                        # tail when count is not divisible by three, avoiding
+                        # a two-frame perturbation in stencils that cross 0.
+                        settle_stencils = np.column_stack((ks, ks + 1))
+                        settle_matches = orientation_frame_colors[settle_stencils] == c
+                        frames_hit[settle_mask] = settle_stencils[
+                            np.arange(ks.size), settle_matches.argmax(axis=1)]
                         ko = (hit[~settle_mask] - L_s) // X_o
-                        frames_hit[~settle_mask] = (ko + (c - ko) % 3) % count
+                        orient_stencils = np.column_stack(
+                            (ko % count, (ko + 1) % count, (ko + 2) % count))
+                        orient_matches = orientation_frame_colors[orient_stencils] == c
+                        frames_hit[~settle_mask] = orient_stencils[
+                            np.arange(ko.size), orient_matches.argmax(axis=1)]
                         so_rows.append(hit)
                         so_cols.append((frames_hit * joints + j) * 3 + comp)
                         so_entries.append(diff[hit])
@@ -4386,20 +4854,31 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                             format='csr') @ fk
         J_world = J_world_pt @ fk
 
-        sub_sections_list = subframe_point_sections(subframe, contact_weight, grip_weight)
-        base_sub_anat = subframe_anatomy_rows(unconstrained_subframe)
-        w_first3 = sum(section.shape[1] for section in sub_sections_list[:3])
-        w_sub_pts = sum(section.shape[1] for section in sub_sections_list)
-        w_sub_anat = base_sub_anat.shape[1]
-        w_sub_total = w_sub_pts + w_sub_anat
+        if cached_rows is not None:
+            section_widths = cached_rows['subframeSectionWidths']
+            w_first3 = sum(section_widths[:3])
+            w_sub_pts = sum(section_widths)
+            base_sub_anat = cached_rows['subframeAnatomy']
+            base_sub = cached_rows['subframe']
+            w_sub_anat = base_sub_anat.shape[1]
+            w_sub_total = base_sub.shape[1]
+        else:
+            sub_sections_list = subframe_point_sections(subframe, contact_weight, grip_weight)
+            section_widths = tuple(section.shape[1] for section in sub_sections_list)
+            base_sub_anat = subframe_anatomy_rows(unconstrained_subframe)
+            w_first3 = sum(section.shape[1] for section in sub_sections_list[:3])
+            w_sub_pts = sum(section.shape[1] for section in sub_sections_list)
+            w_sub_anat = base_sub_anat.shape[1]
+            w_sub_total = w_sub_pts + w_sub_anat
 
         def subframe_composite(points, unconstrained):
             return np.concatenate([subframe_point_rows(points, contact_weight, grip_weight),
                                    subframe_anatomy_rows(unconstrained)], axis=1)
-        base_sub = subframe_composite(subframe, unconstrained_subframe)
+        if cached_rows is None:
+            base_sub = subframe_composite(subframe, unconstrained_subframe)
         # residual per-cursor layout: [contacts, floor, collision, anatomy,
         # grip, geometry, alignment, heel] — anatomy sits fourth.
-        w_contacts_floor = sub_sections_list[0].shape[1] + sub_sections_list[1].shape[1]
+        w_contacts_floor = section_widths[0] + section_widths[1]
         sub_col_offsets = np.concatenate([
             np.arange(w_first3),
             w_first3 + np.arange(w_sub_anat),
@@ -4417,16 +4896,24 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             ir, out = np.nonzero(diff)
             if not ir.size:
                 return
-            # The responding frame is the cursor stencil frame in this shift
-            # class; boundary cursors with duplicate/missing stencil frames
-            # are resolved per row and rows without a match drop out.
+            # This class probe is unambiguous for non-collision cursors; wrap
+            # cursors with colliding classes are collected from single-frame
+            # probes below.
             stencil_frames = neighbors[ir]
             match = stencil_frames % 4 == c
             keep = np.flatnonzero(match.any(axis=1))
             if not keep.size:
                 return
             ir, out = ir[keep], out[keep]
-            frames_hit = stencil_frames[keep, match[keep].argmax(axis=1)]
+            keep_non_collision = ~hermite_collision_cursors[ir]
+            ir, out = ir[keep_non_collision], out[keep_non_collision]
+            if not ir.size:
+                return
+            stencil_frames = neighbors[ir]
+            match = stencil_frames % 4 == c
+            frames_hit = stencil_frames[
+                np.arange(ir.size), match.argmax(axis=1)
+            ]
             J_hermite_rows.append(ir * rig.width + out)
             J_hermite_columns.append(frames_hit * rig.width + columns_of(out))
             J_hermite_entries.append(diff[ir, out])
@@ -4451,6 +4938,53 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     - subframe_coordinates) / fd_step
                 collect_hermite(diff, c, lambda out, comp=comp: np.where(
                     out < 3, 3 + comp, 3 + 3 * ((out - 3) // 3) + comp))
+        if np.any(hermite_collision_cursors):
+            collision_frames = np.unique(neighbors[hermite_collision_cursors])
+
+            def collect_hermite_collision(diff, frame, columns_of):
+                ir, out = np.nonzero(diff)
+                if not ir.size:
+                    return
+                keep = hermite_collision_cursors[ir] & np.any(
+                    neighbors[ir] == frame, axis=1
+                )
+                ir, out = ir[keep], out[keep]
+                if not ir.size:
+                    return
+                J_hermite_rows.append(ir * rig.width + out)
+                J_hermite_columns.append(
+                    np.full(ir.size, frame * rig.width) + columns_of(out)
+                )
+                J_hermite_entries.append(diff[ir, out])
+
+            for frame in collision_frames:
+                frame = int(frame)
+                for comp in range(3):
+                    probes = coordinates.copy()
+                    probes[frame, comp] += fd_step
+                    diff = (sample_rig_coordinates(
+                        {**playback_rig, 'coordinates': probes},
+                        subframe_cursors,
+                        wrap=cyclic,
+                    ) - subframe_coordinates) / fd_step
+                    collect_hermite_collision(
+                        diff, frame, lambda out, comp=comp: np.full(out.shape, comp)
+                    )
+                for comp in range(3):
+                    probes = coordinates.copy()
+                    probes[frame, 3 + comp::3] += fd_step
+                    diff = (sample_rig_coordinates(
+                        {**playback_rig, 'coordinates': probes},
+                        subframe_cursors,
+                        wrap=cyclic,
+                    ) - subframe_coordinates) / fd_step
+                    collect_hermite_collision(
+                        diff,
+                        frame,
+                        lambda out, comp=comp: np.where(
+                            out < 3, 3 + comp, 3 + 3 * ((out - 3) // 3) + comp
+                        ),
+                    )
         J_hermite = sparse_from(J_hermite_entries, J_hermite_rows, J_hermite_columns,
                                 (subframe_count * rig.width, count * rig.width))
         fk_sub = rig.fk_jacobian(subframe_coordinates)
@@ -4530,16 +5064,20 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         anchored = np.max(np.linalg.norm((initial_points-contact_targets)[pinned],axis=-1),initial=0.) < PLAYBACK_CONTACT_LIMIT_METERS
         playback_anchored = _playback_contact_sample_error(
             rig.initial, rig, pinned, contact_targets, cyclic=cyclic) < PLAYBACK_CONTACT_LIMIT_METERS
+        playback_support_geometry_passed = _playback_support_geometry_passed(
+            rig.initial, rig, payload, cyclic=cyclic)
         floor_clear = _playback_floor_penetration(
             rig.initial, rig, cyclic=cyclic, floor=floor) <= PLAYBACK_FLOOR_LIMIT_METERS
         already_valid = (not cyclic and already_rigid and already_smooth and anchored
+                         and playback_support_geometry_passed
                          and playback_anchored and floor_clear
                          and validate_physical_motion(initial_points,names,fps=fps)['passed']
                          and validate_grip(initial_points,names,equipment)['passed'])
         geometry_ready = supported_geometry_ready_for_skip_soft_solve(
             anchored=anchored, playback_anchored=playback_anchored, floor_clear=floor_clear,
             points=initial_points, names=names, equipment=equipment, payload=payload,
-            support_strategy=report.get('supportInitializationStrategy'))
+            support_strategy=report.get('supportInitializationStrategy'),
+            playback_support_geometry_passed=playback_support_geometry_passed)
         if (already_valid or geometry_ready) and not heel_contacts.pairs:
             # Avoid introducing solver noise into an already controlled / supported
             # rig. Soft LS on long plant-only clips raised jerk and ate Stage-C.
@@ -4777,41 +5315,50 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
         _rotation_noise = _body_noise(result, names, spike_reference, fps)
         if _rotation_noise.get('severe'):
             _original = result.copy()
+            _noise_before_smoothing = _rotation_noise
             _pinned_joints = [names.index(n) for n in
                               ('left_ankle', 'left_foot', 'right_ankle', 'right_foot')
                               if n in names]
             _sigma = max(1.0, fps * 0.05)
+            _attempt_reports = []
             for _attempt in range(3):
-                _candidate = rig.initial.copy()
-                _candidate[:, 3:6] = gaussian_filter1d(
-                    _candidate[:, 3:6], _sigma * (1. + 0.5 * _attempt),
-                    axis=0, mode='nearest')
-                _trial = rig.decode(_candidate)
                 # Root-rotation smoothing displaces the planted joints; the
-                # displacement is a smooth per-frame rigid translation, so
-                # subtracting its planted-joint mean restores the contacts
-                # while keeping the axis smoothing.
-                _delta = np.mean(
-                    (_original - _trial)[:, _pinned_joints], axis=1, keepdims=True)
-                _trial = _trial + _delta
+                # compensation is encoded in root travel so the accepted pose
+                # and serialized fit coordinates agree.
+                _candidate, _trial = _smooth_root_rotation_candidate(
+                    rig, rig.initial, _original, _pinned_joints,
+                    _sigma * (1. + 0.5 * _attempt))
                 _after = _body_noise(_trial, names, spike_reference, fps)
                 _contact = float(np.max(np.linalg.norm(
                     (_trial - contact_targets)[pinned], axis=-1), initial=0.))
-                if not _after.get('severe') and _contact <= 0.0005:
+                _accepted = not _after.get('severe') and _contact <= 0.0005
+                _attempt_reports.append({
+                    'sigmaFrames': round(_sigma * (1. + 0.5 * _attempt), 2),
+                    'outputRmsDegreesAt30Hz': round(float(
+                        _after.get('outputRmsDegreesAt30Hz') or 0.), 4),
+                    'severe': bool(_after.get('severe')),
+                    'maxPinnedContactErrorMeters': round(_contact, 7),
+                    'accepted': _accepted,
+                })
+                if _accepted:
                     rig.initial[:] = _candidate
-                    result = _trial + _delta
+                    result = _trial
                     _rotation_noise = _after
                     report['rootRotationSmoothing'] = {
                         'applied': True,
                         'sigmaFrames': round(_sigma * (1. + 0.5 * _attempt), 2),
                         'passes': _attempt + 1,
-                        'rmsBefore': round(float(_rotation_noise.get('outputRmsDegreesAt30Hz') or 0.), 4),
+                        'rmsBefore': round(float(_noise_before_smoothing.get('outputRmsDegreesAt30Hz') or 0.), 4),
                         'rmsAfter': round(float(_after.get('outputRmsDegreesAt30Hz') or 0.), 4),
+                        'attempts': _attempt_reports,
                     }
                     break
             else:
                 report['rootRotationSmoothing'] = {
-                    'applied': False, 'reason': 'no_pass_satisfied_both_screens'}
+                    'applied': False, 'reason': 'no_pass_satisfied_both_screens',
+                    'rmsBefore': round(float(_noise_before_smoothing.get('outputRmsDegreesAt30Hz') or 0.), 4),
+                    'attempts': _attempt_reports,
+                }
         bilateral_support = np.all(pinned[:,[names.index(n) for n in ('left_ankle','left_foot','right_ankle','right_foot')]],axis=1)
         physical = validate_physical_motion(result,names,reference=reference,fps=fps,support_mask=bilateral_support)
         # Fixed-rig lengths are checked directly below; source per-frame length

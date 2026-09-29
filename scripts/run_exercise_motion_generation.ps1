@@ -11,7 +11,7 @@ param(
     [string]$WhamPython = "python",
     [switch]$FastProfile,
     [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "wham",
+    [string]$MotionReconstructor = "gvhmr",
     [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$UseWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
@@ -394,10 +394,6 @@ if ($UseWhamDocker) {
         "-DockerGpus", $WhamDockerGpus,
         "-DockerShmSize", $WhamDockerShmSize
     )
-    Write-Host "Running WHAM via Docker."
-}
-else {
-    Write-Host "Running WHAM with local Python: $WhamPython"
 }
 
 $whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
@@ -434,6 +430,12 @@ else {
     if ($NoReuseWhamCache -and (Test-Path -LiteralPath $whamCachedOutputDir)) {
         Remove-Item -LiteralPath $whamCachedOutputDir -Recurse -Force
     }
+    if ($UseWhamDocker) {
+        Write-Host "Running WHAM via Docker."
+    }
+    else {
+        Write-Host "Running WHAM with local Python: $WhamPython"
+    }
     $whamRunnerScript = Join-Path $PSScriptRoot "run_wham_local.ps1"
     & pwsh $whamRunnerScript @whamRunnerArgs
     if ($LASTEXITCODE -ne 0) {
@@ -442,7 +444,7 @@ else {
 }
 
 if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
-    throw "WHAM stage finished but did not produce wham_output.pkl at '$whamResultsPkl'."
+    throw "Motion reconstruction finished but did not produce the expected output at '$whamResultsPkl'."
 }
 
 $generateArgs = @(

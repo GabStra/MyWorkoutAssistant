@@ -25,7 +25,20 @@ def explicit_endpoint_requirements(exercise_name: str) -> dict[str, str]:
     """
     modes = {mode for mode in ("standing", "kneeling", "seated", "lying", "hanging")
              if re.search(rf"\b{mode}\b", exercise_name.casefold())}
-    return {"supportMode": next(iter(modes))} if len(modes) == 1 else {}
+    requirements = {"supportMode": next(iter(modes))} if len(modes) == 1 else {}
+    normalized_name = re.sub(r"[-_]+", " ", exercise_name.casefold())
+    snatch_motion = re.search(r"\bsnatch\b(?!\s+grip)", normalized_name)
+    overhead_press = re.search(r"\b(?:overhead|push)\s+press\b", normalized_name)
+    if re.search(r"\bjerk\b", normalized_name) or snatch_motion or overhead_press:
+        requirements["end.handHeight"] = "above_head"
+    return requirements
+
+
+def endpoint_requirement(
+    requirements: dict[str, str], endpoint: str, field: str
+) -> str | None:
+    """Return an exercise-name requirement for one endpoint, if present."""
+    return requirements.get(f"{endpoint}.{field}", requirements.get(field))
 
 
 def assess_boundary_evidence(

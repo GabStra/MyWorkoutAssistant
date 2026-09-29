@@ -7,6 +7,29 @@ from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import wave_pipeline as wave
 
 
+def test_yaw_translation_track_fills_unconstrained_frame_translations():
+    anchors = [[-.2, 0., 0.], [.2, 0., 0.]]
+
+    def constraints(angle):
+        import math
+
+        return [
+            (1., anchor, [
+                math.cos(angle) * anchor[0] + math.sin(angle) * anchor[2],
+                anchor[1],
+                -math.sin(angle) * anchor[0] + math.cos(angle) * anchor[2],
+            ])
+            for anchor in anchors
+        ]
+
+    result = bake._solve_yaw_translation_track({0: constraints(0.), 2: constraints(.12)}, 3, 1.)
+
+    assert result is not None
+    yaws, translations, _pivot = result
+    assert len(yaws) == len(translations) == 3
+    assert all(len(translation) == 3 for translation in translations)
+
+
 @pytest.mark.parametrize("rigid_passes", [True, False])
 @pytest.mark.parametrize("loop_required", [True, False])
 def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, monkeypatch, rigid_passes, loop_required):
