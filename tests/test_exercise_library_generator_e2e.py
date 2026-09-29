@@ -13,6 +13,7 @@ from exercise_library_generator_pkg.generator import (
     _capabilities_for_equipment_ids,
     _canonicalize_instruction_requirement_shape,
     _emit_definition,
+    _emit_definition_batch,
     _apply_capability_file,
     _add_confirmation_only_capability_questions,
     _format_equipment_context,
@@ -37,9 +38,232 @@ from exercise_library_generator_pkg.generator import (
     _validate_definition,
     _validate_instruction_requirements,
     generate_exercise_library,
+    review_library_feasibility,
     review_library_checkpoint,
     review_library_instruction_entailment,
+    review_library_muscle_semantics,
 )
+
+
+def _definition_response(messages, build_definition):
+    user_content = messages[-1]["content"]
+    if "Candidates:\n" in user_content:
+        rows = json.loads(user_content.split("Candidates:\n", 1)[1])
+        return json.dumps(
+            {
+                "definitions": [
+                    {
+                        "candidateId": row["candidateId"],
+                        "definition": build_definition(row["candidate"]),
+                    }
+                    for row in rows
+                ]
+            }
+        )
+    candidate = json.loads(user_content.split("Candidate:\n", 1)[1])
+    return json.dumps(build_definition(candidate))
+
+
+def _generator_review_response(_client, messages, _loading_message, show_loading=False):
+    assert show_loading is False
+    system_prompt = messages[0]["content"]
+    review_input = json.loads(messages[-1]["content"])
+    if "Judge whether each exercise is physically executable" in system_prompt:
+        return json.dumps(
+            {
+                "reviews": [
+                    {
+                        "reference": definition["reference"],
+                        "decision": "KEEP",
+                        "missingCapabilities": [],
+                        "reason": "Declared equipment is sufficient.",
+                    }
+                    for definition in review_input["definitions"]
+                ]
+            }
+        )
+    return json.dumps(
+        {
+            "reviews": [
+                {
+                    "reference": definition["reference"],
+                    "muscleGroups": definition["currentMuscleGroups"] or ["FRONT_CHEST"],
+                    "secondaryMuscleGroups": definition["currentSecondaryMuscleGroups"],
+                }
+                for definition in review_input["definitions"]
+            ]
+        }
+    )
+
+
+def test_library_reviews_use_twenty_definition_batches_and_keep_feasibility_consensus() -> None:
+    equipment = {
+        "equipments": [{"id": "dumbbells", "type": "DUMBBELLS", "name": "Dumbbells"}],
+        "accessoryEquipments": [],
+    }
+    definitions = [
+        {
+            "id": f"definition-{index}",
+            "name": f"Dumbbell Exercise {index}",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "dumbbells",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "muscleGroups": ["FRONT_CHEST"],
+            "secondaryMuscleGroups": [],
+        }
+        for index in range(21)
+    ]
+    checkpoint = {**equipment, "exerciseDefinitions": definitions}
+    muscle_batch_sizes = []
+
+    def muscle_review_call(client, messages, loading_message, show_loading=False):
+        review_input = json.loads(messages[-1]["content"])
+        muscle_batch_sizes.append(len(review_input["definitions"]))
+        return _generator_review_response(client, messages, loading_message, show_loading)
+
+    reviewed = review_library_muscle_semantics(
+        None, checkpoint, review_call=muscle_review_call, max_workers=1
+    )
+
+    assert muscle_batch_sizes == [20, 1]
+    assert len(reviewed["exerciseDefinitions"]) == len(definitions)
+
+    feasibility_batch_sizes = []
+
+    def feasibility_review_call(client, messages, loading_message, show_loading=False):
+        review_input = json.loads(messages[-1]["content"])
+        feasibility_batch_sizes.append(len(review_input["definitions"]))
+        return _generator_review_response(client, messages, loading_message, show_loading)
+
+    feasible = review_library_feasibility(
+        None, checkpoint, review_call=feasibility_review_call, max_workers=1
+    )
+
+    assert feasibility_batch_sizes == [20, 20, 1, 1]
+    assert len(feasible["exerciseDefinitions"]) == len(definitions)
+
+
+@pytest.mark.parametrize("discard_feasibility", [False, True])
+def test_generator_overlaps_independent_reviews_within_worker_budget(
+    discard_feasibility: bool,
+) -> None:
+    equipment = {
+        "equipments": [{"id": "dumbbells", "type": "DUMBBELLS", "name": "Dumbbells"}],
+        "accessoryEquipments": [],
+    }
+    candidate = {
+        "name": "Dumbbell Row",
+        "exerciseType": "WEIGHT",
+        "equipmentId": "dumbbells",
+        "bodyWeightPercentage": None,
+        "requiredAccessoryEquipmentIds": [],
+    }
+    review_gate = threading.Barrier(2)
+    review_lock = threading.Lock()
+    waiting_review_types = set()
+    active_reviews = 0
+    maximum_active_reviews = 0
+
+    def fake_review_call(_client, messages, _loading_message, show_loading=False):
+        nonlocal active_reviews, maximum_active_reviews
+        system_prompt = messages[0]["content"]
+        review_type = (
+            "feasibility"
+            if "Judge whether each exercise is physically executable" in system_prompt
+            else "muscle"
+        )
+        with review_lock:
+            active_reviews += 1
+            maximum_active_reviews = max(maximum_active_reviews, active_reviews)
+            should_wait = review_type not in waiting_review_types
+            waiting_review_types.add(review_type)
+        try:
+            if should_wait:
+                review_gate.wait(timeout=5)
+            review_input = json.loads(messages[-1]["content"])
+            if review_type == "feasibility":
+                if discard_feasibility:
+                    return json.dumps(
+                        {
+                            "reviews": [
+                                {
+                                    "reference": definition["reference"],
+                                    "decision": "DISCARD",
+                                    "missingCapabilities": ["RACKED_BAR_SUPPORT"],
+                                    "reason": "The test review marks this definition infeasible.",
+                                }
+                                for definition in review_input["definitions"]
+                            ]
+                        }
+                    )
+                return _generator_review_response(
+                    _client, messages, _loading_message, show_loading
+                )
+            return json.dumps(
+                {
+                    "reviews": [
+                        {
+                            "reference": definition["reference"],
+                            "muscleGroups": ["BACK_UPPER_BACK"],
+                            "secondaryMuscleGroups": ["FRONT_BICEPS"],
+                        }
+                        for definition in review_input["definitions"]
+                    ]
+                }
+            )
+        finally:
+            with review_lock:
+                active_reviews -= 1
+
+    checkpoints = []
+    generation_arguments = {
+        "client": None,
+        "equipment": equipment,
+        "audit_passes": 0,
+        "max_workers": 2,
+        "scope_inventory_by_equipment": False,
+        "inventory_call": lambda *_args, **_kwargs: json.dumps(
+            {"exercises": [candidate]}
+        ),
+        "reasoner_call": fake_review_call,
+        "chat_call": lambda _client, messages, _loading_message, show_loading=False: _definition_response(
+            messages,
+            lambda exercise: {
+                **exercise,
+                "instructions": "Pull the dumbbell toward the torso.",
+                "instructionEquipmentIds": ["dumbbells"],
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": [],
+                "exerciseCategory": "MODERATE_COMPOUND",
+            },
+        ),
+        "review_checkpoint_callback": checkpoints.append,
+    }
+    if discard_feasibility:
+        with pytest.raises(ValueError, match="Review retained 0/1 definitions"):
+            generate_exercise_library(**generation_arguments)
+    else:
+        generated = generate_exercise_library(**generation_arguments)
+
+    assert waiting_review_types == {"muscle", "feasibility"}
+    assert maximum_active_reviews == 2
+    if discard_feasibility:
+        assert checkpoints[-1]["reviewStatus"] == "FAILED"
+        assert checkpoints[-1]["exerciseDefinitions"][0]["muscleGroups"] == [
+            "BACK_UPPER_BACK"
+        ]
+    else:
+        assert generated["exerciseDefinitions"][0]["muscleGroups"] == [
+            "BACK_UPPER_BACK"
+        ]
+        assert generated["exerciseDefinitions"][0]["secondaryMuscleGroups"] == [
+            "FRONT_BICEPS"
+        ]
+        assert any(
+            snapshot["exerciseDefinitions"][0]["muscleGroups"] == ["BACK_UPPER_BACK"]
+            for snapshot in checkpoints
+        )
 
 
 def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic_ids(tmp_path) -> None:
@@ -88,15 +312,20 @@ def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic
         ]
     }
     inventory_responses = iter([initial_candidates, audit_candidates])
+    definition_batch_sizes = []
 
     def fake_inventory_call(_client, _messages, _loading_message):
         return json.dumps(next(inventory_responses))
 
     def fake_definition_call(_client, messages, _loading_message, show_loading=False):
         assert show_loading is False
-        candidate = json.loads(messages[-1]["content"].split("Candidate:\n", 1)[1])
-        return json.dumps(
-            {
+        if "Candidates:\n" in messages[-1]["content"]:
+            definition_batch_sizes.append(
+                len(json.loads(messages[-1]["content"].split("Candidates:\n", 1)[1]))
+            )
+        return _definition_response(
+            messages,
+            lambda candidate: {
                 **candidate,
                 "instructions": f"Perform {candidate['name']} with controlled technique.",
                 "instructionEquipmentIds": [
@@ -110,7 +339,7 @@ def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic
                 "muscleGroups": ["FRONT_CHEST"],
                 "secondaryMuscleGroups": ["FRONT_TRICEPS"],
                 "exerciseCategory": "MODERATE_COMPOUND",
-            }
+            },
         )
 
     generated = generate_exercise_library(
@@ -121,6 +350,7 @@ def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic
         max_workers=2,
         scope_inventory_by_equipment=False,
         inventory_call=fake_inventory_call,
+        reasoner_call=_generator_review_response,
         chat_call=fake_definition_call,
     )
 
@@ -132,6 +362,7 @@ def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic
     assert "workoutPlans" not in generated
     assert len(generated["exerciseDefinitions"]) == 3
     assert generated["generationFailures"] == []
+    assert definition_batch_sizes == [3]
 
     definitions = generated["exerciseDefinitions"]
     assert len({definition["id"] for definition in definitions}) == 3
@@ -161,10 +392,190 @@ def test_generator_emits_definitions_only_with_exact_equipment_and_deterministic
         max_workers=2,
         scope_inventory_by_equipment=False,
         inventory_call=repeat_inventory_call,
+        reasoner_call=_generator_review_response,
         chat_call=fake_definition_call,
     )
     assert [item["id"] for item in repeated["exerciseDefinitions"]] == [
         item["id"] for item in definitions
+    ]
+    assert definition_batch_sizes == [3, 3]
+
+
+def test_definition_emitter_batches_candidates_with_only_linked_equipment_context() -> None:
+    equipment = {
+        "equipments": [
+            {"id": "barbell-id", "type": "BARBELL", "name": "Barbell"},
+            {"id": "dumbbell-id", "type": "DUMBBELL", "name": "Single Dumbbell"},
+        ],
+        "accessoryEquipments": [
+            {"id": "bench-id", "type": "ACCESSORY", "name": "Bench"},
+        ],
+    }
+    candidates = [
+        {
+            "name": "Barbell Bench Press",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "barbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": ["bench-id"],
+            "exerciseCategory": "HEAVY_COMPOUND",
+        },
+        {
+            "name": "Single Dumbbell Curl",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "dumbbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "ISOLATION",
+        },
+    ]
+    calls = []
+
+    def fake_call(_client, messages, _loading_message, show_loading=False):
+        calls.append(messages)
+        rows = json.loads(messages[-1]["content"].split("Candidates:\n", 1)[1])
+        assert "barbell-id" in rows[0]["equipmentContext"]
+        assert "bench-id" in rows[0]["equipmentContext"]
+        assert "dumbbell-id" not in rows[0]["equipmentContext"]
+        assert "dumbbell-id" in rows[1]["equipmentContext"]
+        assert "barbell-id" not in rows[1]["equipmentContext"]
+        return _definition_response(
+            messages,
+            lambda candidate: {
+                **candidate,
+                "muscleGroups": ["FRONT_CHEST"]
+                if "Bench Press" in candidate["name"]
+                else ["FRONT_BICEPS"],
+                "secondaryMuscleGroups": [],
+                "exerciseCategory": candidate["exerciseCategory"],
+            },
+        )
+
+    emitted, errors = _emit_definition_batch(
+        client=None,
+        candidates=candidates,
+        equipment=equipment,
+        use_reasoner=False,
+        call_reasoner=fake_call,
+        call_chat=fake_call,
+    )
+
+    assert len(calls) == 1
+    assert errors == []
+    assert [definition["name"] for definition in emitted if definition] == [
+        "Barbell Bench Press",
+        "Single Dumbbell Curl",
+    ]
+
+
+def test_definition_emitter_falls_back_to_individual_calls_for_invalid_batch() -> None:
+    equipment = {
+        "equipments": [{"id": "barbell-id", "type": "BARBELL", "name": "Barbell"}],
+        "accessoryEquipments": [],
+    }
+    candidates = [
+        {
+            "name": name,
+            "exerciseType": "WEIGHT",
+            "equipmentId": "barbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "HEAVY_COMPOUND",
+        }
+        for name in ("Barbell Bench Press", "Barbell Row")
+    ]
+    calls = []
+
+    def fake_call(_client, messages, _loading_message, show_loading=False):
+        calls.append(messages)
+        if "Candidates:\n" in messages[-1]["content"]:
+            return json.dumps({"definitions": []})
+        return _definition_response(
+            messages,
+            lambda candidate: {
+                **candidate,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": [],
+                "exerciseCategory": "HEAVY_COMPOUND",
+            },
+        )
+
+    emitted, errors = _emit_definition_batch(
+        client=None,
+        candidates=candidates,
+        equipment=equipment,
+        use_reasoner=False,
+        call_reasoner=fake_call,
+        call_chat=fake_call,
+    )
+
+    assert len(calls) == 3
+    assert errors == []
+    assert all(definition is not None for definition in emitted)
+
+
+def test_definition_emitter_retries_only_the_invalid_candidate_from_a_batch() -> None:
+    candidates = [
+        {
+            "name": name,
+            "exerciseType": "WEIGHT",
+            "equipmentId": "barbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "HEAVY_COMPOUND",
+        }
+        for name in ("Barbell Bench Press", "Barbell Row")
+    ]
+    equipment = {
+        "equipments": [{"id": "barbell-id", "type": "BARBELL", "name": "Barbell"}],
+        "accessoryEquipments": [],
+    }
+    calls = []
+
+    def build_definition(candidate, *, valid):
+        return {
+            **candidate,
+            "muscleGroups": ["FRONT_CHEST"] if valid else [],
+            "secondaryMuscleGroups": [],
+            "exerciseCategory": "HEAVY_COMPOUND",
+        }
+
+    def fake_call(_client, messages, _loading_message, show_loading=False):
+        calls.append(messages)
+        if "Candidates:\n" in messages[-1]["content"]:
+            rows = json.loads(messages[-1]["content"].split("Candidates:\n", 1)[1])
+            return json.dumps(
+                {
+                    "definitions": [
+                        {
+                            "candidateId": row["candidateId"],
+                            "definition": build_definition(
+                                row["candidate"],
+                                valid=row["candidate"]["name"] == "Barbell Row",
+                            ),
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+        candidate = json.loads(messages[-1]["content"].split("Candidate:\n", 1)[1])
+        assert candidate["name"] == "Barbell Bench Press"
+        return json.dumps(build_definition(candidate, valid=True))
+
+    emitted, errors = _emit_definition_batch(
+        client=None,
+        candidates=candidates,
+        equipment=equipment,
+        use_reasoner=False,
+        call_reasoner=fake_call,
+        call_chat=fake_call,
+    )
+
+    assert len(calls) == 2
+    assert errors == []
+    assert [definition["name"] for definition in emitted if definition] == [
+        "Barbell Bench Press",
+        "Barbell Row",
     ]
 
 
@@ -291,7 +702,7 @@ def test_definition_emitter_repairs_invalid_muscles_with_scoped_json_patch() -> 
     assert len(calls) == 2
     assert emitted["muscleGroups"] == ["BACK_GLUTEAL"]
     assert emitted["secondaryMuscleGroups"] == ["BACK_HAMSTRING"]
-    assert emitted["instructions"] == "Hinge at the hips and extend under control."
+    assert "instructions" not in emitted
 
 
 def test_muscle_json_patch_cannot_change_definition_identity() -> None:
@@ -322,7 +733,7 @@ def test_muscle_json_patch_cannot_change_definition_identity() -> None:
         )
 
 
-def test_definition_emitter_applies_multiple_scoped_repairs_without_regeneration() -> None:
+def test_definition_emitter_repairs_candidate_identity_without_regeneration() -> None:
     candidate = {
         "name": "Barbell Row",
         "exerciseType": "WEIGHT",
@@ -350,15 +761,6 @@ def test_definition_emitter_applies_multiple_scoped_repairs_without_regeneration
                     }
                 ]
             },
-            {
-                "patch": [
-                    {
-                        "op": "replace",
-                        "path": "/instructions",
-                        "value": "Hinge forward and row the bar toward the torso.",
-                    }
-                ]
-            },
         ]
     )
     call_count = 0
@@ -376,10 +778,10 @@ def test_definition_emitter_applies_multiple_scoped_repairs_without_regeneration
         call_chat=fake_call,
     )
 
-    assert call_count == 3
+    assert call_count == 2
     assert emitted["equipmentId"] == "barbell-id"
-    assert emitted["instructions"] == "Hinge forward and row the bar toward the torso."
     assert emitted["muscleGroups"] == ["BACK_UPPER_BACK"]
+    assert "instructions" not in emitted
 
 
 def test_inventory_rejects_hallucinated_equipment_without_losing_valid_candidates() -> None:
@@ -597,16 +999,16 @@ def test_scoped_inventory_batches_use_worker_concurrency() -> None:
         return json.dumps({"exercises": []})
 
     def fake_definition_call(_client, messages, _loading_message, show_loading=False):
-        candidate = json.loads(messages[-1]["content"].split("Candidate:\n", 1)[1])
-        return json.dumps(
-            {
+        return _definition_response(
+            messages,
+            lambda candidate: {
                 **candidate,
                 "instructions": "Use controlled technique.",
                 "instructionEquipmentIds": [candidate["equipmentId"]],
                 "muscleGroups": ["BACK_UPPER_BACK"],
                 "secondaryMuscleGroups": [],
                 "exerciseCategory": "MODERATE_COMPOUND",
-            }
+            },
         )
 
     generated = generate_exercise_library(
@@ -615,6 +1017,7 @@ def test_scoped_inventory_batches_use_worker_concurrency() -> None:
         audit_passes=0,
         max_workers=3,
         inventory_call=fake_inventory_call,
+        reasoner_call=_generator_review_response,
         chat_call=fake_definition_call,
     )
 
@@ -647,16 +1050,16 @@ def test_generator_rejects_a_severely_incomplete_library() -> None:
         return json.dumps({"exercises": candidates})
 
     def failing_definition_call(_client, messages, _loading_message, show_loading=False):
-        candidate = json.loads(messages[-1]["content"].split("Candidate:\n", 1)[1])
-        return json.dumps(
-            {
+        return _definition_response(
+            messages,
+            lambda candidate: {
                 **candidate,
                 "instructions": "Use controlled technique.",
                 "instructionEquipmentIds": [candidate["equipmentId"]],
                 "muscleGroups": [],
                 "secondaryMuscleGroups": [],
                 "exerciseCategory": "STRENGTH",
-            }
+            },
         )
 
     with pytest.raises(ValueError, match="No incomplete library was saved"):

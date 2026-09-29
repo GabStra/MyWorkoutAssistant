@@ -38,6 +38,7 @@ from workout_generator_pkg.json_patching import (
 
 
 EXERCISE_TYPES = {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP"}
+LIBRARY_REVIEW_BATCH_SIZE = 20
 CandidateKey = tuple[str, str, str | None, tuple[str, ...]]
 EXERCISE_CATEGORIES = {"HEAVY_COMPOUND", "MODERATE_COMPOUND", "ISOLATION"}
 EXECUTION_MODES = {"REPETITIONS", "TARGET_DURATION", "OPEN_DURATION"}
@@ -179,6 +180,7 @@ CONTENT_AUTHORITY_PATCH_PATHS = {
 }
 CONTENT_AUTHORITY_VERSION = 10
 CONTENT_AUTHORITY_BATCH_SIZE = 3
+DEFINITION_EMISSION_BATCH_SIZE = 4
 CONTENT_AUTHORITY_CHECKS = {
     "movementIdentity",
     "setupEquipment",
@@ -1332,6 +1334,33 @@ def _equipment_context_lists(
 def _format_equipment_context(equipment: dict[str, Any]) -> str:
     primary, accessories = _equipment_context_lists(equipment)
     return format_equipment_for_llm(primary, accessories)
+
+
+def _format_candidate_equipment_context(
+    candidate: dict[str, Any],
+    equipment: dict[str, Any],
+) -> str:
+    linked_ids = {
+        item_id
+        for item_id in [
+            candidate.get("equipmentId"),
+            *candidate.get("requiredAccessoryEquipmentIds", []),
+        ]
+        if isinstance(item_id, str)
+    }
+    scoped_equipment = {
+        "equipments": [
+            item
+            for item in equipment.get("equipments", [])
+            if isinstance(item, dict) and item.get("id") in linked_ids
+        ],
+        "accessoryEquipments": [
+            item
+            for item in equipment.get("accessoryEquipments", [])
+            if isinstance(item, dict) and item.get("id") in linked_ids
+        ],
+    }
+    return _format_equipment_context(scoped_equipment)
 
 
 def _available_capabilities(equipment: dict[str, Any]) -> set[str]:
@@ -2569,6 +2598,103 @@ def _repair_definition_muscles_with_json_patch(
     )
 
 
+def _definition_emitter_messages(
+    candidate: dict[str, Any],
+    equipment: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    equipment_context = (
+        _format_candidate_equipment_context(candidate, equipment)
+        if equipment is not None
+        else ""
+    )
+    user_content = (
+        "Valid muscle enum values:\n"
+        + ", ".join(sorted(MUSCLE_GROUPS))
+        + "\n\nValid exerciseCategory values for WEIGHT/BODY_WEIGHT:\n"
+        + ", ".join(sorted(EXERCISE_CATEGORIES))
+        + "\nUse null exerciseCategory for COUNTUP/COUNTDOWN."
+        + (
+            "\n\nAvailable equipment context:\n" + equipment_context
+            if equipment_context
+            else ""
+        )
+        + "\n\nCandidate:\n"
+        + json.dumps(candidate, indent=2, ensure_ascii=False)
+    )
+    return [
+        {"role": "system", "content": DEFINITION_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _definition_batch_messages(
+    candidates: list[dict[str, Any]],
+    equipment: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    candidate_rows = []
+    for index, candidate in enumerate(candidates, start=1):
+        row = {
+            "candidateId": f"CANDIDATE_{index}",
+            "candidate": candidate,
+        }
+        if equipment is not None:
+            row["equipmentContext"] = _format_candidate_equipment_context(
+                candidate,
+                equipment,
+            )
+        candidate_rows.append(row)
+    system_prompt = (
+        DEFINITION_SYSTEM_PROMPT
+        + "\nYou will receive multiple candidates. Return JSON only as "
+        '{"definitions":[{"candidateId":"CANDIDATE_1","definition":{...}}]}. '
+        "Return exactly one definition for each candidateId, preserve every candidate-owned "
+        "field exactly, and do not combine or omit candidates."
+    )
+    user_content = (
+        "Valid muscle enum values:\n"
+        + ", ".join(sorted(MUSCLE_GROUPS))
+        + "\n\nValid exerciseCategory values for WEIGHT/BODY_WEIGHT:\n"
+        + ", ".join(sorted(EXERCISE_CATEGORIES))
+        + "\nUse null exerciseCategory for COUNTUP/COUNTDOWN."
+        + "\n\nCandidates:\n"
+        + json.dumps(candidate_rows, indent=2, ensure_ascii=False)
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _parse_definition_batch(
+    content: str | None,
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    payload = _json_object(content, "exercise definition batch")
+    rows = payload.get("definitions")
+    if not isinstance(rows, list) or len(rows) != len(candidates):
+        raise ValueError("definition batch must return exactly one row per candidate")
+    by_candidate_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"candidateId", "definition"}
+            or not isinstance(row.get("candidateId"), str)
+            or not isinstance(row.get("definition"), dict)
+        ):
+            raise ValueError("definition batch contains an invalid candidate row")
+        candidate_id = row["candidateId"]
+        if candidate_id in by_candidate_id:
+            raise ValueError(f"definition batch duplicated {candidate_id}")
+        by_candidate_id[candidate_id] = row["definition"]
+    expected_ids = {f"CANDIDATE_{index}" for index in range(1, len(candidates) + 1)}
+    if set(by_candidate_id) != expected_ids:
+        raise ValueError("definition batch contains missing or unknown candidate IDs")
+    return [
+        _unwrap_definition_object(by_candidate_id[f"CANDIDATE_{index}"])
+        for index in range(1, len(candidates) + 1)
+    ]
+
+
 def _emit_definition(
     client: Any,
     candidate: dict[str, Any],
@@ -2578,27 +2704,7 @@ def _emit_definition(
     call_reasoner: Callable[..., str | None],
     call_chat: Callable[..., str | None],
 ) -> dict[str, Any]:
-    messages = [
-        {"role": "system", "content": DEFINITION_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
-                "Valid muscle enum values:\n"
-                + ", ".join(sorted(MUSCLE_GROUPS))
-                + "\n\nValid exerciseCategory values for WEIGHT/BODY_WEIGHT:\n"
-                + ", ".join(sorted(EXERCISE_CATEGORIES))
-                + "\nUse null exerciseCategory for COUNTUP/COUNTDOWN."
-                + (
-                    "\n\nAvailable equipment context:\n"
-                    + _format_equipment_context(equipment)
-                    if equipment is not None
-                    else ""
-                )
-                + "\n\nCandidate:\n"
-                + json.dumps(candidate, indent=2, ensure_ascii=False)
-            ),
-        },
-    ]
+    messages = _definition_emitter_messages(candidate, equipment)
     caller = call_reasoner if use_reasoner else call_chat
     last_error = None
     for attempt in range(3):
@@ -2638,6 +2744,67 @@ def _emit_definition(
                 }
             )
     raise ValueError(f"Could not emit {candidate['name']}: {last_error}")
+
+
+def _emit_definition_batch(
+    client: Any,
+    candidates: list[dict[str, Any]],
+    *,
+    equipment: dict[str, Any] | None,
+    use_reasoner: bool,
+    call_reasoner: Callable[..., str | None],
+    call_chat: Callable[..., str | None],
+) -> tuple[list[dict[str, Any] | None], list[str]]:
+    caller = call_reasoner if use_reasoner else call_chat
+    fallback_reason: str | None = None
+    try:
+        content = caller(
+            client,
+            _definition_batch_messages(candidates, equipment),
+            "",
+            show_loading=False,
+        )
+        raw_definitions = _parse_definition_batch(content, candidates)
+    except Exception as error:
+        raw_definitions = [None] * len(candidates)
+        fallback_reason = str(error)
+
+    emitted: list[dict[str, Any] | None] = []
+    errors: list[str] = []
+    fallback_count = 0
+    for index, candidate in enumerate(candidates):
+        raw_definition = raw_definitions[index]
+        try:
+            if raw_definition is not None:
+                try:
+                    emitted.append(
+                        _validate_definition(raw_definition, candidate, equipment)
+                    )
+                    continue
+                except ValueError:
+                    pass
+            fallback_count += 1
+            emitted.append(
+                _emit_definition(
+                    client,
+                    candidate,
+                    equipment=equipment,
+                    use_reasoner=use_reasoner,
+                    call_reasoner=call_reasoner,
+                    call_chat=call_chat,
+                )
+            )
+        except Exception as error:
+            emitted.append(None)
+            errors.append(f"{candidate['name']}: {error}")
+    if fallback_count:
+        reason = f" after batch response issue ({fallback_reason})" if fallback_reason else ""
+        print(
+            f"Definition batch fell back to individual emission for "
+            f"{fallback_count}/{len(candidates)} candidate(s){reason}.",
+            flush=True,
+        )
+    return emitted, errors
 
 
 def _run_semantic_review(
@@ -4037,6 +4204,7 @@ def generate_exercise_library(
     use_reasoner_for_emitters: bool = False,
     audit_passes: int = 1,
     max_workers: int = 4,
+    definition_batch_size: int = DEFINITION_EMISSION_BATCH_SIZE,
     scope_inventory_by_equipment: bool = True,
     inventory_call: Callable[..., str | None] = json_call_reasoner_only_with_loading,
     reasoner_call: Callable[..., str | None] = json_call_reasoner_only_with_loading,
@@ -4047,6 +4215,8 @@ def generate_exercise_library(
     review_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     inventory_client = inventory_client or client
+    if definition_batch_size < 1:
+        raise ValueError("definition_batch_size must be at least one")
     if scope_inventory_by_equipment:
         inventory_scopes = [
             (
@@ -4178,34 +4348,45 @@ def generate_exercise_library(
     if not candidates:
         raise ValueError("The model did not identify any exercises")
 
+    definition_batches = [
+        candidates[index:index + definition_batch_size]
+        for index in range(0, len(candidates), definition_batch_size)
+    ]
+    definition_worker_count = min(max(1, max_workers), len(definition_batches))
     print(
-        f"Stage 2/3: Emitting {len(candidates)} canonical exercise definition(s) "
-        f"with {max(1, max_workers)} worker(s).",
+        f"Stage 2/3: Emitting {len(candidates)} canonical exercise definition(s) in "
+        f"{len(definition_batches)} batch(es) of up to {definition_batch_size}, "
+        f"with {definition_worker_count} worker(s).",
         flush=True,
     )
     definitions_by_index: dict[int, dict[str, Any]] = {}
     errors = []
-    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+    with ThreadPoolExecutor(max_workers=definition_worker_count) as executor:
         future_to_index = {
             executor.submit(
-                _emit_definition,
+                _emit_definition_batch,
                 client,
-                candidate,
+                batch,
                 equipment=equipment,
                 use_reasoner=use_reasoner_for_emitters,
                 call_reasoner=reasoner_call,
                 call_chat=chat_call,
-            ): index
-            for index, candidate in enumerate(candidates)
+            ): batch_index
+            for batch_index, batch in enumerate(definition_batches)
         }
         for completed_count, future in enumerate(as_completed(future_to_index), start=1):
-            index = future_to_index[future]
+            batch_index = future_to_index[future]
             try:
-                definitions_by_index[index] = future.result()
+                emitted, batch_errors = future.result()
+                errors.extend(batch_errors)
+                first_candidate_index = batch_index * definition_batch_size
+                for offset, definition in enumerate(emitted):
+                    if definition is not None:
+                        definitions_by_index[first_candidate_index + offset] = definition
             except Exception as error:
                 errors.append(str(error))
             print(
-                f"\rEmitting definitions: {completed_count}/{len(candidates)}",
+                f"\rEmitting definition batches: {completed_count}/{len(definition_batches)}",
                 end="",
                 flush=True,
             )
@@ -4247,36 +4428,121 @@ def generate_exercise_library(
         _library_payload(definitions, equipment, generation_failures, [], review_status="PENDING")
     )
     print("Stage 3/3: Reviewing muscle semantics and physical feasibility.", flush=True)
-    muscle_review_payload = review_library_muscle_semantics(
-        client,
-        {
-            "exerciseDefinitions": definitions,
-            "equipments": copy.deepcopy(equipment.get("equipments", [])),
-            "accessoryEquipments": copy.deepcopy(
-                equipment.get("accessoryEquipments", [])
-            ),
-        },
-        review_call=reasoner_call,
-        max_workers=max_workers,
-    )
-    definitions = muscle_review_payload["exerciseDefinitions"]
-    save_review_state(
-        _library_payload(definitions, equipment, generation_failures, [], review_status="PENDING")
-    )
-    feasibility_payload = review_library_feasibility(
-        client,
-        {
-            "exerciseDefinitions": definitions,
-            "equipments": copy.deepcopy(equipment.get("equipments", [])),
-            "accessoryEquipments": copy.deepcopy(
-                equipment.get("accessoryEquipments", [])
-            ),
-        },
-        review_call=reasoner_call,
-        max_workers=max_workers,
-        progress_callback=save_review_state,
-    )
-    definitions = feasibility_payload["exerciseDefinitions"]
+    review_checkpoint = {
+        "exerciseDefinitions": copy.deepcopy(definitions),
+        "equipments": copy.deepcopy(equipment.get("equipments", [])),
+        "accessoryEquipments": copy.deepcopy(
+            equipment.get("accessoryEquipments", [])
+        ),
+    }
+    review_worker_budget = max(1, max_workers)
+    muscle_review_payload: dict[str, Any] | None = None
+    feasibility_payload: dict[str, Any] | None = None
+    muscle_review_error: Exception | None = None
+    feasibility_review_error: Exception | None = None
+    feasibility_progress_snapshots: list[dict[str, Any]] = []
+
+    if review_worker_budget == 1:
+        muscle_review_payload = review_library_muscle_semantics(
+            client,
+            review_checkpoint,
+            review_call=reasoner_call,
+            max_workers=1,
+        )
+        definitions = muscle_review_payload["exerciseDefinitions"]
+        save_review_state(
+            _library_payload(
+                definitions, equipment, generation_failures, [], review_status="PENDING"
+            )
+        )
+        feasibility_checkpoint = {
+            **review_checkpoint,
+            "exerciseDefinitions": copy.deepcopy(definitions),
+        }
+        feasibility_payload = review_library_feasibility(
+            client,
+            feasibility_checkpoint,
+            review_call=reasoner_call,
+            max_workers=1,
+            progress_callback=save_review_state,
+        )
+    else:
+        muscle_workers = (review_worker_budget + 1) // 2
+        feasibility_workers = review_worker_budget - muscle_workers
+        with ThreadPoolExecutor(max_workers=2) as stage_executor:
+            muscle_future = stage_executor.submit(
+                review_library_muscle_semantics,
+                client,
+                review_checkpoint,
+                review_call=reasoner_call,
+                max_workers=muscle_workers,
+            )
+            feasibility_future = stage_executor.submit(
+                review_library_feasibility,
+                client,
+                review_checkpoint,
+                review_call=reasoner_call,
+                max_workers=feasibility_workers,
+                progress_callback=feasibility_progress_snapshots.append,
+            )
+            for future in as_completed((muscle_future, feasibility_future)):
+                try:
+                    result = future.result()
+                except Exception as error:
+                    if future is muscle_future:
+                        muscle_review_error = error
+                    else:
+                        feasibility_review_error = error
+                    continue
+                if future is muscle_future:
+                    muscle_review_payload = result
+                    definitions = muscle_review_payload["exerciseDefinitions"]
+                    save_review_state(
+                        _library_payload(
+                            definitions,
+                            equipment,
+                            generation_failures,
+                            [],
+                            review_status="PENDING",
+                        )
+                    )
+                else:
+                    feasibility_payload = result
+
+        if feasibility_progress_snapshots:
+            failed_feasibility_snapshot = feasibility_progress_snapshots[-1]
+            if muscle_review_payload is not None:
+                failed_feasibility_snapshot["exerciseDefinitions"] = copy.deepcopy(
+                    muscle_review_payload["exerciseDefinitions"]
+                )
+            save_review_state(failed_feasibility_snapshot)
+        if muscle_review_error is not None:
+            raise muscle_review_error
+        if feasibility_review_error is not None:
+            raise feasibility_review_error
+
+        if muscle_review_payload is None or feasibility_payload is None:
+            raise RuntimeError("Concurrent definition reviews did not produce both results")
+
+        muscle_definitions_by_id = {
+            definition["id"]: definition
+            for definition in muscle_review_payload["exerciseDefinitions"]
+        }
+        definitions = copy.deepcopy(feasibility_payload["exerciseDefinitions"])
+        for definition in definitions:
+            muscle_reviewed = muscle_definitions_by_id.get(definition["id"])
+            if muscle_reviewed is not None:
+                definition["muscleGroups"] = copy.deepcopy(
+                    muscle_reviewed["muscleGroups"]
+                )
+                definition["secondaryMuscleGroups"] = copy.deepcopy(
+                    muscle_reviewed["secondaryMuscleGroups"]
+                )
+
+    if feasibility_payload is None:
+        raise RuntimeError("Physical feasibility review did not produce a result")
+    if review_worker_budget == 1:
+        definitions = feasibility_payload["exerciseDefinitions"]
     semantic_discards = list(feasibility_payload.get("semanticDiscards", []))
     _require_review_retention(feasibility_payload, source_definitions, save_review_state)
     if review_checkpoint_callback is not None:
@@ -7231,7 +7497,10 @@ def review_library_muscle_semantics(
     if not isinstance(equipments, list) or not isinstance(accessories, list):
         raise ValueError("Checkpoint has invalid equipment collections")
     equipment = {"equipments": equipments, "accessoryEquipments": accessories}
-    batches = [definitions[index:index + 10] for index in range(0, len(definitions), 10)]
+    batches = [
+        definitions[index:index + LIBRARY_REVIEW_BATCH_SIZE]
+        for index in range(0, len(definitions), LIBRARY_REVIEW_BATCH_SIZE)
+    ]
     reviewed_by_batch: dict[int, list[dict[str, Any]]] = {}
     print(
         f"Reviewing muscle semantics in {len(batches)} batch(es) with up to "
@@ -7461,7 +7730,10 @@ def review_library_feasibility(
     if not isinstance(equipments, list) or not isinstance(accessories, list):
         raise ValueError("Checkpoint has invalid equipment collections")
     equipment = {"equipments": equipments, "accessoryEquipments": accessories}
-    batches = [definitions[index:index + 10] for index in range(0, len(definitions), 10)]
+    batches = [
+        definitions[index:index + LIBRARY_REVIEW_BATCH_SIZE]
+        for index in range(0, len(definitions), LIBRARY_REVIEW_BATCH_SIZE)
+    ]
     results: dict[int, tuple[list[dict[str, Any]], list[str]]] = {}
     print(
         f"Reviewing physical feasibility by two-review consensus in {len(batches)} "
@@ -7749,6 +8021,15 @@ def main() -> None:
     parser.add_argument("--audit-passes", type=int, default=1, help="LLM missing-exercise audit passes (default: 1)")
     parser.add_argument("--max-workers", type=int, default=4, help="Concurrent definition emitters (default: 4)")
     parser.add_argument(
+        "--definition-batch-size",
+        type=int,
+        default=DEFINITION_EMISSION_BATCH_SIZE,
+        help=(
+            "Exercise definitions requested per model call (default: "
+            f"{DEFINITION_EMISSION_BATCH_SIZE}; invalid batch rows fall back to individual calls)"
+        ),
+    )
+    parser.add_argument(
         "--request-timeout-seconds",
         type=float,
         default=180.0,
@@ -7796,6 +8077,8 @@ def main() -> None:
         parser.error("--request-timeout-seconds must be greater than zero")
     if args.inventory_timeout_seconds <= 0:
         parser.error("--inventory-timeout-seconds must be greater than zero")
+    if args.definition_batch_size <= 0:
+        parser.error("--definition-batch-size must be greater than zero")
     definition_timeout = httpx.Timeout(args.request_timeout_seconds, connect=60.0)
     inventory_timeout = httpx.Timeout(args.inventory_timeout_seconds, connect=60.0)
     with httpx.Client(timeout=definition_timeout) as definition_http_client, httpx.Client(
@@ -7861,6 +8144,7 @@ def main() -> None:
                 use_reasoner_for_emitters=args.use_reasoner,
                 audit_passes=args.audit_passes,
                 max_workers=args.max_workers,
+                definition_batch_size=args.definition_batch_size,
                 semantic_review_call=json_call_chat_max_with_loading,
                 global_consistency_call=json_call_reasoner_only_with_loading,
                 instruction_entailment_call=json_call_chat_max_with_loading,
