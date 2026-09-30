@@ -110,7 +110,23 @@ fun ExerciseDetail(
             )
         }
 
-        is EnduranceSet -> EnduranceSetScreen(
+        is EnduranceSet -> {
+            val runningPrescription = viewModel.exercisesById[updatedState.exerciseId]?.runningPrescription
+            if (runningPrescription != null) {
+                RunningSetScreen(
+                    viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    modifier = Modifier.fillMaxSize(),
+                    state = updatedState,
+                    prescription = runningPrescription,
+                    onComplete = {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    },
+                    exerciseTitleComposable = exerciseTitleComposable,
+                    customComponentWrapper = customComponentWrapper,
+                )
+            } else EnduranceSetScreen(
             viewModel = viewModel,
             hapticsViewModel = hapticsViewModel,
             modifier = Modifier.fillMaxSize(),
@@ -136,6 +152,7 @@ fun ExerciseDetail(
             exerciseTitleComposable = exerciseTitleComposable,
             customComponentWrapper = customComponentWrapper
         )
+        }
 
         is RestSet -> throw IllegalStateException("Rest set should not be here")
     }

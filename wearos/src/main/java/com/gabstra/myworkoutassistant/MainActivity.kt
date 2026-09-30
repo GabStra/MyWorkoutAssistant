@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import androidx.core.content.edit
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -70,6 +71,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
+import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
@@ -83,6 +85,9 @@ import com.gabstra.myworkoutassistant.screens.WorkoutExercisesScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
@@ -118,6 +123,22 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalHorologistApi::class)
     private lateinit var appHelper: WearDataLayerAppHelper
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_STEM_1 && event?.repeatCount == 0) {
+            val workoutState = appViewModel.screenState.value
+            val activeSet = workoutState.workoutState as? WorkoutState.Set
+            val isTrackingRun = workoutState.sessionPhase == WorkoutSessionPhase.ACTIVE &&
+                activeSet != null &&
+                appViewModel.exercisesById[activeSet.exerciseId]?.exerciseType == ExerciseType.RUNNING &&
+                RunningTrackingService.state.value.running
+            if (isTrackingRun) {
+                appViewModel.openRunningControlsDialog()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -632,8 +653,6 @@ fun WearApp(
                 android.Manifest.permission.BODY_SENSORS,
                 android.Manifest.permission.BLUETOOTH_SCAN,
                 android.Manifest.permission.BLUETOOTH_CONNECT,
-                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.ACCESS_COARSE_LOCATION,
                 android.Manifest.permission.POST_NOTIFICATIONS
             )
             val resumeRecoveredWorkout = {

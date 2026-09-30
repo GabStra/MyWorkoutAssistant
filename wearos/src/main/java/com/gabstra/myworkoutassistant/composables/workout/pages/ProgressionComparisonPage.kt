@@ -134,7 +134,7 @@ fun PlaceholderSetRow(
                     )
                 }
 
-                ExerciseType.COUNTUP, ExerciseType.COUNTDOWN -> {
+                ExerciseType.COUNTUP, ExerciseType.COUNTDOWN, ExerciseType.RUNNING -> {
                     ScalableText(
                         modifier = Modifier.weight(3f),
                         text = "-",

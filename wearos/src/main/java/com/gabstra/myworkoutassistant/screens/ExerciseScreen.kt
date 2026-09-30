@@ -69,6 +69,9 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -360,10 +363,13 @@ fun ExerciseScreen(
                 movingPlaceholder = null,
                 pageOverlay = { pageIndex ->
                     if (pageTypes[pageIndex] == ExerciseHorizontalPage.EXERCISE_DETAIL) {
-                        hearthRateChart(Modifier.fillMaxSize())
+                        val overlayModifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                        hearthRateChart(overlayModifier)
                         ExerciseIndicator(
                             viewModel = viewModel,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = overlayModifier,
                             selectedExerciseId = selectedExercise.id
                         )
                     }
@@ -649,7 +655,8 @@ internal enum class ExercisePreviewSetType {
     WEIGHT,
     BODY_WEIGHT,
     TIMED_DURATION,
-    ENDURANCE
+    ENDURANCE,
+    RUNNING
 }
 
 internal enum class ExercisePreviewPage {
@@ -745,6 +752,12 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
             autoStart = false,
             autoStop = !scenario.enduranceOverLimit
         )
+        ExercisePreviewSetType.RUNNING -> EnduranceSet(
+            id = UUID.fromString("20000000-0000-0000-0000-000000000005"),
+            timeInMillis = 0,
+            autoStart = false,
+            autoStop = false,
+        )
     }
     val mainSets = buildList {
         add(mainSet)
@@ -776,6 +789,12 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
                         autoStart = false,
                         autoStop = !scenario.enduranceOverLimit
                     )
+                    ExercisePreviewSetType.RUNNING -> EnduranceSet(
+                        id = id,
+                        timeInMillis = 0,
+                        autoStart = false,
+                        autoStop = false,
+                    )
                 }
             )
         }
@@ -784,12 +803,13 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
     val mainExercise = Exercise(
         id = mainExerciseId,
         enabled = true,
-        name = "Preview Exercise LONG EXTREMELY LONG ",
+        name = if (scenario.setType == ExercisePreviewSetType.RUNNING) "Easy Run" else "Preview Exercise LONG EXTREMELY LONG ",
         notes = if (scenario.includeTitledLinesPage) "Keep elbows tucked and brace core." else "",
         sets = mainSets,
         exerciseType = when (scenario.setType) {
             ExercisePreviewSetType.WEIGHT, ExercisePreviewSetType.TIMED_DURATION, ExercisePreviewSetType.ENDURANCE -> ExerciseType.WEIGHT
             ExercisePreviewSetType.BODY_WEIGHT -> ExerciseType.BODY_WEIGHT
+            ExercisePreviewSetType.RUNNING -> ExerciseType.RUNNING
         },
         minReps = 6,
         maxReps = 12,
@@ -803,6 +823,15 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         bodyWeightPercentage = if (scenario.setType == ExercisePreviewSetType.BODY_WEIGHT) 1.0 else null,
         keepScreenOn = false,
         showCountDownTimer = false,
+        runningPrescription = if (scenario.setType == ExercisePreviewSetType.RUNNING) {
+            RunningPrescription(
+                environment = RunningEnvironment.OUTDOOR,
+                targetType = RunningTargetType.DISTANCE,
+                targetValue = 5_000.0,
+            )
+        } else {
+            null
+        },
         requiredAccessoryEquipmentIds = if (scenario.includeTitledLinesPage) listOf(accessoryId) else emptyList(),
         requiresLoadCalibration = false,
         movementRef = if (scenario.includeMovementPage) {
@@ -852,6 +881,7 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
             ExercisePreviewSetType.BODY_WEIGHT -> BodyWeightSetData(10, 15.0, 75.0, 900.0)
             ExercisePreviewSetType.TIMED_DURATION -> TimedDurationSetData(60_000, 60_000, autoStart = false, autoStop = true)
             ExercisePreviewSetType.ENDURANCE -> EnduranceSetData(45_000, 10_000, autoStart = false, autoStop = !scenario.enduranceOverLimit)
+            ExercisePreviewSetType.RUNNING -> EnduranceSetData(45_000, 0, autoStart = false, autoStop = false)
         },
         currentSetDataState = mutableStateOf(
             when (scenario.setType) {
@@ -882,6 +912,7 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
                         EnduranceSetData(45_000, 12_000, autoStart = false, autoStop = true)
                     }
                 }
+                ExercisePreviewSetType.RUNNING -> EnduranceSetData(45_000, 0, autoStart = false, autoStop = false)
             }
         ),
         historicalSetData = when (scenario.setType) {
@@ -889,6 +920,7 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
             ExercisePreviewSetType.BODY_WEIGHT -> BodyWeightSetData(10, 15.0, 75.0, 900.0)
             ExercisePreviewSetType.TIMED_DURATION -> TimedDurationSetData(60_000, 60_000, autoStart = false, autoStop = true)
             ExercisePreviewSetType.ENDURANCE -> EnduranceSetData(45_000, 10_000, autoStart = false, autoStop = !scenario.enduranceOverLimit)
+            ExercisePreviewSetType.RUNNING -> EnduranceSetData(45_000, 0, autoStart = false, autoStop = false)
         },
         hasNoHistory = false,
         startTime = when {
@@ -989,7 +1021,11 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
     setCurrentWorkoutState(viewModel, state)
 
     // Keep previews deterministic and avoid background timer side effects.
-    if (scenario.setType == ExercisePreviewSetType.TIMED_DURATION || scenario.setType == ExercisePreviewSetType.ENDURANCE) {
+    if (
+        scenario.setType == ExercisePreviewSetType.TIMED_DURATION ||
+        scenario.setType == ExercisePreviewSetType.ENDURANCE ||
+        scenario.setType == ExercisePreviewSetType.RUNNING
+    ) {
         viewModel.pauseWorkout()
     }
 
@@ -1110,6 +1146,23 @@ private fun ExerciseScreenPreviewWeightWorkSet() {
         ExercisePreviewScenario(
             name = "weight_work",
             setType = ExercisePreviewSetType.WEIGHT
+        )
+    )
+}
+
+@Preview(
+    name = "Running Set",
+    group = "ExerciseScreen/States",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewRunningSet() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "running_set",
+            setType = ExercisePreviewSetType.RUNNING,
+            openPage = ExercisePreviewPage.DETAIL,
         )
     )
 }

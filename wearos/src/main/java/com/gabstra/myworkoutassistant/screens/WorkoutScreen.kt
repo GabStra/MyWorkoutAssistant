@@ -63,12 +63,14 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
+import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -349,7 +351,13 @@ fun WorkoutScreen(
             
             when (workoutState) {
                 is WorkoutState.Set -> {
-                    viewModel.openCustomDialog()
+                    val isActiveRun = viewModel.exercisesById[workoutState.exerciseId]?.exerciseType == ExerciseType.RUNNING &&
+                        RunningTrackingService.state.value.running
+                    if (isActiveRun) {
+                        viewModel.openRunningControlsDialog()
+                    } else {
+                        viewModel.openCustomDialog()
+                    }
                     viewModel.lightScreenUp()
                 }
                 is WorkoutState.Rest -> {

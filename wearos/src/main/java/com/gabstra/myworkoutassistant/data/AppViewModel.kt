@@ -158,6 +158,17 @@ open class AppViewModel : WorkoutViewModel() {
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
 
+    private val _isRunningControlsDialogOpen = MutableStateFlow(false)
+    val isRunningControlsDialogOpen = _isRunningControlsDialogOpen.asStateFlow()
+
+    fun openRunningControlsDialog() {
+        _isRunningControlsDialogOpen.value = true
+    }
+
+    fun closeRunningControlsDialog() {
+        _isRunningControlsDialogOpen.value = false
+    }
+
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
         _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
