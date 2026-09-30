@@ -6,6 +6,11 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
@@ -18,6 +23,13 @@ import java.util.UUID
 object CrossDeviceSyncPhoneWorkoutStoreFixture {
     const val WORKOUT_NAME = "Cross Device Sync Workout"
     const val CALIBRATION_WORKOUT_NAME = "Cross Device Calibration Workout"
+    const val RUNNING_PLAN_WORKOUT_NAME = "Cross Device Running Plan"
+    const val OUTDOOR_RUN_NAME = "Outdoor Distance Run"
+    const val TREADMILL_RUN_NAME = "Treadmill Time Run"
+    val RUNNING_PLAN_WORKOUT_ID: UUID = UUID.fromString("65d1f21a-459c-4376-8a99-2fa1328f4f50")
+    val RUNNING_PLAN_WORKOUT_GLOBAL_ID: UUID = UUID.fromString("758492ca-52b1-44bc-aea9-94f7cde7e011")
+    val OUTDOOR_RUN_EXERCISE_ID: UUID = UUID.fromString("75398883-7cf8-42b3-8c44-0e8e394480f0")
+    val TREADMILL_RUN_EXERCISE_ID: UUID = UUID.fromString("5cba1938-3093-40fa-934e-5c63fd6af852")
     /**
      * Template values written into the phone workout_store before cross-device sync begins.
      * Wear applies workout progression before the session starts, so these are not the same
@@ -274,12 +286,84 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             type = 0
         )
 
+        val runningPlanWorkout = Workout(
+            id = RUNNING_PLAN_WORKOUT_ID,
+            name = RUNNING_PLAN_WORKOUT_NAME,
+            description = "Phone-to-Wear running prescription sync fixture",
+            workoutComponents = listOf(
+                Exercise(
+                    id = OUTDOOR_RUN_EXERCISE_ID,
+                    enabled = true,
+                    name = OUTDOOR_RUN_NAME,
+                    notes = "",
+                    sets = listOf(
+                        EnduranceSet(
+                            id = UUID.fromString("6ed5c27a-0a89-48f4-982a-3eeb8fc7e50a"),
+                            timeInMillis = 0,
+                            autoStart = false,
+                            autoStop = false,
+                            shouldReapplyHistoryToSet = false
+                        )
+                    ),
+                    exerciseType = ExerciseType.RUNNING,
+                    minReps = 0,
+                    maxReps = 0,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = null,
+                    bodyWeightPercentage = null,
+                    runningPrescription = RunningPrescription(
+                        environment = RunningEnvironment.OUTDOOR,
+                        targetType = RunningTargetType.DISTANCE,
+                        targetValue = 30.0
+                    )
+                ),
+                Exercise(
+                    id = TREADMILL_RUN_EXERCISE_ID,
+                    enabled = true,
+                    name = TREADMILL_RUN_NAME,
+                    notes = "",
+                    sets = listOf(
+                        EnduranceSet(
+                            id = UUID.fromString("18eb3a49-4378-4327-9f31-8c97ca5f4c4d"),
+                            timeInMillis = 600_000,
+                            autoStart = false,
+                            autoStop = false,
+                            shouldReapplyHistoryToSet = false
+                        )
+                    ),
+                    exerciseType = ExerciseType.RUNNING,
+                    minReps = 0,
+                    maxReps = 0,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = null,
+                    bodyWeightPercentage = null,
+                    runningPrescription = RunningPrescription(
+                        environment = RunningEnvironment.TREADMILL,
+                        targetType = RunningTargetType.TIME,
+                        targetValue = 600.0
+                    )
+                )
+            ),
+            order = 2,
+            enabled = true,
+            creationDate = LocalDate.now(),
+            previousVersionId = null,
+            nextVersionId = null,
+            isActive = true,
+            timesCompletedInAWeek = null,
+            globalId = RUNNING_PLAN_WORKOUT_GLOBAL_ID,
+            type = 0
+        )
+
         return WorkoutStore(
-            workouts = listOf(workout, calibrationWorkout),
+            workouts = listOf(workout, calibrationWorkout, runningPlanWorkout),
             equipments = listOf(equipment),
             birthDateYear = 1990,
             weightKg = 75.0,
-            progressionPercentageAmount = 0.0
+            progressionPercentageAmount = 0.0,
+            distanceUnit = DistanceUnit.MILES
         )
     }
 
