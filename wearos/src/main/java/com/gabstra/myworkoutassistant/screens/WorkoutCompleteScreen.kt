@@ -2,13 +2,17 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -25,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.navigation.NavController
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -45,6 +50,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.Green
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -205,7 +211,23 @@ private fun WorkoutCompleteScreenContent(
             )
         }
 
-        progressionContent()
+        if (progressionIsEmpty) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Workout complete",
+                    modifier = Modifier.size(48.dp),
+                    tint = Green,
+                )
+            }
+        } else {
+            progressionContent()
+        }
 
         if (progressionDataCalculated) {
             WearPrimaryButton(
