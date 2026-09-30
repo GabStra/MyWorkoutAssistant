@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -44,8 +45,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,6 +72,7 @@ import com.gabstra.myworkoutassistant.composables.HistoryFiltersBlock
 import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
@@ -95,6 +101,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -858,6 +866,19 @@ fun WorkoutHistoryScreen(
         HistorySetsTabColumn(
             state = setHistoryLazyListState,
         ) {
+            selectedWorkoutHistory?.runningResults.orEmpty().forEach { result ->
+                item(key = "running-${result.exerciseId}") {
+                    RunningHistoryCard(
+                        exerciseName = result.exerciseId
+                            .let { runCatching { UUID.fromString(it) }.getOrNull() }
+                            ?.let(exerciseById::get)
+                            ?.let { it.nameOverride ?: it.name }
+                            ?: "Running",
+                        result = result,
+                        distanceUnit = appViewModel.workoutStore.distanceUnit
+                    )
+                }
+            }
             if (heartRateAnalysis != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
                 item {
                     HeartRateSessionCard(
@@ -1177,5 +1198,124 @@ fun WorkoutHistoryScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RunningHistoryCard(
+    exerciseName: String,
+    result: RunningResult,
+    distanceUnit: DistanceUnit,
+) {
+    val unitDistance = result.distanceMeters?.let { meters ->
+        when (distanceUnit) {
+            DistanceUnit.KILOMETERS -> meters / 1000.0
+            DistanceUnit.MILES -> meters / 1609.344
+        }
+    }
+    val unitLabel = if (distanceUnit == DistanceUnit.KILOMETERS) "km" else "mi"
+    val averagePace = result.averagePaceSecondsPerKilometer?.let {
+        val secondsPerUnit = if (distanceUnit == DistanceUnit.KILOMETERS) it else it * 1.609344
+        formatTime(secondsPerUnit.toInt())
+    }
+
+    StyledCard(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.sm)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            ContentTitle(text = exerciseName)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                RunningHistoryMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "ELAPSED",
+                    value = formatTime((result.elapsedTimeMillis / 1000).toInt()),
+                )
+                unitDistance?.let {
+                    RunningHistoryMetric(
+                        modifier = Modifier.weight(1f),
+                        label = "DISTANCE ($unitLabel)",
+                        value = "%.2f".format(it),
+                    )
+                }
+                averagePace?.let {
+                    RunningHistoryMetric(
+                        modifier = Modifier.weight(1f),
+                        label = "AVG PACE ($unitLabel)",
+                        value = it,
+                    )
+                }
+            }
+            result.averageHeartRateBpm?.let { average ->
+                RunningHistoryMetric(
+                    label = "HEART RATE (bpm)",
+                    value = "$average${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}",
+                )
+            }
+            if (result.route.size > 1) {
+                val routeColor = MaterialTheme.colorScheme.primary
+                val startColor = MaterialTheme.colorScheme.tertiary
+                val finishColor = MaterialTheme.colorScheme.error
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .semantics { contentDescription = "GPS route line with start and finish markers" }
+                ) {
+                    val minLat = result.route.minOf { it.latitude }
+                    val maxLat = result.route.maxOf { it.latitude }
+                    val minLon = result.route.minOf { it.longitude }
+                    val maxLon = result.route.maxOf { it.longitude }
+                    val latRange = (maxLat - minLat).takeIf { it > 0.0 } ?: 1.0
+                    val lonRange = (maxLon - minLon).takeIf { it > 0.0 } ?: 1.0
+                    val inset = 14.dp.toPx()
+                    val points = result.route.map { point ->
+                        Offset(
+                            x = inset + (((point.longitude - minLon) / lonRange).toFloat() * (size.width - inset * 2)),
+                            y = size.height - inset - (((point.latitude - minLat) / latRange).toFloat() * (size.height - inset * 2))
+                        )
+                    }
+                    points.zipWithNext().forEach { (start, end) ->
+                        drawLine(
+                            color = routeColor,
+                            start = start,
+                            end = end,
+                            strokeWidth = 4.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+                    }
+                    drawCircle(startColor, radius = 6.dp.toPx(), center = points.first())
+                    drawCircle(finishColor, radius = 6.dp.toPx(), center = points.last())
+                }
+                Text("Start        Finish", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunningHistoryMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+        )
     }
 }

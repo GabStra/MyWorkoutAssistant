@@ -86,8 +86,13 @@ import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -180,6 +185,25 @@ fun ExerciseForm(
 
     val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
     val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    val runningEnvironment = rememberSaveable {
+        mutableStateOf(exercise?.runningPrescription?.environment ?: RunningEnvironment.OUTDOOR)
+    }
+    val runningTargetType = rememberSaveable {
+        mutableStateOf(exercise?.runningPrescription?.targetType ?: RunningTargetType.TIME)
+    }
+    val runningTargetInput = rememberSaveable {
+        mutableStateOf(
+            exercise?.runningPrescription?.let { prescription ->
+                when (prescription.targetType) {
+                    RunningTargetType.TIME -> (prescription.targetValue / 60.0).toString()
+                    RunningTargetType.DISTANCE -> when (viewModel.workoutStore.distanceUnit) {
+                        DistanceUnit.KILOMETERS -> (prescription.targetValue / 1000.0).toString()
+                        DistanceUnit.MILES -> (prescription.targetValue / 1609.344).toString()
+                    }
+                }
+            } ?: "30"
+        )
+    }
     val exerciseTypeItems = remember(exerciseTypeDescriptions) {
         ExerciseType.values().zip(exerciseTypeDescriptions).map { (type, label) ->
             StandardFilterDropdownItem(
@@ -491,6 +515,61 @@ fun ExerciseForm(
             }
 
             Spacer(Modifier.height(Spacing.md))
+            if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                FormSectionTitle(text = "Running target")
+                StyledCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        StandardFilterDropdown(
+                            label = "Environment",
+                            selectedText = if (runningEnvironment.value == RunningEnvironment.OUTDOOR) "Outdoor" else "Treadmill",
+                            items = listOf(
+                                StandardFilterDropdownItem(RunningEnvironment.OUTDOOR, "Outdoor"),
+                                StandardFilterDropdownItem(RunningEnvironment.TREADMILL, "Treadmill")
+                            ),
+                            onItemSelected = { runningEnvironment.value = it },
+                            selectedValue = runningEnvironment.value,
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == runningEnvironment.value }
+                        )
+                        StandardFilterDropdown(
+                            label = "Target",
+                            selectedText = if (runningTargetType.value == RunningTargetType.TIME) "Time" else "Distance",
+                            items = listOf(
+                                StandardFilterDropdownItem(RunningTargetType.TIME, "Time"),
+                                StandardFilterDropdownItem(RunningTargetType.DISTANCE, "Distance")
+                            ),
+                            onItemSelected = { runningTargetType.value = it },
+                            selectedValue = runningTargetType.value,
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == runningTargetType.value }
+                        )
+                        OutlinedTextField(
+                            value = runningTargetInput.value,
+                            onValueChange = { input ->
+                                if (input.matches(Regex("^\\d{0,5}(\\.\\d{0,3})?$"))) runningTargetInput.value = input
+                            },
+                            label = {
+                                Text(
+                                    if (runningTargetType.value == RunningTargetType.TIME) "Minutes" else
+                                        if (viewModel.workoutStore.distanceUnit == DistanceUnit.KILOMETERS) "Kilometers" else "Miles"
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Text(
+                            "The watch alerts at the target; finish the run step when you are ready.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(Spacing.md))
+            }
             CollapsibleSection(
                 title = "Movement",
                 summary = exercise?.movementRef?.movementId?.let { "Movement: $it" }
@@ -1179,6 +1258,8 @@ fun ExerciseForm(
             val canBeSaved =
                 nameState.value.isNotBlank() &&
                         (if (selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true) &&
+                        (selectedExerciseType.value != ExerciseType.RUNNING ||
+                            (runningTargetInput.value.toDoubleOrNull()?.let { it > 0.0 } == true)) &&
                         (!isUnilateral.value || intraSetRestSeconds > 0)
 
             Row(
@@ -1231,6 +1312,20 @@ fun ExerciseForm(
                                 )
 
                                 else -> set
+                            }
+                        }.ifEmpty {
+                            if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                                listOf(
+                                    EnduranceSet(
+                                        id = UUID.randomUUID(),
+                                        timeInMillis = 0,
+                                        autoStart = false,
+                                        autoStop = false,
+                                        shouldReapplyHistoryToSet = false
+                                    )
+                                )
+                            } else {
+                                emptyList()
                             }
                         }
                         val deloadFailedSessionsThreshold = if (useGlobalDeloadFailedThreshold.value) {
@@ -1302,6 +1397,17 @@ fun ExerciseForm(
                             deloadRepsDrop = deloadRepsDrop,
                             deloadCutSetsTo = deloadCutSetsTo,
                             movementRef = exercise?.movementRef,
+                            runningPrescription = if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                                val enteredTarget = runningTargetInput.value.toDoubleOrNull() ?: 0.0
+                                val canonicalValue = when (runningTargetType.value) {
+                                    RunningTargetType.TIME -> enteredTarget * 60.0
+                                    RunningTargetType.DISTANCE -> enteredTarget * when (viewModel.workoutStore.distanceUnit) {
+                                        DistanceUnit.KILOMETERS -> 1000.0
+                                        DistanceUnit.MILES -> 1609.344
+                                    }
+                                }
+                                RunningPrescription(runningEnvironment.value, runningTargetType.value, canonicalValue)
+                            } else null,
                             exerciseDefinitionId = exercise?.exerciseDefinitionId,
                             nameOverride = linkedDefinition?.let { definition ->
                                 nameState.value.trim().takeIf { it != definition.name }

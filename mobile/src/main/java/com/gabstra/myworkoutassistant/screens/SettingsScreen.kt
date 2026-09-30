@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.shared.DeloadConfig
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
 import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
@@ -109,6 +110,7 @@ fun SettingsScreen(
     val whoopDisplayNameState = remember { mutableStateOf(whoopConfig?.displayName ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear.toString()) }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
+    val distanceUnitState = remember { mutableStateOf(workoutStore.distanceUnit) }
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
     val restingHeartRateState = remember {
         mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
@@ -355,6 +357,30 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(Spacing.md)) {
+                    ContentSubtitle(
+                        text = "Distance units for running targets and results.",
+                        modifier = Modifier.padding(vertical = Spacing.xs)
+                    )
+                    listOf(
+                        DistanceUnit.KILOMETERS to "Kilometers (km)",
+                        DistanceUnit.MILES to "Miles (mi)"
+                    ).forEach { (unit, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = distanceUnitState.value == unit,
+                                    onClick = { distanceUnitState.value = unit }
+                                ),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = distanceUnitState.value == unit,
+                                onClick = { distanceUnitState.value = unit }
+                            )
+                            Text(label)
+                        }
+                    }
                     ContentSubtitle(
                         text = "Global deload defaults apply when an exercise keeps a field on \"use global\". Leave both trigger thresholds blank to disable automatic deload by default.",
                         modifier = Modifier.padding(vertical = Spacing.xs)
@@ -776,7 +802,8 @@ fun SettingsScreen(
                                 cutSetsTo = deloadCutSetsTo
                             ),
                             measuredMaxHeartRate = measuredMaxHeartRate,
-                            restingHeartRate = restingHeartRate
+                            restingHeartRate = restingHeartRate,
+                            distanceUnit = distanceUnitState.value
                         )
                         onSaveInsightsSettings(
                             mobileLlmEnabledState.value,

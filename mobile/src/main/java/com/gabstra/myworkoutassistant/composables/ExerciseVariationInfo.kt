@@ -98,4 +98,5 @@ private fun ExerciseType.variationTypeLabel(): String = when (this) {
     ExerciseType.BODY_WEIGHT -> "Body weight"
     ExerciseType.COUNTUP -> "Count up"
     ExerciseType.COUNTDOWN -> "Count down"
+    ExerciseType.RUNNING -> "Running"
 }

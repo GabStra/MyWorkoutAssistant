@@ -64,6 +64,7 @@ fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
         ExerciseType.BODY_WEIGHT -> SetType.BODY_WEIGHT_SET
         ExerciseType.COUNTUP -> SetType.COUNTUP_SET
         ExerciseType.COUNTDOWN -> SetType.COUNTDOWN_SET
+        ExerciseType.RUNNING -> SetType.COUNTUP_SET
     }
 }
 
