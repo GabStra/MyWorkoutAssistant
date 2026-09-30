@@ -7,6 +7,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.UUID
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 
 @Entity(tableName = "workout_history")
 data class WorkoutHistory(
@@ -22,5 +23,6 @@ data class WorkoutHistory(
     val hasBeenSentToHealth: Boolean,
     val globalId: UUID,
     val version: UInt = 0u,
-    val endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED
+    val endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED,
+    val runningResults: List<RunningResult> = emptyList()
 )

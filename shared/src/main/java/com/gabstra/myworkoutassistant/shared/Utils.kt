@@ -1155,7 +1155,7 @@ enum class SetType {
 }
 
 enum class ExerciseType {
-    COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT
+    COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT, RUNNING
 }
 
 /**

@@ -11,6 +11,9 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
@@ -116,6 +119,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.movementRef != null) {
                     jsonObject.add("movementRef", context.serialize(src.movementRef))
                 }
+                src.runningPrescription?.let { jsonObject.add("runningPrescription", context.serialize(it)) }
             }
 
             is Rest -> {
@@ -348,6 +352,20 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 val nameOverride = jsonObject.get("nameOverride")?.let {
                     if (it.isJsonNull) null else it.asString
                 }
+                val runningPrescription = jsonObject.get("runningPrescription")
+                    ?.takeUnless { it.isJsonNull }
+                    ?.let { prescriptionJson ->
+                        val value = prescriptionJson.asJsonObject
+                        val environment = runCatching {
+                            RunningEnvironment.valueOf(value.get("environment").asString)
+                        }.getOrNull()
+                        val targetType = runCatching {
+                            RunningTargetType.valueOf(value.get("targetType").asString)
+                        }.getOrNull()
+                        if (environment != null && targetType != null && value.has("targetValue")) {
+                            RunningPrescription(environment, targetType, value.get("targetValue").asDouble)
+                        } else null
+                    }
 
                 Exercise(
                     id,
@@ -384,6 +402,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     exerciseDefinitionId,
                     placementNotes,
                     nameOverride,
+                    runningPrescription,
                 )
             }
 

@@ -14,6 +14,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
@@ -86,6 +87,7 @@ internal class WorkoutPersistenceCoordinator(
         val startWorkoutTime: LocalDateTime,
         val selectedWorkout: Workout,
         val currentWorkoutHistory: WorkoutHistory?,
+        val runningResults: List<RunningResult>,
         val endReason: WorkoutSessionEndReason,
         val heartBeatRecords: List<Int>,
         val executedSetsHistory: List<SetHistory>,
@@ -259,6 +261,7 @@ internal class WorkoutPersistenceCoordinator(
         startWorkoutTime: LocalDateTime?,
         selectedWorkout: Workout,
         currentWorkoutHistory: WorkoutHistory?,
+        runningResults: List<RunningResult> = emptyList(),
         endReason: WorkoutSessionEndReason,
         heartBeatRecords: List<Int>,
         progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
@@ -271,6 +274,7 @@ internal class WorkoutPersistenceCoordinator(
             startWorkoutTime = startTime,
             selectedWorkout = selectedWorkout,
             currentWorkoutHistory = currentWorkoutHistory,
+            runningResults = runningResults,
             endReason = endReason,
             heartBeatRecords = heartBeatRecords,
             executedSetsHistory = executedSetsSnapshot,
@@ -316,7 +320,8 @@ internal class WorkoutPersistenceCoordinator(
                 isDone = isDone,
                 hasBeenSentToHealth = false,
                 globalId = selectedWorkoutSnapshot.globalId,
-                endReason = resolvedEndReason
+                endReason = resolvedEndReason,
+                runningResults = snapshot.runningResults
             )
         } else {
             currentWorkoutHistorySnapshot = currentWorkoutHistorySnapshot.copy(
@@ -326,7 +331,11 @@ internal class WorkoutPersistenceCoordinator(
                 isDone = isDone,
                 hasBeenSentToHealth = false,
                 version = currentWorkoutHistorySnapshot.version.inc(),
-                endReason = resolvedEndReason
+                endReason = resolvedEndReason,
+                runningResults = (currentWorkoutHistorySnapshot.runningResults + snapshot.runningResults)
+                    .associateBy { it.exerciseId }
+                    .values
+                    .toList()
             )
         }
         val workoutHistoryForThisPush = currentWorkoutHistorySnapshot

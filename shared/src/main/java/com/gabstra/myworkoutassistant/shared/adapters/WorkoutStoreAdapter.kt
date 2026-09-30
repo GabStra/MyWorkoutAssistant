@@ -6,6 +6,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.DeloadConfig
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.defaultDistanceUnit
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.migrateExerciseLibrary
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
@@ -133,7 +135,10 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             progressionPercentageAmount = progressionPercentageAmount,
             deloadConfig = deloadConfig,
             measuredMaxHeartRate = measuredMaxHeartRate,
-            restingHeartRate = restingHeartRate
+            restingHeartRate = restingHeartRate,
+            distanceUnit = jsonObject.get("distanceUnit")?.takeUnless { it.isJsonNull }?.asString
+                ?.let { runCatching { DistanceUnit.valueOf(it) }.getOrNull() }
+                ?: defaultDistanceUnit()
         ).migrateExerciseLibrary()
     }
 }

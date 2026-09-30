@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room.migration.Migration
 import androidx.room.TypeConverters
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnapshotTypeConverter
@@ -20,6 +21,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndReasonTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeConverter
 
 @Database(
     entities = [
@@ -32,7 +34,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndRea
         ExerciseSessionProgression::class,
         ErrorLog::class
     ],
-    version = 60,
+    version = 61,
     exportSchema = false
 )
 @TypeConverters(
@@ -48,7 +50,8 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndRea
     ListSimpleSetTypeConverter::class,
     ProgressionStateTypeConverter::class,
     TernaryTypeConverter::class,
-    WorkoutSessionEndReasonTypeConverter::class
+    WorkoutSessionEndReasonTypeConverter::class,
+    RunningResultsTypeConverter::class
 )
 
 abstract class AppDatabase : RoomDatabase() {
@@ -62,6 +65,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun errorLogDao(): ErrorLogDao
 
     companion object {
+        private val MIGRATION_60_61 = object : Migration(60, 61) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workout_history ADD COLUMN runningResults TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -81,6 +90,7 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         "app_database_2",
                     )
+                        .addMigrations(MIGRATION_60_61)
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {

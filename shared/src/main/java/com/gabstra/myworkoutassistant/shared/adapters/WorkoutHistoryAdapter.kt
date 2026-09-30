@@ -2,10 +2,12 @@ package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
 import com.google.gson.JsonPrimitive
+import com.google.gson.reflect.TypeToken
 import java.lang.reflect.Type
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -42,7 +44,11 @@ class WorkoutHistoryAdapter : JsonDeserializer<WorkoutHistory> {
                 ?.takeUnless { it.isJsonNull }
                 ?.asString
                 ?.let { runCatching { WorkoutSessionEndReason.valueOf(it) }.getOrNull() }
-                ?: WorkoutSessionEndReason.COMPLETED
+                ?: WorkoutSessionEndReason.COMPLETED,
+            runningResults = jsonObject.get("runningResults")
+                ?.takeUnless { it.isJsonNull }
+                ?.let { context.deserialize<List<RunningResult>>(it, object : TypeToken<List<RunningResult>>() {}.type) }
+                ?: emptyList()
         )
     }
 

@@ -25,6 +25,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
@@ -1049,6 +1050,7 @@ open class WorkoutViewModel(
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
+    private val pendingRunningResults = linkedMapOf<String, RunningResult>()
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
@@ -2476,6 +2478,7 @@ open class WorkoutViewModel(
                     startWorkoutTime = startWorkoutTime,
                     selectedWorkout = selectedWorkout.value,
                     currentWorkoutHistory = currentWorkoutHistory,
+                    runningResults = pendingRunningResults.values.toList(),
                     endReason = endReason,
                     heartBeatRecords = heartBeatHistory.toList(),
                     progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
@@ -2509,6 +2512,19 @@ open class WorkoutViewModel(
                     }
                 }
             }
+        }
+    }
+
+    fun recordRunningResult(result: RunningResult) {
+        pendingRunningResults[result.exerciseId] = result
+        currentWorkoutHistory = currentWorkoutHistory?.let { history ->
+            history.copy(
+                runningResults = (history.runningResults + result)
+                    .associateBy { it.exerciseId }
+                    .values
+                    .toList(),
+                version = history.version.inc(),
+            )
         }
     }
 
