@@ -8,6 +8,7 @@ Param(
     [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
     [string]$MobileObserverTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
+    [string]$MobileTestMethod,
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
     [string]$MobileBackupPath,
     [string]$AppPackage = "com.gabstra.myworkoutassistant.debug",
@@ -22,6 +23,10 @@ Param(
     [switch]$SkipWearRebuildAfterFirstRun = $true,
     [switch]$FastTimeoutProfile = $false,
     [switch]$VerifyMissingWearAppGuard = $false,
+    [switch]$InjectEmulatorGpsDuringWearProducer = $false,
+    [switch]$UseWearGpsInjectionMarkers = $false,
+    [switch]$RevokeWearLocationPermissionsBeforeProducer = $false,
+    [string]$WearTestMethod,
     [string]$TimingOutputPath
 )
 
@@ -745,13 +750,55 @@ try {
         "-TimingOutputPath",
         (Join-Path $logsDir "wear_producer_$timestamp.json")
     )
+    if ($WearTestMethod) { $wearArgs += @("-TestMethod", $WearTestMethod) }
     if ($skipAssemble) { $wearArgs += "-SkipAssemble" }
     if ($skipInstall) { $wearArgs += "-SkipInstall" }
     if ($FastTimeoutProfile) { $wearArgs += "-FastTimeoutProfile" }
 
+    if ($UseWearGpsInjectionMarkers) {
+        & adb -s $watchSerial shell appops set $AppPackage android:mock_location allow
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to enable mock GPS locations for the Wear E2E app."
+        }
+        & adb -s $watchSerial logcat -c
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clear Wear logcat before GPS injection control started."
+        }
+    }
+    if ($RevokeWearLocationPermissionsBeforeProducer) {
+        foreach ($permission in @("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION")) {
+            & adb -s $watchSerial shell pm revoke $AppPackage $permission
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to revoke Wear permission '$permission' before instrumentation."
+            }
+            & adb -s $watchSerial shell pm clear-permission-flags $AppPackage $permission user-set user-fixed
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to reset Wear permission prompt state for '$permission'."
+            }
+        }
+    }
     $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru -WorkingDirectory $repoRoot
     $lastParityCheck = Get-Date
+    $lastGpsFix = [DateTime]::MinValue
+    $gpsFixIndex = 0
+    $emulatorGpsRoute = @(
+        @{ Longitude = -122.084000; Latitude = 37.421900 },
+        @{ Longitude = -122.083920; Latitude = 37.421980 },
+        @{ Longitude = -122.083830; Latitude = 37.422060 },
+        @{ Longitude = -122.083740; Latitude = 37.422140 },
+        @{ Longitude = -122.083650; Latitude = 37.422220 },
+        @{ Longitude = -122.083560; Latitude = 37.422300 }
+    )
     while ((-not $wearProcess.HasExited) -or ($observerProcess -and -not $observerProcess.HasExited)) {
+        if ($InjectEmulatorGpsDuringWearProducer -and ((Get-Date) - $lastGpsFix).TotalSeconds -ge 1) {
+            $fix = $emulatorGpsRoute[$gpsFixIndex % $emulatorGpsRoute.Count]
+            & adb -s $watchSerial emu geo fix $fix.Longitude $fix.Latitude | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to inject emulator GPS fix on $watchSerial."
+            }
+            $gpsFixIndex++
+            $lastGpsFix = Get-Date
+        }
         if (((Get-Date) - $lastParityCheck).TotalSeconds -ge 15) {
             Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
             $lastParityCheck = Get-Date
@@ -775,7 +822,8 @@ try {
 
     Write-Host "Running mobile verification instrumentation test..." -ForegroundColor Cyan
     $mobileVerifyPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    $mobileVerificationClass = if ($MobileTestMethod) { "$MobileTestClass#$MobileTestMethod" } else { $MobileTestClass }
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $mobileVerificationClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
     $mobileVerifyPhase.Stop()
     $timings["mobileVerificationInstrumentationSeconds"] = [math]::Round($mobileVerifyPhase.Elapsed.TotalSeconds, 3)
 
@@ -783,6 +831,9 @@ try {
 
     Write-Host "Cross-device sync E2E completed successfully." -ForegroundColor Green
 } finally {
+    if ($UseWearGpsInjectionMarkers -and $watchSerial) {
+        & adb -s $watchSerial shell appops set $AppPackage android:mock_location default | Out-Null
+    }
     $env:ANDROID_SERIAL = $previousAndroidSerial
     $runStopwatch.Stop()
     $timings["totalSeconds"] = [math]::Round($runStopwatch.Elapsed.TotalSeconds, 3)

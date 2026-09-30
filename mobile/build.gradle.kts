@@ -152,6 +152,9 @@ dependencies {
     // AndroidX core
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.activity:activity-compose:1.13.0")
+    // Keep concurrent-futures aligned with the AndroidTest graph, which includes AndroidX Test 1.3.
+    implementation("androidx.concurrent:concurrent-futures:1.3.0")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("androidx.work:work-runtime-ktx:2.12.0")
 
     // Lifecycle
@@ -190,9 +193,6 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
-    androidTestImplementation("androidx.concurrent:concurrent-futures:1.3.0")
-    androidTestImplementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
-
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 

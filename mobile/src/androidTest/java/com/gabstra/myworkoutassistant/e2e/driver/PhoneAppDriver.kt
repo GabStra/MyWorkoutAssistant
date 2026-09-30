@@ -27,7 +27,7 @@ class PhoneAppDriver(
         device.pressHome()
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: error("Launch intent for package ${context.packageName} not found")
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
 
         val appeared = device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)), defaultTimeoutMs)
@@ -76,6 +76,30 @@ class PhoneAppDriver(
         }
     }
 
+    fun grantHealthConnectPermissionsForE2E(timeoutMs: Long = 12_000) {
+        val continueButton = device.wait(Until.findObject(By.text("Continue")), 1_000)
+        if (continueButton != null) {
+            continueButton.click()
+            device.waitForIdle(800)
+        }
+
+        val healthConnectPackage = "com.google.android.healthconnect.controller"
+        if (!device.wait(Until.hasObject(By.pkg(healthConnectPackage)), timeoutMs)) return
+
+        val allowAll = device.wait(Until.findObject(By.text("Allow all")), 5_000)
+        if (allowAll != null) {
+            allowAll.click()
+            device.waitForIdle(500)
+        }
+        val allowButton = device.wait(Until.findObject(By.text("Allow")), 5_000)
+            ?: error("Health Connect permission screen did not expose its Allow action.")
+        allowButton.click()
+        require(device.wait(Until.gone(By.pkg(healthConnectPackage)), timeoutMs)) {
+            "Health Connect permission screen did not close after granting access."
+        }
+        device.waitForIdle(1_000)
+    }
+
     fun syncWithWatchFromMenu(timeoutMs: Long = 12_000) {
         val workManager = WorkManager.getInstance(context)
         val existingWorkIds = runBlocking {
@@ -118,11 +142,16 @@ class PhoneAppDriver(
         backupFileNamePrefix: String,
         appPackageForBackupPath: String = context.packageName
     ) {
-        val chooseFile = device.wait(Until.findObject(By.text("Choose file")), 10_000)
-            ?: device.wait(Until.findObject(By.textContains("Choose file")), 5_000)
-            ?: error("Restore backup dialog with 'Choose file' action did not appear.")
-        chooseFile.click()
-        device.waitForIdle(1_000)
+        val chooseFile = device.wait(Until.findObject(By.text("Choose file")), 2_000)
+            ?: device.wait(Until.findObject(By.textContains("Choose file")), 500)
+        if (chooseFile != null) {
+            chooseFile.click()
+            device.waitForIdle(1_000)
+        } else {
+            require(device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")), 5_000)) {
+                "Restore file picker did not appear after choosing Restore backup."
+            }
+        }
 
         clickIfPresent("Allow", "ALLOW", "While using the app")
         clickIfPresent("Allow access", "Continue")

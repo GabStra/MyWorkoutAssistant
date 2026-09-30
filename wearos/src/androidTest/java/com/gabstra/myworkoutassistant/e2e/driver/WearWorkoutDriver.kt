@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e.driver
 
 import android.content.Intent
 import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.test.uiautomator.By
@@ -66,6 +67,13 @@ class WearWorkoutDriver(
         }
         clickObjectOrAncestorInternal(obj)
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    fun openRunningControls(timeoutMs: Long = 5_000) {
+        device.pressKeyCode(KeyEvent.KEYCODE_STEM_1)
+        require(device.wait(Until.hasObject(By.text("RUN CONTROLS")), timeoutMs)) {
+            "Hardware button did not open running controls"
+        }
     }
 
     fun scrollUntilFound(
@@ -323,7 +331,8 @@ class WearWorkoutDriver(
         while (System.currentTimeMillis() < deadline) {
             if (!isRecoveryDialogVisible()) return
 
-            val dismiss = scrollUntilFound(
+            val dismiss = device.wait(Until.findObject(By.text("Dismiss")), 400)
+                ?: scrollUntilFound(
                 selector = By.desc("Recovery dismiss action"),
                 direction = Direction.DOWN,
                 initialWaitMs = 400
@@ -338,7 +347,22 @@ class WearWorkoutDriver(
                 ?: device.findObject(By.textContains("Dismiss"))
 
             if (dismiss != null) {
-                clickObjectOrAncestorInternal(dismiss)
+                val textTarget = if (dismiss.text.equals("Dismiss", ignoreCase = true)) {
+                    dismiss
+                } else {
+                    device.findObject(By.text("Dismiss")) ?: dismiss
+                }
+                val bounds = textTarget.visibleBounds
+                val centerX = bounds.centerX()
+                val centerY = minOf(bounds.centerY(), (device.displayHeight * 0.8f).toInt())
+                if (centerX in 0 until device.displayWidth && centerY in 0 until device.displayHeight) {
+                    // A partially clipped Wear button can report a clickable ancestor whose raw
+                    // center lies below the display. Tap the visible semantic node instead.
+                    device.click(centerX, centerY)
+                } else {
+                    scrollRecoveryDialogDown()
+                    continue
+                }
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
                 if (device.wait(Until.gone(By.desc("Recovery dismiss action")), 1_500) ||
                     !isRecoveryDialogVisible()

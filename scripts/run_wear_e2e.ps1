@@ -9,6 +9,7 @@ Param(
     [switch]$SkipAssemble = $false,
     [switch]$SkipInstall = $false,
     [switch]$NoLogcat = $false,
+    [switch]$VerboseLogcat = $false,
     [string]$TimingOutputPath,
     [switch]$FastTimeoutProfile = $false,
     [ValidateSet("debug", "release")]
@@ -111,6 +112,7 @@ $timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
 $timings["skipAssemble"] = $SkipAssemble.IsPresent
 $timings["skipInstall"] = $SkipInstall.IsPresent
 $timings["logcatEnabled"] = (-not $NoLogcat)
+$timings["verboseLogcat"] = $VerboseLogcat.IsPresent
 $timings["installFallbackUsed"] = $false
 $timings["buildType"] = $BuildType
 
@@ -292,9 +294,45 @@ function Invoke-Instrumentation {
     Write-Host "Executing instrumentation on $serial..." -ForegroundColor Yellow
     Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
 
-    $instrumentOutput = Invoke-ExternalCommand -commandPath $adb -arguments $instrumentArgs 2>&1
-    $instrumentOutput | Out-Host
+    $instrumentOutput = [System.Collections.Generic.List[string]]::new()
+    $testTimings = [System.Collections.Generic.List[object]]::new()
+    $currentTest = $null
+    $currentTestStartedAt = $null
+    & (Get-ExecutablePath $adb) @instrumentArgs 2>&1 | ForEach-Object {
+        $line = [string]$_
+        $instrumentOutput.Add($line)
+        Write-Host $line
 
+        if ($line -match "INSTRUMENTATION_STATUS: class=(.+)$") {
+            if (-not $currentTest) { $currentTest = [ordered]@{} }
+            $currentTest["class"] = $Matches[1].Trim()
+        } elseif ($line -match "INSTRUMENTATION_STATUS: test=(.+)$") {
+            if (-not $currentTest) { $currentTest = [ordered]@{} }
+            $currentTest["method"] = $Matches[1].Trim()
+        } elseif ($line -match "INSTRUMENTATION_STATUS_CODE: (-?\d+)") {
+            $statusCode = [int]$Matches[1]
+            if ($statusCode -eq 1 -and $currentTest) {
+                $currentTestStartedAt = [DateTime]::UtcNow
+            } elseif (($statusCode -eq 0 -or $statusCode -eq -2 -or $statusCode -eq -3) -and $currentTest) {
+                $elapsedSeconds = if ($currentTestStartedAt) {
+                    [math]::Round(([DateTime]::UtcNow - $currentTestStartedAt).TotalSeconds, 3)
+                } else { $null }
+                $testResult = [PSCustomObject]@{
+                    class = $currentTest["class"]
+                    method = $currentTest["method"]
+                    durationSeconds = $elapsedSeconds
+                    failed = ($statusCode -eq -2)
+                    skipped = ($statusCode -eq -3)
+                }
+                $testTimings.Add($testResult)
+                Write-Host ("TEST TIMING {0:N3}s {1}#{2}{3}" -f `
+                    $elapsedSeconds, $testResult.class, $testResult.method, `
+                    $(if ($testResult.failed) { " FAILED" } elseif ($testResult.skipped) { " SKIPPED" } else { "" })) -ForegroundColor Cyan
+                $currentTest = $null
+                $currentTestStartedAt = $null
+            }
+        }
+    }
     $exitCode = $LASTEXITCODE
     $outputText = $instrumentOutput -join "`n"
     $hasOkSummary = $outputText -match "(?m)^OK \("
@@ -315,6 +353,7 @@ function Invoke-Instrumentation {
         ExitCode = if ($exitCode -ne 0 -or $hasFailureMarker -or -not $hasOkSummary) { if ($exitCode -eq 0) { 1 } else { $exitCode } } else { 0 }
         MissingInstrumentation = $missingInstrumentation
         BenchmarkMetrics = $benchmarkMetrics
+        TestTimings = @($testTimings)
     }
 }
 
@@ -374,11 +413,17 @@ if (-not $NoLogcat) {
 
     Write-Host "Starting logcat capture..." -ForegroundColor Cyan
     Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $targetWearSerial, "logcat", "-c") | Out-Null
+    $logcatFilterSpecs = if ($VerboseLogcat) {
+        @("*:V")
+    } else {
+        @("*:W", "WorkoutSync:I", "DataLayerSync:I", "RunningTracking:I", "Filament:I")
+    }
+    $timings["logcatFilterSpecs"] = $logcatFilterSpecs
     $logcatJob = Start-Job -ScriptBlock {
-        param($adbPath, $serial, $logFilePath)
-        & (Get-Item $adbPath).FullName -s $serial logcat -v threadtime *:V *>&1 |
+        param($adbPath, $serial, $logFilePath, $filterSpecs)
+        & (Get-Item $adbPath).FullName -s $serial logcat -v threadtime @filterSpecs *>&1 |
             Out-File -FilePath $logFilePath -Encoding utf8 -Append
-    } -ArgumentList $adb, $targetWearSerial, $logFile
+    } -ArgumentList $adb, $targetWearSerial, $logFile, $logcatFilterSpecs
 
     Start-Sleep -Milliseconds 500
 }
@@ -440,7 +485,12 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncRetryRecoveryProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearResumeCrossDeviceSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearResumeDiscardCrossDeviceSyncProducerE2ETest",
-        "com.gabstra.myworkoutassistant.e2e.WearWorkoutHeartbeatProducerE2ETest"
+        "com.gabstra.myworkoutassistant.e2e.WearWorkoutHeartbeatProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearCalibrationSupersetCrossDeviceProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearExerciseLibraryPrescriptionProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearTuesdayWorkoutCrossDeviceProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearRunningGpsCrossDeviceProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearRunningGpsPermissionDeniedE2ETest"
     )
     $excludedClasses = @()
     $excludedClasses += $excludedBenchmarkClasses
@@ -537,6 +587,7 @@ try {
         $timings["benchmarkMetrics"] = $result.BenchmarkMetrics
     }
     $exitCode = $result.ExitCode
+    $timings["testTimings"] = $result.TestTimings
 
     if ($exitCode -ne 0 -and $SkipInstall -and $result.MissingInstrumentation) {
         Write-Host "Instrumentation target missing; retrying once with APK install fallback..." -ForegroundColor Yellow
@@ -554,6 +605,15 @@ try {
             $timings["benchmarkMetrics"] = $retryResult.BenchmarkMetrics
         }
         $exitCode = $retryResult.ExitCode
+        $timings["testTimings"] = $retryResult.TestTimings
+    }
+
+    if ($exitCode -ne 0 -and $logFile) {
+        $verboseLogFile = Join-Path $logsDir "logcat_verbose_failure_$timestamp.txt"
+        Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $targetWearSerial, "logcat", "-d", "-v", "threadtime", "*:V") |
+            Out-File -FilePath $verboseLogFile -Encoding utf8
+        $timings["verboseFailureLog"] = $verboseLogFile
+        Write-Host "Verbose failure log saved to: $verboseLogFile" -ForegroundColor Yellow
     }
 } catch {
     Write-Error "Error running Wear E2E: $($_.Exception.Message)"
