@@ -1134,16 +1134,16 @@ function Start-SharedLlamaServer {
     } catch {
     }
     # Production flag set measured for the RTX 4070 SUPER (see
-    # exercise_motion_pkg/SHARED_LLAMA_SERVER.md). Slot count and context
-    # geometry come from the same params that feed the bake requests; the
-    # reasoning flags are pinned off for the shared server and must be
-    # reconciled with the clients' attach-time runtime validation when the
-    # run loop is wired (increment 2).
+    # exercise_motion_pkg/SHARED_LLAMA_SERVER.md). Slot count, context
+    # geometry, and reasoning mode come from the same params that feed the
+    # bake/discovery requests so the clients' attach-time runtime validation
+    # (parallel slots, reasoning flags, budget) always matches the supervisor.
     $parallel = if ($null -ne $LlamaCppParallel) { [int]$LlamaCppParallel } else { 8 }
     $ctxSize = if ($null -ne $LlamaCppCtxSize) { [int]$LlamaCppCtxSize } else { 49152 }
     $batchSize = if ($null -ne $LlamaCppBatchSize) { [int]$LlamaCppBatchSize } else { 1024 }
     $ubatchSize = if ($null -ne $LlamaCppUBatchSize) { [int]$LlamaCppUBatchSize } else { 512 }
     $threadsHttp = if ($null -ne $LlamaCppThreadsHttp) { [int]$LlamaCppThreadsHttp } else { 8 }
+    $reasoningBudget = if ($null -ne $LlamaCppReasoningBudget) { [int]$LlamaCppReasoningBudget } else { 64 }
     $serverArgs = @(
         "-m", $LlamaCppModel,
         "--host", $host_, "--port", "$port",
@@ -1157,7 +1157,7 @@ function Start-SharedLlamaServer {
         "--cache-type-v", $LlamaCppCacheTypeV,
         "--fit", $LlamaCppFit,
         "--threads-http", "$threadsHttp",
-        "--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0",
+        "--reasoning", "on", "--reasoning-format", "deepseek", "--reasoning-budget", "$reasoningBudget",
         "--cont-batching",
         "--gpu-layers", "all"
     )
@@ -4189,6 +4189,29 @@ if ($effectiveWarmGvhmrWorker) {
     New-Item -ItemType Directory -Force -Path $activeGvhmrWorkerSessionDir | Out-Null
     $resolvedGvhmrWorkerSessionDir = (Resolve-Path -LiteralPath $activeGvhmrWorkerSessionDir).Path
 }
+# Shared llama.cpp server (SHARED_LLAMA_SERVER.md): one supervisor-owned
+# vision server for waves, discovery, and contract prefetch. Wave processes
+# join the quiesce protocol through the session dir; discovery attaches by
+# health-poll (an in-flight discovery request killed by a quiesce self-heals
+# through the client recovery path - publishing discovery counters is a
+# follow-up). Disabled entirely when vision ranking is off.
+$effectiveSharedLlamaServer = (
+    $SharedLlamaServer -and
+    -not $SkipVisionRanking
+)
+$resolvedSharedLlamaServerSessionDir = $null
+if ($effectiveSharedLlamaServer) {
+    $activeSharedLlamaSessionDir = if ([string]::IsNullOrWhiteSpace($SharedLlamaServerSessionDir)) {
+        Join-Path $resolvedWorkspaceRoot "shared-llama-server"
+    } else {
+        $SharedLlamaServerSessionDir
+    }
+    New-Item -ItemType Directory -Force -Path $activeSharedLlamaSessionDir | Out-Null
+    $resolvedSharedLlamaServerSessionDir = (Resolve-Path -LiteralPath $activeSharedLlamaSessionDir).Path
+    # Every child process (waves, discovery jobs, contract prefetch) must
+    # resolve the same session dir for the quiesce protocol to coordinate.
+    $env:EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR = $resolvedSharedLlamaServerSessionDir
+}
 $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
     Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
 } else {
@@ -4303,6 +4326,11 @@ if ($null -ne $LlamaCppParallel) {
     $youtubeBaseArgs += @("--llama-cpp-parallel", "$LlamaCppParallel")
 }
 $youtubeBaseArgs = Add-LlamaCppTuningArgs -Arguments $youtubeBaseArgs
+if ($effectiveSharedLlamaServer) {
+    # Discovery and contract prefetch attach to the supervisor-owned shared
+    # server; the session dir arrives via the inherited environment variable.
+    $youtubeBaseArgs += "--llama-cpp-shared-server"
+}
 if ($null -ne $LlamaCppReasoningBudget) {
     $youtubeBaseArgs += @("--llama-cpp-reasoning-budget", "$LlamaCppReasoningBudget")
 }
@@ -4596,6 +4624,12 @@ foreach ($exercise in $exerciseList.exercises) {
             "--gvhmr-worker-session-dir", $resolvedGvhmrWorkerSessionDir,
             "--gvhmr-worker-mount-root", $resolvedWorkspaceRoot,
             "--gvhmr-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
+        )
+    }
+    if ($effectiveSharedLlamaServer) {
+        $bakeArgs += @(
+            "--shared-llama-server",
+            "--shared-llama-server-session-dir", $resolvedSharedLlamaServerSessionDir
         )
     }
     if (-not $FullWhamCameraSlam) {
@@ -4964,6 +4998,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
     # ProgressIntervalSeconds boundaries instead of drifting after each late poll.
     $lastProgressSlot = -1
     $warmWhamWorkerInstance = $null
+    $sharedLlamaServerInstance = $null
     $script:WhamWorkerStartedOnce = $false
     $reusedCount = $completedCount
     if ($reusedCount -gt 0) {
@@ -4997,6 +5032,35 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         Write-Warning "Motion extractor exited while idle; it will be restarted before the next extraction."
                     }
                     $warmWhamWorkerInstance = $null
+                }
+            }
+            if ($effectiveSharedLlamaServer) {
+                if ($null -ne $sharedLlamaServerInstance) {
+                    # A quiescing client stops the server process itself; the
+                    # supervisor just tends the heartbeat and notices death.
+                    $serverProcess = Get-Process -Id $sharedLlamaServerInstance.processId -ErrorAction SilentlyContinue
+                    if ($null -eq $serverProcess) {
+                        $restartRequested = Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")
+                        if ($bakeRunningJobs.Count -gt 0 -and -not $restartRequested) {
+                            Write-Host "Shared llama.cpp server stopped for an exclusive GPU phase; it will restart when a client requests it."
+                        }
+                        $sharedLlamaServerInstance = $null
+                    } else {
+                        Update-SharedLlamaServerHeartbeat -SessionDir $resolvedSharedLlamaServerSessionDir
+                    }
+                }
+                if (
+                    $null -eq $sharedLlamaServerInstance -and
+                    ($discoveryRunningJobs.Count -gt 0 -or $bakeRunningJobs.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0) -and
+                    (
+                        (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) -or
+                        -not (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json"))
+                    )
+                ) {
+                    # Initial start or a client-requested restart after an
+                    # exclusive phase released the GPU. Start-SharedLlamaServer
+                    # clears stale markers (including the request) itself.
+                    $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
                 }
             }
             while (
@@ -5446,6 +5510,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             }
         }
         Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+        Stop-SharedLlamaServer -Server $sharedLlamaServerInstance
     }
 }
 
@@ -5518,6 +5583,8 @@ $summary = [ordered]@{
         mtmdBatchMaxTokens = $LlamaCppMtmdBatchMaxTokens
     }
     warmWhamWorkerEnabled = $effectiveWarmWhamWorker
+    sharedLlamaServerEnabled = $effectiveSharedLlamaServer
+    sharedLlamaServerSessionDir = $resolvedSharedLlamaServerSessionDir
     whamWorkerSessionDir = $resolvedWhamWorkerSessionDir
     whamWorkerMountRoot = if ($effectiveWarmWhamWorker) { $resolvedWorkspaceRoot } else { $null }
     warmGvhmrWorkerEnabled = $effectiveWarmGvhmrWorker

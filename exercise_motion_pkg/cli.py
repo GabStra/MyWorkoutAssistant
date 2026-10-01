@@ -540,6 +540,11 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--llama-cpp-cache-type-k", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_K)
     youtube_search.add_argument("--llama-cpp-cache-type-v", choices=["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], default=DEFAULT_LLAMA_CPP_CACHE_TYPE_V)
     youtube_search.add_argument("--llama-cpp-parallel", type=int, default=DEFAULT_LLAMA_CPP_PARALLEL)
+    youtube_search.add_argument(
+        "--llama-cpp-shared-server",
+        action="store_true",
+        help="Attach to the supervisor-owned shared llama.cpp server instead of owning one; see exercise_motion_pkg/SHARED_LLAMA_SERVER.md.",
+    )
     youtube_search.add_argument("--llama-cpp-threads-http", type=int)
     youtube_search.add_argument("--llama-cpp-cache-reuse", type=int)
     youtube_search.add_argument("--llama-cpp-fit", choices=["on", "off"], default=DEFAULT_LLAMA_CPP_FIT)

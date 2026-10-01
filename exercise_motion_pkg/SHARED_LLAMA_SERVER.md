@@ -198,3 +198,35 @@ loop. **Increment 1 ships the functions + params only; nothing calls them.**
    `build_youtube_ranking_settings` callers and budget fairness rules.
 4. **Contract prefetch sharing**: the exercise-contract text path attaches
    like any other client (settings already flow via `dataclass_replace`).
+
+## Increment 2: run-loop wiring (opt-in via `-SharedLlamaServer`)
+
+Enabled with `-SharedLlamaServer` on `run_exercise_motion_workout_plan.ps1`
+(default off; disabled automatically when vision ranking is skipped):
+
+- Session dir defaults to `<workspace>/shared-llama-server` and is exported as
+  `EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR` so every child process (waves,
+  discovery jobs, contract prefetch) resolves the same coordinator directory.
+- Bake wave args carry `--shared-llama-server --shared-llama-server-session-dir`;
+  discovery/contract-prefetch args carry `--llama-cpp-shared-server` (the
+  `find-youtube-videos` parser flag flows into `YouTubeRankingSettings`).
+- The drain loop is the supervisor: it refreshes `heartbeat.json` every
+  iteration, notices server death (a quiescing client stopped the process),
+  and (re)starts via `Start-SharedLlamaServer` when jobs need vision AND
+  either `start_requested.json` exists or `ready.json` is missing.
+  `Start-SharedLlamaServer` clears stale markers - including the restart
+  request - itself. Teardown always calls `Stop-SharedLlamaServer`.
+- Server flags (parallel, ctx, batch, reasoning mode/budget) derive from the
+  SAME `$LlamaCpp*` params that feed the requests, so the clients' attach-time
+  runtime validation (slot count, reasoning flags) always matches.
+
+Known bounded caveat: discovery processes attach by health-poll and do not yet
+publish in-flight counters, so a wave's quiesce can kill one in-flight
+discovery request; the client recovery path waits for the supervised restart
+and retries. Publishing discovery-side counters is the next follow-up, along
+with wave-overlap scheduling (the actual throughput payoff) and sharing the
+server with the standalone bake runner.
+
+Live-verified 2026-10-01 (real server): attach+caption, quiesce (3.3s drain ->
+stop -> restart request), supervised restart, caption resume, and
+close(force) leaving the shared server alive.
