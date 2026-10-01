@@ -4,9 +4,13 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,15 +109,27 @@ fun WearTonalButton(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                ScalableText(
+                // Wear buttons query intrinsic width; subcomposed text cannot answer that query.
+                BasicText(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(20.dp),
                     text = text,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = labelColor,
-                    textAlign = TextAlign.Center,
-                    minTextSize = 8.sp,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = labelColor,
+                        textAlign = TextAlign.Center,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both,
+                        ),
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = 8.sp,
+                        maxFontSize = MaterialTheme.typography.labelMedium.fontSize,
+                    ),
                 )
                 supportingText?.let {
                     Text(
