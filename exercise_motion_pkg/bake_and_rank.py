@@ -6727,6 +6727,19 @@ def two_scale_topology_verification_passed(
     )
 
 
+def source_review_model_identity(settings: Any) -> dict[str, Any] | None:
+    if settings is None:
+        return None
+    identity = {key: value for key, value in vars(settings).items()
+                if key.startswith("llama_cpp_")}
+    for name in ("llama_cpp_model", "llama_cpp_mmproj"):
+        value = identity.get(name)
+        if value and Path(value).is_file():
+            stat = Path(value).stat()
+            identity[name] = (str(value), stat.st_size, stat.st_mtime_ns)
+    return identity
+
+
 def validate_two_scale_source_with_caption_images(
     item: ReviewItem,
     *,
@@ -6743,18 +6756,12 @@ def validate_two_scale_source_with_caption_images(
     output_dir.mkdir(parents=True, exist_ok=True)
     source = final_output_source_video_window(item)
     settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
-    model_settings = {key: value for key, value in vars(settings).items()
-                      if key.startswith("llama_cpp_")} if settings is not None else None
+    model_settings = source_review_model_identity(settings)
     # Custom callbacks without a model identity must not share persisted verdicts.
     if source is None or model_settings is None:
         return _validate_two_scale_source_uncached(item, uniform_sheet_paths=uniform_sheet_paths,
             output_dir=output_dir, caption_images=caption_images, exercise_motion_contract=exercise_motion_contract,
             source_pose_endpoint_features=source_pose_endpoint_features, source_phase_metrics=source_phase_metrics)
-    for name in ("llama_cpp_model", "llama_cpp_mmproj"):
-        value = model_settings.get(name)
-        if value and Path(value).is_file():
-            stat = Path(value).stat()
-            model_settings[name] = (str(value), stat.st_size, stat.st_mtime_ns)
     video, window = source
     candidate_payload = getattr(item, "candidate", None)
     candidate_contract = (
@@ -6923,7 +6930,18 @@ def _validate_two_scale_source_uncached(
     }
     from exercise_motion_pkg.review_questions import answer_question, run_questions
 
-    cache_questions = getattr(getattr(caption_images, "__self__", None), "settings", None) is not None
+    question_settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
+    cache_questions = question_settings is not None
+    question_identity = None
+    if cache_questions:
+        from exercise_motion_pkg.stage_cache import cache_key
+        question_model = source_review_model_identity(question_settings)
+        # Keep parser/prompt policy and contract changes isolated even if a
+        # particular target-blind question happens to have an unchanged prompt.
+        question_identity = cache_key({"model": question_model,
+            "contract": candidate_contract, "resolvedContract": specific_contract},
+            [Path(__file__), Path(__file__).with_name("review_questions.py"),
+             Path(__file__).with_name("youtube.py")])
 
     def question(name: str, frames: list[Path], prompt: str, *, max_tokens: int = 256,
                  reusable: Callable[[Any], bool]) -> tuple[str, Any]:
@@ -6931,8 +6949,9 @@ def _validate_two_scale_source_uncached(
             return call_two_scale_source_gate(caption_images, frame_paths=frames, prompt=prompt, max_tokens=max_tokens)
         if not cache_questions:
             return operation()
-        return answer_question(directory=output_dir / "questions", name=name, frames=frames,
-            prompt=prompt, max_tokens=max_tokens, operation=operation, reusable=reusable)
+        return answer_question(directory=item.candidate_workspace / "source-question-cache", name=name, frames=frames,
+            prompt=prompt, max_tokens=max_tokens, operation=operation, reusable=reusable,
+            identity=question_identity)
 
     raw_equipment_detail, equipment_detail = (None, None)
     detail_guidance = ""

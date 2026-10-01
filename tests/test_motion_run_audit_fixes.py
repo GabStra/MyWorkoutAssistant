@@ -135,7 +135,8 @@ def test_complete_source_review_cache_tracks_video_contract_model_and_frames(tmp
     passed = [True]
     def validate(*args, **kwargs):
         calls.append(1)
-        return {"passed": passed[0], "uniformContactSheetPaths": [str(path) for path in kwargs['uniform_sheet_paths']],
+        return {"passed": passed[0], "reviewStatus": "passed" if passed[0] else "incomplete",
+                "uniformContactSheetPaths": [str(path) for path in kwargs['uniform_sheet_paths']],
                 "motionContactSheetPaths": []}
     monkeypatch.setattr(bake, "_validate_two_scale_source_uncached", validate)
     def run(contract=None, sheets=None):
@@ -150,7 +151,7 @@ def test_complete_source_review_cache_tracks_video_contract_model_and_frames(tmp
     assert len(calls) == 5
     passed[0] = False
     run({"policy": 3}); run({"policy": 3})
-    assert len(calls) == 7  # Incomplete or rejected reviews never become accepted cache hits.
+    assert len(calls) == 7  # Incomplete reviews remain retryable.
     passed[0] = True
     run(); run()
     assert len(calls) == 8

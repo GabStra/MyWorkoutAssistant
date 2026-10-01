@@ -5,7 +5,7 @@ import threading
 from typing import Any, Callable
 
 from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_PARALLEL
-from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
+from exercise_motion_pkg.stage_cache import cache_key, file_identity, load_stage, save_stage, stage_lock
 
 _executor_lock = threading.Lock()
 _executor: ThreadPoolExecutor | None = None
@@ -44,8 +44,13 @@ def _ensure_question_executor(workers: int) -> ThreadPoolExecutor:
 
 def answer_question(*, directory: Path, name: str, prompt: str, frames: list[Path],
                     max_tokens: int, operation: Callable[[], tuple[str, Any]],
-                    reusable: Callable[[Any], bool]) -> tuple[str, Any]:
-    key = cache_key({"prompt": prompt, "maxTokens": max_tokens}, frames)
+                    reusable: Callable[[Any], bool], identity: Any = None) -> tuple[str, Any]:
+    # Shared answers require an explicit model/policy identity. Preserve image
+    # order while allowing identical regenerated artifacts at different paths.
+    key = (cache_key({"prompt": prompt, "maxTokens": max_tokens, "identity": identity,
+                      "images": [file_identity(frame).get("sha256") for frame in frames]}, [])
+           if identity is not None and all(frame.is_file() for frame in frames)
+           else cache_key({"prompt": prompt, "maxTokens": max_tokens}, frames))
     checkpoint = directory / name / key / "checkpoint.json"
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
