@@ -128,6 +128,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -2210,6 +2211,14 @@ open class WorkoutViewModel(
     protected open suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) = Unit
 
     suspend fun updateExerciseEquipmentForCurrentWorkout(
+        exerciseId: UUID,
+        equipmentId: UUID?
+    ): Boolean = viewModelScope.async(exceptionContext() + dispatchers.main) {
+        // Refresh replaces the initiating screen; its disposal must not cancel the rebuild.
+        updateExerciseEquipmentForCurrentWorkoutOwned(exerciseId, equipmentId)
+    }.await()
+
+    private suspend fun updateExerciseEquipmentForCurrentWorkoutOwned(
         exerciseId: UUID,
         equipmentId: UUID?
     ): Boolean {

@@ -216,8 +216,7 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
         expectedEquipmentName: String?
     ) {
         require(
-            WearWorkoutEquipmentChangeHelper.waitForObservedExerciseEquipment(
-                context = context,
+            WearWorkoutEquipmentChangeHelper.waitForLiveExerciseEquipment(
                 exerciseName = exerciseName,
                 expectedEquipmentName = expectedEquipmentName,
                 timeoutMs = 10_000
