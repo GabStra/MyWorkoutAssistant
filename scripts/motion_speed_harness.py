@@ -96,7 +96,16 @@ def assemble_workspace(arm_dir: Path, slugs: list[str], base_workspace: Path) ->
         shutil.copytree(contract_cache, workspace / "exercise-motion-contract-cache")
 
 
-def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float) -> dict:
+def _log_tail(log_path: Path, lines: int = 12) -> str:
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "<no log>"
+    return "\n".join(content[-lines:])
+
+
+def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
+            stall_seconds: float = 180.0) -> dict:
     extra = ARMS[arm]
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
@@ -114,16 +123,51 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float) ->
         "-SourceOutcomeIndexJson", str(source_index),
     ] + extra
     started = time.perf_counter()
-    with log_path.open("w", encoding="utf-8", errors="replace") as log_handle:
-        completed = subprocess.run(args, stdout=log_handle, stderr=subprocess.STDOUT, timeout=timeout_seconds)
+    log_handle = log_path.open("w", encoding="utf-8", errors="replace")
+    process = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT)
+    status = "running"
+    last_size = -1
+    last_growth = time.perf_counter()
+    try:
+        while process.poll() is None:
+            time.sleep(5.0)
+            try:
+                size = log_path.stat().st_size
+            except OSError:
+                size = last_size
+            if size != last_size:
+                last_size = size
+                last_growth = time.perf_counter()
+            elif time.perf_counter() - last_growth > stall_seconds:
+                # The runner logs continuously (queue snapshots, heartbeats);
+                # a silent log means the arm is wedged, not working.
+                status = "stalled"
+                _kill_process_tree(process)
+                print(f"[harness] {arm}: STALLED (log silent {stall_seconds:.0f}s). Tail:\n{_log_tail(log_path)}", flush=True)
+                break
+            if time.perf_counter() - started > timeout_seconds:
+                status = "timeout"
+                _kill_process_tree(process)
+                print(f"[harness] {arm}: TIMEOUT after {timeout_seconds:.0f}s. Tail:\n{_log_tail(log_path)}", flush=True)
+                break
+    finally:
+        log_handle.close()
     elapsed = time.perf_counter() - started
+    exit_code = process.returncode if status == "running" else status
     return {
         "arm": arm,
-        "exitCode": completed.returncode,
+        "exitCode": exit_code,
         "wallSeconds": round(elapsed, 1),
         "workspace": str(arm_dir / "workspace"),
         "log": str(log_path),
     }
+
+
+def _kill_process_tree(process: subprocess.Popen) -> None:
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+        capture_output=True, check=False,
+    )
 
 
 def extract_metrics(arm_result: dict) -> dict:
@@ -214,11 +258,15 @@ def main() -> None:
         arm_dir = run_root / arm
         print(f"\n[harness] === arm '{arm}' ===", flush=True)
         assemble_workspace(arm_dir, matched, args.base_workspace)
-        try:
-            arm_result = run_arm(arm, arm_dir, plan_json, args.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            arm_result = {"arm": arm, "exitCode": "timeout", "wallSeconds": args.timeout_seconds,
-                          "workspace": str(arm_dir / "workspace"), "log": str(arm_dir / "run.log")}
+        arm_result = run_arm(arm, arm_dir, plan_json, args.timeout_seconds)
+        if isinstance(arm_result.get("exitCode"), int) and arm_result["exitCode"] != 0:
+            print(f"[harness] {arm}: FAILED (exit {arm_result['exitCode']}). Tail:\n{_log_tail(Path(arm_result['log']))}", flush=True)
+            if arm_result["wallSeconds"] < 120:
+                # A config error fails every arm identically; abort instead of
+                # burning the remaining arms on it.
+                results.append(arm_result)
+                print("[harness] aborting remaining arms (early failure = config error).", flush=True)
+                break
         arm_result["metrics"] = extract_metrics(arm_result)
         results.append(arm_result)
         m = arm_result["metrics"]

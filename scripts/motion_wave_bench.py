@@ -221,6 +221,7 @@ def run_config(name: str, shared: bool, items: int, captions: int,
     try:
         if supervisor:
             supervisor.start()
+            print(f"[bench:{name}] supervisor ready", flush=True)
         discovery_thread = threading.Thread(target=discovery_loop, daemon=True)
         discovery_thread.start()
         session = LazyLlamaCppVisionSession(_request(session_dir, shared))
@@ -228,6 +229,7 @@ def run_config(name: str, shared: bool, items: int, captions: int,
             # Source validation: per-item caption bursts.
             for _item in range(items):
                 result["captionLatencies"] += _caption_burst(session, frame, captions)
+            print(f"[bench:{name}] source captions done {result['captionLatencies']}", flush=True)
             # Small co-resident op (the YOLO-refresh analog; both configs).
             session.run_without_llama_overlap(
                 lambda: "small-op",
@@ -238,11 +240,13 @@ def run_config(name: str, shared: bool, items: int, captions: int,
             gen_started = time.perf_counter()
             session.run_without_llama_overlap(lambda: time.sleep(2.0) or "gen-done")
             result["exclusiveWindowSeconds"] = round(time.perf_counter() - gen_started, 2)
+            print(f"[bench:{name}] exclusive window {result['exclusiveWindowSeconds']}s", flush=True)
             # Final validation: pays the restart in owned mode.
             for _item in range(items):
                 result["captionLatencies"] += _caption_burst(session, frame, captions)
         finally:
             session.close(force_stop_server=not shared)
+        print(f"[bench:{name}] session closed; discovery={discovery_state}", flush=True)
         manifest = session.timing_manifest()
         result["visionStartups"] = manifest.get("visionRankerStartupCount")
         result["visionStartupSeconds"] = manifest.get("visionRankerStartupSeconds")
