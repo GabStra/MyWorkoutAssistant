@@ -1231,7 +1231,12 @@ def _run_staged_bake_wave(
                 # Speculative CPU bake/fit only for the first ready source. Later
                 # sources bake during final processing if the primary fails, so
                 # unfinished secondary fits cannot stall the kept path.
-                if len(ready_sources) == 1:
+                # Once extraction is finished, speculative work cannot overlap
+                # it and finalization immediately abandons an unfinished bake.
+                # Let final processing own that bake from the start instead.
+                if len(ready_sources) == 1 and any(
+                    not pending.done() for pending in future_items
+                ):
                     render_futures[_candidate_key(candidate)] = render_executor.submit(
                         prepare_cpu_render_cache, item, candidate, result,
                         prepared_contracts.get(_candidate_key(candidate)))
