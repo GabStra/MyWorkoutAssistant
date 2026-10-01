@@ -446,3 +446,149 @@ def test_cli_flags_plumb_into_requests(tmp_path):
         "--shared-llama-server",
     ])
     assert generate_args.shared_llama_server is True
+
+
+def test_generation_holder_marker_lifecycle(tmp_path) -> None:
+    from exercise_motion_pkg.shared_llama_server import (
+        clear_generation_holder_marker,
+        live_foreign_generation_holders,
+        write_generation_holder_marker,
+    )
+
+    session_dir = tmp_path / "shared"
+    marker = write_generation_holder_marker(session_dir, holder="wave-0001")
+    assert marker.exists()
+    # Own-process holders are never "foreign".
+    assert live_foreign_generation_holders(session_dir) == []
+
+    foreign = _LiveForeignProcess()
+    try:
+        write_generation_holder_marker(session_dir, holder="wave-0002")
+        # Overwrite the pid with the live foreign one to simulate that wave's process.
+        marker2 = session_dir / "generation-holders" / f"{foreign.pid}.json"
+        marker2.write_text(json.dumps({
+            "pid": foreign.pid,
+            "processIdentity": foreign.identity,
+            "holder": "wave-0002",
+            "startedAtUnixSeconds": time.time(),
+        }), encoding="utf-8")
+        holders = live_foreign_generation_holders(session_dir)
+        assert [h.get("holder") for h in holders] == ["wave-0002"]
+    finally:
+        foreign.stop()
+
+    # Dead foreign holders are reclaimed on read.
+    time.sleep(0.2)
+    assert live_foreign_generation_holders(session_dir) == []
+    assert not (session_dir / "generation-holders" / f"{foreign.pid}.json").exists()
+
+    clear_generation_holder_marker(session_dir)
+    assert not marker.exists()
+
+
+def test_stop_before_vlm_skips_while_foreign_generation_active(tmp_path) -> None:
+    from types import SimpleNamespace
+    from exercise_motion_pkg import wave_pipeline
+    from exercise_motion_pkg.shared_llama_server import write_generation_holder_marker
+
+    shared_dir = tmp_path / "shared"
+    worker_dir = tmp_path / "gvhmr-worker"
+    worker_dir.mkdir(parents=True)
+    (worker_dir / "ready.json").write_text("{}", encoding="utf-8")
+
+    item = SimpleNamespace(
+        request=SimpleNamespace(
+            use_warm_wham_worker=False,
+            wham_worker_session_dir=None,
+            use_warm_gvhmr_worker=True,
+            gvhmr_worker_session_dir=worker_dir,
+            shared_llama_server=True,
+            shared_llama_server_session_dir=shared_dir,
+            llama_cpp_base_url="http://127.0.0.1:8090",
+        )
+    )
+
+    # No foreign generation: the worker stop proceeds. A fake worker answers
+    # the stop handshake so the release wait completes.
+    def fake_worker_answers_stop() -> None:
+        stop_path = worker_dir / "stop"
+        for _ in range(120):
+            if stop_path.exists():
+                (worker_dir / "stopped.json").write_text("{}", encoding="utf-8")
+                return
+            time.sleep(0.25)
+
+    responder = threading.Thread(target=fake_worker_answers_stop, daemon=True)
+    responder.start()
+    release = wave_pipeline._stop_warm_wham_worker_before_vlm([item])
+    assert release["stopped"] is True
+    responder.join(timeout=5)
+
+    # Reset worker state, then announce a live foreign generation.
+    for name in ("stop", "stopped.json"):
+        path = worker_dir / name
+        if path.exists():
+            path.unlink()
+    (worker_dir / "ready.json").write_text("{}", encoding="utf-8")
+    foreign = _LiveForeignProcess()
+    try:
+        holder = shared_dir / "generation-holders" / f"{foreign.pid}.json"
+        holder.parent.mkdir(parents=True, exist_ok=True)
+        holder.write_text(json.dumps({
+            "pid": foreign.pid,
+            "processIdentity": foreign.identity,
+            "holder": "wave-0009",
+            "startedAtUnixSeconds": time.time(),
+        }), encoding="utf-8")
+        release = wave_pipeline._stop_warm_wham_worker_before_vlm([item])
+        assert release["stopped"] is False
+        assert release["skippedForForeignGeneration"] is True
+        assert release["foreignHolders"] == ["wave-0009"]
+        # The warm worker was left untouched.
+        assert not (worker_dir / "stop").exists()
+    finally:
+        foreign.stop()
+
+
+def test_supervised_server_wait_extends_for_foreign_generation(tmp_path, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from exercise_motion_pkg import youtube as youtube_module
+    from exercise_motion_pkg.youtube import LlamaCppVisionRanker
+
+    foreign = _LiveForeignProcess()
+    try:
+        shared_dir = tmp_path / "shared"
+        holder = shared_dir / "generation-holders" / f"{foreign.pid}.json"
+        holder.parent.mkdir(parents=True, exist_ok=True)
+        holder.write_text(json.dumps({
+            "pid": foreign.pid,
+            "processIdentity": foreign.identity,
+            "holder": "wave-0007",
+            "startedAtUnixSeconds": time.time(),
+        }), encoding="utf-8")
+        monkeypatch.setenv("EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR", str(shared_dir))
+
+        ranker = object.__new__(LlamaCppVisionRanker)
+        ranker.settings = SimpleNamespace(
+            llama_cpp_base_url="http://127.0.0.1:8090",
+            llama_cpp_server_startup_timeout_seconds=2.0,
+        )
+        attempts = {"count": 0}
+
+        def never_ready() -> None:
+            attempts["count"] += 1
+
+        monkeypatch.setattr(ranker, "_server_models_payload", lambda: None)
+        monkeypatch.setattr(LlamaCppVisionRanker, "_raise_if_server_model_mismatch", lambda self, payload: None)
+        monkeypatch.setattr(LlamaCppVisionRanker, "_raise_if_server_runtime_mismatch", lambda self: None)
+        monkeypatch.setattr(LlamaCppVisionRanker, "_wait_for_chat_completions_ready", lambda self: None)
+
+        started = time.perf_counter()
+        with pytest.raises(RuntimeError, match="did not become ready"):
+            ranker._wait_for_supervised_server()
+        elapsed = time.perf_counter() - started
+        # The foreign generation keeps extending the 2s startup timeout well
+        # past its normal expiry (bounded by the hard ceiling).
+        assert elapsed >= 3.0
+    finally:
+        foreign.stop()
