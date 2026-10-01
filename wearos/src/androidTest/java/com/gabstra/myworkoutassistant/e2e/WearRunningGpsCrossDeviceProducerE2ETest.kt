@@ -1,6 +1,6 @@
 package com.gabstra.myworkoutassistant.e2e
 
-import android.location.Criteria
+import android.location.provider.ProviderProperties
 import android.location.Location
 import android.location.LocationManager
 import android.os.SystemClock
@@ -391,20 +391,21 @@ class WearRunningGpsCrossDeviceProducerE2ETest : WearBaseE2ETest() {
         require(output.isBlank()) { "Could not configure mock location app-op: $output" }
     }
 
-    @Suppress("DEPRECATION")
     private fun addTestGpsProvider() {
         if (!testGpsProviderRegistered) {
             locationManager.addTestProvider(
                 LocationManager.GPS_PROVIDER,
-                false,
-                true,
-                false,
-                false,
-                true,
-                true,
-                true,
-                Criteria.POWER_HIGH,
-                Criteria.ACCURACY_FINE,
+                ProviderProperties.Builder()
+                    .setHasNetworkRequirement(false)
+                    .setHasSatelliteRequirement(true)
+                    .setHasCellRequirement(false)
+                    .setHasMonetaryCost(false)
+                    .setHasAltitudeSupport(true)
+                    .setHasSpeedSupport(true)
+                    .setHasBearingSupport(true)
+                    .setPowerUsage(ProviderProperties.POWER_USAGE_HIGH)
+                    .setAccuracy(ProviderProperties.ACCURACY_FINE)
+                    .build(),
             )
             testGpsProviderRegistered = true
         }

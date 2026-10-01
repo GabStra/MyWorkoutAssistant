@@ -152,7 +152,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-process:2.11.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
-    implementation("androidx.health:health-services-client:1.1.0-rc02")
+    implementation("androidx.health:health-services-client:1.1.0")
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")

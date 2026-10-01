@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.content.pm.ServiceInfo
 import android.location.Location
@@ -132,11 +131,7 @@ class RunningTrackingService : Service() {
                 } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
                 }
-                if (Build.VERSION.SDK_INT >= 34) {
-                    startForeground(NOTIFICATION_ID, createNotification(), serviceType)
-                } else {
-                    startForeground(NOTIFICATION_ID, createNotification())
-                }
+                startForeground(NOTIFICATION_ID, createNotification(), serviceType)
                 scope.launch {
                     startTracking()
                     monitorLocationFixFreshness()
@@ -279,11 +274,9 @@ class RunningTrackingService : Service() {
         .build()
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Run tracking", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Run tracking", NotificationManager.IMPORTANCE_LOW)
+        )
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
