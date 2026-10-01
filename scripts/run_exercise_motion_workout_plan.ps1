@@ -70,6 +70,16 @@ param(
     [int]$StagedWaveSize = 0,
     [ValidateRange(1, 86400)]
     [int]$StagedWaveMaxWaitSeconds = 300,
+    # Wave-overlap pipelining: how many staged waves may run at once. 1 is
+    # exactly the serialized behavior (one wave at a time, nothing else in
+    # the bake lane). Values > 1 only admit a new wave while every running
+    # wave is in its CPU-bound final_validation phase, and require
+    # -SharedLlamaServer: without it each wave's VLM phases spawn a dedicated
+    # ~8 GiB llama-server that cannot co-reside on the GPU (the run clamps
+    # the cap back to 1 in that case). Each wave process also runs its own
+    # CPU fit lanes, so this cap bounds total CPU consumption.
+    [ValidateRange(1, 8)]
+    [int]$MaxConcurrentStagedWaves = 1,
     [ValidateRange(0, 100000)]
     [int]$DiscoveryCandidateBudget = 0,
     [ValidateRange(0, 86400)]
@@ -215,6 +225,7 @@ trap {
 $script:LastProgressDetailByLogPath = @{}
 $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
+$script:StagedWaveCheckpointStageCacheByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
 $script:WhamWorkerStartedOnce = $false
 $discoveryStagePolicyVersion = 5
@@ -3065,6 +3076,7 @@ function Start-StagedResultCompletionJob {
         }
     }
     $job | Add-Member -MemberType NoteProperty -Name WorkItem -Value $WorkItem
+    $job | Add-Member -MemberType NoteProperty -Name IsStagedCompletion -Value $true
     return $job
 }
 
@@ -3803,6 +3815,104 @@ function Get-StagedWaveProgressLine {
     return "{0}." -f $activity.TrimEnd(".")
 }
 
+# Reads the stage field of a staged wave's checkpoint file for the drain
+# loop's wave-overlap admission check. Uses an mtime-based cache (same
+# pattern as Write-StagedWaveProgressUpdates) so polling every loop
+# iteration stays cheap; the wave's 30s checkpoint heartbeat rewrites the
+# file with the same stage, which the cache absorbs.
+# Returns $null for non-wave jobs. Returns an empty string when no checkpoint
+# exists yet or it cannot be parsed: a wave that just started has not written
+# one, so callers must treat that as the earliest (overlap-blocking) stage.
+function Get-StagedWaveCheckpointStage {
+    param([object]$Job)
+
+    if (-not ($Job.PSObject.Properties.Name -contains "IsStagedWave") -or -not $Job.IsStagedWave) {
+        return $null
+    }
+    $checkpointPath = Join-Path $Job.WaveWorkspace "staged_wave_checkpoint.json"
+    if (-not (Test-Path -LiteralPath $checkpointPath)) {
+        return ""
+    }
+    $checkpointVersion = (Get-Item -LiteralPath $checkpointPath).LastWriteTimeUtc.Ticks
+    $cachedStage = $script:StagedWaveCheckpointStageCacheByPath[$checkpointPath]
+    if ($null -ne $cachedStage -and $cachedStage.version -eq $checkpointVersion) {
+        return "$($cachedStage.stage)"
+    }
+    try {
+        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+        $stage = "$($checkpoint.stage)"
+        $script:StagedWaveCheckpointStageCacheByPath[$checkpointPath] = @{
+            version = $checkpointVersion
+            stage = $stage
+        }
+        return $stage
+    } catch {
+        return ""
+    }
+}
+
+# Counts running jobs flagged with a boolean note property (IsStagedWave,
+# IsStagedCompletion). Shared by the drain loop's lane accounting so the
+# wave and completion budgets stay independent of each other.
+function Get-FlaggedJobCount {
+    param(
+        [object[]]$Jobs,
+        [string]$FlagPropertyName
+    )
+
+    if ($Jobs.Count -eq 0) {
+        return 0
+    }
+    return @($Jobs | Where-Object {
+        $_.PSObject.Properties.Name -contains $FlagPropertyName -and
+        [bool]$_.PSObject.Properties[$FlagPropertyName].Value
+    }).Count
+}
+
+# Wave-overlap admission (MaxConcurrentStagedWaves). A new staged wave may
+# start only while:
+#   - every running staged wave is parked in final_validation (CPU-bound
+#     fits; source_validation and wham_generation would oversubscribe the
+#     per-process CPU fit lanes or contend for the exclusive GPU), and
+#   - the running staged wave count is below the overlap cap, and
+#   - no full GPU-capable pipeline (legacy fallback bake) is queued or
+#     running, keeping those exclusive.
+# Trivial staged completion jobs never block admission; they run in their own
+# bounded lane. With a cap of 1 this reduces to today's serialized behavior
+# except that in-flight completion jobs no longer hold back the next wave.
+function Test-StagedWaveOverlapAdmission {
+    param(
+        [object[]]$BakeRunningJobs,
+        [int]$PendingLegacyBakeItemCount,
+        [int]$MaxConcurrentStagedWaves
+    )
+
+    $stagedWaveJobs = @($BakeRunningJobs | Where-Object {
+        $_.PSObject.Properties.Name -contains "IsStagedWave" -and $_.IsStagedWave
+    })
+    $fullPipelineBakeJobs = @($BakeRunningJobs | Where-Object {
+        -not ($_.PSObject.Properties.Name -contains "IsStagedWave" -and $_.IsStagedWave) -and
+        -not ($_.PSObject.Properties.Name -contains "IsStagedCompletion" -and $_.IsStagedCompletion)
+    })
+    $allWavesInFinalValidation = $true
+    foreach ($stagedWaveJob in $stagedWaveJobs) {
+        if ("$(Get-StagedWaveCheckpointStage -Job $stagedWaveJob)" -ne "final_validation") {
+            $allWavesInFinalValidation = $false
+            break
+        }
+    }
+    $admitted = (
+        $stagedWaveJobs.Count -lt $MaxConcurrentStagedWaves -and
+        $allWavesInFinalValidation -and
+        $fullPipelineBakeJobs.Count -eq 0 -and
+        $PendingLegacyBakeItemCount -eq 0
+    )
+    return [pscustomobject]@{
+        admitted = $admitted
+        runningStagedWaveCount = $stagedWaveJobs.Count
+    }
+}
+
 function Write-StagedWaveProgressUpdates {
     param([object[]]$RunningJobs)
 
@@ -4199,6 +4309,16 @@ $effectiveSharedLlamaServer = (
     $SharedLlamaServer -and
     -not $SkipVisionRanking
 )
+# Overlapping staged waves need that shared server: two concurrent wave VLM
+# phases each spawn a dedicated llama-server without it, which cannot
+# co-reside on the GPU. Collapse the cap to 1 (serialized waves, today's
+# behavior) when it is unavailable.
+$effectiveMaxConcurrentStagedWaves = if ($MaxConcurrentStagedWaves -gt 1 -and -not $effectiveSharedLlamaServer) {
+    Write-Warning "MaxConcurrentStagedWaves > 1 requires -SharedLlamaServer; staged waves stay serialized for this run."
+    1
+} else {
+    [int]$MaxConcurrentStagedWaves
+}
 $resolvedSharedLlamaServerSessionDir = $null
 if ($effectiveSharedLlamaServer) {
     $activeSharedLlamaSessionDir = if ([string]::IsNullOrWhiteSpace($SharedLlamaServerSessionDir)) {
@@ -4985,6 +5105,7 @@ Optimize-PendingBakeQueue -Queue $pendingBakeItems
 Write-ProgressCheckpoint
 
 $overallStartedAt = Get-Date
+$runningStagedWaveHighWater = 0
 if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or $pendingSourceDownloadItems.Count -gt 0 -or $pendingFallbackSourceDownloadItems.Count -gt 0 -or $pendingBakeItems.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0 -or $pendingCompletionItems.Count -gt 0) {
     $prefetchRunningJobs = @()
     $discoveryRunningJobs = @()
@@ -5141,18 +5262,39 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 $discoveryRunningJobs.Count -gt 0
             )
 
+            # Wave-overlap admission replaces the old serialized
+            # "no bake jobs at all" requirement: a new staged wave may start
+            # while every running wave is in its CPU-bound final_validation
+            # phase, below the overlap cap, and with no full GPU-capable
+            # pipeline (legacy fallback bake) queued or running. Trivial
+            # completion jobs no longer block the next wave; they run in
+            # their own bounded lane below. The discovery mutual exclusion
+            # ($canLaunchBake) and wave readiness conditions are unchanged.
+            $stagedWaveAdmission = Test-StagedWaveOverlapAdmission `
+                -BakeRunningJobs $bakeRunningJobs `
+                -PendingLegacyBakeItemCount $pendingLegacyBakeItems.Count `
+                -MaxConcurrentStagedWaves $effectiveMaxConcurrentStagedWaves
+            if ($stagedWaveAdmission.runningStagedWaveCount -gt $runningStagedWaveHighWater) {
+                $runningStagedWaveHighWater = $stagedWaveAdmission.runningStagedWaveCount
+            }
             $canStartStagedWave = (
                 $stagedWavesEnabled -and
                 $canLaunchBake -and
-                $bakeRunningJobs.Count -eq 0 -and
-                $pendingLegacyBakeItems.Count -eq 0 -and
-                $pendingCompletionItems.Count -eq 0 -and
+                $stagedWaveAdmission.admitted -and
                 $pendingBakeItems.Count -gt 0 -and
                 ($stagedWaveReady -or $discoveryAndDownloadDrained)
             )
 
-            while ($pendingCompletionItems.Count -gt 0 -and $bakeRunningJobs.Count -lt $resolvedBakeWorkers) {
+            # Completion jobs are in-process PowerShell bookkeeping (no child
+            # python process, no GPU), so they get their own bounded lane of
+            # $resolvedBakeWorkers instead of competing with waves for the
+            # bake-worker budget: counting them against $bakeRunningJobs (the
+            # old gate) would starve them for the whole overlap window
+            # whenever a wave is running. The lane keeps spawning bounded.
+            $runningCompletionJobCount = Get-FlaggedJobCount -Jobs $bakeRunningJobs -FlagPropertyName "IsStagedCompletion"
+            while ($pendingCompletionItems.Count -gt 0 -and $runningCompletionJobCount -lt $resolvedBakeWorkers) {
                 $bakeRunningJobs += Start-StagedResultCompletionJob -WorkItem ($pendingCompletionItems.Dequeue())
+                $runningCompletionJobCount += 1
                 Write-ProgressCheckpoint
             }
 
@@ -5400,11 +5542,28 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         }
                         # A successful staged coordinator stops the resident
                         # WHAM worker before loading the final-validation VLM.
-                        # On an early failure, stop it here before retrying.
+                        # On an early failure, stop it here before retrying -
+                        # unless an overlapping staged batch is still running
+                        # and may be mid-generation on that same worker; the
+                        # sibling's own quiesce (or the exclusive retry lane
+                        # once the pipeline drains) stops it instead. Keep
+                        # the supervisor handle in that case so the drain
+                        # loop's health check and idle stop still own the
+                        # container rather than orphaning it.
+                        $siblingStagedWaveRunning = @($bakeRunningJobs | Where-Object {
+                            $_.Id -ne $job.Id -and
+                            $_.PSObject.Properties.Name -contains "IsStagedWave" -and $_.IsStagedWave
+                        }).Count -gt 0
                         if (-not $waveResult -or $waveResult.exitCode -ne 0) {
-                            Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+                            if ($siblingStagedWaveRunning) {
+                                Write-Host "Motion extractor left for the overlapping staged batch; that batch stops it before its validation phase."
+                            } else {
+                                Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+                            }
                         }
-                        $warmWhamWorkerInstance = $null
+                        if (-not $siblingStagedWaveRunning) {
+                            $warmWhamWorkerInstance = $null
+                        }
                         if ($waveResult -and $waveResult.exitCode -eq 75) {
                             Write-Host "Movement generation stopped: insufficient free storage. Free space and resume."
                             exit 75
@@ -5543,6 +5702,8 @@ $summary = [ordered]@{
     bakeWorkers = $resolvedBakeWorkers
     stagedWaveSize = $StagedWaveSize
     stagedWavesEnabled = $stagedWavesEnabled
+    maxConcurrentStagedWaves = $effectiveMaxConcurrentStagedWaves
+    runningStagedWaveCountHighWater = $runningStagedWaveHighWater
     candidateWorkers = $CandidateWorkers
     maxReconstructionCandidateAttempts = $MaxReconstructionCandidateAttempts
     exerciseMotionContractPrefetch = $contractPrefetchSummary
