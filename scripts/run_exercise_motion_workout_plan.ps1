@@ -4312,6 +4312,7 @@ $effectiveSharedLlamaServer = (
     $SharedLlamaServer -and
     -not $SkipVisionRanking
 )
+$sharedLlamaServerInstance = $null
 # Overlapping staged waves need that shared server: two concurrent wave VLM
 # phases each spawn a dedicated llama-server without it, which cannot
 # co-reside on the GPU. Collapse the cap to 1 (serialized waves, today's
@@ -4334,6 +4335,11 @@ if ($effectiveSharedLlamaServer) {
     # Every child process (waves, discovery jobs, contract prefetch) must
     # resolve the same session dir for the quiesce protocol to coordinate.
     $env:EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR = $resolvedSharedLlamaServerSessionDir
+    # Start eagerly: contract prefetch runs BEFORE the drain loop and attaches
+    # to this server; a lazy first start inside the loop would leave the
+    # prefetch waiting on a server nobody has started yet. The drain loop's
+    # health-check/lazy-restart logic then maintains this instance.
+    $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
 }
 $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
     Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
@@ -5122,7 +5128,6 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
     # ProgressIntervalSeconds boundaries instead of drifting after each late poll.
     $lastProgressSlot = -1
     $warmWhamWorkerInstance = $null
-    $sharedLlamaServerInstance = $null
     $script:WhamWorkerStartedOnce = $false
     $reusedCount = $completedCount
     if ($reusedCount -gt 0) {
