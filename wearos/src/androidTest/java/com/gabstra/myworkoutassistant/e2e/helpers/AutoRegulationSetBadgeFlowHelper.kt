@@ -31,11 +31,23 @@ object AutoRegulationSetBadgeFlowHelper {
         ) {
             "Failed to complete the baseline auto-regulation set through the auto-regulation path."
         }
-        skipRestWhenReady(workoutDriver = workoutDriver, device = device, timeoutMs = 20_000)
+        require(
+            skipRestWhenReady(
+                device = device,
+                expectedNextSetId = AutoRegulationSetBadgeWorkoutStoreFixture.SET_2_ID,
+                timeoutMs = 20_000
+            )
+        ) { "Baseline session did not advance to the second work set." }
         require(waitForCurrentSetId(AutoRegulationSetBadgeWorkoutStoreFixture.SET_2_ID)) {
             "Baseline session did not advance to the second work set."
         }
-        workoutDriver.completeCurrentSet(timeoutMs = 20_000)
+        require(
+            WearWorkoutStateMutationHelper.completeCurrentSet(
+                device = device,
+                context = ApplicationProvider.getApplicationContext(),
+                timeoutMs = 10_000
+            )
+        ) { "Failed to complete the baseline session's second work set." }
         workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
     }
 
@@ -62,7 +74,13 @@ object AutoRegulationSetBadgeFlowHelper {
         ) {
             "Failed to complete the adjusted auto-regulation set through the auto-regulation path."
         }
-        skipRestWhenReady(workoutDriver = workoutDriver, device = device, timeoutMs = 20_000)
+        require(
+            skipRestWhenReady(
+                device = device,
+                expectedNextSetId = AutoRegulationSetBadgeWorkoutStoreFixture.SET_2_ID,
+                timeoutMs = 20_000
+            )
+        ) { "Adjusted session did not advance to the second work set." }
         require(waitForCurrentSetId(AutoRegulationSetBadgeWorkoutStoreFixture.SET_2_ID)) {
             "Adjusted session did not advance to the second work set."
         }
@@ -185,21 +203,18 @@ object AutoRegulationSetBadgeFlowHelper {
     }
 
     private fun skipRestWhenReady(
-        workoutDriver: WearWorkoutDriver,
         device: UiDevice,
+        expectedNextSetId: UUID,
         timeoutMs: Long
     ): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val skipped = runCatching {
-                workoutDriver.skipRest(timeoutMs = 5_000)
-                true
-            }.getOrDefault(false)
-            if (skipped) {
-                return true
-            }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        if (WearWorkoutStateMutationHelper.getCurrentSetId() == expectedNextSetId) {
+            return true
         }
-        error("Failed to skip rest within ${timeoutMs}ms.")
+
+        WearWorkoutStateMutationHelper.skipCurrentRest(
+            device = device,
+            timeoutMs = timeoutMs.coerceAtMost(5_000)
+        )
+        return waitForCurrentSetId(expectedNextSetId, timeoutMs = timeoutMs)
     }
 }

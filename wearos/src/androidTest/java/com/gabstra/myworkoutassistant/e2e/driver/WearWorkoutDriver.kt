@@ -395,6 +395,18 @@ class WearWorkoutDriver(
         var lastDetailVisible = false
 
         while (System.currentTimeMillis() < deadline) {
+            if (device.hasObject(By.desc(detailDesc))) {
+                lastDetailVisible = true
+                val action = findWorkoutDetailPrimaryAction(
+                    timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(2_000L)
+                )
+                if (action != null) {
+                    clickObjectOrAncestorInternal(action.second)
+                    return action.first
+                }
+                continue
+            }
+
             val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 1_000)
                 ?: device.wait(Until.findObject(By.text(workoutName)), 1_000)
             require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
@@ -412,17 +424,16 @@ class WearWorkoutDriver(
             }
 
             val action = findWorkoutDetailPrimaryAction(
-                timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(5_000L)
+                timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(8_000L)
             )
             if (action != null) {
                 clickObjectOrAncestorInternal(action.second)
                 return action.first
             }
 
-            // Back out and retry reopening the detail page. Wear detail screens can transiently
-            // render without the primary action after sync-driven recomposition.
-            device.pressBack()
-            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            // Keep the detail page open while its record check and recomposition settle. Backing
+            // out here restarts the same loading work and can hide the action until the deadline.
+            continue
         }
 
         if (!lastDetailVisible) {
@@ -1496,10 +1507,21 @@ class WearWorkoutDriver(
         while (System.currentTimeMillis() < deadline) {
             findVisibleAction()?.let { return it }
 
-            val direction = if (attempts % 2 == 0) Direction.DOWN else Direction.UP
+            // Let the detail screen finish its asynchronous record check before sending gestures.
+            // Gestures are particularly expensive on Wear emulators and can interrupt recomposition.
+            if (attempts == 0) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findVisibleAction()?.let { return it }
+                attempts++
+                continue
+            }
+
+            // The primary action is below the workout description on the detail screen. Scan down
+            // first; alternating directions on every poll repeatedly traverses the same content.
+            val direction = if (attempts <= 4) Direction.DOWN else Direction.UP
             val scrollable = device.findObject(By.scrollable(true))
             if (scrollable != null) {
-                runCatching { scrollable.scroll(direction, 0.75f) }
+                runCatching { scrollable.scroll(direction, 0.4f) }
             } else {
                 verticalSwipe(direction)
             }

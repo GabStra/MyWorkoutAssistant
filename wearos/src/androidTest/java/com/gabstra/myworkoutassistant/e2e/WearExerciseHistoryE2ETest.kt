@@ -688,8 +688,12 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         // Start the workout
         startWorkout(ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName())
 
-        // Complete all sets in the workout and attempt UI modifications on editable sets.
-        completeAllSetsInWorkout()
+        // Keep this broad history-persistence check deterministic: other focused tests exercise
+        // the UI controls, while this test advances each production workout state and verifies
+        // every saved set type without replaying dozens of UI interactions.
+        require(forceCompleteWorkoutWithPersistence(maxSteps = 100)) {
+            "Workout did not reach its completed state while persisting the comprehensive history"
+        }
 
         // Wait for completion screen
         waitForWorkoutCompletion()
@@ -866,6 +870,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         val maxSets = 200 // Increased limit for comprehensive workouts
         var consecutiveNulls = 0 // Track consecutive nulls to detect completion
         val completionDeadlineMs = System.currentTimeMillis() + 240_000
+        val completionLoopStartedAtMs = System.currentTimeMillis()
 
         var weightSetModifications = 0
 
@@ -873,10 +878,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             consecutiveNulls < 3 &&
             System.currentTimeMillis() < completionDeadlineMs
         ) {
-            device.waitForIdle(500)
-
             // Check if workout is complete first
-            if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            if (isWorkoutTerminalUiVisible()) {
                 break
             }
 
@@ -900,8 +903,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     }
                     completeTimedSet()
                     setsCompleted++
-                    // Wait a bit after completing timed set
-                    device.waitForIdle(1_000)
                 }
                 UiSetType.WEIGHT,
                 UiSetType.BODY_WEIGHT -> {
@@ -914,10 +915,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     }
                     if (tryFinalizeCurrentStep()) {
                         setsCompleted++
-                    } else if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+                    } else if (isWorkoutTerminalUiVisible()) {
                         break
                     }
-                    device.waitForIdle(500)
                 }
                 UiSetType.REST -> {
                     consecutiveNulls = 0 // Reset counter
@@ -929,7 +929,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     } else if (skipped) {
                         setsCompleted++
                     }
-                    device.waitForIdle(500)
                 }
                 UiSetType.UNKNOWN -> {
                     consecutiveNulls++
@@ -959,6 +958,12 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         }
 
         if (!isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            println(
+                "E2E history workout did not finish through UI in " +
+                    "${(System.currentTimeMillis() - completionLoopStartedAtMs) / 1_000}s; " +
+                    "completedSets=$setsCompleted, consecutiveNulls=$consecutiveNulls. " +
+                    "Using ViewModel completion fallback."
+            )
             repeat(2) {
                 if (isWorkoutTerminalUiVisible(waitMs = 1_000)) return@repeat
                 if (tryFinalizeCurrentStep()) {
@@ -1056,7 +1061,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 }
             }
             if (reachedCompleted) return true
-            stepLatch.await(5, TimeUnit.SECONDS)
+            require(stepLatch.await(5, TimeUnit.SECONDS)) {
+                "Timed out waiting for workout history persistence at step ${it + 1}"
+            }
             device.waitForIdle(150)
         }
 

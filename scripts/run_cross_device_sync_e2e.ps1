@@ -21,6 +21,7 @@ Param(
     [switch]$SkipWearToPhonePhase = $false,
     [switch]$MovementVisibilityOnly = $false,
     [switch]$SkipWearRebuildAfterFirstRun = $true,
+    [switch]$SkipBuildAndInstall = $false,
     [switch]$FastTimeoutProfile = $false,
     [switch]$VerifyMissingWearAppGuard = $false,
     [switch]$InjectEmulatorGpsDuringWearProducer = $false,
@@ -37,6 +38,7 @@ $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
 $timings["skipWearRebuildAfterFirstRun"] = $SkipWearRebuildAfterFirstRun.IsPresent
+$timings["skipBuildAndInstall"] = $SkipBuildAndInstall.IsPresent
 $timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
 $timings["movementVisibilityOnly"] = $MovementVisibilityOnly.IsPresent
 
@@ -594,23 +596,47 @@ if (-not $TimingOutputPath) {
 }
 $timings["timingOutputPath"] = $TimingOutputPath
 
+if ($SkipBuildAndInstall -and ($CleanInstallApps -or $VerifyMissingWearAppGuard)) {
+    throw "-SkipBuildAndInstall cannot be combined with -CleanInstallApps or -VerifyMissingWearAppGuard."
+}
+
 $previousAndroidSerial = $env:ANDROID_SERIAL
 try {
-    if ($CleanInstallApps) {
-        Reset-AppInstallState -serial $watchSerial -appPackage $AppPackage
-    }
     $wearInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Install-WearDebugApp -watchSerial $watchSerial
+    if ($SkipBuildAndInstall) {
+        foreach ($apkPath in @(
+            "wearos/build/outputs/apk/debug/wearos-debug.apk",
+            "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk",
+            "mobile/build/outputs/apk/debug/mobile-debug.apk",
+            "mobile/build/outputs/apk/androidTest/debug/mobile-debug-androidTest.apk"
+        )) {
+            if (-not (Test-Path -LiteralPath $apkPath)) {
+                throw "-SkipBuildAndInstall requires existing APK '$apkPath'. Run without the switch to build and install APKs."
+            }
+        }
+        foreach ($packageName in @($AppPackage, "$AppPackage.test")) {
+            Assert-DeviceAndPackage -serial $watchSerial -deviceLabel "Wear" -packageName $packageName
+            Assert-DeviceAndPackage -serial $phoneSerial -deviceLabel "Phone" -packageName $packageName
+        }
+        Write-Host "Reusing the installed app and test APKs on both emulators." -ForegroundColor Yellow
+    } else {
+        if ($CleanInstallApps) {
+            Reset-AppInstallState -serial $watchSerial -appPackage $AppPackage
+        }
+        Install-WearDebugApp -watchSerial $watchSerial
+    }
     $wearInstallPhase.Stop()
     $timings["wearBuildInstallSeconds"] = [math]::Round($wearInstallPhase.Elapsed.TotalSeconds, 3)
 
     Ensure-PhonePackageState -phoneSerial $phoneSerial
-    if ($CleanInstallApps) {
-        Reset-AppInstallState -serial $phoneSerial -appPackage $AppPackage
-    }
 
     $mobileInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
+    if (-not $SkipBuildAndInstall) {
+        if ($CleanInstallApps) {
+            Reset-AppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
+    }
     $mobileInstallPhase.Stop()
     $timings["mobileBuildInstallSeconds"] = [math]::Round($mobileInstallPhase.Elapsed.TotalSeconds, 3)
     Stage-MobileBackupFile -phoneSerial $phoneSerial -appPackage $AppPackage -backupPath $MobileBackupPath
@@ -659,8 +685,8 @@ try {
     }
 
     $wearClassTimings = [ordered]@{}
-    $skipAssemble = $false
-    $skipInstall = $false
+    $skipAssemble = $SkipBuildAndInstall.IsPresent
+    $skipInstall = $SkipBuildAndInstall.IsPresent
 
     if (-not [string]::IsNullOrWhiteSpace($WearPhoneToWatchHistoryTestClass)) {
         Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan

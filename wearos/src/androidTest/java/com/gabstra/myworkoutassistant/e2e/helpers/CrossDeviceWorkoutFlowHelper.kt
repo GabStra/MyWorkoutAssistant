@@ -44,63 +44,59 @@ class CrossDeviceWorkoutFlowHelper(
         val deadline = System.currentTimeMillis() + timeoutMs
 
         while (System.currentTimeMillis() < deadline) {
-            if (isCompletionVisible() || isCompletionStateFromViewModel()) {
-                runCatching {
-                    workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
-                }
-                break
-            }
-
-            if (isRestScreenVisible()) {
-                val skipped = WearWorkoutStateMutationHelper.skipCurrentRest(
-                    device = device,
-                    timeoutMs = 5_000
-                ) || runCatching {
-                    workoutDriver.skipRest(timeoutMs = 4_000)
-                    true
-                }.getOrElse { false }
-                if (!skipped) {
-                    waitForRestAutoAdvance(timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
-                }
-                continue
-            }
-
-            if (isCalibrationRirScreenVisible()) {
-                runCatching {
-                    workoutDriver.selectRIRAndConfirm(targetRir = 2, timeoutMs = 8_000)
-                }
-                continue
-            }
-
-            if (isCalibrationLoadScreenVisible()) {
-                device.pressBack()
-                runCatching {
-                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
-                }
-                continue
-            }
-
-            if (isWeightSetScreenVisible()) {
-                val currentSetId = getCurrentSetIdFromViewModel()
-                if (currentSetId != null &&
-                    currentSetId in targetModifiedSetIds &&
-                    currentSetId !in modifiedSetIds
-                ) {
-                    val modified = modifyRepsByPlusOne()
-                    require(modified) { "Failed to modify reps for target set $currentSetId" }
-                    modifiedSetIds.add(currentSetId)
-                }
-                val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
-                    device = device,
-                    context = InstrumentationRegistry.getInstrumentation().targetContext,
-                    timeoutMs = 20_000
-                )
-                require(completed) { "Failed to advance past set $currentSetId" }
-                if (waitForCompletionState(timeoutMs = 8_000)) {
+            when (val workoutState = readCurrentWorkoutState()) {
+                is WorkoutState.Completed -> {
+                    runCatching {
+                        workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
+                    }
                     break
                 }
-                waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
-                continue
+                is WorkoutState.Rest -> {
+                    val skipped = WearWorkoutStateMutationHelper.skipCurrentRest(
+                        device = device,
+                        timeoutMs = 5_000
+                    ) || runCatching {
+                        workoutDriver.skipRest(timeoutMs = 4_000)
+                        true
+                    }.getOrElse { false }
+                    if (!skipped) {
+                        waitForRestAutoAdvance(
+                            timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS
+                        )
+                    }
+                    continue
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    runCatching {
+                        workoutDriver.selectRIRAndConfirm(targetRir = 2, timeoutMs = 8_000)
+                    }
+                    continue
+                }
+                is WorkoutState.CalibrationLoadSelection -> {
+                    device.pressBack()
+                    runCatching {
+                        workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                    }
+                    continue
+                }
+                is WorkoutState.Set -> {
+                    val currentSetId = workoutState.set.id
+                    if (currentSetId in targetModifiedSetIds && currentSetId !in modifiedSetIds) {
+                        val modified = modifyRepsByPlusOne()
+                        require(modified) { "Failed to modify reps for target set $currentSetId" }
+                        modifiedSetIds.add(currentSetId)
+                    }
+                    val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+                        device = device,
+                        context = InstrumentationRegistry.getInstrumentation().targetContext,
+                        timeoutMs = 20_000
+                    )
+                    require(completed) { "Failed to advance past set $currentSetId" }
+                    if (readCurrentWorkoutState() is WorkoutState.Completed) break
+                    waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
+                    continue
+                }
+                else -> Unit
             }
 
             // If a confirmation dialog is already visible, clear it so progression can continue.
@@ -322,6 +318,18 @@ class CrossDeviceWorkoutFlowHelper(
 
     private fun runOnMain(block: () -> Unit) =
         InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
+
+    private fun readCurrentWorkoutState(): WorkoutState? {
+        var state: WorkoutState? = null
+        runOnMain {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
+                ?: return@runOnMain
+            state = ViewModelProvider(activity)[AppViewModel::class.java].workoutState.value
+        }
+        return state
+    }
 
     private fun isWeightSetScreenVisible(): Boolean {
         return waitForAny(
