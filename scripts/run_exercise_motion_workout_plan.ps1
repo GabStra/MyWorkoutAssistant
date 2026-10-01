@@ -296,6 +296,14 @@ function Add-LlamaCppTextArgs {
     if (-not [string]::IsNullOrWhiteSpace($TextLlamaCppMmproj)) {
         $result += @("--text-llama-cpp-mmproj", $TextLlamaCppMmproj)
     }
+    # Contracts must use the SAME model as the vision server: a mismatched
+    # contract model forced a server model swap around every uncached contract
+    # generation (~2x40s), and it structurally cannot be served by the shared
+    # llama server (attach-time validation refuses serving two models). Qwen
+    # 3.5 9B is the audited best local model for this task anyway.
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppModel)) {
+        $result += @("--exercise-contract-llama-cpp-model", $LlamaCppModel)
+    }
     return $result
 }
 
