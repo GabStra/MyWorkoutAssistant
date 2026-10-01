@@ -528,7 +528,7 @@ FIRST_ATTEMPT_MEDIUM_TRACKABILITY = 0.65
 FIRST_ATTEMPT_HIGH_RECONSTRUCTION_PRIORITY = 0.70
 KINEMATIC_CUT_STRATEGY = "kinematic_cycle"
 KINEMATIC_CUT_MAX_PROPOSALS = 2
-SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 22
+SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 23
 SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS = 8
 SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS = 3
 PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
@@ -22873,6 +22873,7 @@ def select_exact_pose_confirmed_source_cut(
     caption_images: Callable[..., str],
     output_dir: Path,
     shared_cache_dir: Path | None = None,
+    source_window: DetectionWindow | None = None,
 ) -> tuple[LoopRanking, float]:
     started = time.perf_counter()
     try:
@@ -22887,7 +22888,52 @@ def select_exact_pose_confirmed_source_cut(
     selected_validation: dict[str, Any] | None = None
     selected_video_path: Path | None = None
     candidate_queue = list(candidates)
-    while candidate_queue and len(attempts) < SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS:
+    parent_fallback_enqueued = False
+    while True:
+        # Repair arm for fragmented scorecard windows: when every fragment
+        # failed confirmation, give the complete parent window one exact-
+        # validation attempt before rejecting the source. Without this the
+        # scorecard's short fragments fail wholesale and a video whose parent
+        # contains a valid repetition is lost (observed 2026-10-01: fragments
+        # of 0.75-2.42s rejected while the 3.5s parent held the full
+        # repetition the old machinery had selected directly). The fallback
+        # reserves the last attempt slot - it outranks a further boundary
+        # expansion of an already-failing fragment.
+        if (
+            selected_candidate is None
+            and source_window is not None
+            and not parent_fallback_enqueued
+            and (
+                not candidate_queue
+                or len(attempts) >= SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS - 1
+            )
+        ):
+            parent_fallback_enqueued = True
+            tried_windows = {
+                (
+                    round(float(attempt.get("startSeconds") or 0.0), 3),
+                    round(float(attempt.get("endSeconds") or 0.0), 3),
+                )
+                for attempt in attempts
+            }
+            parent_start = round(float(source_window.start_seconds), 3)
+            parent_end = round(float(source_window.end_seconds), 3)
+            if (
+                parent_end > parent_start
+                and (parent_start, parent_end) not in tried_windows
+                and len(attempts) < SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS
+            ):
+                candidate_queue.insert(
+                    0,
+                    {
+                        "candidateId": "PARENT",
+                        "startSeconds": parent_start,
+                        "endSeconds": parent_end,
+                        "parentWindowFallback": True,
+                    },
+                )
+        if not candidate_queue or len(attempts) >= SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS:
+            break
         candidate = candidate_queue.pop(0)
         candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId")) or "unknown"
         candidate_dir = output_dir / f"source_candidate_{candidate_id}"
@@ -23018,6 +23064,8 @@ def select_exact_pose_confirmed_source_cut(
                     "reason": "equipment_confirmation_deferred_to_single_cycle",
                 }
                 if cycle_refinements
+                else {"passed": None, "reason": "equipment_confirmation_deferred_parent_window_fallback"}
+                if candidate.get("parentWindowFallback")
                 else cycle_equipment_prefilter
                 if cycle_equipment_prefilter is not None
                 else {
@@ -23571,6 +23619,7 @@ def choose_pre_wham_source_cut_or_reject(
                 exercise_motion_contract=exercise_motion_contract,
                 caption_images=caption_images,
                 output_dir=selection_dir / "deterministic_confirmation",
+                source_window=source_window,
                 shared_cache_dir=(
                     candidate_workspace.parent
                     / "source-review-cache"

@@ -31813,6 +31813,194 @@ def test_exact_pose_multi_cycle_source_with_missing_equipment_skips_sibling_cycl
 
 
 
+def test_source_cut_confirmation_parent_window_fallback_rescues_fragmented_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_a = source_cut_confirmation_test_candidate(
+        tmp_path, "A", start_seconds=16.37, end_seconds=17.45
+    )
+    candidate_b = source_cut_confirmation_test_candidate(
+        tmp_path, "D", start_seconds=17.45, end_seconds=19.87
+    )
+    ranking = LoopRanking(
+        score=0.96,
+        model_score=0.96,
+        reasons=["source_candidate_scorecard_passed"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "A",
+            "selected_section_start_seconds": 16.37,
+            "selected_section_end_seconds": 17.45,
+            "selectedScorecard": {"id": "A", "passed": True, "score": 0.96},
+            "sourceCutScorecardCandidates": [
+                {"id": "A", "passed": True, "score": 0.96},
+                {"id": "D", "passed": True, "score": 0.94},
+            ],
+            "sourceCutCandidates": [candidate_a, candidate_b],
+        },
+    )
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"source-video")
+    validation_calls: list[str] = []
+
+    def fake_trim_video(**kwargs: object) -> Path:
+        output_path = Path(kwargs["output_path"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"trimmed-video")
+        return output_path
+
+    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+        video_path = Path(kwargs["source_video_path"])
+        candidate_dir = video_path.parent.name
+        candidate_id = candidate_dir.rsplit("_", 1)[-1]
+        validation_calls.append(candidate_id)
+        # Only the complete parent window holds a full repetition.
+        passed = candidate_id == "PARENT"
+        return {
+            "required": True,
+            "passed": passed,
+            "hasCompleteMajorCycle": passed,
+            "hasSingleMajorCycle": passed,
+            "reason": (
+                "source_pose_full_repetition_phase_return_detected"
+                if passed
+                else "source_pose_one_way_partial_repetition_phase"
+            ),
+            "sourcePoseEndpointContractValidation": {
+                "available": True,
+                "passed": True,
+            },
+        }
+
+    monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
+    monkeypatch.setattr(
+        bake_and_rank_module, "exact_pose_single_cycle_refinement_candidates",
+        lambda candidate, validation, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "confirm_pre_wham_named_equipment",
+        lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "validate_exact_pre_wham_source_video",
+        fake_validate_exact_pre_wham_source_video,
+    )
+
+    confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
+        ranking,
+        detection_source_video_path=source_video,
+        exercise_name="Dumbbell Incline Bench Press",
+        exercise_motion_contract=source_cut_confirmation_test_contract(),
+        caption_images=lambda **_kwargs: "",
+        output_dir=tmp_path / "deterministic_confirmation",
+        source_window=DetectionWindow(
+            index=0, start_seconds=16.37, end_seconds=19.87
+        ),
+    )
+
+    assert confirmed.payload is not None
+    assert confirmed.payload["sourceCutDeterministicConfirmationPassed"] is True
+    assert confirmed.payload["selectedCandidateId"] == "PARENT"
+    attempts = confirmed.payload["sourceCutDeterministicConfirmationAttempts"]
+    assert attempts[-1]["candidateId"] == "PARENT"
+    assert attempts[-1]["passed"] is True
+    assert all(a["candidateId"] != "PARENT" for a in attempts[:-1])
+    parent_attempt = attempts[-1]
+    assert parent_attempt["targetBlindEquipmentObservation"]["passed"] is None
+    assert validation_calls[-1] == "PARENT"
+
+
+def test_source_cut_confirmation_parent_window_fallback_dedupes_tried_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_a = source_cut_confirmation_test_candidate(
+        tmp_path, "A", start_seconds=16.37, end_seconds=19.87
+    )
+    ranking = LoopRanking(
+        score=0.96,
+        model_score=0.96,
+        reasons=["source_candidate_scorecard_passed"],
+        raw_response="{}",
+        payload={
+            "selectedCandidateId": "A",
+            "selected_section_start_seconds": 16.37,
+            "selected_section_end_seconds": 19.87,
+            "selectedScorecard": {"id": "A", "passed": True, "score": 0.96},
+            "sourceCutScorecardCandidates": [{"id": "A", "passed": True, "score": 0.96}],
+            "sourceCutCandidates": [candidate_a],
+        },
+    )
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"source-video")
+    validation_calls: list[str] = []
+
+    def fake_trim_video(**kwargs: object) -> Path:
+        output_path = Path(kwargs["output_path"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"trimmed-video")
+        return output_path
+
+    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+        video_path = Path(kwargs["source_video_path"])
+        candidate_id = video_path.parent.name.rsplit("_", 1)[-1]
+        validation_calls.append(candidate_id)
+        return {
+            "required": True,
+            "passed": False,
+            "hasCompleteMajorCycle": False,
+            "hasSingleMajorCycle": False,
+            "reason": "source_pose_one_way_partial_repetition_phase",
+            "sourcePoseEndpointContractValidation": {
+                "available": True,
+                "passed": True,
+            },
+        }
+
+    monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
+    monkeypatch.setattr(
+        bake_and_rank_module, "exact_pose_single_cycle_refinement_candidates",
+        lambda candidate, validation, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "confirm_pre_wham_named_equipment",
+        lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "validate_exact_pre_wham_source_video",
+        fake_validate_exact_pre_wham_source_video,
+    )
+
+    confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
+        ranking,
+        detection_source_video_path=source_video,
+        exercise_name="Dumbbell Incline Bench Press",
+        exercise_motion_contract=source_cut_confirmation_test_contract(),
+        caption_images=lambda **_kwargs: "",
+        output_dir=tmp_path / "deterministic_confirmation",
+        source_window=DetectionWindow(
+            index=0, start_seconds=16.37, end_seconds=19.87
+        ),
+    )
+
+    # The parent window was already tried as candidate A; no PARENT attempt
+    # may be appended for the identical window.
+    attempts = confirmed.payload["sourceCutDeterministicConfirmationAttempts"]
+    # Return-phase expansions of A ran, but the identical parent window was
+    # never retried as a PARENT fallback.
+    assert [a["candidateId"] for a in attempts if a["candidateId"] == "PARENT"] == []
+    assert all(
+        a["candidateId"] == "A" or a["candidateId"].startswith("A-RETN")
+        for a in attempts
+    )
+    assert confirmed.payload["sourceCutDeterministicConfirmationPassed"] is False
+
+
 def test_exact_pose_source_cut_confirmation_keeps_validated_multi_cycle_alternative(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
