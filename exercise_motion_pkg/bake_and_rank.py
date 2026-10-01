@@ -499,12 +499,13 @@ SOURCE_SELECTION_POLICY_VERSION = 57
 
 # Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
 # server instead of evicting it (each eviction costs a server stop plus a ~40s
-# lazy restart on the next vision request). Measured 2026-10-01 on the RTX
-# 4070 SUPER beside a production server: YOLO26x-pose prefilter peak ~300 MiB
-# (batch 16, ~4.8s), UniDepth sampling ~1 GiB peak; steady free VRAM beside
-# the server ranged ~0.6-3 GiB depending on desktop load.
+# lazy restart on the next vision request). Both gated sites run the YOLO26x
+# pose prefilter (the legacy-spread refresh and the exact-source-validation
+# full scan); measured 2026-10-01 on the RTX 4070 SUPER beside a production
+# server: prefilter peak ~300 MiB (batch 16), steady free VRAM beside the
+# server ranged ~0.6-3 GiB depending on desktop load. UniDepth no longer runs
+# on the gvhmr path (video-world alignment is backend-gated in pipeline.py).
 POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB = 600
-EXACT_SOURCE_VALIDATION_CO_RESIDENT_MIN_FREE_MIB = 1400
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
     "Ignore the meaning of source text and logos, but assess their visual obstruction. "
@@ -23893,10 +23894,11 @@ def validate_exact_source_with_cached_gpu_handoff(
             cached = run_with_caption_gpu_exclusive(
                 caption_images,
                 compute_or_reuse,
-                # UniDepth sampling is the GPU work here; it usually co-resides
-                # with the caption server instead of forcing an eviction cycle.
-                small_stage="unidepth",
-                small_min_free_mib=EXACT_SOURCE_VALIDATION_CO_RESIDENT_MIN_FREE_MIB,
+                # The exact validation's GPU work is the YOLO pose prefilter
+                # (full-scan phase completeness); co-reside it with the caption
+                # server instead of forcing an eviction cycle.
+                small_stage="yolo_pose_prefilter",
+                small_min_free_mib=POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB,
             )
             if load_cached_exact_source_phase_validation(
                 cache_path=shared_cache_path,
