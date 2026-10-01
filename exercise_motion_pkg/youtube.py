@@ -5343,6 +5343,40 @@ EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 28
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 13
 
 
+def exercise_motion_contract_cache_key_payload(
+    exercise: ExerciseEntry,
+    settings: YouTubeRankingSettings,
+) -> dict[str, Any]:
+    """Stable identity of a definition contract's semantic inputs.
+
+    The prompt's fixed instruction text evolves with generation policy, so
+    hashing the whole prompt orphaned the entire cache on every advisory
+    wording change even when the exercise definition, model, and policy lever
+    were unchanged. Key on those inputs instead; prompt wording is represented
+    by the contract policy version, which is the deliberate invalidation
+    lever for contract-generation requirements.
+    """
+    contract_settings = exercise_contract_llama_cpp_settings(settings)
+    return {
+        "schemaVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
+        "contractPolicyVersion": EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+        "exerciseName": exercise.name,
+        "motionContext": exercise.motion_context,
+        "model": contract_settings.llama_cpp_model,
+        "mmproj": contract_settings.llama_cpp_mmproj,
+    }
+
+
+def exercise_motion_contract_cache_path_for_key_payload(
+    cache_dir: Path,
+    key_payload: dict[str, Any],
+) -> Path:
+    cache_key = hashlib.sha256(
+        json.dumps(key_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return cache_dir.expanduser().resolve() / f"{cache_key}.json"
+
+
 def exercise_motion_contract_cache_path(
     exercise: ExerciseEntry,
     settings: YouTubeRankingSettings,
@@ -5350,17 +5384,52 @@ def exercise_motion_contract_cache_path(
     cache_dir = settings.exercise_motion_contract_cache_dir
     if cache_dir is None:
         return None
+    return exercise_motion_contract_cache_path_for_key_payload(
+        cache_dir,
+        exercise_motion_contract_cache_key_payload(exercise, settings),
+    )
+
+
+def exercise_motion_contract_legacy_cache_path(
+    exercise: ExerciseEntry,
+    settings: YouTubeRankingSettings,
+) -> Path | None:
+    """Read-only pre-stable-key location keyed by the full prompt text."""
+    cache_dir = settings.exercise_motion_contract_cache_dir
+    if cache_dir is None:
+        return None
     contract_settings = exercise_contract_llama_cpp_settings(settings)
-    cache_key_payload = {
+    legacy_key_payload = {
         "schemaVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
         "prompt": build_exercise_motion_contract_prompt(exercise),
         "model": contract_settings.llama_cpp_model,
         "mmproj": contract_settings.llama_cpp_mmproj,
     }
-    cache_key = hashlib.sha256(
-        json.dumps(cache_key_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    return cache_dir.expanduser().resolve() / f"{cache_key}.json"
+    return exercise_motion_contract_cache_path_for_key_payload(cache_dir, legacy_key_payload)
+
+
+def _read_exercise_motion_contract_cache_payload(
+    cache_path: Path | None,
+) -> dict[str, Any] | None:
+    if cache_path is None or not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_exercise_motion_contract_cache_payload(
+    cache_path: Path,
+    payload: dict[str, Any],
+) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = cache_path.with_name(
+        f"{cache_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    temporary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(temporary_path, cache_path)
 
 
 def load_cached_exercise_motion_contract(
@@ -5368,11 +5437,27 @@ def load_cached_exercise_motion_contract(
     settings: YouTubeRankingSettings,
 ) -> dict[str, Any] | None:
     cache_path = exercise_motion_contract_cache_path(exercise, settings)
-    if cache_path is None or not cache_path.exists():
-        return None
-    try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+    payload = _read_exercise_motion_contract_cache_payload(cache_path)
+    if payload is None:
+        # The key scheme changed, not necessarily the artifact: a legacy
+        # prompt-keyed entry stays reusable when its contract was generated
+        # under the current policy lever. Carry it forward under the stable
+        # key so the legacy entry can age out; a policy-bumped legacy entry
+        # must not be resurrected by the fallback.
+        legacy_path = exercise_motion_contract_legacy_cache_path(exercise, settings)
+        legacy_payload = _read_exercise_motion_contract_cache_payload(legacy_path)
+        legacy_contract = (
+            legacy_payload.get("contract") if isinstance(legacy_payload, dict) else None
+        )
+        if (
+            isinstance(legacy_contract, dict)
+            and int(legacy_contract.get("contractPolicyVersion") or 0)
+            >= EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+        ):
+            payload = legacy_payload
+            if cache_path is not None:
+                _write_exercise_motion_contract_cache_payload(cache_path, legacy_payload)
+    if payload is None:
         return None
     if int(payload.get("schemaVersion") or 0) != EXERCISE_MOTION_CONTRACT_CACHE_VERSION:
         return None
@@ -5396,7 +5481,6 @@ def cache_exercise_motion_contract(
     cache_path = exercise_motion_contract_cache_path(exercise, settings)
     if cache_path is None:
         return None
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
     cached_contract = {
         **contract,
         "cacheStatus": "generated",
@@ -5408,11 +5492,7 @@ def cache_exercise_motion_contract(
         "exerciseName": exercise.name,
         "contract": cached_contract,
     }
-    temporary_path = cache_path.with_name(
-        f"{cache_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    )
-    temporary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(temporary_path, cache_path)
+    _write_exercise_motion_contract_cache_payload(cache_path, payload)
     return cache_path
 
 
