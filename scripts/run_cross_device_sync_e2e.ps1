@@ -776,6 +776,10 @@ try {
         "-TimingOutputPath",
         (Join-Path $logsDir "wear_producer_$timestamp.json")
     )
+    if ($WearTestClass -eq "WearCrossDeviceSyncProducerE2ETest" -and
+        $MobileObserverTestClass -eq "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest") {
+        $wearArgs += "-WaitForCheckpointAcknowledgments"
+    }
     if ($WearTestMethod) { $wearArgs += @("-TestMethod", $WearTestMethod) }
     if ($skipAssemble) { $wearArgs += "-SkipAssemble" }
     if ($skipInstall) { $wearArgs += "-SkipInstall" }

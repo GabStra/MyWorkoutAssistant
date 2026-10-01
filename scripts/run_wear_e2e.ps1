@@ -12,6 +12,7 @@ Param(
     [switch]$VerboseLogcat = $false,
     [string]$TimingOutputPath,
     [switch]$FastTimeoutProfile = $false,
+    [switch]$WaitForCheckpointAcknowledgments = $false,
     [ValidateSet("debug", "release")]
     [string]$BuildType = "debug"
 )
@@ -288,6 +289,9 @@ function Invoke-Instrumentation {
     }
     if ($fastProfile) {
         $instrumentArgs += @("-e", "e2e_profile", "fast")
+    }
+    if ($WaitForCheckpointAcknowledgments) {
+        $instrumentArgs += @("-e", "wait_for_checkpoint_acknowledgments", "true")
     }
     $instrumentArgs += $runner
 

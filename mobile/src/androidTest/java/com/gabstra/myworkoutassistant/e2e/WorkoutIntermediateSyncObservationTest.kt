@@ -4,10 +4,13 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.gabstra.myworkoutassistant.e2e.helpers.CrossDeviceSyncAssertions
 import com.gabstra.myworkoutassistant.e2e.helpers.CrossDeviceSyncTestPrerequisites
+import com.google.android.gms.tasks.Tasks
+import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class WorkoutIntermediateSyncObservationTest {
@@ -47,6 +50,21 @@ class WorkoutIntermediateSyncObservationTest {
                 checkpoint = checkpoint,
                 timeoutMs = resolvedCheckpointTimeoutMs()
             )
+            val checkpointKey = checkpoint.expectedSetIds.lastOrNull()?.toString() ?: "started"
+            val nodes = Tasks.await(Wearable.getNodeClient(context).connectedNodes, 10, TimeUnit.SECONDS)
+            check(nodes.isNotEmpty()) { "No connected Wear node to acknowledge checkpoint $checkpointKey" }
+            val messageClient = Wearable.getMessageClient(context)
+            nodes.forEach { node ->
+                Tasks.await(
+                    messageClient.sendMessage(
+                        node.id,
+                        "/e2e/workout-sync/checkpoint-observed",
+                        checkpointKey.toByteArray(Charsets.UTF_8)
+                    ),
+                    10,
+                    TimeUnit.SECONDS
+                )
+            }
         }
 
         CrossDeviceSyncAssertions.waitForCheckpoint(

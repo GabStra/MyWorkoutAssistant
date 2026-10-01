@@ -34,7 +34,8 @@ class CrossDeviceWorkoutFlowHelper(
 
     fun completeComplexWorkoutWithDeterministicModifications(
         timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS,
-        perSettleMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS
+        perSettleMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS,
+        onIntermediateSetCompleted: ((UUID) -> Unit)? = null
     ) {
         val modifiedSetIds = mutableSetOf<UUID>()
         val targetModifiedSetIds = setOf(
@@ -93,7 +94,11 @@ class CrossDeviceWorkoutFlowHelper(
                     )
                     require(completed) { "Failed to advance past set $currentSetId" }
                     if (readCurrentWorkoutState() is WorkoutState.Completed) break
-                    waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
+                    if (onIntermediateSetCompleted != null) {
+                        onIntermediateSetCompleted(currentSetId)
+                    } else {
+                        waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
+                    }
                     continue
                 }
                 else -> Unit
