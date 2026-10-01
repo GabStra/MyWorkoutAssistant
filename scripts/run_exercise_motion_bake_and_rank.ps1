@@ -341,7 +341,9 @@ $resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $Workspace).Path
-$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and $UseWhamDocker
+# The persistent WHAM worker imports WHAM's demo/network directly; never start
+# it for GVHMR runs (it would hold an unrelated model stack on the same GPU).
+$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and $UseWhamDocker -and ($MotionReconstructor -ne "gvhmr")
 $resolvedWhamWorkerSessionDir = $null
 $whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
 if ($effectiveWarmWhamWorker) {

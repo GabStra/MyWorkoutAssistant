@@ -163,6 +163,10 @@ class GenerateRequest:
     wham_worker_session_dir: Path | None = None
     wham_worker_mount_root: Path | None = None
     wham_worker_timeout_seconds: float | None = None
+    use_warm_gvhmr_worker: bool = False
+    gvhmr_worker_session_dir: Path | None = None
+    gvhmr_worker_mount_root: Path | None = None
+    gvhmr_worker_timeout_seconds: float | None = None
     wham_timeout_seconds: float | None = None
     wham_tracking_preflight: bool = False
     require_wham_cache: bool = False
@@ -617,6 +621,10 @@ def _run_generation_pipeline_uncached(
                         docker_gpus=request.wham_docker_gpus,
                         docker_shm_size=request.wham_docker_shm_size,
                         timeout_seconds=request.wham_timeout_seconds,
+                        use_warm_worker=request.use_warm_gvhmr_worker,
+                        warm_worker_session_dir=request.gvhmr_worker_session_dir,
+                        warm_worker_mount_root=request.gvhmr_worker_mount_root,
+                        warm_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
                     )
             elif request.wham_repo_path is None:
                 raise ValueError(

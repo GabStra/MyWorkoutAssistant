@@ -738,6 +738,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum seconds to wait for one warm WHAM worker job.",
     )
     bake_and_rank.add_argument(
+        "--warm-gvhmr-worker",
+        action="store_true",
+        help="Submit GVHMR jobs to a pre-started warm GVHMR worker instead of one docker run per candidate.",
+    )
+    bake_and_rank.add_argument(
+        "--gvhmr-worker-session-dir",
+        type=Path,
+        help="Host session directory mounted into the warm GVHMR worker.",
+    )
+    bake_and_rank.add_argument(
+        "--gvhmr-worker-mount-root",
+        type=Path,
+        help="Host workspace root mounted as /workspace inside the warm GVHMR worker.",
+    )
+    bake_and_rank.add_argument(
+        "--gvhmr-worker-timeout-seconds",
+        type=float,
+        help="Maximum seconds to wait for one warm GVHMR worker job.",
+    )
+    bake_and_rank.add_argument(
         "--estimate-local-only",
         action="store_true",
         help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
@@ -1262,6 +1282,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "reuse_previous_terminal_results": args.reuse_previous_terminal_results,
         "wham_python_command": args.wham_python,
         "use_warm_wham_worker": args.warm_wham_worker,
+        "use_warm_gvhmr_worker": args.warm_gvhmr_worker,
         "wham_estimate_local_only": args.estimate_local_only or not args.full_wham_camera_slam,
         "wham_run_smplify": not args.skip_smplify,
         "motion_reconstruction_backend": args.motion_reconstructor,

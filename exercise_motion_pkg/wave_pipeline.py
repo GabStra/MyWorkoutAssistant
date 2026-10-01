@@ -591,12 +591,13 @@ def effective_wave_final_output_rejection_limit(
 
 
 def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
-    session_dirs = {
-        item.request.wham_worker_session_dir.expanduser().resolve()
-        for item in items
-        if item.request.use_warm_wham_worker
-        and item.request.wham_worker_session_dir is not None
-    }
+    session_dirs = set()
+    for item in items:
+        request = item.request
+        if request.use_warm_wham_worker and request.wham_worker_session_dir is not None:
+            session_dirs.add(request.wham_worker_session_dir.expanduser().resolve())
+        if request.use_warm_gvhmr_worker and request.gvhmr_worker_session_dir is not None:
+            session_dirs.add(request.gvhmr_worker_session_dir.expanduser().resolve())
     if not session_dirs:
         return {"requested": False, "stopped": True}
     started = time.perf_counter()
@@ -616,7 +617,7 @@ def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, 
             time.sleep(0.25)
         else:
             raise TimeoutError(
-                f"Warm WHAM worker did not release the GPU within 30 seconds: {session_dir}"
+                f"Warm motion-extraction worker did not release the GPU within 30 seconds: {session_dir}"
             )
     return {
         "requested": True,

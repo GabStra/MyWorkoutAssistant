@@ -107,6 +107,7 @@ param(
     [bool]$WarmWhamWorker = $false,
     [switch]$SkipWarmWhamWorker,
     [string]$WhamWorkerSessionDir,
+    [string]$GvhmrWorkerSessionDir,
     [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
     [double]$WhamWorkerJobTimeoutSeconds = 1200.0,
     [double]$WhamTimeoutSeconds = 1200.0,
@@ -1065,7 +1066,9 @@ function Start-WhamWarmWorker {
     param(
         [string]$SessionDir,
         [string]$MountRoot,
-        [string]$WorkerScriptPath
+        [string]$WorkerScriptPath,
+        [ValidateSet("wham", "gvhmr")]
+        [string]$Backend = "wham"
     )
 
     New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
@@ -1087,31 +1090,46 @@ function Start-WhamWarmWorker {
         }
     }
 
-    $containerName = "mwa-wham-worker-$([guid]::NewGuid().ToString('N'))"
+    $containerName = "mwa-$Backend-worker-$([guid]::NewGuid().ToString('N'))"
     $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
     if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
         $dockerArgs += @("--gpus", $WhamDockerGpus)
     }
-    if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
-        $dockerArgs += @("--shm-size", $WhamDockerShmSize)
+    if ($Backend -eq "gvhmr") {
+        $dockerArgs += @("--shm-size", "8g")
+        $dockerArgs += @(
+            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'gvhmr_inference.py')):/worker/gvhmr_inference.py:ro",
+            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'gvhmr_pkl_export.py')):/worker/gvhmr_pkl_export.py:ro",
+            "-v", "$($MountRoot):/workspace",
+            "-v", "$($SessionDir):/worker_state",
+            "-v", "$($WorkerScriptPath):/worker/gvhmr_warm_worker.py:ro",
+            "-w", "/opt/gvhmr",
+            $GvhmrDockerImage,
+            "python", "-u", "/worker/gvhmr_warm_worker.py",
+            "--state-dir", "/worker_state"
+        )
+    } else {
+        if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
+            $dockerArgs += @("--shm-size", $WhamDockerShmSize)
+        }
+        $dockerArgs += @(
+            "-e", "WHAM_POSE_BACKEND=vitpose",
+            "-e", "WHAM_POSE_BATCH_SIZE=16",
+            "-e", "WHAM_FEATURE_BATCH_SIZE=32",
+            "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
+        )
+        $dockerArgs += @(
+            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_preflight.py')):/worker/wham_tracking_preflight.py:ro",
+            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_coverage.py')):/worker/wham_tracking_coverage.py:ro",
+            "-v", "$($MountRoot):/workspace",
+            "-v", "$($SessionDir):/worker_state",
+            "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
+            "-w", "/opt/wham-src",
+            $WhamDockerImage,
+            "python", "-u", "/worker/wham_warm_worker.py",
+            "--state-dir", "/worker_state"
+        )
     }
-    $dockerArgs += @(
-        "-e", "WHAM_POSE_BACKEND=vitpose",
-        "-e", "WHAM_POSE_BATCH_SIZE=16",
-        "-e", "WHAM_FEATURE_BATCH_SIZE=32",
-        "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
-    )
-    $dockerArgs += @(
-        "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_preflight.py')):/worker/wham_tracking_preflight.py:ro",
-        "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_coverage.py')):/worker/wham_tracking_coverage.py:ro",
-        "-v", "$($MountRoot):/workspace",
-        "-v", "$($SessionDir):/worker_state",
-        "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
-        "-w", "/opt/wham-src",
-        $WhamDockerImage,
-        "python", "-u", "/worker/wham_warm_worker.py",
-        "--state-dir", "/worker_state"
-    )
 
     if ($script:WhamWorkerStartedOnce) {
         Write-Host "Restarting motion extractor..."
@@ -2658,6 +2676,9 @@ function Start-StagedBakeWaveJob {
     if ($effectiveWarmWhamWorker) {
         Remove-Item -LiteralPath (Join-Path $resolvedWhamWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
     }
+    if ($effectiveWarmGvhmrWorker) {
+        Remove-Item -LiteralPath (Join-Path $resolvedGvhmrWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
+    }
     Write-Host ("Starting batch {0} ({1} exercises)." -f $WaveIndex, $WorkItems.Count)
     $job = Start-Job -Name $waveId -ScriptBlock {
         param(
@@ -2670,6 +2691,7 @@ function Start-StagedBakeWaveJob {
         $ErrorActionPreference = "Continue"
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $env:EXERCISE_MOTION_WHAM_LAZY_START = '1'
+        $env:EXERCISE_MOTION_GVHMR_LAZY_START = '1'
         & $PythonCommand @Arguments *>> $LogPath
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
@@ -3804,17 +3826,25 @@ $resolvedSourceOutcomeIndexJson = if ([System.IO.Path]::IsPathRooted($SourceOutc
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SourceOutcomeIndexJson))
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOutcomeIndexJson) | Out-Null
-# The persistent worker imports WHAM's demo/network directly. Do not start it
-# for GVHMR runs: it loads an unrelated WHAM model onto the same GPU and cannot
-# serve GVHMR extraction jobs.
+# The persistent WHAM worker imports WHAM's demo/network directly, and the
+# persistent GVHMR worker keeps the GVHMR preprocessing/prediction models
+# resident. Only the worker matching the active reconstruction backend may
+# start; the other would load an unrelated model stack onto the same GPU.
 $effectiveWarmWhamWorker = (
     $WarmWhamWorker -and
     -not $SkipWarmWhamWorker -and
     -not $NoWhamDocker -and
     $MotionReconstructor -eq "wham"
 )
+$effectiveWarmGvhmrWorker = (
+    $WarmWhamWorker -and
+    -not $SkipWarmWhamWorker -and
+    $MotionReconstructor -eq "gvhmr"
+)
 $resolvedWhamWorkerSessionDir = $null
+$resolvedGvhmrWorkerSessionDir = $null
 $whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
+$gvhmrWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\gvhmr_warm_worker.py"
 if ($effectiveWarmWhamWorker) {
     if (-not (Test-Path -LiteralPath $whamWarmWorkerScriptPath)) {
         throw "Warm WHAM worker script not found: $whamWarmWorkerScriptPath"
@@ -3826,6 +3856,18 @@ if ($effectiveWarmWhamWorker) {
     }
     New-Item -ItemType Directory -Force -Path $activeWhamWorkerSessionDir | Out-Null
     $resolvedWhamWorkerSessionDir = (Resolve-Path -LiteralPath $activeWhamWorkerSessionDir).Path
+}
+if ($effectiveWarmGvhmrWorker) {
+    if (-not (Test-Path -LiteralPath $gvhmrWarmWorkerScriptPath)) {
+        throw "Warm GVHMR worker script not found: $gvhmrWarmWorkerScriptPath"
+    }
+    $activeGvhmrWorkerSessionDir = if ([string]::IsNullOrWhiteSpace($GvhmrWorkerSessionDir)) {
+        Join-Path $resolvedWorkspaceRoot "gvhmr-warm-worker"
+    } else {
+        $GvhmrWorkerSessionDir
+    }
+    New-Item -ItemType Directory -Force -Path $activeGvhmrWorkerSessionDir | Out-Null
+    $resolvedGvhmrWorkerSessionDir = (Resolve-Path -LiteralPath $activeGvhmrWorkerSessionDir).Path
 }
 $sharedPreviewCachePath = if ([string]::IsNullOrWhiteSpace($YouTubePreviewCacheDir)) {
     Join-Path (Join-Path $repoRoot "build\exercise_motion") "youtube-preview-cache"
@@ -4228,6 +4270,14 @@ foreach ($exercise in $exerciseList.exercises) {
             "--wham-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
         )
     }
+    if ($effectiveWarmGvhmrWorker) {
+        $bakeArgs += @(
+            "--warm-gvhmr-worker",
+            "--gvhmr-worker-session-dir", $resolvedGvhmrWorkerSessionDir,
+            "--gvhmr-worker-mount-root", $resolvedWorkspaceRoot,
+            "--gvhmr-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
+        )
+    }
     if (-not $FullWhamCameraSlam) {
         $bakeArgs += "--estimate-local-only"
     }
@@ -4463,7 +4513,29 @@ function Write-ProgressCheckpoint {
     }
     $temporaryCheckpointPath = "$progressCheckpointPath.tmp"
     $checkpoint | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryCheckpointPath -Encoding UTF8
-    Move-Item -Force -LiteralPath $temporaryCheckpointPath -Destination $progressCheckpointPath
+    # A concurrent reader can hold the destination briefly; a single
+    # Move-Item -Force has crashed whole runs with "Cannot create a file when
+    # that file already exists" under that race. The checkpoint is advisory
+    # progress state: retry, fall back to a copy, never fail the run over it.
+    $checkpointSwapSucceeded = $false
+    foreach ($swapAttempt in 1..5) {
+        try {
+            Move-Item -Force -LiteralPath $temporaryCheckpointPath -Destination $progressCheckpointPath -ErrorAction Stop
+            $checkpointSwapSucceeded = $true
+            break
+        } catch {
+            Start-Sleep -Milliseconds (50 * $swapAttempt)
+        }
+    }
+    if (-not $checkpointSwapSucceeded) {
+        try {
+            Copy-Item -Force -LiteralPath $temporaryCheckpointPath -Destination $progressCheckpointPath -ErrorAction Stop
+            Remove-Item -LiteralPath $temporaryCheckpointPath -Force -ErrorAction SilentlyContinue
+            $checkpointSwapSucceeded = $true
+        } catch {
+            Write-Warning "Progress checkpoint swap failed after retries; keeping the previous checkpoint."
+        }
+    }
     Update-IncrementalMobilePackage -SuccessfulCount $successfulItems.Count
 }
 $completedCount = 0
@@ -4619,7 +4691,24 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
 
             if ($pendingBakeItems.Count -eq 0) { $readyWaveSince = $null }
             elseif ($null -eq $readyWaveSince) { $readyWaveSince = Get-Date }
-            $partialWaveDue = $null -ne $readyWaveSince -and ((Get-Date) - $readyWaveSince).TotalSeconds -ge $StagedWaveMaxWaitSeconds
+            $discoveryAndDownloadDrained = (
+                $pendingDiscoveryItems.Count -eq 0 -and
+                $discoveryRunningJobs.Count -eq 0 -and
+                $pendingSourceDownloadItems.Count -eq 0 -and
+                $pendingFallbackSourceDownloadItems.Count -eq 0 -and
+                $sourceDownloadRunningJobs.Count -eq 0
+            )
+            # A partial (sub-batch-size) wave runs the final-validation lanes at
+            # reduced width for its whole duration. Only fire it once the
+            # upstream lanes that could still fill it have drained, with a hard
+            # valve at twice the wait so a slow discovery turn cannot stall a
+            # ready exercise indefinitely. Full-size waves fire regardless.
+            $readyWaveWaitSeconds = if ($null -ne $readyWaveSince) { ((Get-Date) - $readyWaveSince).TotalSeconds } else { 0 }
+            $partialWaveDue = (
+                $null -ne $readyWaveSince -and
+                $readyWaveWaitSeconds -ge $StagedWaveMaxWaitSeconds -and
+                ($discoveryAndDownloadDrained -or $readyWaveWaitSeconds -ge (2 * $StagedWaveMaxWaitSeconds))
+            )
             $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -gt 0 -and (
                 $pendingBakeItems.Count -ge $StagedWaveSize -or $partialWaveDue -or
                 ($stagedWaveIndex -eq 0 -and @($pendingBakeItems | Where-Object {
@@ -4660,13 +4749,6 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 $discoveryRunningJobs.Count -gt 0
             )
 
-            $discoveryAndDownloadDrained = (
-                $pendingDiscoveryItems.Count -eq 0 -and
-                $discoveryRunningJobs.Count -eq 0 -and
-                $pendingSourceDownloadItems.Count -eq 0 -and
-                $pendingFallbackSourceDownloadItems.Count -eq 0 -and
-                $sourceDownloadRunningJobs.Count -eq 0
-            )
             $canStartStagedWave = (
                 $stagedWavesEnabled -and
                 $canLaunchBake -and
@@ -4682,13 +4764,20 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 Write-ProgressCheckpoint
             }
 
-            $lazyWorkerRequested = $effectiveWarmWhamWorker -and $bakeRunningJobs.Count -gt 0 -and (Test-Path -LiteralPath (Join-Path $resolvedWhamWorkerSessionDir 'start_requested.json'))
-            if ($canLaunchBake -and ($lazyWorkerRequested -or $pendingLegacyBakeItems.Count -gt 0) -and $null -eq $warmWhamWorkerInstance -and $effectiveWarmWhamWorker) {
+            $lazyWarmWorkerBackend = if ($effectiveWarmGvhmrWorker) { "gvhmr" } else { "wham" }
+            $lazyWarmWorkerSessionDir = if ($effectiveWarmGvhmrWorker) { $resolvedGvhmrWorkerSessionDir } else { $resolvedWhamWorkerSessionDir }
+            $lazyWarmWorkerScriptPath = if ($effectiveWarmGvhmrWorker) { $gvhmrWarmWorkerScriptPath } else { $whamWarmWorkerScriptPath }
+            $lazyWarmWorkerEffective = ($effectiveWarmWhamWorker -or $effectiveWarmGvhmrWorker)
+            $lazyWorkerRequested = $lazyWarmWorkerEffective -and $bakeRunningJobs.Count -gt 0 -and (
+                Test-Path -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json')
+            )
+            if ($canLaunchBake -and ($lazyWorkerRequested -or $pendingLegacyBakeItems.Count -gt 0) -and $null -eq $warmWhamWorkerInstance -and $lazyWarmWorkerEffective) {
                 $warmWhamWorkerInstance = Start-WhamWarmWorker `
-                    -SessionDir $resolvedWhamWorkerSessionDir `
+                    -SessionDir $lazyWarmWorkerSessionDir `
                     -MountRoot $resolvedWorkspaceRoot `
-                    -WorkerScriptPath $whamWarmWorkerScriptPath
-                Remove-Item -LiteralPath (Join-Path $resolvedWhamWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
+                    -WorkerScriptPath $lazyWarmWorkerScriptPath `
+                    -Backend $lazyWarmWorkerBackend
+                Remove-Item -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
             }
 
             if ($canStartStagedWave) {
@@ -5103,6 +5192,9 @@ $summary = [ordered]@{
     warmWhamWorkerEnabled = $effectiveWarmWhamWorker
     whamWorkerSessionDir = $resolvedWhamWorkerSessionDir
     whamWorkerMountRoot = if ($effectiveWarmWhamWorker) { $resolvedWorkspaceRoot } else { $null }
+    warmGvhmrWorkerEnabled = $effectiveWarmGvhmrWorker
+    gvhmrWorkerSessionDir = $resolvedGvhmrWorkerSessionDir
+    gvhmrWorkerMountRoot = if ($effectiveWarmGvhmrWorker) { $resolvedWorkspaceRoot } else { $null }
     smplifyEnabled = -not $effectiveSkipSmplify
     effectiveCandidateBudget = [ordered]@{
         maxCandidates = $MaxCandidates

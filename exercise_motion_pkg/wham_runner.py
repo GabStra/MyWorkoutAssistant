@@ -265,8 +265,14 @@ def run_wham_locally(
     )
 
 
-def ensure_warm_worker_ready(session_dir: Path, *, timeout_seconds: float) -> None:
-    """Ask the supervising wrapper to start WHAM only on a cache miss."""
+def ensure_warm_worker_ready(
+    session_dir: Path,
+    *,
+    timeout_seconds: float,
+    lazy_start_env_var: str = "EXERCISE_MOTION_WHAM_LAZY_START",
+    label: str = "WHAM",
+) -> None:
+    """Ask the supervising wrapper to start the worker only on a cache miss."""
     ready_path = session_dir / "ready.json"
     try:
         if ready_path.exists() and not any((session_dir / name).exists() for name in ("stop", "stopped.json")):
@@ -274,8 +280,8 @@ def ensure_warm_worker_ready(session_dir: Path, *, timeout_seconds: float) -> No
             return
     except RuntimeError:
         pass
-    if os.environ.get("EXERCISE_MOTION_WHAM_LAZY_START") != "1":
-        raise RuntimeError(f"Warm WHAM worker is not ready: {ready_path}")
+    if os.environ.get(lazy_start_env_var) != "1":
+        raise RuntimeError(f"Warm {label} worker is not ready: {ready_path}")
     request_path = session_dir / "start_requested.json"
     request_path.write_text(json.dumps({"requestedBy": os.getpid()}), encoding="utf-8")
     deadline = time.monotonic() + timeout_seconds
@@ -286,7 +292,7 @@ def ensure_warm_worker_ready(session_dir: Path, *, timeout_seconds: float) -> No
                 assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
                 return
             time.sleep(0.25)
-        raise TimeoutError("Timed out waiting for supervised WHAM worker startup")
+        raise TimeoutError(f"Timed out waiting for supervised {label} worker startup")
     finally:
         request_path.unlink(missing_ok=True)
 

@@ -2610,6 +2610,10 @@ class BakeAndRankRequest:
     wham_worker_session_dir: Path | None = None
     wham_worker_mount_root: Path | None = None
     wham_worker_timeout_seconds: float | None = None
+    use_warm_gvhmr_worker: bool = False
+    gvhmr_worker_session_dir: Path | None = None
+    gvhmr_worker_mount_root: Path | None = None
+    gvhmr_worker_timeout_seconds: float | None = None
     wham_timeout_seconds: float | None = None
     wham_tracking_preflight: bool = False
     require_wham_cache: bool = False
@@ -16084,6 +16088,9 @@ def run_bake_and_rank_pipeline(
         "useWarmWhamWorker": request.use_warm_wham_worker,
         "whamWorkerSessionDir": str(request.wham_worker_session_dir) if request.wham_worker_session_dir is not None else None,
         "whamWorkerMountRoot": str(request.wham_worker_mount_root) if request.wham_worker_mount_root is not None else None,
+        "useWarmGvhmrWorker": request.use_warm_gvhmr_worker,
+        "gvhmrWorkerSessionDir": str(request.gvhmr_worker_session_dir) if request.gvhmr_worker_session_dir is not None else None,
+        "gvhmrWorkerMountRoot": str(request.gvhmr_worker_mount_root) if request.gvhmr_worker_mount_root is not None else None,
         "whamTimeoutSeconds": request.wham_timeout_seconds,
         "sourceReviewTimeoutSeconds": request.source_review_timeout_seconds,
         "finalReviewTimeoutSeconds": request.final_review_timeout_seconds,
@@ -20375,6 +20382,10 @@ def generate_candidate_motion(
         wham_worker_session_dir=request.wham_worker_session_dir,
         wham_worker_mount_root=request.wham_worker_mount_root,
         wham_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+        use_warm_gvhmr_worker=request.use_warm_gvhmr_worker,
+        gvhmr_worker_session_dir=request.gvhmr_worker_session_dir,
+        gvhmr_worker_mount_root=request.gvhmr_worker_mount_root,
+        gvhmr_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
         wham_timeout_seconds=request.wham_timeout_seconds,
         wham_tracking_preflight=request.wham_tracking_preflight,
         require_wham_cache=request.require_wham_cache,

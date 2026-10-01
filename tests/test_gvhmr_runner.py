@@ -10,6 +10,8 @@ from exercise_motion_pkg.gvhmr_inference import _time_method
 from exercise_motion_pkg.gvhmr_runner import (
     _read_phase_timing_markers,
     build_gvhmr_command,
+    resolve_gvhmr_warm_worker_session_dir,
+    resolve_gvhmr_warm_worker_timeout_seconds,
 )
 
 torch = pytest.importorskip("torch")
@@ -113,3 +115,70 @@ def test_time_method_preserves_return_value_and_records_elapsed_time() -> None:
 
     assert Example().calculate(4) == 8
     assert timings["calculateSeconds"] >= 0.0
+
+
+def test_resolve_gvhmr_warm_worker_session_dir_prefers_configured(monkeypatch, tmp_path: Path) -> None:
+    configured = tmp_path / "configured-session"
+    assert resolve_gvhmr_warm_worker_session_dir(configured) == configured.resolve()
+
+    env_dir = tmp_path / "env-session"
+    monkeypatch.setenv("EXERCISE_MOTION_GVHMR_WARM_WORKER_SESSION_DIR", str(env_dir))
+    assert resolve_gvhmr_warm_worker_session_dir(None) == env_dir.resolve()
+
+    monkeypatch.delenv("EXERCISE_MOTION_GVHMR_WARM_WORKER_SESSION_DIR")
+    with pytest.raises(ValueError, match="session directory"):
+        resolve_gvhmr_warm_worker_session_dir(None)
+
+
+def test_resolve_gvhmr_warm_worker_timeout_seconds_defaults_to_run_timeout(monkeypatch) -> None:
+    monkeypatch.delenv("EXERCISE_MOTION_GVHMR_WARM_WORKER_TIMEOUT_SECONDS", raising=False)
+    assert resolve_gvhmr_warm_worker_timeout_seconds(None) == 20 * 60.0
+    assert resolve_gvhmr_warm_worker_timeout_seconds(0.0) is None
+    assert resolve_gvhmr_warm_worker_timeout_seconds(90.0) == 90.0
+    monkeypatch.setenv("EXERCISE_MOTION_GVHMR_WARM_WORKER_TIMEOUT_SECONDS", "45")
+    assert resolve_gvhmr_warm_worker_timeout_seconds(None) == 45.0
+
+
+def test_run_gvhmr_locally_dispatches_to_warm_worker(monkeypatch, tmp_path: Path) -> None:
+    from exercise_motion_pkg import gvhmr_runner
+
+    captured: dict[str, object] = {}
+
+    def fake_warm_run(**kwargs):
+        captured.update(kwargs)
+        return gvhmr_runner.GvhmrRunResult(
+            output_dir=kwargs["output_root"] / "clip",
+            results_pkl=kwargs["output_root"] / "clip" / "wham_output.pkl",
+            demo_output_dir=kwargs["output_root"] / "demo" / "clip",
+            stdout_log=kwargs["stdout_log"],
+            stderr_log=kwargs["stderr_log"],
+            command=["gvhmr-warm-worker", "job"],
+            elapsed_seconds=1.0,
+            returncode=0,
+            docker_image="myworkoutassistant/gvhmr:torch2.3-cu121",
+            gpu_lock_wait_seconds=0.0,
+            docker_lock_wait_seconds=0.0,
+            phase_timings={},
+            unattributed_runner_seconds=0.0,
+            timeout_seconds=1200.0,
+            warm_worker=True,
+        )
+
+    monkeypatch.setattr(gvhmr_runner, "run_gvhmr_with_warm_worker", fake_warm_run)
+
+    result = gvhmr_runner.run_gvhmr_locally(
+        input_video=tmp_path / "clip.mp4",
+        output_root=tmp_path / "out",
+        logs_dir=tmp_path / "logs",
+        static_camera=True,
+        timeout_seconds=600.0,
+        use_warm_worker=True,
+        warm_worker_session_dir=tmp_path / "session",
+        warm_worker_mount_root=tmp_path / "mount",
+        warm_worker_timeout_seconds=1200.0,
+    )
+
+    assert result.warm_worker is True
+    assert captured["static_camera"] is True
+    assert captured["warm_worker_timeout_seconds"] == 1200.0
+    assert captured["docker_image"] == "myworkoutassistant/gvhmr:torch2.3-cu121"
