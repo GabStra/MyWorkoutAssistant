@@ -596,7 +596,8 @@ def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, 
         request = item.request
         if request.use_warm_wham_worker and request.wham_worker_session_dir is not None:
             session_dirs.add(request.wham_worker_session_dir.expanduser().resolve())
-        if request.use_warm_gvhmr_worker and request.gvhmr_worker_session_dir is not None:
+        # getattr: request fakes in tests (SimpleNamespace) may predate this field.
+        if getattr(request, "use_warm_gvhmr_worker", False) and request.gvhmr_worker_session_dir is not None:
             session_dirs.add(request.gvhmr_worker_session_dir.expanduser().resolve())
     if not session_dirs:
         return {"requested": False, "stopped": True}

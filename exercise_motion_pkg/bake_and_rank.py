@@ -18,6 +18,7 @@ from exercise_motion_pkg.boundary_evidence import (
     explicit_endpoint_requirements,
 )
 from exercise_motion_pkg.observation_cache import ObservationCache
+from exercise_motion_pkg.gpu_lock import query_free_gpu_memory_mib, small_gpu_stage_lock
 import inspect
 import json
 import math
@@ -495,6 +496,15 @@ SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
 SOURCE_SELECTION_POLICY_VERSION = 57
+
+# Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
+# server instead of evicting it (each eviction costs a server stop plus a ~40s
+# lazy restart on the next vision request). Measured 2026-10-01 on the RTX
+# 4070 SUPER beside a production server: YOLO26x-pose prefilter peak ~300 MiB
+# (batch 16, ~4.8s), UniDepth sampling ~1 GiB peak; steady free VRAM beside
+# the server ranged ~0.6-3 GiB depending on desktop load.
+POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB = 600
+EXACT_SOURCE_VALIDATION_CO_RESIDENT_MIN_FREE_MIB = 1400
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
     "Ignore the meaning of source text and logos, but assess their visual obstruction. "
@@ -2740,6 +2750,16 @@ class CandidateWallTimeBudgetExpired(TimeoutError):
 
 VISION_LIFECYCLE_EVENT_LIMIT = 512
 
+# Sentinel distinguishing "co-residency was declined / OOM-fell-back" from any
+# legitimate operation result (including None).
+_CO_RESIDENT_FALLBACK = object()
+
+
+def _is_cuda_out_of_memory_error(exc: BaseException) -> bool:
+    if type(exc).__name__ == "OutOfMemoryError" and type(exc).__module__.startswith("torch"):
+        return True
+    return "out of memory" in str(exc).lower() or "cuda error: out of memory" in str(exc).lower()
+
 
 class LazyLlamaCppVisionSession:
     def __init__(self, request: BakeAndRankRequest) -> None:
@@ -2767,6 +2787,9 @@ class LazyLlamaCppVisionSession:
         self.final_close_count = 0
         self.exclusive_operation_count = 0
         self.exclusive_batch_count = 0
+        self.co_resident_operation_count = 0
+        self.co_resident_declined_count = 0
+        self.co_resident_oom_fallback_count = 0
         self._exclusive_batch_open = False
         self._candidate_deadlines = threading.local()
         self._endpoint_observations = ObservationCache()
@@ -2918,7 +2941,76 @@ class LazyLlamaCppVisionSession:
                 if self._active_calls == 0:
                     self._condition.notify_all()
 
-    def run_without_llama_overlap(self, operation: Callable[[], Any]) -> Any:
+    def _try_small_gpu_co_resident(
+        self,
+        operation: Callable[[], Any],
+        *,
+        small_stage: str,
+        small_min_free_mib: int,
+    ) -> Any:
+        """Run a small CUDA op beside the resident server instead of evicting it.
+
+        Each exclusive handoff costs a full server stop plus a ~40s lazy restart
+        on the next vision request, and stalls every waiting review worker. Small
+        ops (pose prefilter ~300 MiB, UniDepth sampling ~1 GiB) fit beside the
+        server when free VRAM allows; when the probe declines or the op hits a
+        CUDA out-of-memory race, fall back to the exclusive handoff unchanged.
+        """
+        with small_gpu_stage_lock(small_stage, min_free_mib=small_min_free_mib) as lease:
+            if not lease.granted:
+                with self._condition:
+                    self.co_resident_declined_count += 1
+                    self._record_lifecycle_event_locked(
+                        "small_gpu_co_resident_declined",
+                        stage=small_stage,
+                        freeMib=lease.free_mib,
+                        minFreeMib=small_min_free_mib,
+                    )
+                return _CO_RESIDENT_FALLBACK
+            with self._condition:
+                self._record_lifecycle_event_locked(
+                    "small_gpu_co_resident_started",
+                    stage=small_stage,
+                    freeMib=lease.free_mib,
+                )
+            started = time.perf_counter()
+            try:
+                result = operation()
+            except Exception as exc:
+                if not _is_cuda_out_of_memory_error(exc):
+                    raise
+                with self._condition:
+                    self.co_resident_oom_fallback_count += 1
+                    self._record_lifecycle_event_locked(
+                        "small_gpu_co_resident_oom_fallback",
+                        stage=small_stage,
+                        error=f"{type(exc).__name__}: {exc}"[:240],
+                    )
+                return _CO_RESIDENT_FALLBACK
+            with self._condition:
+                self.co_resident_operation_count += 1
+                self._record_lifecycle_event_locked(
+                    "small_gpu_co_resident_finished",
+                    stage=small_stage,
+                    elapsedSeconds=round(time.perf_counter() - started, 3),
+                )
+            return result
+
+    def run_without_llama_overlap(
+        self,
+        operation: Callable[[], Any],
+        *,
+        small_stage: str | None = None,
+        small_min_free_mib: int | None = None,
+    ) -> Any:
+        if small_stage is not None and small_min_free_mib is not None:
+            operation_result = self._try_small_gpu_co_resident(
+                operation,
+                small_stage=small_stage,
+                small_min_free_mib=small_min_free_mib,
+            )
+            if operation_result is not _CO_RESIDENT_FALLBACK:
+                return operation_result
         with self._condition:
             self._exclusive_waiters += 1
             try:
@@ -3001,6 +3093,9 @@ class LazyLlamaCppVisionSession:
             "visionRankerCloseCount": self.final_close_count,
             "exclusiveGpuOperationCount": self.exclusive_operation_count,
             "exclusiveGpuBatchCount": self.exclusive_batch_count,
+            "coResidentGpuOperationCount": self.co_resident_operation_count,
+            "coResidentGpuDeclinedCount": self.co_resident_declined_count,
+            "coResidentGpuOomFallbackCount": self.co_resident_oom_fallback_count,
             "visionLifecycleEvents": lifecycle_events,
             "configuredParallelCallLimit": self._max_active_calls,
             "peakParallelCallCount": self._peak_active_calls,
@@ -3086,11 +3181,25 @@ class LazyLlamaCppVisionSession:
 def run_with_caption_gpu_exclusive(
     caption_images: Callable[..., str] | None,
     operation: Callable[[], Any],
+    *,
+    small_stage: str | None = None,
+    small_min_free_mib: int | None = None,
 ) -> Any:
-    """Run CUDA work after releasing an owned, resident caption-model session."""
+    """Run CUDA work after releasing an owned, resident caption-model session.
+
+    Small ops may instead co-reside with the caption server when free VRAM
+    allows (no eviction, no restart); pass ``small_stage`` plus the op's
+    ``small_min_free_mib`` requirement to opt in.
+    """
     caption_owner = getattr(caption_images, "__self__", None)
     exclusive_runner = getattr(caption_owner, "run_without_llama_overlap", None)
     if callable(exclusive_runner):
+        if small_stage is not None and small_min_free_mib is not None:
+            return exclusive_runner(
+                operation,
+                small_stage=small_stage,
+                small_min_free_mib=small_min_free_mib,
+            )
         return exclusive_runner(operation)
     return operation()
 
@@ -23271,13 +23380,16 @@ def choose_pre_wham_source_cut_or_reject(
     from .pose_prefilter import refresh_legacy_spread_pose_evidence
     # The refresh runs YOLO on the GPU; go through the exclusive handoff so the
     # resident caption session releases the global GPU lock first instead of
-    # deadlocking the source lane behind it.
+    # deadlocking the source lane behind it. The refresh is small enough to
+    # usually co-reside with the caption server instead of evicting it.
     source_pose_prefilter_payload = run_with_caption_gpu_exclusive(
         caption_images,
         lambda: refresh_legacy_spread_pose_evidence(
             source_pose_prefilter_payload, video_path=source_video_path, output_dir=selection_dir,
             exercise_name=ranked_candidate.exercise_name, contract=exercise_motion_contract,
         ),
+        small_stage="yolo_pose_prefilter",
+        small_min_free_mib=POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB,
     )
     expanded_detection = expand_detection_source_for_kinematic_cut(
         source_video_path=source_video_path,
@@ -23781,6 +23893,10 @@ def validate_exact_source_with_cached_gpu_handoff(
             cached = run_with_caption_gpu_exclusive(
                 caption_images,
                 compute_or_reuse,
+                # UniDepth sampling is the GPU work here; it usually co-resides
+                # with the caption server instead of forcing an eviction cycle.
+                small_stage="unidepth",
+                small_min_free_mib=EXACT_SOURCE_VALIDATION_CO_RESIDENT_MIN_FREE_MIB,
             )
             if load_cached_exact_source_phase_validation(
                 cache_path=shared_cache_path,

@@ -8,8 +8,10 @@ import tempfile
 import threading
 import time
 import ctypes
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
@@ -30,6 +32,80 @@ _LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
 
 _HOLDER_REGISTRY: dict[int, list["GlobalGpuLock"]] = {}
 _REGISTRY_LOCK = threading.Lock()
+
+# Co-residency support for small CUDA ops (pose prefilter, UniDepth sampling):
+# they may run beside a resident exclusive holder (the llama.cpp server) when
+# free VRAM allows, instead of draining it and paying a ~40s server restart.
+SMALL_GPU_PROBE_CACHE_SECONDS = 1.0
+_SMALL_OP_SERIALIZE = threading.RLock()
+_SMALL_OP_CONTEXT = threading.local()
+_FREE_VRAM_CACHE: tuple[float, int | None] = (0.0, None)
+_FREE_VRAM_CACHE_LOCK = threading.Lock()
+
+
+def _probe_free_gpu_memory_mib() -> int | None:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def query_free_gpu_memory_mib() -> int | None:
+    """Best-effort free-VRAM reading in MiB, cached briefly. None = unknown."""
+    global _FREE_VRAM_CACHE
+    with _FREE_VRAM_CACHE_LOCK:
+        cached_at, cached_value = _FREE_VRAM_CACHE
+        if time.perf_counter() - cached_at < SMALL_GPU_PROBE_CACHE_SECONDS:
+            return cached_value
+    value = _probe_free_gpu_memory_mib()
+    with _FREE_VRAM_CACHE_LOCK:
+        _FREE_VRAM_CACHE = (time.perf_counter(), value)
+    return value
+
+
+@dataclass(frozen=True)
+class SmallGpuLease:
+    granted: bool
+    free_mib: int | None
+
+
+@contextmanager
+def small_gpu_stage_lock(stage: str, *, min_free_mib: int) -> Iterator[SmallGpuLease]:
+    """Try to co-reside a small CUDA op with a resident exclusive GPU holder.
+
+    Grants only when the free-VRAM probe clears ``min_free_mib``; small ops are
+    serialized among themselves in-process. When not granted, the caller must
+    fall back to the exclusive handoff (drain the resident holder, then run) -
+    acquiring the global lease here would stall behind the very holder the
+    caller intends to keep alive. While a section is granted, inner
+    ``gpu_stage_lock`` acquisitions on the same thread are no-ops, so callees
+    that take the global lock themselves need no changes.
+    """
+    if getattr(_SMALL_OP_CONTEXT, "stage", None) is not None:
+        # Nested inside an already-granted section that owns VRAM clearance.
+        yield SmallGpuLease(granted=True, free_mib=query_free_gpu_memory_mib())
+        return
+    with _SMALL_OP_SERIALIZE:
+        free_mib = query_free_gpu_memory_mib()
+        if free_mib is None or free_mib < min_free_mib:
+            yield SmallGpuLease(granted=False, free_mib=free_mib)
+            return
+        _SMALL_OP_CONTEXT.stage = stage
+        try:
+            yield SmallGpuLease(granted=True, free_mib=free_mib)
+        finally:
+            _SMALL_OP_CONTEXT.stage = None
 
 
 def _gpu_lock_log(message: str) -> None:
@@ -134,6 +210,10 @@ class GlobalGpuLock:
 
     def __enter__(self) -> float:
         if not self.enabled:
+            return 0.0
+        if getattr(_SMALL_OP_CONTEXT, "stage", None) is not None:
+            # Inside a granted small-op co-residency section: VRAM clearance and
+            # small-op serialization are already owned by this thread.
             return 0.0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
