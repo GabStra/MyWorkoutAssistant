@@ -313,13 +313,18 @@ def fit_pose_and_temporal_trajectories(
         if (last_residual['values'] is None
                 or not np.array_equal(last_residual['values'], values)):
             baseline = permuted_residual(values)
-        return approx_derivative(
+        result = approx_derivative(
             permuted_residual,
             values,
             method='2-point',
             f0=baseline,
             sparsity=(solver_jacobian_pattern, solver_jacobian_groups),
         )
+        # Inactive inequality penalties and unobserved targets contribute many
+        # exact zeros. Keep the dependency pattern for finite differences, but
+        # remove numerical zeros before LSMR repeatedly multiplies the matrix.
+        result.eliminate_zeros()
+        return result
 
     try:
         tr_options = {'maxiter': int(lsmr_max_iterations)}
