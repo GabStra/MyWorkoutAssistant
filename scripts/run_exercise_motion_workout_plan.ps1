@@ -174,9 +174,12 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    # Cap VLM slots for RTX 4070 SUPER with Cursor open; do not raise past 8
-    # without confirming spare VRAM. CPU fit concurrency is separate.
-    [Nullable[int]]$LlamaCppParallel = 8,
+    # 6 slots (not 8): the per-slot context floor then keeps total context at
+    # 49152, leaving ~2.5 GiB VRAM headroom on the 12 GiB card beside the
+    # desktop. At 8 slots the floor-raised 65536-context server peaked ~9.8 GiB
+    # and hard-hung CUDA under desktop memory pressure (2026-10-01 speed-harness
+    # finding); review workers above the slot count simply queue at the server.
+    [Nullable[int]]$LlamaCppParallel = 6,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",

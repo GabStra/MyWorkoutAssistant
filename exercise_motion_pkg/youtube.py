@@ -105,6 +105,9 @@ SEMANTIC_GATE_DURATION_RANK_DEFAULT_WEIGHT = 0.15
 SEMANTIC_GATE_SHORT_DURATION_SECONDS = 20.0
 SEMANTIC_GATE_DURATION_HORIZON_SECONDS = 120.0
 LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS = 5.0
+# Consecutive failed chat probes (while /v1/models still answers) before the
+# recovery path force-restarts a wedged server instead of waiting it out.
+WEDGED_SERVER_RESTART_STRIKES = 2
 DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS = 60.0
 YOUTUBE_SEARCH_MAX_ATTEMPTS = 4
 YOUTUBE_SEARCH_RETRY_BASE_DELAY_SECONDS = 2.0
@@ -9163,13 +9166,36 @@ class LlamaCppVisionRanker:
         with self._server_recovery_lock:
             if self._server_models_payload() is not None:
                 # A busy model must not be restarted because an inference
-                # health probe cannot acquire a slot within five seconds.
-                return
+                # health probe cannot acquire a slot within five seconds. But a
+                # server whose compute slots are WEDGED (e.g. a CUDA hang under
+                # VRAM over-commit) still answers /v1/models while every chat
+                # completion fails - treat consecutive failed chat probes as a
+                # wedged server and force-restart it.
+                chat_ready, _ = self._chat_completions_ready()
+                if chat_ready:
+                    self._wedged_server_strikes = 0
+                    return
+                self._wedged_server_strikes = getattr(self, "_wedged_server_strikes", 0) + 1
+                if self._wedged_server_strikes < WEDGED_SERVER_RESTART_STRIKES:
+                    return
+                self._wedged_server_strikes = 0
+                print(
+                    f"[llama-cpp] server at {self.settings.llama_cpp_base_url} answers /v1/models but "
+                    f"failed {WEDGED_SERVER_RESTART_STRIKES} consecutive chat probes; force-restarting it.",
+                    flush=True,
+                )
             if self.process is not None and not self.settings.keep_llama_cpp_server:
                 self._stop_owned_llama_cpp_server()
                 self._ensure_server()
                 return
-            self._wait_for_chat_completions_ready()
+            # A foreign or kept server cannot be stopped through self.process;
+            # kill whatever holds the port so the next ensure starts cleanly.
+            stop_llama_cpp_servers_for_base_url(
+                self.settings.llama_cpp_base_url,
+                expected_command=self.settings.llama_cpp_server_command,
+                expected_model=self.settings.llama_cpp_model,
+            )
+            self._ensure_server()
 
     def _ensure_server(self) -> None:
         server_payload = self._server_models_payload()
