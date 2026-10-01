@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -45,8 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
@@ -55,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
@@ -74,6 +73,7 @@ import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
+import com.gabstra.myworkoutassistant.composables.RunningRouteMap
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
@@ -103,6 +103,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
 import com.gabstra.myworkoutassistant.shared.running.RunningResult
+import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
 import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -124,6 +125,7 @@ import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSession
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
@@ -1234,63 +1236,62 @@ private fun RunningHistoryCard(
                     label = "ELAPSED",
                     value = formatTime((result.elapsedTimeMillis / 1000).toInt()),
                 )
-                unitDistance?.let {
-                    RunningHistoryMetric(
-                        modifier = Modifier.weight(1f),
-                        label = "DISTANCE ($unitLabel)",
-                        value = "%.2f".format(it),
-                    )
-                }
-                averagePace?.let {
-                    RunningHistoryMetric(
-                        modifier = Modifier.weight(1f),
-                        label = "AVG PACE ($unitLabel)",
-                        value = it,
-                    )
-                }
-            }
-            result.averageHeartRateBpm?.let { average ->
                 RunningHistoryMetric(
-                    label = "HEART RATE (bpm)",
-                    value = "$average${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}",
+                    modifier = Modifier.weight(1f),
+                    label = "DISTANCE ($unitLabel)",
+                    value = unitDistance?.let { "%.2f".format(it) } ?: "—",
                 )
             }
-            if (result.route.size > 1) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                RunningHistoryMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "AVG PACE ($unitLabel)",
+                    value = averagePace ?: "—",
+                )
+                RunningHistoryMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "HEART RATE (bpm)",
+                    value = result.averageHeartRateBpm?.let { average ->
+                        "$average avg${result.minHeartRateBpm?.let { " · $it–${result.maxHeartRateBpm ?: it}" }.orEmpty()}"
+                    } ?: "—",
+                )
+            }
+            Text("Route map", style = MaterialTheme.typography.titleSmall)
+            if (result.route.size >= 2) {
                 val routeColor = MaterialTheme.colorScheme.primary
                 val startColor = MaterialTheme.colorScheme.tertiary
                 val finishColor = MaterialTheme.colorScheme.error
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                        .semantics { contentDescription = "GPS route line with start and finish markers" }
+                RunningRouteMap(
+                    route = result.route,
+                    backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                    gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                    routeColor = routeColor,
+                    startColor = startColor,
+                    finishColor = finishColor,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "Pinch to zoom · drag to move",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    val minLat = result.route.minOf { it.latitude }
-                    val maxLat = result.route.maxOf { it.latitude }
-                    val minLon = result.route.minOf { it.longitude }
-                    val maxLon = result.route.maxOf { it.longitude }
-                    val latRange = (maxLat - minLat).takeIf { it > 0.0 } ?: 1.0
-                    val lonRange = (maxLon - minLon).takeIf { it > 0.0 } ?: 1.0
-                    val inset = 14.dp.toPx()
-                    val points = result.route.map { point ->
-                        Offset(
-                            x = inset + (((point.longitude - minLon) / lonRange).toFloat() * (size.width - inset * 2)),
-                            y = size.height - inset - (((point.latitude - minLat) / latRange).toFloat() * (size.height - inset * 2))
-                        )
-                    }
-                    points.zipWithNext().forEach { (start, end) ->
-                        drawLine(
-                            color = routeColor,
-                            start = start,
-                            end = end,
-                            strokeWidth = 4.dp.toPx(),
-                            cap = StrokeCap.Round
-                        )
-                    }
-                    drawCircle(startColor, radius = 6.dp.toPx(), center = points.first())
-                    drawCircle(finishColor, radius = 6.dp.toPx(), center = points.last())
+                    Text("Start", style = MaterialTheme.typography.labelSmall, color = startColor)
+                    Text("Finish", style = MaterialTheme.typography.labelSmall, color = finishColor)
                 }
-                Text("Start        Finish", style = MaterialTheme.typography.labelSmall)
+            } else {
+                Text(
+                    text = if (result.route.isEmpty()) "No GPS route was recorded for this run."
+                    else "GPS route has only one point; a route line is unavailable.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -1317,5 +1318,47 @@ private fun RunningHistoryMetric(
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
         )
+    }
+}
+
+@Preview(
+    name = "Running history details",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 720,
+)
+@Composable
+private fun RunningHistoryCardPreview() {
+    MyWorkoutAssistantTheme {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(16.dp),
+        ) {
+            RunningHistoryCard(
+                exerciseName = "Outdoor run",
+                result = RunningResult(
+                    exerciseId = "preview-running",
+                    elapsedTimeMillis = 1_847_000,
+                    distanceMeters = 4_320.0,
+                    averagePaceSecondsPerKilometer = 427.5,
+                    averageHeartRateBpm = 148,
+                    minHeartRateBpm = 112,
+                    maxHeartRateBpm = 171,
+                    route = listOf(
+                        RunningRoutePoint(41.9028, 12.4964, 0),
+                        RunningRoutePoint(41.9033, 12.4972, 40_000),
+                        RunningRoutePoint(41.9038, 12.4980, 90_000),
+                        RunningRoutePoint(41.9045, 12.4976, 150_000),
+                        RunningRoutePoint(41.9048, 12.4967, 210_000),
+                        RunningRoutePoint(41.9041, 12.4959, 275_000),
+                        RunningRoutePoint(41.9034, 12.4960, 340_000),
+                        RunningRoutePoint(41.9028, 12.4964, 420_000),
+                    ),
+                ),
+                distanceUnit = DistanceUnit.KILOMETERS,
+            )
+        }
     }
 }

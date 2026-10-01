@@ -359,6 +359,25 @@ internal fun RunningSetScreen(
                         }
                     }
                 }
+                if (isOutdoor && tracker.route.isNotEmpty()) {
+                    WearRunningRouteMap(
+                        route = tracker.route,
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                        routeColor = MaterialTheme.colorScheme.primary,
+                        startColor = Green,
+                        currentColor = Red,
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("START", style = MaterialTheme.typography.bodyExtraSmall, color = Green)
+                        Text("NOW", style = MaterialTheme.typography.bodyExtraSmall, color = Red)
+                    }
+                }
                 if (isOutdoor && (!locationGranted || !tracker.locationAvailable)) {
                     val hasSavedRoute = tracker.route.isNotEmpty()
                     val gpsStatus = if (hasSavedRoute) "GPS lost" else "No GPS · no route"
