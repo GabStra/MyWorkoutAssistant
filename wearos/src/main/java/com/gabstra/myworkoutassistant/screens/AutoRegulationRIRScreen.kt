@@ -15,7 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.navigation.NavController
@@ -115,7 +115,7 @@ fun AutoRegulationRIRScreen(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding + 15.dp),
             style = androidx.wear.compose.material3.MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -143,10 +143,7 @@ fun AutoRegulationRIRScreen(
         ) { pageIndex ->
             val pageType = pageTypes[pageIndex]
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
-                    .clipToBounds()
+                modifier = Modifier.calibrationPageContent(pageType)
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
@@ -225,7 +222,6 @@ fun AutoRegulationRIRScreen(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
                                 ) {
                                     CalibrationRirPage(
                                         modifier = Modifier.fillMaxSize(),

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -16,10 +17,19 @@ import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
+
+internal fun Modifier.calibrationPageContent(pageType: CalibrationPageType): Modifier =
+    when (pageType) {
+        // These pages own their safe-area padding.
+        CalibrationPageType.BUTTONS, CalibrationPageType.INFO,
+        CalibrationPageType.EXERCISES, CalibrationPageType.MOVEMENT -> fillMaxSize()
+        else -> fillMaxSize().padding(WorkoutPagerPageSafeAreaPadding).clipToBounds()
+    }
 
 internal fun buildCalibrationExerciseInfoSections(
     viewModel: AppViewModel,
@@ -76,9 +86,9 @@ internal fun CalibrationExerciseMovementPage(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    top = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding,
-                    start = 45.dp,
-                    end = 45.dp,
+                    top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding(),
+                    start = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding,
+                    end = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding,
                 ),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold,

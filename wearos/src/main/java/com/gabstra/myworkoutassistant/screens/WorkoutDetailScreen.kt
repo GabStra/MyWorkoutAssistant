@@ -27,7 +27,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.content.ContextCompat
@@ -52,6 +51,7 @@ import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
+import com.gabstra.myworkoutassistant.composables.WorkoutNameText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -235,15 +235,7 @@ fun WorkoutDetailScreen(
                                 .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                         ) {
-                            Text(
-                                text = workout.name,
-                                modifier = Modifier,
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
+                            WorkoutNameText(text = workout.name)
                         }
                     }
 
@@ -261,25 +253,6 @@ fun WorkoutDetailScreen(
                         }
                     }
 
-                    item {
-                        WearPrimaryButton(
-                            modifier = Modifier
-                                .semantics { contentDescription = "Start workout" }
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec),
-                            transformation = SurfaceTransformation(spec),
-                            text = "Start",
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                if (hasWorkoutRecord) {
-                                    showStartConfirmationDialog = true
-                                } else {
-                                    requestPermissionsOrStartWorkout()
-                                }
-                            },
-                        )
-                    }
-
                     if (hasWorkoutRecord) {
                         item {
                             WearPrimaryButton(
@@ -293,6 +266,36 @@ fun WorkoutDetailScreen(
                                     hapticsViewModel.doGentleVibration()
                                     requestPermissionsOrResumeWorkout()
                                 }
+                            )
+                        }
+                    }
+
+                    item {
+                        val startModifier = Modifier
+                            .semantics { contentDescription = "Start workout" }
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec)
+                        val onStartClick = {
+                            hapticsViewModel.doGentleVibration()
+                            if (hasWorkoutRecord) {
+                                showStartConfirmationDialog = true
+                            } else {
+                                requestPermissionsOrStartWorkout()
+                            }
+                        }
+                        if (hasWorkoutRecord) {
+                            ButtonWithText(
+                                modifier = startModifier,
+                                transformation = SurfaceTransformation(spec),
+                                text = "Start new",
+                                onClick = onStartClick,
+                            )
+                        } else {
+                            WearPrimaryButton(
+                                modifier = startModifier,
+                                transformation = SurfaceTransformation(spec),
+                                text = "Start",
+                                onClick = onStartClick,
                             )
                         }
                     }

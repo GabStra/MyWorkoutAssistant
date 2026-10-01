@@ -15,7 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.navigation.NavController
@@ -28,7 +28,6 @@ import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.CalibrationLoadPage
 import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
-import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -125,7 +124,7 @@ fun CalibrationLoadScreen(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding + 15.dp),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -155,17 +154,8 @@ fun CalibrationLoadScreen(
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
-            val pageModifier = when (pageType) {
-                CalibrationPageType.BUTTONS,
-                CalibrationPageType.EXERCISES -> Modifier.fillMaxSize()
-                else -> Modifier
-                    .fillMaxSize()
-                    .padding(WorkoutPagerPageSafeAreaPadding)
-                    .clipToBounds()
-            }
-
             Box(
-                modifier = pageModifier
+                modifier = Modifier.calibrationPageContent(pageType)
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
@@ -252,7 +242,6 @@ fun CalibrationLoadScreen(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
                                 ) {
                                     CalibrationLoadPage(
                                         modifier = Modifier.fillMaxSize(),

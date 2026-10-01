@@ -36,7 +36,7 @@ import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ProgressionInfo
 import com.gabstra.myworkoutassistant.composables.ProgressionSectionContent
-import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.WorkoutNameText
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerHeaderReservedHeight
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -203,12 +203,7 @@ private fun WorkoutCompleteScreenContent(
                 textAlign = TextAlign.Center,
                 style = headerStyle
             )
-            ScalableText(
-                modifier = Modifier.fillMaxWidth(),
-                textModifier = Modifier.fillMaxWidth(),
-                text = workoutName,
-                style = MaterialTheme.typography.titleLarge
-            )
+            WorkoutNameText(text = workoutName)
         }
 
         if (progressionIsEmpty) {

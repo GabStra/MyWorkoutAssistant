@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
@@ -132,6 +133,7 @@ private fun ControlButton(
             .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
                 role = Role.Button
+                if (!enabled) disabled()
                 onClick(
                     label = contentDescription
                 ) {

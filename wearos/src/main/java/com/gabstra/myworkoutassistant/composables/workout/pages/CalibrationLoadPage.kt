@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -25,9 +27,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -221,6 +226,8 @@ fun CalibrationLoadPage(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
+                isMinusEnabled = selectedWeightIndex in 1..sortedWeights.lastIndex,
+                isPlusEnabled = selectedWeightIndex >= 0 && selectedWeightIndex < sortedWeights.lastIndex,
                 isResetEnabled = selectedWeight != initialWeight,
                 onCloseClick = { onClosePicker() },
                 onResetClick = {
@@ -232,39 +239,50 @@ fun CalibrationLoadPage(
                 },
             ) {
                 Column(
+                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(SetValueHeaderToValueSpacing),
                 ) {
-                    exerciseTitleComposable()
-                    SetValueSection(
-                        label = "WEIGHT (KG)",
-                        headerStyle = headerStyle,
-                    ) {
-                        ScalableText(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = {
-                                        updateInteractionTime()
-                                    },
-                                    onLongClick = {
-                                        onClosePicker()
-                                    },
-                                    onDoubleClick = {},
-                                ),
-                            text = weightText,
-                            style = itemStyle,
+                    Text(
+                        text = "WEIGHT (KG)",
+                        style = headerStyle,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    BasicText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .combinedClickable(
+                                onClick = {
+                                    updateInteractionTime()
+                                },
+                                onLongClick = {
+                                    onClosePicker()
+                                },
+                                onDoubleClick = {},
+                            ),
+                        text = weightText,
+                        style = itemStyle.copy(
                             color = MaterialTheme.colorScheme.onBackground,
-                        )
-                    }
+                            textAlign = TextAlign.Center,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both,
+                            ),
+                        ),
+                        maxLines = 1,
+                        softWrap = false,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = itemStyle.fontSize),
+                    )
                 }
             }
         } else {
             // Initial state: show exercise info, header, and two-column layout (weight + reps)
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 15.dp),
+                    .fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
             ) {
@@ -294,14 +312,10 @@ fun CalibrationLoadPage(
                     }
                 }
 
-                Text(
+                CalibrationInstructionText(
                     text = "Set load for $reps reps\nat 1-2 RIR",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp)
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
                 )
             }
         }

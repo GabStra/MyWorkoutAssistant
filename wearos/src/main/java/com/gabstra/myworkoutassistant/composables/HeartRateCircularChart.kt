@@ -16,14 +16,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -48,10 +50,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -299,12 +307,6 @@ private fun HeartRateDisplay(
     colorsByZone: Array<Color>,
     displayMode: Int
 ) {
-    val textWidth = if(displayMode == 0){
-        25.dp
-    }else{
-        50.dp
-    }
-
     // Zone chip with black background, colored border, and colored text
     val chipBorderColor = colorsByZone[currentZone]
 
@@ -330,27 +332,34 @@ private fun HeartRateDisplay(
                 tint = heartColor
             )
 
-            Row(
-                modifier = Modifier.width(55.dp),
-                horizontalArrangement = Arrangement.End
-            ){
-                Text(
-                    modifier = Modifier.alignByBaseline().widthIn(min = textWidth),
-                    text = textToDisplay,
-                    textAlign = if (displayMode != 0) TextAlign.Center else TextAlign.End,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
-                )
-
-                if (bpm != 0 && displayMode == 0) {
-                    Spacer(modifier = Modifier.width(2.5.dp))
-                    Text(
-                        modifier = Modifier.alignByBaseline(),
-                        text = "bpm",
-                        style = MaterialTheme.typography.bodyExtraSmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
+            Box(
+                modifier = Modifier.width(55.dp).fillMaxHeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val labelStyle = MaterialTheme.typography.labelMedium
+                val valueLabel = buildAnnotatedString {
+                    append(textToDisplay)
+                    if (bpm != 0 && displayMode == 0) {
+                        // Relative sizing keeps the unit on the value's baseline as both shrink.
+                        withStyle(SpanStyle(fontSize = 0.7.em)) { append(" bpm") }
+                    }
                 }
+                BasicText(
+                    text = valueLabel,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = labelStyle.copy(
+                        textAlign = if (displayMode == 0) TextAlign.End else TextAlign.Center,
+                        color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both,
+                        ),
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize),
+                )
             }
             if (bpm != 0 && currentZone != 0) {
                 Box(
@@ -367,18 +376,23 @@ private fun HeartRateDisplay(
                         ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
+                        BasicText(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(2.5.dp),
                             text = zoneText,
-                            textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall
-                                .copy(platformStyle = PlatformTextStyle(
-                                    includeFontPadding = false
-                                )
+                                .copy(
+                                    textAlign = TextAlign.Center,
+                                    color = chipBorderColor,
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                ),
+                            maxLines = 1,
+                            softWrap = false,
+                            autoSize = TextAutoSize.StepBased(
+                                minFontSize = 8.sp,
+                                maxFontSize = MaterialTheme.typography.bodySmall.fontSize,
                             ),
-                            color = chipBorderColor
                         )
                     }
                 }

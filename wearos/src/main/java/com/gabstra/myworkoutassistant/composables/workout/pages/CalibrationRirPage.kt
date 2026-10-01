@@ -217,8 +217,7 @@ fun CalibrationRirPage(
             // Initial state: show exercise info, header, and RIR value
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
+                    .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
             ) {
@@ -248,15 +247,7 @@ fun CalibrationRirPage(
                     }
                 }
 
-                Text(
-                    text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp)
-                )
+                CalibrationInstructionText(text = "0 = Form Breaks")
             }
         }
     }
@@ -431,7 +422,7 @@ fun CalibrationRirPage(
             }
         } else {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
             ) {
@@ -454,13 +445,7 @@ fun CalibrationRirPage(
                             RIRRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                         }
                 }
-                Text(
-                    text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
-                )
+                CalibrationInstructionText(text = "0 = Form Breaks")
             }
         }
     }
