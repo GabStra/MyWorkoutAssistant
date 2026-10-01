@@ -1149,6 +1149,10 @@ class YouTubeRankingSettings:
     llama_cpp_mtmd_batch_max_tokens: int | None = DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS
     llama_cpp_auto_start_server: bool = True
     keep_llama_cpp_server: bool = False
+    # Attach to the supervisor-owned shared server (SHARED_LLAMA_SERVER.md):
+    # never spawn, adopt, or stop a server; exclusive phases are coordinated by
+    # the shared session dir quiesce protocol instead of the GPU lock lease.
+    llama_cpp_shared_server: bool = False
     llama_cpp_server_startup_timeout_seconds: float = 180.0
     llama_cpp_request_timeout_seconds: float = 240.0
     text_llama_cpp_model: str | None = DEFAULT_TEXT_LLAMA_CPP_MODEL
@@ -8952,7 +8956,7 @@ class LlamaCppVisionRanker:
         self.gpu_lock_wait_seconds = 0.0
         try:
             if settings.llama_cpp_base_url is not None:
-                if self._uses_gpu():
+                if self._uses_gpu() and not self._attaches_shared_server():
                     gpu_lock = GlobalGpuLock(
                         stage="llama_cpp_server",
                         on_force_release=self._emergency_release_gpu,
@@ -8994,6 +8998,11 @@ class LlamaCppVisionRanker:
     def _uses_gpu(self) -> bool:
         return str(self.settings.llama_cpp_backend or "").strip().lower() != "cpu"
 
+    def _attaches_shared_server(self) -> bool:
+        # Tolerate duck-typed settings (tests, legacy callers): a missing flag
+        # simply means today's own-the-server behavior.
+        return bool(getattr(self.settings, "llama_cpp_shared_server", False))
+
     def _release_gpu_lock(self) -> None:
         if self.gpu_lock is None:
             return
@@ -9012,6 +9021,11 @@ class LlamaCppVisionRanker:
             pass
 
     def _stop_owned_llama_cpp_server(self, *, force: bool = False) -> None:
+        if self._attaches_shared_server():
+            # The supervisor owns the shared server; an attached session never
+            # stops it. Exclusive-phase stops run through the shared session
+            # dir quiesce protocol instead.
+            return
         if self.process is None:
             if force and self.settings.llama_cpp_auto_start_server:
                 stop_llama_cpp_servers_for_base_url(
@@ -9061,7 +9075,12 @@ class LlamaCppVisionRanker:
                 self._wait_for_chat_completions_ready()
                 return
             except RuntimeError:
-                if not self.settings.llama_cpp_auto_start_server:
+                if (
+                    self._attaches_shared_server()
+                    or not self.settings.llama_cpp_auto_start_server
+                ):
+                    # An attached session must not evict the supervisor's
+                    # server over a configuration mismatch; surface it.
                     raise
                 stopped = stop_llama_cpp_servers_for_base_url(
                     self.settings.llama_cpp_base_url,
@@ -9073,6 +9092,11 @@ class LlamaCppVisionRanker:
                 deadline = time.monotonic() + 10.0
                 while time.monotonic() < deadline and self._server_models_payload() is not None:
                     time.sleep(0.2)
+        if self._attaches_shared_server():
+            # Attach mode never spawns a server; wait for the supervisor's
+            # (re)start - e.g. after an exclusive phase released the GPU.
+            self._wait_for_supervised_server()
+            return
         if not self.settings.llama_cpp_auto_start_server:
             response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
             response.raise_for_status()
@@ -9250,6 +9274,25 @@ class LlamaCppVisionRanker:
         except OSError:
             return ""
         return " | ".join(line.strip() for line in lines[-12:] if line.strip())
+
+    def _wait_for_supervised_server(self) -> None:
+        """Attach mode: wait for the supervisor's server (re)start; never spawn."""
+        deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
+        while time.monotonic() < deadline:
+            server_payload = self._server_models_payload()
+            if server_payload is not None:
+                self._raise_if_server_model_mismatch(server_payload)
+                self._raise_if_server_runtime_mismatch()
+                self._wait_for_chat_completions_ready()
+                return
+            time.sleep(1.0)
+        raise RuntimeError(
+            "Shared llama.cpp server at "
+            f"{self.settings.llama_cpp_base_url} did not become ready within "
+            f"{self.settings.llama_cpp_server_startup_timeout_seconds:.0f} seconds. "
+            "The supervisor must start (or restart) it; attached sessions never "
+            "spawn a server themselves."
+        )
 
     def _wait_for_chat_completions_ready(self) -> None:
         if self.settings.llama_cpp_base_url is None:

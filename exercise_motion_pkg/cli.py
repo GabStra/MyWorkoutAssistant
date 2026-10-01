@@ -271,6 +271,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a YouTube cookies.txt file (helps with bot-protected videos).",
     )
+    generate.add_argument(
+        "--shared-llama-server",
+        action="store_true",
+        help="Attach to the supervisor-owned shared llama.cpp server when this pipeline needs vision inference; see exercise_motion_pkg/SHARED_LLAMA_SERVER.md.",
+    )
 
     preview = subparsers.add_parser("preview", help="Build a standalone HTML preview from a normalized motion JSON.")
     preview.add_argument("--motion-json", required=True)
@@ -980,6 +985,16 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--llama-cpp-mtmd-batch-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS)
     bake_and_rank.add_argument("--no-llama-cpp-auto-start-server", action="store_true")
     bake_and_rank.add_argument(
+        "--shared-llama-server",
+        action="store_true",
+        help="Attach to the supervisor-owned shared llama.cpp server instead of owning one; exclusive GPU phases coordinate through the shared session dir quiesce protocol (see exercise_motion_pkg/SHARED_LLAMA_SERVER.md).",
+    )
+    bake_and_rank.add_argument(
+        "--shared-llama-server-session-dir",
+        type=Path,
+        help="Session directory coordinating the shared llama.cpp server. Defaults to EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR, then a temp dir keyed on the base-url port.",
+    )
+    bake_and_rank.add_argument(
         "--keep-llama-cpp-server",
         action="store_true",
         help="Leave an auto-started llama.cpp server running after the pipeline so later runs skip model startup.",
@@ -1380,6 +1395,7 @@ def main() -> None:
                 source_start_seconds=args.source_start_seconds,
                 source_end_seconds=args.source_end_seconds,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
+                shared_llama_server=args.shared_llama_server,
             )
         )
         print(f"Manifest: {result.manifest_path}")

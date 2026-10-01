@@ -214,6 +214,9 @@ class GenerateRequest:
     youtube_cookies: Path | None = None
     source_pose_reference_path: Path | None = None
     video_world_alignment_enabled: bool = True
+    # Attach to the supervisor-owned shared llama.cpp server for any vision
+    # inference (SHARED_LLAMA_SERVER.md); default off keeps per-session servers.
+    shared_llama_server: bool = False
 
 
 @dataclass(frozen=True)

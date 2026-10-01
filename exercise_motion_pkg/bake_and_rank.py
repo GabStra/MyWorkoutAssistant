@@ -212,6 +212,11 @@ from exercise_motion_pkg.chunking import (
     movement_complexity_from_contract,
     normalize_exercise_name,
 )
+from exercise_motion_pkg.shared_llama_server import (
+    QuiesceSummary,
+    SharedLlamaServerCoordinator,
+    resolve_shared_llama_session_dir,
+)
 
 
 DEFAULT_MAX_LOOP_SECONDS = 10.0
@@ -2717,6 +2722,8 @@ class BakeAndRankRequest:
     llama_cpp_mtmd_batch_max_tokens: int | None = DEFAULT_LLAMA_CPP_MTMD_BATCH_MAX_TOKENS
     llama_cpp_auto_start_server: bool = True
     keep_llama_cpp_server: bool = False
+    shared_llama_server: bool = False
+    shared_llama_server_session_dir: Path | None = None
     llama_cpp_server_startup_timeout_seconds: float = 180.0
     llama_cpp_request_timeout_seconds: float = 240.0
     source_review_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS
@@ -2776,6 +2783,24 @@ class LazyLlamaCppVisionSession:
         self._wham_active = False
         self._exclusive_waiters = 0
         self._closed = False
+        # Attach mode (see SHARED_LLAMA_SERVER.md): the server is owned by the
+        # supervisor, so this session never starts or stops it. Exclusive GPU
+        # phases coordinate through the shared session dir instead.
+        self._shared: SharedLlamaServerCoordinator | None = None
+        if request.shared_llama_server:
+            self._shared = SharedLlamaServerCoordinator(
+                session_dir=resolve_shared_llama_session_dir(
+                    request.shared_llama_server_session_dir,
+                    base_url=self.settings.llama_cpp_base_url,
+                ),
+                base_url=self.settings.llama_cpp_base_url,
+                stop_server=lambda: stop_llama_cpp_servers_for_base_url(
+                    self.settings.llama_cpp_base_url,
+                    expected_command=self.settings.llama_cpp_server_command,
+                    expected_model=self.settings.llama_cpp_model,
+                ),
+            )
+            self._shared.register()
         self.queue_wait_seconds = 0.0
         self.request_seconds = 0.0
         self.request_count = 0
@@ -2855,16 +2880,28 @@ class LazyLlamaCppVisionSession:
                 raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for endpoint observation.") from None
             raise
 
+    def _shared_blocks_admission_locked(self) -> bool:
+        # A live cross-process stop-intent means the shared server is stopping
+        # or stopped for an exclusive GPU phase; hold new VLM admissions until
+        # the owning process releases it.
+        return self._shared is not None and self._shared.stop_intent_live()
+
+    def _publish_shared_active_calls_locked(self) -> None:
+        if self._shared is not None:
+            self._shared.publish_active_requests(self._active_calls)
+
     def caption_images(self, *args: Any, **kwargs: Any) -> str:
         queued_at = time.perf_counter()
         with self._condition:
             # Once CUDA-exclusive work is queued, drain it before admitting
             # another VLM request. This turns N per-exercise model swaps into
-            # one swap around a group of deterministic validations.
+            # one swap around a group of deterministic validations. In shared
+            # mode a foreign exclusive phase gates admissions the same way.
             while (
                 self._wham_active
                 or self._exclusive_waiters > 0
                 or self._active_calls >= self._max_active_calls
+                or self._shared_blocks_admission_locked()
             ):
                 if self._closed:
                     raise RuntimeError("llama.cpp vision session was already closed.")
@@ -2905,6 +2942,7 @@ class LazyLlamaCppVisionSession:
             ranker = self._ranker
             self._active_calls += 1
             self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
+            self._publish_shared_active_calls_locked()
             candidate_deadline = getattr(self._candidate_deadlines, "value", None)
         candidate_budget_limited_request = False
         if candidate_deadline is not None:
@@ -2912,6 +2950,7 @@ class LazyLlamaCppVisionSession:
             if remaining_seconds <= 0.0:
                 with self._condition:
                     self._active_calls = max(0, self._active_calls - 1)
+                    self._publish_shared_active_calls_locked()
                     if self._active_calls == 0:
                         self._condition.notify_all()
                 raise CandidateWallTimeBudgetExpired(
@@ -2939,6 +2978,7 @@ class LazyLlamaCppVisionSession:
                 self.request_seconds += time.perf_counter() - request_started
                 self.request_count += 1
                 self._active_calls = max(0, self._active_calls - 1)
+                self._publish_shared_active_calls_locked()
                 if self._active_calls == 0:
                     self._condition.notify_all()
 
@@ -3014,6 +3054,7 @@ class LazyLlamaCppVisionSession:
                 return operation_result
         with self._condition:
             self._exclusive_waiters += 1
+            quiesce_summary: QuiesceSummary | None = None
             try:
                 while self._wham_active:
                     self._condition.wait()
@@ -3027,8 +3068,28 @@ class LazyLlamaCppVisionSession:
                     )
                 while self._active_calls > 0:
                     self._condition.wait()
+                if self._shared is not None:
+                    # Shared mode: stop-intent -> drain attached processes'
+                    # in-flight requests -> stop the supervisor's server. The
+                    # ranker close below releases only our client because a
+                    # shared ranker never stops the server itself.
+                    self._record_lifecycle_event_locked(
+                        "shared_exclusive_quiesce_started",
+                        exclusiveBatchId=self.exclusive_batch_count,
+                    )
+                    quiesce_summary = self._shared.begin_exclusive_phase()
+                    self._record_lifecycle_event_locked(
+                        "shared_exclusive_quiesce_finished",
+                        exclusiveBatchId=self.exclusive_batch_count,
+                        waitedSeconds=round(quiesce_summary.waited_seconds, 3),
+                        peakForeignActiveRequests=quiesce_summary.peak_foreign_active_requests,
+                        stoppedServer=quiesce_summary.stopped_server,
+                        reclaimedStaleMarkers=quiesce_summary.reclaimed_stale_markers,
+                    )
                 self._close_ranker_locked(force_stop_server=True, final_close=False)
             except Exception:
+                if quiesce_summary is not None:
+                    self._release_shared_exclusive_locked()
                 self._wham_active = False
                 self._exclusive_batch_open = False
                 self._condition.notify_all()
@@ -3060,11 +3121,23 @@ class LazyLlamaCppVisionSession:
                     self._wham_active = False
                     if self._exclusive_waiters == 0:
                         self._exclusive_batch_open = False
+                        if self._shared is not None:
+                            self._release_shared_exclusive_locked()
                         self._record_lifecycle_event_locked(
                             "exclusive_gpu_batch_finished",
                             exclusiveBatchId=self.exclusive_batch_count,
                         )
                     self._condition.notify_all()
+
+    def _release_shared_exclusive_locked(self) -> None:
+        """End a shared exclusive phase: reopen admissions, request restart."""
+        if self._shared is None:
+            return
+        self._shared.end_exclusive_phase()
+        self._record_lifecycle_event_locked(
+            "shared_restart_requested",
+            restartRequestCount=self._shared.restart_request_count,
+        )
 
     def close(self, *, force_stop_server: bool = False) -> None:
         with self._condition:
@@ -3072,6 +3145,11 @@ class LazyLlamaCppVisionSession:
             if not force_stop_server:
                 while self._active_calls > 0:
                     self._condition.wait()
+            if self._shared is not None:
+                # Attached sessions release nothing of the server itself: drop
+                # our in-flight counter (and any marker we still own) and let
+                # the ranker close tear down only the local HTTP client.
+                self._shared.detach()
             self._close_ranker_locked(
                 force_stop_server=force_stop_server,
                 final_close=not force_stop_server,
@@ -3081,6 +3159,9 @@ class LazyLlamaCppVisionSession:
     def timing_manifest(self) -> dict[str, Any]:
         with self._condition:
             lifecycle_events = [dict(event) for event in self._lifecycle_events]
+            shared_metrics = (
+                self._shared.metrics() if self._shared is not None else None
+            )
         return {
             "visionQueueWaitSeconds": round(self.queue_wait_seconds, 3),
             "visionRequestSeconds": round(self.request_seconds, 3),
@@ -3097,6 +3178,7 @@ class LazyLlamaCppVisionSession:
             "coResidentGpuOperationCount": self.co_resident_operation_count,
             "coResidentGpuDeclinedCount": self.co_resident_declined_count,
             "coResidentGpuOomFallbackCount": self.co_resident_oom_fallback_count,
+            **({"sharedVisionSession": shared_metrics} if shared_metrics is not None else {}),
             "visionLifecycleEvents": lifecycle_events,
             "configuredParallelCallLimit": self._max_active_calls,
             "peakParallelCallCount": self._peak_active_calls,
@@ -3129,7 +3211,13 @@ class LazyLlamaCppVisionSession:
             exclusiveBatchId=self.exclusive_batch_count if self._exclusive_batch_open else None,
         )
         if self._ranker is None:
-            if force_stop_server and self.settings.llama_cpp_auto_start_server:
+            # In shared mode the quiesce protocol owns stopping the shared
+            # server; an attached session must never kill it from close().
+            if (
+                force_stop_server
+                and self.settings.llama_cpp_auto_start_server
+                and self._shared is None
+            ):
                 stop_llama_cpp_servers_for_base_url(
                     self.settings.llama_cpp_base_url,
                     expected_command=self.settings.llama_cpp_server_command,
@@ -39331,6 +39419,7 @@ def build_llama_cpp_vision_settings(request: BakeAndRankRequest) -> YouTubeRanki
         llama_cpp_mtmd_batch_max_tokens=request.llama_cpp_mtmd_batch_max_tokens,
         llama_cpp_auto_start_server=request.llama_cpp_auto_start_server,
         keep_llama_cpp_server=request.keep_llama_cpp_server,
+        llama_cpp_shared_server=request.shared_llama_server,
         llama_cpp_server_startup_timeout_seconds=request.llama_cpp_server_startup_timeout_seconds,
         llama_cpp_request_timeout_seconds=request.llama_cpp_request_timeout_seconds,
         text_llama_cpp_model=request.text_llama_cpp_model,

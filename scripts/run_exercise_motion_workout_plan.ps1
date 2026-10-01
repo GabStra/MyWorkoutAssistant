@@ -182,6 +182,11 @@ param(
     [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
     [double]$LlamaCppRequestTimeoutSeconds = 180.0,
+    # Shared llama.cpp server (SHARED_LLAMA_SERVER.md). Increment 1 ships the
+    # supervisor functions only; run-loop wiring is deliberately deferred.
+    [switch]$SharedLlamaServer,
+    [string]$SharedLlamaServerSessionDir,
+    [double]$SharedLlamaServerStopDrainTimeoutSeconds = 120.0,
     [ValidateSet("debug", "full")]
     [string]$ArtifactRetention = "debug",
     [int]$ProgressIntervalSeconds = 90,
@@ -1060,6 +1065,197 @@ $skeletonSection
 "@
     Set-Content -LiteralPath $DestinationPath -Value $html -Encoding UTF8
     return $DestinationPath
+}
+
+function Get-SharedLlamaSessionDir {
+    # Mirrors the Python default (exercise_motion_pkg/shared_llama_server.py):
+    # explicit -SharedLlamaServerSessionDir, then a temp dir keyed on the
+    # base-url port, so the supervisor and every attached process agree.
+    if (-not [string]::IsNullOrWhiteSpace($SharedLlamaServerSessionDir)) {
+        return $SharedLlamaServerSessionDir
+    }
+    $port = "default"
+    try {
+        $parsed = [uri]$LlamaCppBaseUrl
+        if ($parsed.Port -gt 0) { $port = [string]$parsed.Port }
+    } catch {
+    }
+    return (Join-Path ([System.IO.Path]::GetTempPath()) "myworkoutassistant-shared-llama-$port")
+}
+
+function Get-SharedLlamaLiveInflightCounters {
+    param([string]$SessionDir)
+
+    $inflightDir = Join-Path $SessionDir "in-flight"
+    if (-not (Test-Path -LiteralPath $inflightDir)) {
+        return @()
+    }
+    $live = @()
+    foreach ($counterFile in @(Get-ChildItem -LiteralPath $inflightDir -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+        try {
+            $payload = Get-Content -LiteralPath $counterFile.FullName -Raw | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ownerPid = 0
+        $active = 0
+        try { $ownerPid = [int]$payload.pid } catch { continue }
+        try { $active = [int]$payload.activeRequests } catch { continue }
+        if ($ownerPid -le 0) { continue }
+        $ownerAlive = $null -ne (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+        if ($ownerAlive -and $active -gt 0) {
+            $live += [pscustomobject]@{ pid = $ownerPid; activeRequests = $active }
+        }
+    }
+    return $live
+}
+
+function Start-SharedLlamaServer {
+    param([string]$SessionDir)
+
+    New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir "in-flight") | Out-Null
+    # Stale markers from a previous supervisor instance must not satisfy or
+    # confuse a fresh start; crashed clients leave their counters behind.
+    foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop_intent.json", "start_requested.json", "stopped.json")) {
+        $path = Join-Path $SessionDir $staleFile
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+    Get-ChildItem -LiteralPath (Join-Path $SessionDir "in-flight") -Filter "*.json" -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $host_ = "127.0.0.1"
+    $port = 8090
+    try {
+        $parsed = [uri]$LlamaCppBaseUrl
+        if ($parsed.Host) { $host_ = $parsed.Host }
+        if ($parsed.Port -gt 0) { $port = $parsed.Port }
+    } catch {
+    }
+    # Production flag set measured for the RTX 4070 SUPER (see
+    # exercise_motion_pkg/SHARED_LLAMA_SERVER.md). Slot count and context
+    # geometry come from the same params that feed the bake requests; the
+    # reasoning flags are pinned off for the shared server and must be
+    # reconciled with the clients' attach-time runtime validation when the
+    # run loop is wired (increment 2).
+    $parallel = if ($null -ne $LlamaCppParallel) { [int]$LlamaCppParallel } else { 8 }
+    $ctxSize = if ($null -ne $LlamaCppCtxSize) { [int]$LlamaCppCtxSize } else { 49152 }
+    $batchSize = if ($null -ne $LlamaCppBatchSize) { [int]$LlamaCppBatchSize } else { 1024 }
+    $ubatchSize = if ($null -ne $LlamaCppUBatchSize) { [int]$LlamaCppUBatchSize } else { 512 }
+    $threadsHttp = if ($null -ne $LlamaCppThreadsHttp) { [int]$LlamaCppThreadsHttp } else { 8 }
+    $serverArgs = @(
+        "-m", $LlamaCppModel,
+        "--host", $host_, "--port", "$port",
+        "--mmproj", $LlamaCppMmproj, "--mmproj-offload",
+        "--parallel", "$parallel",
+        "--ctx-size", "$ctxSize",
+        "--batch-size", "$batchSize",
+        "--ubatch-size", "$ubatchSize",
+        "--flash-attn", $LlamaCppFlashAttn,
+        "--cache-type-k", $LlamaCppCacheTypeK,
+        "--cache-type-v", $LlamaCppCacheTypeV,
+        "--fit", $LlamaCppFit,
+        "--threads-http", "$threadsHttp",
+        "--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0",
+        "--cont-batching",
+        "--gpu-layers", "all"
+    )
+    $logPath = Join-Path $SessionDir "server.log"
+    $errorLogPath = Join-Path $SessionDir "server.err.log"
+    Write-Host "Starting shared llama.cpp server ($($serverArgs -join ' '))..."
+    $process = Start-Process `
+        -FilePath $LlamaCppServerCommand `
+        -ArgumentList (@($serverArgs | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } })) `
+        -RedirectStandardOutput $logPath `
+        -RedirectStandardError $errorLogPath `
+        -WindowStyle Hidden `
+        -PassThru
+    $baseUrl = "http://${host_}:${port}"
+    $deadline = (Get-Date).AddSeconds($LlamaCppServerStartupTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($process.HasExited) {
+            $tail = ""
+            try {
+                $tail = (Get-Content -LiteralPath $logPath -Tail 12 -ErrorAction SilentlyContinue) -join " | "
+            } catch {
+            }
+            throw "Shared llama.cpp server exited during startup (code $($process.ExitCode)). Logs: $tail"
+        }
+        try {
+            $null = Invoke-RestMethod -Uri "$baseUrl/v1/models" -TimeoutSec 5
+            $ready = [ordered]@{
+                pid = $process.Id
+                baseUrl = $baseUrl
+                model = $LlamaCppModel
+                parallel = $parallel
+                startedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            }
+            $ready | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "ready.json") -Encoding UTF8
+            Update-SharedLlamaServerHeartbeat -SessionDir $SessionDir
+            Write-Host ("Shared llama.cpp server ready (pid {0}) at {1}." -f $process.Id, $baseUrl)
+            return [pscustomobject]@{
+                processId = $process.Id
+                sessionDir = $SessionDir
+                baseUrl = $baseUrl
+                logPath = $logPath
+            }
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+    try {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    } catch {
+    }
+    @{ error = "Timed out waiting for shared llama.cpp server startup after $LlamaCppServerStartupTimeoutSeconds seconds." } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "startup_error.json") -Encoding UTF8
+    throw "Timed out waiting for shared llama.cpp server startup after $LlamaCppServerStartupTimeoutSeconds seconds. Logs: $logPath"
+}
+
+function Update-SharedLlamaServerHeartbeat {
+    param([string]$SessionDir)
+
+    @{ updatedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "heartbeat.json") -Encoding UTF8
+}
+
+function Stop-SharedLlamaServer {
+    param([object]$Server)
+
+    if ($null -eq $Server) {
+        return
+    }
+    $sessionDir = $Server.sessionDir
+    try {
+        # Close attached clients' admission gates before draining, mirroring the
+        # Python quiesce protocol's stop-intent ordering.
+        @{ pid = $PID; requestedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sessionDir "stop_intent.json") -Encoding UTF8
+    } catch {
+    }
+    $deadline = (Get-Date).AddSeconds($SharedLlamaServerStopDrainTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $live = @(Get-SharedLlamaLiveInflightCounters -SessionDir $sessionDir)
+        if ($live.Count -eq 0) {
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
+    try {
+        Stop-Process -Id $Server.processId -Force -ErrorAction Stop
+        Wait-Process -Id $Server.processId -Timeout 10 -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "Failed to stop shared llama.cpp server (pid $($Server.processId)): $($_.Exception.Message)"
+    }
+    foreach ($marker in @("stop_intent.json", "ready.json", "heartbeat.json")) {
+        $path = Join-Path $sessionDir $marker
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    }
+    @{ stoppedByPid = $PID; stoppedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sessionDir "stopped.json") -Encoding UTF8
 }
 
 function Start-WhamWarmWorker {
