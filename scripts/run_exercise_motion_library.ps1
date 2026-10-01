@@ -281,6 +281,10 @@ function Invoke-MovementPass {
 }
 
 function Test-ExistingSelectionRevalidationNeeded {
+    # A library run can outlive edits to the validation code, so the policy
+    # version cached at script start may lag the code that is about to reuse
+    # the selections. Read the authoritative version fresh for every check.
+    $currentPolicyVersion = Get-MotionSelectionValidationPolicyVersion
     $exerciseSelectionFiles = @(
         Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory -ErrorAction SilentlyContinue |
             ForEach-Object {
@@ -309,7 +313,7 @@ function Test-ExistingSelectionRevalidationNeeded {
                     )
                 )
                 if (
-                    [int]$marker.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion -and
+                    [int]$marker.selectionValidationPolicyVersion -ge $currentPolicyVersion -and
                     $retainedFallbackCurrent
                 ) {
                     continue
@@ -317,7 +321,7 @@ function Test-ExistingSelectionRevalidationNeeded {
             }
             if (
                 ($selection.PSObject.Properties.Name -contains "selectionValidationPolicyVersion") -and
-                [int]$selection.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
+                [int]$selection.selectionValidationPolicyVersion -ge $currentPolicyVersion
             ) {
                 continue
             }
@@ -350,6 +354,23 @@ function Invoke-ExistingSelectionRevalidation {
         throw "Existing selection revalidation failed with exit code $revalidateExitCode"
     }
     $script:CompletedRevalidationReportPath = $reportPath
+}
+
+function Invoke-PassBoundaryRevalidation {
+    # Each movement pass reloads the Python validation code, and a long run can
+    # outlive edits to that code. Check at every pass boundary whether retained
+    # selections lag the current policy (Test-ExistingSelectionRevalidationNeeded
+    # reads the authoritative version fresh) so the boundary re-audits them
+    # under the current policy instead of letting the next pass silently
+    # discard selections the previous pass published.
+    $script:CompletedRevalidationReportPath = $null
+    Invoke-ExistingSelectionRevalidation
+    if (-not [string]::IsNullOrWhiteSpace($script:CompletedRevalidationReportPath)) {
+        # Publish the newly audited set before starting expensive regeneration. If the
+        # run is interrupted later, the durable mobile package must not retain
+        # movements that this revalidation just rejected.
+        Write-MovementPackage -MotionSummaryJson $script:CompletedRevalidationReportPath
+    }
 }
 
 function Write-MovementPackage {
@@ -386,15 +407,8 @@ function Invoke-AutoResetDiscoveryRejections {
 }
 
 $skipFirstPass = $false
-$script:CompletedRevalidationReportPath = $null
 Invoke-AutoResetDiscoveryRejections
-Invoke-ExistingSelectionRevalidation
-if (-not [string]::IsNullOrWhiteSpace($script:CompletedRevalidationReportPath)) {
-    # Publish the newly audited set before starting expensive regeneration. If the
-    # run is interrupted later, the durable mobile package must not retain
-    # movements that this revalidation just rejected.
-    Write-MovementPackage -MotionSummaryJson $script:CompletedRevalidationReportPath
-}
+Invoke-PassBoundaryRevalidation
 if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
     try {
         $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
@@ -454,6 +468,7 @@ while ($true) {
     $beforeReviewCount = Get-DiscoveryReviewCount
     $beforeSourceTurnSignature = Get-SourceTurnResumeSignature
     Write-MotionLibraryMessage -NewBlock "Pass 2 - round $round`: finish retained processing and advance source cursors; larger discovery turns for cold unresolved exercises; reuse movements already saved."
+    Invoke-PassBoundaryRevalidation
     Write-RunState -Phase "deferred_pass_started" -SummaryJson $firstPassSummaryPath
     Invoke-MovementPass -ReuseSelected
     Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath

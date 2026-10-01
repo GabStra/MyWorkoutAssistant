@@ -1418,9 +1418,12 @@ function Remove-ExerciseIntermediateArtifacts {
     }
 }
 
-function Get-ExistingSelectedSummary {
+function Get-SelectedOutputArtifacts {
     param([object]$WorkItem)
 
+    # Structural completeness of a retained selection: the manifest plus one
+    # consistent set of skeleton/preview/input outputs. Shared by the reuse
+    # gate and the stale-policy re-audit so both judge the exact same files.
     $selectedOutputDir = Join-Path $WorkItem.exerciseWorkspace "selected"
     $selectionPath = Join-Path $selectedOutputDir "selection_manifest.json"
     if (-not (Test-Path -LiteralPath $selectionPath)) {
@@ -1446,6 +1449,33 @@ function Get-ExistingSelectedSummary {
         return $null
     }
     $interactivePreviewHtmlFiles = @(Get-ChildItem -LiteralPath $selectedOutputDir -Filter "$($selectedFilePrefix)*_interactive_preview.html" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    return [ordered]@{
+        SelectedOutputDir = $selectedOutputDir
+        SelectionPath = $selectionPath
+        WearSkeletonFiles = $wearSkeletonFiles
+        PreviewFiles = $previewFiles
+        InputFiles = $inputFiles
+        InputWebmFiles = $inputWebmFiles
+        PreviewHtmlFiles = $previewHtmlFiles
+        InteractivePreviewHtmlFiles = $interactivePreviewHtmlFiles
+    }
+}
+
+function Get-ExistingSelectedSummary {
+    param([object]$WorkItem)
+
+    $artifacts = Get-SelectedOutputArtifacts -WorkItem $WorkItem
+    if ($null -eq $artifacts) {
+        return $null
+    }
+    $selectedOutputDir = $artifacts.SelectedOutputDir
+    $selectionPath = $artifacts.SelectionPath
+    $wearSkeletonFiles = @($artifacts.WearSkeletonFiles)
+    $previewFiles = @($artifacts.PreviewFiles)
+    $inputFiles = @($artifacts.InputFiles)
+    $inputWebmFiles = @($artifacts.InputWebmFiles)
+    $previewHtmlFiles = @($artifacts.PreviewHtmlFiles)
+    $interactivePreviewHtmlFiles = @($artifacts.InteractivePreviewHtmlFiles)
     $debugDir = Join-Path $selectedOutputDir "debug"
     $candidateDebugPath = Join-Path $debugDir "youtube_candidates.full.json"
     $candidateDecisionsPath = Join-Path $debugDir "candidate_decisions.jsonl"
@@ -1542,6 +1572,100 @@ function Get-ExistingSelectedSummary {
         selectedResults = $selectedResultOutputs
         selectedCandidateDebugPath = if (Test-Path -LiteralPath $candidateDebugPath) { $candidateDebugPath } else { $null }
         selectedCandidateDecisionsPath = if (Test-Path -LiteralPath $candidateDecisionsPath) { $candidateDecisionsPath } else { $null }
+    }
+}
+
+function Test-SelectionNeedsPolicyReaudit {
+    param([object]$WorkItem)
+
+    # A retained selection can be structurally complete yet carry session
+    # state written by older code (policy-version markers, audit checksums,
+    # fallback-version stamps). Reuse must not silently discard that work: the
+    # stale state means "re-audit under the current policy", not "no
+    # selection". This mirrors Get-ExistingSelectedSummary's gate and asks for
+    # a re-audit exactly when that gate would reject on stale session state;
+    # an explicit prior verdict (invalid / needs review) always stands.
+    $artifacts = Get-SelectedOutputArtifacts -WorkItem $WorkItem
+    if ($null -eq $artifacts) {
+        return $false
+    }
+    try {
+        $selection = Get-Content -LiteralPath $artifacts.SelectionPath -Raw | ConvertFrom-Json
+    } catch {
+        return $false
+    }
+    $manifestCurrent = ($selection.PSObject.Properties.Name -contains "selectionValidationPolicyVersion") -and
+        [int]$selection.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
+    $revalidationPath = Join-Path $artifacts.SelectedOutputDir "revalidation.json"
+    if (-not (Test-Path -LiteralPath $revalidationPath)) {
+        return -not $manifestCurrent
+    }
+    try {
+        $marker = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json
+        if ("$($marker.status)" -in @("invalid", "needs_manual_review")) {
+            return $false
+        }
+        $shaOk = -not ($marker.PSObject.Properties.Name -contains "selectedManifestSha256") -or
+            $marker.selectedManifestSha256 -eq (Get-FileHash -LiteralPath $artifacts.SelectionPath -Algorithm SHA256).Hash
+        if (-not $shaOk) {
+            return $true
+        }
+        $markerCurrent = ($marker.PSObject.Properties.Name -contains "selectionValidationPolicyVersion") -and
+            [int]$marker.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
+        if ($markerCurrent -and "$($marker.status)" -ne "valid") {
+            return $true
+        }
+        $bakeSelectionManifestPath = Join-Path $WorkItem.exerciseWorkspace "bake\selection_manifest.json"
+        if (
+            $markerCurrent -and
+            -not (Test-Path -LiteralPath $bakeSelectionManifestPath) -and
+            (
+                -not ($marker.PSObject.Properties.Name -contains "retainedSelectedArtifactFallbackVersion") -or
+                [int]$marker.retainedSelectedArtifactFallbackVersion -lt $RetainedSelectedRevalidationVersion
+            )
+        ) {
+            return $true
+        }
+        if (-not $manifestCurrent -and -not $markerCurrent) {
+            return $true
+        }
+        return $false
+    } catch {
+        return $true
+    }
+}
+
+function Invoke-SelectionPolicyReaudit {
+    param([string[]]$ExerciseSlugs)
+
+    # Refresh stale selection session state by re-auditing the retained
+    # artifacts under the current quality policy (the shared library
+    # revalidation flow), so reuse is decided by a current audit instead of
+    # silently discarding validated selections. Failures fall back to the
+    # recorded markers, which is never worse than skipping the re-audit.
+    $reportPath = Join-Path $resolvedWorkspaceRoot "exercise_library_reuse_revalidation_report.json"
+    Write-Host ("Revalidating {0} retained selection(s) under the current quality policy before reuse." -f $ExerciseSlugs.Count)
+    $reauditArguments = [string[]]@(
+        "-m", "exercise_motion_pkg.cli", "revalidate-library-workspace",
+        "--workspace-root", $resolvedWorkspaceRoot,
+        "--exercise-library-json", $resolvedWorkoutPlanJson,
+        "--out-json", $reportPath,
+        "--selected-artifacts-only"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+        $reauditArguments += @("--equipment-json", $EquipmentJson)
+    }
+    foreach ($exerciseSlug in $ExerciseSlugs) {
+        $reauditArguments += @("--only-exercise-slug", $exerciseSlug)
+    }
+    & $PythonCommand @reauditArguments
+    $reauditExitCode = $LASTEXITCODE
+    if ((Test-MotionRunCancelRequested) -or $reauditExitCode -eq 130) {
+        Write-MotionInterruptReceived
+        exit 130
+    }
+    if ($reauditExitCode -ne 0) {
+        Write-Warning ("Selection re-audit exited with code {0}; reuse falls back to the recorded markers." -f $reauditExitCode)
     }
 }
 
@@ -4581,6 +4705,14 @@ $contractPrefetchSummary = [ordered]@{
 $existingSelectedSummaryByIndex = @{}
 $existingSelectedSummaryChecked = @{}
 if ($ReuseExistingSelected) {
+    $policyReauditSlugs = [string[]]@(
+        $workItems |
+            Where-Object { Test-SelectionNeedsPolicyReaudit -WorkItem $_ } |
+            ForEach-Object { "$($_.exerciseSlug)" }
+    )
+    if ($policyReauditSlugs.Count -gt 0) {
+        Invoke-SelectionPolicyReaudit -ExerciseSlugs $policyReauditSlugs
+    }
     foreach ($workItem in $workItems) {
         $indexKey = [string]$workItem.index
         $existingSelectedSummaryChecked[$indexKey] = $true

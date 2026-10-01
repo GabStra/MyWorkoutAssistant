@@ -61,6 +61,96 @@ def test_definition_contract_still_reuses_cache_and_top_level_seed(tmp_path, tar
     assert module.load_seed_exercise_motion_contract_from_candidates_json(seed, target)
 
 
+def test_contract_cache_survives_prompt_wording_changes(tmp_path, target, contract, monkeypatch):
+    # Advisory prompt wording evolves with generation policy; without a policy
+    # bump the exercise definition is unchanged and the cached contract must
+    # stay reusable instead of being orphaned by key churn.
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    assert module.cache_exercise_motion_contract(target, settings, contract)
+    monkeypatch.setattr(
+        module, "build_exercise_motion_contract_prompt",
+        lambda _exercise: "Reworded advisory prompt text for the same exercise.",
+    )
+    cached = module.load_cached_exercise_motion_contract(target, settings)
+    assert cached is not None
+    assert cached["cacheStatus"] == "reused"
+
+
+def test_contract_cache_tracks_definition_and_policy_inputs(tmp_path, target, contract):
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    baseline = module.exercise_motion_contract_cache_path(target, settings)
+    assert baseline is not None
+
+    changed_context = module.ExerciseEntry(
+        exercise_id=target.exercise_id,
+        slug=target.slug,
+        name=target.name,
+        motion_context={"primaryEquipment": {"type": "barbell"}},
+    )
+    assert module.exercise_motion_contract_cache_path(changed_context, settings) != baseline
+
+    changed_name = module.ExerciseEntry(exercise_id=target.exercise_id, slug=target.slug, name="Other Press")
+    assert module.exercise_motion_contract_cache_path(changed_name, settings) != baseline
+
+    original_policy_version = module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+    try:
+        module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION = original_policy_version + 1
+        assert module.exercise_motion_contract_cache_path(target, settings) != baseline
+    finally:
+        module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION = original_policy_version
+
+
+def _write_legacy_contract_cache_entry(tmp_path, target, settings, contract_policy_version):
+    contract = {
+        "status": "generated",
+        "source": "llm",
+        "exerciseName": target.name,
+        "advisoryText": "Press the implement away and return under control.",
+        "youtubeQueryAliases": [target.name],
+        "contractPolicyVersion": contract_policy_version,
+    }
+    legacy_path = module.exercise_motion_contract_legacy_cache_path(target, settings)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(json.dumps({
+        "schemaVersion": module.EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
+        "generatedAt": "2026-09-27T00:00:00+00:00",
+        "exerciseName": target.name,
+        "contract": contract,
+    }), encoding="utf-8")
+    return legacy_path
+
+
+def test_contract_cache_migrates_legacy_prompt_keyed_entries(tmp_path, target):
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    legacy_path = _write_legacy_contract_cache_entry(
+        tmp_path, target, settings, module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+    )
+    stable_path = module.exercise_motion_contract_cache_path(target, settings)
+    assert stable_path is not None and not stable_path.exists()
+
+    cached = module.load_cached_exercise_motion_contract(target, settings)
+    assert cached is not None
+    assert cached["cacheStatus"] == "reused"
+    assert cached["cachePath"] == str(stable_path)
+    # Carried forward under the stable key so the legacy entry can age out.
+    assert stable_path.exists()
+    assert module.load_cached_exercise_motion_contract(target, settings) is not None
+    assert legacy_path.exists()
+
+
+def test_contract_cache_rejects_legacy_entries_from_older_contract_policy(tmp_path, target):
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    _write_legacy_contract_cache_entry(
+        tmp_path, target, settings, module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION - 1
+    )
+    stable_path = module.exercise_motion_contract_cache_path(target, settings)
+    assert stable_path is not None
+
+    assert module.load_cached_exercise_motion_contract(target, settings) is None
+    # A policy bump must not be resurrected through the legacy fallback.
+    assert not stable_path.exists()
+
+
 def test_single_dumbbell_rule_reaches_prompts_and_invalidates_two_arm_cache(tmp_path):
     target = module.ExerciseEntry(exercise_id="press", slug="press", name="Single Dumbbell Incline Press")
     contract = {"status": "generated", "source": "llm", "exerciseName": target.name,
