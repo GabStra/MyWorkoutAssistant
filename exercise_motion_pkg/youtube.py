@@ -29,7 +29,14 @@ from exercise_motion_pkg.gpu_lock import GlobalGpuLock
 from exercise_motion_pkg.shared_llama_server import (
     detach_shared_llama_request_publisher,
     install_shared_llama_request_publisher,
+    live_foreign_generation_holders,
+    resolve_shared_llama_session_dir,
 )
+
+# A supervised shared-server restart can be delayed by an overlapping wave's
+# whole generation phase; attached clients keep extending their wait while a
+# live foreign generation holder owns the GPU, bounded by this ceiling.
+FOREIGN_GENERATION_MAX_WAIT_SECONDS = 20 * 60.0
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_BATCH_SIZE,
     DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
@@ -9375,7 +9382,12 @@ class LlamaCppVisionRanker:
 
     def _wait_for_supervised_server(self) -> None:
         """Attach mode: wait for the supervisor's server (re)start; never spawn."""
-        deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
+        startup_timeout = self.settings.llama_cpp_server_startup_timeout_seconds
+        deadline = time.monotonic() + startup_timeout
+        hard_deadline = time.monotonic() + max(startup_timeout, FOREIGN_GENERATION_MAX_WAIT_SECONDS)
+        shared_session_dir = resolve_shared_llama_session_dir(
+            None, base_url=self.settings.llama_cpp_base_url
+        )
         while time.monotonic() < deadline:
             server_payload = self._server_models_payload()
             if server_payload is not None:
@@ -9383,6 +9395,11 @@ class LlamaCppVisionRanker:
                 self._raise_if_server_runtime_mismatch()
                 self._wait_for_chat_completions_ready()
                 return
+            if live_foreign_generation_holders(shared_session_dir):
+                # An overlapping wave's generation phase holds the GPU (and
+                # quiesced this server); the supervised restart lands when it
+                # ends, so keep waiting instead of failing the attach.
+                deadline = min(hard_deadline, time.monotonic() + startup_timeout)
             time.sleep(1.0)
         raise RuntimeError(
             "Shared llama.cpp server at "

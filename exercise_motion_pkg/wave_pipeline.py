@@ -35,6 +35,12 @@ from exercise_motion_pkg.bake_and_rank import (
 )
 from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
 from exercise_motion_pkg.wham_runner import WhamTrackingPreflightRejected
+from exercise_motion_pkg.shared_llama_server import (
+    clear_generation_holder_marker,
+    live_foreign_generation_holders,
+    resolve_shared_llama_session_dir,
+    write_generation_holder_marker,
+)
 from exercise_motion_pkg.source_outcomes import update_source_outcome_index
 from exercise_motion_pkg.source_review_preflight import SourceReviewIncomplete, review_prepared_source
 from exercise_motion_pkg.source_review_authority import retained_source_attempt_keys
@@ -592,6 +598,7 @@ def effective_wave_final_output_rejection_limit(
 
 def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
     session_dirs = set()
+    shared_session_dir: Path | None = None
     for item in items:
         request = item.request
         if request.use_warm_wham_worker and request.wham_worker_session_dir is not None:
@@ -599,8 +606,27 @@ def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, 
         # getattr: request fakes in tests (SimpleNamespace) may predate this field.
         if getattr(request, "use_warm_gvhmr_worker", False) and request.gvhmr_worker_session_dir is not None:
             session_dirs.add(request.gvhmr_worker_session_dir.expanduser().resolve())
+        if getattr(request, "shared_llama_server", False):
+            shared_session_dir = resolve_shared_llama_session_dir(
+                getattr(request, "shared_llama_server_session_dir", None),
+                base_url=request.llama_cpp_base_url,
+            )
     if not session_dirs:
         return {"requested": False, "stopped": True}
+    if shared_session_dir is not None:
+        foreign_holders = live_foreign_generation_holders(shared_session_dir)
+        if foreign_holders:
+            # An overlapping wave is mid-generation with the warm worker; its
+            # own release pass stops the worker when it finishes. Stopping it
+            # here would stall that wave's jobs for a full worker restart, and
+            # this wave's final VLM cannot start before the shared server
+            # restarts anyway (the generating wave quiesced it).
+            return {
+                "requested": True,
+                "stopped": False,
+                "skippedForForeignGeneration": True,
+                "foreignHolders": [str(h.get("holder")) for h in foreign_holders],
+            }
     started = time.perf_counter()
     stopped_dirs: list[str] = []
     for session_dir in session_dirs:
@@ -1164,6 +1190,20 @@ def _run_staged_bake_wave(
     wham_phase_started = time.perf_counter()
     announce(f"Extracting motion for {len(prepared)} exercise(s).")
     checkpoint("wham_generation")
+    # Announce the exclusive generation phase so an overlapping wave's final
+    # VLM neither stops this wave's warm worker nor expects the shared server
+    # back before this phase ends. Crashes leave a stale marker that readers
+    # reclaim via pid+identity liveness, so no finally-cleanup is required.
+    shared_llama_session_dir = (
+        resolve_shared_llama_session_dir(
+            getattr(items[0].request, "shared_llama_server_session_dir", None),
+            base_url=items[0].request.llama_cpp_base_url,
+        )
+        if getattr(items[0].request, "shared_llama_server", False)
+        else None
+    )
+    if shared_llama_session_dir is not None:
+        write_generation_holder_marker(shared_llama_session_dir, holder=wave_id)
 
     def cached_source_only(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("A staged WHAM pass attempted an uncached source VLM request.")
@@ -1303,6 +1343,8 @@ def _run_staged_bake_wave(
     )
     for state in item_states.values():
         state["whamWorkerRelease"] = wham_release
+    if shared_llama_session_dir is not None:
+        clear_generation_holder_marker(shared_llama_session_dir)
     checkpoint("wham_released")
 
     announce(f"Reviewing {len(wham_ready)} generated movement(s).")
