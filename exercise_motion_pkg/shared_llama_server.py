@@ -33,6 +33,7 @@ START_REQUEST_FILE_NAME = "start_requested.json"
 STOPPED_FILE_NAME = "stopped.json"
 READY_FILE_NAME = "ready.json"
 HEARTBEAT_FILE_NAME = "heartbeat.json"
+GENERATION_HOLDERS_DIRECTORY_NAME = "generation-holders"
 # Two consecutive all-zero in-flight observations this far apart close the
 # admission-vs-drain race: a request admitted just before a foreign stop-intent
 # became visible publishes its counter before its HTTP call starts, so the
@@ -110,6 +111,52 @@ def _owner_is_live(payload: dict[str, object] | None) -> bool:
         if actual_identity is None or actual_identity != expected_identity:
             return False
     return True
+
+
+def write_generation_holder_marker(session_dir: Path, *, holder: str) -> Path:
+    """Announce that this process is running an exclusive generation phase.
+
+    Overlapping waves read these markers so a wave about to start its final
+    VLM phase does not stop the warm reconstruction worker another wave is
+    actively using, and so attached vision clients keep waiting for the
+    supervised server restart until the foreign generation releases the GPU.
+    """
+    holders_dir = session_dir / GENERATION_HOLDERS_DIRECTORY_NAME
+    marker = holders_dir / f"{os.getpid()}.json"
+    _write_json_atomic(marker, {
+        "pid": os.getpid(),
+        "processIdentity": process_identity(os.getpid()),
+        "holder": holder,
+        "startedAtUnixSeconds": time.time(),
+    })
+    return marker
+
+
+def clear_generation_holder_marker(session_dir: Path) -> None:
+    holders_dir = session_dir / GENERATION_HOLDERS_DIRECTORY_NAME
+    _remove(holders_dir / f"{os.getpid()}.json")
+
+
+def live_foreign_generation_holders(session_dir: Path) -> list[dict[str, object]]:
+    """Marker payloads for live generation phases owned by OTHER processes."""
+    holders_dir = session_dir / GENERATION_HOLDERS_DIRECTORY_NAME
+    holders: list[dict[str, object]] = []
+    try:
+        marker_paths = sorted(holders_dir.glob("*.json"))
+    except OSError:
+        return holders
+    for marker_path in marker_paths:
+        payload = _read_json(marker_path)
+        if payload is None:
+            continue
+        pid = payload.get("pid")
+        if isinstance(pid, int) and pid == os.getpid():
+            continue
+        if not _owner_is_live(payload):
+            _remove(marker_path)
+            continue
+        holders.append(payload)
+    return holders
 
 
 @dataclass(frozen=True)
