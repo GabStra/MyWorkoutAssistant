@@ -26,6 +26,10 @@ from exercise_motion_pkg.discovery_budget import DiscoveryBudget
 from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
 from exercise_motion_pkg.ffmpeg_utils import ffmpeg_location_for_ytdlp, resolve_ffmpeg_path
 from exercise_motion_pkg.gpu_lock import GlobalGpuLock
+from exercise_motion_pkg.shared_llama_server import (
+    detach_shared_llama_request_publisher,
+    install_shared_llama_request_publisher,
+)
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_BATCH_SIZE,
     DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
@@ -9043,6 +9047,14 @@ class LlamaCppVisionRanker:
                     )
                     self.gpu_lock_wait_seconds = gpu_lock.__enter__()
                     self.gpu_lock = gpu_lock
+                if self._attaches_shared_server():
+                    # Publishing-only attachment (SHARED_LLAMA_SERVER.md): count
+                    # this process's in-flight caption requests so any quiescing
+                    # client drains them before stopping the shared server.
+                    # Discovery never drives the quiesce protocol itself.
+                    install_shared_llama_request_publisher(
+                        base_url=settings.llama_cpp_base_url
+                    )
                 self._ensure_server()
             self.client = LlamaCppVisionClient(
                 base_url=settings.llama_cpp_base_url,
@@ -9062,6 +9074,7 @@ class LlamaCppVisionRanker:
             # A server can have bound the port or allocated GPU resources before
             # its readiness probe fails. Do not let that partial process poison
             # subsequent discovery retries.
+            self._detach_shared_publisher()
             self._stop_owned_llama_cpp_server(force=True)
             self._release_gpu_lock()
             raise
@@ -9073,7 +9086,12 @@ class LlamaCppVisionRanker:
             try:
                 self._stop_owned_llama_cpp_server(force=force_stop_server)
             finally:
+                self._detach_shared_publisher()
                 self._release_gpu_lock()
+
+    def _detach_shared_publisher(self) -> None:
+        if self._attaches_shared_server():
+            detach_shared_llama_request_publisher()
 
     def _uses_gpu(self) -> bool:
         return str(self.settings.llama_cpp_backend or "").strip().lower() != "cpu"

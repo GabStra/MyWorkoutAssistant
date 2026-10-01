@@ -28,7 +28,7 @@ coordinate *stopping* the server around them (the quiesce protocol below).
 | `llama-server` process lifetime | PowerShell supervisor (`Start-SharedLlamaServer` / `Stop-SharedLlamaServer` in `scripts/run_exercise_motion_workout_plan.ps1`) |
 | Server start / health / restart | Supervisor only |
 | Server stop before exclusive GPU phases | The quiescing *client* process itself (netstat/taskkill via `stop_llama_cpp_servers_for_base_url`), after drain |
-| In-flight request accounting | Each attached process (counter file in the session dir) |
+| In-flight request accounting | One coordinator per attached process (counter file in the session dir); see "In-flight counter ownership" below |
 
 The supervisor owns the process the same way it owns warm WHAM/GVHMR worker
 containers: a session directory with marker files, lazy start on
@@ -48,7 +48,7 @@ so every process pointing at one base URL agrees with no configuration).
 | `ready.json` | Supervisor | `{pid, baseUrl, model, parallel, startedAtUnixSeconds}` - server healthy |
 | `heartbeat.json` | Supervisor | `{updatedAtUnixSeconds}` - supervisor still tending the server |
 | `stop_intent.json` | Quiescing client | `{pid, processIdentity, requestedAtUnixSeconds}` - exclusive GPU phase pending/active; attached clients gate new VLM admissions on a *live* intent |
-| `in-flight/<pid>.json` | Each attached client | `{pid, processIdentity, activeRequests, updatedAtUnixSeconds}` - that process's concurrent VLM request count |
+| `in-flight/<pid>.json` | One coordinator per attached process | `{pid, processIdentity, activeRequests, updatedAtUnixSeconds}` - that process's concurrent VLM request count (wave-session admissions + every non-session shared-server request) |
 | `stopped.json` | Quiescing client | `{stoppedByPid, stoppedAtUnixSeconds}` - observability for the supervisor |
 | `start_requested.json` | Client needing the server back | `{requestedByPid, processIdentity, requestedAtUnixSeconds}` - lazy restart request; supervisor deletes it after a successful restart |
 | `startup_error.json`, `server.log` | Supervisor | startup failure payload, redirected server output |
@@ -76,6 +76,50 @@ Wiring must reconcile the supervisor's reasoning flags with the runtime
 settings (align flags, or pass matching `--llama-cpp-reasoning-budget` /
 `--llama-cpp-disable-reasoning` to shared-mode clients); weakening the
 validation is not an option.
+
+## In-flight counter ownership
+
+Every shared-server vision request in a process is counted exactly once, into
+ONE counter file (`in-flight/<pid>.json`) written by ONE coordinator per
+resolved session dir per process:
+
+- **Single writer per pid.** `shared_llama_coordinator_for(dir)` (a
+  process-global registry in `shared_llama_server.py`) hands every user in the
+  process the same `SharedLlamaServerCoordinator` for a given dir, so wave
+  sessions and discovery/contract clients in one pid can never publish
+  independent counts that clobber each other. The first installed dir wins for
+  the process - every attaching client is expected to resolve the same dir.
+- **Wave sessions count admissions themselves.** `LazyLlamaCppVisionSession`
+  counts a request when it admits it (before its HTTP call, preserving the
+  admission-vs-drain settle guarantee) and suspends the client-level publisher
+  on its thread while the request runs (`suspend_shared_llama_request_publisher`).
+- **Everything else is counted at the client choke point.**
+  `LlamaCppVisionClient.caption_images` wraps every request in
+  `shared_llama_request_scope`: +1 before the request (including retries and
+  recovery), -1 in `finally` on success and exception paths. The scope is a
+  no-op unless this process attached to a shared session dir (a ranker or a
+  wave session installed the process-global publisher), or the calling thread
+  is already counted by a wave session. This covers discovery, contract
+  prefetch, and segment detection without per-caller wiring.
+- **The publisher never quiesces.** The process-global coordinator used by
+  discovery-side attachment is publishing-only: it never acquires a
+  stop-intent, never stops or restarts the server. Only wave sessions drive
+  `begin/end_exclusive_phase`.
+- **Foreign-intent admission gate.** Like the wave session's admission gate,
+  the client-level scope waits while a *live foreign* `stop_intent.json`
+  exists, bounded by the request's timeout (`None` = unbounded, mirroring the
+  session). Own-pid intents do not gate it: a request dispatched from inside
+  this process's own exclusive phase (contract prefetch through an isolated
+  attached ranker) must proceed, not deadlock on ourselves; the wave session's
+  admission gate still closes its own requests during that phase. When the
+  wait budget expires the request is refused before any server contact
+  (`SharedLlamaExclusivePhaseActive`), leaving the counter untouched.
+
+Publisher attachment is refcounted: every attaching `LlamaCppVisionRanker`
+(discovery, contract, segment) installs on creation and detaches on close; a
+wave session installs at init and detaches at close; the last detachment drops
+the counter file, and an `atexit` hook covers unclean exits. The counter file
+survives a detachment while counted requests are still in flight.
 
 ## The QUIESCE protocol (exclusive phases)
 
@@ -118,10 +162,13 @@ validation is not an option.
 
 ### What it does NOT guarantee
 
-- Requests that were already in flight when the intent landed are *not*
-  interrupted gracefully; they fail when the server stops and recover through
-  the existing client recovery path (bounded wait for restart). This is the
-  same exposure as today's owned force-stop.
+- Requests that were already in flight when the intent landed are waited out
+  by the drain (every attached process now publishes its in-flight count,
+  including discovery); they complete rather than being killed. Requests this
+  process dispatches from inside its *own* exclusive phase are the remaining
+  exposure: the session's quiesce does not drain its own pid, so they fail and
+  recover through the existing client recovery path, as with today's owned
+  force-stop.
 - If the supervisor is not running (increment 1 default), nobody restarts the
   server; the next attach/recovery waits out the startup timeout and raises
   an actionable error. Attach with no server at the base URL fails fast.
@@ -220,12 +267,14 @@ Enabled with `-SharedLlamaServer` on `run_exercise_motion_workout_plan.ps1`
   SAME `$LlamaCpp*` params that feed the requests, so the clients' attach-time
   runtime validation (slot count, reasoning flags) always matches.
 
-Known bounded caveat: discovery processes attach by health-poll and do not yet
-publish in-flight counters, so a wave's quiesce can kill one in-flight
-discovery request; the client recovery path waits for the supervised restart
-and retries. Publishing discovery-side counters is the next follow-up, along
-with wave-overlap scheduling (the actual throughput payoff) and sharing the
-server with the standalone bake runner.
+Discovery-side in-flight counters ship with increment 2 (see "In-flight
+counter ownership" above): every shared-server request a discovery process
+makes is published through `LlamaCppVisionClient.caption_images`, and the
+client-level admission gate defers new discovery requests while a live foreign
+exclusive phase holds the server. A wave's quiesce therefore drains discovery
+requests instead of killing them mid-flight. Remaining follow-ups:
+wave-overlap scheduling (the actual throughput payoff) and sharing the server
+with the standalone bake runner.
 
 Live-verified 2026-10-01 (real server): attach+caption, quiesce (3.3s drain ->
 stop -> restart request), supervised restart, caption resume, and

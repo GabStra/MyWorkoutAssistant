@@ -15,10 +15,27 @@ from exercise_motion_pkg.bake_and_rank import BakeAndRankRequest, LazyLlamaCppVi
 from exercise_motion_pkg.gpu_lock import process_identity
 from exercise_motion_pkg.shared_llama_server import (
     INFLIGHT_DIRECTORY_NAME,
+    SHARED_LLAMA_SESSION_DIR_ENV_VAR,
     START_REQUEST_FILE_NAME,
     STOP_INTENT_FILE_NAME,
+    SharedLlamaExclusivePhaseActive,
     SharedLlamaServerCoordinator,
+    detach_shared_llama_request_publisher,
+    install_shared_llama_request_publisher,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_shared_llama_process_state():
+    # The request publisher and coordinator registry are process-global; keep
+    # tests independent of each other's installations.
+    from exercise_motion_pkg.shared_llama_server import (
+        reset_shared_llama_process_state_for_tests,
+    )
+
+    reset_shared_llama_process_state_for_tests()
+    yield
+    reset_shared_llama_process_state_for_tests()
 
 
 class _LiveForeignProcess:
@@ -446,3 +463,208 @@ def test_cli_flags_plumb_into_requests(tmp_path):
         "--shared-llama-server",
     ])
     assert generate_args.shared_llama_server is True
+
+
+# ---------------------------------------------------------------------------
+# Client-level in-flight request publisher (discovery / non-session clients)
+# ---------------------------------------------------------------------------
+
+
+def _published_active_requests(session_dir: Path) -> int | None:
+    counter_path = session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json"
+    try:
+        payload = json.loads(counter_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload.get("activeRequests")
+
+
+class _FakeHttpResponse:
+    status_code = 200
+    text = ""
+
+    def json(self) -> dict[str, object]:
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+
+def _attached_publisher_session_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    session_dir = tmp_path / "publisher-session"
+    monkeypatch.setenv(SHARED_LLAMA_SESSION_DIR_ENV_VAR, str(session_dir))
+    install_shared_llama_request_publisher(base_url="http://127.0.0.1:18090")
+    return session_dir
+
+
+def _vision_client_with_recording_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    session_dir: Path,
+    *,
+    observed: list[int | None],
+    error: Exception | None = None,
+):
+    from exercise_motion_pkg.segment_detection import LlamaCppVisionClient
+
+    client = LlamaCppVisionClient(base_url="http://127.0.0.1:18090", model="model.gguf")
+
+    def fake_post(**_kwargs: object):
+        observed.append(_published_active_requests(session_dir))
+        if error is not None:
+            raise error
+        return _FakeHttpResponse()
+
+    monkeypatch.setattr(client, "_post_chat_completion", fake_post)
+    return client
+
+
+def test_discovery_request_publishes_and_releases_inflight_counter(tmp_path, monkeypatch):
+    session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
+    assert _published_active_requests(session_dir) == 0
+
+    observed: list[int | None] = []
+    client = _vision_client_with_recording_transport(monkeypatch, session_dir, observed=observed)
+    assert client.caption_images(frame_paths=[], prompt="p") == "{}"
+
+    # The counter must be visible at 1 while the HTTP request is in flight and
+    # return to 0 afterwards, so a wave's quiesce drains the request first.
+    assert observed == [1]
+    assert _published_active_requests(session_dir) == 0
+
+
+def test_discovery_request_releases_counter_on_exception(tmp_path, monkeypatch):
+    session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
+    observed: list[int | None] = []
+    client = _vision_client_with_recording_transport(
+        monkeypatch, session_dir, observed=observed, error=RuntimeError("transport exploded")
+    )
+    with pytest.raises(RuntimeError, match="transport exploded"):
+        client.caption_images(frame_paths=[], prompt="p")
+    assert observed == [1]
+    assert _published_active_requests(session_dir) == 0
+
+
+def test_wave_session_request_is_counted_once(tmp_path, monkeypatch):
+    session_dir = tmp_path / "shared-session"
+    observed: list[int | None] = []
+    client = _vision_client_with_recording_transport(monkeypatch, session_dir, observed=observed)
+
+    class FakeRanker:
+        def __init__(self, _settings: object) -> None:
+            self.client = client
+            self.gpu_lock_wait_seconds = 0.0
+
+        def close(self, *, force_stop_server: bool = False) -> None:
+            pass
+
+    monkeypatch.setattr(bake_and_rank_module, "LlamaCppVisionRanker", FakeRanker)
+    session = LazyLlamaCppVisionSession(_shared_request(tmp_path))
+    try:
+        assert session.caption_images(frame_paths=[], prompt="p") == "{}"
+        # The session publishes its admitted count; the client-level publisher
+        # must stay silent for its threads - exactly one counter, not two.
+        assert observed == [1]
+        assert _published_active_requests(session_dir) == 0
+    finally:
+        session.close(force_stop_server=True)
+    assert not (session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json").exists()
+
+
+def test_foreign_stop_intent_gates_discovery_request_until_released(tmp_path, monkeypatch):
+    session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
+    observed: list[int | None] = []
+    client = _vision_client_with_recording_transport(monkeypatch, session_dir, observed=observed)
+
+    foreign = _LiveForeignProcess()
+    try:
+        foreign.write_stop_intent(session_dir)
+        completed = threading.Event()
+        errors: list[BaseException] = []
+
+        def run_caption():
+            try:
+                client.caption_images(frame_paths=[], prompt="p", request_timeout_seconds=10.0)
+                completed.set()
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        caption_thread = threading.Thread(target=run_caption)
+        caption_thread.start()
+        time.sleep(0.8)
+        # A live foreign exclusive phase queues the request before any HTTP
+        # call and before the counter is published.
+        assert not completed.is_set()
+        assert observed == []
+        assert _published_active_requests(session_dir) == 0
+
+        (session_dir / STOP_INTENT_FILE_NAME).unlink()
+        assert _wait_until(completed.is_set, timeout_seconds=5)
+        caption_thread.join(timeout=5)
+        assert not errors
+        assert observed == [1]
+        assert _published_active_requests(session_dir) == 0
+    finally:
+        foreign.stop()
+        detach_shared_llama_request_publisher()
+
+
+def test_foreign_stop_intent_refuses_after_request_wait_budget(tmp_path, monkeypatch):
+    session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
+    observed: list[int | None] = []
+    client = _vision_client_with_recording_transport(monkeypatch, session_dir, observed=observed)
+
+    foreign = _LiveForeignProcess()
+    try:
+        foreign.write_stop_intent(session_dir)
+        started = time.monotonic()
+        with pytest.raises(SharedLlamaExclusivePhaseActive):
+            client.caption_images(frame_paths=[], prompt="p", request_timeout_seconds=1.0)
+        waited = time.monotonic() - started
+        # Refused after the bounded wait, without contacting the server and
+        # without ever publishing an in-flight request.
+        assert waited >= 1.0
+        assert observed == []
+        assert _published_active_requests(session_dir) == 0
+    finally:
+        foreign.stop()
+        detach_shared_llama_request_publisher()
+
+
+def test_publisher_attachments_refcount_until_the_last_detach(tmp_path, monkeypatch):
+    session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
+    counter_path = session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json"
+    assert counter_path.exists()
+
+    # A second attaching ranker reuses the same coordinator and keeps the
+    # counter alive after the first one closes.
+    install_shared_llama_request_publisher(base_url="http://127.0.0.1:18090")
+    detach_shared_llama_request_publisher()
+    assert counter_path.exists()
+
+    detach_shared_llama_request_publisher()
+    assert not counter_path.exists()
+    # Extra detaches are harmless (ranker close + atexit both fire).
+    detach_shared_llama_request_publisher()
+
+
+def test_shared_rankers_install_the_publisher_for_their_process(monkeypatch, tmp_path):
+    from exercise_motion_pkg import youtube as youtube_module
+
+    session_dir = tmp_path / "ranker-publisher-session"
+    monkeypatch.setenv(SHARED_LLAMA_SESSION_DIR_ENV_VAR, str(session_dir))
+    monkeypatch.setattr(
+        youtube_module.LlamaCppVisionRanker,
+        "_ensure_server",
+        lambda self: None,
+    )
+    settings = youtube_module.YouTubeRankingSettings(
+        llama_cpp_base_url="http://127.0.0.1:18090",
+        llama_cpp_shared_server=True,
+        vision_llm_workers=1,
+    )
+    counter_path = session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json"
+    first = youtube_module.LlamaCppVisionRanker(settings)
+    assert counter_path.exists()
+    second = youtube_module.LlamaCppVisionRanker(settings)
+    first.close()
+    assert counter_path.exists()
+    second.close()
+    assert not counter_path.exists()
+

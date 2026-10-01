@@ -18,6 +18,7 @@ from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.contact_sheet_crop import CONTACT_SHEET_CROP_POLICY_VERSION, persistent_border_crop
+from exercise_motion_pkg.shared_llama_server import shared_llama_request_scope
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS,
     DEFAULT_LLAMA_CPP_TEMPERATURE,
@@ -1590,17 +1591,31 @@ class LlamaCppVisionClient:
     ) -> str:
         if self.base_url is None:
             raise RuntimeError("llama-cpp vision mode requires a base URL.")
-        return self._caption_images_via_server(
-            frame_paths=frame_paths,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            request_timeout_seconds=request_timeout_seconds,
-            disable_reasoning=disable_reasoning,
-            json_response=json_response,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-        )
+        # Single choke point for every shared-server vision request (wave
+        # sessions, discovery, contract prefetch): publish this process's
+        # in-flight count so any quiescing client drains us before stopping
+        # the server. No-op unless this process attached to a shared session
+        # dir, and for threads already counted by LazyLlamaCppVisionSession.
+        with shared_llama_request_scope(
+            timeout_seconds=self._resolved_request_timeout(request_timeout_seconds)
+        ):
+            return self._caption_images_via_server(
+                frame_paths=frame_paths,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+                disable_reasoning=disable_reasoning,
+                json_response=json_response,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+            )
+
+    def _resolved_request_timeout(self, request_timeout_seconds: float | None) -> float | None:
+        if request_timeout_seconds is None:
+            return self.request_timeout_seconds
+        requested_timeout = float(request_timeout_seconds)
+        return None if requested_timeout <= 0.0 else max(1.0, requested_timeout)
 
     def _caption_images_via_server(
         self,
@@ -1649,11 +1664,7 @@ class LlamaCppVisionClient:
             raise RuntimeError("llama-cpp server mode requires base URL.")
         image_count = len(frame_paths)
         image_bytes = sum(frame_path.stat().st_size for frame_path in frame_paths if frame_path.exists())
-        if request_timeout_seconds is None:
-            request_timeout: float | None = self.request_timeout_seconds
-        else:
-            requested_timeout = float(request_timeout_seconds)
-            request_timeout = None if requested_timeout <= 0.0 else max(1.0, requested_timeout)
+        request_timeout = self._resolved_request_timeout(request_timeout_seconds)
         request_kwargs: dict[str, object] = {"json": payload, "timeout": request_timeout}
         interaction = "llama-cpp vision chat completion"
         last_error: CriticalVlmInteractionError | None = None

@@ -215,7 +215,11 @@ from exercise_motion_pkg.chunking import (
 from exercise_motion_pkg.shared_llama_server import (
     QuiesceSummary,
     SharedLlamaServerCoordinator,
+    detach_shared_llama_request_publisher,
+    install_shared_llama_request_publisher,
     resolve_shared_llama_session_dir,
+    shared_llama_coordinator_for,
+    suspend_shared_llama_request_publisher,
 )
 
 
@@ -2785,11 +2789,15 @@ class LazyLlamaCppVisionSession:
         self._closed = False
         # Attach mode (see SHARED_LLAMA_SERVER.md): the server is owned by the
         # supervisor, so this session never starts or stops it. Exclusive GPU
-        # phases coordinate through the shared session dir instead.
+        # phases coordinate through the shared session dir instead. The
+        # process-global coordinator registry keeps ONE coordinator (and one
+        # in-flight counter file) per session dir, shared with the
+        # client-level request publisher that counts discovery/contract
+        # requests in this same process.
         self._shared: SharedLlamaServerCoordinator | None = None
         if request.shared_llama_server:
-            self._shared = SharedLlamaServerCoordinator(
-                session_dir=resolve_shared_llama_session_dir(
+            self._shared = shared_llama_coordinator_for(
+                resolve_shared_llama_session_dir(
                     request.shared_llama_server_session_dir,
                     base_url=self.settings.llama_cpp_base_url,
                 ),
@@ -2801,6 +2809,10 @@ class LazyLlamaCppVisionSession:
                 ),
             )
             self._shared.register()
+            # Arm the client-level publisher for non-session requests made by
+            # this process (isolated contract/segment rankers); the session's
+            # own requests suspend it per thread to avoid double counting.
+            install_shared_llama_request_publisher(coordinator=self._shared)
         self.queue_wait_seconds = 0.0
         self.request_seconds = 0.0
         self.request_count = 0
@@ -2886,9 +2898,16 @@ class LazyLlamaCppVisionSession:
         # the owning process releases it.
         return self._shared is not None and self._shared.stop_intent_live()
 
-    def _publish_shared_active_calls_locked(self) -> None:
+    def _shared_request_admitted_locked(self) -> None:
+        # Sessions count admitted requests through the coordinator's counted
+        # scopes (not absolute publishes) so concurrent client-level counts in
+        # this same pid add up instead of clobbering each other.
         if self._shared is not None:
-            self._shared.publish_active_requests(self._active_calls)
+            self._shared.begin_counted_request()
+
+    def _shared_request_released_locked(self) -> None:
+        if self._shared is not None:
+            self._shared.end_counted_request()
 
     def caption_images(self, *args: Any, **kwargs: Any) -> str:
         queued_at = time.perf_counter()
@@ -2942,7 +2961,7 @@ class LazyLlamaCppVisionSession:
             ranker = self._ranker
             self._active_calls += 1
             self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
-            self._publish_shared_active_calls_locked()
+            self._shared_request_admitted_locked()
             candidate_deadline = getattr(self._candidate_deadlines, "value", None)
         candidate_budget_limited_request = False
         if candidate_deadline is not None:
@@ -2950,7 +2969,7 @@ class LazyLlamaCppVisionSession:
             if remaining_seconds <= 0.0:
                 with self._condition:
                     self._active_calls = max(0, self._active_calls - 1)
-                    self._publish_shared_active_calls_locked()
+                    self._shared_request_released_locked()
                     if self._active_calls == 0:
                         self._condition.notify_all()
                 raise CandidateWallTimeBudgetExpired(
@@ -2965,20 +2984,24 @@ class LazyLlamaCppVisionSession:
             )
         request_started = time.perf_counter()
         try:
-            try:
-                return ranker.client.caption_images(*args, **kwargs)
-            except Exception as exc:
-                if candidate_budget_limited_request and is_critical_vlm_interaction_error(exc):
-                    raise CandidateWallTimeBudgetExpired(
-                        "Candidate wall-time budget expired during a VLM request."
-                    ) from None
-                raise
+            # Suspend the client-level publisher for this thread while the
+            # session counts the request itself (see the admitted/released
+            # helpers above): one admitted request, one in-flight counter.
+            with suspend_shared_llama_request_publisher():
+                try:
+                    return ranker.client.caption_images(*args, **kwargs)
+                except Exception as exc:
+                    if candidate_budget_limited_request and is_critical_vlm_interaction_error(exc):
+                        raise CandidateWallTimeBudgetExpired(
+                            "Candidate wall-time budget expired during a VLM request."
+                        ) from None
+                    raise
         finally:
             with self._condition:
                 self.request_seconds += time.perf_counter() - request_started
                 self.request_count += 1
                 self._active_calls = max(0, self._active_calls - 1)
-                self._publish_shared_active_calls_locked()
+                self._shared_request_released_locked()
                 if self._active_calls == 0:
                     self._condition.notify_all()
 
@@ -3148,7 +3171,10 @@ class LazyLlamaCppVisionSession:
             if self._shared is not None:
                 # Attached sessions release nothing of the server itself: drop
                 # our in-flight counter (and any marker we still own) and let
-                # the ranker close tear down only the local HTTP client.
+                # the ranker close tear down only the local HTTP client. The
+                # publisher attachment installed at init is released here too
+                # (the ranker close below releases its own).
+                detach_shared_llama_request_publisher()
                 self._shared.detach()
             self._close_ranker_locked(
                 force_stop_server=force_stop_server,

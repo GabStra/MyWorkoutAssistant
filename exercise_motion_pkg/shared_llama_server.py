@@ -16,9 +16,12 @@ injected as a callable so tests can fake it without touching real processes.
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
 import os
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -120,6 +123,23 @@ class InflightSnapshot:
     live: bool
 
 
+class SharedLlamaExclusivePhaseActive(RuntimeError):
+    """A foreign exclusive phase still held the shared server past the wait budget.
+
+    Raised by the client-level request publisher's admission gate when a live
+    stop-intent owned by another process does not clear within the request's
+    wait budget; the request never started, so no server contact was made.
+    """
+
+
+def _publishing_only_stop_server() -> None:
+    # Publishing-only coordinators never quiesce: a discovery/contract client
+    # must never stop the supervisor's server. Loud failure if that changes.
+    raise RuntimeError(
+        "shared-llama request publishers never drive the exclusive quiesce protocol"
+    )
+
+
 @dataclass
 class QuiesceSummary:
     """Observable outcome of one exclusive quiesce, for lifecycle events."""
@@ -154,6 +174,8 @@ class SharedLlamaServerCoordinator:
         self._inflight_dir = session_dir / INFLIGHT_DIRECTORY_NAME
         self._counter_path = self._inflight_dir / f"{os.getpid()}.json"
         self._identity = process_identity(os.getpid())
+        self._counted_lock = threading.Lock()
+        self._counted_active_requests = 0
         self.quiesce_wait_seconds = 0.0
         self.quiesce_count = 0
         self.server_stop_count = 0
@@ -163,11 +185,16 @@ class SharedLlamaServerCoordinator:
     # --- registration -----------------------------------------------------
 
     def register(self) -> None:
-        self.publish_active_requests(0)
+        with self._counted_lock:
+            self.publish_active_requests(self._counted_active_requests)
 
     def detach(self) -> None:
         """Leave the session: drop our counter and any markers we still own."""
-        _remove(self._counter_path)
+        with self._counted_lock:
+            # Keep the counter file while counted requests are still in flight;
+            # a removed file would hide them from a foreign drainer.
+            if self._counted_active_requests <= 0:
+                _remove(self._counter_path)
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
         if self._owns_stop_intent(intent_path):
             _remove(intent_path)
@@ -187,9 +214,74 @@ class SharedLlamaServerCoordinator:
         """True while any live process has declared an exclusive GPU phase."""
         return _owner_is_live(_read_json(self.session_dir / STOP_INTENT_FILE_NAME))
 
+    def foreign_stop_intent_live(self) -> bool:
+        """True while a *foreign* live process holds an exclusive GPU phase.
+
+        Unlike :meth:`stop_intent_live`, our own intent does not count: the
+        client-level publisher runs in processes that deliberately quiesce the
+        server (wave exclusive phases), and requests dispatched from inside our
+        own exclusive phase - e.g. contract prefetch through an isolated
+        attached ranker - must proceed, not deadlock on ourselves.
+        """
+        payload = _read_json(self.session_dir / STOP_INTENT_FILE_NAME)
+        pid = payload.get("pid") if payload is not None else None
+        return (
+            isinstance(pid, int)
+            and pid != os.getpid()
+            and _owner_is_live(payload)
+        )
+
     def _owns_stop_intent(self, intent_path: Path) -> bool:
         payload = _read_json(intent_path)
         return payload is not None and payload.get("pid") == os.getpid()
+
+    # --- process-wide counted request scopes ---------------------------------
+
+    def begin_counted_request(self) -> None:
+        """Admit one request into this process's in-flight counter."""
+        with self._counted_lock:
+            self._counted_active_requests += 1
+            self.publish_active_requests(self._counted_active_requests)
+
+    def end_counted_request(self) -> None:
+        """Release one request from this process's in-flight counter."""
+        with self._counted_lock:
+            self._counted_active_requests = max(0, self._counted_active_requests - 1)
+            self.publish_active_requests(self._counted_active_requests)
+
+    def counted_active_requests(self) -> int:
+        with self._counted_lock:
+            return self._counted_active_requests
+
+    @contextlib.contextmanager
+    def counted_request_scope(self, *, max_wait_seconds: float | None = None):
+        """Count one in-flight request, gated on live foreign exclusive phases.
+
+        Mirrors ``LazyLlamaCppVisionSession``'s caption admission: wait while a
+        live foreign stop-intent exists (bounded by ``max_wait_seconds``; None
+        waits indefinitely), then publish the counter *before* the wrapped
+        request starts so the drainer's settle window observes it.
+        """
+        self._wait_out_foreign_stop_intent(max_wait_seconds)
+        self.begin_counted_request()
+        try:
+            yield
+        finally:
+            self.end_counted_request()
+
+    def _wait_out_foreign_stop_intent(self, max_wait_seconds: float | None) -> None:
+        deadline = (
+            time.monotonic() + max(0.0, float(max_wait_seconds))
+            if max_wait_seconds is not None
+            else None
+        )
+        while self.foreign_stop_intent_live():
+            if deadline is not None and time.monotonic() >= deadline:
+                raise SharedLlamaExclusivePhaseActive(
+                    "shared llama server held by a foreign exclusive GPU phase for "
+                    f"longer than the {max_wait_seconds}s request wait budget"
+                )
+            time.sleep(self._poll_seconds)
 
     # --- in-flight observation ---------------------------------------------
 
@@ -228,7 +320,11 @@ class SharedLlamaServerCoordinator:
         started = time.monotonic()
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
         self._acquire_stop_intent(intent_path, summary)
-        self.publish_active_requests(0)
+        with self._counted_lock:
+            # Our own admissions are drained by now; counted client-scope
+            # requests (discovery/contract rankers in this pid) stay visible so
+            # foreign drainers keep seeing the truth about this process.
+            self.publish_active_requests(self._counted_active_requests)
         self._drain_foreign_inflight(summary)
         summary.stopped_server = self._stop_shared_server()
         _write_json_atomic(self.session_dir / STOPPED_FILE_NAME, {
@@ -246,7 +342,8 @@ class SharedLlamaServerCoordinator:
         if self._owns_stop_intent(intent_path):
             _remove(intent_path)
         self._request_restart()
-        self.publish_active_requests(0)
+        with self._counted_lock:
+            self.publish_active_requests(self._counted_active_requests)
 
     def _acquire_stop_intent(self, intent_path: Path, summary: QuiesceSummary) -> None:
         while True:
@@ -325,3 +422,161 @@ class SharedLlamaServerCoordinator:
             "sharedVisionRestartRequestCount": self.restart_request_count,
             "sharedVisionPeakForeignActiveRequests": self.peak_foreign_active_requests,
         }
+
+
+# ---------------------------------------------------------------------------
+# Process-global in-flight request publisher
+#
+# Ownership rule (see SHARED_LLAMA_SERVER.md): within one process there is
+# exactly ONE coordinator per resolved session dir (the registry below), and
+# that coordinator owns this pid's `in-flight/<pid>.json` counter file. Wave
+# sessions count their admitted requests through the coordinator's counted
+# scopes while suspending the client-level publisher on their threads; every
+# other shared-server request (discovery, contract prefetch, segment
+# detection) is counted automatically by ``LlamaCppVisionClient.caption_images``
+# wrapping the request in ``shared_llama_request_scope``. The publisher NEVER
+# drives the quiesce protocol - discovery never stops the server - it only
+# publishes this process's in-flight count and defers to foreign exclusive
+# phases at admission.
+# ---------------------------------------------------------------------------
+
+_coordinator_registry_lock = threading.RLock()
+_coordinator_registry: dict[Path, SharedLlamaServerCoordinator] = {}
+
+_publisher_state_lock = threading.RLock()
+_publisher_coordinator: SharedLlamaServerCoordinator | None = None
+_publisher_refcount = 0
+_publisher_atexit_registered = False
+_publisher_thread_suppression = threading.local()
+
+
+def shared_llama_coordinator_for(
+    session_dir: Path,
+    *,
+    base_url: str | None,
+    stop_server: Callable[[], object] | None = None,
+) -> SharedLlamaServerCoordinator:
+    """Return the one coordinator this process uses for ``session_dir``.
+
+    Sessions pass their real ``stop_server`` (and may upgrade a coordinator
+    first created publishing-only by an attaching ranker); publishing-only
+    installers pass ``None`` so they never disarm an existing quiescer.
+    """
+    with _coordinator_registry_lock:
+        coordinator = _coordinator_registry.get(session_dir)
+        if coordinator is None:
+            coordinator = SharedLlamaServerCoordinator(
+                session_dir=session_dir,
+                base_url=base_url,
+                stop_server=stop_server if stop_server is not None else _publishing_only_stop_server,
+            )
+            _coordinator_registry[session_dir] = coordinator
+        elif stop_server is not None:
+            coordinator._stop_server = stop_server
+        return coordinator
+
+
+def reset_shared_llama_process_state_for_tests() -> None:
+    """Drop the process-global registry/publisher (test isolation only)."""
+    global _publisher_coordinator, _publisher_refcount
+    with _publisher_state_lock:
+        _publisher_coordinator = None
+        _publisher_refcount = 0
+    with _coordinator_registry_lock:
+        _coordinator_registry.clear()
+
+
+@contextlib.contextmanager
+def suspend_shared_llama_request_publisher():
+    """Mark the current thread as already counted by a wave session.
+
+    ``LazyLlamaCppVisionSession`` publishes its admitted-request count itself,
+    so the client-level publisher must stay silent for requests made on its
+    threads while it owns them - otherwise the same request would be counted
+    twice. Re-entrant per thread.
+    """
+    previous = getattr(_publisher_thread_suppression, "depth", 0)
+    _publisher_thread_suppression.depth = previous + 1
+    try:
+        yield
+    finally:
+        _publisher_thread_suppression.depth = previous
+
+
+def _publisher_requests_suppressed() -> bool:
+    return getattr(_publisher_thread_suppression, "depth", 0) > 0
+
+
+def install_shared_llama_request_publisher(
+    *,
+    base_url: str | None = None,
+    session_dir: Path | None = None,
+    coordinator: SharedLlamaServerCoordinator | None = None,
+) -> SharedLlamaServerCoordinator | None:
+    """Attach this process to the shared session dir for request counting.
+
+    Lazily creates the publishing-only coordinator from the first attaching
+    client's settings (``resolve_shared_llama_session_dir``), registers it, and
+    detaches on interpreter exit. Refcounted: each install must be matched by
+    one :func:`detach_shared_llama_request_publisher`. The first installed
+    session dir wins for the process - every attaching client is expected to
+    resolve the same dir (env var / port default).
+    """
+    global _publisher_coordinator, _publisher_refcount, _publisher_atexit_registered
+    with _publisher_state_lock:
+        if coordinator is None:
+            if _publisher_coordinator is not None:
+                _publisher_refcount += 1
+                return _publisher_coordinator
+            resolved = resolve_shared_llama_session_dir(session_dir, base_url=base_url)
+            coordinator = shared_llama_coordinator_for(resolved, base_url=base_url)
+        elif _publisher_coordinator is not None and _publisher_coordinator is not coordinator:
+            # A wave session adopting its own coordinator after another dir was
+            # installed: keep the first-installed dir, as any ranker would.
+            _publisher_refcount += 1
+            return _publisher_coordinator
+        if _publisher_coordinator is None:
+            _publisher_coordinator = coordinator
+            _publisher_refcount = 0
+            if not _publisher_atexit_registered:
+                atexit.register(detach_shared_llama_request_publisher)
+                _publisher_atexit_registered = True
+        _publisher_refcount += 1
+        coordinator.register()
+        return _publisher_coordinator
+
+
+def detach_shared_llama_request_publisher() -> None:
+    """Release one publisher attachment; the last one leaves the session dir."""
+    global _publisher_coordinator, _publisher_refcount
+    with _publisher_state_lock:
+        if _publisher_coordinator is None:
+            return
+        _publisher_refcount = max(0, _publisher_refcount - 1)
+        if _publisher_refcount > 0:
+            return
+        coordinator = _publisher_coordinator
+        _publisher_coordinator = None
+        _publisher_refcount = 0
+    coordinator.detach()
+
+
+@contextlib.contextmanager
+def shared_llama_request_scope(*, timeout_seconds: float | None = None):
+    """Wrap one shared-server vision request with this process's counter.
+
+    No-op unless a publisher is installed for this process, or the calling
+    thread is already counted by a wave session (suspended). Otherwise: wait
+    out any live foreign exclusive phase (bounded by ``timeout_seconds``,
+    mirroring the wave session's admission gate), then +1 the in-flight
+    counter for the whole request - including exception paths - and -1 it in
+    ``finally`` so any quiescing client drains us before stopping the server.
+    """
+    with _publisher_state_lock:
+        coordinator = _publisher_coordinator
+    if coordinator is None or _publisher_requests_suppressed():
+        yield
+        return
+    with coordinator.counted_request_scope(max_wait_seconds=timeout_seconds):
+        yield
+
