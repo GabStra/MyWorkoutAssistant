@@ -340,7 +340,9 @@ def build_runner_command(
 
 def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             staged_wave_size: int, staged_wave_max_wait_seconds: int,
-            stall_seconds: float = 180.0,
+            # A cold GVHMR docker start is legitimately silent for minutes;
+            # 300s still fast-fails a real wedge inside the 45-minute budget.
+            stall_seconds: float = 300.0,
             extra_runner_args: list[str] | None = None) -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():

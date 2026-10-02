@@ -79,7 +79,17 @@ def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp_path.write_text(json.dumps(payload), encoding="utf-8")
-    os.replace(tmp_path, path)
+    # Windows raises transient WinError 5 when another process still holds an
+    # open handle on the destination (observed racing the contract-prefetch
+    # session's shutdown); a short bounded retry absorbs it.
+    for attempt in range(4):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            time.sleep(0.25 * (attempt + 1))
 
 
 def _read_json(path: Path) -> dict[str, object] | None:
