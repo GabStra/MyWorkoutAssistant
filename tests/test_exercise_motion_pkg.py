@@ -16735,6 +16735,48 @@ def test_source_pose_endpoint_contract_accepts_hinged_below_hip_rack_pull_bounda
     assert validation["passed"] is True
 
 
+def test_review_item_contract_reduction_carries_generated_provenance() -> None:
+    """Endpoint gating classifies generated expectations by contract provenance.
+
+    The prompt-shaped reduction drops status/source; the review-item contract
+    must carry them back or the materialized gate hard-blocks mismatches the
+    full contract classifies as advisory (observed 2026-10-02: OHP rejected on
+    a start-window handHeight expectation).
+    """
+    contract = {
+        "exerciseName": "Dumbbell Overhead Press",
+        "status": "generated",
+        "source": "llm",
+        "advisoryText": "Press the dumbbells overhead to full extension.",
+    }
+    ranking = bake_and_rank_module.LoopRanking(
+        score=1.0,
+        reasons=[],
+        payload={"exerciseMotionContract": contract},
+    )
+    item = bake_and_rank_module.ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Overhead press",
+        candidate_workspace=Path("."),
+        preview_html_path=Path("preview.html"),
+        skeleton_path=Path("skeleton.json"),
+        review_video_path=Path("review.webm"),
+        duration_sec=3.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=3.0,
+        candidate={"videoId": "video"},
+    )
+
+    merged = bake_and_rank_module.exercise_motion_contract_for_review_item(item, ranking)
+
+    assert merged is not None
+    assert merged["status"] == "generated"
+    assert merged["source"] == "llm"
+
+
 def test_generated_endpoint_pose_expectations_are_advisory_but_explicit_contracts_block() -> None:
     upright = {
         "supportMode": "standing",

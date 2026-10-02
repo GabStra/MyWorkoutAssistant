@@ -31758,7 +31758,15 @@ def exercise_motion_contract_for_review_item(item: ReviewItem, ranking: LoopRank
     if isinstance(contract, dict):
         prompt_contract = exercise_motion_contract_for_prompt(contract)
         if prompt_contract is not None:
-            return prompt_contract
+            # The prompt-shaped reduction drops status/source; downstream
+            # gating classifies generated expectations by that provenance, so
+            # carry it back before returning the reduced contract.
+            provenance = {
+                key: contract[key]
+                for key in ("status", "source", "exerciseMotionContractStatus")
+                if contract.get(key) is not None
+            }
+            return {**provenance, **prompt_contract}
         if observable_motion_spec_for_contract(contract) is not None:
             return contract
     prompt_contract = exercise_motion_contract_from_candidate(item.candidate)
