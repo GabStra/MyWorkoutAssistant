@@ -363,7 +363,7 @@ fun WorkoutsCalendar(
         availableMonths.firstOrNull() ?: currentMonth
     }
     val endMonth = remember(availableMonths, currentMonth) {
-        availableMonths.lastOrNull() ?: currentMonth
+        maxOf(availableMonths.lastOrNull() ?: currentMonth, currentMonth)
     }
 
     val daysOfWeek = remember { daysOfWeek() }

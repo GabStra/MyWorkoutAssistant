@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -619,18 +620,34 @@ fun WearApp(
                                     targetValue = progress,
                                     animationSpec = tween(durationMillis = 400)
                                 )
+                                // Processing is the longest silent stage; a live elapsed
+                                // counter keeps it from reading as a hung spinner.
+                                val processingElapsedSeconds by produceState(0, syncPhase) {
+                                    if (syncPhase == SyncPhase.PROCESSING) {
+                                        while (true) {
+                                            delay(1000)
+                                            value++
+                                        }
+                                    } else {
+                                        value = 0
+                                    }
+                                }
 
                                 val syncStageText = when (syncPhase) {
                                     SyncPhase.CONNECTING -> "Connecting to phone"
                                     SyncPhase.TRANSFERRING -> "Receiving data"
-                                    SyncPhase.PROCESSING -> "Processing data"
+                                    SyncPhase.PROCESSING -> "Processing data · ${processingElapsedSeconds}s"
                                     SyncPhase.COMPLETED -> "Sync complete"
                                 }
                                 FullScreenLoadingIndicator(
                                     text = syncStageText,
+                                    // Only the chunk transfer has a known fraction;
+                                    // processing duration is unknown, so it stays
+                                    // indeterminate (the elapsed counter shows liveness).
                                     progress = animatedProgress.takeIf {
                                         syncPhase == SyncPhase.TRANSFERRING
                                     },
+                                    completed = syncPhase == SyncPhase.COMPLETED,
                                 )
                             }
                         }

@@ -1558,78 +1558,54 @@ private fun GeneratedLowPolyMesh.toShadedMesh(
     includeColors: Boolean = true,
     includeIndices: Boolean = true,
 ): ShadedMeshData {
-    val vertexCount = vertices.size
-    val normals = Array(vertexCount) { WearSkeletonVec3(0f, 0f, 0f) }
-    val fills = if (includeColors) Array(vertexCount) { Color.White } else emptyArray()
+    // The browser bake lights every polygon with its own flat normal; emit a
+    // triangle soup so each corner carries its face's normal and reproduces
+    // the same faceted shading instead of smoothed per-vertex normals.
+    val poseVertexList = ArrayList<Float>()
+    val colorList = ArrayList<Float>()
+    val indexList = ArrayList<Int>()
     faces.forEach { face ->
         val points = face.vertexIndices.mapNotNull { index -> vertices.getOrNull(index) }
         if (points.size < 3) {
             return@forEach
         }
         val normal = (points[1] - points[0]).cross(points[2] - points[1])
-        face.vertexIndices.forEach { index ->
-            if (index in 0 until vertexCount) {
-                normals[index] = normals[index] + normal
-                if (includeColors) {
-                    fills[index] = face.fill
-                }
+            .normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
+        fun addCorner(point: WearSkeletonVec3) {
+            require(poseVertexList.size / FilamentPoseFloatCount <= UShort.MAX_VALUE.toInt()) {
+                "Wear skeleton mesh exceeded 16-bit index capacity."
+            }
+            poseVertexList += point.x
+            poseVertexList += point.y
+            poseVertexList += point.z
+            poseVertexList += normal.x
+            poseVertexList += normal.y
+            poseVertexList += normal.z
+            poseVertexList += 0f
+            if (includeColors) {
+                // The browser bake multiplies the light level into the raw sRGB
+                // color; keep the same space so shading contrast matches.
+                colorList += face.fill.red
+                colorList += face.fill.green
+                colorList += face.fill.blue
+                colorList += face.fill.alpha
+            }
+            if (includeIndices) {
+                indexList += indexList.size
             }
         }
-    }
-
-    val poseVertices = FloatArray(vertexCount * FilamentPoseFloatCount)
-    val colors = if (includeColors) {
-        FloatArray(vertexCount * FilamentColorFloatCount)
-    } else {
-        FloatArray(0)
-    }
-    for (index in 0 until vertexCount) {
-        val point = vertices[index]
-        val normal = normals[index].normalizedOr(WearSkeletonVec3(0f, 1f, 0f))
-        val poseOffset = index * FilamentPoseFloatCount
-        poseVertices[poseOffset] = point.x
-        poseVertices[poseOffset + 1] = point.y
-        poseVertices[poseOffset + 2] = point.z
-        poseVertices[poseOffset + 3] = normal.x
-        poseVertices[poseOffset + 4] = normal.y
-        poseVertices[poseOffset + 5] = normal.z
-        poseVertices[poseOffset + 6] = 0f
-        if (includeColors) {
-            val colorOffset = index * FilamentColorFloatCount
-            val fill = fills[index]
-            colors[colorOffset] = fill.red.srgbToLinearChannel()
-            colors[colorOffset + 1] = fill.green.srgbToLinearChannel()
-            colors[colorOffset + 2] = fill.blue.srgbToLinearChannel()
-            colors[colorOffset + 3] = fill.alpha
+        for (fanIndex in 1 until points.lastIndex) {
+            addCorner(points[0])
+            addCorner(points[fanIndex])
+            addCorner(points[fanIndex + 1])
         }
-    }
-
-    val indices = if (!includeIndices) {
-        intArrayOf()
-    } else {
-        val indexList = ArrayList<Int>()
-        faces.forEach { face ->
-            val corners = face.vertexIndices.filter { it in 0 until vertexCount }
-            if (corners.size < 3) {
-                return@forEach
-            }
-            for (fanIndex in 1 until corners.lastIndex) {
-                require(indexList.size + 3 <= UShort.MAX_VALUE.toInt()) {
-                    "Wear skeleton mesh exceeded 16-bit index capacity."
-                }
-                indexList += corners[0]
-                indexList += corners[fanIndex]
-                indexList += corners[fanIndex + 1]
-            }
-        }
-        indexList.toIntArray()
     }
 
     return ShadedMeshData(
-        poseVertices = poseVertices,
-        colors = colors,
-        indices = indices,
-        vertexCount = vertexCount,
+        poseVertices = poseVertexList.toFloatArray(),
+        colors = if (includeColors) colorList.toFloatArray() else FloatArray(0),
+        indices = if (includeIndices) indexList.toIntArray() else intArrayOf(),
+        vertexCount = poseVertexList.size / FilamentPoseFloatCount,
         modelBounds = modelBounds,
     )
 }
@@ -1654,9 +1630,10 @@ private fun buildFloorMesh(
         poseVertices += up.y
         poseVertices += up.z
         poseVertices += 0f
-        colors += color.red.srgbToLinearChannel()
-        colors += color.green.srgbToLinearChannel()
-        colors += color.blue.srgbToLinearChannel()
+        // Same space as the browser bake: raw sRGB, multiplied in-shader.
+        colors += color.red
+        colors += color.green
+        colors += color.blue
         colors += color.alpha
     }
 

@@ -275,8 +275,18 @@ class DataLayerListenerService : WearableListenerService() {
             localNodeId = resolveLocalNodeId()
         }
         
-        // Detect service restart and handle incomplete syncs
-        detectAndHandleServiceRestart()
+        // Detect service restart and handle incomplete syncs. A re-bind within the
+        // same process is not a restart: the sync state is not stale and transfer
+        // or processing may be mid-flight, so auto-heal must not fire.
+        if (serviceCreatedInThisProcess) {
+            Log.d(
+                "DataLayerSync",
+                "Service re-bound within the same process; skipping restart auto-heal."
+            )
+        } else {
+            serviceCreatedInThisProcess = true
+            detectAndHandleServiceRestart()
+        }
         reconcileBackupSyncStateIfNeeded()
     }
     
@@ -291,8 +301,15 @@ class DataLayerListenerService : WearableListenerService() {
         
         // Check if there's an incomplete sync
         val hasIncompleteSync = hasStartedSync && currentTransactionId != null
-        
-        if (hasIncompleteSync && (currentTime - lastServiceStartTime > serviceRestartThreshold)) {
+
+        if (hasIncompleteSync && currentTransactionId == activeProcessingTransactionId) {
+            // The service was re-bound while backup processing from this process is
+            // still running; the persisted state only looks stale. Do not heal.
+            Log.i(
+                "DataLayerSync",
+                "Service re-bound during active sync; processing still running for transaction: $currentTransactionId. Skipping auto-heal."
+            )
+        } else if (hasIncompleteSync && (currentTime - lastServiceStartTime > serviceRestartThreshold)) {
             val transactionId = currentTransactionId
             Log.w(
                 "DataLayerSync",
@@ -501,6 +518,16 @@ class DataLayerListenerService : WearableListenerService() {
     private val timeoutRunnable = Runnable {
         if (timeoutOperationCancelled) {
             return@Runnable // Exit if cancelled
+        }
+        // Late retry chunks can re-arm this timeout after the sync already
+        // completed and cleaned up; without an active sync there is nothing to
+        // fail and the success screen must not be overwritten.
+        if (!hasStartedSync || currentTransactionId == null) {
+            Log.d(
+                "DataLayerListenerService",
+                "Timeout triggered after sync end; ignoring (no active sync)"
+            )
+            return@Runnable
         }
         Log.d("DataLayerListenerService", "Timeout triggered")
 
@@ -1223,21 +1250,38 @@ class DataLayerListenerService : WearableListenerService() {
                             if (!ignoreUntilStartOrEnd && shouldStop && !isRetry) {
                                 removeTimeout()
                                 removeRetryTimeout()
-                                val intent = Intent(INTENT_ID).apply {
-                                    putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-                                    setPackage(packageName)
+
+                                if (isStart) {
+                                    // A new transaction supersedes the active one. Reset old state and
+                                    // fall through: the start handling below must initialize this sync,
+                                    // otherwise its chunks are ignored waiting for a start that was
+                                    // already consumed here.
+                                    Log.d(
+                                        "DataLayerSync",
+                                        "Superseding active sync $currentTransactionId with new transaction: $transactionId"
+                                    )
+                                    backupChunks = mutableMapOf()
+                                    receivedChunkIndices = mutableSetOf()
+                                    expectedChunks = 0
+                                    hasStartedSync = false
+                                    currentTransactionId = null
+                                } else {
+                                    val intent = Intent(INTENT_ID).apply {
+                                        putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                        setPackage(packageName)
+                                    }
+
+                                    sendBroadcast(intent)
+
+                                    backupChunks = mutableMapOf()
+                                    receivedChunkIndices = mutableSetOf()
+                                    expectedChunks = 0
+                                    hasStartedSync = false
+                                    currentTransactionId = null
+
+                                    ignoreUntilStartOrEnd = true
+                                    return
                                 }
-
-                                sendBroadcast(intent)
-
-                                backupChunks = mutableMapOf()
-                                receivedChunkIndices = mutableSetOf()
-                                expectedChunks = 0
-                                hasStartedSync = false
-                                currentTransactionId = null
-
-                                ignoreUntilStartOrEnd = true
-                                return
                             }
 
                             if (isStart) {
@@ -1361,6 +1405,14 @@ class DataLayerListenerService : WearableListenerService() {
                                     }
                                     sendBroadcast(processingIntent)
                                     backupProcessingJob = scope.launch(Dispatchers.IO) {
+                                        // Snapshot the transaction's transfer state: the
+                                        // SharedPreferences-backed properties are re-read on every
+                                        // access, so a superseding sync resetting them mid-processing
+                                        // would corrupt validation and chunk combination.
+                                        val processingChunks = backupChunks.toMap()
+                                        val processingReceivedIndices = receivedChunkIndices.toSet()
+                                        val processingExpectedChunks = expectedChunks
+                                        activeProcessingTransactionId = transactionId
                                         var processingStep = "initialization"
                                         try {
                                             transactionId?.let { tid ->
@@ -1396,10 +1448,10 @@ class DataLayerListenerService : WearableListenerService() {
                                             
                                             // Log chunk reception details
                                             val chunkReceptionStartTime = System.currentTimeMillis()
-                                            val receivedIndicesList = receivedChunkIndices.sorted()
+                                            val receivedIndicesList = processingReceivedIndices.sorted()
                                             Log.d(
                                                 "DataLayerSync",
-                                                "Chunk validation for transaction: $transactionId - Expected: $expectedChunks, Received: ${backupChunks.size}, Received indices: $receivedIndicesList"
+                                                "Chunk validation for transaction: $transactionId - Expected: $processingExpectedChunks, Received: ${processingChunks.size}, Received indices: $receivedIndicesList"
                                             )
                                             
                                             // Check connection state during validation - fail fast if disconnected
@@ -1410,8 +1462,8 @@ class DataLayerListenerService : WearableListenerService() {
 
                                             // Validate that all expected chunks are present
                                             val missingIndices = mutableListOf<Int>()
-                                            for (i in 0 until expectedChunks) {
-                                                if (i !in receivedChunkIndices) {
+                                            for (i in 0 until processingExpectedChunks) {
+                                                if (i !in processingReceivedIndices) {
                                                     missingIndices.add(i)
                                                 }
                                             }
@@ -1426,10 +1478,10 @@ class DataLayerListenerService : WearableListenerService() {
                                             if (missingIndices.isNotEmpty()) {
                                                 Log.e(
                                                     "DataLayerSync",
-                                                    "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${backupChunks.size}, Missing indices: $missingIndices, Validation time: ${validationTime}ms"
+                                                    "Validation failed: Missing chunks. Expected: $processingExpectedChunks, Received: ${processingChunks.size}, Missing indices: $missingIndices, Validation time: ${validationTime}ms"
                                                 )
                                                 // Log chunk delivery metrics
-                                                val deliveryRate = (backupChunks.size.toFloat() / expectedChunks * 100).toInt()
+                                                val deliveryRate = (processingChunks.size.toFloat() / processingExpectedChunks * 100).toInt()
                                                 Log.e(
                                                     "DataLayerSync",
                                                     "Chunk delivery metrics - Delivery rate: $deliveryRate%, Missing: ${missingIndices.size}, Transaction: $transactionId"
@@ -1439,7 +1491,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 transactionId?.let { tid ->
                                                     try {
                                                         val errorMessage =
-                                                            "MISSING_CHUNKS: Expected $expectedChunks chunks, received ${backupChunks.size}. Missing indices: $missingIndices"
+                                                            "MISSING_CHUNKS: Expected $processingExpectedChunks chunks, received ${processingChunks.size}. Missing indices: $missingIndices"
                                                         Log.e(
                                                             "DataLayerSync",
                                                             "Sending SYNC_ERROR for transaction: $tid due to missing chunks"
@@ -1485,7 +1537,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 // Don't clear chunk state yet - may receive retry chunks
                                                 // Don't send APP_BACKUP_FAILED - keep syncing screen visible for retry
                                                 removeRetryTimeout()
-                                                postRetryTimeout(maxOf(expectedChunks, 1))
+                                                postRetryTimeout(maxOf(processingExpectedChunks, 1))
                                                 return@launch
                                             }
 
@@ -1499,17 +1551,17 @@ class DataLayerListenerService : WearableListenerService() {
                                             processingStep = "combining chunks"
                                             Log.d(
                                                 "DataLayerSync",
-                                                "All chunks validated. Combining ${backupChunks.size} chunks for transaction: $transactionId"
+                                                "All chunks validated. Combining ${processingChunks.size} chunks for transaction: $transactionId"
                                             )
 
                                             // Combine chunks in index order
                                             val sortedChunks =
-                                                (0 until expectedChunks).mapNotNull { index ->
-                                                    backupChunks[index]
+                                                (0 until processingExpectedChunks).mapNotNull { index ->
+                                                    processingChunks[index]
                                                 }
 
-                                            if (sortedChunks.size != expectedChunks) {
-                                                throw IllegalStateException("Expected $expectedChunks chunks but only ${sortedChunks.size} found after validation")
+                                            if (sortedChunks.size != processingExpectedChunks) {
+                                                throw IllegalStateException("Expected $processingExpectedChunks chunks but only ${sortedChunks.size} found after validation")
                                             }
 
                                             val backupData = combineChunks(sortedChunks)
@@ -1710,12 +1762,16 @@ class DataLayerListenerService : WearableListenerService() {
                                                 )
 
                                                 markTransactionCompleted(transactionId)
-                                                backupChunks = mutableMapOf()
-                                                receivedChunkIndices = mutableSetOf()
-                                                expectedChunks = 0
-                                                hasStartedSync = false
-                                                ignoreUntilStartOrEnd = false
-                                                currentTransactionId = null
+                                                // Only clear if this transaction is still the active one;
+                                                // a superseding sync owns the shared state now.
+                                                if (currentTransactionId == transactionId) {
+                                                    backupChunks = mutableMapOf()
+                                                    receivedChunkIndices = mutableSetOf()
+                                                    expectedChunks = 0
+                                                    hasStartedSync = false
+                                                    ignoreUntilStartOrEnd = false
+                                                    currentTransactionId = null
+                                                }
                                                 removeRetryTimeout()
                                             }
                                         } catch (exception: Exception) {
@@ -1857,12 +1913,16 @@ class DataLayerListenerService : WearableListenerService() {
 
                                             // Clean up state and notify UI of failure
                                             removeRetryTimeout()
-                                            backupChunks = mutableMapOf()
-                                            receivedChunkIndices = mutableSetOf()
-                                            expectedChunks = 0
-                                            hasStartedSync = false
-                                            ignoreUntilStartOrEnd = false
-                                            currentTransactionId = null
+                                            // Only clear if this transaction is still the active one;
+                                            // a superseding sync owns the shared state now.
+                                            if (currentTransactionId == transactionId) {
+                                                backupChunks = mutableMapOf()
+                                                receivedChunkIndices = mutableSetOf()
+                                                expectedChunks = 0
+                                                hasStartedSync = false
+                                                ignoreUntilStartOrEnd = false
+                                                currentTransactionId = null
+                                            }
 
                                             // Send broadcast to reset UI state (dismiss loading screen)
                                             val failedIntent = Intent(INTENT_ID).apply {
@@ -1874,6 +1934,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                 "DataLayerSync",
                                                 "Sent APP_BACKUP_FAILED broadcast to reset UI state"
                                             )
+                                        } finally {
+                                            if (activeProcessingTransactionId == transactionId) {
+                                                activeProcessingTransactionId = null
+                                            }
                                         }
                                     }
                                 }
@@ -2064,6 +2128,17 @@ class DataLayerListenerService : WearableListenerService() {
         private const val TAG = "DataLayerListenerService"
         private const val MAX_COMPLETED_TRANSACTION_IDS = 128
         private const val PREFS_COMPLETED_ORDERED = "completedTransactionIdsOrdered"
+
+        // Process-wide so a service re-bind (new instance, same process) can tell
+        // "backup processing still running" apart from "process died mid-sync";
+        // only the latter should trigger auto-heal.
+        @Volatile
+        var activeProcessingTransactionId: String? = null
+
+        // False until the first onCreate in this process; a later onCreate is a
+        // re-bind of the same process, not a service restart.
+        @Volatile
+        var serviceCreatedInThisProcess = false
 
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"

@@ -3,8 +3,13 @@ package com.gabstra.myworkoutassistant.screens
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
@@ -52,6 +57,7 @@ import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.SyncStatusCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
@@ -1025,23 +1031,22 @@ fun WorkoutsScreen(
         )
 
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
-        LoadingOverlay(
-            isVisible = isSyncing,
-            text = when (syncPhase) {
-                SyncPhase.CONNECTING -> "Connecting to watch..."
-                SyncPhase.TRANSFERRING -> "Sending data to watch..."
-                SyncPhase.PROCESSING -> "Watch is processing received data..."
-                SyncPhase.COMPLETED -> "Sync complete"
-                null -> "Preparing sync..."
-            },
-            useOpaqueBackground = true,
-            progress = if (syncPhase == SyncPhase.TRANSFERRING) {
-                syncProgress?.let { animatedSyncProgress }
-            } else {
-                null
-            },
-            onCancel = onCancelSync,
-        )
+        // Manual sync never modifies phone data, so it runs as a non-modal banner
+        // and the rest of the screen stays interactive.
+        AnimatedVisibility(
+            visible = isSyncing,
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            SyncStatusCard(
+                phase = syncPhase,
+                // Determinate only while chunks are transferring; the progress
+                // value is stale/meaningless in the other phases.
+                progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },
+                onCancel = onCancelSync,
+            )
+        }
         LoadingOverlay(
             isVisible = rememberMinimumLoadingVisibility(
                 isLoading = isExportingWorkoutDataForLlm,
