@@ -122,6 +122,42 @@ def test_pre_render_gate_rejects_cleanup_support_and_required_loop_bridge(tmp_pa
     ]
 
 
+def test_pre_render_gate_skips_loop_bridge_for_declared_nonloop_artifact(tmp_path, monkeypatch):
+    """The authoritative full-clip bake contains setup/teardown by construction.
+
+    Its cyclic boundaries are owned by the observed 3D cycle selection, so the
+    seam premise only applies once the artifact declares a loop span.
+    """
+    payload = {"fps": 30, "loop": {"enabled": False, "label": "Full clip"}, "jointNames": ["pelvis"], "frames": [
+        {"timeSec": 0.0, "joints": {"pelvis": [0.0, 1.0, 0.0]}},
+        {"timeSec": 1.0, "joints": {"pelvis": [0.0, 1.0, 0.0]}},
+    ]}
+    monkeypatch.setattr(bake, "compute_kinematic_plausibility_metrics_from_payload", lambda *_: {
+        "artifactReasons": [], "processingIncompleteReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_source_pose_fidelity_metrics", lambda **_: {
+        "rejectionReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_cleanup_support_metrics", lambda *a, **k: {
+        "supportContactContradiction": False,
+        "unsupportedElevatedSupportGeometry": False,
+    })
+    monkeypatch.setattr(bake, "compute_loop_bridge_quality_metrics_from_payload", lambda *_: {
+        "severeLoopMismatch": True,
+    })
+
+    gate = bake.pre_render_deterministic_gate(
+        payload,
+        None,
+        exercise_motion_contract={"exerciseName": "Bench Press", "requiresReturnToStart": True},
+        candidate_workspace=tmp_path,
+        skeleton_path=tmp_path / "skeleton.json",
+    )
+
+    assert gate["rejectionReasons"] == []
+    assert gate["loopBridge"]["severeLoopMismatch"] is True
+
+
 def test_incomplete_processing_preserves_source_and_resumes_processing(tmp_path):
     candidate = {"status": "needs_motion_processing", "candidate": {"videoId": "good-source"},
                  "reconstructionAttempted": True,

@@ -8840,8 +8840,23 @@ def materialized_output_acceptance_metrics(
     ):
         rejection_reasons.append("materialized_foot_lock_conflicts_with_overhead_hand_support")
     loop_continuity_required = review_item_loop_continuity_required(item, ranking)
-    if bool(loop_bridge_metrics.get("severeLoopMismatch")) and loop_continuity_required:
+    # The seam premise applies to the artifact that plays on loop. The
+    # authoritative full-clip bake legitimately contains setup/teardown; its
+    # cyclic boundaries are owned by the observed 3D cycle selection and the
+    # looped re-bake is validated on its own. Payloads without loop state are
+    # treated as looped so the check stays conservative for unknown shapes.
+    loop_info = export_payload.get("loop") if isinstance(export_payload, dict) else None
+    artifact_loop_enabled = (
+        loop_info.get("enabled") is True if isinstance(loop_info, dict) else True
+    )
+    if (
+        bool(loop_bridge_metrics.get("severeLoopMismatch"))
+        and loop_continuity_required
+        and artifact_loop_enabled
+    ):
         rejection_reasons.append("materialized_loop_bridge_pose_mismatch")
+    elif bool(loop_bridge_metrics.get("severeLoopMismatch")) and not artifact_loop_enabled:
+        skipped_reasons.append("materialized_loop_bridge_mismatch_ignored_nonloop_artifact")
     elif bool(loop_bridge_metrics.get("severeLoopMismatch")):
         skipped_reasons.append("materialized_loop_bridge_mismatch_ignored_loop_not_required")
     ranking_skipped = any(
@@ -25848,6 +25863,14 @@ def pre_render_deterministic_gate(
         str((exercise_motion_contract or {}).get("exerciseName") or ""),
         ranking_payload={"exerciseMotionContract": exercise_motion_contract},
     )
+    # The seam premise applies to the loop span. The authoritative full-clip
+    # bake contains setup/teardown by construction; its cyclic boundaries are
+    # owned by the observed 3D cycle selection and the looped re-bake is
+    # validated separately. Payloads without loop state keep the check.
+    loop_span_info = payload.get("loop")
+    loop_continuity_applies = loop_continuity_required and (
+        not isinstance(loop_span_info, dict) or loop_span_info.get("enabled") is True
+    )
     reasons = dedupe_text(kinematics["artifactReasons"]
                          + kinematics.get("processingIncompleteReasons", [])
                          + fidelity.get("rejectionReasons", [])
@@ -25857,7 +25880,7 @@ def pre_render_deterministic_gate(
                          + (["materialized_unrendered_elevated_support_surface"]
                             if cleanup_support.get("unsupportedElevatedSupportGeometry") else [])
                          + (["materialized_loop_bridge_pose_mismatch"]
-                            if loop_continuity_required and loop_bridge.get("severeLoopMismatch")
+                            if loop_continuity_applies and loop_bridge.get("severeLoopMismatch")
                             else []))
     return {"passed": not reasons, "rejectionReasons": reasons,
             "kinematics": kinematics, "sourcePoseFidelity": fidelity,
