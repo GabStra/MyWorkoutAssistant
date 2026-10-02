@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +36,7 @@ DEFAULT_SOURCE_CACHE_DIR = REPO_ROOT / "build/exercise_motion/youtube-source-cac
 HARNESS_ROOT = REPO_ROOT / "build/exercise_motion/speed-harness"
 SMOKE_CHECK_ROOT = HARNESS_ROOT / "smoke-check"
 DEFAULT_MOTION_PYTHON = r"C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
+GVHMR_DOCKER_IMAGE = "myworkoutassistant/gvhmr:torch2.3-cu121"
 PATH_TEXT_SUFFIXES = {".html", ".json", ".jsonl", ".md", ".toml", ".txt", ".yaml", ".yml"}
 
 # Small default smoke pair. It may fail discovery before reaching staged
@@ -338,11 +340,85 @@ def build_runner_command(
     return args
 
 
+def prewarm_gvhmr_worker(timeout_seconds: float = 600.0) -> dict:
+    """Run the production warm-worker container once until ready, then stop it.
+
+    The worker's cold in-container startup (python imports + ViTPose/HMR2
+    init, ~350-460s measured) is page-cache dominated; a silent cold start
+    inside a timed arm reads as a wedge and can be stall-killed before it
+    becomes ready. Warming once before the first arm gives every arm the same
+    fast-start environment. Mirrors the production docker invocation in
+    run_exercise_motion_workout_plan.ps1.
+    """
+    pkg_dir = REPO_ROOT / "exercise_motion_pkg"
+    state_dir = HARNESS_ROOT / "prewarm" / "gvhmr-warm-worker"
+    workspace_dir = HARNESS_ROOT / "prewarm" / "workspace"
+    for child in ("jobs", "running", "results", "job_logs"):
+        (state_dir / child).mkdir(parents=True, exist_ok=True)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    for stale in ("ready.json", "heartbeat.json", "startup_error.json", "stop", "stopped.json"):
+        path = state_dir / stale
+        if path.exists():
+            path.unlink()
+    container = f"mwa-gvhmr-prewarm-{uuid.uuid4().hex[:12]}"
+    args = [
+        "docker", "run", "-d", "--rm", "--name", container,
+        "--gpus", "all", "--shm-size", "8g",
+        "-v", str(pkg_dir / "gvhmr_inference.py") + ":/worker/gvhmr_inference.py:ro",
+        "-v", str(pkg_dir / "gvhmr_pkl_export.py") + ":/worker/gvhmr_pkl_export.py:ro",
+        "-v", str(workspace_dir) + ":/workspace",
+        "-v", str(state_dir) + ":/worker_state",
+        "-v", str(pkg_dir / "gvhmr_warm_worker.py") + ":/worker/gvhmr_warm_worker.py:ro",
+        "-w", "/opt/gvhmr",
+        GVHMR_DOCKER_IMAGE,
+        "python", "-u", "/worker/gvhmr_warm_worker.py",
+        "--state-dir", "/worker_state",
+    ]
+    started = time.perf_counter()
+    print(f"[harness] prewarming GVHMR worker (cold start ~350-460s when uncached)...", flush=True)
+    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ready_path = state_dir / "ready.json"
+    ready_payload = None
+    while time.perf_counter() - started < timeout_seconds:
+        if process.poll() is not None and process.returncode != 0:
+            break
+        if ready_path.is_file():
+            try:
+                ready_payload = json.loads(ready_path.read_text(encoding="utf-8"))
+                break
+            except ValueError:
+                pass
+        time.sleep(2.0)
+    if ready_payload is not None:
+        (state_dir / "stop").write_text("{}", encoding="utf-8")
+        try:
+            process.wait(timeout=180)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
+    else:
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
+        process.poll()
+    elapsed = round(time.perf_counter() - started, 1)
+    result = {
+        "ready": ready_payload is not None,
+        "prewarmSeconds": elapsed,
+        "workerLoadSeconds": (ready_payload or {}).get("loadSeconds"),
+        "workerGpuName": (ready_payload or {}).get("gpuName"),
+    }
+    print(
+        f"[harness] prewarm {'OK' if result['ready'] else 'FAILED'}: {elapsed}s "
+        f"(worker load {result['workerLoadSeconds']}s)",
+        flush=True,
+    )
+    return result
+
+
 def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             staged_wave_size: int, staged_wave_max_wait_seconds: int,
-            # A cold GVHMR docker start is legitimately silent for minutes;
-            # 300s still fast-fails a real wedge inside the 45-minute budget.
-            stall_seconds: float = 300.0,
+            # The warm GVHMR worker's cold in-container startup (imports +
+            # ViTPose/HMR2 init, ~350-460s measured) is silent in run.log;
+            # 600s still fast-fails a real wedge inside the 45-minute budget.
+            stall_seconds: float = 600.0,
             extra_runner_args: list[str] | None = None) -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
@@ -506,6 +582,10 @@ def main() -> None:
         help="Partial-wave wait before flushing; production library default is 300.",
     )
     parser.add_argument("--keep-workspaces", action="store_true")
+    parser.add_argument(
+        "--skip-prewarm", action="store_true",
+        help="Do not run the one-shot GVHMR worker pre-warm before the first arm",
+    )
     args = parser.parse_args()
 
     arm_names = [name.strip() for name in args.arms.split(",") if name.strip()]
@@ -544,6 +624,9 @@ def main() -> None:
     fixture_manifest_sha = sha256_file(args.fixtures) if args.fixtures is not None else None
 
     results = []
+    prewarm_result = None
+    if not args.smoke_check and not args.skip_prewarm:
+        prewarm_result = prewarm_gvhmr_worker()
     requested_arms = arm_names[:1] if args.smoke_check else arm_names
     for arm in requested_arms:
         arm_dir = run_root / arm
