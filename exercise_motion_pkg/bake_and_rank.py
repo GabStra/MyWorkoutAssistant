@@ -23956,6 +23956,10 @@ def validate_exact_pre_wham_source_video(
     )
     if isinstance(source_pose_reference, dict):
         source_pose_reference_path = cache_path.with_name("exact_source_pose_reference.json")
+        # The shared-cache layout redirects cache_path into a per-key
+        # subdirectory that may not exist yet; the reference write precedes
+        # the cache write (which creates the parent) and must not fail.
+        source_pose_reference_path.parent.mkdir(parents=True, exist_ok=True)
         source_pose_reference_path.write_text(
             json.dumps(
                 {
