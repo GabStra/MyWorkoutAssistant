@@ -4,6 +4,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -11,10 +13,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,6 +34,7 @@ import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,6 +60,7 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
@@ -110,36 +117,15 @@ private fun ExerciseDefinition.details(
     equipmentNamesById: Map<UUID, String>,
     accessoryNamesById: Map<UUID, String>,
 ): List<ExerciseDefinitionDetail> = buildList {
-    add(ExerciseDefinitionDetail("Type", exerciseType.name.toDisplayLabel()))
-    add(
-        ExerciseDefinitionDetail(
-            "Equipment",
-            equipmentId?.let { equipmentNamesById[it] ?: "Unknown equipment" } ?: "None",
-        ),
-    )
-    exerciseCategory?.let { category ->
-        add(ExerciseDefinitionDetail("Category", category.name.toDisplayLabel()))
-    }
     if (exerciseType == ExerciseType.BODY_WEIGHT) {
         bodyWeightPercentage?.let { percentage ->
-            add(ExerciseDefinitionDetail("Body-weight contribution", "$percentage%"))
+            add(
+                ExerciseDefinitionDetail(
+                    "Body weight",
+                    "Counts as $percentage% of body weight",
+                ),
+            )
         }
-    }
-    muscleGroups.orEmpty().takeIf { it.isNotEmpty() }?.let { muscles ->
-        add(
-            ExerciseDefinitionDetail(
-                "Primary muscles",
-                muscles.map { it.name.toDisplayLabel() }.sorted().joinToString(),
-            ),
-        )
-    }
-    secondaryMuscleGroups.orEmpty().takeIf { it.isNotEmpty() }?.let { muscles ->
-        add(
-            ExerciseDefinitionDetail(
-                "Secondary muscles",
-                muscles.map { it.name.toDisplayLabel() }.sorted().joinToString(),
-            ),
-        )
     }
     requiredAccessoryEquipmentIds.orEmpty().takeIf { it.isNotEmpty() }?.let { accessoryIds ->
         add(
@@ -150,9 +136,6 @@ private fun ExerciseDefinition.details(
                 }.sorted().joinToString(),
             ),
         )
-    }
-    if (movementRef != null) {
-        add(ExerciseDefinitionDetail("Motion preview", "Available"))
     }
 }
 
@@ -223,6 +206,7 @@ fun ExerciseLibraryScreen(
     var selectedFamilies by remember { mutableStateOf(emptyList<ExerciseFamily>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
     var definitionsPendingDelete by remember { mutableStateOf(emptyList<ExerciseDefinition>()) }
+    var movementPreviewFamily by remember { mutableStateOf<ExerciseFamily?>(null) }
     val usagesByDefinitionId = remember(workouts, plans) {
         buildExerciseDefinitionUsages(workouts, plans)
     }
@@ -413,6 +397,28 @@ fun ExerciseLibraryScreen(
                                 Column(
                                     modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
                                 ) {
+                                    if (familyMovementRef != null) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { movementPreviewFamily = family }
+                                                .padding(vertical = Spacing.xs),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.PlayCircle,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                text = "View movement",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    }
                                     family.variations.forEachIndexed { variationIndex, definition ->
                                         if (variationIndex > 0) {
                                             HorizontalDivider(
@@ -430,12 +436,8 @@ fun ExerciseLibraryScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            Text(
-                                                text = definition.variationLabel(),
-                                                modifier = Modifier.weight(1f),
-                                                style = MaterialTheme.typography.labelLarge,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                            )
+                                            VariationLabelChip(definition.variationLabel())
+                                            Spacer(Modifier.weight(1f))
                                             Box(
                                                 modifier = Modifier
                                                     .size(32.dp)
@@ -473,13 +475,9 @@ fun ExerciseLibraryScreen(
                                                 )
                                             }
                                         }
+                                        DetailChipsSection(definition)
                                         ExerciseDefinitionDetailsSection(
-                                            definition.details(equipmentNamesById, accessoryNamesById)
-                                                .filterNot {
-                                                    it.label == "Type" ||
-                                                        it.label == "Equipment" ||
-                                                        it.label == "Motion preview"
-                                                },
+                                            definition.details(equipmentNamesById, accessoryNamesById),
                                         )
                                         UsageSection(activeUsages, onOpenPlan, onOpenWorkout)
                                     }
@@ -553,6 +551,22 @@ fun ExerciseLibraryScreen(
         }
     }
 
+    movementPreviewFamily?.let { family ->
+        StandardDialog(
+            onDismissRequest = { movementPreviewFamily = null },
+            title = family.name,
+            body = {
+                ExerciseMovementPreviewPage(
+                    movementRef = family.variations.firstNotNullOfOrNull { it.movementRef },
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                )
+            },
+            dismissText = "Close",
+            onDismissButton = { movementPreviewFamily = null },
+            showConfirm = false,
+        )
+    }
+
     ConfirmationDialog(
         show = definitionsPendingDelete.isNotEmpty(),
         title = "Delete selected exercises?",
@@ -571,6 +585,84 @@ fun ExerciseLibraryScreen(
         },
         onDismiss = { definitionsPendingDelete = emptyList() },
     )
+}
+
+@Composable
+private fun VariationLabelChip(label: String) {
+    Box(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private enum class DetailChipTone { CATEGORY, PRIMARY_MUSCLE, SECONDARY_MUSCLE }
+
+@Composable
+private fun DetailChip(text: String, tone: DetailChipTone) {
+    val shape = MaterialTheme.shapes.small
+    val modifier = when (tone) {
+        DetailChipTone.CATEGORY ->
+            Modifier
+                .background(MaterialTheme.colorScheme.primaryContainer, shape)
+        DetailChipTone.PRIMARY_MUSCLE ->
+            Modifier
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), shape)
+        DetailChipTone.SECONDARY_MUSCLE ->
+            Modifier
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                    shape = shape,
+                )
+    }
+    Box(modifier = modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = when (tone) {
+                DetailChipTone.CATEGORY -> MaterialTheme.colorScheme.onPrimaryContainer
+                DetailChipTone.PRIMARY_MUSCLE -> MaterialTheme.colorScheme.onSurface
+                DetailChipTone.SECONDARY_MUSCLE -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailChipsSection(definition: ExerciseDefinition) {
+    val category = definition.exerciseCategory
+    val primaryMuscles = definition.muscleGroups.orEmpty()
+    val secondaryMuscles = definition.secondaryMuscleGroups.orEmpty()
+    if (category == null && primaryMuscles.isEmpty() && secondaryMuscles.isEmpty()) return
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (category != null || primaryMuscles.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                category?.let { DetailChip(it.name.toDisplayLabel(), DetailChipTone.CATEGORY) }
+                primaryMuscles.forEach { muscle ->
+                    DetailChip(muscle.name.toDisplayLabel(), DetailChipTone.PRIMARY_MUSCLE)
+                }
+            }
+        }
+        if (secondaryMuscles.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                secondaryMuscles.forEach { muscle ->
+                    DetailChip(muscle.name.toDisplayLabel(), DetailChipTone.SECONDARY_MUSCLE)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -646,7 +738,7 @@ private fun UsageSection(
     )
     if (usages.isEmpty()) {
         Text(
-            text = "No active workouts",
+            text = "Not used in any active workout",
             modifier = Modifier.padding(top = 4.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -674,63 +766,61 @@ private fun UsageSection(
                             else Modifier
                         ),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
                     Text(
                         text = planUsages.first().planName ?: "Without a workout plan",
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    if (planId != null) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open workout plan",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
                 planUsages
                     .sortedBy { it.workout.name.lowercase() }
                     .forEach { usage ->
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenWorkout(usage.workout.id) }
-                                .padding(start = Spacing.sm, top = Spacing.sm, bottom = Spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                .padding(start = Spacing.md, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                            ) {
+                            Text(
+                                text = usage.workout.name,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            if (usage.placementCount > 1) {
                                 Text(
-                                    text = usage.workout.name,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                if (usage.placementCount > 1) {
-                                    Text(
-                                        text = "${usage.placementCount} uses",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (usage.placementNameOverrides.isNotEmpty()) {
-                                Text(
-                                    text = usage.placementNameOverrides.joinToString(
-                                        prefix = if (usage.placementNameOverrides.size == 1) {
-                                            "Workout name: "
-                                        } else {
-                                            "Workout names: "
-                                        },
-                                    ),
+                                    text = "${usage.placementCount} uses",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Open workout",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (usage.placementNameOverrides.isNotEmpty()) {
+                            Text(
+                                text = usage.placementNameOverrides.joinToString(prefix = "Shown as: "),
+                                modifier = Modifier.padding(start = Spacing.md),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                 }
             }
