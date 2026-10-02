@@ -4,7 +4,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -51,7 +50,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
@@ -345,10 +343,12 @@ fun ExerciseLibraryScreen(
                         StyledCard(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.medium)
                                 .combinedClickable(
                                     onClick = onItemClick,
                                     onLongClick = onItemLongClick,
                                 ),
+                            borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                         ) {
                         Column(
                             modifier = Modifier
@@ -411,18 +411,19 @@ fun ExerciseLibraryScreen(
                             }
                             if (expanded) {
                                 Column(
-                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.md),
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
                                 ) {
-                                    family.variations.forEach { definition ->
+                                    family.variations.forEachIndexed { variationIndex, definition ->
+                                        if (variationIndex > 0) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(vertical = Spacing.sm),
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                            )
+                                        }
                                         val activeUsages = usagesByDefinitionId[definition.id].orEmpty()
                                             .filter { it.workout.isActive }
                                         Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(MaterialTheme.colorScheme.surface)
-                                                .padding(Spacing.md),
+                                            modifier = Modifier.fillMaxWidth(),
                                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                                         ) {
                                         Row(

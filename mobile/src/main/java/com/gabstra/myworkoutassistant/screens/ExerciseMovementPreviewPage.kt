@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.outlined.MotionPhotosOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -193,11 +192,9 @@ private fun MovementStatus(
                 strokeWidth = 2.dp,
             )
         } else {
-            Icon(
-                imageVector = Icons.Outlined.MotionPhotosOff,
+            MovementUnavailablePlaceholder(
                 contentDescription = text,
-                modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
