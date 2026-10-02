@@ -36,6 +36,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from dataclasses import replace as dataclass_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -181,6 +182,8 @@ from exercise_motion_pkg.youtube import (
     vision_payload_has_legacy_boundary_override,
     EXERCISE_MOTION_CONTRACT_LLAMA_MAX_TOKENS,
     EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+    cache_exercise_motion_contract,
+    load_cached_exercise_motion_contract,
     ExerciseEntry,
     POSE_PREFILTER_HARD_REJECT_ISSUES,
     LlamaCppVisionRanker,
@@ -194,6 +197,7 @@ from exercise_motion_pkg.youtube import (
     exercise_motion_contract_uses_candidate_evidence,
     exercise_motion_contract_for_prompt,
     exercise_motion_contract_prompt_body,
+    exercise_motion_contract_quality_issues,
     contract_pose_support_mode,
     find_cached_youtube_preview,
     normalize_exercise_motion_contract,
@@ -2738,6 +2742,7 @@ class BakeAndRankRequest:
     text_llama_cpp_mmproj: str | None = DEFAULT_TEXT_LLAMA_CPP_MMPROJ
     exercise_contract_llama_cpp_model: str | None = None
     exercise_contract_llama_cpp_mmproj: str | None = None
+    exercise_motion_contract_cache_dir: Path | None = None
     artifact_retention: str = ARTIFACT_RETENTION_DEBUG
 
 
@@ -6721,18 +6726,42 @@ def generate_specific_exercise_motion_contract(
     source: str,
     request_timeout_seconds: float,
 ) -> tuple[dict[str, Any] | None, str | None, str | None]:
-    """Generate a contract with thinking first and a direct JSON fallback."""
+    """Generate a contract with thinking first, then direct JSON fallbacks.
+
+    The final attempt is a repair pass with deterministic validation feedback,
+    mirroring the discovery-time contract generation repair arm; without it a
+    degenerate first draft blocks source preparation with no retry.
+    """
     prompt = build_exercise_motion_contract_prompt(exercise)
     failures: list[str] = []
     last_raw: str | None = None
     last_contract: dict[str, Any] | None = None
-    for disable_reasoning in (False, True):
-        generation_mode = "direct" if disable_reasoning else "thinking"
+    for generation_mode, disable_reasoning in (
+        ("thinking", False),
+        ("direct", True),
+        ("direct_repair", True),
+    ):
         attempt_prompt = prompt
         if failures:
-            attempt_prompt += "\nCorrect the previous contract validation failures: " + " | ".join(failures)
-            if last_contract is not None:
-                attempt_prompt += "\nPrevious draft: " + json.dumps(last_contract, default=str)
+            if generation_mode == "direct_repair" and last_contract is not None:
+                attempt_prompt += (
+                    "\nThe previous draft failed deterministic contract validation. Correct the entire contract, not "
+                    "only the quoted words. Re-evaluate the physical support posture, natural target-action boundary, "
+                    "completionMode, requiresReturnToStart, end state, and required phases from normal exercise knowledge. "
+                    "Do not preserve a return phase when it is normally assistance or reset.\n"
+                    "Validation issues: "
+                    + json.dumps(
+                        exercise_motion_contract_quality_issues(last_contract, exercise=exercise),
+                        ensure_ascii=False,
+                    )
+                    + "\nPrevious draft: "
+                    + json.dumps(exercise_motion_contract_for_prompt(last_contract), ensure_ascii=False, default=str)
+                    + "\nReturn one corrected minified JSON object using the original required keys."
+                )
+            else:
+                attempt_prompt += "\nCorrect the previous contract validation failures: " + " | ".join(failures)
+                if last_contract is not None:
+                    attempt_prompt += "\nPrevious draft: " + json.dumps(last_contract, default=str)
         try:
             last_raw = call_caption_images_json(
                 caption_images,
@@ -16202,6 +16231,19 @@ def generate_exercise_motion_contract_for_bake(
     started = time.perf_counter()
     caption_callback = caption_images
     contract_model = request.llama_cpp_model
+    cache_settings: YouTubeRankingSettings | None = None
+    if request.exercise_motion_contract_cache_dir is not None:
+        # Discovery and contract prefetch fill this cache; the wave/bake path
+        # must reuse it instead of regenerating (and re-failing) the same
+        # contract. Keyed identically to the discovery-time cache.
+        cache_settings = dataclass_replace(
+            exercise_contract_llama_cpp_settings(build_llama_cpp_vision_settings(request)),
+            exercise_motion_contract_cache_dir=request.exercise_motion_contract_cache_dir,
+        )
+        cached_contract = load_cached_exercise_motion_contract(exercise, cache_settings)
+        if cached_contract is not None:
+            cached_contract["exerciseMotionContractStatus"] = "reused_contract_cache"
+            return cached_contract
     try:
         if request.llama_cpp_base_url is not None:
             contract_settings = exercise_contract_llama_cpp_settings(build_llama_cpp_vision_settings(request))
@@ -16267,6 +16309,8 @@ def generate_exercise_motion_contract_for_bake(
         contract["model"] = contract_model
         contract["generationElapsedSeconds"] = elapsed_seconds(started)
         contract["exerciseMotionContractStatus"] = "generated_on_demand"
+        if cache_settings is not None:
+            cache_exercise_motion_contract(exercise, cache_settings, contract)
         return contract
     except Exception as exc:
         if is_critical_vlm_interaction_error(exc):

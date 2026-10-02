@@ -4862,6 +4862,9 @@ foreach ($exercise in $exerciseList.exercises) {
         "-m", "exercise_motion_pkg.cli",
         "bake-and-rank",
         "--candidates-json", $exerciseCandidatesPath,
+        # Shared contract cache with discovery/contract prefetch so staged
+        # waves reuse generated contracts instead of regenerating them.
+        "--exercise-motion-contract-cache-dir", $exerciseMotionContractCachePath,
         "--fallback-candidates", "$FallbackCandidates",
         "--max-source-window-attempts", "$MaxSourceWindowAttempts",
         "--max-final-output-rejections", "$MaxFinalOutputRejections",
