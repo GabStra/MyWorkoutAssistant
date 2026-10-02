@@ -38,5 +38,21 @@ RUN python -m pip install --no-cache-dir --no-build-isolation -e .
 # (gitignored) and copied in. GVHMR license is research/non-profit only.
 COPY inputs/checkpoints /opt/gvhmr/inputs/checkpoints
 
+# Startup-cost levers, measured 2026-10-02:
+# - COPY does not byte-compile the application tree (pip does this for
+#   site-packages), so every cold import recompiled /opt/gvhmr from source.
+# - The model checkpoint loads pay a full eager read; mmap=True streams them
+#   from the page cache instead. Tensor parity was verified against the
+#   plain-load image on a real extraction job before this became default.
+RUN sed -i \
+        -e 's/torch\.load(ckpt_path, "cpu")/torch.load(ckpt_path, "cpu", mmap=True)/' \
+        -e 's/check = torch\.load(checkpoint)/check = torch.load(checkpoint, mmap=True)/' \
+            /opt/gvhmr/hmr4d/model/gvhmr/gvhmr_pl_demo.py \
+            /opt/gvhmr/hmr4d/model/gvhmr/gvhmr_pl.py \
+            /opt/gvhmr/hmr4d/utils/net_utils.py \
+            /opt/gvhmr/hmr4d/utils/preproc/vitpose_pytorch/src/vitpose_infer/model_builder.py \
+            /opt/gvhmr/hmr4d/utils/preproc/vitpose_pytorch/src/vitpose_infer/builder/model_builder.py \
+    && python -m compileall -q /opt/gvhmr
+
 WORKDIR /opt/gvhmr
 CMD ["bash"]

@@ -16738,21 +16738,21 @@ def test_source_pose_endpoint_contract_accepts_hinged_below_hip_rack_pull_bounda
 def test_review_item_contract_reduction_carries_generated_provenance() -> None:
     """Endpoint gating classifies generated expectations by contract provenance.
 
-    The prompt-shaped reduction drops status/source; the review-item contract
-    must carry them back or the materialized gate hard-blocks mismatches the
-    full contract classifies as advisory (observed 2026-10-02: OHP rejected on
-    a start-window handHeight expectation).
+    The ranking payload's contract is the model's JSON echo of the
+    prompt-shaped reduction and carries no status/source; the review-item
+    contract must recover provenance from the candidate's raw contract or the
+    materialized gate hard-blocks mismatches the full contract classifies as
+    advisory (observed 2026-10-02: OHP rejected on a start-window handHeight
+    expectation).
     """
-    contract = {
+    echoed = {
         "exerciseName": "Dumbbell Overhead Press",
-        "status": "generated",
-        "source": "llm",
         "advisoryText": "Press the dumbbells overhead to full extension.",
     }
     ranking = bake_and_rank_module.LoopRanking(
         score=1.0,
         reasons=[],
-        payload={"exerciseMotionContract": contract},
+        payload={"exerciseMotionContract": echoed},
     )
     item = bake_and_rank_module.ReviewItem(
         exercise_index=0,
@@ -16767,14 +16767,22 @@ def test_review_item_contract_reduction_carries_generated_provenance() -> None:
         duration_sec=3.0,
         loop_start_seconds=0.0,
         loop_end_seconds=3.0,
-        candidate={"videoId": "video"},
+        candidate={
+            "videoId": "video",
+            "exerciseMotionContract": {
+                "exerciseName": "Dumbbell Overhead Press",
+                "status": "generated",
+                "source": "reused_candidate_contract",
+                "advisoryText": "Press the dumbbells overhead to full extension.",
+            },
+        },
     )
 
     merged = bake_and_rank_module.exercise_motion_contract_for_review_item(item, ranking)
 
     assert merged is not None
     assert merged["status"] == "generated"
-    assert merged["source"] == "llm"
+    assert merged["source"] == "reused_candidate_contract"
 
 
 def test_generated_endpoint_pose_expectations_are_advisory_but_explicit_contracts_block() -> None:

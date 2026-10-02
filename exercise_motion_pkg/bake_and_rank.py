@@ -31752,20 +31752,38 @@ def build_final_output_source_contract_prompt_section(contract: dict[str, Any] |
     return "Final body-only acceptance contract: " + json.dumps(body_only_contract()) + "\n"
 
 
+def _contract_provenance(contract: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: contract[key]
+        for key in ("status", "source", "exerciseMotionContractStatus")
+        if contract.get(key) is not None
+    }
+
+
 def exercise_motion_contract_for_review_item(item: ReviewItem, ranking: LoopRanking | None) -> dict[str, Any] | None:
     ranking_payload = ranking.payload if ranking is not None and isinstance(ranking.payload, dict) else {}
     contract = ranking_payload.get("exerciseMotionContract")
     if isinstance(contract, dict):
         prompt_contract = exercise_motion_contract_for_prompt(contract)
         if prompt_contract is not None:
-            # The prompt-shaped reduction drops status/source; downstream
-            # gating classifies generated expectations by that provenance, so
-            # carry it back before returning the reduced contract.
-            provenance = {
-                key: contract[key]
-                for key in ("status", "source", "exerciseMotionContractStatus")
-                if contract.get(key) is not None
-            }
+            # The prompt-shaped reduction (and the model's JSON echo of it)
+            # drops status/source; downstream gating classifies generated
+            # expectations by that provenance. Recover it from the echoed
+            # contract first, then from the candidate's raw contract.
+            provenance = _contract_provenance(contract)
+            if not provenance:
+                for source in (
+                    item.candidate.get("exerciseMotionContract") if isinstance(item.candidate, dict) else None,
+                    (
+                        item.candidate.get("visionPayload", {}).get("exerciseMotionContract")
+                        if isinstance(item.candidate, dict) and isinstance(item.candidate.get("visionPayload"), dict)
+                        else None
+                    ),
+                ):
+                    if isinstance(source, dict):
+                        provenance = _contract_provenance(source)
+                        if provenance:
+                            break
             return {**provenance, **prompt_contract}
         if observable_motion_spec_for_contract(contract) is not None:
             return contract
