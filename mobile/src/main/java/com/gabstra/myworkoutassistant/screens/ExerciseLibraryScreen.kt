@@ -730,9 +730,7 @@ private fun ExerciseDefinitionDetailsSection(
 private fun UsageSection(
     usages: List<ExerciseDefinitionUsage>,
     onOpenWorkout: (UUID) -> Unit,
-    initiallyExpanded: Boolean = false,
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
     if (usages.isEmpty()) {
         Text(
             text = "Not used in any active workout",
@@ -741,94 +739,90 @@ private fun UsageSection(
         )
         return
     }
-    val workoutCount = usages.size
+    val sortedUsages = usages.sortedWith(
+        compareBy(
+            { it.planName.orEmpty().lowercase() },
+            { it.workout.name.lowercase() },
+        ),
+    )
+    val visibleCount = minOf(sortedUsages.size, CollapsedUsageRowCount)
+    var showAll by remember { mutableStateOf(false) }
+    val visibleUsages = if (showAll) sortedUsages else sortedUsages.take(visibleCount)
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(MaterialTheme.shapes.small)
-                .clickable { expanded = !expanded }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        Text(
+            text = "USED IN",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(
-                text = if (workoutCount == 1) "Used in 1 workout" else "Used in $workoutCount workouts",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (expanded) "Hide workouts" else "Show workouts",
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (expanded) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                usages
-                    .sortedWith(
-                        compareBy(
-                            { it.planName.orEmpty().lowercase() },
-                            { it.workout.name.lowercase() },
-                        ),
-                    )
-                    .forEach { usage ->
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(MaterialTheme.shapes.small)
-                                    .clickable { onOpenWorkout(usage.workout.id) }
-                                    .padding(start = Spacing.sm, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                            ) {
-                                Text(
-                                    text = buildString {
-                                        usage.planName?.let { planName ->
-                                            append(planName)
-                                            append(" · ")
-                                        }
-                                        append(usage.workout.name)
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                if (usage.placementCount > 1) {
-                                    Text(
-                                        text = "${usage.placementCount} uses",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+            visibleUsages.forEach { usage ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable { onOpenWorkout(usage.workout.id) }
+                            .padding(start = Spacing.sm, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        Text(
+                            text = buildString {
+                                usage.planName?.let { planName ->
+                                    append(planName)
+                                    append(" · ")
                                 }
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = "Open workout",
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (usage.placementNameOverrides.isNotEmpty()) {
-                                Text(
-                                    text = usage.placementNameOverrides.joinToString(prefix = "Shown as: "),
-                                    modifier = Modifier.padding(start = Spacing.md),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                                append(usage.workout.name)
+                            },
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (usage.placementCount > 1) {
+                            Text(
+                                text = "${usage.placementCount} uses",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open workout",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
+                    if (usage.placementNameOverrides.isNotEmpty()) {
+                        Text(
+                            text = usage.placementNameOverrides.joinToString(prefix = "Shown as: "),
+                            modifier = Modifier.padding(start = Spacing.md),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
+        }
+        if (sortedUsages.size > visibleCount && !showAll) {
+            Text(
+                text = "Show all ${sortedUsages.size}",
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable { showAll = true }
+                    .padding(start = Spacing.sm, top = 4.dp, bottom = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
 
+private const val CollapsedUsageRowCount = 3
 
+// region Compose previews (Android Studio)
 
 private const val PreviewBarbellId = "11111111-1111-1111-1111-111111111111"
 private const val PreviewBenchId = "22222222-2222-2222-2222-222222222222"
@@ -918,7 +912,6 @@ private fun PreviewUsage(
     )
 }
 
-// region Compose previews (Android Studio)
 @Preview(
     name = "Row - collapsed, no movement",
     uiMode = Configuration.UI_MODE_NIGHT_YES,
