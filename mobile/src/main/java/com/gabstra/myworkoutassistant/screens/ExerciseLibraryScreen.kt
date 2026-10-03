@@ -733,7 +733,7 @@ private fun UsageSection(
 ) {
     if (usages.isEmpty()) {
         Text(
-            text = "Not used in any active workout",
+            text = "This exercise isn't part of any workout yet",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -750,7 +750,7 @@ private fun UsageSection(
     val visibleUsages = if (showAll) sortedUsages else sortedUsages.take(visibleCount)
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "USED IN",
+            text = "Used in",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
