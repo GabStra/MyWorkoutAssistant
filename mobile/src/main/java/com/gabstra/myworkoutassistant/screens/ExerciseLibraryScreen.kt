@@ -128,7 +128,7 @@ private fun ExerciseDefinition.details(
             add(
                 ExerciseDefinitionDetail(
                     "Body weight",
-                    "Counts as $percentage% of body weight",
+                    "$percentage%",
                 ),
             )
         }
@@ -566,28 +566,12 @@ private fun ExerciseFamilyCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                VariationLabelChip(definition.variationLabel())
-                                Spacer(Modifier.weight(1f))
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clickable { onEdit(definition) },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit ${definition.variationLabel()} variation",
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clickable {
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.small)
+                                    .combinedClickable(
+                                        onClick = { onEdit(definition) },
+                                        onLongClick = {
                                             if (usagesByDefinitionId[definition.id].isNullOrEmpty()) {
                                                 onRequestDelete(definition)
                                             } else {
@@ -598,15 +582,17 @@ private fun ExerciseFamilyCard(
                                                 ).show()
                                             }
                                         },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete ${definition.variationLabel()} variation",
-                                        modifier = Modifier.size(18.dp),
-                                        tint = Red,
-                                    )
-                                }
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                VariationLabelChip(definition.variationLabel())
+                                Spacer(Modifier.weight(1f))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Edit ${definition.variationLabel()} variation",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             DetailChipsSection(definition)
                             ExerciseDefinitionDetailsSection(
@@ -637,34 +623,23 @@ private fun VariationLabelChip(label: String) {
     }
 }
 
-private enum class DetailChipTone { CATEGORY, PRIMARY_MUSCLE, SECONDARY_MUSCLE }
-
 @Composable
-private fun DetailChip(text: String, tone: DetailChipTone) {
-    val shape = MaterialTheme.shapes.small
-    val modifier = when (tone) {
-        DetailChipTone.CATEGORY ->
-            Modifier
-                .background(MaterialTheme.colorScheme.primaryContainer, shape)
-        DetailChipTone.PRIMARY_MUSCLE ->
-            Modifier
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), shape)
-        DetailChipTone.SECONDARY_MUSCLE ->
-            Modifier
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                    shape = shape,
-                )
-    }
-    Box(modifier = modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
+private fun DetailChip(text: String, emphasized: Boolean) {
+    Box(
+        modifier = Modifier
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (emphasized) 0.42f else 0.18f),
+                MaterialTheme.shapes.small,
+            )
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = when (tone) {
-                DetailChipTone.CATEGORY -> MaterialTheme.colorScheme.onPrimaryContainer
-                DetailChipTone.PRIMARY_MUSCLE -> MaterialTheme.colorScheme.onSurface
-                DetailChipTone.SECONDARY_MUSCLE -> MaterialTheme.colorScheme.onSurfaceVariant
+            color = if (emphasized) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
     }
@@ -681,19 +656,22 @@ private fun DetailChipsSection(definition: ExerciseDefinition) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (category != null || primaryMuscles.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                category?.let { DetailChip(it.name.toDisplayLabel(), DetailChipTone.CATEGORY) }
-                primaryMuscles.forEach { muscle ->
-                    DetailChip(muscle.name.toDisplayLabel(), DetailChipTone.PRIMARY_MUSCLE)
-                }
-            }
+        category?.let {
+            Text(
+                text = it.name.toDisplayLabel(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        if (secondaryMuscles.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                secondaryMuscles.forEach { muscle ->
-                    DetailChip(muscle.name.toDisplayLabel(), DetailChipTone.SECONDARY_MUSCLE)
-                }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            primaryMuscles.forEach { muscle ->
+                DetailChip(muscle.name.toDisplayLabel(), emphasized = true)
+            }
+            secondaryMuscles.forEach { muscle ->
+                DetailChip(muscle.name.toDisplayLabel(), emphasized = false)
             }
         }
     }
