@@ -305,9 +305,11 @@ All replay failure evidence is retained under `build/exercise_motion/speed-harne
   trans_world, betas, frame_ids all element-wise equal). Job execution 126.4s →
   39.0s; cold worker load 373s → 286s (page-cache states not perfectly controlled;
   parity is the decisive result).
-- Parity tooling: `scripts/gvhmr_image_parity.py` (per-run worker + job; it swallows
-  `docker run` errors — check `docker ps` if a run times out), parity artifacts under
-  `build/exercise_motion/speed-harness/prewarm/`.
+- Parity tooling: `scripts/gvhmr_image_parity.py` requires an explicit `--video` and
+  `--reference-pkl`, compares `pose_world`, `trans_world`, `betas`, and `frame_ids`,
+  preserves existing run directories, and reports Docker/startup/job failures. Each
+  run uses a new safe run id; artifacts are under
+  `build/exercise_motion/speed-harness/prewarm/parity/`.
 
 ## Known open items / honest caveats
 

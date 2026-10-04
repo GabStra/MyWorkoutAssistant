@@ -7,7 +7,8 @@ short run, entry into staged processing, or an accepted movement. Reports
 include wall time, per-phase timings, wave size, source workers, vision-server
 startup counts, co-resident operations, shared-server quiesce metrics, overlap
 high-water mark, per-wave browser task metrics, separate candidate-generation and
-GVHMR timings, and terminal statuses.
+GVHMR timings, per-wave resource budgets, immutable arm inputs, host CPU/RAM and
+GPU/VRAM high-water samples, and terminal statuses.
 
 Usage:
   python scripts/motion_speed_harness.py --arms baseline,shared
@@ -17,12 +18,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -451,11 +454,22 @@ def load_scheduler_timeline(arm_result: dict) -> dict | None:
 
     Missing or unparsable timeline is retained as null, not an error.
     """
+    snapshot = _load_metric_input_snapshot(arm_result)
+    if snapshot is not None:
+        timeline = snapshot.get("schedulerTimeline")
+        if isinstance(timeline, dict):
+            return _format_scheduler_timeline(timeline)
+        return None
     timeline_path = Path(arm_result["workspace"]) / "scheduler_timeline.json"
     try:
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    return _format_scheduler_timeline(timeline)
+
+
+def _format_scheduler_timeline(timeline: dict) -> dict:
+    """Parse the runner-written scheduler timeline into compact metrics."""
     started = _parse_utc(timeline.get("runStartedAtUtc"))
     items = []
     for item in timeline.get("items") or []:
@@ -755,6 +769,12 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
         shutil.copy2(DEFAULT_SOURCE_OUTCOME_INDEX, source_index)
+    workspace = arm_dir / "isolated" / "exercise_motion" / "workspace"
+    staged_waves_root = workspace / "staged-waves"
+    if staged_waves_root.is_dir() and any(staged_waves_root.iterdir()):
+        raise RuntimeError(
+            f"arm workspace already contains staged-wave state: {staged_waves_root}"
+        )
     log_path = arm_dir / "run.log"
     args = build_runner_command(
         arm, arm_dir, plan_json, staged_wave_size, staged_wave_max_wait_seconds,
@@ -767,8 +787,30 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     if "-YouTubeSourceCacheDir" in args:
         source_cache_root = Path(args[args.index("-YouTubeSourceCacheDir") + 1])
     started = time.perf_counter()
+    try:
+        import psutil
+
+        psutil.cpu_percent(interval=None)
+    except Exception:
+        pass
+    resource_samples: list[dict] = []
+    resource_samples_lock = threading.Lock()
+    resource_sampling_stop = threading.Event()
+
+    def sample_resources_until_stopped() -> None:
+        while not resource_sampling_stop.wait(20.0):
+            sample = sample_host_resources(time.perf_counter() - started)
+            with resource_samples_lock:
+                resource_samples.append(sample)
+
     log_handle = log_path.open("w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT)
+    resource_sampler = threading.Thread(
+        target=sample_resources_until_stopped,
+        name=f"motion-resource-sampler-{arm}",
+        daemon=True,
+    )
+    resource_sampler.start()
     status = "running"
     shutdown = {"confirmed": True, "method": "normal_exit", "taskkillExitCode": None}
     last_size = -1
@@ -798,8 +840,27 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     finally:
         log_handle.close()
     elapsed = time.perf_counter() - started
+    resource_sampling_stop.set()
+    resource_sampler.join(timeout=10.0)
+    if resource_sampler.is_alive():
+        with resource_samples_lock:
+            resource_samples.append({
+                "elapsedSeconds": round(elapsed, 3),
+                "samplerError": "resource sampler did not stop within 10 seconds",
+                "gpus": [],
+            })
+    else:
+        resource_samples.append(sample_host_resources(elapsed))
+    resource_samples_path = arm_dir / "resource-samples.jsonl"
+    with resource_samples_lock:
+        resource_samples_path.write_text(
+            "".join(json.dumps(sample) + "\n" for sample in resource_samples),
+            encoding="utf-8",
+        )
     exit_code = process.returncode if status == "running" else status
     termination_status = "completed" if status == "running" else status
+    metric_snapshot_path = arm_dir / "metrics-input-snapshot.json"
+    metric_snapshot = capture_metric_input_snapshot(workspace, metric_snapshot_path)
     return {
         "arm": arm,
         "exitCode": exit_code,
@@ -809,11 +870,14 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
         "shutdownStatus": "confirmed" if shutdown.get("confirmed") else "unconfirmed",
         "shutdownDetails": shutdown,
         "wallSeconds": round(elapsed, 1),
-        "workspace": str(arm_dir / "isolated" / "exercise_motion" / "workspace"),
+        "workspace": str(workspace),
         "whamCacheRoot": str(arm_dir / "isolated" / "exercise_motion" / "wham-cache"),
         "previewCacheRoot": str(arm_dir / "cache" / "youtube-preview-cache"),
         "sourceCacheRoot": str(source_cache_root),
         "log": str(log_path),
+        "metricInputSnapshotPath": str(metric_snapshot_path),
+        "metricInputSnapshotErrors": metric_snapshot["errors"],
+        "resourceSamplesPath": str(resource_samples_path),
         "runnerArgs": args,
     }
 
@@ -868,6 +932,249 @@ def _kill_process_tree(process: subprocess.Popen, wait_timeout_seconds: float = 
     }
 
 
+def _load_metric_input_snapshot(arm_result: dict) -> dict | None:
+    snapshot_path_text = arm_result.get("metricInputSnapshotPath")
+    if not isinstance(snapshot_path_text, str) or not snapshot_path_text:
+        return None
+    try:
+        snapshot = json.loads(Path(snapshot_path_text).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return snapshot if isinstance(snapshot, dict) and snapshot.get("schemaVersion") == 1 else None
+
+
+def capture_metric_input_snapshot(workspace: Path, snapshot_path: Path) -> dict:
+    """Freeze the per-arm inputs used by post-run metric extraction.
+
+    Staged-wave workspaces may be reused for a diagnostic replay after an arm
+    ends. Candidate manifests are also rewritten on cache reuse. Store the
+    reports, checkpoints, and the timing data each checkpoint referred to while
+    they still describe this arm, so later files cannot alter its measurements.
+    """
+    workspace = Path(workspace)
+    errors: list[str] = []
+
+    def read_object(path: Path) -> dict | None:
+        if not path.is_file():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            errors.append(f"{path}: {type(exc).__name__}: {exc}")
+            return None
+        if not isinstance(value, dict):
+            errors.append(f"{path}: expected a JSON object")
+            return None
+        return value
+
+    waves: list[dict] = []
+    waves_root = workspace / "staged-waves"
+    if waves_root.is_dir():
+        for wave_dir in sorted(path for path in waves_root.iterdir() if path.is_dir()):
+            report = read_object(wave_dir / "staged_wave_report.json")
+            checkpoint = read_object(wave_dir / "staged_wave_checkpoint.json")
+            if report is None and checkpoint is None:
+                continue
+            wave_id = str(
+                (report or {}).get("waveId")
+                or (checkpoint or {}).get("waveId")
+                or wave_dir.name
+            )
+            for item in (checkpoint or {}).get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                wham = item.get("wham") or {}
+                if not isinstance(wham, dict):
+                    continue
+                for attempt in wham.get("attempts") or []:
+                    if not isinstance(attempt, dict):
+                        continue
+                    selected_video = attempt.get("selectedVideoPath")
+                    manifest = None
+                    manifest_path_text = None
+                    manifest_sha256 = None
+                    if isinstance(selected_video, str) and selected_video:
+                        manifest_path = Path(selected_video).parent.parent / "manifest.json"
+                        manifest_path_text = str(manifest_path)
+                        manifest = (
+                            read_object(manifest_path) if manifest_path.is_file() else None
+                        )
+                        if manifest is not None:
+                            manifest_sha256 = sha256_file(manifest_path)
+                    attempt["_speedHarnessManifestSnapshot"] = {
+                        "path": manifest_path_text,
+                        "sha256": manifest_sha256,
+                        "timings": (manifest or {}).get("timings"),
+                    }
+            waves.append({"waveId": wave_id, "report": report, "checkpoint": checkpoint})
+
+    summary_path = workspace / "workout_motion_generation_summary.json"
+    timeline_path = workspace / "scheduler_timeline.json"
+    summary = read_object(summary_path)
+    scheduler_timeline = read_object(timeline_path)
+    run_log_path = workspace.parent.parent.parent / "run.log"
+    # The arm log sits outside the workspace; resolve it from its stable
+    # workspace layout and retain only the parsed worker startup durations.
+    if not run_log_path.is_file():
+        run_log_path = snapshot_path.parent / "run.log"
+    try:
+        log_text = run_log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log_text = ""
+    worker_startup_seconds = [
+        float(match.group(1))
+        for match in re.finditer(
+            r"Motion extractor ready in ([0-9]+(?:\.[0-9]+)?)s", log_text
+        )
+    ]
+    resource_samples: list[dict] = []
+    resource_samples_path = snapshot_path.parent / "resource-samples.jsonl"
+    if resource_samples_path.is_file():
+        try:
+            sample_lines = resource_samples_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            errors.append(
+                f"{resource_samples_path}: {type(exc).__name__}: {exc}"
+            )
+            sample_lines = []
+        for line_number, line in enumerate(sample_lines, start=1):
+            if not line.strip():
+                continue
+            try:
+                sample = json.loads(line)
+            except ValueError as exc:
+                errors.append(
+                    f"{resource_samples_path}:{line_number}: {type(exc).__name__}: {exc}"
+                )
+                continue
+            if isinstance(sample, dict):
+                resource_samples.append(sample)
+            else:
+                errors.append(f"{resource_samples_path}:{line_number}: expected a JSON object")
+    snapshot = {
+        "schemaVersion": 1,
+        "capturedAtUtc": datetime.now(timezone.utc).isoformat(),
+        "workspace": str(workspace.resolve()),
+        "waveIds": [wave["waveId"] for wave in waves],
+        "waves": waves,
+        "summary": summary,
+        "schedulerTimeline": scheduler_timeline,
+        "gvhmrWorkerStartupSeconds": worker_startup_seconds,
+        "resourceSamples": resource_samples,
+        "errors": errors,
+    }
+    if summary is not None:
+        (
+            snapshot["acceptedMovementArtifacts"],
+            snapshot["acceptedMovementArtifactErrors"],
+        ) = _movement_artifact_identities(summary, workspace)
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
+    return snapshot
+
+
+def _sample_number(value) -> float | None:
+    if value is None or str(value).strip().casefold() in {"", "n/a", "not supported"}:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sample_host_resources(elapsed_seconds: float) -> dict:
+    """Collect low-overhead host CPU/RAM and NVIDIA utilization samples."""
+    sample: dict = {"elapsedSeconds": round(elapsed_seconds, 3), "gpus": []}
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        sample.update({
+            "cpuLogicalCores": psutil.cpu_count(logical=True),
+            "cpuUtilizationPercent": psutil.cpu_percent(interval=None),
+            "systemMemoryUsedBytes": memory.used,
+            "systemMemoryTotalBytes": memory.total,
+            "systemMemoryUsedPercent": memory.percent,
+        })
+    except ImportError as exc:
+        sample["hostSampleError"] = f"psutil unavailable: {exc}"
+    except Exception as exc:  # telemetry failure must not terminate the generator arm
+        sample["hostSampleError"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+        if result.returncode != 0:
+            sample["gpuSampleError"] = (result.stderr or result.stdout).strip()
+        else:
+            for row in csv.reader(result.stdout.splitlines(), skipinitialspace=True):
+                if len(row) < 4:
+                    continue
+                sample["gpus"].append({
+                    "index": int(row[0]),
+                    "utilizationPercent": _sample_number(row[1]),
+                    "memoryUsedMiB": _sample_number(row[2]),
+                    "memoryTotalMiB": _sample_number(row[3]),
+                })
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        sample["gpuSampleError"] = f"{type(exc).__name__}: {exc}"
+    return sample
+
+
+def summarize_resource_samples(samples: list[dict]) -> dict:
+    host_cpu = [
+        number for sample in samples
+        if (number := _sample_number(sample.get("cpuUtilizationPercent"))) is not None
+    ]
+    ram_used = [
+        number for sample in samples
+        if (number := _sample_number(sample.get("systemMemoryUsedBytes"))) is not None
+    ]
+    ram_percent = [
+        number for sample in samples
+        if (number := _sample_number(sample.get("systemMemoryUsedPercent"))) is not None
+    ]
+    gpu_utilization = [
+        number
+        for sample in samples
+        for gpu in sample.get("gpus") or []
+        if (number := _sample_number(gpu.get("utilizationPercent"))) is not None
+    ]
+    gpu_memory_used = [
+        number
+        for sample in samples
+        for gpu in sample.get("gpus") or []
+        if (number := _sample_number(gpu.get("memoryUsedMiB"))) is not None
+    ]
+    gpu_memory_total = [
+        number
+        for sample in samples
+        for gpu in sample.get("gpus") or []
+        if (number := _sample_number(gpu.get("memoryTotalMiB"))) is not None
+    ]
+    return {
+        "hostCpuSampleCount": len(host_cpu),
+        "hostMemorySampleCount": len(ram_used),
+        "gpuUtilizationSampleCount": len(gpu_utilization),
+        "cpuUtilizationPercentMax": max(host_cpu, default=None),
+        "cpuUtilizationPercentMean": round(sum(host_cpu) / len(host_cpu), 2) if host_cpu else None,
+        "systemMemoryUsedBytesMax": max(ram_used, default=None),
+        "systemMemoryUsedPercentMax": max(ram_percent, default=None),
+        "gpuUtilizationPercentMax": max(gpu_utilization, default=None),
+        "gpuMemoryUsedMiBMax": max(gpu_memory_used, default=None),
+        "gpuMemoryTotalMiB": max(gpu_memory_total, default=None),
+    }
+
+
 def _metric_seconds(value: object) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         return float(value)
@@ -892,6 +1199,25 @@ def arm_qualification_error(
     """Reject an arm that cannot support a later comparison arm."""
     if arm_result.get("exitCode") != 0:
         return f"runner exited with code {arm_result.get('exitCode')!r}"
+    metric_snapshot_errors = metrics.get("metricInputSnapshotErrors") or []
+    if metric_snapshot_errors:
+        return f"arm metric inputs could not be frozen cleanly: {metric_snapshot_errors[0]}"
+    if arm_result.get("metricInputSnapshotPath"):
+        resource_sample_count = metrics.get("resourceSampleCount", 0)
+        if resource_sample_count < 2:
+            return (
+                "arm has too few host resource samples to assess throughput headroom "
+                f"({resource_sample_count}; expected at least 2)"
+            )
+        resource_high_water = metrics.get("resourceHighWater") or {}
+        if resource_high_water.get("hostCpuSampleCount", 0) < 2:
+            return "arm has too few usable CPU utilization samples for throughput headroom"
+        if resource_high_water.get("hostMemorySampleCount", 0) < 2:
+            return "arm has too few usable system-memory samples for throughput headroom"
+        if resource_high_water.get("gpuUtilizationSampleCount", 0) < 2:
+            return "arm has too few usable GPU utilization samples for throughput headroom"
+        if resource_high_water.get("gpuUtilizationPercentMax") is None:
+            return "arm has no usable GPU utilization samples for throughput headroom"
 
     statuses = metrics.get("statuses")
     if not isinstance(statuses, dict) or not statuses:
@@ -1074,12 +1400,68 @@ def extract_metrics(arm_result: dict) -> dict:
         "gvhmrPredictionSamples": 0,
         "gvhmrPredictionSeconds": 0.0,
         "browserTasksByWave": [],
+        "waveIds": [],
+        "resourceMetricsByWave": [],
+        "visionMetricsByWave": [],
+        "metricInputSnapshotErrors": [],
+        "resourceSampleCount": 0,
+        "resourceHighWater": {},
     }
+    snapshot = _load_metric_input_snapshot(arm_result)
+    snapshot_path_text = arm_result.get("metricInputSnapshotPath")
+    if snapshot_path_text and snapshot is None:
+        metrics["metricInputSnapshotErrors"].append(
+            f"metric input snapshot is missing or invalid: {snapshot_path_text}"
+        )
+    if snapshot is not None:
+        metrics["metricInputSnapshotErrors"] = list(snapshot.get("errors") or [])
+        resource_samples = [
+            sample for sample in snapshot.get("resourceSamples") or []
+            if isinstance(sample, dict)
+        ]
+        metrics["resourceSampleCount"] = len(resource_samples)
+        metrics["resourceHighWater"] = summarize_resource_samples(resource_samples)
+        wave_records = [
+            wave for wave in snapshot.get("waves") or [] if isinstance(wave, dict)
+        ]
+        metrics["waveIds"] = [str(wave.get("waveId") or "") for wave in wave_records]
+    else:
+        wave_dirs = sorted(
+            path for path in (workspace / "staged-waves").glob("*") if path.is_dir()
+        )
+        wave_records = []
+        for wave_dir in wave_dirs:
+            try:
+                report = json.loads(
+                    (wave_dir / "staged_wave_report.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                report = None
+            try:
+                checkpoint = json.loads(
+                    (wave_dir / "staged_wave_checkpoint.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                checkpoint = None
+            wave_id = str(
+                (report or {}).get("waveId")
+                or (checkpoint or {}).get("waveId")
+                or wave_dir.name
+            )
+            wave_records.append({
+                "waveId": wave_id,
+                "report": report if isinstance(report, dict) else None,
+                "checkpoint": checkpoint if isinstance(checkpoint, dict) else None,
+            })
+        metrics["waveIds"] = [str(wave.get("waveId") or "") for wave in wave_records]
     shared_session_snapshots: list[dict] = []
-    for report_path in sorted(workspace.glob("staged-waves/*/staged_wave_report.json")):
+    for wave_record in wave_records:
+        report = wave_record.get("report")
+        if not isinstance(report, dict):
+            continue
         metrics["waves"] += 1
-        report = json.loads(report_path.read_text(encoding="utf-8"))
         m = report.get("metrics", {})
+        wave_id = str(report.get("waveId") or wave_record.get("waveId") or "")
         metrics["maxExercisesPerWave"] = max(
             metrics["maxExercisesPerWave"], len(report.get("items") or [])
         )
@@ -1095,9 +1477,27 @@ def extract_metrics(arm_result: dict) -> dict:
         by_task = browser_workers.get("byTask")
         if isinstance(by_task, dict) and by_task:
             metrics["browserTasksByWave"].append({
-                "waveId": report.get("waveId") or report_path.parent.name,
+                "waveId": wave_id,
                 "byTask": by_task,
             })
+        metrics["resourceMetricsByWave"].append({
+            "waveId": wave_id,
+            "resourceBudget": m.get("resourceBudget"),
+            "sourceValidationWorkers": m.get("sourceValidationWorkers"),
+            "finalValidationFitSlots": m.get("finalValidationFitSlots"),
+            "finalValidationWorkers": m.get("finalValidationWorkers"),
+            "renderPrefetchWorkers": m.get("renderPrefetchWorkers"),
+            "generationCpuWorkers": m.get("generationCpuWorkers"),
+            "cpuRenderPrefetch": m.get("cpuRenderPrefetch"),
+            "unidepthModelCache": m.get("unidepthModelCache"),
+            "acceleratorTransitions": m.get("acceleratorTransitions"),
+        })
+        metrics["visionMetricsByWave"].append({
+            "waveId": wave_id,
+            "sourceVisionSession": m.get("sourceVisionSession"),
+            "finalVisionSession": m.get("finalVisionSession"),
+            "reviewQuestionCache": m.get("reviewQuestionCache"),
+        })
         for phase in ("sourceVisionSession", "finalVisionSession"):
             session = m.get(phase) or {}
             metrics["visionStartups"] += session.get("visionRankerStartupCount", 0)
@@ -1108,10 +1508,9 @@ def extract_metrics(arm_result: dict) -> dict:
             shared = session.get("sharedVisionSession") or session
             if isinstance(shared, dict):
                 shared_session_snapshots.append(shared)
-    for checkpoint_path in sorted(workspace.glob("staged-waves/*/staged_wave_checkpoint.json")):
-        try:
-            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+    for wave_record in wave_records:
+        checkpoint = wave_record.get("checkpoint")
+        if not isinstance(checkpoint, dict):
             continue
         for item in checkpoint.get("items", []):
             wham = item.get("wham") or {}
@@ -1126,18 +1525,26 @@ def extract_metrics(arm_result: dict) -> dict:
                 metrics["candidateGenerationAttempts"] += 1
                 metrics["candidateGenerationAttemptSeconds"] += float(attempt["elapsedSeconds"])
                 selected_video = attempt.get("selectedVideoPath")
-                if not selected_video:
-                    continue
-                candidate_workspace = Path(selected_video).parent.parent
-                manifest_path = candidate_workspace / "manifest.json"
-                if not manifest_path.is_file():
-                    continue
-                try:
-                    candidate_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
+                manifest_snapshot = attempt.get("_speedHarnessManifestSnapshot")
+                if isinstance(manifest_snapshot, dict):
+                    generation_timings = manifest_snapshot.get("timings") or {}
+                    if not manifest_snapshot.get("sha256"):
+                        continue
+                else:
+                    if not selected_video:
+                        continue
+                    candidate_workspace = Path(selected_video).parent.parent
+                    manifest_path = candidate_workspace / "manifest.json"
+                    if not manifest_path.is_file():
+                        continue
+                    try:
+                        candidate_manifest = json.loads(
+                            manifest_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        continue
+                    generation_timings = candidate_manifest.get("timings") or {}
                 metrics["candidateAttemptManifests"] += 1
-                generation_timings = candidate_manifest.get("timings") or {}
                 stage_seconds = _metric_seconds(generation_timings.get("whamRunSeconds"))
                 if stage_seconds is not None:
                     metrics["gvhmrStageCalls"] += 1
@@ -1153,9 +1560,15 @@ def extract_metrics(arm_result: dict) -> dict:
                 if prediction_seconds is not None:
                     metrics["gvhmrPredictionSamples"] += 1
                     metrics["gvhmrPredictionSeconds"] += prediction_seconds
-    summary_path = workspace / "workout_motion_generation_summary.json"
-    if summary_path.is_file():
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary = snapshot.get("summary") if snapshot is not None else None
+    if snapshot is None:
+        summary_path = workspace / "workout_motion_generation_summary.json"
+        if summary_path.is_file():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                summary = None
+    if isinstance(summary, dict):
         statuses: dict[str, int] = {}
         for exercise in summary.get("exercises", []):
             status = str(exercise.get("status", "unknown"))
@@ -1171,10 +1584,18 @@ def extract_metrics(arm_result: dict) -> dict:
         metrics["cpuPrefetchDuringBake"] = parallelism.get("cpuPrefetchDuringBake")
         metrics["prefetchWorkers"] = parallelism.get("prefetchWorkers")
         metrics["prefetchQueueDepth"] = parallelism.get("prefetchQueueDepth")
-        (
-            metrics["acceptedMovementArtifacts"],
-            metrics["acceptedMovementArtifactErrors"],
-        ) = _movement_artifact_identities(summary, workspace)
+        if snapshot is not None:
+            metrics["acceptedMovementArtifacts"] = list(
+                snapshot.get("acceptedMovementArtifacts") or []
+            )
+            metrics["acceptedMovementArtifactErrors"] = list(
+                snapshot.get("acceptedMovementArtifactErrors") or []
+            )
+        else:
+            (
+                metrics["acceptedMovementArtifacts"],
+                metrics["acceptedMovementArtifactErrors"],
+            ) = _movement_artifact_identities(summary, workspace)
     # These are cumulative coordinator snapshots, repeated in source/final
     # phase reports and across waves. Summing snapshots double-counts events;
     # the largest observed cumulative value is the run total.
@@ -1186,18 +1607,25 @@ def extract_metrics(arm_result: dict) -> dict:
         (int(snapshot.get("sharedVisionRestartRequestCount") or 0) for snapshot in shared_session_snapshots),
         default=0,
     )
-    run_log = arm_result.get("log")
-    if run_log and Path(run_log).is_file():
-        try:
-            log_text = Path(run_log).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            log_text = ""
-        startup_seconds = [
-            float(match.group(1))
-            for match in re.finditer(r"Motion extractor ready in ([0-9]+(?:\.[0-9]+)?)s", log_text)
-        ]
+    if snapshot is not None:
+        startup_seconds = snapshot.get("gvhmrWorkerStartupSeconds") or []
         metrics["gvhmrWorkerStartups"] = len(startup_seconds)
         metrics["gvhmrWorkerStartupSeconds"] = sum(startup_seconds)
+    else:
+        run_log = arm_result.get("log")
+        if run_log and Path(run_log).is_file():
+            try:
+                log_text = Path(run_log).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                log_text = ""
+            startup_seconds = [
+                float(match.group(1))
+                for match in re.finditer(
+                    r"Motion extractor ready in ([0-9]+(?:\.[0-9]+)?)s", log_text
+                )
+            ]
+            metrics["gvhmrWorkerStartups"] = len(startup_seconds)
+            metrics["gvhmrWorkerStartupSeconds"] = sum(startup_seconds)
     return metrics
 
 

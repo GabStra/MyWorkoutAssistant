@@ -44,6 +44,117 @@ def test_shared_session_cumulative_counters_are_not_summed_across_snapshots(tmp_
     assert metrics["visionStartups"] == 6
 
 
+def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_path):
+    workspace = tmp_path / "workspace"
+    first_wave = workspace / "staged-waves" / "run-one-wave-1"
+    candidate_workspace = workspace / "exercise" / "candidate"
+    (first_wave).mkdir(parents=True)
+    selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    selected_video.parent.mkdir(parents=True)
+    selected_video.write_bytes(b"fixture video")
+    manifest_path = candidate_workspace / "manifest.json"
+    manifest_path.write_text(json.dumps({
+        "timings": {
+            "whamRunSeconds": 31.0,
+            "wham": {
+                "elapsedSeconds": 29.0,
+                "phaseTimings": {"inference": {"predictionSeconds": 5.0}},
+            },
+        },
+    }), encoding="utf-8")
+    (first_wave / "staged_wave_report.json").write_text(json.dumps({
+        "waveId": "run-one-wave-1",
+        "items": [],
+        "metrics": {
+            "phaseTimings": {"sourceValidationSeconds": 2.0},
+            "resourceBudget": {"cpuFitSlots": 4},
+            "sourceVisionSession": {"visionRequestCount": 3},
+            "reviewQuestionCache": {"cacheHits": 2},
+        },
+    }), encoding="utf-8")
+    (first_wave / "staged_wave_checkpoint.json").write_text(json.dumps({
+        "waveId": "run-one-wave-1",
+        "items": [{
+            "wham": {"attempts": [{
+                "elapsedSeconds": 50.0,
+                "selectedVideoPath": str(selected_video),
+            }]},
+        }],
+    }), encoding="utf-8")
+    (workspace / "scheduler_timeline.json").write_text(json.dumps({
+        "runStartedAtUtc": "2026-10-04T10:00:00Z",
+        "items": [],
+        "waves": [],
+    }), encoding="utf-8")
+
+    snapshot_path = tmp_path / "arm-one" / "metrics-input-snapshot.json"
+    snapshot_path.parent.mkdir(parents=True)
+    (snapshot_path.parent / "resource-samples.jsonl").write_text("\n".join([
+        json.dumps({
+            "elapsedSeconds": 20,
+            "cpuUtilizationPercent": 71.0,
+            "systemMemoryUsedBytes": 8_000,
+            "systemMemoryUsedPercent": 62.0,
+            "gpus": [{"utilizationPercent": 93.0, "memoryUsedMiB": 6_000, "memoryTotalMiB": 12_000}],
+        }),
+        json.dumps({
+            "elapsedSeconds": 40,
+            "cpuUtilizationPercent": 65.0,
+            "systemMemoryUsedBytes": 9_000,
+            "systemMemoryUsedPercent": 68.0,
+            "gpus": [{"utilizationPercent": 78.0, "memoryUsedMiB": 7_000, "memoryTotalMiB": 12_000}],
+        }),
+    ]) + "\n", encoding="utf-8")
+    motion_speed_harness.capture_metric_input_snapshot(workspace, snapshot_path)
+
+    # A later replay appends another wave and rewrites the candidate manifest
+    # at the same path. Neither may change the original arm's extracted result.
+    later_wave = workspace / "staged-waves" / "run-two-wave-1"
+    _write_wave_report(workspace, "run-two-wave-1", cumulative_handoffs=9)
+    (later_wave / "staged_wave_checkpoint.json").write_text(json.dumps({
+        "waveId": "run-two-wave-1",
+        "items": [{
+            "wham": {"attempts": [{
+                "elapsedSeconds": 60.0,
+                "selectedVideoPath": str(selected_video),
+            }]},
+        }],
+    }), encoding="utf-8")
+    manifest_path.write_text(json.dumps({
+        "timings": {"whamRunSeconds": 99.0},
+    }), encoding="utf-8")
+    (workspace / "scheduler_timeline.json").write_text(json.dumps({
+        "runStartedAtUtc": "2026-10-04T20:00:00Z",
+        "items": [],
+        "waves": [],
+    }), encoding="utf-8")
+
+    metrics = motion_speed_harness.extract_metrics({
+        "workspace": str(workspace),
+        "metricInputSnapshotPath": str(snapshot_path),
+    })
+
+    assert metrics["waves"] == 1
+    assert metrics["waveIds"] == ["run-one-wave-1"]
+    assert metrics["candidateGenerationAttempts"] == 1
+    assert metrics["candidateGenerationAttemptSeconds"] == 50.0
+    assert metrics["candidateAttemptManifests"] == 1
+    assert metrics["gvhmrStageWallSeconds"] == 31.0
+    assert metrics["gvhmrRunnerCallSeconds"] == 29.0
+    assert metrics["gvhmrPredictionSeconds"] == 5.0
+    assert metrics["resourceMetricsByWave"][0]["resourceBudget"] == {"cpuFitSlots": 4}
+    assert metrics["visionMetricsByWave"][0]["reviewQuestionCache"] == {"cacheHits": 2}
+    assert metrics["resourceSampleCount"] == 2
+    assert metrics["resourceHighWater"]["cpuUtilizationPercentMax"] == 71.0
+    assert metrics["resourceHighWater"]["gpuUtilizationPercentMax"] == 93.0
+    assert metrics["resourceHighWater"]["gpuMemoryUsedMiBMax"] == 7_000
+    timeline = motion_speed_harness.load_scheduler_timeline({
+        "workspace": str(workspace),
+        "metricInputSnapshotPath": str(snapshot_path),
+    })
+    assert timeline["runStartedAtUtc"] == "2026-10-04T10:00:00Z"
+
+
 def test_effective_configuration_requires_requested_wave_size_and_arm_settings():
     metrics = {
         "sharedLlamaServerEnabled": True,
