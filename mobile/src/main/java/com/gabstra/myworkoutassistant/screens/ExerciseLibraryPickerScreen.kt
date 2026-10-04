@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -59,7 +60,7 @@ fun ExerciseLibraryPickerScreen(
                         Text(
                             definition.exerciseType.name.replace('_', ' ').lowercase(),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                         )
                     }
                 }

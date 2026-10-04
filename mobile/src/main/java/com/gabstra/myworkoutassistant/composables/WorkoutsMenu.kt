@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.activity.compose.BackHandler
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -470,7 +471,7 @@ private fun MenuDestinationCard(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
             Icon(

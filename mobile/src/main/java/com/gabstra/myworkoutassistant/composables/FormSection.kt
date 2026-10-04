@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,7 @@ fun ContentSubtitle(
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.tertiaryContent,
         textAlign = TextAlign.Start,
         modifier = modifier
     )
@@ -131,7 +132,7 @@ fun CollapsibleSection(
                         Text(
                             text = summary,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }

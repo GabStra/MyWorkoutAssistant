@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.basicMarquee
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -118,7 +119,7 @@ fun GenericButtonWithMenu(
                                         Text(
                                             text = description,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = MaterialTheme.colorScheme.tertiaryContent,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -225,7 +226,7 @@ fun EquipmentAccessoryMetadata(
                     append(accessories.joinToString(" · "))
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.tertiaryContent,
                 textAlign = textAlign,
             )
         }

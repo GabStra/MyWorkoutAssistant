@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.basicMarquee
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -452,7 +453,7 @@ internal fun WorkoutExerciseHeader(
                     text = familyName,
                     maxLines = 1,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
         }
@@ -489,7 +490,7 @@ private fun ExerciseExpandableSetTableBody(
                         .fillMaxWidth()
                         .padding(start = 16.dp, end = 48.dp, bottom = 14.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
         },

@@ -3,6 +3,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.background
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -344,7 +345,7 @@ fun ExerciseScreen(
                             .height(16.dp),
                         text = context,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.tertiaryContent,
                         textAlign = TextAlign.Center,
                         minTextSize = 8.sp,
                     )

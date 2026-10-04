@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -371,7 +372,7 @@ private fun RecoveryBodyText(
             text = text,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.tertiaryContent,
         )
     }
 }

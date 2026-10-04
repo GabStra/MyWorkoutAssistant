@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -970,7 +971,7 @@ fun WorkoutHistoryScreen(
                                                 .fillMaxWidth()
                                                 .padding(start = 16.dp, end = 48.dp, bottom = 14.dp),
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = MaterialTheme.colorScheme.tertiaryContent,
                                         )
                                     },
                                     content = {
@@ -1290,7 +1291,7 @@ private fun RunningHistoryCard(
                     text = if (result.route.isEmpty()) "No GPS route was recorded for this run."
                     else "GPS route has only one point; a route line is unavailable.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
         }

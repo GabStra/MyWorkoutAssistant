@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -142,7 +143,7 @@ fun WeightSetForm(
             Text(
                 text = "This exercise is waiting to be calibrated.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.tertiaryContent,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 4.dp)

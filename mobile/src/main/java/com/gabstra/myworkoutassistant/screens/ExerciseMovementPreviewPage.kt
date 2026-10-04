@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,7 +74,7 @@ fun ExerciseMovementAction(
                 Text(
                     text = "View movement",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
             }
             Icon(

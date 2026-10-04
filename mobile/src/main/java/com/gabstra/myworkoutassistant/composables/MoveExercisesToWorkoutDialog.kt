@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -124,7 +125,7 @@ private fun MoveTargetEmptyState() {
             imageVector = Icons.Outlined.FitnessCenter,
             contentDescription = null,
             modifier = Modifier.size(40.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            tint = MaterialTheme.colorScheme.tertiaryContent
         )
         Text(
             text = "No destination yet",

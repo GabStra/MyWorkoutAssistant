@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
@@ -248,7 +249,7 @@ fun WorkoutDetailScreen(
                                     .transformedHeight(this, spec),
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                         }
                     }

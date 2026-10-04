@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
 import com.gabstra.myworkoutassistant.composables.workoutPagerTitleTextStyle
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
@@ -904,7 +905,7 @@ private fun PlatesPageContent(
                         Text(
                             text = "Barbell already loaded",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                         )
                     }
                 }
@@ -927,7 +928,7 @@ private fun PlatesPageContent(
                         Text(
                             text = "Step ${userStepIndex + 1}/$totalFrames",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                             textAlign = TextAlign.Center,
                         )
                     }

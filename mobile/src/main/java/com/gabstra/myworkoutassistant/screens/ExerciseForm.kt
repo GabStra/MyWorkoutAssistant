@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -143,7 +144,7 @@ private fun SwitchSettingRow(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.tertiaryContent
                 )
             }
         }
@@ -564,7 +565,7 @@ fun ExerciseForm(
                         Text(
                             "The watch alerts at the target; finish the run step when you are ready.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }
@@ -753,7 +754,7 @@ fun ExerciseForm(
                         Text(
                             text = "Choose how taps on the map are saved:",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -785,7 +786,7 @@ fun ExerciseForm(
                         Text(
                             text = "Primary muscles are the main muscles worked. Secondary muscles are assisting muscles.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }
@@ -1080,7 +1081,7 @@ fun ExerciseForm(
                             Text(
                                 text = "Override the global deload defaults for this exercise only.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
 
                             Text(
@@ -1205,7 +1206,7 @@ fun ExerciseForm(
                             Text(
                                 text = "A deload starts when either trigger shown above is reached. If both show Off, automatic deload is off for this exercise.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                         }
                     }
@@ -1224,7 +1225,7 @@ fun ExerciseForm(
                             Text(
                                 text = "Use calibration when you do not yet know a reliable working weight for this exercise. At the start of the workout, the watch asks you to choose a load, complete a calibration set, and report your reps in reserve (RIR). It then adjusts the load for the remaining work sets and turns calibration off for future sessions.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                             SwitchSettingRow(
                                 title = "Use Calibration mode",
@@ -1247,7 +1248,7 @@ fun ExerciseForm(
                 Text(
                     text = "Set a name above to configure training and advanced options.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                     modifier = Modifier.padding(top = Spacing.md)
                 )
             }

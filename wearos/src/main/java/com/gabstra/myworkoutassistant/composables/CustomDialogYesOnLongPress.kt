@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.core.Animatable
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -256,7 +257,7 @@ fun CustomDialogYesOnLongPress(
                         Text(
                             text = "Hold check to confirm",
                             textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.fillMaxWidth(),
                         )

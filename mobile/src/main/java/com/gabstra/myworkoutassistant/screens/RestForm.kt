@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -128,7 +129,7 @@ fun RestForm(
                     Text(
                         text = "Same time between each pair of exercises; existing rests are replaced.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.tertiaryContent,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

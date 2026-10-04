@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.content.res.Configuration
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -502,7 +503,7 @@ private fun ExerciseFamilyCard(
                         Text(
                             text = "${family.variations.size} variations",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                         )
                     }
                 }
@@ -713,7 +714,7 @@ private fun ExerciseDefinitionDetailsSection(
                     text = detail.label,
                     modifier = Modifier.width(96.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                 )
                 Text(
                     text = detail.value,
@@ -735,7 +736,7 @@ private fun UsageSection(
         Text(
             text = "This exercise isn't part of any workout yet",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.tertiaryContent,
         )
         return
     }
@@ -785,7 +786,7 @@ private fun UsageSection(
                             Text(
                                 text = "${usage.placementCount} uses",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = MaterialTheme.colorScheme.tertiaryContent,
                             )
                         }
                         Icon(
@@ -800,7 +801,7 @@ private fun UsageSection(
                             text = usage.placementNameOverrides.joinToString(prefix = "Shown as: "),
                             modifier = Modifier.padding(start = Spacing.md),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                         )
                     }
                 }

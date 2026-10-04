@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -116,7 +117,7 @@ fun ErrorLogsScreen(
                 Text(
                     text = "No error logs",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.tertiaryContent
                 )
             }
         } else {
@@ -186,7 +187,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
             Text(
                 text = "Thread: ${errorLog.threadName}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.tertiaryContent
             )
             
             Spacer(modifier = Modifier.height(4.dp))

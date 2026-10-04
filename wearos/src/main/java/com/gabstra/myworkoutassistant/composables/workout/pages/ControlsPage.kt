@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
 import com.gabstra.myworkoutassistant.composables.*
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -405,7 +406,7 @@ fun ControlsPage(
                                 },
                                 style = MaterialTheme.typography.bodyExtraSmall,
                                 textAlign = TextAlign.Start,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                         }
                         Switch(
@@ -469,7 +470,7 @@ fun ControlsPage(
                                 text = statusText,
                                 style = MaterialTheme.typography.bodyExtraSmall,
                                 textAlign = TextAlign.Start,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                         }
                         Switch(

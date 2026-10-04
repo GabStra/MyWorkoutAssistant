@@ -16,7 +16,6 @@ import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.LocalWearCoroutineExceptionHandler
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
@@ -24,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.TertiaryTextGray
 import com.gabstra.myworkoutassistant.shared.Yellow
 
 val darkScheme = ColorScheme(
@@ -49,7 +49,8 @@ val darkScheme = ColorScheme(
     surfaceContainer = MediumDarkGray,
     surfaceContainerHigh = MediumGray,
     onSurface =  LighterGray, //Color(210, 210, 210),
-    onSurfaceVariant = LightGray,
+    // Same secondary-text color as the mobile app; weight differentiates hierarchy.
+    onSurfaceVariant = LighterGray,
     outline = MediumGray,
     outlineVariant = MediumLightGray,
 
@@ -74,6 +75,14 @@ data class ColorFamily(
 val unspecified_scheme = ColorFamily(
     Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified
 )
+
+/**
+ * Quiet color for captions, hints and empty states.
+ * One visible step below the primary text colors so auxiliary text reads as
+ * secondary without dropping below accessible contrast on any surface.
+ */
+val ColorScheme.tertiaryContent: Color
+    get() = TertiaryTextGray
 
 @Composable
 fun checkboxButtonColors(): CheckboxButtonColors {

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -152,7 +153,7 @@ fun PreparingExternalHeartRateScreen(
                     .padding(top = 5.dp),
                 text = statusMessage,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.tertiaryContent,
                 textAlign = TextAlign.Center,
             )
         }
@@ -212,7 +213,7 @@ fun PreparingExternalHeartRateScreen(
                         .transformedHeight(this, spec),
                     text = statusMessage,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                     textAlign = TextAlign.Center
                 )
             }

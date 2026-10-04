@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -57,7 +58,7 @@ fun HistoryFiltersBlock(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
                         )
                     }
                 }

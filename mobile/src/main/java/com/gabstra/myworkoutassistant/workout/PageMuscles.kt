@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.layout.Arrangement
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -72,7 +73,7 @@ fun PageMuscles(
                 text = "No muscle groups",
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.tertiaryContent,
                 textAlign = TextAlign.Center,
             )
         } else {
