@@ -2291,7 +2291,7 @@ def test_cleanup_motion_clip_trims_centers_and_grounds() -> None:
     cleaned_root_span = max(cleaned_pelvis_xs) - min(cleaned_pelvis_xs)
     assert cleaned_root_span < raw_trimmed_root_span
     assert cleaned.metadata["cleanup"]["rootJoint"] == "pelvis"
-    assert cleaned.metadata["cleanup"]["smoothingMethod"] == "support_stabilization_plus_one_euro_root_translation_xz"
+    assert cleaned.metadata["cleanup"]["smoothingMethod"] == "one_euro_root_translation_xz_plus_support_stabilization"
     assert cleaned.metadata["cleanup"]["reviewStatus"] == "needs_manual_review"
 
 

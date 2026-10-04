@@ -1167,32 +1167,34 @@ def cleanup_motion_clip(
     intermittent_support = (
         str(ground_contact_mode or "unknown").strip().casefold() == "intermittent"
     )
-    support_stabilized = (
-        grounded
-        if preserve_horizontal_orientation or not floor_support_enabled or intermittent_support
-        else stabilize_global_translation_from_support_contacts(
-            grounded,
-            contact_states=support_states,
-            support_ground_y=support_ground_y,
-        )
-    )
     # Distinct-surface motion needs the measured root path intact. Its contact
     # solver locks each planted episode and interpolates the rigid body path
     # through flight; filtering here first shortens that path and creates two
     # competing owners for the same translation.
     smoothed = (
-        support_stabilized
+        grounded
         if intermittent_support
         else smooth_root_translation(
-            support_stabilized,
+            grounded,
             root_joint=root_joint,
             min_cutoff=one_euro_min_cutoff,
             beta=one_euro_beta,
             derivative_cutoff=one_euro_derivative_cutoff,
         )
     )
+    # Root smoothing translates every joint by the same X/Z delta. Apply it
+    # before support anchoring so planted feet remain stationary afterward.
+    support_stabilized = (
+        smoothed
+        if preserve_horizontal_orientation or not floor_support_enabled or intermittent_support
+        else stabilize_global_translation_from_support_contacts(
+            smoothed,
+            contact_states=support_states,
+            support_ground_y=support_ground_y,
+        )
+    )
     if not floor_support_enabled:
-        vertically_grounded = smoothed
+        vertically_grounded = support_stabilized
         vertical_grounding = {
             "applied": False,
             "groundContactMode": str(ground_contact_mode or "unknown").strip().casefold(),
@@ -1205,7 +1207,7 @@ def cleanup_motion_clip(
             ),
         }
     elif preserve_horizontal_orientation:
-        vertically_grounded = smoothed
+        vertically_grounded = support_stabilized
         vertical_grounding = {
             "applied": False,
             "groundContactMode": str(ground_contact_mode or "unknown").strip().casefold(),
@@ -1213,7 +1215,7 @@ def cleanup_motion_clip(
         }
     else:
         vertically_grounded, vertical_grounding = stabilize_vertical_floor_contact(
-            smoothed,
+            support_stabilized,
             ground_contact_mode=(
                 "continuous" if uses_knee_floor_support(support_mode) else ground_contact_mode
             ),
@@ -1337,7 +1339,7 @@ def cleanup_motion_clip(
         "smoothingMethod": (
             "distinct_surface_solver_owns_contact_and_root_translation"
             if intermittent_support
-            else "support_stabilization_plus_one_euro_root_translation_xz"
+            else "one_euro_root_translation_xz_plus_support_stabilization"
         ),
         "trimmedStartFrames": start_trim,
         "trimmedEndFrames": end_trim,
