@@ -337,26 +337,26 @@ def corroborated_stationary_sole(evidence, side):
 
 
 def materialize_stationary_sole_support(payload):
-    """Materialize full-cycle ground contacts after selecting/slicing a cycle."""
+    """Return rig-side evidence with eligible full-cycle sole support materialized."""
     from .contact_constraints import (
         contact_frame_bounds,
         motion_space_support_evidence,
     )
-    evidence = motion_space_support_evidence(payload)
+    evidence = deepcopy(motion_space_support_evidence(payload))
     existing = evidence.get('bodySupport') or {}
     if existing.get('required') and existing.get('status') != 'confirmed':
-        return  # New foot evidence cannot resolve missing torso observations.
+        return evidence  # New foot evidence cannot resolve missing torso observations.
     observed = evidence.get('bodySupportObservation') or {}
     if observed.get('status') != 'observed':
-        return
+        return evidence
     answer = observed.get('observation') or {}
     count = len(payload.get('frames') or [])
     names = payload.get('jointNames') or []
     if count < 7 or not {'left_hip', 'right_hip', 'left_shoulder', 'right_shoulder'}.issubset(names):
-        return
+        return evidence
     floor = payload.get('renderFloorY')
     if not isinstance(floor, (int, float)) or not np.isfinite(floor):
-        return
+        return evidence
     sides = []
     existing_soles = {c['joints'][2] for c in existing.get('soleContacts', [])}
     for side in ('left', 'right'):
@@ -371,7 +371,7 @@ def materialize_stationary_sole_support(payload):
                for c in contacts) or (contacts and corroborated_stationary_sole(evidence, side)):
             sides.append(side)
     if not sides:
-        return
+        return evidence
     medians = {n: np.median([f['joints'][n] for f in payload['frames']], axis=0) for n in names}
     support = deepcopy(existing) if existing else {'required': True, 'status': 'confirmed',
                'source': 'observed_full_cycle_ground_sole_contacts',
@@ -389,6 +389,7 @@ def materialize_stationary_sole_support(payload):
     add_ground_sole_contacts(payload, support, medians, sides)
     if support['soleContacts']:
         evidence['bodySupport'] = support
+    return evidence
 
 
 def body_support_source_readiness(source_pose, contract=None):

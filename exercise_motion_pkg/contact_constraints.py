@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 from copy import deepcopy
@@ -13,6 +15,10 @@ import numpy as np
 # Envelope validation must use the same precision after converting to degrees;
 # this is solver roundoff tolerance, separate from source/anatomical allowances.
 ANGLE_NUMERICAL_TOLERANCE_RADIANS = 1e-6
+_FIT_SUPPORT_EVIDENCE_OVERRIDE: ContextVar[tuple[str, dict[str, Any]] | None] = ContextVar(
+    "fit_support_evidence_override",
+    default=None,
+)
 
 
 def _support_evidence_digest(evidence: dict[str, Any]) -> str:
@@ -81,6 +87,25 @@ def _source_evidence_from_motion_space(evidence: dict[str, Any]) -> dict[str, An
     return source_evidence
 
 
+def _fit_support_evidence_identity(payload: dict[str, Any]) -> str:
+    return _support_evidence_digest({
+        "sourceFootSupportEvidence": payload.get("sourceFootSupportEvidence") or {},
+        "sourcePoseCameraReference": payload.get("sourcePoseCameraReference"),
+    })
+
+
+@contextmanager
+def fit_motion_space_support_evidence_scope(payload: dict[str, Any], evidence: dict[str, Any]):
+    """Expose materialized rig-side support only during this fit call tree."""
+    token = _FIT_SUPPORT_EVIDENCE_OVERRIDE.set(
+        (_fit_support_evidence_identity(payload), evidence)
+    )
+    try:
+        yield evidence
+    finally:
+        _FIT_SUPPORT_EVIDENCE_OVERRIDE.reset(token)
+
+
 def motion_space_support_evidence(
     payload: dict[str, Any],
     *,
@@ -92,6 +117,14 @@ def motion_space_support_evidence(
     registration assigns those labels to the opposite rig sides, cache a
     remapped view for constraints while leaving the source evidence untouched.
     """
+    active_fit_evidence = _FIT_SUPPORT_EVIDENCE_OVERRIDE.get()
+    if (
+        evidence_override is None
+        and active_fit_evidence is not None
+        and active_fit_evidence[0] == _fit_support_evidence_identity(payload)
+    ):
+        return active_fit_evidence[1]
+
     evidence = evidence_override if isinstance(evidence_override, dict) else (
         payload.get("sourceFootSupportEvidence") or {}
     )

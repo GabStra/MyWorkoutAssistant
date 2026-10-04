@@ -19,6 +19,87 @@ def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch)
     assert motion._hybrid_jacobian_enabled()
 
 
+def test_swapped_materialized_sole_support_reaches_fit_without_mutating_source(monkeypatch):
+    from copy import deepcopy
+
+    from exercise_motion_pkg import controlled_motion as motion
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+    from exercise_motion_pkg.support_geometry import support_evidence
+
+    names = [
+        'pelvis', 'left_hip', 'right_hip', 'left_shoulder', 'right_shoulder',
+        'left_knee', 'right_knee', 'left_ankle', 'right_ankle', 'left_foot', 'right_foot',
+    ]
+    joints = {
+        'pelvis': [0., .8, 0.],
+        'left_hip': [-.15, .8, 0.],
+        'right_hip': [.15, .8, 0.],
+        'left_shoulder': [-.2, 1.2, 0.],
+        'right_shoulder': [.2, 1.2, 0.],
+        'left_knee': [-.15, .4, 0.],
+        'right_knee': [.15, .4, 0.],
+        'left_ankle': [-.15, .1, 0.],
+        'right_ankle': [.15, .1, 0.],
+        'left_foot': [-.15, .05, .08],
+        'right_foot': [.15, .05, .08],
+    }
+    source_evidence = {
+        'bodySupportObservation': {
+            'status': 'observed',
+            'observation': {
+                'leftFoot': 'stationary_full_sole',
+                'leftFootSurface': 'ground',
+            },
+        },
+        'supportContacts': [{
+            'jointName': 'left_foot',
+            'contactState': 'full_sole',
+            'contactMotion': 'stationary',
+            'startRatio': 0.,
+            'endRatio': 1.,
+        }],
+    }
+    payload = {
+        'jointNames': names,
+        'frames': [
+            {'timeSec': frame_index / 30., 'joints': deepcopy(joints)}
+            for frame_index in range(9)
+        ],
+        'renderFloorY': 0.,
+        'sourceFootSupportEvidence': deepcopy(source_evidence),
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'swapped'}},
+    }
+    cached_motion_evidence = deepcopy(motion_space_support_evidence(payload))
+    consumed = {}
+
+    def capture_fit_inputs(fit_payload, **_kwargs):
+        mapped = motion_space_support_evidence(fit_payload)
+        consumed['supportEvidence'] = support_evidence(fit_payload)
+        consumed['pinned'] = motion.contact_mask(fit_payload, names, len(fit_payload['frames']))
+        consumed['sourceEvidenceDigest'] = motion.controlled_motion_fit_source_evidence_digest(
+            fit_payload
+        )
+        assert mapped['supportContacts'][0]['jointName'] == 'right_foot'
+        return fit_payload, {'applied': True, 'strategy': motion.CONTROLLED_MOTION_STRATEGY}
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion_impl', capture_fit_inputs)
+    result, report = motion._fit_controlled_motion(payload, timeout_seconds=30.)
+
+    assert consumed['supportEvidence']['status'] == 'confirmed'
+    assert consumed['supportEvidence']['soleContacts'][0]['joints'] == [
+        'right_knee', 'right_ankle', 'right_foot',
+    ]
+    assert consumed['pinned'][:, names.index('right_foot')].all()
+    assert report['fitSourceEvidenceDigest'] == consumed['sourceEvidenceDigest']
+    assert report['fitSourceEvidenceDigest'] == (
+        motion.controlled_motion_fit_source_evidence_digest(result)
+    )
+    assert result['sourceFootSupportEvidence'] == source_evidence
+    assert payload['sourceFootSupportEvidence'] == source_evidence
+    assert payload['motionSpaceSupportEvidence'] == cached_motion_evidence
+    assert motion_space_support_evidence(payload) == cached_motion_evidence
+
+
 def test_cyclic_frame_probe_colors_are_unique_across_wrapped_three_frame_stencils():
     from exercise_motion_pkg.controlled_motion import _cyclic_frame_probe_colors
 

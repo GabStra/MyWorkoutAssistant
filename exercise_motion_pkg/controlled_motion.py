@@ -566,11 +566,10 @@ def controlled_motion_fit_source_evidence(payload):
     source_support_evidence = payload.get('sourceFootSupportEvidence')
     motion_space_evidence = None
     if isinstance(source_support_evidence, dict):
-        from .contact_constraints import motion_space_support_evidence
-        # Keep source labels canonical and also bind the exact side-mapped view
-        # consumed by the rig constraints. The mapper validates any cached view
-        # against the canonical source evidence before returning it.
-        motion_space_evidence = motion_space_support_evidence(payload)
+        from .body_support_observation import materialize_stationary_sole_support
+        # Bind the same derived rig-side constraints consumed by fitting while
+        # preserving the canonical source labels and their mapping digest.
+        motion_space_evidence = materialize_stationary_sole_support(payload)
     legacy_selection = payload.get('loopCycleSelection')
     legacy_selection_is_authoritative = (
         isinstance(legacy_selection, dict)
@@ -4186,7 +4185,7 @@ def fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None
             "error": str(exc),
         }
     report['cpuFitQueueWaitSeconds'] = waited
-    if report.get('applied'):
+    if report.get('applied') and not isinstance(report.get('fitSourceEvidenceDigest'), str):
         report['fitSourceEvidenceDigest'] = controlled_motion_fit_source_evidence_digest(result)
     return result, report
 
@@ -4601,6 +4600,24 @@ def _smooth_root_rotation_candidate(rig, coordinates, original, pinned_joints, s
 
 
 def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None, shared_support=None):
+    """Fit with one local, motion-space view of materialized support evidence."""
+    from .body_support_observation import materialize_stationary_sole_support
+    from .contact_constraints import fit_motion_space_support_evidence_scope
+
+    fit_support_evidence = materialize_stationary_sole_support(payload)
+    with fit_motion_space_support_evidence_scope(payload, fit_support_evidence):
+        result, report = _fit_controlled_motion_impl(
+            payload,
+            max_evaluations=max_evaluations,
+            timeout_seconds=timeout_seconds,
+            shared_support=shared_support,
+        )
+        if report.get('applied'):
+            report['fitSourceEvidenceDigest'] = controlled_motion_fit_source_evidence_digest(result)
+    return result, report
+
+
+def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_seconds=None, shared_support=None):
     """Return only a validated fit; otherwise retain the input with a report."""
     allow_refinement = max_evaluations is None
     if max_evaluations is None:
@@ -4613,8 +4630,6 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
     report = {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
               'timeBudgetSeconds': timeout_seconds, 'polishReserveSeconds': reserved_polish}
     optimization_deadline = started + timeout_seconds
-    from .body_support_observation import materialize_stationary_sole_support
-    materialize_stationary_sole_support(payload)
     from .contact_constraints import motion_space_support_evidence
     fit_support_evidence = motion_space_support_evidence(payload)
     if can_reuse_controlled_motion(payload):
