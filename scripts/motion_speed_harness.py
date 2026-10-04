@@ -38,6 +38,8 @@ HARNESS_ROOT = REPO_ROOT / "build/exercise_motion/speed-harness"
 DEFAULT_MOTION_PYTHON = r"C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
 GVHMR_DOCKER_IMAGE = "myworkoutassistant/gvhmr:torch2.3-cu121"
 DEFAULT_STAGED_WAVE_SIZE = 8
+DEFAULT_PREFETCH_WORKERS = 8
+DEFAULT_PREFETCH_QUEUE_DEPTH = 40
 PATH_TEXT_SUFFIXES = {".html", ".json", ".jsonl", ".md", ".toml", ".txt", ".yaml", ".yml"}
 
 # Small default smoke pair. It may fail discovery before reaching staged
@@ -330,6 +332,44 @@ def stage_fixture_contract_cache(manifest: dict, destination: Path) -> Path:
     return destination
 
 
+def stage_fixture_source_cache(manifest: dict, destination: Path) -> Path:
+    """Copy pinned source videos into an arm-local cache and verify every copy."""
+    if destination.exists():
+        raise SystemExit(f"Refusing to overwrite staged fixture source cache: {destination}")
+    destination.mkdir(parents=True)
+    copied_hashes: dict[str, str] = {}
+    for exercise in manifest.get("exercises") or []:
+        source = Path(exercise["sourceCachePath"])
+        expected_sha256 = exercise["sourceSha256"]
+        if not source.is_file():
+            raise SystemExit(f"Fixture source cache file missing: {source}")
+        source_sha256 = sha256_file(source)
+        if source_sha256 != expected_sha256:
+            raise SystemExit(
+                f"Fixture source SHA-256 mismatch for {source}: "
+                f"expected {expected_sha256}, got {source_sha256}"
+            )
+
+        target = destination / source.name
+        previous_hash = copied_hashes.get(source.name)
+        if previous_hash is not None:
+            if previous_hash != expected_sha256:
+                raise SystemExit(
+                    f"Fixture source cache filename collision for {source.name}: "
+                    f"{previous_hash} != {expected_sha256}"
+                )
+            continue
+        shutil.copy2(source, target)
+        copied_sha256 = sha256_file(target)
+        if copied_sha256 != expected_sha256:
+            raise SystemExit(
+                f"Copied fixture source SHA-256 mismatch for {target}: "
+                f"expected {expected_sha256}, got {copied_sha256}"
+            )
+        copied_hashes[source.name] = copied_sha256
+    return destination
+
+
 def resolve_motion_python() -> str:
     return os.environ.get("EXERCISE_MOTION_PYTHON") or DEFAULT_MOTION_PYTHON
 
@@ -458,20 +498,59 @@ def _log_tail(log_path: Path, lines: int = 12) -> str:
     return "\n".join(content[-lines:])
 
 
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return parsed
+
+
 def build_runner_command(
     arm: str, arm_dir: Path, plan_json: Path, staged_wave_size: int,
     staged_wave_max_wait_seconds: int, extra_runner_args: list[str] | None = None,
+    *, cpu_prefetch_during_bake: bool = True,
+    prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
+    prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
+    preview_cache_dir: Path | None = None,
+    source_cache_dir: Path | None = None,
 ) -> list[str]:
+    if staged_wave_size < 0:
+        raise ValueError("staged_wave_size must be zero or greater")
+    if prefetch_workers < 1 or prefetch_queue_depth < 1:
+        raise ValueError("prefetch worker count and queue depth must be at least 1")
+    if preview_cache_dir is None:
+        preview_cache_dir = arm_dir / "cache" / "youtube-preview-cache"
+    if source_cache_dir is None:
+        source_cache_dir = arm_dir / "cache" / "youtube-source-cache"
     args = [
         "pwsh", "-NoProfile", "-File", str(RUNNER),
         "-WorkoutPlanJson", str(plan_json),
         "-WorkspaceRoot", str(arm_dir / "isolated" / "exercise_motion" / "workspace"),
         "-IncrementalMobilePackageOutputJson", str(arm_dir / "movements_out.json"),
+        "-YouTubePreviewCacheDir", str(preview_cache_dir),
+        "-YouTubeSourceCacheDir", str(source_cache_dir),
         "-MotionReconstructor", "gvhmr",
         "-StagedWaveSize", str(staged_wave_size),
         "-StagedWaveMaxWaitSeconds", str(staged_wave_max_wait_seconds),
+        "-PrefetchWorkers", str(prefetch_workers),
+        "-PrefetchQueueDepth", str(prefetch_queue_depth),
         "-SourceOutcomeIndexJson", str(arm_dir / "source_outcome_index.json"),
     ] + ARMS[arm]
+    if cpu_prefetch_during_bake:
+        args.append("-CpuPrefetchDuringBake")
     if extra_runner_args:
         args += list(extra_runner_args)
     return args
@@ -669,7 +748,10 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             # ViTPose/HMR2 init, ~350-460s measured) is silent in run.log;
             # 600s still fast-fails a real wedge inside the 45-minute budget.
             stall_seconds: float = 600.0,
-            extra_runner_args: list[str] | None = None) -> dict:
+            extra_runner_args: list[str] | None = None,
+            cpu_prefetch_during_bake: bool = True,
+            prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
+            prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH) -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
         shutil.copy2(DEFAULT_SOURCE_OUTCOME_INDEX, source_index)
@@ -677,7 +759,13 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     args = build_runner_command(
         arm, arm_dir, plan_json, staged_wave_size, staged_wave_max_wait_seconds,
         extra_runner_args=extra_runner_args,
+        cpu_prefetch_during_bake=cpu_prefetch_during_bake,
+        prefetch_workers=prefetch_workers,
+        prefetch_queue_depth=prefetch_queue_depth,
     )
+    source_cache_root = DEFAULT_SOURCE_CACHE_DIR
+    if "-YouTubeSourceCacheDir" in args:
+        source_cache_root = Path(args[args.index("-YouTubeSourceCacheDir") + 1])
     started = time.perf_counter()
     log_handle = log_path.open("w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT)
@@ -723,6 +811,8 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
         "wallSeconds": round(elapsed, 1),
         "workspace": str(arm_dir / "isolated" / "exercise_motion" / "workspace"),
         "whamCacheRoot": str(arm_dir / "isolated" / "exercise_motion" / "wham-cache"),
+        "previewCacheRoot": str(arm_dir / "cache" / "youtube-preview-cache"),
+        "sourceCacheRoot": str(source_cache_root),
         "log": str(log_path),
         "runnerArgs": args,
     }
@@ -824,7 +914,128 @@ def arm_qualification_error(
             f"runner reported {terminal_count} terminal exercises; "
             f"expected {expected_exercise_count}"
         )
+    artifact_errors = metrics.get("acceptedMovementArtifactErrors") or []
+    if artifact_errors:
+        first_error = artifact_errors[0]
+        return (
+            "could not identify accepted movement artifact for "
+            f"{first_error.get('exerciseName') or first_error.get('exerciseId')}: "
+            f"{first_error.get('error')}"
+        )
+    artifact_rows = metrics.get("acceptedMovementArtifacts")
+    if not isinstance(artifact_rows, list) or len(artifact_rows) != expected_exercise_count:
+        return (
+            f"runner summary has {len(artifact_rows) if isinstance(artifact_rows, list) else 0} "
+            f"accepted movement identities; expected {expected_exercise_count}"
+        )
     return None
+
+
+def _movement_artifact_identities(summary: dict, workspace: Path) -> tuple[list[dict], list[dict]]:
+    """Return stable per-exercise hashes for each accepted skeleton and its frames."""
+    identities: list[dict] = []
+    errors: list[dict] = []
+    for exercise in summary.get("exercises") or []:
+        if exercise.get("status") != "completed":
+            continue
+        exercise_id = exercise.get("exerciseId")
+        exercise_name = exercise.get("exerciseName")
+        results = exercise.get("selectedResults")
+        selected_results = results if isinstance(results, list) and results else [exercise]
+        movements = []
+        for result_index, selected in enumerate(selected_results):
+            if not isinstance(selected, dict):
+                errors.append({
+                    "exerciseId": exercise_id,
+                    "exerciseName": exercise_name,
+                    "error": f"selected result {result_index} is not an object",
+                })
+                continue
+            skeleton_path_text = (
+                selected.get("selectedWearSkeletonPath")
+                or selected.get("skeletonPath")
+                or (exercise.get("selectedWearSkeletonPath") if selected is exercise else None)
+            )
+            if not isinstance(skeleton_path_text, str) or not skeleton_path_text.strip():
+                errors.append({
+                    "exerciseId": exercise_id,
+                    "exerciseName": exercise_name,
+                    "error": f"selected result {result_index} has no skeleton path",
+                })
+                continue
+            skeleton_path = Path(skeleton_path_text)
+            if not skeleton_path.is_absolute():
+                skeleton_path = (workspace / skeleton_path).resolve()
+            if not skeleton_path.is_file():
+                errors.append({
+                    "exerciseId": exercise_id,
+                    "exerciseName": exercise_name,
+                    "error": f"selected skeleton is missing: {skeleton_path}",
+                })
+                continue
+            try:
+                raw_skeleton = skeleton_path.read_bytes()
+                skeleton = json.loads(raw_skeleton)
+                frames = skeleton.get("frames") if isinstance(skeleton, dict) else None
+                if not isinstance(frames, list):
+                    raise ValueError("skeleton has no frames array")
+                canonical_frames = json.dumps(
+                    frames,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                errors.append({
+                    "exerciseId": exercise_id,
+                    "exerciseName": exercise_name,
+                    "error": f"could not read selected skeleton: {type(exc).__name__}: {exc}",
+                })
+                continue
+            source = skeleton.get("source") or {}
+            source_video_id = None
+            if isinstance(source, dict):
+                for key in ("videoId", "youtubeVideoId", "video_id"):
+                    if isinstance(source.get(key), str):
+                        source_video_id = source[key]
+                        break
+            movements.append({
+                "artifactSha256": hashlib.sha256(raw_skeleton).hexdigest(),
+                "frameSequenceSha256": hashlib.sha256(canonical_frames).hexdigest(),
+                "frameCount": len(frames),
+                "declaredFrameCount": skeleton.get("frameCount"),
+                "fps": skeleton.get("fps"),
+                "durationSec": skeleton.get("durationSec"),
+                "sourceVideoId": source_video_id,
+            })
+        if movements:
+            identities.append({
+                "exerciseId": exercise_id,
+                "exerciseName": exercise_name,
+                "movements": sorted(movements, key=lambda item: item["artifactSha256"]),
+            })
+    identities.sort(key=lambda item: (str(item.get("exerciseId") or ""), str(item.get("exerciseName") or "")))
+    errors.sort(key=lambda item: (str(item.get("exerciseId") or ""), str(item.get("error") or "")))
+    return identities, errors
+
+
+def accepted_artifact_parity_error(reference: list[dict], observed: list[dict]) -> str | None:
+    """Check exact movement bytes and canonical frame sequences across arms/runs."""
+    if reference == observed:
+        return None
+    reference_by_id = {str(item.get("exerciseId")): item for item in reference}
+    observed_by_id = {str(item.get("exerciseId")): item for item in observed}
+    missing = sorted(reference_by_id.keys() - observed_by_id.keys())
+    added = sorted(observed_by_id.keys() - reference_by_id.keys())
+    if missing or added:
+        return f"accepted exercise identities differ (missing={missing}, added={added})"
+    changed = [
+        exercise_id
+        for exercise_id in sorted(reference_by_id)
+        if reference_by_id[exercise_id] != observed_by_id[exercise_id]
+    ]
+    return f"accepted artifact/frame identities differ for exercise ids {changed}"
 
 
 def extract_metrics(arm_result: dict) -> dict:
@@ -846,7 +1057,13 @@ def extract_metrics(arm_result: dict) -> dict:
         "stagedWaveSize": None,
         "effectiveMaxConcurrentStagedWaves": None,
         "stagedWaveWorkerMode": None,
+        "stagedWavesEnabled": None,
         "sharedLlamaServerEnabled": None,
+        "cpuPrefetchDuringBake": None,
+        "prefetchWorkers": None,
+        "prefetchQueueDepth": None,
+        "acceptedMovementArtifacts": [],
+        "acceptedMovementArtifactErrors": [],
         "candidateGenerationAttempts": 0,
         "candidateGenerationAttemptSeconds": 0.0,
         "candidateAttemptManifests": 0,
@@ -946,9 +1163,18 @@ def extract_metrics(arm_result: dict) -> dict:
         metrics["statuses"] = statuses
         metrics["overlapHighWater"] = summary.get("runningStagedWaveCountHighWater")
         metrics["stagedWaveSize"] = summary.get("stagedWaveSize")
+        metrics["stagedWavesEnabled"] = summary.get("stagedWavesEnabled")
         metrics["effectiveMaxConcurrentStagedWaves"] = summary.get("maxConcurrentStagedWaves")
         metrics["stagedWaveWorkerMode"] = summary.get("stagedWaveWorkerMode")
         metrics["sharedLlamaServerEnabled"] = summary.get("sharedLlamaServerEnabled")
+        parallelism = summary.get("parallelism") or {}
+        metrics["cpuPrefetchDuringBake"] = parallelism.get("cpuPrefetchDuringBake")
+        metrics["prefetchWorkers"] = parallelism.get("prefetchWorkers")
+        metrics["prefetchQueueDepth"] = parallelism.get("prefetchQueueDepth")
+        (
+            metrics["acceptedMovementArtifacts"],
+            metrics["acceptedMovementArtifactErrors"],
+        ) = _movement_artifact_identities(summary, workspace)
     # These are cumulative coordinator snapshots, repeated in source/final
     # phase reports and across waves. Summing snapshots double-counts events;
     # the largest observed cumulative value is the run total.
@@ -975,7 +1201,14 @@ def extract_metrics(arm_result: dict) -> dict:
     return metrics
 
 
-def effective_configuration_error(arm: str, metrics: dict, requested_wave_size: int) -> str | None:
+def effective_configuration_error(
+    arm: str,
+    metrics: dict,
+    requested_wave_size: int,
+    cpu_prefetch_during_bake: bool = True,
+    prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
+    prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
+) -> str | None:
     expected = ARM_EFFECTIVE_SETTINGS.get(arm)
     if expected is None:
         return f"no effective-setting contract is defined for arm '{arm}'"
@@ -990,14 +1223,38 @@ def effective_configuration_error(arm: str, metrics: dict, requested_wave_size: 
             f"effective stagedWaveSize={metrics.get('stagedWaveSize')!r}, "
             f"requested {requested_wave_size}"
         )
+    expected_staged_enabled = requested_wave_size > 0
+    if metrics.get("stagedWavesEnabled") is not expected_staged_enabled:
+        return (
+            f"effective stagedWavesEnabled={metrics.get('stagedWavesEnabled')!r}, "
+            f"expected {expected_staged_enabled} for wave size {requested_wave_size}"
+        )
+    requested_prefetch = {
+        "cpuPrefetchDuringBake": cpu_prefetch_during_bake,
+        "prefetchWorkers": prefetch_workers,
+        "prefetchQueueDepth": prefetch_queue_depth,
+    }
+    for key, value in requested_prefetch.items():
+        observed = metrics.get(key)
+        if observed != value:
+            return f"effective {key}={observed!r}, requested {value!r}"
     expected_high_water = expected["effectiveMaxConcurrentStagedWaves"]
+    expected_high_water = expected_high_water if expected_staged_enabled else 0
     if metrics.get("overlapHighWater") != expected_high_water:
         return (
             f"observed overlap high-water={metrics.get('overlapHighWater')!r}, "
             f"expected {expected_high_water}"
         )
-    if metrics.get("stagedWaveWorkerMode") != "workspace_scoped_persistent_serial_queue":
-        return f"unexpected staged-wave worker mode {metrics.get('stagedWaveWorkerMode')!r}"
+    expected_worker_mode = (
+        "workspace_scoped_persistent_serial_queue" if expected_staged_enabled else "disabled"
+    )
+    if metrics.get("stagedWaveWorkerMode") != expected_worker_mode:
+        return (
+            f"unexpected staged-wave worker mode {metrics.get('stagedWaveWorkerMode')!r}; "
+            f"expected {expected_worker_mode!r}"
+        )
+    if not expected_staged_enabled and metrics.get("waves") != 0:
+        return f"disabled staged waves reported {metrics.get('waves')!r} wave reports"
     return None
 
 
@@ -1025,15 +1282,41 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=45 * 60.0)
     parser.add_argument(
         "--staged-wave-size",
-        type=int,
+        type=_non_negative_int,
         default=DEFAULT_STAGED_WAVE_SIZE,
-        help="Exercises per staged wave; defaults to the production library setting.",
+        help="Exercises per staged wave; 0 disables staged waves.",
     )
     parser.add_argument(
         "--staged-wave-max-wait-seconds",
-        type=int,
+        type=_positive_int,
         default=300,
         help="Partial-wave wait before flushing; production library default is 300.",
+    )
+    prefetch_group = parser.add_mutually_exclusive_group()
+    prefetch_group.add_argument(
+        "--cpu-prefetch-during-bake",
+        dest="cpu_prefetch_during_bake",
+        action="store_true",
+        help="Enable production-library CPU/network candidate prefetch (default).",
+    )
+    prefetch_group.add_argument(
+        "--disable-cpu-prefetch",
+        dest="cpu_prefetch_during_bake",
+        action="store_false",
+        help="Disable CPU/network candidate prefetch for this measurement.",
+    )
+    parser.set_defaults(cpu_prefetch_during_bake=True)
+    parser.add_argument(
+        "--prefetch-workers",
+        type=_positive_int,
+        default=DEFAULT_PREFETCH_WORKERS,
+        help="Prefetch workers; production library default is 8.",
+    )
+    parser.add_argument(
+        "--prefetch-queue-depth",
+        type=_positive_int,
+        default=DEFAULT_PREFETCH_QUEUE_DEPTH,
+        help="Prefetch queue depth; production library default is 40.",
     )
     parser.add_argument("--keep-workspaces", action="store_true")
     parser.add_argument(
@@ -1058,10 +1341,6 @@ def main() -> None:
     if unsupported:
         details = "; ".join(f"{name}: {UNSUPPORTED_ARMS[name]}" for name in unsupported)
         raise SystemExit(f"Unsupported measurement arm: {details}")
-    if args.staged_wave_size < 1:
-        raise SystemExit("--staged-wave-size must be at least 1")
-    if args.staged_wave_max_wait_seconds < 1:
-        raise SystemExit("--staged-wave-max-wait-seconds must be at least 1")
     if args.smoke_check and args.fixtures is None:
         raise SystemExit("--smoke-check requires --fixtures")
 
@@ -1141,29 +1420,44 @@ def main() -> None:
                 f"no comparison arm was started. See {run_root / 'prewarm.json'}"
             )
     requested_arms = arm_names[:1] if args.smoke_check else arm_names
+    parity_reference_arm: str | None = None
+    parity_reference_artifacts: list[dict] | None = None
     for arm in requested_arms:
         arm_dir = run_root / arm
         print(f"\n[harness] === arm '{arm}' ===", flush=True)
         fixture_args: list[str] = []
+        arm_cache_root = arm_dir / "cache"
+        preview_cache_dir = arm_cache_root / "youtube-preview-cache"
+        source_cache_dir = arm_cache_root / "youtube-source-cache"
         if fixture_manifest is not None:
             prepared_manifest_path, seeded = assemble_workspace_fixtures(
                 arm_dir, fixture_manifest, contract_cache_snapshot
             )
+            source_cache_dir = stage_fixture_source_cache(
+                fixture_manifest, source_cache_dir
+            )
             fixture_args = [
                 "-PreparedCandidatesManifest", str(prepared_manifest_path),
-                "-YouTubeSourceCacheDir", str(DEFAULT_SOURCE_CACHE_DIR),
             ]
             print(f"[harness] seeded exercise_plan.json only for: {', '.join(seeded)}", flush=True)
             print(f"[harness] staged prepared-candidates manifest: {prepared_manifest_path}", flush=True)
+            print(f"[harness] staged pinned source cache: {source_cache_dir}", flush=True)
         else:
             rewritten_paths = assemble_workspace(arm_dir, matched, args.base_workspace)
             print(f"[harness] remapped workspace paths in {rewritten_paths} copied text files", flush=True)
+            source_cache_dir.mkdir(parents=True, exist_ok=True)
+        preview_cache_dir.mkdir(parents=True, exist_ok=True)
         if args.allow_dirty_worktree:
             fixture_args.append("-AllowDirtyWorktree")
         if args.smoke_check:
             command = build_runner_command(
                 arm, arm_dir, plan_json, args.staged_wave_size,
-                args.staged_wave_max_wait_seconds, extra_runner_args=fixture_args,
+                args.staged_wave_max_wait_seconds,
+                extra_runner_args=fixture_args,
+                cpu_prefetch_during_bake=args.cpu_prefetch_during_bake,
+                prefetch_workers=args.prefetch_workers,
+                prefetch_queue_depth=args.prefetch_queue_depth,
+                preview_cache_dir=preview_cache_dir,
             )
             workspace = arm_dir / "isolated" / "exercise_motion" / "workspace"
             for slug in matched:
@@ -1181,8 +1475,22 @@ def main() -> None:
             staged_wave_size=args.staged_wave_size,
             staged_wave_max_wait_seconds=args.staged_wave_max_wait_seconds,
             extra_runner_args=fixture_args or None,
+            cpu_prefetch_during_bake=args.cpu_prefetch_during_bake,
+            prefetch_workers=args.prefetch_workers,
+            prefetch_queue_depth=args.prefetch_queue_depth,
         )
         arm_result.update(run_identity)
+        arm_result["requestedConfiguration"] = {
+            "stagedWaveSize": args.staged_wave_size,
+            "stagedWaveMaxWaitSeconds": args.staged_wave_max_wait_seconds,
+            "cpuPrefetchDuringBake": args.cpu_prefetch_during_bake,
+            "prefetchWorkers": args.prefetch_workers,
+            "prefetchQueueDepth": args.prefetch_queue_depth,
+        }
+        arm_result["cacheRoots"] = {
+            "youtubePreview": str(preview_cache_dir),
+            "youtubeSource": str(source_cache_dir),
+        }
         arm_result["prewarmOutcome"] = prewarm_result
         arm_result["fixtureManifestPath"] = str(args.fixtures) if args.fixtures is not None else None
         arm_result["fixtureManifestSha256"] = fixture_manifest_sha
@@ -1202,7 +1510,12 @@ def main() -> None:
             print(f"[harness] {arm}: FAILED (exit {arm_result['exitCode']}). Tail:\n{_log_tail(Path(arm_result['log']))}", flush=True)
         arm_result["metrics"] = extract_metrics(arm_result)
         config_error = effective_configuration_error(
-            arm, arm_result["metrics"], args.staged_wave_size
+            arm,
+            arm_result["metrics"],
+            args.staged_wave_size,
+            cpu_prefetch_during_bake=args.cpu_prefetch_during_bake,
+            prefetch_workers=args.prefetch_workers,
+            prefetch_queue_depth=args.prefetch_queue_depth,
         )
         arm_result["effectiveConfigurationValid"] = config_error is None
         if config_error:
@@ -1213,6 +1526,22 @@ def main() -> None:
             arm_result, arm_result["metrics"], expected_exercise_count=len(matched)
         )
         arm_result["qualificationError"] = qualification_error
+        parity_error = None
+        if config_error is None and qualification_error is None:
+            current_artifacts = arm_result["metrics"]["acceptedMovementArtifacts"]
+            if parity_reference_artifacts is None:
+                parity_reference_arm = arm
+                parity_reference_artifacts = current_artifacts
+                arm_result["acceptedArtifactParityComparedWithArm"] = None
+                arm_result["acceptedArtifactParityValid"] = None
+            else:
+                parity_error = accepted_artifact_parity_error(
+                    parity_reference_artifacts, current_artifacts
+                )
+                arm_result["acceptedArtifactParityComparedWithArm"] = parity_reference_arm
+                arm_result["acceptedArtifactParityValid"] = parity_error is None
+                if parity_error:
+                    arm_result["acceptedArtifactParityError"] = parity_error
         results.append(arm_result)
         if config_error:
             print("[harness] aborting remaining arms; this run cannot support a comparison.", flush=True)
@@ -1221,6 +1550,13 @@ def main() -> None:
             print(
                 f"[harness] aborting remaining arms after unqualified {arm}: "
                 f"{qualification_error}; failed workspace artifacts are retained",
+                flush=True,
+            )
+            break
+        if parity_error:
+            print(
+                f"[harness] aborting after accepted-output parity failure against "
+                f"'{parity_reference_arm}': {parity_error}",
                 flush=True,
             )
             break
