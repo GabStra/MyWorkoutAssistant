@@ -42511,6 +42511,110 @@ def test_fitted_cycle_rebinds_source_lineage_after_fit_local_crop() -> None:
     assert fitted["artifactState"]["lineageComplete"] is True
 
 
+def test_fitted_cycle_from_full_clip_records_parent_bounded_lineage() -> None:
+    from exercise_motion_pkg.artifact_state import (
+        CYCLE_SELECTION,
+        CYCLIC_REBAKE,
+        FULL_CLIP_BAKE,
+        baked_payload_identity,
+        validate_artifact_state,
+    )
+
+    fps = 30.0
+    full_frames = [
+        {
+            "timeSec": index / fps,
+            "sourceTimeSec": index / fps,
+            "sourceFrameIndex": index,
+            "joints": {"pelvis": [index / 100.0, 1.0, 0.0]},
+            "sourceJoints": {"pelvis": [index / 100.0, 1.0, 0.0]},
+        }
+        for index in range(70)
+    ]
+    full_clip = {
+        "kind": "wearSkeleton",
+        "fps": fps,
+        "frameCount": len(full_frames),
+        "jointNames": ["pelvis"],
+        "frames": full_frames,
+        "loop": {"enabled": False, "startFrame": 0, "endFrame": 69},
+    }
+    contract = {
+        "movementType": "repetition",
+        "completionMode": "return_to_start",
+        "requiresReturnToStart": True,
+    }
+    parent_evidence = {"fullClipBake": baked_payload_identity(full_clip)}
+    parent_state = bake_and_rank_module.artifact_state_for_baked_payload(
+        full_clip,
+        contract=contract,
+        selection_class=FULL_CLIP_BAKE,
+        selection_evidence=parent_evidence,
+    )
+    assert parent_state["lineageComplete"] is True
+    assert parent_state["terminal"] is False
+
+    fitted = {
+        **copy.deepcopy(full_clip),
+        "frameCount": 56,
+        "frames": copy.deepcopy(full_frames[8:64]),
+        "loop": {
+            "enabled": True,
+            "startFrame": 0,
+            "endFrame": 55,
+            "durationSec": 55 / fps,
+        },
+    }
+    for index, frame in enumerate(fitted["frames"]):
+        frame["timeSec"] = index / fps
+
+    fitted_evidence = bake_and_rank_module.selection_evidence_for_materialized_interval(
+        parent_selection_evidence=parent_state["selectionEvidence"],
+        movement_payload=fitted,
+        selection_class=FULL_CLIP_BAKE,
+        source_parent_payload=full_clip,
+    )
+    assert fitted_evidence["cycleSelection"]["interval"] == {
+        "type": "controlled_fit_cycle",
+        "startFrame": 8,
+        "endFrame": 63,
+        "startTimeSec": pytest.approx(8 / fps),
+        "endTimeSec": pytest.approx(63 / fps),
+        "durationSec": pytest.approx(55 / fps),
+    }
+    assert bake_and_rank_module.attach_materialized_source_interval(
+        fitted,
+        fitted_evidence,
+        selection_class=CYCLE_SELECTION,
+    )
+    fitted["artifactState"] = bake_and_rank_module.artifact_state_for_baked_payload(
+        fitted,
+        contract=contract,
+        selection_class=FULL_CLIP_BAKE,
+        selection_evidence=fitted_evidence,
+    )
+
+    state = validate_artifact_state(
+        fitted["artifactState"],
+        movement_payload=fitted,
+    )
+    assert state["artifactClass"] == CYCLIC_REBAKE
+    assert state["history"] == [FULL_CLIP_BAKE, CYCLE_SELECTION, CYCLIC_REBAKE]
+    assert state["lineageComplete"] is True
+    assert state["terminal"] is True
+    assert state["selectionEvidence"]["fullClipBake"] == parent_evidence["fullClipBake"]
+
+    forged = copy.deepcopy(fitted)
+    forged["loop"]["sourceStartFrame"] = -1
+    forged["loop"]["sourceStartTimeSec"] = -1 / fps
+    assert bake_and_rank_module.selection_evidence_for_materialized_interval(
+        parent_selection_evidence=parent_state["selectionEvidence"],
+        movement_payload=forged,
+        selection_class=FULL_CLIP_BAKE,
+        source_parent_payload=full_clip,
+    ) == {}
+
+
 def test_acceptance_gate_persists_reconciled_state_without_ranking(
     tmp_path: Path,
 ) -> None:

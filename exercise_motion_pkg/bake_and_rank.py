@@ -27368,14 +27368,20 @@ def _bake_preview_loops_with_playwright_uncached(
                         else:
                             export_payload["loopCycleSelection"] = pre_fit_cycle_selection
                     elif isinstance(fit_report, dict) and fit_report.get("applied"):
+                        fitted_lineage_parent = lineage_parent_payload
+                        if eligible_loop.artifact_class == FULL_CLIP_BAKE:
+                            fitted_lineage_parent = full_clip_bake_cache.get(
+                                full_clip_cache_key
+                            )
                         fitted_selection_evidence = (
                             selection_evidence_for_materialized_interval(
                                 parent_selection_evidence=lineage_evidence,
                                 movement_payload=export_payload,
                                 selection_class=eligible_loop.artifact_class,
-                                source_parent_payload=lineage_parent_payload,
+                                source_parent_payload=fitted_lineage_parent,
                             )
                             if eligible_loop.artifact_class in {
+                                FULL_CLIP_BAKE,
                                 CYCLE_SELECTION,
                                 BOUNDED_MOVEMENT_SELECTION,
                             }
@@ -27397,6 +27403,28 @@ def _bake_preview_loops_with_playwright_uncached(
                                     "variantId": variant_id,
                                     "rejectedReason": (
                                         "fitted_source_interval_not_within_selected_movement"
+                                    ),
+                                })
+                                unusable_fit = True
+                                stop_after_incomplete_fit = True
+                                break
+                        if (
+                            eligible_loop.artifact_class == FULL_CLIP_BAKE
+                            and isinstance(export_payload.get("loop"), dict)
+                            and export_payload["loop"].get("enabled") is True
+                        ):
+                            if fitted_selection_evidence:
+                                lineage_evidence = fitted_selection_evidence
+                                attach_materialized_source_interval(
+                                    export_payload,
+                                    lineage_evidence,
+                                    selection_class=CYCLE_SELECTION,
+                                )
+                            else:
+                                loop_diagnostics["artifacts"].append({
+                                    "variantId": variant_id,
+                                    "rejectedReason": (
+                                        "fitted_cycle_source_interval_not_within_full_clip"
                                     ),
                                 })
                                 unusable_fit = True
@@ -35420,18 +35448,32 @@ def selection_evidence_for_materialized_interval(
     source_parent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebind fitted frame provenance to its validated source selection."""
-    if selection_class not in {CYCLE_SELECTION, BOUNDED_MOVEMENT_SELECTION}:
+    if selection_class not in {
+        FULL_CLIP_BAKE,
+        CYCLE_SELECTION,
+        BOUNDED_MOVEMENT_SELECTION,
+    }:
         return {}
-    if selection_class == CYCLE_SELECTION:
+    if selection_class in {FULL_CLIP_BAKE, CYCLE_SELECTION}:
         parent_selection = parent_selection_evidence.get("cycleSelection")
         full_clip_identity = parent_selection_evidence.get("fullClipBake")
         if not isinstance(full_clip_identity, dict):
             return {}
-        parent_interval = parent_interval or (
-            parent_selection.get("interval")
-            if isinstance(parent_selection, dict)
-            else None
-        )
+        if selection_class == FULL_CLIP_BAKE:
+            if not isinstance(source_parent_payload, dict):
+                return {}
+            if baked_payload_identity(source_parent_payload) != full_clip_identity:
+                return {}
+            parent_interval = parent_interval or _materialized_source_interval(
+                source_parent_payload,
+                interval_type="full_clip_bake",
+            )
+        else:
+            parent_interval = parent_interval or (
+                parent_selection.get("interval")
+                if isinstance(parent_selection, dict)
+                else None
+            )
         loop = movement_payload.get("loop")
         if not isinstance(loop, dict) or loop.get("enabled") is not True:
             return {}
@@ -35450,7 +35492,11 @@ def selection_evidence_for_materialized_interval(
         return {}
     selected_interval = _materialized_source_interval(
         movement_payload,
-        interval_type=str(parent_interval.get("type") or "selected_source_interval"),
+        interval_type=(
+            "controlled_fit_cycle"
+            if selection_class == FULL_CLIP_BAKE
+            else str(parent_interval.get("type") or "selected_source_interval")
+        ),
     )
     if selected_interval is None or not _interval_is_within_parent(
         selected_interval,
@@ -35458,7 +35504,7 @@ def selection_evidence_for_materialized_interval(
     ):
         return {}
 
-    if selection_class == CYCLE_SELECTION:
+    if selection_class in {FULL_CLIP_BAKE, CYCLE_SELECTION}:
         selection_payload = {
             "fullClipContentSha256": full_clip_identity.get("contentSha256"),
             "interval": selected_interval,
