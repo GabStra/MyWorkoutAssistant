@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from collections import defaultdict
 from copy import deepcopy
@@ -29,7 +30,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v60_support_plane_source_projection_precedence'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v61_canonical_interval_fit_evidence'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -572,9 +573,6 @@ def can_reuse_controlled_motion(payload):
 
 def controlled_motion_fit_source_evidence(payload):
     """Return source and support inputs that can change fit constraints or acceptance."""
-    state = payload.get('artifactState')
-    selection_evidence = state.get('selectionEvidence') if isinstance(state, dict) else None
-    selection_evidence = selection_evidence if isinstance(selection_evidence, dict) else {}
     frames = payload.get('frames') or []
     source_support_evidence = payload.get('sourceFootSupportEvidence')
     motion_space_evidence = None
@@ -583,10 +581,15 @@ def controlled_motion_fit_source_evidence(payload):
         # Bind the same derived rig-side constraints consumed by fitting while
         # preserving the canonical source labels and their mapping digest.
         motion_space_evidence = materialize_stationary_sole_support(payload)
-    legacy_selection = payload.get('loopCycleSelection')
-    legacy_selection_is_authoritative = (
-        isinstance(legacy_selection, dict)
-        and _fit_source_interval_selection(payload).get('source') == 'loopCycleSelection'
+    selected_interval = _fit_source_interval_selection(payload)
+    if (
+        not selected_interval.get('available')
+        and not _fit_payload_declares_source_interval(payload)
+    ):
+        selected_interval = _materialized_fit_source_interval(payload)
+    selected_interval_evidence = _canonical_fit_source_interval_evidence(
+        selected_interval,
+        fps=payload.get('fps'),
     )
     source_frame_provenance = [
         {
@@ -610,15 +613,10 @@ def controlled_motion_fit_source_evidence(payload):
     evidence = {
         'sourcePoseCameraReference': payload.get('sourcePoseCameraReference'),
         'sourcePoseReference': payload.get('sourcePoseReference'),
-        'cycleSelectionEvidence': (
-            None if legacy_selection_is_authoritative
-            else selection_evidence.get('cycleSelection')
-        ),
-        'boundedMovementSelectionEvidence': (
-            None if legacy_selection_is_authoritative
-            else selection_evidence.get('boundedMovementSelection')
-        ),
-        'loopCycleSelection': legacy_selection,
+        # The selected interval can be stored in legacy loopCycleSelection
+        # while fitting and then moved into artifactState lineage after the fit.
+        # Bind its meaning and bounds, not that storage representation.
+        'selectedSourceInterval': selected_interval_evidence,
         'observedCycleProposals': payload.get('observedCycleProposals'),
         'sourceCyclePreflight': payload.get('sourceCyclePreflight'),
         'sourceFrameProvenance': source_frame_provenance,
@@ -642,6 +640,117 @@ def controlled_motion_fit_source_evidence(payload):
     if fit_context:
         evidence['fitContext'] = fit_context
     return evidence
+
+
+def _fit_payload_declares_source_interval(payload):
+    if isinstance(payload.get('loopCycleSelection'), dict):
+        return True
+    state = payload.get('artifactState')
+    evidence = state.get('selectionEvidence') if isinstance(state, dict) else None
+    return isinstance(evidence, dict) and any(
+        isinstance(evidence.get(key), dict)
+        for key in ('cycleSelection', 'boundedMovementSelection')
+    )
+
+
+def _materialized_fit_source_interval(payload):
+    """Bind the frame range the fit actually saw when no selection is declared."""
+    frames = payload.get('frames')
+    if not isinstance(frames, list):
+        return {'available': False, 'reason': 'fit_source_frames_unavailable'}
+    source_frames = [
+        frame for frame in frames
+        if isinstance(frame, dict) and not bool(frame.get('syntheticLoopBridge'))
+    ]
+    if not source_frames:
+        return {'available': False, 'reason': 'fit_source_frame_provenance_unavailable'}
+
+    source_indices = [frame.get('sourceFrameIndex') for frame in source_frames]
+    source_times = [frame.get('sourceTimeSec') for frame in source_frames]
+    if (
+        any(type(index) is not int for index in source_indices)
+        or any(
+            isinstance(value, bool)
+            or _optional_fit_evidence_float(value) is None
+            for value in source_times
+        )
+        or any(
+            right != left + 1
+            for left, right in zip(source_indices, source_indices[1:])
+        )
+    ):
+        return {'available': False, 'reason': 'fit_source_interval_provenance_not_contiguous'}
+
+    normalized_times = [_optional_fit_evidence_float(value) for value in source_times]
+    if any(right <= left for left, right in zip(normalized_times, normalized_times[1:])):
+        return {'available': False, 'reason': 'fit_source_interval_time_provenance_invalid'}
+
+    loop = payload.get('loop')
+    kind = 'cycle' if isinstance(loop, dict) and loop.get('enabled') is True else 'materialized'
+    return {
+        'available': True,
+        'kind': kind,
+        'source': 'materialized_frame_provenance',
+        'interval': {
+            'startFrame': source_indices[0],
+            'endFrame': source_indices[-1],
+            'startTimeSec': normalized_times[0],
+            'endTimeSec': normalized_times[-1],
+        },
+    }
+
+
+def _canonical_fit_source_interval_evidence(selection, *, fps):
+    """Normalize legacy and artifact-lineage interval records for fit identity."""
+    if not isinstance(selection, dict) or selection.get('available') is not True:
+        return {
+            'available': False,
+            'reason': (
+                selection.get('reason')
+                if isinstance(selection, dict)
+                else 'selected_source_interval_unavailable'
+            ),
+        }
+
+    interval = selection.get('interval')
+    if not isinstance(interval, dict):
+        return {'available': False, 'reason': 'selected_source_interval_bounds_missing'}
+
+    start_frame = interval.get('startFrame')
+    end_frame = interval.get('endFrame')
+    if end_frame is None:
+        stop_frame_exclusive = interval.get('stopFrameExclusive')
+        if type(stop_frame_exclusive) is int:
+            end_frame = stop_frame_exclusive - 1
+
+    start_time = interval.get('startTimeSec', interval.get('sourceStartTimeSec'))
+    end_time = interval.get('endTimeSec')
+    if end_time is None:
+        stop_time_exclusive = _optional_fit_evidence_float(
+            interval.get('sourceStopTimeSec')
+        )
+        resolved_fps = _optional_fit_evidence_float(fps)
+        if stop_time_exclusive is not None and resolved_fps is not None and resolved_fps > 0.0:
+            end_time = stop_time_exclusive - 1.0 / resolved_fps
+
+    return {
+        'available': True,
+        'kind': selection.get('kind'),
+        'startFrame': start_frame,
+        'endFrame': end_frame,
+        'startTimeSec': start_time,
+        'endTimeSec': end_time,
+    }
+
+
+def _optional_fit_evidence_float(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 def controlled_motion_fit_source_evidence_digest(payload):

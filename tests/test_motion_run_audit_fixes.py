@@ -255,6 +255,108 @@ def test_artifact_state_records_full_clip_cycle_selection_and_rebake():
         validate_artifact_history([bake.FULL_CLIP_BAKE, bake.CYCLIC_REBAKE])
 
 
+def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bounds(
+    monkeypatch,
+):
+    from exercise_motion_pkg.artifact_state import cycle_selection_evidence
+    from exercise_motion_pkg.controlled_motion import (
+        CONTROLLED_MOTION_STRATEGY,
+        controlled_motion_fit_source_evidence_digest,
+    )
+    from exercise_motion_pkg.sequence_stabilization import pose_digest
+
+    contract = {
+        "completionMode": "return_to_start",
+        "requiresReturnToStart": True,
+        "exerciseName": "Barbell Step-Up",
+    }
+    full_clip = _artifact_test_payload(
+        start_frame=0,
+        end_frame=59,
+        frame_count=60,
+        loop_enabled=False,
+    )
+    parent_state = bake.artifact_state_for_baked_payload(
+        full_clip,
+        contract=contract,
+        selection_class=bake.FULL_CLIP_BAKE,
+    )
+
+    retained = json.loads(json.dumps(full_clip))
+    retained["loop"]["enabled"] = True
+    retained["loop"]["transition"] = "requires_cycle_repair"
+    retained["sourceCyclePreflight"] = [{
+        "passed": True,
+        "selection": {"startFrame": 17, "stopFrameExclusive": 50},
+    }]
+    retained["artifactState"] = parent_state
+    fit_source_digest = controlled_motion_fit_source_evidence_digest(retained)
+    retained["controlledMotionFit"] = {
+        "applied": True,
+        "strategy": CONTROLLED_MOTION_STRATEGY,
+        "fitSourceEvidenceDigest": fit_source_digest,
+        "outputPoseDigest": pose_digest(retained),
+    }
+
+    selection = bake.selection_evidence_for_materialized_interval(
+        parent_selection_evidence=parent_state["selectionEvidence"],
+        movement_payload=retained,
+        selection_class=bake.FULL_CLIP_BAKE,
+        source_parent_payload=full_clip,
+    )
+    assert selection["cycleSelection"]["interval"]["startFrame"] == 0
+    assert selection["cycleSelection"]["interval"]["endFrame"] == 59
+    assert bake.attach_materialized_source_interval(
+        retained,
+        selection,
+        selection_class=bake.CYCLE_SELECTION,
+    )
+    retained["artifactState"] = bake.artifact_state_for_baked_payload(
+        retained,
+        contract=contract,
+        selection_class=bake.FULL_CLIP_BAKE,
+        selection_evidence=selection,
+    )
+
+    assert retained["artifactState"]["artifactClass"] == bake.CYCLIC_REBAKE
+    assert retained["artifactState"]["lineageComplete"] is True
+    assert retained["artifactState"]["selectionEvidence"]["cycleSelection"][
+        "interval"
+    ]["startFrame"] == 0
+    assert retained["artifactState"]["selectionEvidence"]["cycleSelection"][
+        "interval"
+    ]["endFrame"] == 59
+    assert retained["artifactState"]["selectionEvidence"]["sourceCyclePreflight"][0][
+        "selection"
+    ] == {"startFrame": 17, "stopFrameExclusive": 50}
+    assert retained["controlledMotionFit"]["fitSourceEvidenceDigest"] == (
+        controlled_motion_fit_source_evidence_digest(retained)
+    )
+
+    monkeypatch.setattr(bake, "compute_kinematic_plausibility_metrics_from_payload", lambda _: {
+        "artifactReasons": [], "processingIncompleteReasons": [],
+    })
+    monkeypatch.setattr(bake, "materialized_source_pose_fidelity_metrics", lambda **_: {
+        "rejectionReasons": [],
+    })
+    monkeypatch.setattr(bake, "exercise_requires_loop_continuity", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(bake, "compute_loop_bridge_quality_metrics_from_payload", lambda _: {
+        "severeLoopMismatch": True,
+    })
+    from exercise_motion_pkg import support_geometry
+    monkeypatch.setattr(support_geometry, "declare_support_requirements", lambda *_args: None)
+    monkeypatch.setattr(support_geometry, "validate_support_geometry", lambda *_args: {
+        "passed": True, "rejectionReasons": [],
+    })
+    gate = bake.pre_render_deterministic_gate(
+        retained,
+        None,
+        exercise_motion_contract=contract,
+    )
+    assert gate["passed"] is False
+    assert "materialized_loop_bridge_pose_mismatch" in gate["rejectionReasons"]
+
+
 @pytest.mark.parametrize(
     "corruption",
     [

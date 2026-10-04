@@ -27275,6 +27275,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     lineage_evidence = {
                         "fullClipBake": baked_payload_identity(export_payload),
                     }
+                    lineage_parent_payload = copy.deepcopy(export_payload)
                     full_clip_cache_key = (
                         variant_id,
                         json.dumps(options, sort_keys=True, separators=(",", ":"), default=str),
@@ -27392,10 +27393,6 @@ def _bake_preview_loops_with_playwright_uncached(
                             export_payload["loopCycleSelection"] = pre_fit_cycle_selection
                     elif isinstance(fit_report, dict) and fit_report.get("applied"):
                         fitted_lineage_parent = lineage_parent_payload
-                        if eligible_loop.artifact_class == FULL_CLIP_BAKE:
-                            fitted_lineage_parent = full_clip_bake_cache.get(
-                                full_clip_cache_key
-                            )
                         fitted_selection_evidence = (
                             selection_evidence_for_materialized_interval(
                                 parent_selection_evidence=lineage_evidence,

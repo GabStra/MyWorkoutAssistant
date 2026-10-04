@@ -100,6 +100,137 @@ def test_swapped_materialized_sole_support_reaches_fit_without_mutating_source(m
     assert motion_space_support_evidence(payload) == cached_motion_evidence
 
 
+def test_fit_source_evidence_is_stable_when_cycle_selection_moves_to_artifact_lineage():
+    from copy import deepcopy
+
+    from exercise_motion_pkg.controlled_motion import (
+        controlled_motion_fit_source_evidence,
+        controlled_motion_fit_source_evidence_digest,
+    )
+
+    fps = 30.0
+    source_frames = [12, 13, 14]
+    frames = [
+        {
+            'timeSec': index / fps,
+            'sourceFrameIndex': source_frame,
+            'sourceTimeSec': source_frame / fps,
+            'cycleSourceFrameIndex': source_frame,
+            'cycleSourceTimeSec': source_frame / fps,
+            'joints': {},
+        }
+        for index, source_frame in enumerate(source_frames)
+    ]
+    loop = {
+        'enabled': True,
+        'sourceStartFrame': 12,
+        'sourceEndFrame': 14,
+        'sourceStartTimeSec': 12 / fps,
+        'sourceEndTimeSec': 14 / fps,
+    }
+    legacy_payload = {
+        'fps': fps,
+        'frames': deepcopy(frames),
+        'loop': deepcopy(loop),
+        'loopCycleSelection': {
+            'startFrame': 12,
+            'stopFrameExclusive': 15,
+            'inputFrameCount': 100,
+            'sourceStartTimeSec': 12 / fps,
+            'sourceStopTimeSec': 15 / fps,
+        },
+    }
+    artifact_payload = {
+        'fps': fps,
+        'frames': deepcopy(frames),
+        'loop': deepcopy(loop),
+        'artifactState': {
+            'selectionEvidence': {
+                'cycleSelection': {
+                    'selectionId': 'cycle-selection-id',
+                    'interval': {
+                        'startFrame': 12,
+                        'endFrame': 14,
+                        'startTimeSec': 12 / fps,
+                        'endTimeSec': 14 / fps,
+                    },
+                },
+            },
+        },
+    }
+
+    assert controlled_motion_fit_source_evidence(legacy_payload)[
+        'selectedSourceInterval'
+    ] == controlled_motion_fit_source_evidence(artifact_payload)[
+        'selectedSourceInterval'
+    ]
+    assert controlled_motion_fit_source_evidence_digest(
+        legacy_payload
+    ) == controlled_motion_fit_source_evidence_digest(artifact_payload)
+
+    changed_selection = deepcopy(artifact_payload)
+    changed_selection['artifactState']['selectionEvidence']['cycleSelection'][
+        'interval'
+    ]['endTimeSec'] += 1 / fps
+    assert controlled_motion_fit_source_evidence_digest(
+        changed_selection
+    ) != controlled_motion_fit_source_evidence_digest(artifact_payload)
+
+    retained_full_clip = {
+        'fps': fps,
+        'loop': {
+            'enabled': True,
+            'sourceStartFrame': 0,
+            'sourceEndFrame': 119,
+            'sourceStartTimeSec': 0.0,
+            'sourceEndTimeSec': 119 / fps,
+        },
+        'sourceCyclePreflight': [{
+            'passed': True,
+            'selection': {'startFrame': 17, 'stopFrameExclusive': 100},
+        }],
+        'frames': [
+            {
+                'timeSec': index / fps,
+                'sourceFrameIndex': index,
+                'sourceTimeSec': index / fps,
+                'joints': {},
+            }
+            for index in range(120)
+        ],
+    }
+    fit_digest_before_lineage = controlled_motion_fit_source_evidence_digest(
+        retained_full_clip
+    )
+    retained_full_clip['artifactState'] = {
+        'selectionEvidence': {
+            'fullClipBake': {'frameCount': 120},
+            'cycleSelection': {
+                'selectionId': 'retained-full-clip-selection',
+                'interval': {
+                    'startFrame': 0,
+                    'endFrame': 119,
+                    'startTimeSec': 0.0,
+                    'endTimeSec': 119 / fps,
+                },
+            },
+        },
+    }
+    assert controlled_motion_fit_source_evidence_digest(
+        retained_full_clip
+    ) == fit_digest_before_lineage
+    assert controlled_motion_fit_source_evidence(
+        retained_full_clip
+    )['selectedSourceInterval'] == {
+        'available': True,
+        'kind': 'cycle',
+        'startFrame': 0,
+        'endFrame': 119,
+        'startTimeSec': 0.0,
+        'endTimeSec': 119 / fps,
+    }
+
+
 def test_cyclic_frame_probe_colors_are_unique_across_wrapped_three_frame_stencils():
     from exercise_motion_pkg.controlled_motion import _cyclic_frame_probe_colors
 
