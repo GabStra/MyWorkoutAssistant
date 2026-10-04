@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -307,6 +308,52 @@ def test_service_dispatches_manifest_arguments_through_the_cli_wave_entrypoint(
     assert captured["render_executor"] is render_executor
     assert result["reportPath"] == str((wave_workspace / "staged_wave_report.json").resolve())
     assert result["report"] == {"waveId": "wave-a"}
+
+
+@pytest.mark.parametrize(
+    ("invalid_item", "expected_error"),
+    [
+        (None, "item at index 1 must be an object"),
+        ({"workspace": "item-workspace"}, "requires a non-empty 'candidatesJson' path"),
+        ({"candidatesJson": "candidates.json"}, "requires a non-empty 'workspace' path"),
+    ],
+)
+def test_cli_rejects_invalid_wave_items_before_starting_wave(
+    tmp_path: Path,
+    monkeypatch,
+    invalid_item,
+    expected_error: str,
+):
+    from exercise_motion_pkg import cli
+
+    manifest_path = tmp_path / "wave_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "waveId": "wave-invalid",
+                "items": [
+                    {"candidatesJson": "valid-candidates.json", "workspace": "valid-workspace"},
+                    invalid_item,
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    wave_started = False
+
+    def unexpected_wave_start(*args, **kwargs):
+        nonlocal wave_started
+        wave_started = True
+        raise AssertionError("invalid manifest started the staged wave")
+
+    monkeypatch.setattr(cli, "run_staged_bake_wave", unexpected_wave_start)
+    with pytest.raises(ValueError, match=expected_error):
+        cli.run_staged_bake_wave_manifest(
+            SimpleNamespace(staged_wave_manifest=manifest_path),
+            request=object(),
+        )
+
+    assert not wave_started
 
 
 def test_queue_service_retains_ambiguous_processing_request_without_replaying(tmp_path: Path):

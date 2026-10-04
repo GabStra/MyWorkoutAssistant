@@ -1353,14 +1353,30 @@ def run_staged_bake_wave_manifest(
     request = request or build_bake_and_rank_request(args)
     wave_manifest_path = args.staged_wave_manifest.expanduser().resolve()
     wave_payload = json.loads(wave_manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(wave_payload, dict):
+        raise ValueError("Staged-wave manifest must be a JSON object")
+    raw_items = wave_payload.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError("Staged-wave manifest must contain a non-empty 'items' list")
+    for index, item_payload in enumerate(raw_items):
+        if not isinstance(item_payload, dict):
+            raise ValueError(
+                f"Staged-wave manifest item at index {index} must be an object"
+            )
+        for path_key in ("candidatesJson", "workspace"):
+            path_value = item_payload.get(path_key)
+            if not isinstance(path_value, str) or not path_value.strip():
+                raise ValueError(
+                    f"Staged-wave manifest item at index {index} requires a "
+                    f"non-empty '{path_key}' path"
+                )
+
     wave_id = str(wave_payload.get("waveId") or wave_manifest_path.stem)
     wave_workspace = Path(
         wave_payload.get("workspace") or wave_manifest_path.parent / wave_id
     )
     wave_items: list[StagedWaveItem] = []
-    for index, item_payload in enumerate(wave_payload.get("items") or []):
-        if not isinstance(item_payload, dict):
-            continue
+    for index, item_payload in enumerate(raw_items):
         candidates_json = Path(str(item_payload["candidatesJson"])).expanduser().resolve()
         item_workspace = Path(str(item_payload["workspace"])).expanduser().resolve()
         exercise_id = str(item_payload.get("exerciseId") or f"exercise-{index + 1}")
