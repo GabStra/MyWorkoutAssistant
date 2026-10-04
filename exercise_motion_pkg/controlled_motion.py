@@ -4269,8 +4269,20 @@ def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None
 def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None):
     """Prefer a source-confirmed cycle, retaining the full interval as fallback."""
     timeout_seconds = fit_time_budget(payload, timeout_seconds)
+    artifact_state = payload.get('artifactState')
+    selection_evidence = (
+        artifact_state.get('selectionEvidence')
+        if isinstance(artifact_state, dict)
+        else None
+    )
+    has_artifact_selected_interval = isinstance(selection_evidence, dict) and any(
+        isinstance(selection_evidence.get(key), dict)
+        and isinstance(selection_evidence[key].get('interval'), dict)
+        for key in ('cycleSelection', 'boundedMovementSelection')
+    )
     if (not (payload.get('loop') or {}).get('enabled') or payload.get('fixedRig')
-            or payload.get('loopCycleSelection') or timeout_seconds <= 0):
+            or payload.get('loopCycleSelection') or has_artifact_selected_interval
+            or timeout_seconds <= 0):
         return _fit_controlled_motion(payload, max_evaluations=max_evaluations,
                                       timeout_seconds=timeout_seconds)
     from .loop_cycles import rank_loop_cycles, slice_loop_cycle

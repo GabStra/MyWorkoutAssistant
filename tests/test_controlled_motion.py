@@ -1263,6 +1263,42 @@ def test_selected_cycle_fit_stops_when_effective_boundary_rows_are_incomplete():
     ]
 
 
+def test_artifact_selected_cycle_preserves_boundary_evidence_rejection(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, _, _ = _artifact_state_source_fit_payload('cycleSelection')
+    assert 'loopCycleSelection' not in current
+
+    prepare_constraints = motion._prepare_source_projection_fit_constraints
+
+    def prepare_with_pinned_start(payload, frames, names, points, pinned, scale):
+        pinned = pinned.copy()
+        pinned[0, :] = True
+        return prepare_constraints(payload, frames, names, points, pinned, scale)
+
+    monkeypatch.setattr(
+        motion, '_prepare_source_projection_fit_constraints', prepare_with_pinned_start,
+    )
+
+    def unexpected_solver_call(*args, **kwargs):
+        raise AssertionError('fit solver must not run without effective cycle-boundary rows')
+
+    monkeypatch.setattr(motion, 'solve_trajectory', unexpected_solver_call)
+    result, report = motion.fit_controlled_motion(
+        current,
+        max_evaluations=1,
+        timeout_seconds=10.,
+    )
+
+    assert result is current
+    assert report['applied'] is False
+    assert report['reason'] == 'selected_source_interval_source_evidence_incomplete'
+    assert report['sourceProjectionConstraint']['cycleBoundaryCoverage']['start']['available'] is True
+    assert report['sourceProjectionConstraint']['cycleBoundaryCoverage']['start']['effectiveObservationCount'] == 0
+    assert report['sourceProjectionConstraint']['cycleBoundaryCoverage']['start']['effectiveAvailable'] is False
+    assert report['sourceIntervalFitCoverageGaps'] == ['source_cycle_boundary_start_unavailable']
+
+
 def test_pinned_source_confirmed_foot_anchor_projects_with_low_trust_for_unknown_confidence():
     from exercise_motion_pkg import controlled_motion as motion
 
