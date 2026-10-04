@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+import scipy.optimize
 from scipy.spatial.transform import Rotation
 from scipy.sparse import diags, csr_matrix, kron, vstack
 from scipy.optimize._numdiff import group_columns
@@ -201,6 +202,28 @@ def test_exhausted_budget_keeps_original_geometry():
     assert result is source
     assert not report['applied']
     assert report['reason'] == 'fit_budget_exhausted'
+
+
+def test_wall_clock_timeout_discards_a_better_partial_fit(monkeypatch):
+    source = arm_clip([0.] * 9)
+    proposal = arm_clip([50.] * 9)
+
+    def partial_fit_then_timeout(fun, initial, **_kwargs):
+        partial_residual = fun(initial)
+        assert float(partial_residual @ partial_residual) < 1.0
+        raise TimeoutError('forced wall-clock budget exhaustion')
+
+    monkeypatch.setattr(scipy.optimize, 'least_squares', partial_fit_then_timeout)
+    result, report = fit_pose_and_temporal_trajectories(
+        source, proposal, (CHAIN,), timeout_seconds=5.0,
+    )
+
+    assert result is source
+    assert not report['applied']
+    assert not report['completed']
+    assert report['reason'] == 'time_limit'
+    assert report['timedOutBestObjective'] < report['initialObjective']
+    assert report['finalObjective'] == report['initialObjective']
 
 
 def test_post_ik_spike_repair_does_not_shorten_the_limb():

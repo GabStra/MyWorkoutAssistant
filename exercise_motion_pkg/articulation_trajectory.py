@@ -56,7 +56,11 @@ def fit_pose_and_temporal_trajectories(
     started = monotonic()
     edges = list(dict.fromkeys(edge for chain in chains for edge in zip(chain, chain[1:])))
     count = source.frame_count
-    report = {'applied': False, 'strategy': 'joint_pose_temporal_trajectory_v1'}
+    report = {
+        'applied': False,
+        'completed': False,
+        'strategy': 'joint_pose_temporal_trajectory_v1',
+    }
     if (timeout_seconds <= 0 or max_evaluations < 1 or lsmr_max_iterations < 1
             or (lsmr_tolerance is not None and lsmr_tolerance <= 0)):
         return source, {**report, 'reason': 'fit_budget_exhausted'}
@@ -336,13 +340,20 @@ def fit_pose_and_temporal_trajectories(
         status, evaluations = 'converged' if solved.success else 'evaluation_limit', solved.nfev
     except TimeoutError:
         status, evaluations = 'time_limit', None
-    points = decode(best[1])
+    timed_out = status == 'time_limit'
+    points = original if timed_out else decode(best[1])
     residual(best[1], enforce_deadline=False)
     corrected_names = [names[index] for index in moved]
-    frames = [MotionFrame(frame.time_sec, {**frame.joints,
-               **{name: tuple(float(v) for v in points[i, indices[name]]) for name in corrected_names}})
-              for i, frame in enumerate(source.frames)]
-    fitted = replace(source, frames=frames)
+    if timed_out:
+        # A wall-clock timeout depends on CPU contention, so its best partial
+        # iterate is not a stable movement transformation. Leave the source
+        # geometry intact and retain the partial objective only as diagnostics.
+        fitted = source
+    else:
+        frames = [MotionFrame(frame.time_sec, {**frame.joints,
+                   **{name: tuple(float(v) for v in points[i, indices[name]]) for name in corrected_names}})
+                  for i, frame in enumerate(source.frames)]
+        fitted = replace(source, frames=frames)
     finished_elapsed = monotonic() - started
     if (not objective_progress
             or objective_progress[-1]['elapsedSeconds'] < finished_elapsed - 1e-3):
@@ -351,10 +362,13 @@ def fit_pose_and_temporal_trajectories(
                                    'bestObjective': best[0],
                                    'residualEvaluationSeconds': residual_evaluation_seconds,
                                    'bestObjectiveTerms': dict(best_terms)})
-    report.update(applied=best[0] < initial_cost, reason=status, evaluations=evaluations,
+    report.update(applied=(not timed_out and best[0] < initial_cost),
+                  completed=status == 'converged', reason=status, evaluations=evaluations,
                   elapsedSeconds=finished_elapsed, initialObjective=initial_cost,
-                  finalObjective=best[0], correctedJoints=corrected_names, rigidPair=rigid_pair,
-                  initialObjectiveTerms=initial_terms, finalObjectiveTerms=dict(best_terms),
+                  finalObjective=initial_cost if timed_out else best[0],
+                  correctedJoints=corrected_names, rigidPair=rigid_pair,
+                  initialObjectiveTerms=initial_terms,
+                  finalObjectiveTerms=(initial_terms if timed_out else dict(best_terms)),
                   objectiveProgress=objective_progress,
                   jacobianColorGroups=int(jacobian_groups.max() + 1),
                   jacobianVariableCount=variable_count,
@@ -366,6 +380,9 @@ def fit_pose_and_temporal_trajectories(
                   residualEvaluationShare=(residual_evaluation_seconds / max(finished_elapsed, 1e-9)),
                   poseTargetRmsBefore=float(np.sqrt(np.mean((original[:, moved] - target[:, moved])**2))),
                   poseTargetRmsAfter=float(np.sqrt(np.mean((points[:, moved] - target[:, moved])**2))))
+    if timed_out:
+        report['timedOutBestObjective'] = best[0]
+        report['timedOutBestObjectiveTerms'] = dict(best_terms)
     if pair:
         report['maximumPairSpacingError'] = float(np.max(abs(
             np.linalg.norm(points[:, pair[0]] - points[:, pair[1]], axis=-1) - pair_distance)))
