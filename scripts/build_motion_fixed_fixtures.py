@@ -57,6 +57,20 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_directory_contents(directory: Path) -> str:
+    """Hash file names and contents in a directory tree, independent of order."""
+    if not directory.is_dir():
+        raise SystemExit(f"Fixture directory missing: {directory}")
+    digest = hashlib.sha256()
+    for path in sorted(item for item in directory.rglob("*") if item.is_file()):
+        relative_path = path.relative_to(directory).as_posix().encode("utf-8")
+        content_digest = bytes.fromhex(sha256_file(path))
+        digest.update(len(relative_path).to_bytes(8, "big"))
+        digest.update(relative_path)
+        digest.update(content_digest)
+    return digest.hexdigest()
+
+
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
@@ -155,17 +169,20 @@ def resolve_contract(
     revalidation_path = base_workspace / slug / "selected" / "revalidation.json"
     revalidation = json.loads(revalidation_path.read_text(encoding="utf-8"))
     contract_sha = (revalidation.get("artifactIdentity") or {}).get("contractSha256")
-    if not contract_sha:
-        raise SystemExit(f"{slug}: revalidation.json has no artifactIdentity.contractSha256")
-    cache_file = contract_cache_dir / f"{contract_sha}.json"
-    if cache_file.is_file():
+    cache_file = (
+        contract_cache_dir / f"{contract_sha}.json"
+        if isinstance(contract_sha, str) and contract_sha
+        else None
+    )
+    if cache_file is not None and cache_file.is_file():
         destination.write_bytes(cache_file.read_bytes())
     else:
         contract = (candidate.get("visionPayload") or {}).get("exerciseMotionContract")
         if not isinstance(contract, dict):
+            cache_status = f"{contract_sha} not in cache" if contract_sha else "no cached contract identity"
             raise SystemExit(
-                f"{slug}: contract {contract_sha} not in cache and candidate has no "
-                f"visionPayload.exerciseMotionContract to fall back on"
+                f"{slug}: {cache_status} and candidate has no "
+                "visionPayload.exerciseMotionContract to fall back on"
             )
         write_json(destination, contract)
     return destination, sha256_file(destination)
@@ -226,7 +243,8 @@ def build_exercise_fixture(
         raise SystemExit(f"Missing exercise plan: {seed_source}")
     seed_dir = output_dir / "workspaces" / slug
     seed_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(seed_source, seed_dir / "exercise_plan.json")
+    seed_destination = seed_dir / "exercise_plan.json"
+    shutil.copy2(seed_source, seed_destination)
 
     return {
         "slug": slug,
@@ -239,6 +257,8 @@ def build_exercise_fixture(
         "preparedCandidatesSha256": sha256_file(prepared_path),
         "contractPath": _posix(contract_path),
         "contractSha256": contract_sha,
+        "workspaceSeedPath": _posix(seed_destination),
+        "workspaceSeedSha256": sha256_file(seed_destination),
         "referenceFiles": references,
     }
 
@@ -290,13 +310,24 @@ def main() -> None:
         rows = list(DEFAULT_EXERCISES)
 
     output_dir = args.output_dir
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise SystemExit(
+            f"--output-dir already exists and was preserved: {output_dir}. "
+            "Choose a new output directory for this fixture set."
+        ) from exc
+
+    contract_cache_snapshot = output_dir / "contract-cache"
+    if args.contract_cache_dir.is_dir():
+        shutil.copytree(args.contract_cache_dir, contract_cache_snapshot)
+    else:
+        contract_cache_snapshot.mkdir()
+    contract_cache_sha256 = sha256_directory_contents(contract_cache_snapshot)
 
     exercises = [
         build_exercise_fixture(
-            args.base_workspace, args.source_cache_dir, args.contract_cache_dir,
+            args.base_workspace, args.source_cache_dir, contract_cache_snapshot,
             output_dir, slug, video_id, exercise_id, source_file_name,
         )
         for slug, video_id, exercise_id, source_file_name in rows
@@ -326,6 +357,8 @@ def main() -> None:
         "exercises": exercises,
         "preparedCandidatesManifestPath": _posix(manifest_path),
         "workspaceSeedsRoot": _posix(output_dir / "workspaces"),
+        "contractCacheSnapshotPath": _posix(contract_cache_snapshot),
+        "contractCacheSnapshotSha256": contract_cache_sha256,
     })
 
     print_summary(exercises)

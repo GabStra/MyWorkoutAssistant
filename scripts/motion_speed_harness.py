@@ -6,10 +6,11 @@ and source selection may still run; a small exercise list does not guarantee a
 short run, entry into staged processing, or an accepted movement. Reports
 include wall time, per-phase timings, wave size, source workers, vision-server
 startup counts, co-resident operations, shared-server quiesce metrics, overlap
-high-water mark, GVHMR attempt durations, and terminal statuses.
+high-water mark, per-wave browser task metrics, separate candidate-generation and
+GVHMR timings, and terminal statuses.
 
 Usage:
-  python scripts/motion_speed_harness.py --arms baseline,shared,shared-overlap
+  python scripts/motion_speed_harness.py --arms baseline,shared
   python scripts/motion_speed_harness.py --arms baseline --exercises slug-a,slug-b
   python scripts/motion_speed_harness.py --fixtures <fixture_manifest.json> --arms baseline
 """
@@ -34,9 +35,9 @@ DEFAULT_BASE_WORKSPACE = REPO_ROOT / "build/exercise_motion/exercise-library"
 DEFAULT_SOURCE_OUTCOME_INDEX = REPO_ROOT / "build/exercise_motion/source_outcome_index.json"
 DEFAULT_SOURCE_CACHE_DIR = REPO_ROOT / "build/exercise_motion/youtube-source-cache"
 HARNESS_ROOT = REPO_ROOT / "build/exercise_motion/speed-harness"
-SMOKE_CHECK_ROOT = HARNESS_ROOT / "smoke-check"
 DEFAULT_MOTION_PYTHON = r"C:\Users\gabri\miniconda3\envs\mwa-motion-cuda\python.exe"
 GVHMR_DOCKER_IMAGE = "myworkoutassistant/gvhmr:torch2.3-cu121"
+DEFAULT_STAGED_WAVE_SIZE = 8
 PATH_TEXT_SUFFIXES = {".html", ".json", ".jsonl", ".md", ".toml", ".txt", ".yaml", ".yml"}
 
 # Small default smoke pair. It may fail discovery before reaching staged
@@ -51,11 +52,18 @@ ARMS: dict[str, list[str]] = {
     "baseline": ["-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true"],
     # + one supervisor-owned shared llama server for all vision consumers.
     "shared": ["-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer"],
-    # + overlapping waves (next wave's source validation during final validation).
-    "shared-overlap": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
-        "-MaxConcurrentStagedWaves", "2",
-    ],
+}
+
+UNSUPPORTED_ARMS = {
+    "shared-overlap": (
+        "the current workspace-scoped persistent staged-wave service is serial "
+        "and the runner clamps MaxConcurrentStagedWaves to 1; no overlap would occur"
+    ),
+}
+
+ARM_EFFECTIVE_SETTINGS = {
+    "baseline": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
+    "shared": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 1},
 }
 
 
@@ -156,6 +164,20 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_directory_contents(directory: Path) -> str:
+    """Hash file names and contents in a directory tree, independent of order."""
+    if not directory.is_dir():
+        raise SystemExit(f"Fixture directory missing: {directory}")
+    digest = hashlib.sha256()
+    for path in sorted(item for item in directory.rglob("*") if item.is_file()):
+        relative_path = path.relative_to(directory).as_posix().encode("utf-8")
+        content_digest = bytes.fromhex(sha256_file(path))
+        digest.update(len(relative_path).to_bytes(8, "big"))
+        digest.update(relative_path)
+        digest.update(content_digest)
+    return digest.hexdigest()
+
+
 def load_fixture_manifest(manifest_path: Path) -> dict:
     """Load a fixture manifest and re-verify every recorded SHA-256."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -164,11 +186,34 @@ def load_fixture_manifest(manifest_path: Path) -> dict:
     exercises = manifest.get("exercises") or []
     if not exercises:
         raise SystemExit(f"{manifest_path}: manifest lists no exercises")
+    cache_path_text = manifest.get("contractCacheSnapshotPath")
+    cache_sha256 = manifest.get("contractCacheSnapshotSha256")
+    if not isinstance(cache_path_text, str) or not isinstance(cache_sha256, str):
+        raise SystemExit(
+            f"{manifest_path}: fixture does not pin the contract-cache snapshot; "
+            "rebuild it with build_motion_fixed_fixtures.py"
+        )
+    cache_path = Path(cache_path_text)
+    actual_cache_sha256 = sha256_directory_contents(cache_path)
+    if actual_cache_sha256 != cache_sha256:
+        raise SystemExit(
+            f"Fixture contract-cache SHA-256 mismatch for {cache_path}: "
+            f"expected {cache_sha256}, got {actual_cache_sha256}"
+        )
     for exercise in exercises:
+        seed_path_text = exercise.get("workspaceSeedPath")
+        seed_sha256 = exercise.get("workspaceSeedSha256")
+        if not isinstance(seed_path_text, str) or not isinstance(seed_sha256, str):
+            raise SystemExit(
+                f"{manifest_path}: fixture '{exercise.get('slug', '<unknown>')}' "
+                "does not pin exercise_plan.json; rebuild it with "
+                "build_motion_fixed_fixtures.py"
+            )
         checks = [
             (exercise["sourceCachePath"], exercise["sourceSha256"]),
             (exercise["preparedCandidatesPath"], exercise["preparedCandidatesSha256"]),
             (exercise["contractPath"], exercise["contractSha256"]),
+            (seed_path_text, seed_sha256),
         ] + [(ref["path"], ref["sha256"]) for ref in exercise.get("referenceFiles", [])]
         for path_text, expected in checks:
             path = Path(path_text)
@@ -184,31 +229,54 @@ def load_fixture_manifest(manifest_path: Path) -> dict:
 
 
 def assemble_workspace_fixtures(
-    arm_dir: Path, manifest: dict, base_workspace: Path
+    arm_dir: Path, manifest: dict, contract_cache_snapshot: Path | None = None
 ) -> tuple[Path, list[str]]:
     """Seed a fresh per-exercise workspace set from the fixed fixture set.
 
     Seeds only exercise_plan.json per slug (no completed selections,
     reconstruction results, terminal verdicts, or old staged reports), copies
-    the contract cache snapshot, and stages an arm-local prepared-candidates
+    the pinned contract-cache snapshot, and stages an arm-local prepared-candidates
     manifest with the pinned candidates copied next to it.
     """
     if arm_dir.exists():
         shutil.rmtree(arm_dir)
     workspace = arm_dir / "isolated" / "exercise_motion" / "workspace"
     workspace.mkdir(parents=True)
-    seeds_root = Path(manifest["workspaceSeedsRoot"])
+    expected_cache_sha256 = manifest["contractCacheSnapshotSha256"]
+    if contract_cache_snapshot is None:
+        contract_cache_snapshot = Path(manifest["contractCacheSnapshotPath"])
+    actual_cache_sha256 = sha256_directory_contents(contract_cache_snapshot)
+    if actual_cache_sha256 != expected_cache_sha256:
+        raise SystemExit(
+            f"Fixture contract-cache SHA-256 mismatch before arm assembly for "
+            f"{contract_cache_snapshot}: expected {expected_cache_sha256}, "
+            f"got {actual_cache_sha256}"
+        )
     fixtures_dir = arm_dir / "fixtures"
     fixtures_dir.mkdir()
     manifest_items: list[dict] = []
     for exercise in manifest["exercises"]:
         slug = exercise["slug"]
-        seed = seeds_root / slug / "exercise_plan.json"
+        seed = Path(exercise["workspaceSeedPath"])
+        expected_seed_sha256 = exercise["workspaceSeedSha256"]
         if not seed.is_file():
             raise SystemExit(f"Missing fixture workspace seed: {seed}")
+        actual_seed_sha256 = sha256_file(seed)
+        if actual_seed_sha256 != expected_seed_sha256:
+            raise SystemExit(
+                f"Fixture workspace seed SHA-256 mismatch for {seed}: "
+                f"expected {expected_seed_sha256}, got {actual_seed_sha256}"
+            )
         destination = workspace / slug
         destination.mkdir()
-        shutil.copy2(seed, destination / "exercise_plan.json")
+        seeded_plan = destination / "exercise_plan.json"
+        shutil.copy2(seed, seeded_plan)
+        copied_seed_sha256 = sha256_file(seeded_plan)
+        if copied_seed_sha256 != expected_seed_sha256:
+            raise SystemExit(
+                f"Copied workspace seed SHA-256 mismatch for {seeded_plan}: "
+                f"expected {expected_seed_sha256}, got {copied_seed_sha256}"
+            )
         candidates_destination = fixtures_dir / slug / "youtube_candidates.json"
         candidates_destination.parent.mkdir(parents=True)
         # Copy arm-local so the staged manifest never points outside this arm.
@@ -220,9 +288,14 @@ def assemble_workspace_fixtures(
             "candidatesJson": candidates_destination.resolve().as_posix(),
             "expectedVideoId": exercise["expectedVideoId"],
         })
-    contract_cache = base_workspace / "exercise-motion-contract-cache"
-    if contract_cache.is_dir():
-        shutil.copytree(contract_cache, workspace / "exercise-motion-contract-cache")
+    arm_contract_cache = workspace / "exercise-motion-contract-cache"
+    shutil.copytree(contract_cache_snapshot, arm_contract_cache)
+    copied_cache_sha256 = sha256_directory_contents(arm_contract_cache)
+    if copied_cache_sha256 != expected_cache_sha256:
+        raise SystemExit(
+            f"Copied contract-cache SHA-256 mismatch for {arm_contract_cache}: "
+            f"expected {expected_cache_sha256}, got {copied_cache_sha256}"
+        )
     prepared_manifest_path = fixtures_dir / "prepared_candidates_manifest.json"
     prepared_manifest_path.write_text(
         json.dumps({
@@ -235,6 +308,28 @@ def assemble_workspace_fixtures(
     return prepared_manifest_path, [item["exerciseSlug"] for item in manifest_items]
 
 
+def stage_fixture_contract_cache(manifest: dict, destination: Path) -> Path:
+    """Copy the verified fixture cache once so every arm consumes identical bytes."""
+    source = Path(manifest["contractCacheSnapshotPath"])
+    expected_sha256 = manifest["contractCacheSnapshotSha256"]
+    source_sha256 = sha256_directory_contents(source)
+    if source_sha256 != expected_sha256:
+        raise SystemExit(
+            f"Fixture contract-cache SHA-256 mismatch before staging: "
+            f"expected {expected_sha256}, got {source_sha256}"
+        )
+    if destination.exists():
+        raise SystemExit(f"Refusing to overwrite staged fixture cache: {destination}")
+    shutil.copytree(source, destination)
+    staged_sha256 = sha256_directory_contents(destination)
+    if staged_sha256 != expected_sha256:
+        raise SystemExit(
+            f"Staged contract-cache SHA-256 mismatch for {destination}: "
+            f"expected {expected_sha256}, got {staged_sha256}"
+        )
+    return destination
+
+
 def resolve_motion_python() -> str:
     return os.environ.get("EXERCISE_MOTION_PYTHON") or DEFAULT_MOTION_PYTHON
 
@@ -244,14 +339,56 @@ def capture_run_identity() -> dict:
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=False,
     )
-    diff = subprocess.run(["git", "diff"], cwd=REPO_ROOT, capture_output=True, check=False)
+    diff = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    untracked_digest = hashlib.sha256()
+    untracked_count = 0
+    for encoded_path in untracked.stdout.split(b"\0"):
+        if not encoded_path:
+            continue
+        relative_path = os.fsdecode(encoded_path)
+        path = REPO_ROOT / relative_path
+        try:
+            if path.is_symlink():
+                file_kind = b"symlink"
+                contents = os.fsencode(os.readlink(path))
+            elif path.is_file():
+                file_kind = b"file"
+                contents = path.read_bytes()
+            else:
+                file_kind = b"other"
+                contents = b""
+        except OSError:
+            file_kind = b"unreadable"
+            contents = b""
+        path_bytes = encoded_path
+        for part in (file_kind, path_bytes, contents):
+            untracked_digest.update(len(part).to_bytes(8, "big"))
+            untracked_digest.update(part)
+        untracked_count += 1
     python_command = resolve_motion_python()
     version = subprocess.run(
         [python_command, "--version"], capture_output=True, text=True, check=False,
     )
+    tracked_diff_digest = hashlib.sha256(diff.stdout).hexdigest()
+    untracked_content_digest = untracked_digest.hexdigest()
     return {
         "gitCommit": commit.stdout.strip() or None,
-        "gitDiffSha256": hashlib.sha256(diff.stdout).hexdigest(),
+        "gitDiffBase": "HEAD",
+        "gitDiffSha256": tracked_diff_digest,
+        "gitUntrackedContentSha256": untracked_content_digest,
+        "gitUntrackedFileCount": untracked_count,
+        "gitWorktreeClean": not diff.stdout and untracked_count == 0,
         "pythonCommand": python_command,
         "pythonVersion": (version.stdout or version.stderr).strip() or None,
     }
@@ -351,8 +488,9 @@ def prewarm_gvhmr_worker(timeout_seconds: float = 600.0) -> dict:
     run_exercise_motion_workout_plan.ps1.
     """
     pkg_dir = REPO_ROOT / "exercise_motion_pkg"
-    state_dir = HARNESS_ROOT / "prewarm" / "gvhmr-warm-worker"
-    workspace_dir = HARNESS_ROOT / "prewarm" / "workspace"
+    prewarm_root = HARNESS_ROOT / "prewarm" / uuid.uuid4().hex
+    state_dir = prewarm_root / "gvhmr-warm-worker"
+    workspace_dir = prewarm_root / "workspace"
     for child in ("jobs", "running", "results", "job_logs"):
         (state_dir / child).mkdir(parents=True, exist_ok=True)
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -376,41 +514,152 @@ def prewarm_gvhmr_worker(timeout_seconds: float = 600.0) -> dict:
     ]
     started = time.perf_counter()
     print(f"[harness] prewarming GVHMR worker (cold start ~350-460s when uncached)...", flush=True)
-    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_error = None
+    container_start_exit_code = None
+    container_id = None
+    try:
+        start_result = subprocess.run(
+            args, capture_output=True, text=True, check=False, timeout=120,
+        )
+        container_start_exit_code = start_result.returncode
+        container_id = (start_result.stdout or "").strip() or None
+        if start_result.returncode != 0:
+            run_error = (start_result.stderr or start_result.stdout or "docker run failed").strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        run_error = f"{type(exc).__name__}: {exc}"
+
     ready_path = state_dir / "ready.json"
     ready_payload = None
-    while time.perf_counter() - started < timeout_seconds:
-        if process.poll() is not None and process.returncode != 0:
+    startup_status = "start_failed" if run_error else "starting"
+    ready_after_seconds = None
+    startup_error = None
+    while run_error is None and time.perf_counter() - started < timeout_seconds:
+        startup_error_path = state_dir / "startup_error.json"
+        if startup_error_path.is_file():
+            try:
+                startup_error = json.loads(startup_error_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                startup_error = {"error": "worker published an unreadable startup_error.json"}
+            startup_status = "startup_error"
             break
         if ready_path.is_file():
             try:
-                ready_payload = json.loads(ready_path.read_text(encoding="utf-8"))
+                candidate = json.loads(ready_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                candidate = None
+            if isinstance(candidate, dict) and candidate.get("status") == "ready":
+                ready_payload = candidate
+                ready_after_seconds = round(time.perf_counter() - started, 1)
+                startup_status = "ready"
                 break
-            except ValueError:
-                pass
+        container_status = _docker_container_status(container)
+        if container_status in {"exited", "dead", "not_found"}:
+            startup_status = "container_exited_before_ready"
+            break
+        if container_status.startswith("inspect_error") or container_status == "inspect_timeout":
+            startup_status = container_status
+            break
         time.sleep(2.0)
+    if startup_status == "starting":
+        startup_status = "timeout"
+
+    clean_shutdown = False
+    shutdown_confirmed = False
+    shutdown_method = "none"
+    container_status_after_shutdown = None
     if ready_payload is not None:
+        shutdown_method = "stop_marker"
         (state_dir / "stop").write_text("{}", encoding="utf-8")
-        try:
-            process.wait(timeout=180)
-        except subprocess.TimeoutExpired:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
+        stop_deadline = time.monotonic() + 180.0
+        while time.monotonic() < stop_deadline:
+            stopped_path = state_dir / "stopped.json"
+            worker_stopped = stopped_path.is_file()
+            container_status_after_shutdown = _docker_container_status(container)
+            if worker_stopped and container_status_after_shutdown in {"exited", "dead", "not_found"}:
+                clean_shutdown = True
+                shutdown_confirmed = True
+                break
+            if container_status_after_shutdown in {"exited", "dead", "not_found"}:
+                # The marker can be committed while docker inspect is running;
+                # check once more after observing container exit.
+                clean_shutdown = stopped_path.is_file()
+                shutdown_confirmed = True
+                break
+            time.sleep(1.0)
     else:
-        subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
-        process.poll()
+        if startup_error is not None:
+            run_error = startup_error.get("error") or str(startup_error)
+
+    if not shutdown_confirmed:
+        shutdown_method = "docker_rm_force"
+        cleanup = _remove_docker_container(container)
+        shutdown_confirmed = cleanup["confirmed"]
+        container_status_after_shutdown = cleanup["containerStatus"]
+        if cleanup.get("error") and run_error is None:
+            run_error = cleanup["error"]
     elapsed = round(time.perf_counter() - started, 1)
     result = {
+        "attempted": True,
         "ready": ready_payload is not None,
+        "startupStatus": startup_status,
+        "startupError": startup_error,
+        "containerStartExitCode": container_start_exit_code,
+        "containerId": container_id,
+        "readyAfterSeconds": ready_after_seconds,
         "prewarmSeconds": elapsed,
         "workerLoadSeconds": (ready_payload or {}).get("loadSeconds"),
         "workerGpuName": (ready_payload or {}).get("gpuName"),
+        "cleanShutdown": clean_shutdown,
+        "shutdownConfirmed": shutdown_confirmed,
+        "shutdownMethod": shutdown_method,
+        "containerStatusAfterShutdown": container_status_after_shutdown,
+        "error": run_error,
     }
     print(
-        f"[harness] prewarm {'OK' if result['ready'] else 'FAILED'}: {elapsed}s "
-        f"(worker load {result['workerLoadSeconds']}s)",
+        f"[harness] prewarm {'OK' if result['ready'] and clean_shutdown else 'FAILED'}: "
+        f"{elapsed}s (worker load {result['workerLoadSeconds']}s; "
+        f"shutdown={result['shutdownConfirmed']}/{result['cleanShutdown']})",
         flush=True,
     )
     return result
+
+
+def _docker_container_status(container: str) -> str:
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Status}}", container],
+            capture_output=True, text=True, check=False, timeout=15,
+        )
+    except FileNotFoundError:
+        return "inspect_error:docker_unavailable"
+    except subprocess.TimeoutExpired:
+        return "inspect_timeout"
+    if result.returncode == 0:
+        return (result.stdout or "").strip() or "inspect_error:empty_status"
+    combined = f"{result.stdout or ''} {result.stderr or ''}".casefold()
+    if "no such object" in combined or "no such container" in combined:
+        return "not_found"
+    return "inspect_error:command_failed"
+
+
+def _remove_docker_container(container: str) -> dict:
+    error = None
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", container],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    deadline = time.monotonic() + 30.0
+    status = _docker_container_status(container)
+    while status not in {"not_found", "exited", "dead"} and time.monotonic() < deadline:
+        time.sleep(0.5)
+        status = _docker_container_status(container)
+    confirmed = status == "not_found"
+    if not confirmed and error is None:
+        error = f"could not confirm prewarm container removal (status={status})"
+    return {"confirmed": confirmed, "containerStatus": status, "error": error}
 
 
 def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
@@ -432,6 +681,7 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     log_handle = log_path.open("w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT)
     status = "running"
+    shutdown = {"confirmed": True, "method": "normal_exit", "taskkillExitCode": None}
     last_size = -1
     last_growth = time.perf_counter()
     try:
@@ -448,21 +698,27 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
                 # The runner logs continuously (queue snapshots, heartbeats);
                 # a silent log means the arm is wedged, not working.
                 status = "stalled"
-                _kill_process_tree(process)
+                shutdown = _kill_process_tree(process)
                 print(f"[harness] {arm}: STALLED (log silent {stall_seconds:.0f}s). Tail:\n{_log_tail(log_path)}", flush=True)
                 break
             if time.perf_counter() - started > timeout_seconds:
                 status = "timeout"
-                _kill_process_tree(process)
+                shutdown = _kill_process_tree(process)
                 print(f"[harness] {arm}: TIMEOUT after {timeout_seconds:.0f}s. Tail:\n{_log_tail(log_path)}", flush=True)
                 break
     finally:
         log_handle.close()
     elapsed = time.perf_counter() - started
     exit_code = process.returncode if status == "running" else status
+    termination_status = "completed" if status == "running" else status
     return {
         "arm": arm,
         "exitCode": exit_code,
+        "terminationStatus": termination_status,
+        "processReturnCode": process.returncode,
+        "shutdownConfirmed": bool(shutdown.get("confirmed")),
+        "shutdownStatus": "confirmed" if shutdown.get("confirmed") else "unconfirmed",
+        "shutdownDetails": shutdown,
         "wallSeconds": round(elapsed, 1),
         "workspace": str(arm_dir / "isolated" / "exercise_motion" / "workspace"),
         "whamCacheRoot": str(arm_dir / "isolated" / "exercise_motion" / "wham-cache"),
@@ -471,11 +727,72 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     }
 
 
-def _kill_process_tree(process: subprocess.Popen) -> None:
-    subprocess.run(
-        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-        capture_output=True, check=False,
-    )
+def _kill_process_tree(process: subprocess.Popen, wait_timeout_seconds: float = 30.0) -> dict:
+    """Force the runner tree down and wait for its root process to exit."""
+    taskkill_exit_code = None
+    taskkill_error = None
+    try:
+        taskkill = subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True, text=True, check=False, timeout=wait_timeout_seconds,
+        )
+        taskkill_exit_code = taskkill.returncode
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        taskkill_error = f"{type(exc).__name__}: {exc}"
+
+    try:
+        process.wait(timeout=wait_timeout_seconds)
+        root_exited = True
+        wait_error = None
+    except subprocess.TimeoutExpired as exc:
+        root_exited = False
+        wait_error = f"{type(exc).__name__}: {exc}"
+
+    # One bounded retry covers a taskkill command timeout while still ensuring
+    # a failed shutdown cannot silently flow into the next comparison arm.
+    if not root_exited:
+        try:
+            retry = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True, text=True, check=False, timeout=wait_timeout_seconds,
+            )
+            taskkill_exit_code = retry.returncode
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            taskkill_error = f"{type(exc).__name__}: {exc}"
+        try:
+            process.wait(timeout=wait_timeout_seconds)
+            root_exited = True
+            wait_error = None
+        except subprocess.TimeoutExpired as exc:
+            wait_error = f"{type(exc).__name__}: {exc}"
+
+    confirmed = root_exited and taskkill_exit_code == 0
+    return {
+        "confirmed": confirmed,
+        "method": "taskkill_tree_and_wait",
+        "taskkillExitCode": taskkill_exit_code,
+        "taskkillError": taskkill_error,
+        "rootProcessExited": root_exited,
+        "waitError": wait_error,
+    }
+
+
+def _metric_seconds(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+        return float(value)
+    return None
+
+
+def browser_task_summary(metrics: dict) -> str:
+    summaries = []
+    for wave in metrics.get("browserTasksByWave", []):
+        wave_id = wave.get("waveId", "unknown-wave")
+        for task_name, task_metrics in sorted((wave.get("byTask") or {}).items()):
+            summaries.append(
+                f"{wave_id}:{task_name}={task_metrics.get('jobCount', 0)}j/"
+                f"{task_metrics.get('browserLaunchCount', 0)}l"
+            )
+    return ",".join(summaries) if summaries else "unavailable"
 
 
 def extract_metrics(arm_result: dict) -> dict:
@@ -488,13 +805,28 @@ def extract_metrics(arm_result: dict) -> dict:
         "visionStartups": 0,
         "visionStartupSeconds": 0.0,
         "visionQueueWaitSeconds": 0.0,
+        "gvhmrWorkerStartups": 0,
+        "gvhmrWorkerStartupSeconds": 0.0,
         "coResidentOps": 0,
         "coResidentDeclined": 0,
         "sharedQuiesceCount": 0,
         "sharedRestartRequests": 0,
-        "gvhmrAttempts": 0,
-        "gvhmrAttemptSeconds": 0.0,
+        "stagedWaveSize": None,
+        "effectiveMaxConcurrentStagedWaves": None,
+        "stagedWaveWorkerMode": None,
+        "sharedLlamaServerEnabled": None,
+        "candidateGenerationAttempts": 0,
+        "candidateGenerationAttemptSeconds": 0.0,
+        "candidateAttemptManifests": 0,
+        "gvhmrStageCalls": 0,
+        "gvhmrStageWallSeconds": 0.0,
+        "gvhmrRunnerCalls": 0,
+        "gvhmrRunnerCallSeconds": 0.0,
+        "gvhmrPredictionSamples": 0,
+        "gvhmrPredictionSeconds": 0.0,
+        "browserTasksByWave": [],
     }
+    shared_session_snapshots: list[dict] = []
     for report_path in sorted(workspace.glob("staged-waves/*/staged_wave_report.json")):
         metrics["waves"] += 1
         report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -510,6 +842,13 @@ def extract_metrics(arm_result: dict) -> dict:
         metrics["phases"]["source"] += timings.get("sourceValidationSeconds", 0.0)
         metrics["phases"]["generation"] += timings.get("whamGenerationSeconds", 0.0)
         metrics["phases"]["final"] += timings.get("finalValidationSeconds", 0.0)
+        browser_workers = m.get("browserWorkers") or {}
+        by_task = browser_workers.get("byTask")
+        if isinstance(by_task, dict) and by_task:
+            metrics["browserTasksByWave"].append({
+                "waveId": report.get("waveId") or report_path.parent.name,
+                "byTask": by_task,
+            })
         for phase in ("sourceVisionSession", "finalVisionSession"):
             session = m.get(phase) or {}
             metrics["visionStartups"] += session.get("visionRankerStartupCount", 0)
@@ -518,8 +857,8 @@ def extract_metrics(arm_result: dict) -> dict:
             metrics["coResidentOps"] += session.get("coResidentGpuOperationCount", 0)
             metrics["coResidentDeclined"] += session.get("coResidentGpuDeclinedCount", 0)
             shared = session.get("sharedVisionSession") or session
-            metrics["sharedQuiesceCount"] += (shared.get("sharedVisionQuiesceCount") or 0)
-            metrics["sharedRestartRequests"] += (shared.get("sharedVisionRestartRequestCount") or 0)
+            if isinstance(shared, dict):
+                shared_session_snapshots.append(shared)
     for checkpoint_path in sorted(workspace.glob("staged-waves/*/staged_wave_checkpoint.json")):
         try:
             checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
@@ -527,14 +866,44 @@ def extract_metrics(arm_result: dict) -> dict:
             continue
         for item in checkpoint.get("items", []):
             wham = item.get("wham") or {}
-            timing = wham.get("timing") or wham.get("timings") or {}
             candidates = [
                 attempt for attempt in (wham.get("attempts") or [])
                 if isinstance(attempt, dict) and isinstance(attempt.get("elapsedSeconds"), (int, float))
             ]
             for attempt in candidates:
-                metrics["gvhmrAttempts"] += 1
-                metrics["gvhmrAttemptSeconds"] += float(attempt.get("elapsedSeconds", 0.0))
+                # This wraps generate_candidate_motion(), including work before
+                # and after GVHMR. Keep it separate from the manifest's GVHMR
+                # stage, runner-call, and model-prediction measurements below.
+                metrics["candidateGenerationAttempts"] += 1
+                metrics["candidateGenerationAttemptSeconds"] += float(attempt["elapsedSeconds"])
+                selected_video = attempt.get("selectedVideoPath")
+                if not selected_video:
+                    continue
+                candidate_workspace = Path(selected_video).parent.parent
+                manifest_path = candidate_workspace / "manifest.json"
+                if not manifest_path.is_file():
+                    continue
+                try:
+                    candidate_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                metrics["candidateAttemptManifests"] += 1
+                generation_timings = candidate_manifest.get("timings") or {}
+                stage_seconds = _metric_seconds(generation_timings.get("whamRunSeconds"))
+                if stage_seconds is not None:
+                    metrics["gvhmrStageCalls"] += 1
+                    metrics["gvhmrStageWallSeconds"] += stage_seconds
+                runner_timings = generation_timings.get("wham") or {}
+                runner_seconds = _metric_seconds(runner_timings.get("elapsedSeconds"))
+                if runner_seconds is not None:
+                    metrics["gvhmrRunnerCalls"] += 1
+                    metrics["gvhmrRunnerCallSeconds"] += runner_seconds
+                phase_timings = runner_timings.get("phaseTimings") or {}
+                inference_timings = phase_timings.get("inference") or {}
+                prediction_seconds = _metric_seconds(inference_timings.get("predictionSeconds"))
+                if prediction_seconds is not None:
+                    metrics["gvhmrPredictionSamples"] += 1
+                    metrics["gvhmrPredictionSeconds"] += prediction_seconds
     summary_path = workspace / "workout_motion_generation_summary.json"
     if summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -544,10 +913,63 @@ def extract_metrics(arm_result: dict) -> dict:
             statuses[status] = statuses.get(status, 0) + 1
         metrics["statuses"] = statuses
         metrics["overlapHighWater"] = summary.get("runningStagedWaveCountHighWater")
+        metrics["stagedWaveSize"] = summary.get("stagedWaveSize")
+        metrics["effectiveMaxConcurrentStagedWaves"] = summary.get("maxConcurrentStagedWaves")
+        metrics["stagedWaveWorkerMode"] = summary.get("stagedWaveWorkerMode")
+        metrics["sharedLlamaServerEnabled"] = summary.get("sharedLlamaServerEnabled")
+    # These are cumulative coordinator snapshots, repeated in source/final
+    # phase reports and across waves. Summing snapshots double-counts events;
+    # the largest observed cumulative value is the run total.
+    metrics["sharedQuiesceCount"] = max(
+        (int(snapshot.get("sharedVisionQuiesceCount") or 0) for snapshot in shared_session_snapshots),
+        default=0,
+    )
+    metrics["sharedRestartRequests"] = max(
+        (int(snapshot.get("sharedVisionRestartRequestCount") or 0) for snapshot in shared_session_snapshots),
+        default=0,
+    )
+    run_log = arm_result.get("log")
+    if run_log and Path(run_log).is_file():
+        try:
+            log_text = Path(run_log).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            log_text = ""
+        startup_seconds = [
+            float(match.group(1))
+            for match in re.finditer(r"Motion extractor ready in ([0-9]+(?:\.[0-9]+)?)s", log_text)
+        ]
+        metrics["gvhmrWorkerStartups"] = len(startup_seconds)
+        metrics["gvhmrWorkerStartupSeconds"] = sum(startup_seconds)
     return metrics
 
 
-def main() -> None:
+def effective_configuration_error(arm: str, metrics: dict, requested_wave_size: int) -> str | None:
+    expected = ARM_EFFECTIVE_SETTINGS.get(arm)
+    if expected is None:
+        return f"no effective-setting contract is defined for arm '{arm}'"
+    for key, value in expected.items():
+        observed = metrics.get(key)
+        if observed is None:
+            return f"runner summary is missing effective setting {key}"
+        if observed != value:
+            return f"effective setting {key}={observed!r}, expected {value!r}"
+    if metrics.get("stagedWaveSize") != requested_wave_size:
+        return (
+            f"effective stagedWaveSize={metrics.get('stagedWaveSize')!r}, "
+            f"requested {requested_wave_size}"
+        )
+    expected_high_water = expected["effectiveMaxConcurrentStagedWaves"]
+    if metrics.get("overlapHighWater") != expected_high_water:
+        return (
+            f"observed overlap high-water={metrics.get('overlapHighWater')!r}, "
+            f"expected {expected_high_water}"
+        )
+    if metrics.get("stagedWaveWorkerMode") != "workspace_scoped_persistent_serial_queue":
+        return f"unexpected staged-wave worker mode {metrics.get('stagedWaveWorkerMode')!r}"
+    return None
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arms", default=",".join(ARMS), help="Comma-separated arm names")
     source_group = parser.add_mutually_exclusive_group()
@@ -572,8 +994,8 @@ def main() -> None:
     parser.add_argument(
         "--staged-wave-size",
         type=int,
-        default=1,
-        help="Exercises per staged wave; production library default is 8.",
+        default=DEFAULT_STAGED_WAVE_SIZE,
+        help="Exercises per staged wave; defaults to the production library setting.",
     )
     parser.add_argument(
         "--staged-wave-max-wait-seconds",
@@ -586,12 +1008,24 @@ def main() -> None:
         "--skip-prewarm", action="store_true",
         help="Do not run the one-shot GVHMR worker pre-warm before the first arm",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--allow-dirty-worktree", action="store_true",
+        help="Pass -AllowDirtyWorktree to the runner; the run still records the full source identity",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_argument_parser().parse_args()
 
     arm_names = [name.strip() for name in args.arms.split(",") if name.strip()]
-    unknown = [name for name in arm_names if name not in ARMS]
+    unknown = [name for name in arm_names if name not in ARMS and name not in UNSUPPORTED_ARMS]
     if unknown:
         raise SystemExit(f"Unknown arms: {', '.join(unknown)}; available: {', '.join(ARMS)}")
+    unsupported = [name for name in arm_names if name in UNSUPPORTED_ARMS]
+    if unsupported:
+        details = "; ".join(f"{name}: {UNSUPPORTED_ARMS[name]}" for name in unsupported)
+        raise SystemExit(f"Unsupported measurement arm: {details}")
     if args.staged_wave_size < 1:
         raise SystemExit("--staged-wave-size must be at least 1")
     if args.staged_wave_max_wait_seconds < 1:
@@ -613,20 +1047,67 @@ def main() -> None:
     run_identity = capture_run_identity()
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_root = SMOKE_CHECK_ROOT if args.smoke_check else HARNESS_ROOT / stamp
-    if args.smoke_check and run_root.exists():
-        shutil.rmtree(run_root)
-    run_root.mkdir(parents=True, exist_ok=True)
+    run_root = HARNESS_ROOT / f"{stamp}-{uuid.uuid4().hex[:8]}"
+    run_root.mkdir(parents=True, exist_ok=False)
     plan_json = run_root / "mini_library.json"
     matched = build_mini_library(args.library_json, set(slugs), plan_json)
     print(f"[harness] {len(matched)} exercises: {', '.join(matched)}", flush=True)
     library_plan_sha = sha256_file(plan_json)
     fixture_manifest_sha = sha256_file(args.fixtures) if args.fixtures is not None else None
 
+    contract_cache_snapshot = None
+    if fixture_manifest is not None:
+        contract_cache_snapshot = stage_fixture_contract_cache(
+            fixture_manifest, run_root / "fixture-contract-cache"
+        )
+    elif not args.smoke_check:
+        # Non-fixture runs do not make a cross-arm claim about this cache, but
+        # each workspace still gets an isolated copy through the legacy path.
+        contract_cache_snapshot = None
+
     results = []
-    prewarm_result = None
-    if not args.smoke_check and not args.skip_prewarm:
-        prewarm_result = prewarm_gvhmr_worker()
+    if args.smoke_check:
+        prewarm_result = {
+            "attempted": False,
+            "ready": None,
+            "startupStatus": "skipped_for_smoke_check",
+            "cleanShutdown": None,
+            "shutdownConfirmed": None,
+        }
+    elif args.skip_prewarm:
+        prewarm_result = {
+            "attempted": False,
+            "ready": None,
+            "startupStatus": "explicitly_skipped",
+            "cleanShutdown": None,
+            "shutdownConfirmed": None,
+        }
+    else:
+        try:
+            prewarm_result = prewarm_gvhmr_worker()
+        except Exception as exc:
+            prewarm_result = {
+                "attempted": True,
+                "ready": False,
+                "startupStatus": "prewarm_exception",
+                "cleanShutdown": False,
+                "shutdownConfirmed": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    if not args.smoke_check:
+        (run_root / "prewarm.json").write_text(
+            json.dumps(prewarm_result, indent=1), encoding="utf-8"
+        )
+        if prewarm_result.get("attempted") and (
+            prewarm_result.get("ready") is not True
+            or prewarm_result.get("cleanShutdown") is not True
+            or prewarm_result.get("shutdownConfirmed") is not True
+        ):
+            (run_root / "results.json").write_text("[]", encoding="utf-8")
+            raise SystemExit(
+                "GVHMR prewarm did not reach readiness and confirm a clean shutdown; "
+                f"no comparison arm was started. See {run_root / 'prewarm.json'}"
+            )
     requested_arms = arm_names[:1] if args.smoke_check else arm_names
     for arm in requested_arms:
         arm_dir = run_root / arm
@@ -634,7 +1115,7 @@ def main() -> None:
         fixture_args: list[str] = []
         if fixture_manifest is not None:
             prepared_manifest_path, seeded = assemble_workspace_fixtures(
-                arm_dir, fixture_manifest, args.base_workspace
+                arm_dir, fixture_manifest, contract_cache_snapshot
             )
             fixture_args = [
                 "-PreparedCandidatesManifest", str(prepared_manifest_path),
@@ -645,6 +1126,8 @@ def main() -> None:
         else:
             rewritten_paths = assemble_workspace(arm_dir, matched, args.base_workspace)
             print(f"[harness] remapped workspace paths in {rewritten_paths} copied text files", flush=True)
+        if args.allow_dirty_worktree:
+            fixture_args.append("-AllowDirtyWorktree")
         if args.smoke_check:
             command = build_runner_command(
                 arm, arm_dir, plan_json, args.staged_wave_size,
@@ -668,12 +1151,21 @@ def main() -> None:
             extra_runner_args=fixture_args or None,
         )
         arm_result.update(run_identity)
+        arm_result["prewarmOutcome"] = prewarm_result
         arm_result["fixtureManifestPath"] = str(args.fixtures) if args.fixtures is not None else None
         arm_result["fixtureManifestSha256"] = fixture_manifest_sha
         arm_result["libraryPlanSha256"] = library_plan_sha
         arm_result["workspacePathsRemapped"] = (
             None if fixture_manifest is not None else rewritten_paths
         )
+        if arm_result.get("terminationStatus") in {"stalled", "timeout"} or not arm_result.get("shutdownConfirmed"):
+            results.append(arm_result)
+            print(
+                f"[harness] aborting remaining arms after {arm_result.get('terminationStatus')} "
+                f"({arm_result.get('shutdownStatus')}); no later arm will run",
+                flush=True,
+            )
+            break
         if isinstance(arm_result.get("exitCode"), int) and arm_result["exitCode"] != 0:
             print(f"[harness] {arm}: FAILED (exit {arm_result['exitCode']}). Tail:\n{_log_tail(Path(arm_result['log']))}", flush=True)
             if arm_result["wallSeconds"] < 120:
@@ -683,8 +1175,18 @@ def main() -> None:
                 print("[harness] aborting remaining arms (early failure = config error).", flush=True)
                 break
         arm_result["metrics"] = extract_metrics(arm_result)
+        config_error = effective_configuration_error(
+            arm, arm_result["metrics"], args.staged_wave_size
+        )
+        arm_result["effectiveConfigurationValid"] = config_error is None
+        if config_error:
+            arm_result["effectiveConfigurationError"] = config_error
+            print(f"[harness] {arm}: INVALID MEASUREMENT CONFIGURATION: {config_error}", flush=True)
         arm_result["schedulerTimeline"] = load_scheduler_timeline(arm_result)
         results.append(arm_result)
+        if config_error:
+            print("[harness] aborting remaining arms; this run cannot support a comparison.", flush=True)
+            break
         m = arm_result["metrics"]
         print(
             f"[harness] {arm}: wall={arm_result['wallSeconds']}s exit={arm_result['exitCode']} "
@@ -692,7 +1194,12 @@ def main() -> None:
             f"waveItems={m['maxExercisesPerWave']} sourceWorkers={m['sourceValidationWorkersHighWater']} "
             f"startups={m['visionStartups']}/{m['visionStartupSeconds']:.0f}s coRes={m['coResidentOps']} "
             f"quiesce={m['sharedQuiesceCount']} overlapHW={m.get('overlapHighWater')} "
-            f"gvhmr={m['gvhmrAttempts']}x{m['gvhmrAttemptSeconds']:.0f}s statuses={m.get('statuses')}",
+            f"candidateGen={m['candidateGenerationAttempts']}x{m['candidateGenerationAttemptSeconds']:.0f}s "
+            f"gvhmrStartup={m['gvhmrWorkerStartups']}x{m['gvhmrWorkerStartupSeconds']:.0f}s "
+            f"gvhmrStage={m['gvhmrStageCalls']}x{m['gvhmrStageWallSeconds']:.0f}s "
+            f"runner={m['gvhmrRunnerCalls']}x{m['gvhmrRunnerCallSeconds']:.0f}s "
+            f"predict={m['gvhmrPredictionSamples']}x{m['gvhmrPredictionSeconds']:.1f}s "
+            f"browserTasks={browser_task_summary(m)} statuses={m.get('statuses')}",
             flush=True,
         )
         statuses = m.get("statuses") or {}
