@@ -4557,6 +4557,9 @@ function Start-StagedBakeWaveJob {
         runId = $movementRunId
         waveId = $waveId
         sourceIdentityFingerprint = $script:MotionSourceIdentityFingerprint
+        serviceConfigurationFingerprint = (Get-StagedBakeServiceConfigurationFingerprint `
+            -ConfiguredPythonCommand $PythonCommand `
+            -MaxWaveItems $StagedWaveSize)
         arguments = [string[]]$applicationArguments
         logPath = $waveLogPath
     }

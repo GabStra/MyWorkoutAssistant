@@ -119,6 +119,7 @@ def test_queue_service_processes_wave_request_and_stops_after_drain(tmp_path: Pa
     request = {
         "waveId": "run-wave-0001",
         "sourceIdentityFingerprint": "source-v1",
+        "serviceConfigurationFingerprint": "runtime-config-v1",
         "arguments": ["bake-and-rank", "--staged-wave-manifest", "manifest.json"],
         "reportPath": str(tmp_path / "wave" / "staged_wave_report.json"),
     }
@@ -208,6 +209,52 @@ def test_queue_service_rejects_requests_from_a_different_source_identity(tmp_pat
     result_payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert result_payload["exitCode"] == 1
     assert "source identity" in result_payload["error"]
+    assert executed == []
+
+    (queue_root / "stop.request").write_text("test shutdown", encoding="utf-8")
+    service_thread.join(timeout=2)
+    assert not service_thread.is_alive()
+    assert result["processed"] == 1
+
+
+def test_queue_service_rejects_requests_from_a_different_runtime_configuration(
+    tmp_path: Path,
+):
+    queue_root = tmp_path / "queue"
+    requests = queue_root / "requests"
+    requests.mkdir(parents=True)
+    request = {
+        "requestId": "request-old-configuration",
+        "runId": "run-old-configuration",
+        "waveId": "run-old-configuration-wave-0001",
+        "sourceIdentityFingerprint": "current-source",
+        "serviceConfigurationFingerprint": "old-runtime-config",
+    }
+    (requests / "request-old-configuration.json").write_text(
+        json.dumps(request), encoding="utf-8"
+    )
+    executed = []
+    result = {}
+
+    def run_service():
+        result["processed"] = run_staged_wave_service(
+            queue_root,
+            execute_wave=lambda payload: executed.append(payload["requestId"]) or {},
+            poll_interval_seconds=0.01,
+            source_identity_fingerprint="current-source",
+            service_configuration_fingerprint="current-runtime-config",
+        )
+
+    service_thread = threading.Thread(target=run_service)
+    service_thread.start()
+    result_path = queue_root / "results" / "request-old-configuration.json"
+    deadline = time.monotonic() + 2
+    while not result_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert result_path.exists()
+    result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result_payload["exitCode"] == 1
+    assert "runtime configuration" in result_payload["error"]
     assert executed == []
 
     (queue_root / "stop.request").write_text("test shutdown", encoding="utf-8")

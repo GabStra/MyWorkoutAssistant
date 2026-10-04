@@ -481,6 +481,15 @@ def _run_staged_wave_service_locked(
                             "Staged-wave request source identity does not match the "
                             "loaded service code; request was not executed."
                         )
+                    elif (
+                        service_configuration_fingerprint is not None
+                        and request_payload.get("serviceConfigurationFingerprint")
+                        != service_configuration_fingerprint
+                    ):
+                        error_message = (
+                            "Staged-wave request runtime configuration does not match "
+                            "the loaded service; request was not executed."
+                        )
                     elif run_id and (cancelled_runs / f"{run_id}.json").exists():
                         error_message = "Motion run was cancelled before this wave started."
                     else:
