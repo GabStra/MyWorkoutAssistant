@@ -435,3 +435,42 @@ directory has a condensed version of this state; update it after the arms land.
   separately covered by the cleanup regression and retained RDL replay. No GPU
   campaign was run. The baseline remains stopped, so no maximum-throughput claim
   is made.
+
+### Retained RDL fit and acceptance follow-up — 2026-10-04
+
+- The profile replay helper now reads the candidate contract's contact mode,
+  support orientation, and paired-hand requirement. It reports postprocess
+  quality diagnostics separately from baked-artifact acceptance; a cleaned full
+  clip is not itself a final baked artifact.
+- The exact RDL contract exposed an ordering bug in support initialization:
+  geometry and alignment passed, but a 36 mm rigid-grip spacing miss suppressed
+  polish for a 1.45 mm shoulder-span residual. Root-continuity then rejected the
+  reference before the later grip projector. Support anatomy/contact polish now
+  depends on valid support geometry and alignment only; grip remains an
+  independent gate and repair. A focused regression covers that separation.
+- After this fix, the retained RDL loop fit reached the full controlled-fit stage
+  instead of stopping at `support_reference_projection_incomplete`. The baseline
+  controlled-fit variant ran 174.5s and failed its quality checks. Its sibling
+  adaptive contact-sequence correction passed the production pre-render gate and
+  produced a 95-frame review video. A 15-frame contact sheet showed the complete
+  hinge and return with stationary feet.
+- The production materialized-output metrics then passed on that correction
+  artifact: source pose fidelity passed (P90 joint error 0.072 body ratios),
+  source-confirmed support stationarity passed, final render evidence passed, and
+  the acceptance decision was `valid`. That deterministic gate invocation used
+  a replay-only review item and ranking wrapper to evaluate materialized metrics;
+  it did not create production selection evidence. The optional visual-review
+  callback was not invoked; the saved production render was inspected directly.
+  This replay did not run discovery, WHAM/GVHMR inference, or the normal
+  selection/package wrapper, so it establishes a valid retained artifact
+  candidate, not a complete live source-to-package generation.
+- The scoped PowerShell process E2E passed again after the repair: 1 passed in
+  142.31s. It still uses a prepared candidate and normalized-motion fixture for
+  upstream boundaries; live discovery, source acquisition, and reconstruction
+  remain unverified by that process test.
+- The fit remains a measured bottleneck: this RDL replay spent 174.5s in a
+  controlled-fit variant that failed, before the 0.3s correction variant passed
+  deterministic gates. Reordering or short-circuiting fit work could save time,
+  but needs a separate quality-preserving comparison across the agreed exercise
+  base. The stopped baseline was not restarted, and no maximum-throughput claim
+  is made.
