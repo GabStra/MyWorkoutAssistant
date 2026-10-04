@@ -272,7 +272,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 40
+SELECTED_SECTION_BAKE_CACHE_VERSION = 41
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -2586,6 +2586,7 @@ def artifact_state_for_baked_payload(
     contract: dict[str, Any] | None,
     selection_class: str,
     selection_evidence: dict[str, Any] | None = None,
+    source_parent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     loop = payload.get("loop")
     loop_enabled = isinstance(loop, dict) and loop.get("enabled") is True
@@ -2616,7 +2617,11 @@ def artifact_state_for_baked_payload(
         required_class=required_final_artifact_class(contract),
         selection_evidence=evidence,
     )
-    validate_artifact_state(state, movement_payload=payload)
+    validate_artifact_state(
+        state,
+        movement_payload=payload,
+        source_parent_payload=source_parent_payload,
+    )
     payload["artifactState"] = state
     return state
 
@@ -27150,7 +27155,11 @@ def _bake_preview_loops_with_playwright_uncached(
                     )
 
                 lineage_evidence: dict[str, Any] = {}
-                if eligible_loop.artifact_class == CYCLE_SELECTION:
+                lineage_parent_payload: dict[str, Any] | None = None
+                if eligible_loop.artifact_class in {
+                    CYCLE_SELECTION,
+                    BOUNDED_MOVEMENT_SELECTION,
+                }:
                     full_clip_cache_key = (
                         variant_id,
                         json.dumps(options, sort_keys=True, separators=(",", ":"), default=str),
@@ -27172,10 +27181,19 @@ def _bake_preview_loops_with_playwright_uncached(
                         full_clip_bake_cache[full_clip_cache_key] = copy.deepcopy(
                             full_clip_seed
                         )
-                    lineage_evidence = cycle_selection_evidence(
-                        full_clip_seed,
-                        eligible_loop.loop,
-                    )
+                    if eligible_loop.artifact_class == CYCLE_SELECTION:
+                        lineage_evidence = cycle_selection_evidence(
+                            full_clip_seed,
+                            eligible_loop.loop,
+                        )
+                    else:
+                        lineage_parent_payload = full_clip_seed
+                        lineage_evidence = {
+                            "boundedMovementSelection": bounded_movement_selection_evidence(
+                                eligible_loop.loop,
+                                source_parent_payload=full_clip_seed,
+                            )
+                        }
                 export_payload = bake_current_range()
                 options, camera_yaw_selection, camera_rebake_applied = (
                     select_readable_preview_camera_options(
@@ -27241,12 +27259,6 @@ def _bake_preview_loops_with_playwright_uncached(
                         full_clip_cache_key,
                         copy.deepcopy(export_payload),
                     )
-                elif eligible_loop.artifact_class == BOUNDED_MOVEMENT_SELECTION:
-                    lineage_evidence = {
-                        "boundedMovementSelection": bounded_movement_selection_evidence(
-                            eligible_loop.loop
-                        )
-                    }
                 # Give the first controlled fit the same retained camera/source
                 # evidence that final materialized-output fitting uses. The
                 # preview renderer attaches this later for review, but waiting
@@ -27261,6 +27273,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     contract=exercise_motion_contract,
                     selection_class=eligible_loop.artifact_class,
                     selection_evidence=lineage_evidence,
+                    source_parent_payload=lineage_parent_payload,
                 )
                 pre_fit_fidelity = pre_fit_source_articulation_fidelity_rejection(
                     export_payload,
@@ -27359,6 +27372,7 @@ def _bake_preview_loops_with_playwright_uncached(
                                 parent_selection_evidence=lineage_evidence,
                                 movement_payload=export_payload,
                                 selection_class=eligible_loop.artifact_class,
+                                source_parent_payload=lineage_parent_payload,
                             )
                             if eligible_loop.artifact_class in {
                                 CYCLE_SELECTION,
@@ -27426,6 +27440,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     contract=exercise_motion_contract,
                     selection_class=eligible_loop.artifact_class,
                     selection_evidence=lineage_evidence,
+                    source_parent_payload=lineage_parent_payload,
                 )
                 export_payload["deterministicPreviewCameraSelection"] = camera_yaw_selection
                 adaptive_settings = (
@@ -27582,6 +27597,7 @@ def _bake_preview_loops_with_playwright_uncached(
                             contract=exercise_motion_contract,
                             selection_class=eligible_loop.artifact_class,
                             selection_evidence=lineage_evidence,
+                            source_parent_payload=lineage_parent_payload,
                         )
                         corrected_payload, articulation_constraint = (
                             constrain_baked_payload_to_source_articulation(
@@ -27646,6 +27662,7 @@ def _bake_preview_loops_with_playwright_uncached(
                             contract=exercise_motion_contract,
                             selection_class=eligible_loop.artifact_class,
                             selection_evidence=lineage_evidence,
+                            source_parent_payload=lineage_parent_payload,
                         )
                         if (
                             preserves_loop_continuity
@@ -31241,6 +31258,7 @@ def bake_preview_time_range_with_playwright(
                 contract=exercise_motion_contract,
                 selection_class=selection_class,
                 selection_evidence=selection_evidence,
+                source_parent_payload=lineage_parent_payload,
             )
             write_json_atomic(skeleton_path, export_payload)
             return BakedLoopArtifact(
@@ -31328,6 +31346,7 @@ def bake_preview_time_range_with_playwright(
             contract=exercise_motion_contract,
             selection_class=selection_class,
             selection_evidence=selection_evidence,
+            source_parent_payload=lineage_parent_payload,
         )
         export_payload, _ = constrain_baked_payload_to_source_articulation(
             export_payload,
@@ -31345,6 +31364,7 @@ def bake_preview_time_range_with_playwright(
             contract=exercise_motion_contract,
             selection_class=selection_class,
             selection_evidence=selection_evidence,
+            source_parent_payload=lineage_parent_payload,
         )
         annotate_export_payload_post_bake_scene_orientation(
             export_payload,
@@ -35386,6 +35406,7 @@ def rematerialized_selection_evidence(
         movement_payload=movement_payload,
         selection_class=selection_class,
         parent_interval=parent_interval,
+        source_parent_payload=parent_payload,
     )
 
 
@@ -35395,6 +35416,7 @@ def selection_evidence_for_materialized_interval(
     movement_payload: dict[str, Any],
     selection_class: str,
     parent_interval: dict[str, Any] | None = None,
+    source_parent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebind fitted frame provenance to its validated source selection."""
     if selection_class not in {CYCLE_SELECTION, BOUNDED_MOVEMENT_SELECTION}:
@@ -35456,9 +35478,12 @@ def selection_evidence_for_materialized_interval(
             },
         }
 
+    if not isinstance(source_parent_payload, dict):
+        return {}
     return {
         "boundedMovementSelection": bounded_movement_selection_evidence(
-            selected_interval
+            selected_interval,
+            source_parent_payload=source_parent_payload,
         )
     }
 

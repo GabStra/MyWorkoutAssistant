@@ -55,6 +55,28 @@ def _artifact_test_payload(*, start_frame: int, end_frame: int, frame_count: int
     }
 
 
+def _legacy_bounded_selection_evidence(interval: dict[str, object]) -> dict[str, object]:
+    """Model a persisted schema-v1 selection written before parent binding."""
+    interval_keys = (
+        "type",
+        "startFrame",
+        "endFrame",
+        "startTimeSec",
+        "endTimeSec",
+        "durationSec",
+    )
+    normalized_interval = {key: interval[key] for key in interval_keys if key in interval}
+    selection_id = hashlib.sha256(
+        json.dumps(
+            {"interval": normalized_interval},
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return {"selectionId": selection_id, "interval": normalized_interval}
+
+
 def test_manual_review_fallback_is_exportable_from_a_staged_wave():
     assert wave.wave_manifest_is_exportable({"selected": {"selectedWearSkeletonPath": "x"}})
     fallback_manifest = {
@@ -528,8 +550,17 @@ def test_rematerialized_selection_preserves_lineage_through_package_audit(
             frame_count=41,
             loop_enabled=False,
         )
+        source_parent_payload = _artifact_test_payload(
+            start_frame=0,
+            end_frame=59,
+            frame_count=60,
+            loop_enabled=False,
+        )
         parent_evidence = {
-            "boundedMovementSelection": bounded_movement_selection_evidence(interval)
+            "boundedMovementSelection": bounded_movement_selection_evidence(
+                interval,
+                source_parent_payload=source_parent_payload,
+            )
         }
     parent_state = bake.artifact_state_for_baked_payload(
         parent_payload,
@@ -746,7 +777,12 @@ def test_rematerialized_selection_preserves_lineage_through_package_audit(
     else:
         tampered_selection["selectionId"] = hashlib.sha256(
             json.dumps(
-                {"interval": tampered_selection["interval"]},
+                {
+                    "sourceParentContentSha256": tampered_selection["sourceParent"][
+                        "contentSha256"
+                    ],
+                    "interval": tampered_selection["interval"],
+                },
                 sort_keys=True,
                 separators=(",", ":"),
                 allow_nan=False,
@@ -847,7 +883,7 @@ def test_bounded_rebake_requires_matching_selection_and_output_identity():
         selection_class=bake.BOUNDED_MOVEMENT_SELECTION,
         required_class=bake.BOUNDED_MOVEMENT_REBAKE,
         selection_evidence={
-            "boundedMovementSelection": bounded_movement_selection_evidence(interval),
+            "boundedMovementSelection": _legacy_bounded_selection_evidence(interval),
         },
     )
     assert incomplete["lineageComplete"] is False
@@ -868,8 +904,9 @@ def test_bounded_rebake_requires_matching_selection_and_output_identity():
         payload,
         contract={"completionMode": "distinct_end_state"},
         selection_class=bake.BOUNDED_MOVEMENT_SELECTION,
+        # Persisted schema-v1 state before source-parent binding.
         selection_evidence={
-            "boundedMovementSelection": bounded_movement_selection_evidence(interval),
+            "boundedMovementSelection": _legacy_bounded_selection_evidence(interval),
         },
     )
     assert payload["artifactState"]["lineageComplete"] is True
@@ -891,7 +928,7 @@ def test_bounded_rebake_requires_matching_selection_and_output_identity():
         contract={"completionMode": "distinct_end_state"},
         selection_class=bake.BOUNDED_MOVEMENT_SELECTION,
         selection_evidence={
-            "boundedMovementSelection": bounded_movement_selection_evidence(interval),
+            "boundedMovementSelection": _legacy_bounded_selection_evidence(interval),
         },
     )
     assert looping_payload["artifactState"]["lineageComplete"] is False
@@ -907,13 +944,82 @@ def test_bounded_rebake_requires_matching_selection_and_output_identity():
             looping_payload["artifactState"],
             package_class=PACKAGED_MOVEMENT,
         )
-
     forged_state = dict(looping_payload["artifactState"])
     forged_state["lineageComplete"] = True
     forged_state["terminal"] = True
     with pytest.raises(ValueError, match="lineage flag"):
         validate_artifact_state(forged_state, movement_payload=looping_payload)
 
+
+def test_bounded_selection_identity_binds_source_parent_payload():
+    from exercise_motion_pkg.artifact_state import (
+        bounded_movement_selection_evidence,
+        validate_artifact_state,
+    )
+
+    interval = {
+        "type": "exact_source_movement_instance",
+        "startFrame": 5,
+        "endFrame": 45,
+        "startTimeSec": 5 / 30,
+        "endTimeSec": 45 / 30,
+        "durationSec": 40 / 30,
+    }
+    parent_a = _artifact_test_payload(
+        start_frame=0,
+        end_frame=59,
+        frame_count=60,
+        loop_enabled=False,
+    )
+    parent_b = json.loads(json.dumps(parent_a))
+    parent_b["frames"][0]["joints"]["pelvis"][0] = 0.25
+
+    evidence_a = bounded_movement_selection_evidence(
+        interval,
+        source_parent_payload=parent_a,
+    )
+    evidence_b = bounded_movement_selection_evidence(
+        interval,
+        source_parent_payload=parent_b,
+    )
+    assert evidence_a["selectionId"] != evidence_b["selectionId"]
+
+    fitted_payload = _artifact_test_payload(
+        start_frame=10,
+        end_frame=30,
+        frame_count=21,
+        loop_enabled=False,
+    )
+    fitted_evidence = bake.selection_evidence_for_materialized_interval(
+        parent_selection_evidence={"boundedMovementSelection": evidence_a},
+        movement_payload=fitted_payload,
+        selection_class=bake.BOUNDED_MOVEMENT_SELECTION,
+        parent_interval=interval,
+        source_parent_payload=parent_a,
+    )
+    fitted_selection = fitted_evidence["boundedMovementSelection"]
+    assert fitted_selection["sourceParent"] == evidence_a["sourceParent"]
+    assert fitted_selection["interval"]["startFrame"] == 10
+    assert fitted_selection["interval"]["endFrame"] == 30
+
+    state = bake.artifact_state_for_baked_payload(
+        fitted_payload,
+        contract={"completionMode": "distinct_end_state"},
+        selection_class=bake.BOUNDED_MOVEMENT_SELECTION,
+        selection_evidence=fitted_evidence,
+        source_parent_payload=parent_a,
+    )
+    validate_artifact_state(
+        state,
+        movement_payload=fitted_payload,
+        source_parent_payload=parent_a,
+    )
+    with pytest.raises(ValueError, match="source-parent identity does not match"):
+        validate_artifact_state(
+            state,
+            movement_payload=fitted_payload,
+            source_parent_payload=parent_b,
+        )
 
 def test_final_review_window_must_match_selected_cycle_interval():
     from exercise_motion_pkg.artifact_state import cycle_selection_evidence

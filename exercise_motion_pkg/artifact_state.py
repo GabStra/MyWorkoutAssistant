@@ -54,6 +54,7 @@ def validate_artifact_state(
     state: Any,
     *,
     movement_payload: dict[str, Any] | None = None,
+    source_parent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate a persisted, pre-package movement state and return it."""
     if not isinstance(state, dict):
@@ -120,6 +121,17 @@ def validate_artifact_state(
                 raise ValueError("Cyclic rebake interval does not match its selected-cycle evidence")
     if artifact_class == BOUNDED_MOVEMENT_REBAKE and lineage_complete:
         evidence = state.get("selectionEvidence")
+        selection = evidence["boundedMovementSelection"]
+        persisted_parent_identity = selection.get("sourceParent")
+        if source_parent_payload is not None:
+            if not isinstance(persisted_parent_identity, dict):
+                raise ValueError(
+                    "Bounded movement selection has no source-parent identity"
+                )
+            if baked_payload_identity(source_parent_payload) != persisted_parent_identity:
+                raise ValueError(
+                    "Bounded movement source-parent identity does not match its parent payload"
+                )
         if movement_payload is not None:
             payload_loop = movement_payload.get("loop")
             payload_loop_enabled = (
@@ -372,13 +384,23 @@ def cycle_selection_evidence(
     }
 
 
-def bounded_movement_selection_evidence(selected_interval: dict[str, Any]) -> dict[str, Any]:
-    """Bind a bounded movement selection to its inclusive source interval."""
+def bounded_movement_selection_evidence(
+    selected_interval: dict[str, Any],
+    *,
+    source_parent_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind a new bounded selection to its interval and source-parent bake."""
     interval = _selection_interval(selected_interval)
     if not _is_valid_selection_interval(interval):
         raise ValueError("Bounded movement selection is missing complete source interval bounds")
+    source_parent_identity = baked_payload_identity(source_parent_payload)
+    selection_payload = {
+        "sourceParentContentSha256": source_parent_identity["contentSha256"],
+        "interval": interval,
+    }
     return {
-        "selectionId": _selection_id({"interval": interval}),
+        "sourceParent": source_parent_identity,
+        "selectionId": _selection_id(selection_payload),
         "interval": interval,
     }
 
@@ -454,12 +476,22 @@ def _has_complete_bounded_lineage(history: Any, evidence: Any) -> bool:
         return False
     interval = selection.get("interval")
     selection_id = selection.get("selectionId")
-    return (
-        _is_valid_selection_interval(interval)
-        and isinstance(selection_id, str)
-        and selection_id == _selection_id({"interval": interval})
-        and _has_valid_payload_identity(rebake)
-    )
+    if not _is_valid_selection_interval(interval) or not _has_valid_payload_identity(rebake):
+        return False
+    source_parent = selection.get("sourceParent")
+    if source_parent is None:
+        # Schema-v1 artifacts written before parent binding remain readable.
+        expected_selection_id = _selection_id({"interval": interval})
+    else:
+        if not _has_valid_payload_identity(source_parent):
+            return False
+        expected_selection_id = _selection_id(
+            {
+                "sourceParentContentSha256": source_parent["contentSha256"],
+                "interval": interval,
+            }
+        )
+    return isinstance(selection_id, str) and selection_id == expected_selection_id
 
 
 def _selection_interval(selected_interval: dict[str, Any]) -> dict[str, Any]:
