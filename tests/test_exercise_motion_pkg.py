@@ -54178,3 +54178,486 @@ def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
             f"fk_jacobian diverges from finite differences "
             f"(project_socket={project_socket}): {max_relative:.2e}"
         )
+
+
+def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trace one coherent cached pose through the staged CLI and package gate."""
+    import gzip
+    import hashlib
+    import importlib.util
+
+    import cv2
+
+    from exercise_motion_pkg import cli as cli_module
+    from exercise_motion_pkg import wave_pipeline
+    from exercise_motion_pkg.bake_and_rank import (
+        EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+        SOURCE_SELECTION_POLICY_VERSION,
+    )
+    from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES
+
+    exercise = ExerciseEntry(exercise_id="squat", name="Squat", slug="squat")
+    contract = youtube_module.normalize_exercise_motion_contract(
+        {
+            "movementType": "repetition",
+            "groundContactMode": "intermittent",
+            "implementSupportMode": "bodyweight",
+            "completionMode": "return_to_start",
+            "requiresReturnToStart": True,
+            **pose_contract_fields(
+                support_mode="standing",
+                hand_height="hip",
+                torso_orientation="upright",
+                knee_state="extended",
+                stance="shoulder_width",
+            ),
+            "validStartState": "standing upright with feet shoulder width apart",
+            "validEndState": "standing upright with feet shoulder width apart",
+            "requiredPhases": ["lower the hips into a squat", "stand upright again"],
+            "primaryMovingRegions": ["hips", "knees"],
+            "referenceRegions": ["ankles"],
+            "primaryAxis": "vertical",
+            "motionPattern": "joint_flex_extend",
+            "mustBeVisibleRegions": ["hips", "knees", "ankles"],
+        },
+        exercise=exercise,
+        source="self_contained_staged_wave_fixture",
+    )
+
+    # This is one complete, fixed-length squat cycle in the canonical Y-up
+    # basis. The midpoint of the shoulders lies halfway along spine3 -> neck,
+    # inside the existing anatomy constraint's 0.35..1.25 interval.
+    frame_count = 49
+    frames: list[MotionFrame] = []
+    for index in range(frame_count):
+        cycle_position = index / (frame_count - 1)
+        squat_depth = 0.20 * (1.0 - math.cos(2.0 * math.pi * cycle_position)) / 2.0
+        pelvis_y = 0.90 - squat_depth
+        torso_z = 0.10 * squat_depth
+        joints: dict[str, tuple[float, float, float]] = {
+            "pelvis": (0.0, pelvis_y, torso_z),
+            "spine1": (0.0, pelvis_y + 0.20, torso_z),
+            "spine2": (0.0, pelvis_y + 0.40, torso_z),
+            "spine3": (0.0, pelvis_y + 0.60, torso_z),
+            "neck": (0.0, pelvis_y + 0.76, torso_z),
+            "head": (0.0, pelvis_y + 0.94, torso_z),
+        }
+        for side, sign in (("left", -1.0), ("right", 1.0)):
+            hip = (sign * 0.12, pelvis_y - 0.02, torso_z)
+            ankle = (sign * 0.12, 0.05, 0.0)
+            dy = ankle[1] - hip[1]
+            dz = ankle[2] - hip[2]
+            distance = math.hypot(dy, dz)
+            offset = math.sqrt(max(0.0, 0.45 * 0.45 - distance * distance / 4.0))
+            knee = (
+                sign * 0.12,
+                (hip[1] + ankle[1]) / 2.0 + dz / distance * offset,
+                (hip[2] + ankle[2]) / 2.0 - dy / distance * offset,
+            )
+            joints[f"{side}_hip"] = hip
+            joints[f"{side}_knee"] = knee
+            joints[f"{side}_ankle"] = ankle
+            joints[f"{side}_foot"] = (ankle[0], ankle[1] - 0.02, ankle[2] + 0.10)
+            joints[f"{side}_collar"] = (sign * 0.12, pelvis_y + 0.62, torso_z)
+            joints[f"{side}_shoulder"] = (sign * 0.18, pelvis_y + 0.70, torso_z)
+            joints[f"{side}_elbow"] = (sign * 0.22, pelvis_y + 0.43, torso_z)
+            joints[f"{side}_wrist"] = (sign * 0.24, pelvis_y + 0.18, torso_z)
+            joints[f"{side}_hand"] = (sign * 0.24, pelvis_y + 0.12, torso_z)
+        frames.append(MotionFrame(time_sec=index / 16.0, joints=joints))
+
+    canonical_clip = MotionClip(
+        fps=16.0,
+        joint_names=list(SMPL_JOINT_NAMES),
+        frames=frames,
+    )
+    normalized_motion_path = tmp_path / "normalized_motion.json"
+    # The normalized-motion hook stands in for WHAM output, so its cache must
+    # use WHAM's Y-down/Z-forward basis. Production canonicalization then
+    # returns the same pose used to make the source video and 2D observations.
+    wham_camera_clip = MotionClip(
+        fps=canonical_clip.fps,
+        joint_names=canonical_clip.joint_names,
+        frames=[
+            MotionFrame(
+                time_sec=frame.time_sec,
+                joints={
+                    name: (point[0], -point[1], -point[2])
+                    for name, point in frame.joints.items()
+                },
+            )
+            for frame in canonical_clip.frames
+        ],
+    )
+    save_motion_json(normalized_motion_path, wham_camera_clip)
+
+    source_video = tmp_path / "squat_fixture.mp4"
+    width, height = 160, 120
+    writer = cv2.VideoWriter(
+        str(source_video), cv2.VideoWriter_fourcc(*"mp4v"), canonical_clip.fps, (width, height)
+    )
+    assert writer.isOpened()
+    source_pose_frames: list[dict[str, object]] = []
+    connections = (
+        ("pelvis", "spine1"), ("spine1", "spine2"), ("spine2", "spine3"),
+        ("spine3", "neck"), ("neck", "head"), ("left_hip", "right_hip"),
+        ("left_hip", "left_knee"), ("left_knee", "left_ankle"),
+        ("right_hip", "right_knee"), ("right_knee", "right_ankle"),
+        ("left_ankle", "left_foot"), ("right_ankle", "right_foot"),
+        ("left_collar", "right_collar"),
+        ("left_collar", "left_shoulder"), ("left_shoulder", "left_elbow"),
+        ("left_elbow", "left_wrist"), ("left_wrist", "left_hand"),
+        ("right_collar", "right_shoulder"), ("right_shoulder", "right_elbow"),
+        ("right_elbow", "right_wrist"), ("right_wrist", "right_hand"),
+    )
+    try:
+        for frame in canonical_clip.frames:
+            image_points = {
+                name: [0.5 + point[0] * 0.4, 0.92 - point[1] * 0.42]
+                for name, point in frame.joints.items()
+            }
+            image = np.zeros((height, width, 3), dtype=np.uint8)
+            pixels = {
+                name: (round(point[0] * width), round(point[1] * height))
+                for name, point in image_points.items()
+            }
+            for start, end in connections:
+                cv2.line(image, pixels[start], pixels[end], (220, 220, 220), 3)
+            for point in pixels.values():
+                cv2.circle(image, point, 3, (40, 190, 255), -1)
+            writer.write(image)
+            source_pose_frames.append(
+                {
+                    "sourceTimeSec": frame.time_sec,
+                    "timeSec": frame.time_sec,
+                    "joints": image_points,
+                    "jointConfidence": {name: 1.0 for name in image_points},
+                }
+            )
+    finally:
+        writer.release()
+    assert source_video.is_file() and source_video.stat().st_size > 0
+
+    item_workspace = tmp_path / "wave" / "squat"
+    candidate_workspace = item_workspace / "squat-001-synthetic-squat"
+    selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    selected_video.parent.mkdir(parents=True, exist_ok=True)
+    selected_video.write_bytes(source_video.read_bytes())
+    source_sha256 = hashlib.sha256(selected_video.read_bytes()).hexdigest()
+    reference_path = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+    reference_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "sourceVideoSha256": source_sha256,
+                "pose": {
+                    "coordinateSpace": "normalized_image_xy",
+                    "imageWidth": width,
+                    "imageHeight": height,
+                    "frames": source_pose_frames,
+                    "sourcePoseEvidenceAudit": {
+                        "policyVersion": 1,
+                        "events": [],
+                        "unresolved": False,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    seeded_source_metrics = {
+        "required": True,
+        "passed": True,
+        "reason": "fixture_exact_source_cycle_evidence",
+        "validationPolicyVersion": EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+        "sourceVideoPath": str(selected_video.resolve()),
+        "sourcePoseReferencePath": str(reference_path.resolve()),
+        "sourcePoseEndpointContractValidation": {"available": True, "passed": True},
+    }
+    (reference_path.parent / "segment_selection.json").write_text(
+        json.dumps(
+            {
+                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                "role": "pre_wham_validated_source_cut",
+                "sourcePrepReason": "pre_wham_source_window_choice",
+                "preWhamSourceValidationEnabled": True,
+                "exerciseMotionContractEnabled": True,
+                "exerciseMotionContractStatus": "generated",
+                "exerciseMotionContract": contract,
+                "selectedSegmentPath": str(selected_video.resolve()),
+                "selectedSpan": {"startSeconds": 0.0, "endSeconds": frames[-1].time_sec},
+                "exactSourcePhaseValidation": seeded_source_metrics,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def cached_pose_validation(**kwargs: object) -> dict[str, object]:
+        assert Path(kwargs["source_video_path"]).resolve() == selected_video.resolve()
+        return dict(seeded_source_metrics)
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "validate_exact_source_with_cached_gpu_handoff",
+        cached_pose_validation,
+    )
+    body_support_module = __import__(
+        "exercise_motion_pkg.body_support_observation", fromlist=["observe_body_support"]
+    )
+    monkeypatch.setattr(
+        body_support_module,
+        "observe_body_support",
+        lambda *_args, **_kwargs: {
+            "status": "observed",
+            "source": "synthetic_fixture_model_boundary",
+            "policyVersion": body_support_module.POLICY_VERSION,
+            "observation": {
+                "torsoSurface": "vertical",
+                "pelvisAndUpperBackSameSurface": False,
+                "pelvis": "moving",
+                "upperBack": "moving",
+                "head": "moving",
+                "leftFoot": "stationary_full_sole",
+                "rightFoot": "stationary_full_sole",
+                "leftFootSurface": "ground",
+                "rightFootSurface": "ground",
+                "leftHand": "moving",
+                "rightHand": "moving",
+                "handsSameHorizontalSurface": False,
+                "observations": "Synthetic squat with both feet planted.",
+            },
+        },
+    )
+
+    candidates_path = tmp_path / "candidates.json"
+    candidates_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {
+                        "exerciseId": "squat",
+                        "exerciseName": "Squat",
+                        "slug": "squat",
+                        "exerciseMotionContract": contract,
+                        "candidates": [
+                            {
+                                "videoId": "synthetic-squat",
+                                "videoPath": str(source_video.resolve()),
+                                "title": "Squat with a complete repetition",
+                                "status": "recommended",
+                                "visionPayload": {
+                                    "bestChunkScore": 0.97,
+                                    "validChunkCount": 1,
+                                    "scoredChunkCount": 1,
+                                    "target_identity_match": True,
+                                    "correct_exercise": True,
+                                    "usable_for_motion_extraction": True,
+                                    "real_human_subject": True,
+                                    "continuous_motion": True,
+                                    "complete_repetition_visible": True,
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    wave_manifest_path = tmp_path / "wave_manifest.json"
+    wave_manifest_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "runId": "fixture-run",
+                "waveId": "fixture-wave-001",
+                "workspace": str((tmp_path / "wave").resolve()),
+                "items": [
+                    {
+                        "exerciseId": "squat",
+                        "exerciseName": "Squat",
+                        "candidatesJson": str(candidates_path.resolve()),
+                        "workspace": str(item_workspace.resolve()),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    generated_results: dict[str, GenerateResult] = {}
+
+    def generate_from_normalized_fixture(
+        candidate,
+        *,
+        request,
+        prepared_video_path,
+        **_kwargs,
+    ) -> GenerateResult:
+        cached = generated_results.get(candidate.workspace_slug)
+        if cached is not None:
+            return cached
+        result = run_generation_pipeline(
+            GenerateRequest(
+                exercise_slug=candidate.workspace_slug,
+                workspace=request.workspace,
+                video_path=prepared_video_path,
+                normalized_motion_json=normalized_motion_path,
+                motion_reconstruction_backend="wham",
+                ground_contact_mode="intermittent",
+                support_mode_hint="standing",
+                source_pose_reference_path=reference_path,
+                reuse_wham_cache=False,
+                structural_refinement_enabled=True,
+            )
+        )
+        generated_results[candidate.workspace_slug] = result
+        return result
+
+    monkeypatch.setattr(wave_pipeline, "generate_candidate_motion", generate_from_normalized_fixture)
+    monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", generate_from_normalized_fixture)
+
+    final_vlm_calls: list[Path] = []
+
+    def approve_rendered_fixture_with_stubbed_vlm(
+        item: ReviewItem,
+        *_args: object,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        final_vlm_calls.append(item.skeleton_path)
+        return {
+            "advisoryOnly": True,
+            "status": "observed",
+            "findings": [],
+        }
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "validate_final_output_with_caption_images",
+        approve_rendered_fixture_with_stubbed_vlm,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "exercise-motion",
+            "bake-and-rank",
+            "--candidates-json",
+            str(candidates_path),
+            "--staged-wave-manifest",
+            str(wave_manifest_path),
+            "--workspace",
+            str(tmp_path / "cli-workspace"),
+            "--wham-repo-path",
+            str(tmp_path / "wham-repo"),
+            "--body-model-root",
+            str(tmp_path / "body-models"),
+            "--skip-source-segment-detection",
+            "--no-classify-support-dominance",
+            "--no-llama-cpp-auto-start-server",
+            "--review-frames",
+            "8",
+            "--candidate-timeout-seconds",
+            "90",
+            "--exercise-timeout-seconds",
+            "120",
+            "--max-reconstruction-candidate-attempts",
+            "1",
+            "--final-output-validation",
+            "--max-final-output-rejections",
+            "1",
+        ],
+    )
+
+    cli_module.main()
+
+    assert len(generated_results) == 1
+    generated_result = next(iter(generated_results.values()))
+    assert generated_result.manifest_path.is_file()
+    assert bake_and_rank_module.load_verified_source_pose_reference(
+        reference_path, selected_video
+    ) is not None
+    checkpoint = json.loads(
+        (candidate_workspace / "baked_stage_checkpoint.json").read_text(encoding="utf-8")
+    )
+    export_payload = checkpoint["payload"]["artifacts"][0]["artifact"]["export_payload"]
+    fit_report = export_payload["controlledMotionFit"]
+    assert fit_report["applied"] is True
+    anatomy = fit_report["anatomicalInitialization"]
+    assert anatomy["passed"] is True
+    shoulder_attachment_violation = "anatomy_chest_attachment:shoulders"
+    assert shoulder_attachment_violation not in anatomy["sourceViolations"]
+    assert shoulder_attachment_violation not in anatomy["remainingViolations"]
+    assert list(candidate_workspace.rglob("*.webm")), "the production browser bake did not render a review video"
+    assert final_vlm_calls, "the final visual-review boundary was not exercised"
+
+    selection_path = item_workspace / "selection_manifest.json"
+    selection_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert selection_manifest.get("finalOutputValidationEnabled") is True
+    assert selection_manifest.get("selectionStatus") == "selected"
+    selected = selection_manifest.get("selected")
+    assert isinstance(selected, dict)
+    final_validation = selected["ranking"]["payload"]["finalOutputValidation"]
+    assert final_validation.get("passed") is True
+    assert final_validation.get("renderEvidence", {}).get("passed") is True
+    review_identity = final_validation["renderEvidence"]["skeletonIdentity"]
+    skeleton_path = Path(selected["selectedWearSkeletonPath"])
+    skeleton_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    assert review_identity["sha256"] == hashlib.sha256(skeleton_path.read_bytes()).hexdigest()
+    assert review_identity["frameCount"] == len(skeleton_payload["frames"])
+    assert all(Path(path).is_file() for path in final_validation["renderEvidence"]["contactSheetPaths"])
+
+    package_input = tmp_path / "plan.json"
+    package_input.write_text(
+        json.dumps({"exerciseDefinitions": [{"id": "squat", "name": "Squat"}]}),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "motion_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {
+                        "exerciseId": "squat",
+                        "exerciseName": "Squat",
+                        "status": "completed",
+                        "selectedWearSkeletonPath": str(skeleton_path.resolve()),
+                        "selectionManifestPath": str(selection_path.resolve()),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    builder_path = Path(__file__).resolve().parents[1] / "scripts" / "build_workout_plan_movement_package.py"
+    builder_spec = importlib.util.spec_from_file_location("motion_e2e_package_builder", builder_path)
+    assert builder_spec and builder_spec.loader
+    builder_module = importlib.util.module_from_spec(builder_spec)
+    builder_spec.loader.exec_module(builder_module)
+    output_path = tmp_path / "plan_with_movements.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(builder_path),
+            "--workout-plan-package-json",
+            str(package_input),
+            "--motion-summary-json",
+            str(summary_path),
+            "--output-json",
+            str(output_path),
+            "--strict-id-match",
+        ],
+    )
+    assert builder_module.main() == 0
+    package_output = json.loads(output_path.read_text(encoding="utf-8"))
+    packaged_movement = package_output["exerciseMovements"][0]
+    packaged_json = gzip.decompress(
+        __import__("base64").b64decode(packaged_movement["compressedJsonBase64"])
+    )
+    selected_json = skeleton_path.read_text(encoding="utf-8").encode("utf-8")
+    assert packaged_json == selected_json
+    assert packaged_movement["movementRef"]["contentHash"] == hashlib.sha256(selected_json).hexdigest()
