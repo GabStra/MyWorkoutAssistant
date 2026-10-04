@@ -197,6 +197,145 @@ def test_corrupt_or_ownerless_old_gpu_locks_are_not_age_evicted(tmp_path: Path):
         assert not is_stale(lock_path, timeout_seconds=1.0)
 
 
+def test_gpu_stale_lock_recovery_is_serialized_between_waiters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from exercise_motion_pkg import gpu_lock
+
+    lock_path = tmp_path / "gpu-stale.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42, "stage": "crashed"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setattr(gpu_lock, "process_is_running", lambda _pid: False)
+    original_is_stale = gpu_lock.gpu_lock_is_stale
+    check_lock = threading.Lock()
+    active_stale_checks = 0
+    max_concurrent_stale_checks = 0
+    active_sections = 0
+    max_concurrent_sections = 0
+    counts_lock = threading.Lock()
+    start_together = threading.Barrier(3)
+    failures: list[BaseException] = []
+
+    def observe_stale_check(path: Path, *, timeout_seconds: float) -> bool:
+        nonlocal active_stale_checks, max_concurrent_stale_checks
+        with check_lock:
+            active_stale_checks += 1
+            max_concurrent_stale_checks = max(max_concurrent_stale_checks, active_stale_checks)
+        try:
+            # Keep the stale observation open long enough for a second waiter
+            # to reach the same decision point if admission is not serialized.
+            time.sleep(0.1)
+            return original_is_stale(path, timeout_seconds=timeout_seconds)
+        finally:
+            with check_lock:
+                active_stale_checks -= 1
+
+    monkeypatch.setattr(gpu_lock, "gpu_lock_is_stale", observe_stale_check)
+
+    def acquire() -> None:
+        nonlocal active_sections, max_concurrent_sections
+        try:
+            start_together.wait()
+            with GlobalGpuLock(stage="stale-recovery-test"):
+                with counts_lock:
+                    active_sections += 1
+                    max_concurrent_sections = max(max_concurrent_sections, active_sections)
+                try:
+                    time.sleep(0.05)
+                finally:
+                    with counts_lock:
+                        active_sections -= 1
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    workers = [threading.Thread(target=acquire) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    start_together.wait()
+    for worker in workers:
+        worker.join(timeout=5.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert not failures
+    assert max_concurrent_stale_checks == 1
+    assert max_concurrent_sections == 1
+
+
+def test_wham_stale_lock_recovery_is_serialized_between_waiters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from exercise_motion_pkg import wham_runner
+
+    lock_path = tmp_path / "wham-stale.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_ENV_VAR, str(lock_path))
+    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR, "5")
+    monkeypatch.setattr(wham_runner, "process_is_running", lambda _pid: False)
+    original_is_stale = wham_runner.wham_docker_lock_is_stale
+    check_lock = threading.Lock()
+    active_stale_checks = 0
+    max_concurrent_stale_checks = 0
+    active_sections = 0
+    max_concurrent_sections = 0
+    counts_lock = threading.Lock()
+    start_together = threading.Barrier(3)
+    failures: list[BaseException] = []
+
+    def observe_stale_check(path: Path, *, timeout_seconds: float) -> bool:
+        nonlocal active_stale_checks, max_concurrent_stale_checks
+        with check_lock:
+            active_stale_checks += 1
+            max_concurrent_stale_checks = max(max_concurrent_stale_checks, active_stale_checks)
+        try:
+            time.sleep(0.1)
+            return original_is_stale(path, timeout_seconds=timeout_seconds)
+        finally:
+            with check_lock:
+                active_stale_checks -= 1
+
+    monkeypatch.setattr(wham_runner, "wham_docker_lock_is_stale", observe_stale_check)
+
+    def acquire() -> None:
+        nonlocal active_sections, max_concurrent_sections
+        try:
+            start_together.wait()
+            with wham_runner.wham_docker_run_lock(enabled=True):
+                with counts_lock:
+                    active_sections += 1
+                    max_concurrent_sections = max(max_concurrent_sections, active_sections)
+                try:
+                    time.sleep(0.05)
+                finally:
+                    with counts_lock:
+                        active_sections -= 1
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    workers = [threading.Thread(target=acquire) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    start_together.wait()
+    for worker in workers:
+        worker.join(timeout=5.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert not failures
+    assert max_concurrent_stale_checks == 1
+    assert max_concurrent_sections == 1
+
+
 def test_cross_process_gpu_wait_sleep_is_bounded_by_candidate_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

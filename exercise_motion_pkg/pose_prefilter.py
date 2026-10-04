@@ -903,7 +903,14 @@ def ensure_cached_pose_model(
             if partial_path.exists():
                 partial_path.unlink()
             if seed_path is not None and seed_path.exists() and seed_path.stat().st_size > 0:
-                shutil.copy2(seed_path, target_path)
+                try:
+                    shutil.copy2(seed_path, partial_path)
+                    if not partial_path.exists() or partial_path.stat().st_size <= 0:
+                        raise RuntimeError(f"Copied empty pose model seed: {seed_path}")
+                    os.replace(partial_path, target_path)
+                except BaseException:
+                    partial_path.unlink(missing_ok=True)
+                    raise
                 return target_path
             urlretrieve(url, partial_path)
             if not partial_path.exists() or partial_path.stat().st_size <= 0:

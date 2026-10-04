@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from exercise_motion_pkg.process_lock import InterProcessFileLock
+
 
 GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
 GPU_LOCK_PATH_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_PATH"
@@ -154,6 +156,29 @@ def close_lock_lease(handle: int, path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
+@contextmanager
+def lock_lease_acquisition_guard(
+    path: Path,
+    *,
+    stage: str,
+    timeout_seconds: float,
+) -> Iterator[None]:
+    """Serialize lease creation and stale-file recovery across processes.
+
+    The lease itself remains readable for diagnostics and keeps its existing
+    process-exit behavior. This kernel-owned guard ensures two waiters cannot
+    both act on the same stale-file observation while one replaces it.
+    """
+    guard_path = path.with_name(f"{path.name}.admission.oslock")
+    with InterProcessFileLock(
+        guard_path,
+        stage=stage,
+        timeout_seconds=timeout_seconds,
+        stale_after_seconds=timeout_seconds,
+    ):
+        yield
+
+
 class GlobalGpuLock:
     def __init__(
         self,
@@ -224,104 +249,125 @@ class GlobalGpuLock:
                 raise TimeoutError(
                     f"Candidate deadline expired waiting for global GPU lock: {self.path}"
                 )
-            try:
-                self._handle = open_lock_lease(self.path)
-                payload = {
-                    "pid": os.getpid(),
-                    "processIdentity": process_identity(os.getpid()),
-                    "threadId": threading.get_ident(),
-                    "stage": self.stage,
-                    "createdAt": time.time(),
-                }
-                os.write(self._handle, json.dumps(payload).encode("utf-8"))
-                self.wait_seconds = time.perf_counter() - started
-                self._acquired()
-                return self.wait_seconds
-            except OSError as error:
-                if self._handle is not None:
-                    handle, self._handle = self._handle, None
-                    close_lock_lease(handle, self.path)
-                    raise
-                if not lock_open_is_contention(error):
-                    raise
-                active_payload = lock_payload(self.path)
-                same_process = (
-                    isinstance(active_payload, dict)
-                    and active_payload.get("pid") == os.getpid()
+            active_payload: dict[str, Any] | None = None
+            same_process = False
+            guard_timeout = self.timeout_seconds
+            if self.deadline is not None:
+                guard_timeout = min(
+                    guard_timeout,
+                    max(0.0, self.deadline - time.perf_counter()),
                 )
-                if same_process:
-                    current_thread_id = threading.get_ident()
-                    if active_payload.get("threadId") == current_thread_id:
-                        raise RuntimeError(
-                            "Nested global GPU lock acquisition in the same thread would deadlock: "
-                            f"currentStage={active_payload.get('stage')} requestedStage={self.stage} "
-                            f"threadId={current_thread_id} lockPath={self.path}"
-                        )
-                elif not self.path.exists():
-                    continue
-                elif gpu_lock_is_stale(self.path, timeout_seconds=self.timeout_seconds):
+            try:
+                with lock_lease_acquisition_guard(
+                    self.path,
+                    stage=f"gpu_lock_admission:{self.stage}",
+                    timeout_seconds=guard_timeout,
+                ):
                     try:
-                        self.path.unlink()
-                        continue
-                    except OSError:
-                        pass
-                elapsed = time.perf_counter() - started
+                        self._handle = open_lock_lease(self.path)
+                        payload = {
+                            "pid": os.getpid(),
+                            "processIdentity": process_identity(os.getpid()),
+                            "threadId": threading.get_ident(),
+                            "stage": self.stage,
+                            "createdAt": time.time(),
+                        }
+                        os.write(self._handle, json.dumps(payload).encode("utf-8"))
+                        self.wait_seconds = time.perf_counter() - started
+                        self._acquired()
+                        return self.wait_seconds
+                    except OSError as error:
+                        if self._handle is not None:
+                            handle, self._handle = self._handle, None
+                            close_lock_lease(handle, self.path)
+                            raise
+                        if not lock_open_is_contention(error):
+                            raise
+                        active_payload = lock_payload(self.path)
+                        same_process = (
+                            isinstance(active_payload, dict)
+                            and active_payload.get("pid") == os.getpid()
+                        )
+                        if same_process:
+                            current_thread_id = threading.get_ident()
+                            if active_payload.get("threadId") == current_thread_id:
+                                raise RuntimeError(
+                                    "Nested global GPU lock acquisition in the same thread would deadlock: "
+                                    f"currentStage={active_payload.get('stage')} requestedStage={self.stage} "
+                                    f"threadId={current_thread_id} lockPath={self.path}"
+                                )
+                        elif not self.path.exists():
+                            continue
+                        elif gpu_lock_is_stale(self.path, timeout_seconds=self.timeout_seconds):
+                            try:
+                                self.path.unlink()
+                                continue
+                            except OSError:
+                                pass
+            except TimeoutError as error:
                 if self.deadline is not None and time.perf_counter() >= self.deadline:
                     raise TimeoutError(
                         f"Candidate deadline expired waiting for global GPU lock: {self.path}"
-                    )
-                if elapsed - last_wait_log >= GPU_LOCK_WAIT_LOG_SECONDS:
-                    last_wait_log = elapsed
-                    holder_stage = active_payload.get("stage") if isinstance(active_payload, dict) else None
-                    holder_pid = active_payload.get("pid") if isinstance(active_payload, dict) else None
-                    _gpu_lock_log(
-                        f"waiting for global GPU lock: requestedStage={self.stage} "
-                        f"waited={elapsed:.0f}s holderStage={holder_stage} "
-                        f"holderPid={holder_pid} sameProcess={same_process}"
-                    )
-                effective_timeout = (
-                    min(self.timeout_seconds, self.same_process_timeout_seconds)
-                    if same_process
-                    else self.timeout_seconds
-                )
-                if self.deadline is not None:
-                    effective_timeout = min(
-                        effective_timeout,
-                        max(0.0, self.deadline - started),
-                    )
-                if elapsed >= effective_timeout:
-                    if self.deadline is not None and time.perf_counter() >= self.deadline:
-                        raise TimeoutError(
-                            f"Candidate deadline expired waiting for global GPU lock: {self.path}"
-                        )
-                    if same_process and force_release_gpu_lock_holders(
-                        self.path,
-                        reason=(
-                            f"same-process holder starved {self.stage} for {elapsed:.0f}s"
-                        ),
-                    ):
-                        continue
-                    raise TimeoutError(f"Timed out waiting for global GPU lock: {self.path}")
-                if same_process:
-                    remaining_seconds = effective_timeout - elapsed
-                    with _LOCAL_GPU_LOCK_RELEASED:
-                        _LOCAL_GPU_LOCK_RELEASED.wait(
-                            timeout=min(_LOCAL_GPU_LOCK_WAIT_SECONDS, remaining_seconds)
-                        )
-                else:
-                    sleep_seconds = 2.0
-                    if self.deadline is not None:
-                        sleep_seconds = min(
-                            sleep_seconds,
-                            max(0.0, self.deadline - time.perf_counter()),
-                        )
-                    time.sleep(sleep_seconds)
+                    ) from error
+                raise TimeoutError(
+                    f"Timed out waiting for global GPU lock admission: {self.path}"
+                ) from error
             except BaseException:
                 if self._handle is not None:
                     handle, self._handle = self._handle, None
                     close_lock_lease(handle, self.path)
                 raise
-
+            elapsed = time.perf_counter() - started
+            if self.deadline is not None and time.perf_counter() >= self.deadline:
+                raise TimeoutError(
+                    f"Candidate deadline expired waiting for global GPU lock: {self.path}"
+                )
+            if elapsed - last_wait_log >= GPU_LOCK_WAIT_LOG_SECONDS:
+                last_wait_log = elapsed
+                holder_stage = active_payload.get("stage") if isinstance(active_payload, dict) else None
+                holder_pid = active_payload.get("pid") if isinstance(active_payload, dict) else None
+                _gpu_lock_log(
+                    f"waiting for global GPU lock: requestedStage={self.stage} "
+                    f"waited={elapsed:.0f}s holderStage={holder_stage} "
+                    f"holderPid={holder_pid} sameProcess={same_process}"
+                )
+            effective_timeout = (
+                min(self.timeout_seconds, self.same_process_timeout_seconds)
+                if same_process
+                else self.timeout_seconds
+            )
+            if self.deadline is not None:
+                effective_timeout = min(
+                    effective_timeout,
+                    max(0.0, self.deadline - started),
+                )
+            if elapsed >= effective_timeout:
+                if self.deadline is not None and time.perf_counter() >= self.deadline:
+                    raise TimeoutError(
+                        f"Candidate deadline expired waiting for global GPU lock: {self.path}"
+                    )
+                if same_process and force_release_gpu_lock_holders(
+                    self.path,
+                    reason=(
+                        f"same-process holder starved {self.stage} for {elapsed:.0f}s"
+                    ),
+                ):
+                    continue
+                raise TimeoutError(f"Timed out waiting for global GPU lock: {self.path}")
+            if same_process:
+                remaining_seconds = effective_timeout - elapsed
+                with _LOCAL_GPU_LOCK_RELEASED:
+                    _LOCAL_GPU_LOCK_RELEASED.wait(
+                        timeout=min(_LOCAL_GPU_LOCK_WAIT_SECONDS, remaining_seconds)
+                    )
+            else:
+                sleep_seconds = 2.0
+                if self.deadline is not None:
+                    sleep_seconds = min(
+                        sleep_seconds,
+                        max(0.0, self.deadline - time.perf_counter()),
+                    )
+                time.sleep(sleep_seconds)
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         try:
             self._release_lease()

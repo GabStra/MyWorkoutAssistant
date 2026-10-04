@@ -22740,6 +22740,45 @@ def test_pose_model_alias_seeds_shared_cache_from_existing_local_file(
     assert Path(resolved).read_bytes() == b"seed-model"
 
 
+def test_pose_model_seed_copy_never_publishes_a_partial_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_dir = tmp_path / "pose-model-cache"
+    seed_path = tmp_path / "seed-model.pt"
+    seed_path.write_bytes(b"complete-seed-model")
+    target_path = cache_dir / "test-model.pt"
+    partial_path = target_path.with_suffix(target_path.suffix + ".part")
+    real_copy2 = shutil.copy2
+
+    def interrupt_seed_copy(source: Path, destination: Path) -> str:
+        Path(destination).write_bytes(b"partial")
+        assert not target_path.exists()
+        raise OSError("simulated interrupted seed copy")
+
+    monkeypatch.setattr(pose_prefilter_module, "POSE_MODEL_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(pose_prefilter_module.shutil, "copy2", interrupt_seed_copy)
+
+    with pytest.raises(OSError, match="interrupted seed copy"):
+        pose_prefilter_module.ensure_cached_pose_model(
+            "test-model.pt",
+            url="https://example.invalid/test-model.pt",
+            seed_path=seed_path,
+        )
+
+    assert not target_path.exists()
+    assert not partial_path.exists()
+
+    monkeypatch.setattr(pose_prefilter_module.shutil, "copy2", real_copy2)
+    resolved = pose_prefilter_module.ensure_cached_pose_model(
+        "test-model.pt",
+        url="https://example.invalid/test-model.pt",
+        seed_path=seed_path,
+    )
+    assert resolved == target_path
+    assert target_path.read_bytes() == b"complete-seed-model"
+
+
 def test_yolo_pose_model_is_reused_within_worker_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

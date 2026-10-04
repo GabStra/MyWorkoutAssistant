@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from exercise_motion_pkg.gpu_lock import (gpu_stage_lock, open_lock_lease, close_lock_lease,
-                                        read_lock_text, lock_open_is_contention, process_identity)
+                                        read_lock_text, lock_open_is_contention, process_identity,
+                                        lock_lease_acquisition_guard)
 from exercise_motion_pkg.motion_scheduler import gpu_stage_task, timeout_with_candidate_deadline
 
 
@@ -785,41 +786,61 @@ def wham_docker_run_lock(*, enabled: bool, deadline: float | None = None):
     while True:
         if deadline is not None and time.perf_counter() >= deadline:
             raise TimeoutError(f"Candidate deadline expired waiting for WHAM Docker lock: {lock_path}")
+        guard_timeout = timeout_seconds
+        if deadline is not None:
+            guard_timeout = min(
+                guard_timeout,
+                max(0.0, deadline - time.perf_counter()),
+            )
         try:
-            lock_handle = open_lock_lease(lock_path)
-            payload = {
-                "pid": os.getpid(),
-                "processIdentity": process_identity(os.getpid()),
-                "createdAt": time.time(),
-            }
-            os.write(lock_handle, json.dumps(payload).encode("utf-8"))
-            break
-        except OSError as error:
-            if lock_handle is not None:
-                close_lock_lease(lock_handle, lock_path)
-                lock_handle = None
-                raise
-            if not lock_open_is_contention(error):
-                raise
-            if wham_docker_lock_is_stale(lock_path, timeout_seconds=timeout_seconds):
+            with lock_lease_acquisition_guard(
+                lock_path,
+                stage="wham_docker_lock_admission",
+                timeout_seconds=guard_timeout,
+            ):
                 try:
-                    lock_path.unlink()
-                    continue
-                except OSError:
-                    pass
-            elapsed = time.perf_counter() - started
-            effective_timeout = timeout_seconds
-            if deadline is not None:
-                effective_timeout = min(effective_timeout, max(0.0, deadline - started))
-            if elapsed >= effective_timeout:
-                raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}")
-            sleep_seconds = min(2.0, effective_timeout - elapsed)
-            time.sleep(max(0.01, sleep_seconds))
+                    lock_handle = open_lock_lease(lock_path)
+                    payload = {
+                        "pid": os.getpid(),
+                        "processIdentity": process_identity(os.getpid()),
+                        "createdAt": time.time(),
+                    }
+                    os.write(lock_handle, json.dumps(payload).encode("utf-8"))
+                    break
+                except OSError as error:
+                    if lock_handle is not None:
+                        close_lock_lease(lock_handle, lock_path)
+                        lock_handle = None
+                        raise
+                    if not lock_open_is_contention(error):
+                        raise
+                    if wham_docker_lock_is_stale(lock_path, timeout_seconds=timeout_seconds):
+                        try:
+                            lock_path.unlink()
+                            continue
+                        except OSError:
+                            pass
+        except TimeoutError as error:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError(
+                    f"Candidate deadline expired waiting for WHAM Docker lock: {lock_path}"
+                ) from error
+            raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}") from error
         except BaseException:
             if lock_handle is not None:
                 close_lock_lease(lock_handle, lock_path)
                 lock_handle = None
             raise
+        if lock_handle is not None:
+            break
+        elapsed = time.perf_counter() - started
+        effective_timeout = timeout_seconds
+        if deadline is not None:
+            effective_timeout = min(effective_timeout, max(0.0, deadline - started))
+        if elapsed >= effective_timeout:
+            raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}")
+        sleep_seconds = min(2.0, effective_timeout - elapsed)
+        time.sleep(max(0.01, sleep_seconds))
     try:
         yield time.perf_counter() - started
     finally:
