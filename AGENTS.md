@@ -25,6 +25,13 @@
 - Handle errors appropriately - use try-catch blocks, nullable types, and Result types where appropriate.
 - Maintain consistency with existing codebase patterns and conventions.
 
+## Codebase Memory MCP
+
+- When codebase-memory is available, start with its graph tools for symbol ownership, call paths, dependencies, and architecture. Use `search_graph`, `trace_path`, `query_graph`, and `get_architecture` as appropriate, then retrieve relevant indexed source with `get_code_snippet`.
+- Check `check_index_coverage` for the exact files before relying on graph results. If coverage is partial, unusable, or reports changed metadata, inspect the current files directly. Reindex when source content is newer than the index; if the same freshness warning remains after a completed refresh, do not loop reindexing—use direct source for that path.
+- Use `rg` or direct source reads for exact text, recent edits, and parser gaps. Treat the graph as a navigation aid; verify behavior and line references against the current working tree.
+- Keep machine-specific MCP executable paths and allowed-root settings in local Codex configuration; do not commit absolute paths tied to one developer's installation.
+
 ## Exercise Movement Generator Working Principles
 
 - Optimize for the highest practical movement quality across the widest possible range of exercises, with the shortest time and fewest attempts needed to produce a genuinely usable result. Evaluate speed and quality together; neither faster rejection nor a higher automated acceptance count is sufficient evidence of improvement.
