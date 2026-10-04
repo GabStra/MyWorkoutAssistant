@@ -54294,7 +54294,13 @@ def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
 def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     tmp_path: Path,
 ) -> None:
-    """Trace one fixture pose through the wrapper, queue service, CLI, and package gate."""
+    """Run the process, fit, render, cached evidence gates, and package path end to end.
+
+    Candidate discovery/source acquisition and WHAM inference remain explicit
+    fixture boundaries here; downstream source-cache identity and validation,
+    fitting, rendering, visual-response parsing, artifact lineage, and packaging
+    use their production implementations.
+    """
     import gzip
     import hashlib
 
@@ -54303,7 +54309,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     from exercise_motion_pkg.bake_and_rank import (
         EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
         SOURCE_SELECTION_POLICY_VERSION,
+        exact_source_phase_validation_cache_key,
+        write_exact_source_phase_validation_cache,
     )
+    from exercise_motion_pkg import body_support_observation as body_support_module
     from exercise_motion_pkg.controlled_motion import (
         controlled_motion_fit_source_evidence,
         controlled_motion_fit_source_evidence_digest,
@@ -54489,6 +54498,52 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         "sourcePoseReferencePath": str(reference_path.resolve()),
         "sourcePoseEndpointContractValidation": {"available": True, "passed": True},
     }
+    source_cache_path = reference_path.parent / "exact_source_phase_validation.json"
+    _, source_cache_key = exact_source_phase_validation_cache_key(
+        source_video_path=selected_video,
+        exercise_name=exercise.name,
+        exercise_motion_contract=contract,
+    )
+    write_exact_source_phase_validation_cache(
+        cache_path=source_cache_path,
+        cache_key=source_cache_key,
+        metrics=seeded_source_metrics,
+    )
+
+    # The production observer's cache is keyed by exact selected-video bytes
+    # and observer policy. Its normal image/VLM path is not reached on this hit.
+    body_support_digest = hashlib.sha256(selected_video.read_bytes()).hexdigest()
+    body_support_cache_dir = reference_path.parent / "body_support"
+    body_support_cache_path = body_support_cache_dir / (
+        f"body-support-{body_support_digest}-v{body_support_module.POLICY_VERSION}.json"
+    )
+    body_support_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    body_support_cache_path.write_text(
+        json.dumps(
+            {
+                "status": "observed",
+                "source": "exact_source_visual_support_observation",
+                "sourceVideoSha256": body_support_digest,
+                "policyVersion": body_support_module.POLICY_VERSION,
+                "observation": {
+                    "torsoSurface": "vertical",
+                    "pelvisAndUpperBackSameSurface": False,
+                    "pelvis": "moving",
+                    "upperBack": "moving",
+                    "head": "moving",
+                    "leftFoot": "stationary_full_sole",
+                    "rightFoot": "stationary_full_sole",
+                    "leftFootSurface": "ground",
+                    "rightFootSurface": "ground",
+                    "leftHand": "moving",
+                    "rightHand": "moving",
+                    "handsSameHorizontalSurface": False,
+                    "observations": "Synthetic squat fixture with both feet planted.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     (reference_path.parent / "segment_selection.json").write_text(
         json.dumps(
             {
@@ -54542,8 +54597,6 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         ),
         encoding="utf-8",
     )
-    source_validation_path = tmp_path / "source_validation.json"
-    source_validation_path.write_text(json.dumps(seeded_source_metrics), encoding="utf-8")
     prepared_manifest_path = tmp_path / "prepared_candidates_manifest.json"
     prepared_manifest_path.write_text(
         json.dumps(
@@ -54588,7 +54641,9 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             {
                 "normalizedMotionPath": str(normalized_motion_path.resolve()),
                 "sourcePoseReferencePath": str(reference_path.resolve()),
-                "sourceValidationPath": str(source_validation_path.resolve()),
+                "sourceValidationCacheKey": source_cache_key,
+                "bodySupportCachePath": str(body_support_cache_path.resolve()),
+                "bodySupportSourceVideoSha256": body_support_digest,
                 "callsPath": str(calls_path.resolve()),
             }
         ),
@@ -54752,11 +54807,62 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert generation_cache_hits[0]["cacheStatus"] == "reused_processed"
     assert generation_completions[0]["cacheStatus"] != "reused_processed"
     generation_completion = generation_completions[-1]
-    assert [call["event"] for call in boundary_calls].count("source_validation") >= 1
+    source_validation_calls = [
+        call for call in boundary_calls if call["event"] == "source_validation"
+    ]
+    assert source_validation_calls, "the production exact-source cache gate was not reached"
+    assert all(call["cacheStatus"] == "reused" for call in source_validation_calls)
+    assert all(
+        call["cacheKey"] == source_cache_key
+        and call["sourcePoseReferencePath"] == str(reference_path.resolve())
+        and call["validationPolicyVersion"] == EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION
+        for call in source_validation_calls
+    )
+    assert not any(
+        call["event"] == "source_validation_cache_miss" for call in boundary_calls
+    )
+    body_support_calls = [
+        call for call in boundary_calls if call["event"] == "body_support_observation"
+    ]
+    assert body_support_calls, "the production body-support observer was not reached"
+    assert all(
+        call["cacheHit"] is True
+        and call["sourceVideoSha256"] == body_support_digest
+        and call["policyVersion"] == body_support_module.POLICY_VERSION
+        and call["cachePath"] == str(body_support_cache_path.resolve())
+        for call in body_support_calls
+    )
+    assert not any(
+        call["event"] in {"body_support_cache_miss", "body_support_visual_call_unexpected"}
+        for call in boundary_calls
+    )
+    final_review_requests = [
+        call for call in boundary_calls if call["event"] == "final_visual_review_request"
+    ]
+    assert final_review_requests, "the deterministic final-review response callback was not used"
+    assert all(
+        json.loads(call["response"]) == {
+            "findings": [],
+            "note": "Deterministic process E2E visual-review response.",
+        }
+        and call["framePaths"]
+        and all(Path(path).is_file() for path in call["framePaths"])
+        for call in final_review_requests
+    )
     final_review_calls = [
         call for call in boundary_calls if call["event"] == "final_visual_review"
     ]
-    assert final_review_calls, "the production child process did not reach the final VLM boundary"
+    assert final_review_calls, "the production final-output parser did not run"
+    assert len(final_review_calls) == len(final_review_requests)
+    assert all(
+        call["parserStatus"] == "observed"
+        and call["advisoryOnly"] is True
+        and call["discardedFindingCount"] == 0
+        and call["rawResponse"]
+        and Path(call["parsedResponsePath"]).is_file()
+        and Path(call["cacheMetadataPath"]).is_file()
+        for call in final_review_calls
+    )
     assert "Starting batch" in run_stdout
     service_log = workspace_root / "staged-wave-services" / "v1" / "service.log"
     assert service_log.is_file(), "the persistent staged-wave service was not launched"
@@ -54816,6 +54922,11 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     final_validation = selected["ranking"]["payload"]["finalOutputValidation"]
     assert final_validation.get("passed") is True
     assert final_validation.get("renderEvidence", {}).get("passed") is True
+    visual_review = final_validation.get("visualReview")
+    assert visual_review["status"] == "observed"
+    assert visual_review["advisoryOnly"] is True
+    assert visual_review["discardedFindingCount"] == 0
+    assert visual_review["note"] == "Deterministic process E2E visual-review response."
     review_identity = final_validation["renderEvidence"]["skeletonIdentity"]
     skeleton_path = Path(selected["selectedWearSkeletonPath"])
     skeleton_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
