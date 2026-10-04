@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from exercise_motion_pkg.artifact_state import validate_artifact_state
+
+
 MOVEMENT_FORMAT = "wear_skeleton_json_v1"
 MOVEMENT_COMPRESSION = "gzip+base64"
 
@@ -80,9 +87,9 @@ def normalize_name(value: Any) -> str:
 
 
 def is_approved_summary_item(summary_item: dict[str, Any]) -> bool:
-    """Accept legacy summaries, but reject any explicitly non-completed result."""
+    """Only attach movements with an explicit successful pipeline status."""
     status = summary_item.get("status")
-    return status is None or normalize_key(status) in {"completed", "valid"}
+    return isinstance(status, str) and normalize_key(status) in {"completed", "valid"}
 
 
 def iter_motion_summary_items(summary: dict[str, Any]):
@@ -126,6 +133,150 @@ def revalidated_selection_motion_path(
             pass
     copied_skeletons = sorted(selected_dir.glob("*_wear_skeleton.json"))
     return copied_skeletons[0].resolve() if len(copied_skeletons) == 1 else None
+
+
+def selection_manifest_path_for_summary_item(
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> Path | None:
+    manifest_path = resolve_motion_path(
+        summary_item.get("selectionManifestPath"),
+        summary_path,
+        summary,
+    )
+    if manifest_path is not None:
+        return manifest_path
+
+    workspace = resolve_motion_path(summary_item.get("workspace"), summary_path, summary)
+    if workspace is None or not workspace.is_dir():
+        return None
+    candidate = workspace / "selected" / "selection_manifest.json"
+    return candidate.resolve() if candidate.is_file() else None
+
+
+def selected_review_identity(selected: dict[str, Any]) -> dict[str, Any] | None:
+    identity = selected.get("selectedSkeletonIdentity")
+    if isinstance(identity, dict):
+        return identity
+
+    ranking = selected.get("ranking")
+    ranking_payload = ranking.get("payload") if isinstance(ranking, dict) else None
+    final_validation = (
+        ranking_payload.get("finalOutputValidation")
+        if isinstance(ranking_payload, dict)
+        else None
+    )
+    render_evidence = (
+        final_validation.get("renderEvidence")
+        if isinstance(final_validation, dict)
+        else None
+    )
+    identity = (
+        render_evidence.get("skeletonIdentity")
+        if isinstance(render_evidence, dict)
+        else None
+    )
+    return identity if isinstance(identity, dict) else None
+
+
+def successful_final_validation(selected: dict[str, Any], artifact_class: str) -> dict[str, Any] | None:
+    ranking = selected.get("ranking")
+    ranking_payload = ranking.get("payload") if isinstance(ranking, dict) else None
+    final_validation = (
+        ranking_payload.get("finalOutputValidation")
+        if isinstance(ranking_payload, dict)
+        else None
+    )
+    if not isinstance(final_validation, dict) or final_validation.get("passed") is not True:
+        return None
+    artifact_class_gate = final_validation.get("artifactClassGate")
+    if (
+        not isinstance(artifact_class_gate, dict)
+        or artifact_class_gate.get("passed") is not True
+        or artifact_class_gate.get("artifactClass") != artifact_class
+    ):
+        return None
+    render_evidence = final_validation.get("renderEvidence")
+    if (
+        not isinstance(render_evidence, dict)
+        or render_evidence.get("available") is not True
+        or render_evidence.get("passed") is not True
+    ):
+        return None
+    return render_evidence
+
+
+def validate_selected_movement(
+    selected_path: Path,
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        movement_json = read_text_file(selected_path)
+        movement_payload = json.loads(movement_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Selected wear skeleton is not valid JSON: {selected_path}") from exc
+    if not isinstance(movement_payload, dict) or not isinstance(movement_payload.get("frames"), list):
+        raise ValueError(f"Selected wear skeleton has no frame array: {selected_path}")
+
+    try:
+        movement_state = validate_artifact_state(
+            movement_payload.get("artifactState"),
+            movement_payload=movement_payload,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Selected wear skeleton has invalid artifact state: {selected_path}: {exc}") from exc
+    if movement_state["terminal"] is not True:
+        raise ValueError(f"Selected wear skeleton is not a terminal artifact: {selected_path}")
+
+    manifest_path = selection_manifest_path_for_summary_item(
+        summary_item,
+        summary_path=summary_path,
+        summary=summary,
+    )
+    if manifest_path is None:
+        raise ValueError(
+            f"Selected wear skeleton has no selection manifest for review parity: {selected_path}"
+        )
+    try:
+        selection_manifest = load_json_file(manifest_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not load selected movement manifest: {manifest_path}") from exc
+    selected = selection_manifest.get("selected") if isinstance(selection_manifest, dict) else None
+    if not isinstance(selected, dict):
+        raise ValueError(f"Selected movement manifest has no selected artifact: {manifest_path}")
+    if selected.get("artifactState") != movement_state:
+        raise ValueError(
+            f"Selected skeleton artifact state differs from its selection manifest: {selected_path}"
+        )
+
+    render_evidence = successful_final_validation(selected, movement_state["artifactClass"])
+    if render_evidence is None:
+        raise ValueError(f"Selection manifest has no passing final render validation: {manifest_path}")
+
+    review_identity = selected_review_identity(selected)
+    if not isinstance(review_identity, dict):
+        raise ValueError(f"Selection manifest has no final review identity: {manifest_path}")
+    rendered_identity = render_evidence.get("skeletonIdentity")
+    if not isinstance(rendered_identity, dict):
+        raise ValueError(f"Final render validation has no skeleton identity: {manifest_path}")
+    if any(
+        review_identity.get(key) != rendered_identity.get(key)
+        for key in ("sha256", "frameCount")
+    ):
+        raise ValueError(f"Selection identity differs from final render review: {manifest_path}")
+    expected_hash = review_identity.get("sha256")
+    expected_frame_count = review_identity.get("frameCount")
+    actual_hash = hashlib.sha256(selected_path.read_bytes()).hexdigest()
+    if expected_hash != actual_hash or expected_frame_count != len(movement_payload["frames"]):
+        raise ValueError(
+            f"Selected skeleton differs from the final reviewed artifact: {selected_path}"
+        )
+    return movement_payload
 
 
 def movement_id_for(prefix: str, exercise_id: Any, exercise_name: Any) -> str:
@@ -288,11 +439,13 @@ def main() -> int:
             )
             continue
 
+        validate_selected_movement(
+            selected_path,
+            summary_item,
+            summary_path=summary_path,
+            summary=summary,
+        )
         movement_json = read_text_file(selected_path)
-        try:
-            json.loads(movement_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Selected wear skeleton is not valid JSON: {selected_path}") from exc
 
         content_hash = hashlib.sha256(movement_json.encode("utf-8")).hexdigest()
         movement_id = movement_id_for(args.movement_id_prefix, exercise_id, exercise_name)

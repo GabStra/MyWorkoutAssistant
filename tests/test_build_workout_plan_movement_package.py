@@ -1,6 +1,15 @@
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
+
+import pytest
+
+from exercise_motion_pkg.artifact_state import (
+    FULL_CLIP_BAKE,
+    baked_payload_identity,
+    build_artifact_state,
+)
 
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "build_workout_plan_movement_package.py"
@@ -8,6 +17,62 @@ SPEC = importlib.util.spec_from_file_location("build_movement_package", SCRIPT_P
 assert SPEC and SPEC.loader
 BUILDER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILDER)
+
+
+def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
+    movement_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "kind": "wear_skeleton_v1",
+        "title": "Reviewed exercise",
+        "source": {"kind": "test"},
+        "fps": 30,
+        "frameCount": 2,
+        "jointNames": ["root"],
+        "rootJoint": "root",
+        "loop": {"enabled": False},
+        "frames": [{"root": [0, 0, 0]}, {"root": [0, 0.1, 0]}],
+    }
+    payload["artifactState"] = build_artifact_state(
+        artifact_class=FULL_CLIP_BAKE,
+        selection_class=FULL_CLIP_BAKE,
+        required_class=FULL_CLIP_BAKE,
+        selection_evidence={"fullClipBake": baked_payload_identity(payload)},
+    )
+    movement_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    review_identity = {
+        "sha256": hashlib.sha256(movement_path.read_bytes()).hexdigest(),
+        "frameCount": len(payload["frames"]),
+    }
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "selected": {
+                    "artifactState": payload["artifactState"],
+                    "selectedSkeletonIdentity": review_identity,
+                    "ranking": {
+                        "payload": {
+                            "finalOutputValidation": {
+                                "passed": True,
+                                "artifactClassGate": {
+                                    "passed": True,
+                                    "artifactClass": FULL_CLIP_BAKE,
+                                },
+                                "renderEvidence": {
+                                    "available": True,
+                                    "passed": True,
+                                    "skeletonIdentity": review_identity,
+                                },
+                            }
+                        }
+                    },
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return payload
 
 
 def test_iter_package_exercises_includes_library_definitions():
@@ -28,7 +93,8 @@ def test_iter_package_exercises_includes_library_definitions():
 
 def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkeypatch):
     movement_path = tmp_path / "movement.json"
-    movement_path.write_text(json.dumps({"frames": []}), encoding="utf-8")
+    manifest_path = tmp_path / "selection_manifest.json"
+    write_reviewed_movement(movement_path, manifest_path)
     package_path = tmp_path / "library.json"
     package_path.write_text(
         json.dumps(
@@ -47,7 +113,9 @@ def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkey
                     {
                         "exerciseId": "definition-a",
                         "exerciseName": "Exercise A",
+                        "status": "completed",
                         "selectedWearSkeletonPath": str(movement_path),
+                        "selectionManifestPath": str(manifest_path),
                     }
                 ]
             }
@@ -77,9 +145,16 @@ def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkey
     assert output["exerciseMovements"][0]["movementRef"] == movement_ref
 
 
+def test_summary_without_explicit_success_status_is_not_approved():
+    assert not BUILDER.is_approved_summary_item(
+        {"selectedWearSkeletonPath": "movement.json"}
+    )
+
+
 def test_explicitly_unapproved_results_are_not_packaged(tmp_path, monkeypatch):
     approved_movement_path = tmp_path / "approved.json"
-    approved_movement_path.write_text(json.dumps({"frames": ["approved"]}), encoding="utf-8")
+    approved_manifest_path = tmp_path / "approved-selection-manifest.json"
+    write_reviewed_movement(approved_movement_path, approved_manifest_path)
     manual_movement_path = tmp_path / "manual.json"
     manual_movement_path.write_text(json.dumps({"frames": ["manual"]}), encoding="utf-8")
     package_path = tmp_path / "library.json"
@@ -104,6 +179,7 @@ def test_explicitly_unapproved_results_are_not_packaged(tmp_path, monkeypatch):
                         "exerciseName": "Approved Exercise",
                         "status": "completed",
                         "selectedWearSkeletonPath": str(approved_movement_path),
+                        "selectionManifestPath": str(approved_manifest_path),
                     },
                     {
                         "exerciseId": "manual",
@@ -145,7 +221,7 @@ def test_revalidation_report_packages_only_valid_selected_workspace(tmp_path, mo
     selected_dir = exercise_workspace / "selected"
     selected_dir.mkdir(parents=True)
     movement_path = selected_dir / "exercise_a_wear_skeleton.json"
-    movement_path.write_text(json.dumps({"frames": ["valid"]}), encoding="utf-8")
+    write_reviewed_movement(movement_path, selected_dir / "selection_manifest.json")
     package_path = tmp_path / "library.json"
     package_path.write_text(
         json.dumps(
@@ -202,3 +278,51 @@ def test_revalidation_report_packages_only_valid_selected_workspace(tmp_path, mo
     )
     assert "movementRef" not in output["exerciseDefinitions"][1]
     assert len(output["exerciseMovements"]) == 1
+
+
+def test_packager_rejects_skeleton_that_differs_from_reviewed_bytes(tmp_path, monkeypatch):
+    movement_path = tmp_path / "movement.json"
+    manifest_path = tmp_path / "selection_manifest.json"
+    payload = write_reviewed_movement(movement_path, manifest_path)
+    payload["title"] = "Changed after review"
+    movement_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    package_path = tmp_path / "library.json"
+    package_path.write_text(
+        json.dumps({"exerciseDefinitions": [{"id": "definition-a", "name": "Exercise A"}]}),
+        encoding="utf-8",
+    )
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "exercises": [
+                    {
+                        "exerciseId": "definition-a",
+                        "exerciseName": "Exercise A",
+                        "status": "completed",
+                        "selectedWearSkeletonPath": str(movement_path),
+                        "selectionManifestPath": str(manifest_path),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "library-with-movements.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(SCRIPT_PATH),
+            "--workout-plan-package-json",
+            str(package_path),
+            "--motion-summary-json",
+            str(summary_path),
+            "--output-json",
+            str(output_path),
+            "--strict-id-match",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="differs from the final reviewed artifact"):
+        BUILDER.main()
