@@ -55,6 +55,28 @@ def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     assert pose_digest(result)==before
 
 
+def test_persisted_fit_cache_is_rejected_after_constraint_code_changes(tmp_path, monkeypatch):
+    from exercise_motion_pkg import fit_runtime
+
+    source = tmp_path / 'contact_constraints.py'
+    source.write_text("constraint_policy = 'before'", encoding='utf-8')
+    monkeypatch.setattr(fit_runtime, 'fit_cache_source_paths', lambda: (source,))
+    first = fit_runtime.CandidateFitSession(tmp_path)
+    checkpoint = tmp_path / 'anatomy_repair_checkpoint.json'
+    checkpoint.write_text(json.dumps({
+        'version': 1,
+        'namespace': first.cache_namespace,
+        'repairs': {'stale': {'value': 1}},
+        'trajectories': {},
+    }), encoding='utf-8')
+
+    source.write_text("constraint_policy = 'after'", encoding='utf-8')
+    refreshed = fit_runtime.CandidateFitSession(tmp_path)
+
+    assert refreshed.cache_namespace != first.cache_namespace
+    assert refreshed.repairs == {}
+
+
 def test_modified_contact_evidence_and_incomplete_reports_cannot_reuse():
     payload=accepted_payload()
     assert can_reuse_controlled_motion(payload)

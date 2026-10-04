@@ -272,7 +272,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 38
+SELECTED_SECTION_BAKE_CACHE_VERSION = 39
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -2782,7 +2782,7 @@ def review_item_artifact_state(
             state["terminal"] = expected_artifact_terminal(
                 str(state["artifactClass"]),
                 required_class,
-            )
+            ) and state.get("lineageComplete") is True
             validate_artifact_state(state, movement_payload=_payload)
         return state
     artifact_class = review_item_artifact_class(item)
@@ -26410,6 +26410,79 @@ def _bake_path_code_digest() -> dict[str, Any]:
         }
 
 
+SELECTED_SECTION_BAKE_DEPENDENCY_MODULES: tuple[str, ...] = (
+    "anatomical_repair.py",
+    "articulation_trajectory.py",
+    "body_support_observation.py",
+    "contact_constraints.py",
+    "contact_pinning.py",
+    "contact_trajectory.py",
+    "controlled_motion.py",
+    "equipment_constraints.py",
+    "physical_validation.py",
+    "pose_fidelity.py",
+    "rig_interpolation.py",
+    "rig_playback.py",
+    "scene_placement.py",
+    "sequence_stabilization.py",
+    "support_alignment.py",
+    "support_geometry.py",
+    "temporal_contact_solver.py",
+    "whole_body_repair.py",
+)
+
+
+def _selected_section_bake_code_digest_source(
+    local_bake_path_digest: str,
+    dependency_digests: dict[str, str],
+) -> dict[str, Any]:
+    """Bind selected-section cache identity to external fitter dependencies."""
+    payload = {
+        "version": 1,
+        "localBakePathDigest": local_bake_path_digest,
+        "dependencies": {
+            name: dependency_digests[name]
+            for name in sorted(dependency_digests)
+        },
+    }
+    return {
+        "version": payload["version"],
+        "dependencyCount": len(payload["dependencies"]),
+        "sha256": hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+_SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE: dict[tuple[tuple[str, int, int], ...], dict[str, Any]] = {}
+
+
+def _selected_section_bake_code_digest() -> dict[str, Any]:
+    dependency_paths = tuple(
+        (name, Path(__file__).with_name(name))
+        for name in SELECTED_SECTION_BAKE_DEPENDENCY_MODULES
+    )
+    stats = tuple(
+        (name, path.stat().st_size, path.stat().st_mtime_ns)
+        for name, path in dependency_paths
+    )
+    cached = _SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE.get(stats)
+    if cached is not None:
+        return cached
+    dependency_digests = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in dependency_paths
+    }
+    digest = _selected_section_bake_code_digest_source(
+        _bake_path_code_digest()["sha256"],
+        dependency_digests,
+    )
+    if len(_SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE) > 4:
+        _SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE.clear()
+    _SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE[stats] = digest
+    return digest
+
+
 def bake_preview_loops_with_playwright(
     preview_html_path: Path,
     eligible_loops: list[EligibleLoop],
@@ -31294,7 +31367,7 @@ def bake_preview_time_range_with_playwright(
         )
         export_payload["deterministicPreviewCameraSelection"] = camera_yaw_selection
         export_payload["selectedSectionBakeCacheVersion"] = SELECTED_SECTION_BAKE_CACHE_VERSION
-        export_payload["selectedSectionBakePathCodeDigest"] = _bake_path_code_digest()["sha256"]
+        export_payload["selectedSectionBakePathCodeDigest"] = _selected_section_bake_code_digest()["sha256"]
         export_payload["selectedSectionPreviewSource"] = preview_source
         export_payload["selectedSectionFitInputIdentity"] = fit_input_identity
         write_json_atomic(skeleton_path, export_payload)
@@ -31349,7 +31422,7 @@ def bake_preview_time_range_with_playwright(
             json.dumps(
                 {
                     "schemaVersion": SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION,
-                    "bakePathCodeDigest": _bake_path_code_digest()["sha256"],
+                    "bakePathCodeDigest": _selected_section_bake_code_digest()["sha256"],
                     "frameCount": len(frame_data_urls),
                     "fps": review_video_fps,
                     "repeats": SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS,
@@ -31597,7 +31670,7 @@ def selected_section_wear_skeleton_cache_is_current(
     # The exported payload is post-processed by Python code whose behavior
     # changes independently of the preview HTML and options; only a current
     # bake-path code digest proves the retained artifact still matches it.
-    if export_payload.get("selectedSectionBakePathCodeDigest") != _bake_path_code_digest()["sha256"]:
+    if export_payload.get("selectedSectionBakePathCodeDigest") != _selected_section_bake_code_digest()["sha256"]:
         return False
     if (
         fit_input_identity is not None
@@ -31815,7 +31888,7 @@ def selected_section_review_video_cache_is_current(
     frame_indices = dense_loop_review_video_frame_indices(export_payload)
     return (
         int(metadata.get("schemaVersion") or 0) == SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION
-        and metadata.get("bakePathCodeDigest") == _bake_path_code_digest()["sha256"]
+        and metadata.get("bakePathCodeDigest") == _selected_section_bake_code_digest()["sha256"]
         and int(metadata.get("repeats") or 0) == SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS
         and int(metadata.get("frameCount") or 0) == len(frame_indices)
         and metadata.get("exportPayloadSignature") == selected_section_export_payload_signature(export_payload)

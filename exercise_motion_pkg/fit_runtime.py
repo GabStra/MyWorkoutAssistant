@@ -267,10 +267,7 @@ class CandidateFitSession:
         self.fit_calls = 0
         self.reused_fits = 0
         self.reused_frames = 0
-        self.cache_namespace = hashlib.sha256(b''.join(
-            Path(__file__).with_name(name).read_bytes() for name in
-            ('anatomical_repair.py', 'controlled_motion.py', 'physical_validation.py')
-        )).hexdigest()
+        self.cache_namespace = fit_cache_source_namespace()
         if self.path:
             try:
                 value = json.loads(self.path.read_text(encoding='utf-8'))
@@ -312,6 +309,46 @@ def current_fit_session():
 
 def fit_input_key(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+FIT_CACHE_SOURCE_MODULES = (
+    'anatomical_repair.py',
+    'articulation_trajectory.py',
+    'body_support_observation.py',
+    'contact_constraints.py',
+    'contact_pinning.py',
+    'contact_trajectory.py',
+    'controlled_motion.py',
+    'equipment_constraints.py',
+    'physical_validation.py',
+    'pose_fidelity.py',
+    'rig_interpolation.py',
+    'rig_playback.py',
+    'scene_placement.py',
+    'sequence_stabilization.py',
+    'support_alignment.py',
+    'support_geometry.py',
+    'temporal_contact_solver.py',
+    'whole_body_repair.py',
+)
+
+
+def fit_cache_source_paths():
+    return tuple(Path(__file__).with_name(name) for name in FIT_CACHE_SOURCE_MODULES)
+
+
+def fit_cache_source_namespace(source_paths=None):
+    """Bind persisted fit reuse to the fitter and its direct repair dependencies."""
+    paths = fit_cache_source_paths() if source_paths is None else tuple(Path(path) for path in source_paths)
+    digest = hashlib.sha256()
+    for path in paths:
+        name = path.name.encode('utf-8')
+        source = path.read_bytes()
+        digest.update(len(name).to_bytes(4, 'big'))
+        digest.update(name)
+        digest.update(len(source).to_bytes(8, 'big'))
+        digest.update(source)
+    return digest.hexdigest()
 
 
 @contextmanager

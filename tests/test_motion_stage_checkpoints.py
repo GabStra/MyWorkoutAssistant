@@ -454,6 +454,27 @@ def test_bake_path_code_digest_scopes_to_bake_path_source():
     assert bake._bake_path_code_digest_source(constant_edit) != base
 
 
+def test_selected_section_code_digest_tracks_external_fit_dependencies():
+    base = bake._selected_section_bake_code_digest_source(
+        "local-bake-digest",
+        {
+            "controlled_motion.py": "a" * 64,
+            "contact_constraints.py": "b" * 64,
+        },
+    )
+    changed = bake._selected_section_bake_code_digest_source(
+        "local-bake-digest",
+        {
+            "controlled_motion.py": "a" * 64,
+            "contact_constraints.py": "c" * 64,
+        },
+    )
+
+    assert base["dependencyCount"] == 2
+    assert changed["sha256"] != base["sha256"]
+    assert "contact_constraints.py" in bake.SELECTED_SECTION_BAKE_DEPENDENCY_MODULES
+
+
 def test_bake_checkpoint_key_scopes_code_hash_to_bake_path(tmp_path, monkeypatch):
     preview = tmp_path / "preview.html"
     preview.write_text("preview")

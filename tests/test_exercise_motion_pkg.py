@@ -30987,7 +30987,7 @@ def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings
     manual_rotation = {"x": 0.0, "y": 0.0, "z": 0.0}
     export_payload = {
         "selectedSectionBakeCacheVersion": bake_and_rank_module.SELECTED_SECTION_BAKE_CACHE_VERSION,
-        "selectedSectionBakePathCodeDigest": bake_and_rank_module._bake_path_code_digest()["sha256"],
+        "selectedSectionBakePathCodeDigest": bake_and_rank_module._selected_section_bake_code_digest()["sha256"],
         "selectedSectionFitInputIdentity": fit_input_identity,
         "selectedSectionPreviewSource": preview_source,
         "selectedPreviewSettings": {
@@ -35516,7 +35516,7 @@ def test_selected_section_review_video_cache_requires_current_repeat_metadata(tm
         json.dumps(
                 {
                     "schemaVersion": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION,
-                    "bakePathCodeDigest": bake_and_rank_module._bake_path_code_digest()["sha256"],
+                    "bakePathCodeDigest": bake_and_rank_module._selected_section_bake_code_digest()["sha256"],
                     "frameCount": expected_frame_count,
                     "repeats": bake_and_rank_module.SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS,
                     "exportPayloadSignature": bake_and_rank_module.selected_section_export_payload_signature(
@@ -42340,6 +42340,66 @@ def test_acceptance_gate_persists_contract_reconciled_state_before_review_and_pa
         skeleton_path=skeleton_path,
     )
     assert audit["passed"] is True
+
+
+def test_incomplete_lineage_stays_nonterminal_when_review_adds_required_class(
+    tmp_path: Path,
+) -> None:
+    from exercise_motion_pkg.artifact_state import (
+        CYCLE_SELECTION,
+        CYCLIC_REBAKE,
+        build_artifact_state,
+    )
+
+    payload = {
+        "fps": 30.0,
+        "frames": [{"joints": {"pelvis": [0.0, 1.0, 0.0]}}],
+        "loop": {"enabled": True},
+    }
+    state = build_artifact_state(
+        artifact_class=CYCLIC_REBAKE,
+        selection_class=CYCLE_SELECTION,
+        required_class=None,
+        selection_evidence={},
+    )
+    payload["artifactState"] = state
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Dumbbell Overhead Press",
+        candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html",
+        skeleton_path=tmp_path / "skeleton.json",
+        review_video_path=tmp_path / "review.webm",
+        duration_sec=1.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=1.0,
+        candidate={"videoId": "press"},
+        artifact_class=CYCLIC_REBAKE,
+        export_payload=payload,
+    )
+    contract = {
+        "requiresReturnToStart": True,
+        "observableMotionSpec": {"requiresReturnToStart": True},
+    }
+
+    reconciled = bake_and_rank_module.review_item_artifact_state(
+        item,
+        contract=contract,
+    )
+
+    assert reconciled["requiredClass"] == CYCLIC_REBAKE
+    assert reconciled["lineageComplete"] is False
+    assert reconciled["terminal"] is False
+    gate = bake_and_rank_module.movement_artifact_class_gate(
+        reconciled,
+        accepted_classes=bake_and_rank_module.TERMINAL_ARTIFACT_CLASSES,
+        gate_name="baked_motion",
+    )
+    assert gate["passed"] is False
+    assert gate["rejectionReasons"] == ["artifact_lineage_incomplete"]
 
 
 def test_fitted_cycle_rebinds_source_lineage_after_fit_local_crop() -> None:
