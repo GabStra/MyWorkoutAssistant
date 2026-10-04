@@ -57,6 +57,45 @@ def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     assert pose_digest(result)==before
 
 
+def test_postfit_stabilization_rebinds_fit_digest_and_preserves_source_evidence(monkeypatch):
+    import copy
+    from exercise_motion_pkg import controlled_motion, sequence_stabilization
+
+    payload = accepted_payload()
+    original_source_tracks = [copy.deepcopy(frame['sourceJoints']) for frame in payload['frames']]
+    payload.pop('controlledMotionFit')
+
+    def fake_fit(candidate, **kwargs):
+        fitted = copy.deepcopy(candidate)
+        report = {
+            'applied': True,
+            'strategy': CONTROLLED_MOTION_STRATEGY,
+            'checks': dict.fromkeys(REQUIRED_FIT_CHECKS, True),
+            'outputPoseDigest': pose_digest(fitted),
+            'fitSourceEvidenceDigest': controlled_motion_fit_source_evidence_digest(fitted),
+        }
+        return fitted, report
+
+    def fake_stabilize(candidate):
+        stabilized = copy.deepcopy(candidate)
+        for frame in stabilized['frames']:
+            for point in frame['joints'].values():
+                point[0] += .001
+        return stabilized, {'applied': True, 'strategy': 'test_stabilization'}
+
+    monkeypatch.setattr(controlled_motion, 'fit_controlled_motion', fake_fit)
+    monkeypatch.setattr(sequence_stabilization, 'stabilize_exported_sequence', fake_stabilize)
+
+    result, _ = bake_and_rank.constrain_baked_payload_to_source_articulation(payload)
+
+    assert [frame['sourceJoints'] for frame in result['frames']] == original_source_tracks
+    assert result['controlledMotionFit']['outputPoseDigest'] == pose_digest(result)
+    assert result['controlledMotionFit']['fitSourceEvidenceDigest'] == (
+        controlled_motion_fit_source_evidence_digest(result)
+    )
+    assert can_reuse_controlled_motion(result)
+
+
 @pytest.mark.parametrize(
     'dependency_name',
     ('contact_constraints.py', 'temporal_quality.py'),

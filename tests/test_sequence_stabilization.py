@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 import numpy as np
 from exercise_motion_pkg.sequence_stabilization import (
@@ -190,11 +191,13 @@ def noisy_stance():
 def test_complete_sequence_projection_reduces_noise_and_keeps_stationary_supports():
     from exercise_motion_pkg.temporal_quality import body_local_head_direction
     payload = noisy_stance()
+    source_tracks = [deepcopy(frame['sourceJoints']) for frame in payload['frames']]
     payload['sourceFootSupportEvidence'] = {'contacts': [
         {'jointName': side+'_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
          'startRatio': 0., 'endRatio': 1.} for side in ('left', 'right')]}
     result, report = stabilize_exported_sequence(payload)
     assert report['applied'], report
+    assert [frame['sourceJoints'] for frame in result['frames']] == source_tracks
     assert report['noiseImproved'] and report['rangePreserved']
     assert report['maximumBoneLengthErrorMeters'] < .002
     names = payload['jointNames']

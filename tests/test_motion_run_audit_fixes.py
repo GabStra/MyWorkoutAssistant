@@ -1325,6 +1325,7 @@ def test_candidate_bake_manifest_commits_processing_and_terminal_lifecycle_atomi
     lifecycle = json.loads(path.read_text())["artifactLifecycle"]
     assert lifecycle["state"] == "ready_for_selection"
     assert lifecycle["terminal"] is True
+    assert terminal["artifactLifecycle"] == lifecycle
     assert [entry["state"] for entry in lifecycle["history"]] == [
         "processing", "ready_for_selection",
     ]

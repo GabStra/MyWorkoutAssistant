@@ -338,12 +338,8 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     candidate = deepcopy(payload)
     for index, (frame, values) in enumerate(zip(candidate['frames'], result)):
         frame['joints'].update({n: p.tolist() for n, p in zip(names, values)})
-        source_joints = frame.get('sourceJoints')
-        if isinstance(source_joints, dict):
-            source_joints.update({
-                n: reference_smooth[index, names.index(n)].tolist()
-                for n in names if n in source_joints
-            })
+    # Source tracks are evidence for fitting and provenance. Use their
+    # denoised view as a solver reference above, but never rewrite the evidence.
     transport_corrected_bone_sides(payload['frames'], candidate)
     refresh_motion_bounds(candidate)
     from .bake_and_rank import compute_kinematic_plausibility_metrics_from_payload

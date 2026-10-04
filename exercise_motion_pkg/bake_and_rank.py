@@ -26187,6 +26187,11 @@ def constrain_baked_payload_to_source_articulation(
             from .sequence_stabilization import stabilize_exported_sequence
             result, sequence_report = stabilize_exported_sequence(result)
             result["sequenceStabilization"] = sequence_report
+            if sequence_report.get("applied"):
+                # The stabilizer has its own physical/source-envelope gates.
+                # Bind the fit record to that accepted final pose so downstream
+                # reuse does not reject it as a stale pre-stabilization result.
+                result["controlledMotionFit"]["outputPoseDigest"] = pose_digest(result)
         return result, metadata
     constrained_clip, post_ik_spike_metadata = suppress_post_ik_anatomical_spikes(
         constrained_clip
@@ -42494,25 +42499,27 @@ def build_loop_ranking_prompt(
 def write_candidate_bake_manifest(candidate_workspace: Path, payload: dict[str, Any]) -> None:
     review_dir = candidate_workspace / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
-    manifest = dict(payload)
-    status = str(manifest.get("status") or "processing")
-    lifecycle = dict(manifest.get("artifactLifecycle") or {})
+    status = str(payload.get("status") or "processing")
+    lifecycle = dict(payload.get("artifactLifecycle") or {})
     history = list(lifecycle.get("history") or [])
     if status not in {"pending", "processing"} and lifecycle.get("state") != status:
         history.append({
             "state": status,
-            "stage": manifest.get("activeStage"),
+            "stage": payload.get("activeStage"),
             "at": datetime.now(timezone.utc).isoformat(),
         })
     lifecycle.update(
         schemaVersion=1,
         state=status,
-        stage=manifest.get("activeStage") or lifecycle.get("stage"),
+        stage=payload.get("activeStage") or lifecycle.get("stage"),
         terminal=status not in {"pending", "processing"},
         updatedAt=datetime.now(timezone.utc).isoformat(),
         history=history,
     )
-    manifest["artifactLifecycle"] = lifecycle
+    # Keep the in-memory terminal result in sync with its durable checkpoint.
+    # The final selection manifest is built from these same payload objects.
+    payload["artifactLifecycle"] = lifecycle
+    manifest = {**payload, "artifactLifecycle": lifecycle}
     write_json_atomic(review_dir / "bake_manifest.json", manifest)
 
 
