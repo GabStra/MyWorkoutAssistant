@@ -253,10 +253,11 @@ def materialize_hand_support(payload, source_pose):
 
 
 def materialize_observed_ground_contacts(payload, source_pose):
-    """Full sole and forefoot observations both establish a planted toe.
+    """Full sole and forefoot observations can establish a planted toe.
 
-    This deliberately says nothing about heel height or shoe pitch. Those
-    require independent heel/toe geometry, even when a visual label says sole.
+    Temporal patch evidence must corroborate a full-clip anchor; partial source
+    contacts remain interval constraints. This deliberately says nothing about
+    heel height or shoe pitch, which require independent heel/toe geometry.
     """
     # A few support-review frames cannot establish an uninterrupted ground
     # anchor when the movement permits release. Keep the timed observations.
@@ -270,6 +271,15 @@ def materialize_observed_ground_contacts(payload, source_pose):
             or not np.isfinite(floor)):
         return
     contacts = []
+    patch = evidence.get('footPatchEvidence') or {}
+    temporal_patch_available = patch.get('available') is True
+    if temporal_patch_available:
+        patch_contact_count = len(payload.get('frames') or [])
+        full_cycle_sides = {
+            side for side in ('left', 'right')
+            if _has_full_cycle_stationary_sole(evidence, side, patch_contact_count)
+        }
+        _remove_unverified_materialized_foot_support(evidence, full_cycle_sides)
     for side in ('left', 'right'):
         states = ((evidence.get('footPatchEvidence') or {}).get('feet', {}).get(side) or {}).get('states', [])
         if (answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}
@@ -277,6 +287,8 @@ def materialize_observed_ground_contacts(payload, source_pose):
                 and f'{side}_foot' in payload.get('jointNames', [])
                 and stationary_source_track(source_pose, f'{side}_ankle')
                 and not any(state in {'airborne', 'heel_only'} for state in states)):
+            if temporal_patch_available and side not in full_cycle_sides:
+                continue
             contacts.append(f'{side}_foot')
     if not contacts:
         return
@@ -334,6 +346,62 @@ def corroborated_stationary_sole(evidence, side):
                and c.get('contactMotion') == 'stationary'
                and c.get('startRatio') == 0. and c.get('endRatio') == 1.
                for c in evidence.get('footContactCandidates') or [])
+
+
+def _has_full_cycle_stationary_sole(evidence, side, frame_count):
+    if frame_count > 1:
+        from .contact_constraints import contact_frame_bounds
+        if any(
+            ('startRatio' in contact or 'startFrame' in contact)
+            and ('endRatio' in contact or 'endFrame' in contact)
+            and contact_frame_bounds(contact, frame_count) == (0, frame_count - 1)
+            for contact in observed_stationary_sole_contacts(evidence)
+            if contact.get('jointName') == f'{side}_foot'
+        ):
+            return True
+    return corroborated_stationary_sole(evidence, side)
+
+
+def _remove_unverified_materialized_foot_support(evidence, corroborated_sides):
+    support = evidence.get('bodySupport')
+    if not isinstance(support, dict) or support.get('source') not in {
+        'exact_source_contacts_and_stationary_pose_tracks',
+        'observed_full_cycle_ground_sole_contacts',
+    }:
+        return
+
+    removed_joints = {
+        f'{side}_{joint}'
+        for side in ('left', 'right') if side not in corroborated_sides
+        for joint in ('ankle', 'foot')
+    }
+    if not removed_joints.intersection(support.get('stationaryJoints') or []):
+        return
+
+    support['stationaryJoints'] = [
+        joint for joint in support.get('stationaryJoints') or []
+        if joint not in removed_joints
+    ]
+    groups = []
+    for group in support.get('coplanarGroups') or []:
+        joints = [joint for joint in group.get('joints') or [] if joint not in removed_joints]
+        minimum_count = 1 if 'planeOffsetMeters' in group else 2
+        if len(joints) < minimum_count:
+            continue
+        updated_group = {**group, 'joints': joints}
+        if ('anchorJoint' in updated_group
+                and updated_group['anchorJoint'] not in joints):
+            updated_group['anchorJoint'] = joints[0]
+        groups.append(updated_group)
+    support['coplanarGroups'] = groups
+    support['soleContacts'] = [
+        contact for contact in support.get('soleContacts') or []
+        if not removed_joints.intersection(contact.get('joints') or [])
+    ]
+
+    if (not support['stationaryJoints'] and not support['coplanarGroups']
+            and not support.get('nonPenetrationChains') and not support['soleContacts']):
+        evidence.pop('bodySupport', None)
 
 
 def materialize_stationary_sole_support(payload):

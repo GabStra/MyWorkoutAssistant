@@ -69,6 +69,77 @@ def test_observed_ground_toe_keeps_heel_pitch_free_and_rejects_release():
         assert result['sourceFootSupportEvidence']['supportContacts'] == timed
 
 
+def test_observed_ground_contact_needs_full_cycle_corroboration_when_patch_data_exists():
+    from exercise_motion_pkg.body_support_observation import materialize_observed_ground_contacts
+
+    joints = {'left_ankle': [.2, .2, 0.], 'left_foot': [.2, 0., .1],
+              'right_ankle': [.7, .2, 0.], 'right_foot': [.7, 0., .1],
+              'pelvis': [.5, .5, 0.], 'head': [.5, .9, 0.]}
+    source = {'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
+    contacts = [
+        {'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+         'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'startFrame': 1, 'endFrame': 4},
+        {'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+         'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'startFrame': 7, 'endFrame': 10},
+    ]
+    base = {'jointNames': list(joints), 'renderFloorY': 0.,
+            'frames': [{'joints': deepcopy(joints)} for _ in range(12)],
+            'sourceFootSupportEvidence': {
+                'temporalResolutionSufficient': True,
+                'contacts': deepcopy(contacts),
+                'footContactCandidates': [
+                    {'jointName': 'left_ankle', 'contactMotion': 'stationary',
+                     'startRatio': 0., 'endRatio': 1.},
+                    {'jointName': 'right_ankle', 'contactMotion': 'stationary',
+                     'startRatio': 0., 'endRatio': 1.},
+                ],
+                'footPatchEvidence': {'available': True, 'feet': {
+                    'left': {'states': ['full_sole', 'toe_only', 'full_sole']},
+                    'right': {'states': ['unknown']*3},
+                }},
+                'bodySupportObservation': {'status': 'observed',
+                    'observation': {'leftFoot': 'stationary_full_sole',
+                                    'leftFootSurface': 'ground',
+                                    'rightFoot': 'stationary_full_sole',
+                                    'rightFootSurface': 'ground'}},
+            }}
+
+    contradicted = deepcopy(base)
+    materialize_observed_ground_contacts(contradicted, source)
+    assert 'bodySupport' not in contradicted['sourceFootSupportEvidence']
+    assert contradicted['sourceFootSupportEvidence']['contacts'] == contacts
+
+    stale_support = deepcopy(base)
+    stale_support['sourceFootSupportEvidence']['bodySupport'] = {
+        'required': True, 'status': 'confirmed',
+        'source': 'exact_source_contacts_and_stationary_pose_tracks',
+        'stationaryJoints': ['pelvis', 'left_foot', 'right_foot'],
+        'coplanarGroups': [
+            {'joints': ['pelvis'], 'normal': [0., 1., 0.], 'planeOffsetMeters': .5},
+            {'joints': ['left_foot', 'right_foot'], 'normal': [0., 1., 0.],
+             'planeOffsetMeters': 0.},
+        ],
+        'nonPenetrationChains': [], 'soleContacts': [],
+    }
+    materialize_observed_ground_contacts(stale_support, source)
+    retained_support = stale_support['sourceFootSupportEvidence']['bodySupport']
+    assert retained_support['stationaryJoints'] == ['pelvis']
+    assert retained_support['coplanarGroups'] == [
+        {'joints': ['pelvis'], 'normal': [0., 1., 0.], 'planeOffsetMeters': .5}
+    ]
+
+    corroborated = deepcopy(base)
+    corroborated['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left'][
+        'states'
+    ] = ['unknown', 'full_sole', 'unknown']
+    materialize_observed_ground_contacts(corroborated, source)
+    assert corroborated['sourceFootSupportEvidence']['bodySupport'][
+        'stationaryJoints'
+    ] == ['left_foot']
+
+
 def test_visual_contact_needs_independent_stationarity_and_keeps_moving_parts_free():
     joints = {'pelvis': [0., 1., 0.], 'left_hip': [-.1, 1., 0.], 'right_hip': [.1, 1., 0.],
               'left_shoulder': [-.2, 1., .5], 'right_shoulder': [.2, 1., .5],
@@ -107,6 +178,10 @@ def test_visual_contact_needs_independent_stationarity_and_keeps_moving_parts_fr
 def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
     from exercise_motion_pkg.body_support_observation import materialize_stationary_sole_support
     from exercise_motion_pkg.loop_cycles import slice_loop_cycle
+
+    def materialize(payload):
+        payload['sourceFootSupportEvidence'] = materialize_stationary_sole_support(payload)
+
     fixture = json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
     joints = fixture['joints']
     payload = {'jointNames': list(joints), 'fps': 30., 'renderFloorY': fixture['renderFloorY'],
@@ -116,7 +191,7 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
                                  'contactMotion': 'stationary', 'startFrame': 2, 'endFrame': 11}],
                    'bodySupportObservation': {'status': 'observed', 'sourceVideoSha256': 'fixture',
                        'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}}
-    materialize_stationary_sole_support(payload)
+    materialize(payload)
     assert 'bodySupport' not in payload['sourceFootSupportEvidence']
     corroborated = deepcopy(payload)
     evidence = corroborated['sourceFootSupportEvidence']
@@ -131,21 +206,21 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
             incomplete['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left']['states'][0] = 'airborne'
         else:
             incomplete['sourceFootSupportEvidence']['footContactCandidates'][0]['startRatio'] = .1
-        materialize_stationary_sole_support(incomplete)
+        materialize(incomplete)
         assert 'bodySupport' not in incomplete['sourceFootSupportEvidence']
-    materialize_stationary_sole_support(corroborated)
+    materialize(corroborated)
     assert corroborated['sourceFootSupportEvidence']['bodySupport']['stationaryJoints'] == ['left_ankle', 'left_foot']
     cycle = slice_loop_cycle(payload, {'startFrame': 2, 'stopFrameExclusive': 12})
     for surface in ['raised_surface', 'unknown']:
         unsupported = deepcopy(cycle)
         unsupported['sourceFootSupportEvidence']['bodySupportObservation']['observation']['leftFootSurface'] = surface
-        materialize_stationary_sole_support(unsupported)
+        materialize(unsupported)
         assert 'bodySupport' not in unsupported['sourceFootSupportEvidence']
     unresolved = deepcopy(cycle)
     unresolved['sourceFootSupportEvidence']['bodySupport'] = {'required': True, 'status': 'unknown'}
-    materialize_stationary_sole_support(unresolved)
+    materialize(unresolved)
     assert unresolved['sourceFootSupportEvidence']['bodySupport']['status'] == 'unknown'
-    materialize_stationary_sole_support(cycle)
+    materialize(cycle)
     support = cycle['sourceFootSupportEvidence']['bodySupport']
     assert support['stationaryJoints'] == ['left_ankle', 'left_foot']
     assert support['soleContacts'][0]['joints'] == ['left_knee', 'left_ankle', 'left_foot']
@@ -166,7 +241,7 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
         'soleContacts': [], 'nonPenetrationChains': []}
     original = deepcopy(partial)
     selected = slice_loop_cycle(partial, {'startFrame': 2, 'stopFrameExclusive': 12})
-    materialize_stationary_sole_support(selected)
+    materialize(selected)
     upgraded = selected['sourceFootSupportEvidence']['bodySupport']
     assert set(upgraded['stationaryJoints']) == {'left_ankle', 'left_foot', 'right_wrist'}
     assert len(upgraded['stationaryJoints']) == 3
