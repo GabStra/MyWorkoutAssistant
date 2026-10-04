@@ -83,6 +83,7 @@ POLISH_RESERVE_MAX_SECONDS = 25.
 POLISH_RESERVE_MIN_SECONDS = 12.
 SOURCE_PROJECTION_FIT_WEIGHT = 2.0
 SOURCE_CYCLE_BOUNDARY_FIT_MULTIPLIER = 2.0
+SOURCE_CYCLE_BOUNDARY_MIN_EFFECTIVE_OBSERVATIONS = 3
 SOURCE_ENDPOINT_POSTURE_FIT_MULTIPLIER = 1.5
 SOURCE_ENDPOINT_POSTURE_MIN_WINDOW_SECONDS = 0.05
 SOURCE_ENDPOINT_POSTURE_MAX_WINDOW_SECONDS = 0.2
@@ -3508,8 +3509,15 @@ def _selected_interval_source_fit_coverage_gaps(payload, constraint):
 
     if selection.get('kind') == 'cycle':
         boundary_coverage = constraint.get('cycleBoundaryCoverage') or {}
+        boundary_observation_count = constraint.get('cycleBoundaryObservationCount') or {}
         for role in ('start', 'end'):
-            if not (boundary_coverage.get(role) or {}).get('available'):
+            coverage = boundary_coverage.get(role) or {}
+            effective_count = boundary_observation_count.get(role, 0)
+            effective_available = (
+                type(effective_count) is int
+                and effective_count >= SOURCE_CYCLE_BOUNDARY_MIN_EFFECTIVE_OBSERVATIONS
+            )
+            if not coverage.get('available') or not effective_available:
                 gaps.append(f'source_cycle_boundary_{role}_unavailable')
     return gaps
 
@@ -3926,6 +3934,14 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                 ),
             })
     distinct_frames = len({(row['leftFrame'], row['rightFrame']) for row in observations})
+    for role in ('start', 'end'):
+        cycle_boundary_coverage[role]['effectiveObservationCount'] = (
+            cycle_boundary_observation_count[role]
+        )
+        cycle_boundary_coverage[role]['effectiveAvailable'] = (
+            cycle_boundary_observation_count[role]
+            >= SOURCE_CYCLE_BOUNDARY_MIN_EFFECTIVE_OBSERVATIONS
+        )
     if len(observations) < 6 or distinct_frames < 3:
         return {**unavailable, 'reason': 'insufficient_source_projection_coverage'}
     return {
@@ -5005,6 +5021,16 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
                     'contactErrorMeters': contact_err,
                     'anatomyPassed': anatomy_ok, 'supportPassed': support_ok,
                     'rootPassed': root_ok,
+                }
+                # A supported fit's temporal prior and later polish assume the
+                # reference already clears root continuity. Continuing from a
+                # failed joint root/contact repair makes those stages optimize
+                # against contradictory support geometry (and burns the fit
+                # budget without a feasible starting reference).
+                return payload, {
+                    **report,
+                    'applied': False,
+                    'reason': 'support_reference_projection_incomplete',
                 }
         # Explicit support owns these corrections. Keep the original temporal
         # evidence unchanged, but compare articulation to the feasible supported

@@ -1237,6 +1237,32 @@ def test_selected_cycle_fit_stops_when_source_endpoint_coverage_is_incomplete(mo
     assert not motion.controlled_fit_processing_incomplete(report)
 
 
+def test_selected_cycle_fit_stops_when_effective_boundary_rows_are_incomplete():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('cycleSelection')
+    pinned = np.zeros((len(points), len(names)), dtype=bool)
+    pinned[0, :] = True
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        pinned,
+        motion.body_scale(points, names),
+    )
+    assert constraint['available'] is True
+    assert constraint['cycleBoundaryCoverage']['start']['available'] is True
+    assert constraint['cycleBoundaryCoverage']['start']['jointObservationCount'] >= 3
+    assert constraint['cycleBoundaryCoverage']['start']['effectiveObservationCount'] == 0
+    assert constraint['cycleBoundaryCoverage']['start']['effectiveAvailable'] is False
+    assert constraint['endpointPostureCoverage']['start']['available'] is True
+    assert motion._selected_interval_source_fit_coverage_gaps(current, constraint) == [
+        'source_cycle_boundary_start_unavailable',
+    ]
+
+
 def test_pinned_source_confirmed_foot_anchor_projects_with_low_trust_for_unknown_confidence():
     from exercise_motion_pkg import controlled_motion as motion
 
@@ -2618,6 +2644,61 @@ def test_support_init_watchdog_continues_to_acceptance(monkeypatch):
     assert report.get('supportInitializationTimedOut')
     assert report.get('checks'), report
     assert not motion.controlled_fit_processing_incomplete(report)
+
+
+def test_unrepaired_support_root_continuity_stops_before_main_fit(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+    from exercise_motion_pkg import support_geometry
+
+    names, points = stance(12)
+    current = payload(names, points)
+    stationary = [name for name in ('pelvis', 'spine1', 'spine2', 'spine3') if name in names]
+    if len(stationary) < 2:
+        stationary = [name for name in names if 'spine' in name or name == 'pelvis'][:3]
+    evidence = {
+        'required': True,
+        'status': 'confirmed',
+        'stationaryJoints': stationary,
+        'coplanarGroups': [{
+            'joints': stationary,
+            'normal': [0., 1., 0.],
+            'planeOffsetMeters': float(points[0, names.index(stationary[0]), 1]),
+        }],
+    }
+    current['sourceFootSupportEvidence'] = {'bodySupport': evidence}
+
+    monkeypatch.setattr(support_geometry, 'support_evidence', lambda payload: evidence)
+    monkeypatch.setattr(support_geometry, 'plant_only_body_support', lambda evidence: False)
+    monkeypatch.setattr(
+        support_geometry, 'calibrate_support_pose', lambda *args, **kwargs: (points[0], {}),
+    )
+    monkeypatch.setattr(
+        support_geometry, 'initialize_supported_motion',
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError()),
+    )
+    monkeypatch.setattr(motion, 'support_reference_grossly_invalid', lambda report: False)
+    monkeypatch.setattr(
+        motion, 'root_motion_quality',
+        lambda *args, **kwargs: {'available': True, 'passed': False},
+    )
+    monkeypatch.setattr(
+        motion, 'project_root_continuity_coordinates', lambda coordinates, *args, **kwargs: coordinates,
+    )
+    monkeypatch.setattr(
+        motion, 'project_contact_plant_coordinates', lambda coordinates, *args, **kwargs: coordinates,
+    )
+
+    def unexpected_solver_call(*args, **kwargs):
+        raise AssertionError('main trajectory fit must not run from an unrepaired support reference')
+
+    monkeypatch.setattr(motion, 'solve_trajectory', unexpected_solver_call)
+    result, report = motion.fit_controlled_motion(current, timeout_seconds=20.)
+
+    assert result is current
+    assert report['supportInitializationTimedOut'] is True
+    assert report['supportReferenceRootContinuity']['passed'] is False
+    assert report['reason'] == 'support_reference_projection_incomplete'
+    assert report['applied'] is False
 
 
 def test_support_reference_gross_failure_is_only_early_rejected_beyond_margin():
