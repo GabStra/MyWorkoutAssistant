@@ -251,6 +251,70 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
     assert partial == original
 
 
+def test_fit_support_materialization_removes_stale_full_clip_foot_anchors():
+    from exercise_motion_pkg.body_support_observation import materialize_stationary_sole_support
+
+    joints = {
+        'left_hip': [.4, .8, 0.], 'right_hip': [.6, .8, 0.],
+        'left_shoulder': [.35, 1.2, 0.], 'right_shoulder': [.65, 1.2, 0.],
+        'left_ankle': [.4, .05, 0.], 'left_foot': [.4, 0., .1],
+        'right_ankle': [.6, .05, 0.], 'right_foot': [.6, 0., .1],
+    }
+    contacts = [
+        {'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+         'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'startFrame': 1, 'endFrame': 3},
+        {'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+         'contactState': 'toe_only', 'contactMotion': 'stationary',
+         'startFrame': 4, 'endFrame': 5},
+    ]
+    payload = {
+        'jointNames': list(joints), 'fps': 30., 'renderFloorY': 0.,
+        'frames': [{'timeSec': i / 30., 'joints': deepcopy(joints)} for i in range(12)],
+        'sourceFootSupportEvidence': {
+            'bodySupport': {
+                'required': True, 'status': 'confirmed',
+                'source': 'exact_source_contacts_and_stationary_pose_tracks',
+                'stationaryJoints': ['left_foot', 'right_foot'],
+                'coplanarGroups': [
+                    {'joints': ['left_foot', 'right_foot'], 'normal': [0., 1., 0.],
+                     'planeOffsetMeters': 0.},
+                ],
+                'nonPenetrationChains': [], 'soleContacts': [],
+            },
+            'bodySupportObservation': {
+                'status': 'observed',
+                'observation': {
+                    'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
+                    'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground',
+                },
+            },
+            'temporalResolutionSufficient': True,
+            'footPatchEvidence': {
+                'available': True,
+                'feet': {
+                    'left': {'states': ['full_sole'] * 4 + ['toe_only'] + ['unknown'] * 7},
+                    'right': {'states': ['unknown'] * 12},
+                },
+            },
+            'footContactCandidates': [
+                {'jointName': 'left_ankle', 'contactMotion': 'stationary',
+                 'startRatio': 0., 'endRatio': 1.},
+                {'jointName': 'right_ankle', 'contactMotion': 'stationary',
+                 'startRatio': 0., 'endRatio': 1.},
+            ],
+            'contacts': deepcopy(contacts),
+        },
+    }
+    original = deepcopy(payload)
+
+    materialized = materialize_stationary_sole_support(payload)
+
+    assert 'bodySupport' not in materialized
+    assert materialized['contacts'] == contacts
+    assert payload == original
+
+
 def test_lying_press_does_not_require_moving_shoulder_anchors():
     joints = {
         'pelvis': [0.5, 0.6, 0.0],

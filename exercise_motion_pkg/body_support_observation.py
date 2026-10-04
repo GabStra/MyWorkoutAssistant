@@ -414,12 +414,24 @@ def materialize_stationary_sole_support(payload):
     existing = evidence.get('bodySupport') or {}
     if existing.get('required') and existing.get('status') != 'confirmed':
         return evidence  # New foot evidence cannot resolve missing torso observations.
+    count = len(payload.get('frames') or [])
+    names = payload.get('jointNames') or []
+    patch = evidence.get('footPatchEvidence') or {}
+    if patch.get('available') is True:
+        corroborated_sides = {
+            side for side in ('left', 'right')
+            if _has_full_cycle_stationary_sole(evidence, side, count)
+        }
+        # Retained source evidence may carry bodySupport anchors materialized by
+        # an older cache policy. Recheck them in the fit's motion-space view so
+        # direct fitting and source digests cannot bypass the temporal patch
+        # gate used by the normal source-preparation path.
+        _remove_unverified_materialized_foot_support(evidence, corroborated_sides)
+    existing = evidence.get('bodySupport') or {}
     observed = evidence.get('bodySupportObservation') or {}
     if observed.get('status') != 'observed':
         return evidence
     answer = observed.get('observation') or {}
-    count = len(payload.get('frames') or [])
-    names = payload.get('jointNames') or []
     if count < 7 or not {'left_hip', 'right_hip', 'left_shoulder', 'right_shoulder'}.issubset(names):
         return evidence
     floor = payload.get('renderFloorY')

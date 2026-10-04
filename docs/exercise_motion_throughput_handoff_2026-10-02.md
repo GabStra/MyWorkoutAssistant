@@ -476,3 +476,31 @@ directory has a condensed version of this state; update it after the arms land.
   but needs a separate quality-preserving comparison across the agreed exercise
   base. The stopped baseline was not restarted, and no maximum-throughput claim
   is made.
+
+### Retained RDL stale-support replay — 2026-10-05
+
+- A current-code read of the retained RDL fit payload found that
+  `materialize_stationary_sole_support` could preserve cached bilateral
+  `bodySupport` anchors without reapplying the temporal foot-patch gate. The
+  mapped patch evidence contained intermittent full-sole intervals, a toe-only
+  interval, and unknown spans on one side; the other side was entirely unknown.
+  Full-span ankle tracks did not satisfy the existing full-sole corroboration
+  rule, but stale derived anchors remained in the direct fit evidence view.
+- The fitter now removes generated foot anchors that current temporal evidence
+  does not corroborate, using the same rule as source preparation. Timed source
+  contacts and unrelated support joints remain intact. A focused regression
+  covers stale bilateral anchors, toe-only evidence, and an all-unknown side.
+- All 7 tests in `tests/test_body_support_observation.py` passed, Python
+  compilation and `git diff --check` passed. The production workout-plan process E2E passed
+  after the change (1 passed in 140.87s); it continues to use a prepared
+  candidate, cached source/support evidence, normalized-motion fixture, and
+  deterministic final-review response.
+- A bounded CPU replay of the retained 93-frame RDL fit used the corrected
+  support view and ended after 148.3s with `unreachable_conflict`. The `bodySupport`
+  check now passes, while contacts, trajectory fit, anatomy, motion continuity,
+  and playback/loop checks still fail. No successful current RDL selection or
+  package is established by this replay.
+- No source search, WHAM/GVHMR, visual-review model call, or throughput campaign
+  was run. The agreed OHP + RDL pair still lacks two current production-path
+  successes, so maximum throughput remains unverified; the interrupted baseline
+  and measured overlap regression remain closed as recorded above.
