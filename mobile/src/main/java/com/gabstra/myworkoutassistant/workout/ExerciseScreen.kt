@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveSetCounterLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -213,6 +214,7 @@ fun ExerciseScreen(
         val activeExerciseContext = buildActiveExerciseContextLabel(
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
             setCounterKind = displayCounterKindForSetState(state),
+            hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
         )
@@ -506,17 +508,12 @@ private fun buildTargetRepRange(
 private fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
     setCounterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
 ): String? = listOfNotNull(
     setCounter?.let { (current, total) ->
-        val label = when (setCounterKind) {
-            SetDisplayCounterKind.Warmup -> "WARM-UP"
-            SetDisplayCounterKind.Work -> "WORK SET"
-            SetDisplayCounterKind.Calibration -> "CALIBRATION"
-            null -> "SET"
-        }
-        "$label $current/$total"
+        "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
     },
     buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
         ?.removePrefix("-")

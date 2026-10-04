@@ -1676,6 +1676,17 @@ open class WorkoutViewModel(
     }
 
     /**
+     * True when the exercise's flow actually contains warm-up sets. Exercises without
+     * warm-up generation (and calibration flows that skip them) have none, so the
+     * warm-up/work labeling distinction does not apply.
+     */
+    fun hasWarmupSetsForExercise(exerciseId: UUID): Boolean {
+        return getStatesForExercise(exerciseId)
+            .filterIsInstance<WorkoutState.Set>()
+            .any { it.isWarmupSet }
+    }
+
+    /**
      * Resolves unilateral side index (1..intraSetTotal) from the current workout position,
      * without relying on mutable in-place counter updates on WorkoutState.Set.
      */

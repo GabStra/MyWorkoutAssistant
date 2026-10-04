@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveSetCounterLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
@@ -317,6 +318,7 @@ fun ExerciseScreen(
         val activeExerciseContext = buildActiveExerciseContextLabel(
             setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
             setCounterKind = displayCounterKindForSetState(state),
+            hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
         )
@@ -480,6 +482,7 @@ fun ExerciseScreen(
                                     emptyList()
                                 },
                                 setCounter = viewModel.getSetCounterForExercise(state.exerciseId, state),
+                                hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
                                 unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
                                 plateauReason = plateauReason,
                             )
@@ -1451,12 +1454,13 @@ private fun buildExerciseInfoSections(
     accessoryEquipmentNames: List<String>,
     supersetExercises: List<Exercise>,
     setCounter: Pair<Int, Int>?,
+    hasWarmupSets: Boolean,
     unilateralSideIndex: UInt?,
     plateauReason: String?,
 ): List<TitledLinesSection> {
     val setLabel = when (displayCounterKindForSetState(state)) {
         SetDisplayCounterKind.Warmup -> "Warm-up"
-        SetDisplayCounterKind.Work -> "Work set"
+        SetDisplayCounterKind.Work -> if (hasWarmupSets) "Work set" else "Set"
         else -> "Set"
     }
     val sessionLines = buildList {
@@ -1526,18 +1530,13 @@ private fun buildTargetRepRange(
 private fun buildActiveExerciseContextLabel(
     setCounter: Pair<Int, Int>?,
     setCounterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
 ): String? = listOfNotNull(
     setCounter
         ?.let { (current, total) ->
-            val label = when (setCounterKind) {
-                SetDisplayCounterKind.Warmup -> "WARM-UP"
-                SetDisplayCounterKind.Work -> "WORK SET"
-                SetDisplayCounterKind.Calibration -> "CALIBRATION"
-                null -> "SET"
-            }
-            "$label $current/$total"
+            "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
         },
     buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
         ?.removePrefix("-")

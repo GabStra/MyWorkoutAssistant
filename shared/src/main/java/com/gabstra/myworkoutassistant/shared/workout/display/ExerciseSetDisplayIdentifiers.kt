@@ -63,6 +63,21 @@ fun buildSetDisplayIdentifier(
     )
 }
 
+/**
+ * Label for the active set counter shown next to the exercise name. The warm-up/work
+ * distinction is only meaningful when the exercise actually has warm-up sets; otherwise
+ * every non-calibration set is just "SET".
+ */
+fun buildActiveSetCounterLabel(
+    counterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
+): String = when (counterKind) {
+    SetDisplayCounterKind.Warmup -> "WARM-UP"
+    SetDisplayCounterKind.Work -> if (hasWarmupSets) "WORK SET" else "SET"
+    SetDisplayCounterKind.Calibration -> "CALIBRATION"
+    null -> "SET"
+}
+
 fun displayCounterKindForSet(set: Set): SetDisplayCounterKind? {
     return when (set) {
         is WeightSet -> displayCounterKindForSubCategory(set.subCategory)
