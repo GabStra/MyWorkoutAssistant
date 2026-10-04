@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from copy import deepcopy
 from typing import Any
 
 import numpy as np
@@ -10,6 +13,122 @@ import numpy as np
 # Envelope validation must use the same precision after converting to degrees;
 # this is solver roundoff tolerance, separate from source/anatomical allowances.
 ANGLE_NUMERICAL_TOLERANCE_RADIANS = 1e-6
+
+
+def _support_evidence_digest(evidence: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(
+        evidence, sort_keys=True, separators=(",", ":"), default=str,
+    ).encode("utf-8")).hexdigest()
+
+
+def _swap_support_evidence_sides(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Swap only anatomical labels; the operation is its own inverse."""
+    def swap_side(name: str) -> str:
+        if name.startswith("left_"):
+            return "right_" + name[5:]
+        if name.startswith("right_"):
+            return "left_" + name[6:]
+        return name
+
+    def swap_observation_key(key: str) -> str:
+        for side in ("left", "right"):
+            if key.startswith(side) and key[len(side):] in {
+                "Foot", "FootSurface", "Hand", "HandSurface",
+            }:
+                return ("right" if side == "left" else "left") + key[len(side):]
+        return key
+
+    joint_fields = {"jointName", "anchorJoint"}
+    joint_list_fields = {"stationaryJoints", "joints", "endpoints"}
+
+    def remap(value: Any, *, parent_key: str = "") -> Any:
+        if isinstance(value, dict):
+            result = {}
+            for key, child in value.items():
+                mapped_key = key
+                if parent_key == "feet" and key in {"left", "right"}:
+                    mapped_key = "right" if key == "left" else "left"
+                elif parent_key == "observation":
+                    mapped_key = swap_observation_key(key)
+                if key in joint_fields and isinstance(child, str):
+                    result[mapped_key] = swap_side(child)
+                elif key in joint_list_fields and isinstance(child, list):
+                    result[mapped_key] = [swap_side(item) if isinstance(item, str) else remap(item)
+                                          for item in child]
+                else:
+                    result[mapped_key] = remap(child, parent_key=key)
+            return result
+        if isinstance(value, list):
+            return [remap(item, parent_key=parent_key) for item in value]
+        return value
+
+    return remap(deepcopy(evidence))
+
+
+def _source_evidence_from_motion_space(evidence: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a mapped view and recover its canonical source labels."""
+    mapping = evidence.get("motionSpaceMapping")
+    if not isinstance(mapping, dict) or mapping.get("bilateralAssignment") != "swapped":
+        return None
+    expected_digest = mapping.get("sourceEvidenceSha256")
+    if not isinstance(expected_digest, str):
+        return None
+    mapped_content = deepcopy(evidence)
+    mapped_content.pop("motionSpaceMapping", None)
+    source_evidence = _swap_support_evidence_sides(mapped_content)
+    if _support_evidence_digest(source_evidence) != expected_digest:
+        return None
+    return source_evidence
+
+
+def motion_space_support_evidence(
+    payload: dict[str, Any],
+    *,
+    evidence_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return support evidence named in the baked rig's left/right space.
+
+    Source observations retain their original anatomical labels. When camera
+    registration assigns those labels to the opposite rig sides, cache a
+    remapped view for constraints while leaving the source evidence untouched.
+    """
+    evidence = evidence_override if isinstance(evidence_override, dict) else (
+        payload.get("sourceFootSupportEvidence") or {}
+    )
+    camera_reference = payload.get("sourcePoseCameraReference") or {}
+    camera = camera_reference.get("camera") if isinstance(camera_reference, dict) else None
+    camera_is_swapped = isinstance(camera, dict) and camera.get("bilateralAssignment") == "swapped"
+
+    if isinstance(evidence.get("motionSpaceMapping"), dict):
+        source_evidence = _source_evidence_from_motion_space(evidence)
+        if source_evidence is not None:
+            return evidence if camera_is_swapped else source_evidence
+        # A stale or modified motion-space view must not silently constrain the
+        # opposite rig side. Recover canonical evidence from the payload when
+        # possible; otherwise disable these unverified constraints.
+        fallback = payload.get("sourceFootSupportEvidence")
+        if not isinstance(fallback, dict) or isinstance(fallback.get("motionSpaceMapping"), dict):
+            return {}
+        evidence = fallback
+
+    if not camera_is_swapped:
+        return evidence
+
+    source_digest = _support_evidence_digest(evidence)
+    cached = payload.get("motionSpaceSupportEvidence")
+    if isinstance(cached, dict):
+        cached_source_evidence = _source_evidence_from_motion_space(cached)
+        if (cached_source_evidence is not None
+                and _support_evidence_digest(cached_source_evidence) == source_digest):
+            return cached
+    mapped = _swap_support_evidence_sides(evidence)
+    mapped["motionSpaceMapping"] = {
+        "source": "sourceFootSupportEvidence",
+        "bilateralAssignment": "swapped",
+        "sourceEvidenceSha256": source_digest,
+    }
+    payload["motionSpaceSupportEvidence"] = mapped
+    return mapped
 
 
 def motion_support_contacts(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:

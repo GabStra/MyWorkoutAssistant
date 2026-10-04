@@ -14,6 +14,15 @@ _metrics_lock = threading.Lock()
 _metrics = {"cacheHits": 0, "questionsAsked": 0, "executorWorkers": 0}
 
 
+def _deadline_value(deadlines: Any) -> float | None:
+    if deadlines is None:
+        return None
+    getter = getattr(deadlines, "get", None)
+    if callable(getter):
+        return getter()
+    return getattr(deadlines, "value", None)
+
+
 def question_cache_metrics() -> dict[str, int]:
     with _metrics_lock:
         return dict(_metrics)
@@ -74,19 +83,27 @@ def run_questions(jobs: dict[str, Callable[[], Any]], caption_images: Callable[.
     if getattr(owner, "_max_active_calls", 1) <= 1:
         return {name: operation() for name, operation in jobs.items()}
     deadlines = getattr(owner, "_candidate_deadlines", None)
-    deadline = getattr(deadlines, "value", None)
+    deadline = _deadline_value(deadlines)
     executor = _ensure_question_executor(int(getattr(owner, "_max_active_calls", 0) or 0))
 
     def invoke(operation: Callable[[], Any]) -> Any:
-        # Session deadlines are thread-local; preserve the candidate's budget
-        # when its independent questions move to shared review workers.
-        previous = getattr(deadlines, "value", None)
+        # Preserve the candidate budget when independent questions move to
+        # review workers. ContextVar values are thread-local by design and do
+        # not cross ThreadPoolExecutor boundaries without this explicit handoff.
+        previous = _deadline_value(deadlines)
+        deadline_token = None
         if deadlines is not None:
-            deadlines.value = deadline
+            setter = getattr(deadlines, "set", None)
+            if callable(setter):
+                deadline_token = setter(deadline)
+            else:
+                deadlines.value = deadline
         try:
             return operation()
         finally:
-            if deadlines is not None:
+            if deadline_token is not None:
+                deadlines.reset(deadline_token)
+            elif deadlines is not None:
                 deadlines.value = previous
 
     futures = {name: executor.submit(invoke, operation) for name, operation in jobs.items()}

@@ -240,6 +240,66 @@ def test_clean_contract_skips_extra_generation_attempt() -> None:
     assert result["completionMode"] == "return_to_start"
 
 
+def test_contract_normalization_aligns_torso_constraint_with_explicit_endpoint_state() -> None:
+    payload = _squat_payload()
+    payload["startPoseConstraints"]["torsoOrientation"] = "hinged"
+    payload["validStartState"] = (
+        "standing with feet shoulder-width apart, torso upright, holding the barbell at hip height"
+    )
+
+    corrected = youtube.normalize_exercise_motion_contract(
+        payload,
+        exercise=_exercise("Barbell Romanian Deadlift"),
+        source="llm",
+    )
+
+    assert corrected["startPoseConstraints"]["torsoOrientation"] == "upright"
+    assert youtube.exercise_motion_contract_is_usable(
+        corrected,
+        exercise=_exercise("Barbell Romanian Deadlift"),
+    )
+
+    hinge_payload = _squat_payload()
+    hinge_payload["validStartState"] = "standing with the torso hinged forward at the hips"
+    hinge_payload["startPoseConstraints"]["torsoOrientation"] = "hinged"
+    preserved = youtube.normalize_exercise_motion_contract(
+        hinge_payload,
+        exercise=_exercise("Barbell Romanian Deadlift"),
+        source="llm",
+    )
+    assert preserved["startPoseConstraints"]["torsoOrientation"] == "hinged"
+
+
+def test_cached_contract_reconciles_posture_without_regeneration(tmp_path) -> None:
+    exercise = _exercise("Barbell Romanian Deadlift")
+    settings = YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path)
+    payload = _squat_payload()
+    payload["validStartState"] = "standing with torso upright before the squat"
+    contract = youtube.normalize_exercise_motion_contract(
+        payload,
+        exercise=exercise,
+        source="llm",
+    )
+    contract["startPoseConstraints"]["torsoOrientation"] = "hinged"
+    cache_path = youtube.exercise_motion_contract_cache_path(exercise, settings)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": youtube.EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
+                "contract": contract,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reused = youtube.load_cached_exercise_motion_contract(exercise, settings)
+
+    assert reused is not None
+    assert reused["cacheStatus"] == "reused"
+    assert reused["startPoseConstraints"]["torsoOrientation"] == "upright"
+
+
 def test_malformed_critic_json_retries_then_keeps_unpatched() -> None:
     critic_raw: list[str] = []
 

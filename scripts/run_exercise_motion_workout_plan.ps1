@@ -108,6 +108,7 @@ param(
     [Alias("Resume")]
     [switch]$ReuseExistingSelected,
     [switch]$DisableStageResume,
+    [switch]$AllowDirtyWorktree,
     [switch]$DeferAfterFirstAttempt,
     [switch]$IncludeDisabled,
     [switch]$NoWhamDocker,
@@ -214,9 +215,12 @@ param(
 
 . (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
 $SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
-$RetainedSelectedRevalidationVersion = 14
+$RetainedSelectedRevalidationVersion = Get-MotionRetainedSelectedRevalidationVersion
+$StagedWaveAmbiguousRecoveryExitCode = 76
+$StagedWaveAmbiguousRecoveryStatus = "ambiguous_recovery"
 
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot "motion_source_identity.psm1") -Force
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
 trap {
     if (
@@ -858,6 +862,369 @@ function Copy-SelectedFile {
     return $destinationPath
 }
 
+function Get-WearSkeletonIdentity {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Cannot identify missing Wear skeleton: $Path"
+    }
+    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $frames = Get-ObjectProperty -Object $payload -Name "frames"
+    return [ordered]@{
+        sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        frameCount = @($frames).Count
+    }
+}
+
+function Add-StagedWaveTimelineOutcome {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$WorkItem,
+        [Parameter(Mandatory = $true)]
+        [object]$WaveState
+    )
+
+    $artifactLifecycle = Get-ObjectProperty -Object $WaveState -Name 'artifactLifecycle'
+    $artifactState = "$(Get-ObjectProperty -Object $artifactLifecycle -Name 'state')"
+    if ($artifactState -eq "accepted") {
+        Add-SchedulerTimelineItemEvent -WorkItem $WorkItem -MarkAccepted -FinalStatus "accepted"
+    } elseif ($artifactState -eq "manual_review") {
+        Add-SchedulerTimelineItemEvent -WorkItem $WorkItem -FinalStatus "needs_manual_review"
+    } else {
+        Add-SchedulerTimelineItemEvent -WorkItem $WorkItem -FinalStatus "unverified_completion"
+    }
+}
+
+function ConvertTo-CanonicalArtifactStateJson {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return "null"
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $properties = @()
+        foreach ($key in @($Value.Keys | Sort-Object -CaseSensitive)) {
+            $keyJson = ConvertTo-Json -InputObject ([string]$key) -Compress
+            $valueJson = ConvertTo-CanonicalArtifactStateJson -Value $Value[$key]
+            $properties += "${keyJson}:$valueJson"
+        }
+        return "{$($properties -join ',')}"
+    }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $properties = @()
+        foreach ($property in @($Value.PSObject.Properties | Sort-Object -Property Name -CaseSensitive)) {
+            $keyJson = ConvertTo-Json -InputObject ([string]$property.Name) -Compress
+            $valueJson = ConvertTo-CanonicalArtifactStateJson -Value $property.Value
+            $properties += "${keyJson}:$valueJson"
+        }
+        return "{$($properties -join ',')}"
+    }
+    if ($Value -is [array]) {
+        $items = @()
+        foreach ($item in $Value) {
+            $items += (ConvertTo-CanonicalArtifactStateJson -Value $item)
+        }
+        return "[$($items -join ',')]"
+    }
+    return [string](ConvertTo-Json -InputObject $Value -Compress -Depth 100)
+}
+
+function Assert-PersistedMovementArtifactState {
+    param(
+        [object]$SelectionEntry,
+        [switch]$ManualReviewFallback
+    )
+
+    $artifactState = Get-ObjectProperty -Object $SelectionEntry -Name "artifactState"
+    if ($null -eq $artifactState) {
+        throw "Selected movement is missing its persisted artifact state."
+    }
+    $stateJson = ConvertTo-Json -InputObject $artifactState -Compress -Depth 100
+    $validationCode = "import json,sys; from exercise_motion_pkg.artifact_state import validate_artifact_state; state=validate_artifact_state(json.loads(sys.argv[1])); print(json.dumps({key:state.get(key) for key in ('artifactClass','terminal','lineageComplete','requiredClass','history','selectionEvidence')},separators=(',',':')))"
+    $validationOutput = @(Invoke-PythonModule -Arguments @(
+        "-c",
+        $validationCode,
+        $stateJson
+    ))
+    $validationJson = ($validationOutput -join [Environment]::NewLine).Trim()
+    if ([string]::IsNullOrWhiteSpace($validationJson)) {
+        throw "Python artifact state validator returned no movement state."
+    }
+    $validatedState = $validationJson | ConvertFrom-Json -ErrorAction Stop
+    $entryArtifactClass = [string](Get-ObjectProperty -Object $SelectionEntry -Name "artifactClass")
+    if ([string]$validatedState.artifactClass -ne $entryArtifactClass) {
+        throw "Selected movement artifact class differs from its persisted state."
+    }
+    if (-not $ManualReviewFallback -and -not [bool]$validatedState.terminal) {
+        throw "Selected artifact class '$($validatedState.artifactClass)' is not terminal for its movement contract."
+    }
+    return [ordered]@{
+        artifactClass = [string]$validatedState.artifactClass
+        terminal = [bool]$validatedState.terminal
+        lineageComplete = $validatedState.lineageComplete
+        requiredClass = $validatedState.requiredClass
+        history = @($validatedState.history)
+        selectionEvidence = $validatedState.selectionEvidence
+    }
+}
+
+function New-PackagedArtifactState {
+    param(
+        [object]$MovementState,
+        [string]$PackageClass
+    )
+
+    $builderMovementState = [ordered]@{
+        schemaVersion = 1
+        artifactClass = $MovementState.artifactClass
+        requiredClass = $MovementState.requiredClass
+        terminal = $MovementState.terminal
+        lineageComplete = $MovementState.lineageComplete
+        history = @($MovementState.history)
+        selectionEvidence = $MovementState.selectionEvidence
+    }
+    $movementStateJson = ConvertTo-Json -InputObject $builderMovementState -Compress -Depth 100
+    $builderCode = "import json,sys; from exercise_motion_pkg.artifact_state import build_packaged_artifact_state; print(json.dumps(build_packaged_artifact_state(json.loads(sys.argv[1]),package_class=sys.argv[2]),separators=(',',':')))"
+    $builderOutput = @(Invoke-PythonModule -Arguments @(
+        "-c",
+        $builderCode,
+        $movementStateJson,
+        $PackageClass
+    ))
+    $builderJson = ($builderOutput -join [Environment]::NewLine).Trim()
+    if ([string]::IsNullOrWhiteSpace($builderJson)) {
+        throw "Python artifact state builder returned no packaged state."
+    }
+    return ($builderJson | ConvertFrom-Json -ErrorAction Stop)
+}
+
+function Assert-SelectedSkeletonReviewParity {
+    param(
+        [object]$SelectionEntry,
+        [string]$SourcePath,
+        [string]$PackagedPath,
+        [switch]$ManualReviewFallback
+    )
+
+    $movementState = Assert-PersistedMovementArtifactState -SelectionEntry $SelectionEntry -ManualReviewFallback:$ManualReviewFallback
+    $artifactClass = $movementState.artifactClass
+    $artifactHistory = $movementState.history
+
+    $sourcePayload = Get-Content -LiteralPath $SourcePath -Raw | ConvertFrom-Json
+    $embeddedArtifactState = Get-ObjectProperty -Object $sourcePayload -Name "artifactState"
+    if ($null -eq $embeddedArtifactState) {
+        throw "Selected skeleton is missing its persisted artifact state."
+    }
+    $artifactStateValidationCode = "import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from exercise_motion_pkg.artifact_state import validate_artifact_state; payload=json.loads(Path(sys.argv[2]).read_text(encoding='utf-8')); validate_artifact_state(payload.get('artifactState'),movement_payload=payload)"
+    Invoke-PythonModule -Arguments @(
+        "-c",
+        $artifactStateValidationCode,
+        $repoRoot,
+        $SourcePath
+    )
+    $manifestStateJson = ConvertTo-CanonicalArtifactStateJson -Value (Get-ObjectProperty -Object $SelectionEntry -Name "artifactState")
+    $embeddedStateJson = ConvertTo-CanonicalArtifactStateJson -Value $embeddedArtifactState
+    if ($manifestStateJson -cne $embeddedStateJson) {
+        throw "Selected skeleton artifact state differs from the validated selection manifest state."
+    }
+
+    $ranking = Get-ObjectProperty -Object $SelectionEntry -Name "ranking"
+    $rankingPayload = Get-ObjectProperty -Object $ranking -Name "payload"
+    $finalValidation = Get-ObjectProperty -Object $rankingPayload -Name "finalOutputValidation"
+    $renderEvidence = Get-ObjectProperty -Object $finalValidation -Name "renderEvidence"
+    $renderedIdentity = Get-ObjectProperty -Object $renderEvidence -Name "skeletonIdentity"
+    $reviewWindow = Get-ObjectProperty -Object $renderEvidence -Name "reviewWindow"
+    $expectedHash = Get-ObjectProperty -Object $renderedIdentity -Name "sha256"
+    if ([string]::IsNullOrWhiteSpace([string]$expectedHash)) {
+        if ($ManualReviewFallback) {
+            return [ordered]@{
+                verified = $false
+                reason = "review_identity_unavailable"
+                artifactClass = $artifactClass
+                artifactHistory = $artifactHistory
+                requiredClass = $movementState.requiredClass
+                parentTerminal = $movementState.terminal
+                selectionEvidence = $movementState.selectionEvidence
+            }
+        }
+        throw "Selected movement has no final-validation skeleton identity."
+    }
+    if (-not $ManualReviewFallback) {
+        $classGate = Get-ObjectProperty -Object $finalValidation -Name "artifactClassGate"
+        if ($null -eq $classGate -or (
+            (Get-ObjectProperty -Object $classGate -Name "passed") -ne $true -or
+            [string](Get-ObjectProperty -Object $classGate -Name "artifactClass") -ne $artifactClass
+        )) {
+            throw "Final validation did not approve the selected artifact class."
+        }
+        if ($null -eq $reviewWindow) {
+            throw "Final validation has no persisted review window for the selected movement."
+        }
+    }
+    if ($null -ne $reviewWindow) {
+        $reviewFrameCount = Get-ObjectProperty -Object $reviewWindow -Name "frameCount"
+        $reviewFrameIndices = Get-ObjectProperty -Object $reviewWindow -Name "frameIndices"
+        $reviewSelection = Get-ObjectProperty -Object $reviewWindow -Name "selection"
+        if ($null -eq $reviewFrameCount -or
+            $null -eq $reviewFrameIndices -or @($reviewFrameIndices).Count -eq 0 -or
+            [string](Get-ObjectProperty -Object $reviewSelection -Name "artifactClass") -ne $artifactClass) {
+            throw "Final render review window is incomplete or names a different artifact class."
+        }
+        foreach ($frameIndex in @($reviewFrameIndices)) {
+            if ([long]$frameIndex -lt 0 -or [long]$frameIndex -ge [long]$reviewFrameCount) {
+                throw "Final render review window contains a frame outside the selected skeleton."
+            }
+        }
+        if ($artifactClass -eq "cyclic_rebake" -or $artifactClass -eq "bounded_movement_rebake") {
+            $selectionEvidence = $movementState.selectionEvidence
+            $selectedLineage = if ($artifactClass -eq "cyclic_rebake") {
+                Get-ObjectProperty -Object $selectionEvidence -Name "cycleSelection"
+            } else {
+                Get-ObjectProperty -Object $selectionEvidence -Name "boundedMovementSelection"
+            }
+            $expectedSelectionId = [string](Get-ObjectProperty -Object $selectedLineage -Name "selectionId")
+            $expectedInterval = Get-ObjectProperty -Object $selectedLineage -Name "interval"
+            $reviewedSelectionId = [string](Get-ObjectProperty -Object $reviewSelection -Name "selectionId")
+            $reviewedInterval = Get-ObjectProperty -Object $reviewSelection -Name "interval"
+            if ($expectedSelectionId -ne $reviewedSelectionId -or $null -eq $reviewedInterval) {
+                throw "Final render review window does not identify the selected source interval."
+            }
+            foreach ($field in @("type", "startFrame", "endFrame", "startTimeSec", "endTimeSec", "durationSec")) {
+                $expectedValue = Get-ObjectProperty -Object $expectedInterval -Name $field
+                $reviewedValue = Get-ObjectProperty -Object $reviewedInterval -Name $field
+                $mismatch = $null -eq $expectedValue -or $null -eq $reviewedValue
+                if (-not $mismatch -and $field -eq "type") {
+                    $mismatch = [string]$expectedValue -ne [string]$reviewedValue
+                } elseif (-not $mismatch -and $field -match "Frame$") {
+                    $mismatch = [long]$expectedValue -ne [long]$reviewedValue
+                } elseif (-not $mismatch) {
+                    $mismatch = [math]::Abs([double]$expectedValue - [double]$reviewedValue) -gt 0.000001
+                }
+                if ($mismatch) {
+                    throw "Final render review interval differs from the artifact selection evidence."
+                }
+            }
+        }
+    }
+
+    $sourceIdentity = Get-WearSkeletonIdentity -Path $SourcePath
+    $packagedIdentity = Get-WearSkeletonIdentity -Path $PackagedPath
+    $expectedFrameCount = Get-ObjectProperty -Object $renderedIdentity -Name "frameCount"
+    if (
+        $sourceIdentity.sha256 -ne [string]$expectedHash -or
+        $packagedIdentity.sha256 -ne $sourceIdentity.sha256 -or
+        ($null -ne $expectedFrameCount -and [int]$expectedFrameCount -ne [int]$packagedIdentity.frameCount)
+    ) {
+        throw "Packaged Wear skeleton does not match the skeleton reviewed by final validation."
+    }
+    if ($null -ne $reviewWindow -and [int]$reviewWindow.frameCount -ne [int]$packagedIdentity.frameCount) {
+        throw "Final render review window frame count differs from the packaged skeleton."
+    }
+    return [ordered]@{
+        verified = $true
+        artifactClass = $artifactClass
+        artifactHistory = $artifactHistory
+        requiredClass = $movementState.requiredClass
+        parentTerminal = $movementState.terminal
+        selectionEvidence = $movementState.selectionEvidence
+        sha256 = $packagedIdentity.sha256
+        frameCount = $packagedIdentity.frameCount
+    }
+}
+
+function Write-AtomicJsonDocument {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$InputObject,
+        [int]$Depth = 100
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $parentPath = Split-Path -Parent $fullPath
+    [System.IO.Directory]::CreateDirectory($parentPath) | Out-Null
+    $temporaryPath = Join-Path $parentPath (".{0}.{1}.{2}.tmp" -f `
+        [System.IO.Path]::GetFileName($fullPath), $PID, [guid]::NewGuid().ToString("N"))
+    try {
+        $json = ConvertTo-Json -InputObject $InputObject -Depth $Depth
+        [System.IO.File]::WriteAllText(
+            $temporaryPath,
+            $json + [Environment]::NewLine,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::Move($temporaryPath, $fullPath, $true)
+    } finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
+function Record-PackagedSkeletonReviewParity {
+    param(
+        [string]$SelectionManifestPath,
+        [int]$OptionIndex,
+        [string]$PackagedPath,
+        [object]$Parity,
+        [switch]$ManualReviewFallback
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SelectionManifestPath) -or
+        -not (Test-Path -LiteralPath $SelectionManifestPath -PathType Leaf)) {
+        throw "Copied selection manifest is missing; cannot persist packaged skeleton identity."
+    }
+    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json
+    if ($ManualReviewFallback) {
+        $record = Get-ObjectProperty -Object $selection -Name "manualReviewFallback"
+        if ($null -eq $record) {
+            throw "Manual-review fallback is missing from the copied selection manifest."
+        }
+        if ((Get-ObjectProperty -Object $selection -Name "selectionStatus") -ne "needs_manual_review" -or
+            (Get-ObjectProperty -Object $record -Name "selectionStatus") -ne "needs_manual_review") {
+            throw "Manual-review package must retain the needs_manual_review status."
+        }
+        $movementState = Assert-PersistedMovementArtifactState -SelectionEntry $record -ManualReviewFallback
+        if ($movementState.artifactClass -ne $Parity.artifactClass -or
+            [string]::Join("|", @($movementState.history)) -ne [string]::Join("|", @($Parity.artifactHistory))) {
+            throw "Manual-review package parent state differs from its validated artifact state."
+        }
+        $packageState = New-PackagedArtifactState -MovementState $movementState -PackageClass "manual_review_package"
+        $record | Add-Member -NotePropertyName "packagedWearSkeletonPath" -NotePropertyValue $PackagedPath -Force
+        $record | Add-Member -NotePropertyName "packagedSkeletonReviewParity" -NotePropertyValue $Parity -Force
+        $record | Add-Member -NotePropertyName "packagedArtifactClass" -NotePropertyValue "manual_review_package" -Force
+        $record | Add-Member -NotePropertyName "packagedArtifactState" -NotePropertyValue $packageState -Force
+        Write-AtomicJsonDocument -Path $SelectionManifestPath -InputObject $selection -Depth 100
+        return
+    }
+    $selectedIndex = $OptionIndex - 1
+    $selectedResult = @($selection.selectedResults | Where-Object {
+        [int](Get-ObjectProperty -Object $_ -Name "selectedResultIndex") -eq $selectedIndex
+    } | Select-Object -First 1)
+    if ($selectedResult.Count -eq 0) {
+        throw "Selected option $OptionIndex is missing from the copied selection manifest."
+    }
+    $record = $selectedResult[0]
+    if ((Get-ObjectProperty -Object $selection -Name "selectionStatus") -ne "selected") {
+        throw "Accepted package does not have selected manifest status."
+    }
+    $movementState = Assert-PersistedMovementArtifactState -SelectionEntry $record
+    if ($movementState.artifactClass -ne $Parity.artifactClass -or
+        [string]::Join("|", @($movementState.history)) -ne [string]::Join("|", @($Parity.artifactHistory))) {
+        throw "Accepted package parent state differs from its validated artifact state."
+    }
+    $packageState = New-PackagedArtifactState -MovementState $movementState -PackageClass "packaged_movement"
+    $record | Add-Member -NotePropertyName "packagedWearSkeletonPath" -NotePropertyValue $PackagedPath -Force
+    $record | Add-Member -NotePropertyName "packagedSkeletonReviewParity" -NotePropertyValue $Parity -Force
+    $record | Add-Member -NotePropertyName "packagedArtifactClass" -NotePropertyValue "packaged_movement" -Force
+    $record | Add-Member -NotePropertyName "packagedArtifactState" -NotePropertyValue $packageState -Force
+    if ($selectedIndex -eq 0 -and $null -ne $selection.selected) {
+        $selection.selected | Add-Member -NotePropertyName "packagedWearSkeletonPath" -NotePropertyValue $PackagedPath -Force
+        $selection.selected | Add-Member -NotePropertyName "packagedSkeletonReviewParity" -NotePropertyValue $Parity -Force
+        $selection.selected | Add-Member -NotePropertyName "packagedArtifactClass" -NotePropertyValue "packaged_movement" -Force
+        $selection.selected | Add-Member -NotePropertyName "packagedArtifactState" -NotePropertyValue $record.packagedArtifactState -Force
+    }
+    Write-AtomicJsonDocument -Path $SelectionManifestPath -InputObject $selection -Depth 100
+}
+
 function Write-PublishedSelectionAcceptanceMarker {
     param(
         [object]$WorkItem,
@@ -890,7 +1257,7 @@ function Write-PublishedSelectionAcceptanceMarker {
         selectedManifestSha256 = (Get-FileHash -LiteralPath $SelectionManifestPath -Algorithm SHA256).Hash
         publishedBy = "workout_plan_selected_output"
     }
-    $marker | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $markerPath -Encoding UTF8
+    Write-AtomicJsonDocument -Path $markerPath -InputObject $marker -Depth 6
 }
 
 function Copy-SelectedPreviewRuntimeAssets {
@@ -959,13 +1326,13 @@ function Copy-SelectedSourceAuditEvidence {
             $validation = Get-Content -LiteralPath $destinationValidationPath -Raw | ConvertFrom-Json
             if ($validation.metrics) {
                 $validation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
-                $validation | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $destinationValidationPath -Encoding UTF8
+                Write-AtomicJsonDocument -Path $destinationValidationPath -InputObject $validation -Depth 100
             }
             if ($destinationSelectionPath) {
                 $selection = Get-Content -LiteralPath $destinationSelectionPath -Raw | ConvertFrom-Json
                 if ($selection.exactSourcePhaseValidation -and $selection.exactSourcePhaseValidation.metrics) {
                     $selection.exactSourcePhaseValidation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
-                    $selection | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $destinationSelectionPath -Encoding UTF8
+                    Write-AtomicJsonDocument -Path $destinationSelectionPath -InputObject $selection -Depth 100
                 }
             }
         } catch {
@@ -1263,9 +1630,165 @@ function Get-SharedLlamaLiveInflightCounters {
     return $live
 }
 
+function Get-MotionServiceRuntimeState {
+    param([object]$RuntimeOwner)
+
+    if ($null -eq $RuntimeOwner) {
+        return "stopped"
+    }
+    switch ([string]$RuntimeOwner.kind) {
+        "process" {
+            $processId = 0
+            try { $processId = [int]$RuntimeOwner.pid } catch { return "unknown" }
+            if ($processId -le 0) { return "unknown" }
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -eq $process) { return "stopped" }
+            try {
+                $identity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
+                if ($null -ne $RuntimeOwner.processIdentity -and
+                    $identity -ne [long]$RuntimeOwner.processIdentity) {
+                    return "stopped"
+                }
+                if ($process.HasExited) { return "stopped" }
+                return "running"
+            } catch {
+                return "unknown"
+            }
+        }
+        "docker" {
+            $identifier = [string]$RuntimeOwner.containerId
+            if ([string]::IsNullOrWhiteSpace($identifier)) {
+                $identifier = [string]$RuntimeOwner.containerName
+            }
+            if ([string]::IsNullOrWhiteSpace($identifier)) { return "unknown" }
+            $selector = if ($RuntimeOwner.containerId) {
+                "id=$($RuntimeOwner.containerId)"
+            } else {
+                "name=$($RuntimeOwner.containerName)"
+            }
+            for ($attempt = 0; $attempt -lt 3; $attempt += 1) {
+                $running = $null
+                $inspectExitCode = -1
+                try {
+                    $running = (& docker inspect -f "{{.State.Running}}" $identifier 2>$null)
+                    $inspectExitCode = $LASTEXITCODE
+                } catch {
+                    # Some hosts promote native nonzero exits to terminating
+                    # errors. Preserve the inspect result and still run the
+                    # independent list probe for auto-removed containers.
+                    if ($null -ne $LASTEXITCODE) {
+                        $inspectExitCode = [int]$LASTEXITCODE
+                    }
+                }
+                if ($inspectExitCode -eq 0) {
+                    $value = ([string]$running).Trim().ToLowerInvariant()
+                    if ($value -eq "true") { return "running" }
+                    if ($value -eq "false") { return "stopped" }
+                }
+
+                $listed = $null
+                $listExitCode = -1
+                try {
+                    $listed = (& docker ps --all --filter $selector --format "{{.ID}}" 2>$null)
+                    $listExitCode = $LASTEXITCODE
+                } catch {
+                    if ($null -ne $LASTEXITCODE) {
+                        $listExitCode = [int]$LASTEXITCODE
+                    }
+                }
+                # WHAM containers use --rm. During removal, inspect and list
+                # can briefly disagree; retry that transient state before
+                # retaining a stale owner record as unconfirmed.
+                if ($listExitCode -eq 0 -and
+                    [string]::IsNullOrWhiteSpace([string]$listed)) {
+                    return "stopped"
+                }
+                if ($attempt -lt 2) {
+                    Start-Sleep -Milliseconds 150
+                }
+            }
+            return "unknown"
+        }
+        default {
+            return "unknown"
+        }
+    }
+}
+
+function Write-MotionWorkspaceLeaseOwner {
+    param(
+        [object]$Lease,
+        [object]$RuntimeOwner,
+        [string]$ServiceState,
+        [switch]$ClearRuntimeOwner
+    )
+
+    if ($null -eq $Lease -or [string]::IsNullOrWhiteSpace($Lease.ownerPath)) {
+        return
+    }
+    $owner = Get-Content -LiteralPath $Lease.ownerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$owner.ownerToken -ne [string]$Lease.ownerToken) {
+        throw "Motion workspace lease ownership changed before its runtime state could be updated: $($Lease.ownerPath)"
+    }
+    if ($ClearRuntimeOwner) {
+        $owner.PSObject.Properties.Remove("runtimeOwner")
+        $owner.PSObject.Properties.Remove("serviceState")
+    } else {
+        $owner | Add-Member -NotePropertyName "runtimeOwner" -NotePropertyValue $RuntimeOwner -Force
+        $owner | Add-Member -NotePropertyName "serviceState" -NotePropertyValue $ServiceState -Force
+    }
+    $temporaryPath = "$($Lease.ownerPath).$($Lease.ownerToken).tmp"
+    try {
+        $owner | ConvertTo-Json -Depth 12 -Compress |
+            Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+        Move-Item -LiteralPath $temporaryPath -Destination $Lease.ownerPath -Force | Out-Null
+    } finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-MotionServiceSessionRuntimeOwner {
+    param(
+        [string]$SessionDirectory,
+        [object]$RuntimeOwner,
+        [string]$ServiceState
+    )
+
+    $lease = $null
+    if ([string]::IsNullOrWhiteSpace($SessionDirectory)) {
+        $lease = $script:MotionWorkspaceLease
+    } elseif ($script:MotionServiceSessionLeases.ContainsKey($SessionDirectory)) {
+        $lease = $script:MotionServiceSessionLeases[$SessionDirectory]
+    }
+    if ($null -eq $lease) {
+        return
+    }
+    $lease | Add-Member -NotePropertyName "runtimeOwner" -NotePropertyValue $RuntimeOwner -Force
+    Write-MotionWorkspaceLeaseOwner `
+        -Lease $lease `
+        -RuntimeOwner $RuntimeOwner `
+        -ServiceState $ServiceState
+}
+
+function Set-MotionServiceSessionState {
+    param(
+        [string]$SessionDirectory,
+        [object]$RuntimeOwner,
+        [string]$ServiceState
+    )
+
+    Set-MotionServiceSessionRuntimeOwner `
+        -SessionDirectory $SessionDirectory `
+        -RuntimeOwner $RuntimeOwner `
+        -ServiceState $ServiceState
+}
+
 function Start-SharedLlamaServer {
     param([string]$SessionDir)
 
+    $sessionLeaseKey = Acquire-MotionServiceSessionLease `
+        -SessionDirectory $SessionDir `
+        -Stage "shared_llama_server"
     New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir "in-flight") | Out-Null
     # Stale markers from a previous supervisor instance must not satisfy or
     # confuse a fresh start; crashed clients leave their counters behind.
@@ -1316,6 +1839,21 @@ function Start-SharedLlamaServer {
     )
     $logPath = Join-Path $SessionDir "server.log"
     $errorLogPath = Join-Path $SessionDir "server.err.log"
+    $baseUrl = "http://${host_}:${port}"
+    # Persist an unknown process owner before spawn. If the wrapper is
+    # interrupted between process creation and PID recording, a later run must
+    # retain this session instead of assuming it is safe to start another one.
+    $runtimeOwner = [ordered]@{
+        kind = "process"
+        service = "llama-server"
+        pid = 0
+        processIdentity = $null
+        baseUrl = $baseUrl
+    }
+    Set-MotionServiceSessionRuntimeOwner `
+        -SessionDirectory $sessionLeaseKey `
+        -RuntimeOwner $runtimeOwner `
+        -ServiceState "starting"
     Write-Host "Starting shared llama.cpp server ($($serverArgs -join ' '))..."
     $process = Start-Process `
         -FilePath $LlamaCppServerCommand `
@@ -1324,7 +1862,12 @@ function Start-SharedLlamaServer {
         -RedirectStandardError $errorLogPath `
         -WindowStyle Hidden `
         -PassThru
-    $baseUrl = "http://${host_}:${port}"
+    $runtimeOwner.pid = $process.Id
+    $runtimeOwner.processIdentity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
+    Set-MotionServiceSessionRuntimeOwner `
+        -SessionDirectory $sessionLeaseKey `
+        -RuntimeOwner $runtimeOwner `
+        -ServiceState "running"
     $deadline = (Get-Date).AddSeconds($LlamaCppServerStartupTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
@@ -1352,6 +1895,8 @@ function Start-SharedLlamaServer {
                 sessionDir = $SessionDir
                 baseUrl = $baseUrl
                 logPath = $logPath
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
             }
         } catch {
             Start-Sleep -Seconds 2
@@ -1380,6 +1925,10 @@ function Stop-SharedLlamaServer {
         return
     }
     $sessionDir = $Server.sessionDir
+    Set-MotionServiceSessionState `
+        -SessionDirectory $Server.sessionLeaseKey `
+        -RuntimeOwner $Server.runtimeOwner `
+        -ServiceState "stopping"
     try {
         # Close attached clients' admission gates before draining, mirroring the
         # Python quiesce protocol's stop-intent ordering.
@@ -1401,14 +1950,19 @@ function Stop-SharedLlamaServer {
     } catch {
         Write-Warning "Failed to stop shared llama.cpp server (pid $($Server.processId)): $($_.Exception.Message)"
     }
-    foreach ($marker in @("stop_intent.json", "ready.json", "heartbeat.json")) {
-        $path = Join-Path $sessionDir $marker
-        if (Test-Path -LiteralPath $path) {
-            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $Server.sessionLeaseKey
+    if ($runtimeState -eq "stopped") {
+        foreach ($marker in @("stop_intent.json", "ready.json", "heartbeat.json")) {
+            $path = Join-Path $sessionDir $marker
+            if (Test-Path -LiteralPath $path) {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
         }
+        @{ stoppedByPid = $PID; stoppedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sessionDir "stopped.json") -Encoding UTF8
+    } else {
+        Write-Warning "Shared llama.cpp server shutdown could not be confirmed; preserving its session markers and owner evidence."
     }
-    @{ stoppedByPid = $PID; stoppedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
-        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sessionDir "stopped.json") -Encoding UTF8
 }
 
 function Start-WhamWarmWorker {
@@ -1420,18 +1974,16 @@ function Start-WhamWarmWorker {
         [string]$Backend = "wham"
     )
 
+    $sessionLeaseKey = Acquire-MotionServiceSessionLease `
+        -SessionDirectory $SessionDir `
+        -Stage "$Backend warm-worker service"
     New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
-    foreach ($child in @("jobs", "running", "results", "job_logs")) {
+    $workerQueueDirectories = @("jobs", "running", "results", "job_logs", "ambiguous")
+    foreach ($child in $workerQueueDirectories) {
         New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
     }
-    # A terminated wrapper can leave queue markers behind after the process that
-    # was waiting for their result has gone away. Never make a replacement worker
-    # spend GPU time on those orphaned requests; the resumed bake submits a fresh
-    # job and reuses any completed reconstruction artifacts normally.
-    foreach ($queueDirectory in @("jobs", "running")) {
-        Get-ChildItem -LiteralPath (Join-Path $SessionDir $queueDirectory) -Filter "*.json" -File -ErrorAction SilentlyContinue |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-    }
+    # Each backend worker now preserves unclaimed jobs and classifies claimed
+    # jobs before loading its model; never clear either queue at supervisor start.
     foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop", "stopped.json")) {
         $path = Join-Path $SessionDir $staleFile
         if (Test-Path -LiteralPath $path) {
@@ -1440,6 +1992,16 @@ function Start-WhamWarmWorker {
     }
 
     $containerName = "mwa-$Backend-worker-$([guid]::NewGuid().ToString('N'))"
+    $runtimeOwner = [ordered]@{
+        kind = "docker"
+        service = "$Backend-warm-worker"
+        containerName = $containerName
+        containerId = $null
+    }
+    Set-MotionServiceSessionRuntimeOwner `
+        -SessionDirectory $sessionLeaseKey `
+        -RuntimeOwner $runtimeOwner `
+        -ServiceState "starting"
     $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
     if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
         $dockerArgs += @("--gpus", $WhamDockerGpus)
@@ -1491,6 +2053,11 @@ function Start-WhamWarmWorker {
         throw "Failed to start warm WHAM worker container: $containerId"
     }
     $containerId = ([string]$containerId).Trim()
+    $runtimeOwner.containerId = $containerId
+    Set-MotionServiceSessionRuntimeOwner `
+        -SessionDirectory $sessionLeaseKey `
+        -RuntimeOwner $runtimeOwner `
+        -ServiceState "running"
     $readyPath = Join-Path $SessionDir "ready.json"
     $startupErrorPath = Join-Path $SessionDir "startup_error.json"
     $deadline = (Get-Date).AddSeconds($WhamWorkerStartupTimeoutSeconds)
@@ -1504,6 +2071,8 @@ function Start-WhamWarmWorker {
                 sessionDir = $SessionDir
                 mountRoot = $MountRoot
                 readyPath = $readyPath
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
             }
         }
         if (Test-Path -LiteralPath $startupErrorPath) {
@@ -1541,6 +2110,10 @@ function Stop-WhamWarmWorker {
     if ($null -eq $Worker) {
         return
     }
+    Set-MotionServiceSessionState `
+        -SessionDirectory $Worker.sessionLeaseKey `
+        -RuntimeOwner $Worker.runtimeOwner `
+        -ServiceState "stopping"
     try {
         "stop" | Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stop") -Encoding UTF8
     } catch {
@@ -1549,6 +2122,10 @@ function Stop-WhamWarmWorker {
         & docker stop --time 10 $Worker.containerName | Out-Null
     } catch {
         Write-Warning "Failed to stop warm WHAM worker container '$($Worker.containerName)': $($_.Exception.Message)"
+    }
+    $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $Worker.sessionLeaseKey
+    if ($runtimeState -ne "stopped") {
+        Write-Warning "Warm $($Worker.runtimeOwner.service) shutdown could not be confirmed; preserving its session owner evidence."
     }
 }
 
@@ -2805,7 +3382,13 @@ function Start-BakeJob {
         }
 
         function Get-AttemptCandidateSnapshotPaths {
-            param([string]$CandidatesPath)
+            param(
+                [string]$CandidatesPath,
+                [string]$DiscoveryArgumentsSha256,
+                [string]$ExercisePlanSha256,
+                [string]$EquipmentSha256,
+                [int]$DiscoveryStagePolicyVersion
+            )
             $snapshotDir = Join-Path (Split-Path -Parent $CandidatesPath) "attempt_exclusions"
             if (-not (Test-Path -LiteralPath $snapshotDir)) {
                 return @()
@@ -2817,9 +3400,19 @@ function Start-BakeJob {
                         try {
                             $snapshot = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
                             $signature = $snapshot.wrapperDiscoverySignature
+                            $cachedArgumentsHash = "$($signature.argumentsSha256)".ToLowerInvariant()
+                            $expectedArgumentsHash = "$DiscoveryArgumentsSha256".ToLowerInvariant()
+                            $cachedPlanHash = "$($signature.exercisePlanSha256)".ToLowerInvariant()
+                            $expectedPlanHash = "$ExercisePlanSha256".ToLowerInvariant()
+                            $cachedEquipmentHash = "$($signature.equipmentSha256)".ToLowerInvariant()
+                            $expectedEquipmentHash = "$EquipmentSha256".ToLowerInvariant()
                             if (
                                 $signature -and
-                                [int]$signature.policyVersion -eq $DiscoveryStagePolicyVersion
+                                [int]$signature.schemaVersion -eq 1 -and
+                                [int]$signature.policyVersion -eq $DiscoveryStagePolicyVersion -and
+                                $cachedArgumentsHash -eq $expectedArgumentsHash -and
+                                $cachedPlanHash -eq $expectedPlanHash -and
+                                $cachedEquipmentHash -eq $expectedEquipmentHash
                             ) {
                                 $_.FullName
                             }
@@ -2830,6 +3423,66 @@ function Start-BakeJob {
                         }
                     }
             )
+        }
+
+        function Get-CandidateEvidenceIdentities {
+            param([string]$Path)
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+                return @()
+            }
+            try {
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+            } catch {
+                return @()
+            }
+            $identities = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::OrdinalIgnoreCase
+            )
+            foreach ($exercise in @($payload.exercises)) {
+                foreach ($candidate in @($exercise.candidates)) {
+                    if ($null -eq $candidate) {
+                        continue
+                    }
+                    $identity = @(
+                        $candidate.videoId,
+                        $candidate.id,
+                        $candidate.url,
+                        $candidate.webpageUrl
+                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1
+                    if ([string]::IsNullOrWhiteSpace([string]$identity)) {
+                        $serialized = $candidate | ConvertTo-Json -Depth 64 -Compress
+                        $identity = [Convert]::ToHexString(
+                            [System.Security.Cryptography.SHA256]::HashData(
+                                [System.Text.Encoding]::UTF8.GetBytes($serialized)
+                            )
+                        )
+                    }
+                    [void]$identities.Add([string]$identity)
+                }
+            }
+            return @($identities)
+        }
+
+        function Get-NewCandidateEvidenceCount {
+            param(
+                [string]$CandidatesPath,
+                [string[]]$PreviousCandidateJsonPaths
+            )
+            $known = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::OrdinalIgnoreCase
+            )
+            foreach ($previousPath in @($PreviousCandidateJsonPaths | Select-Object -Unique)) {
+                foreach ($identity in @(Get-CandidateEvidenceIdentities -Path $previousPath)) {
+                    [void]$known.Add([string]$identity)
+                }
+            }
+            $newCount = 0
+            foreach ($identity in @(Get-CandidateEvidenceIdentities -Path $CandidatesPath)) {
+                if ($known.Add([string]$identity)) {
+                    $newCount += 1
+                }
+            }
+            return $newCount
         }
 
         function Save-AttemptSelectionManifest {
@@ -2936,7 +3589,14 @@ function Start-BakeJob {
         $hasTargetLimit = $MaxTargetSuitableCount -gt 0
         $targetLimitLabel = if ($hasTargetLimit) { "$MaxTargetSuitableCount" } else { "evidence-exhaustion" }
         $attemptIndex = 1
-        $previousAttemptCandidateJsonPaths = @(Get-AttemptCandidateSnapshotPaths -CandidatesPath $CandidatesPath)
+        $previousAttemptCandidateJsonPaths = @(
+            Get-AttemptCandidateSnapshotPaths `
+                -CandidatesPath $CandidatesPath `
+                -DiscoveryArgumentsSha256 $DiscoveryArgumentsSha256 `
+                -ExercisePlanSha256 $ExercisePlanSha256 `
+                -EquipmentSha256 $EquipmentSha256 `
+                -DiscoveryStagePolicyVersion $DiscoveryStagePolicyVersion
+        )
         $useExistingCandidates = $UseExistingCandidatesForFirstAttempt -and (Test-Path -LiteralPath $CandidatesPath)
         $discoverySecondsTotal = 0.0
         $bakeSecondsTotal = 0.0
@@ -3029,6 +3689,40 @@ function Start-BakeJob {
                     return
                 }
 
+                if ($previousAttemptCandidateJsonPaths.Count -gt 0) {
+                    $newCandidateEvidenceCount = Get-NewCandidateEvidenceCount `
+                        -CandidatesPath $CandidatesPath `
+                        -PreviousCandidateJsonPaths $previousAttemptCandidateJsonPaths
+                    if ($newCandidateEvidenceCount -eq 0) {
+                        "[$(Get-Date -Format o)] discovery returned no new candidate identities; stopping after evidence exhaustion" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+                        Restore-BestNoSelectionManifest
+                        $restoredSelectionPath = Join-Path $BakeWorkspace "selection_manifest.json"
+                        $restoredSelection = if (Test-Path -LiteralPath $restoredSelectionPath) {
+                            Get-Content -LiteralPath $restoredSelectionPath -Raw | ConvertFrom-Json
+                        } else {
+                            $null
+                        }
+                        $terminalReason = if ($restoredSelection -and $restoredSelection.manualReviewFallback) {
+                            $null
+                        } else {
+                            "no_new_candidate_identities"
+                        }
+                        [pscustomobject]@{
+                            exitCode = 0
+                            stage = "discovery_evidence_exhausted"
+                            logPath = $LogPath
+                            discoverySeconds = $discoverySecondsTotal
+                            bakeSeconds = $bakeSecondsTotal
+                            discoveryAttemptCount = $discoveryAttemptCount
+                            bakeAttemptCount = $bakeAttemptCount
+                            noNewWork = $true
+                            terminalReason = $terminalReason
+                            attempts = $attempts
+                        }
+                        return
+                    }
+                }
+
                 if (Test-Path -LiteralPath $CandidatesPath) {
                     $attemptCandidateSnapshotPath = Save-AttemptCandidateSnapshot -Path $CandidatesPath -AttemptIndex $attemptIndex
                     if (-not [string]::IsNullOrWhiteSpace($attemptCandidateSnapshotPath)) {
@@ -3065,8 +3759,28 @@ function Start-BakeJob {
             if ($bakeAttemptCount -gt 0 -or $ReusePreviousTerminalResults) {
                 $attemptBakeArguments += "--reuse-previous-terminal-results"
             }
-            & $PythonCommand @attemptBakeArguments *>> $LogPath
-            $bakeExitCode = $LASTEXITCODE
+            $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
+            $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
+            try {
+                # The legacy retry runs outside the staged service process. Let
+                # its warm-worker client request a supervised restart when a
+                # prior GPU handoff stopped the worker. Python publishes that
+                # request only after acquiring the shared GPU and Docker locks.
+                if ($attemptBakeArguments -contains "--warm-wham-worker") {
+                    $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
+                }
+                if ($attemptBakeArguments -contains "--warm-gvhmr-worker") {
+                    $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
+                }
+                & $PythonCommand @attemptBakeArguments *>> $LogPath
+                $bakeExitCode = $LASTEXITCODE
+            }
+            finally {
+                if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
+                else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
+                if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
+                else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
+            }
             if ($bakeExitCode -eq 75) {
                 [pscustomobject]@{ exitCode = 75; stage = "storage"; logPath = $LogPath }
                 return
@@ -3204,6 +3918,453 @@ function Start-BakeJob {
     return $job
 }
 
+function ConvertTo-StagedServiceArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    $builder = [System.Text.StringBuilder]::new()
+    [void]$builder.Append([char]34)
+    $backslashCount = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char]92) {
+            $backslashCount += 1
+            continue
+        }
+        if ($character -eq [char]34) {
+            [void]$builder.Append(([string]([char]92) * (2 * $backslashCount + 1)))
+            [void]$builder.Append([char]34)
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void]$builder.Append(([string]([char]92) * $backslashCount))
+            $backslashCount = 0
+        }
+        [void]$builder.Append($character)
+    }
+    if ($backslashCount -gt 0) {
+        [void]$builder.Append(([string]([char]92) * (2 * $backslashCount)))
+    }
+    [void]$builder.Append([char]34)
+    return $builder.ToString()
+}
+
+function Get-StagedBakeQueueServiceState {
+    param([string]$QueueRoot)
+
+    $statePath = Join-Path $QueueRoot "worker_state.json"
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        return [pscustomobject]@{
+            healthy = $false
+            processState = "unknown"
+            matchingProcess = $false
+            state = $null
+            process = $null
+        }
+    }
+    try {
+        $workerState = Get-Content -LiteralPath $statePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$workerState.schemaVersion -ne 1 -or
+            -not [string]::Equals([string]$workerState.queueRoot, $QueueRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{
+                healthy = $false
+                processState = "unknown"
+                matchingProcess = $false
+                state = $workerState
+                process = $null
+            }
+        }
+        $workerPid = 0
+        try { $workerPid = [int]$workerState.pid } catch {}
+        if ($workerPid -le 0) {
+            return [pscustomobject]@{
+                healthy = $false
+                processState = "unknown"
+                matchingProcess = $false
+                state = $workerState
+                process = $null
+            }
+        }
+        $workerProcess = Get-Process -Id $workerPid -ErrorAction SilentlyContinue
+        if ($null -eq $workerProcess) {
+            return [pscustomobject]@{
+                healthy = $false
+                processState = "stopped"
+                matchingProcess = $false
+                state = $workerState
+                process = $null
+            }
+        }
+        $expectedIdentity = 0L
+        try { $expectedIdentity = [int64]$workerState.processIdentity } catch {}
+        if ($expectedIdentity -le 0) {
+            return [pscustomobject]@{
+                healthy = $false
+                processState = "unknown"
+                matchingProcess = $false
+                state = $workerState
+                process = $workerProcess
+            }
+        }
+        try {
+            $actualIdentity = [int64]$workerProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+            if ($actualIdentity -ne $expectedIdentity -or $workerProcess.HasExited) {
+                return [pscustomobject]@{
+                    healthy = $false
+                    processState = "stopped"
+                    matchingProcess = $false
+                    state = $workerState
+                    process = $workerProcess
+                }
+            }
+        } catch {
+            return [pscustomobject]@{
+                healthy = $false
+                processState = "unknown"
+                matchingProcess = $false
+                state = $workerState
+                process = $workerProcess
+            }
+        }
+        $heartbeatAge = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 - [double]$workerState.updatedAtEpoch
+        $healthy = (
+            [string]$workerState.status -in @("idle", "running") -and
+            $heartbeatAge -ge -5 -and $heartbeatAge -lt 20
+        )
+        return [pscustomobject]@{
+            healthy = $healthy
+            processState = "running"
+            matchingProcess = $true
+            state = $workerState
+            process = $workerProcess
+        }
+    } catch {
+        return [pscustomobject]@{
+            healthy = $false
+            processState = "unknown"
+            matchingProcess = $false
+            state = $null
+            process = $null
+        }
+    }
+}
+
+function Get-StagedBakeServiceConfigurationFingerprint {
+    param(
+        [string]$ConfiguredPythonCommand,
+        [int]$MaxWaveItems
+    )
+
+    $resolvedPythonCommand = $ConfiguredPythonCommand
+    try {
+        $command = Get-Command -Name $ConfiguredPythonCommand -ErrorAction Stop | Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+            $resolvedPythonCommand = [string]$command.Source
+        }
+    } catch {
+    }
+    $serviceEnvironment = [ordered]@{}
+    Get-ChildItem Env: | Where-Object { $_.Name -like "EXERCISE_MOTION_*" } | Sort-Object Name | ForEach-Object {
+        $serviceEnvironment[[string]$_.Name] = [string]$_.Value
+    }
+    # The service always enables lazy warm-worker startup, regardless of the
+    # caller's ambient values. Fingerprint the effective values it receives.
+    $serviceEnvironment["EXERCISE_MOTION_WHAM_LAZY_START"] = "1"
+    $serviceEnvironment["EXERCISE_MOTION_GVHMR_LAZY_START"] = "1"
+    $payload = [ordered]@{
+        pythonCommand = $resolvedPythonCommand
+        maxWaveItems = [int]$MaxWaveItems
+        environment = $serviceEnvironment
+    }
+    $json = $payload | ConvertTo-Json -Depth 16 -Compress
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        return (($hasher.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    } finally {
+        $hasher.Dispose()
+    }
+}
+
+function Invoke-WithStagedWaveAdmissionLock {
+    param(
+        [string]$QueueRoot,
+        [scriptblock]$Operation
+    )
+
+    # This name matches staged_wave_service.ADMISSION_MUTEX_NAME. A named OS
+    # mutex is released automatically if either process exits unexpectedly.
+    $mutex = [System.Threading.Mutex]::new(
+        $false,
+        "Global\MyWorkoutAssistant.StagedWaveAdmission.v1"
+    )
+    $ownsMutex = $false
+    try {
+        try {
+            $ownsMutex = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
+        } catch [System.Threading.AbandonedMutexException] {
+            $ownsMutex = $true
+        }
+        if (-not $ownsMutex) {
+            throw "Timed out waiting for staged-wave admission lock for '$QueueRoot'."
+        }
+        return & $Operation
+    } finally {
+        if ($ownsMutex) {
+            $mutex.ReleaseMutex()
+        }
+        $mutex.Dispose()
+    }
+}
+
+function Ensure-StagedBakeQueueService {
+    param([int]$MaxWaveItems)
+
+    $queueRoot = $script:StagedWaveServiceQueueRoot
+    $configurationFingerprint = Get-StagedBakeServiceConfigurationFingerprint `
+        -ConfiguredPythonCommand $PythonCommand `
+        -MaxWaveItems $MaxWaveItems
+    foreach ($directoryName in @("requests", "processing", "results", "ambiguous", "cancelled_runs")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $queueRoot $directoryName) | Out-Null
+    }
+    $existingService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+    if ($existingService.matchingProcess -and [string]$existingService.state.status -eq "stopping") {
+        # Idle shutdown closes admission while holding the same mutex used by
+        # producers. Wait for that generation to exit, then start a fresh one.
+        $existingService.process.WaitForExit(20000)
+        $existingService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        if ($existingService.matchingProcess) {
+            throw "Staged-wave service process $($existingService.state.pid) is still stopping; refusing to enqueue until its generation exits."
+        }
+    }
+    if ($existingService.healthy) {
+        $sourceIdentityMatches = [string]$existingService.state.sourceIdentityFingerprint -eq $script:MotionSourceIdentityFingerprint
+        $configurationMatches = [string]$existingService.state.serviceConfigurationFingerprint -eq $configurationFingerprint
+        if ($sourceIdentityMatches -and $configurationMatches) {
+            return
+        }
+        $changedIdentity = if (-not $sourceIdentityMatches) { "source identity" } else { "runtime configuration" }
+        if ([string]$existingService.state.status -ne "idle") {
+            throw "Staged-wave service process $($existingService.state.pid) is still using a different $changedIdentity; refusing to submit work to stale code or settings. Retry after that wave stops."
+        }
+        $pendingRequests = @(
+            Get-ChildItem -LiteralPath (Join-Path $queueRoot "requests") -Filter "*.json" -File -ErrorAction SilentlyContinue
+        )
+        $processingRequests = @(
+            Get-ChildItem -LiteralPath (Join-Path $queueRoot "processing") -Filter "*.json" -File -ErrorAction SilentlyContinue
+        )
+        if ($pendingRequests.Count -gt 0 -or $processingRequests.Count -gt 0) {
+            throw "Staged-wave service $changedIdentity changed while old requests remain queued; refusing to reuse or replace that worker until its queue drains."
+        }
+        $stopRequestPath = Join-Path $queueRoot "stop.request"
+        "$changedIdentity changed" | Set-Content -LiteralPath $stopRequestPath -Encoding UTF8
+        $existingService.process.WaitForExit(20000)
+        $stoppedService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        if ($stoppedService.matchingProcess) {
+            throw "Staged-wave service process $($existingService.state.pid) did not stop after its source identity changed; refusing to launch a duplicate worker."
+        }
+    }
+    if ($existingService.matchingProcess -and [string]$existingService.state.status -ne "stopped") {
+        throw "Staged-wave service process $($existingService.state.pid) is alive but its heartbeat is stale or invalid; refusing to launch a second worker."
+    }
+    if ($existingService.matchingProcess) {
+        $existingService.process.WaitForExit(20000)
+        $stillRunning = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        if ($stillRunning.matchingProcess) {
+            throw "Staged-wave service process $($existingService.state.pid) is shutting down; refusing to launch a second worker."
+        }
+    }
+
+    $serviceLogPath = Join-Path $queueRoot "service.log"
+    $serviceErrorPath = Join-Path $queueRoot "service.error.log"
+    $serviceArguments = @(
+        "-m", "exercise_motion_pkg.staged_wave_service",
+        "--queue-root", $queueRoot,
+        "--max-wave-items", [string]$MaxWaveItems,
+        "--source-identity-fingerprint", $script:MotionSourceIdentityFingerprint,
+        "--service-configuration-fingerprint", $configurationFingerprint,
+        "--idle-timeout-seconds", "600"
+    )
+    $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
+    $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
+    $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
+    $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
+    try {
+        $pythonExtension = [System.IO.Path]::GetExtension($PythonCommand).ToLowerInvariant()
+        if ($pythonExtension -in @(".cmd", ".bat")) {
+            $commandArguments = @($serviceArguments | ForEach-Object { ConvertTo-StagedServiceArgument -Value ([string]$_) }) -join " "
+            $commandLine = '"{0}" {1}' -f $PythonCommand, $commandArguments
+            $startArgument = '/d /s /c "{0}"' -f $commandLine
+            $process = Start-Process `
+                -FilePath $env:ComSpec `
+                -ArgumentList $startArgument `
+                -WorkingDirectory $repoRoot `
+                -WindowStyle Hidden `
+                -RedirectStandardOutput $serviceLogPath `
+                -RedirectStandardError $serviceErrorPath `
+                -PassThru
+        } else {
+            $commandArguments = @($serviceArguments | ForEach-Object { ConvertTo-StagedServiceArgument -Value ([string]$_) }) -join " "
+            $process = Start-Process `
+                -FilePath $PythonCommand `
+                -ArgumentList $commandArguments `
+                -WorkingDirectory $repoRoot `
+                -WindowStyle Hidden `
+                -RedirectStandardOutput $serviceLogPath `
+                -RedirectStandardError $serviceErrorPath `
+                -PassThru
+        }
+    } finally {
+        if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
+        else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
+        if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
+        else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
+    }
+
+    $startupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    do {
+        Start-Sleep -Milliseconds 200
+        $startedService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        if ($startedService.healthy) {
+            return
+        }
+        if ($process.HasExited) {
+            break
+        }
+    } while ([DateTimeOffset]::UtcNow -lt $startupDeadline)
+    $errorTail = if (Test-Path -LiteralPath $serviceErrorPath) {
+        (Get-Content -LiteralPath $serviceErrorPath -Tail 20 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+    } else { "" }
+    throw "Staged-wave service failed to publish a valid PID, process-start identity, and heartbeat. Process=$($process.Id). $errorTail"
+}
+
+function Publish-StagedBakeQueueRequest {
+    param(
+        [string]$QueueRoot,
+        [int]$MaxWaveItems,
+        [string]$RequestTemporaryPath,
+        [string]$RequestPath
+    )
+
+    while ($true) {
+        Ensure-StagedBakeQueueService -MaxWaveItems $MaxWaveItems
+        $published = Invoke-WithStagedWaveAdmissionLock -QueueRoot $QueueRoot -Operation {
+            $service = Get-StagedBakeQueueServiceState -QueueRoot $QueueRoot
+            if (
+                $service.healthy -and
+                [string]$service.state.status -in @("idle", "running")
+            ) {
+                Move-Item `
+                    -LiteralPath $RequestTemporaryPath `
+                    -Destination $RequestPath `
+                    -Force
+                return $true
+            }
+            if (
+                $service.processState -eq "stopped" -or
+                ($service.matchingProcess -and [string]$service.state.status -in @("stopping", "stopped"))
+            ) {
+                return $false
+            }
+            throw "Cannot confirm a live staged-wave service generation while publishing a request; refusing to leave an unowned queue entry."
+        }
+        if ($published) {
+            return
+        }
+        # The worker closed admission between Ensure and mutex acquisition.
+        # Ensure waits for its exit and launches a fresh generation before the
+        # same still-private request file is published on the next iteration.
+    }
+}
+
+function Stop-StagedBakeQueueService {
+    param(
+        [switch]$Cancel,
+        [switch]$RunFailure
+    )
+
+    if (-not $Cancel -and -not $RunFailure) {
+        # The worker stays available across workout-plan invocations and exits
+        # itself after its bounded idle timeout.
+        return
+    }
+    if ($Cancel -and -not (Test-MotionRunCancelRequested)) {
+        return $true
+    }
+    $queueRoot = $script:StagedWaveServiceQueueRoot
+    if ([string]::IsNullOrWhiteSpace($queueRoot) -or
+        [string]::IsNullOrWhiteSpace($movementRunId) -or
+        -not (Test-Path -LiteralPath $queueRoot -PathType Container)) {
+        return $true
+    }
+    $cancelDirectory = Join-Path $queueRoot "cancelled_runs"
+    New-Item -ItemType Directory -Force -Path $cancelDirectory | Out-Null
+    $cancelPath = Join-Path $cancelDirectory "$movementRunId.json"
+    $cancelPayload = [ordered]@{
+        schemaVersion = 1
+        runId = $movementRunId
+        cancelledAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        reason = if ($RunFailure) { "workout-plan scheduler failed" } else { "motion run cancelled by user" }
+    }
+    $cancelTemporaryPath = "$cancelPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $cancelPayload | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $cancelTemporaryPath -Encoding UTF8
+    Move-Item -LiteralPath $cancelTemporaryPath -Destination $cancelPath -Force
+
+    $service = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+    if ($service.processState -eq "stopped") {
+        # A valid worker record whose PID is gone or whose start identity no
+        # longer matches confirms that this service generation cannot still
+        # be using its model dependencies.
+        return $true
+    }
+    if ($service.processState -ne "running" -or -not $service.matchingProcess) {
+        # Missing, malformed, or inaccessible state is not proof of shutdown.
+        # Keep the model services alive until this worker can be identified.
+        Write-Warning "Could not confirm staged-wave worker ownership during shutdown; preserving its model dependencies."
+        return $false
+    }
+    $activeWavePrefix = "$movementRunId-wave-"
+    $activeWaveId = if ($service.state) { [string]$service.state.currentWaveId } else { "" }
+    if (-not $activeWaveId.StartsWith($activeWavePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        # The cancellation marker prevents a queued request from starting.
+        # Keep an idle worker, or a worker serving another run, alive.
+        return $true
+    }
+    if (-not $service.matchingProcess) {
+        # The service is already gone. Its claimed request will be recovered
+        # as ambiguous on the next start, without replaying model work.
+        return $true
+    }
+    try {
+        Stop-Process -Id $service.process.Id -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Could not terminate staged-wave worker process $($service.process.Id): $($_.Exception.Message)"
+    }
+    try {
+        [void]$service.process.WaitForExit(10000)
+    } catch {
+    }
+    if ($service.process.HasExited) {
+        return $true
+    }
+    Write-Warning "Cancellation was requested, but staged-wave worker process $($service.process.Id) has not confirmed exit."
+    return $false
+}
+
+function Stop-MotionModelServicesAfterStagedWorker {
+    param(
+        [bool]$StagedWaveShutdownConfirmed,
+        [object]$WarmWhamWorker,
+        [object]$SharedLlamaServer
+    )
+
+    if (-not $StagedWaveShutdownConfirmed) {
+        return $false
+    }
+    Stop-WhamWarmWorker -Worker $WarmWhamWorker
+    Stop-SharedLlamaServer -Server $SharedLlamaServer
+    return $true
+}
+
 function Start-StagedBakeWaveJob {
     param(
         [object[]]$WorkItems,
@@ -3224,6 +4385,7 @@ function Start-StagedBakeWaveJob {
     }
     $wavePayload = [ordered]@{
         schemaVersion = 1
+        runId = $movementRunId
         waveId = $waveId
         workspace = $waveWorkspace
         items = @(
@@ -3238,7 +4400,6 @@ function Start-StagedBakeWaveJob {
         )
     }
     $wavePayload | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $waveManifestPath -Encoding UTF8
-    $waveArguments = [string[]](@($WorkItems[0].bakeArgs) + @("--staged-wave-manifest", $waveManifestPath))
     # A resumed worker may have left a request after its caller exited.
     if ($effectiveWarmWhamWorker) {
         Remove-Item -LiteralPath (Join-Path $resolvedWhamWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
@@ -3246,48 +4407,148 @@ function Start-StagedBakeWaveJob {
     if ($effectiveWarmGvhmrWorker) {
         Remove-Item -LiteralPath (Join-Path $resolvedGvhmrWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
     }
+    $applicationArguments = @($WorkItems[0].bakeArgs | Select-Object -Skip 2)
+    $applicationArguments += @("--staged-wave-manifest", $waveManifestPath)
+    $requestId = [guid]::NewGuid().ToString("N")
+    $unixEpochTicks = [DateTime]::UnixEpoch.Ticks
+    $enqueuedAtUnixNs = [long](([DateTime]::UtcNow.Ticks - $unixEpochTicks) * 100)
+    $requestPath = Join-Path (Join-Path $script:StagedWaveServiceQueueRoot "requests") "$requestId.json"
+    $requestPayload = [ordered]@{
+        schemaVersion = 1
+        requestId = $requestId
+        enqueuedAtUnixNs = $enqueuedAtUnixNs
+        runId = $movementRunId
+        waveId = $waveId
+        sourceIdentityFingerprint = $script:MotionSourceIdentityFingerprint
+        arguments = [string[]]$applicationArguments
+        logPath = $waveLogPath
+    }
+    $requestDirectory = Split-Path -Parent $requestPath
+    New-Item -ItemType Directory -Force -Path $requestDirectory | Out-Null
+    $requestTemporaryPath = "$requestPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $requestPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $requestTemporaryPath -Encoding UTF8
+    try {
+        Publish-StagedBakeQueueRequest `
+            -QueueRoot $script:StagedWaveServiceQueueRoot `
+            -MaxWaveItems $StagedWaveSize `
+            -RequestTemporaryPath $requestTemporaryPath `
+            -RequestPath $requestPath
+    } finally {
+        if (Test-Path -LiteralPath $requestTemporaryPath) {
+            Remove-Item -LiteralPath $requestTemporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
     Write-Host ("Starting batch {0} ({1} exercises)." -f $WaveIndex, $WorkItems.Count)
-    $job = Start-Job -Name $waveId -ScriptBlock {
+    $job = Start-Job -Name "await-$waveId" -ScriptBlock {
         param(
-            [string]$PythonCommand,
-            [string[]]$Arguments,
             [string]$LogPath,
             [string]$WaveWorkspace,
-            [string]$ExpectedWaveId
+            [string]$ExpectedWaveId,
+            [string]$ExpectedRequestId,
+            [string]$QueueRoot
         )
-        $ErrorActionPreference = "Continue"
+        $resultPath = Join-Path (Join-Path $QueueRoot "results") "$ExpectedRequestId.json"
+        $statePath = Join-Path $QueueRoot "worker_state.json"
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $env:EXERCISE_MOTION_WHAM_LAZY_START = '1'
-        $env:EXERCISE_MOTION_GVHMR_LAZY_START = '1'
-        & $PythonCommand @Arguments *>> $LogPath
-        $exitCode = $LASTEXITCODE
-        if ($exitCode -ne 0) {
-            $exitCodeHex = '0x{0:X8}' -f ([long]$exitCode -band 0xFFFFFFFFL)
-            "Python wave process exited with code $exitCode ($exitCodeHex)." | Add-Content -LiteralPath $LogPath
-        }
-        $stopwatch.Stop()
         $reportPath = Join-Path $WaveWorkspace "staged_wave_report.json"
         $report = $null
-        if (Test-Path -LiteralPath $reportPath) {
-            try {
-                $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-                if ($report.waveId -ne $ExpectedWaveId) {
-                    "Ignoring staged report with unexpected wave identity." | Add-Content -LiteralPath $LogPath
-                    $report = $null
-                    if ($exitCode -eq 0) { $exitCode = 1 }
+        $errorMessage = $null
+        $exitCode = 1
+        $serviceStatus = "failed"
+        while ($true) {
+            if (Test-Path -LiteralPath $resultPath) {
+                try {
+                    $serviceResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+                    if ($serviceResult.requestId -ne $ExpectedRequestId -or $serviceResult.waveId -ne $ExpectedWaveId) {
+                        throw "Ignoring staged service result with unexpected request or wave identity."
+                    }
+                    $exitCode = [int]$serviceResult.exitCode
+                    $serviceStatus = [string]$serviceResult.status
+                    $errorMessage = $serviceResult.error
+                    if ($serviceStatus -eq $using:StagedWaveAmbiguousRecoveryStatus) {
+                        # The service status is authoritative for recovered
+                        # in-flight work; keep it distinct from storage code 75.
+                        $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                    } elseif ($exitCode -eq $using:StagedWaveAmbiguousRecoveryExitCode -and
+                        [string]::IsNullOrWhiteSpace($serviceStatus)) {
+                            $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                    }
+                    if ($exitCode -eq 0 -and (Test-Path -LiteralPath $reportPath)) {
+                        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+                        if ($report.waveId -ne $ExpectedWaveId) {
+                            $report = $null
+                            $exitCode = 1
+                            $errorMessage = "Staged report has an unexpected wave identity."
+                        }
+                    } elseif ($exitCode -eq 0) {
+                        $exitCode = 1
+                        $errorMessage = "Staged-wave service reported success without a report file."
+                    }
+                    # The request waiter owns result consumption. Moving the
+                    # validated terminal record lets the persistent service
+                    # prune old consumed responses without touching results
+                    # that a live caller may still need.
+                    try {
+                        $consumedDirectory = Join-Path $QueueRoot "consumed"
+                        New-Item -ItemType Directory -Force -Path $consumedDirectory | Out-Null
+                        Move-Item `
+                            -LiteralPath $resultPath `
+                            -Destination (Join-Path $consumedDirectory "$ExpectedRequestId.json") `
+                            -ErrorAction Stop
+                    } catch {
+                        # Retain the response in results if acknowledgement
+                        # cannot be persisted; cleanup must never lose it.
+                    }
+                    break
+                } catch {
+                    $errorMessage = $_.Exception.Message
+                    break
                 }
-            } catch {
             }
+            $workerState = $null
+            if (Test-Path -LiteralPath $statePath) {
+                try { $workerState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch {}
+            }
+            if ($workerState -and $workerState.status -eq "stopped") {
+                $errorMessage = "Persistent staged-wave service stopped before returning this wave."
+                break
+            }
+            if ($workerState) {
+                $heartbeatAge = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 - [double]$workerState.updatedAtEpoch
+                $stateQueueMatches = [string]::Equals([string]$workerState.queueRoot, $QueueRoot, [StringComparison]::OrdinalIgnoreCase)
+                $workerProcess = Get-Process -Id ([int]$workerState.pid) -ErrorAction SilentlyContinue
+                $workerIdentityMatches = $false
+                if ($workerProcess -and $null -ne $workerState.processIdentity) {
+                    try {
+                        $workerIdentityMatches = [int64]$workerProcess.StartTime.ToUniversalTime().ToFileTimeUtc() -eq [int64]$workerState.processIdentity
+                    } catch {
+                        $workerIdentityMatches = $false
+                    }
+                }
+                if ($workerState.schemaVersion -ne 1 -or -not $stateQueueMatches -or
+                    $heartbeatAge -lt -5 -or $heartbeatAge -gt 20 -or
+                    $null -eq $workerProcess -or -not $workerIdentityMatches) {
+                    $errorMessage = "Persistent staged-wave service heartbeat stopped while awaiting the wave result."
+                    break
+                }
+            } elseif ($stopwatch.Elapsed.TotalSeconds -gt 45) {
+                $errorMessage = "Persistent staged-wave service did not publish its startup heartbeat."
+                break
+            }
+            Start-Sleep -Milliseconds 250
         }
+        $stopwatch.Stop()
         [pscustomobject]@{
             exitCode = $exitCode
             stage = "staged_wave"
             elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
             reportPath = $reportPath
             report = $report
+            serviceStatus = $serviceStatus
             logPath = $LogPath
+            error = $errorMessage
         }
-    } -ArgumentList $PythonCommand, $waveArguments, $waveLogPath, $waveWorkspace, $waveId
+    } -ArgumentList $waveLogPath, $waveWorkspace, $waveId, $requestId, $script:StagedWaveServiceQueueRoot
     $job | Add-Member -MemberType NoteProperty -Name WorkItems -Value $WorkItems
     $job | Add-Member -MemberType NoteProperty -Name IsStagedWave -Value $true
     $job | Add-Member -MemberType NoteProperty -Name WaveWorkspace -Value $waveWorkspace
@@ -3359,7 +4620,11 @@ function Complete-BakeJob {
         $exitCode = if ($jobResult) { $jobResult.exitCode } else { "unknown" }
         $stage = if ($jobResult -and $jobResult.stage) { $jobResult.stage } else { "unknown" }
         $failureStage = $stage
-        $errorMessage = "python $stage command failed with exit code $exitCode. See log: $($workItem.logPath)"
+        $detail = Get-ObjectProperty -Object $jobResult -Name "error"
+        $detailText = if (-not [string]::IsNullOrWhiteSpace([string]$detail)) { " $detail" } else { "" }
+        $failureLogPath = Get-ObjectProperty -Object $jobResult -Name "logPath"
+        if ([string]::IsNullOrWhiteSpace([string]$failureLogPath)) { $failureLogPath = $workItem.logPath }
+        $errorMessage = "python $stage command failed with exit code $exitCode.$detailText See log: $failureLogPath"
     }
 
     $selectionPath = Join-Path $workItem.bakeWorkspace "selection_manifest.json"
@@ -3470,6 +4735,17 @@ function Complete-BakeJob {
             -SourcePath $manualReviewFallback.selectedWearSkeletonPath `
             -DestinationDirectory $manualReviewOutputDir `
             -DestinationFileName "$($manualReviewFilePrefix)_wear_skeleton.json"
+        $manualReviewSkeletonParity = Assert-SelectedSkeletonReviewParity `
+            -SelectionEntry $manualReviewFallback `
+            -SourcePath $manualReviewFallback.selectedWearSkeletonPath `
+            -PackagedPath $selectedWearSkeletonPath `
+            -ManualReviewFallback
+        Record-PackagedSkeletonReviewParity `
+            -SelectionManifestPath $selectedSelectionManifestPath `
+            -OptionIndex 1 `
+            -PackagedPath $selectedWearSkeletonPath `
+            -Parity $manualReviewSkeletonParity `
+            -ManualReviewFallback
         $selectedPreviewVideoPath = Copy-SelectedFile `
             -SourcePath $manualReviewFallback.selectedReviewVideoPath `
             -DestinationDirectory $manualReviewOutputDir `
@@ -3535,6 +4811,7 @@ function Complete-BakeJob {
                 label = "Manual review fallback"
                 selectionStatus = "needs_manual_review"
                 selectedWearSkeletonPath = $selectedWearSkeletonPath
+                selectedSkeletonReviewParity = $manualReviewSkeletonParity
                 selectedPreviewVideoPath = $selectedPreviewVideoPath
                 selectedPreviewHtmlPath = $selectedPreviewHtmlPath
                 selectedInteractivePreviewHtmlPath = $selectedInteractivePreviewHtmlPath
@@ -3582,6 +4859,22 @@ function Complete-BakeJob {
                 $status = "failed"
                 $failureStage = "selected_output_copy"
                 $errorMessage = "Selected Wear skeleton option $optionIndex was not copied to the selected output directory."
+                break
+            }
+            try {
+                $optionSkeletonReviewParity = Assert-SelectedSkeletonReviewParity `
+                    -SelectionEntry $option `
+                    -SourcePath $option.selectedWearSkeletonPath `
+                    -PackagedPath $optionWearSkeletonPath
+                Record-PackagedSkeletonReviewParity `
+                    -SelectionManifestPath $selectedSelectionManifestPath `
+                    -OptionIndex $optionIndex `
+                    -PackagedPath $optionWearSkeletonPath `
+                    -Parity $optionSkeletonReviewParity
+            } catch {
+                $status = "failed"
+                $failureStage = "selected_output_parity"
+                $errorMessage = $_.Exception.Message
                 break
             }
             $optionPreviewVideoPath = $null
@@ -3679,6 +4972,7 @@ function Complete-BakeJob {
                 selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
                 selectedSourceVideoMissing = $optionInputVideoMissing
                 selectedSourceAuditDirectory = $optionSourceAuditDirectory
+                selectedSkeletonReviewParity = $optionSkeletonReviewParity
                 selectionScore = if ($option.PSObject.Properties.Name -contains "selectionScore") { $option.selectionScore } else { $null }
                 candidateTitle = if ($option.PSObject.Properties.Name -contains "candidateTitle") { $option.candidateTitle } else { $null }
             }
@@ -3956,6 +5250,7 @@ function Get-StagedWaveActivityText {
                     $status -ne "" -and $status -ne "pending"
                 }).Count
                 $selected = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "selected" }).Count
+                $manualReview = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "needs_manual_review" }).Count
                 $incomplete = @($eligible | Where-Object { "$($_.finalValidation.status)" -eq "incomplete_processing" }).Count
                 $failed = @($eligible | Where-Object { "$($_.finalValidation.status)" -in @("failed", "no_selection") }).Count
                 $pending = @($eligible | Where-Object {
@@ -3970,6 +5265,7 @@ function Get-StagedWaveActivityText {
                 }
                 $meta = @()
                 if ($selected -gt 0) { $meta += "$selected keep" }
+                if ($manualReview -gt 0) { $meta += "$manualReview manual review" }
                 if ($incomplete -gt 0) { $meta += "$incomplete incomplete" }
                 if ($failed -gt 0) { $meta += "$failed fail" }
                 if ($workerCount -gt 0 -and $fitSlots -gt 0) { $meta += "$workerCount lanes/$fitSlots fit" }
@@ -4273,6 +5569,18 @@ function Write-ProgressSnapshot {
 }
 
 $repoRoot = Get-RepoRoot
+$script:MotionSourceIdentity = Get-MotionSourceIdentity -RepoRoot $repoRoot
+Assert-MotionSourceIdentity `
+    -Identity $script:MotionSourceIdentity `
+    -AllowDirtyWorktree:$AllowDirtyWorktree
+$script:MotionSourceIdentityFingerprint = @(
+    [string]$script:MotionSourceIdentity.schemaVersion,
+    [string]$script:MotionSourceIdentity.gitCommit,
+    [string]$script:MotionSourceIdentity.gitStatusSha256,
+    [string]$script:MotionSourceIdentity.gitTrackedDiffSha256,
+    [string]$script:MotionSourceIdentity.gitUntrackedContentSha256,
+    [string]$script:MotionSourceIdentity.gitSubmoduleWorktreeSha256
+) -join ":"
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
 switch ($SpeedProfile) {
     "fast" {
@@ -4484,9 +5792,272 @@ if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
 $resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
+function Acquire-MotionWorkspaceLease {
+    param([string]$WorkspaceRoot)
+
+    $lockPath = Join-Path $WorkspaceRoot ".motion_workspace.lock"
+    $ownerPath = Join-Path $WorkspaceRoot ".motion_workspace.owner.json"
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    } catch [System.IO.IOException] {
+        $owner = "owner metadata unavailable"
+        try {
+            if (Test-Path -LiteralPath $ownerPath) {
+                $owner = (Get-Content -LiteralPath $ownerPath -Raw -ErrorAction Stop).Trim()
+            }
+        } catch {
+        }
+        throw "Motion workspace '$WorkspaceRoot' is already owned by another run. Owner: $owner"
+    }
+
+    if (Test-Path -LiteralPath $ownerPath -PathType Leaf) {
+        try {
+            $previousOwner = Get-Content -LiteralPath $ownerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $previousOwner -or
+                $previousOwner -isnot [System.Management.Automation.PSCustomObject] -or
+                [string]::IsNullOrWhiteSpace([string]$previousOwner.ownerToken)) {
+                throw "Motion service session '$WorkspaceRoot' has incomplete previous owner evidence; refusing to replace it."
+            }
+            $previousRuntime = Get-ObjectProperty -Object $previousOwner -Name "runtimeOwner"
+            if ($null -ne $previousRuntime) {
+                $runtimeState = Get-MotionServiceRuntimeState -RuntimeOwner $previousRuntime
+                if ($runtimeState -ne "stopped") {
+                    $stream.Dispose()
+                    throw "Motion service session '$WorkspaceRoot' is retained by a previous owner; runtime state is $runtimeState. Owner: $($previousOwner | ConvertTo-Json -Compress -Depth 8)"
+                }
+            }
+        } catch {
+            if ($null -ne $stream) { $stream.Dispose() }
+            throw
+        }
+    }
+
+    $ownerToken = [guid]::NewGuid().ToString("N")
+    $owner = [ordered]@{
+        schemaVersion = 1
+        pid = $PID
+        stage = "run_exercise_motion_workout_plan"
+        workspaceRoot = $WorkspaceRoot
+        ownerToken = $ownerToken
+        acquiredAtUtc = [DateTime]::UtcNow.ToString("o")
+    }
+    $ownerJson = $owner | ConvertTo-Json -Compress
+    $ownerTempPath = "$ownerPath.$ownerToken.tmp"
+    try {
+        $lockBytes = [System.Text.Encoding]::UTF8.GetBytes($ownerJson)
+        $stream.SetLength(0)
+        $stream.Write($lockBytes, 0, $lockBytes.Length)
+        $stream.Flush($true)
+        [System.IO.File]::WriteAllText(
+            $ownerTempPath,
+            $ownerJson + [Environment]::NewLine,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Move-Item -LiteralPath $ownerTempPath -Destination $ownerPath -Force
+    } catch {
+        $stream.Dispose()
+        Remove-Item -LiteralPath $ownerTempPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    return [pscustomobject]@{
+        stream = $stream
+        ownerPath = $ownerPath
+        ownerToken = $ownerToken
+    }
+}
+
+function Release-MotionWorkspaceLease {
+    param(
+        [object]$Lease,
+        [switch]$PreserveOwner
+    )
+
+    if ($null -eq $Lease) {
+        return
+    }
+    try {
+        if (Test-Path -LiteralPath $Lease.ownerPath) {
+            $owner = Get-Content -LiteralPath $Lease.ownerPath -Raw -ErrorAction SilentlyContinue |
+                ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($owner -and "$($owner.ownerToken)" -eq "$($Lease.ownerToken)") {
+                if (-not $PreserveOwner) {
+                    $runtimeOwner = Get-ObjectProperty -Object $owner -Name "runtimeOwner"
+                    if ($null -ne $runtimeOwner -and
+                        (Get-MotionServiceRuntimeState -RuntimeOwner $runtimeOwner) -ne "stopped") {
+                        Write-Warning "Preserving workspace lease evidence at '$($Lease.ownerPath)' because the owned service shutdown is unconfirmed."
+                    } else {
+                        Remove-Item -LiteralPath $Lease.ownerPath -Force -ErrorAction SilentlyContinue
+                    }
+                } else {
+                    Write-Warning "Preserving workspace lease evidence at '$($Lease.ownerPath)' because shutdown was not confirmed."
+                }
+            }
+        }
+    } finally {
+        if ($null -ne $Lease.stream) {
+            $Lease.stream.Dispose()
+        }
+    }
+}
+
+function Acquire-MotionServiceSessionLease {
+    param(
+        [string]$SessionDirectory,
+        [string]$Stage
+    )
+
+    $normalizedSession = [System.IO.Path]::GetFullPath($SessionDirectory).TrimEnd(
+        [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    )
+    $normalizedWorkspace = [System.IO.Path]::GetFullPath($resolvedWorkspaceRoot).TrimEnd(
+        [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    )
+    if ([string]::Equals($normalizedSession, $normalizedWorkspace, [StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    if ($script:MotionServiceSessionLeases.ContainsKey($normalizedSession)) {
+        $existingLease = $script:MotionServiceSessionLeases[$normalizedSession]
+        $existingRuntimeState = Get-MotionServiceRuntimeState -RuntimeOwner $existingLease.runtimeOwner
+        if ($existingRuntimeState -ne "stopped") {
+            throw "Motion service session is already owned by this run and its service is not confirmed stopped (runtime state: $existingRuntimeState): $normalizedSession"
+        }
+        # Reuse the held OS lease for an in-run restart. Releasing and
+        # reacquiring here would create a gap in which another process could
+        # claim the session between two service generations.
+        return $normalizedSession
+    }
+    $lease = Acquire-MotionWorkspaceLease -WorkspaceRoot $normalizedSession
+    $lease | Add-Member -NotePropertyName "runtimeOwner" -NotePropertyValue $null -Force
+    $script:MotionServiceSessionLeases[$normalizedSession] = $lease
+    return $normalizedSession
+}
+
+function Release-MotionServiceSessionLease {
+    param([string]$SessionDirectory)
+
+    $lease = $null
+    $releaseLease = $false
+    if ([string]::IsNullOrWhiteSpace($SessionDirectory)) {
+        # A service may deliberately share the top-level workspace directory;
+        # the outer run lease owns the handle in that case.
+        $lease = $script:MotionWorkspaceLease
+    } elseif ($script:MotionServiceSessionLeases.ContainsKey($SessionDirectory)) {
+        $lease = $script:MotionServiceSessionLeases[$SessionDirectory]
+        $script:MotionServiceSessionLeases.Remove($SessionDirectory)
+        $releaseLease = $true
+    }
+    if ($null -eq $lease) {
+        return "stopped"
+    }
+
+    $runtimeOwner = $lease.runtimeOwner
+    if ($null -eq $runtimeOwner -and (Test-Path -LiteralPath $lease.ownerPath -PathType Leaf)) {
+        try {
+            $owner = Get-Content -LiteralPath $lease.ownerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $runtimeOwner = Get-ObjectProperty -Object $owner -Name "runtimeOwner"
+        } catch {
+            $runtimeOwner = $null
+        }
+    }
+    $runtimeState = Get-MotionServiceRuntimeState -RuntimeOwner $runtimeOwner
+    if ($runtimeState -eq "stopped") {
+        $ownerCleared = $true
+        if ($null -ne $runtimeOwner) {
+            try {
+                Write-MotionWorkspaceLeaseOwner `
+                    -Lease $lease `
+                    -RuntimeOwner $runtimeOwner `
+                    -ServiceState "stopped" `
+                    -ClearRuntimeOwner
+            } catch {
+                $ownerCleared = $false
+                Write-Warning "Could not clear stopped service ownership evidence for '$SessionDirectory': $($_.Exception.Message)"
+            }
+        }
+        if ($releaseLease) {
+            if ($ownerCleared) {
+                Release-MotionWorkspaceLease -Lease $lease
+            } else {
+                # Keep any stale marker intact; the next owner can safely
+                # confirm the recorded child is gone before replacing it.
+                Release-MotionWorkspaceLease -Lease $lease -PreserveOwner
+            }
+        }
+        return "stopped"
+    }
+
+    try {
+        Write-MotionWorkspaceLeaseOwner `
+            -Lease $lease `
+            -RuntimeOwner $runtimeOwner `
+            -ServiceState "shutdown_unconfirmed"
+    } catch {
+        Write-Warning "Could not persist shutdown evidence for '$SessionDirectory': $($_.Exception.Message)"
+    }
+    if ($releaseLease) {
+        # Closing the OS handle is unavoidable when the run exits. Keep the
+        # durable owner record so a later acquisition probes the child before
+        # it can replace that record or start a second service.
+        Release-MotionWorkspaceLease -Lease $lease -PreserveOwner
+    }
+    Write-Warning "Retaining service session '$SessionDirectory' because shutdown is unconfirmed (runtime state: $runtimeState)."
+    return $runtimeState
+}
+
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+$script:MotionWorkspaceLease = Acquire-MotionWorkspaceLease -WorkspaceRoot $resolvedWorkspaceRoot
+try {
+$script:MotionServiceSessionLeases = @{}
 $script:SchedulerTimelinePath = Join-Path $resolvedWorkspaceRoot "scheduler_timeline.json"
+$script:MotionSourceIdentityPath = Join-Path $resolvedWorkspaceRoot "motion_source_identity.json"
+$priorSourceIdentity = $null
+if (Test-Path -LiteralPath $script:MotionSourceIdentityPath) {
+    try {
+        $priorSourceIdentityEnvelope = Get-Content -LiteralPath $script:MotionSourceIdentityPath -Raw | ConvertFrom-Json
+        if ($null -ne $priorSourceIdentityEnvelope.identity) {
+            $priorSourceIdentity = $priorSourceIdentityEnvelope.identity
+        } else {
+            $priorSourceIdentity = $priorSourceIdentityEnvelope
+        }
+    } catch {
+        $priorSourceIdentity = $null
+    }
+}
+$script:MotionSourceIdentityMatchesPriorRun = $false
+if ($null -ne $priorSourceIdentity) {
+    $script:MotionSourceIdentityMatchesPriorRun = (
+        [int]$priorSourceIdentity.schemaVersion -eq [int]$script:MotionSourceIdentity.schemaVersion -and
+        "$($priorSourceIdentity.gitCommit)" -eq "$($script:MotionSourceIdentity.gitCommit)" -and
+        "$($priorSourceIdentity.gitStatusSha256)" -eq "$($script:MotionSourceIdentity.gitStatusSha256)" -and
+        "$($priorSourceIdentity.gitTrackedDiffSha256)" -eq "$($script:MotionSourceIdentity.gitTrackedDiffSha256)" -and
+        "$($priorSourceIdentity.gitUntrackedContentSha256)" -eq "$($script:MotionSourceIdentity.gitUntrackedContentSha256)" -and
+        "$($priorSourceIdentity.gitSubmoduleWorktreeSha256)" -eq "$($script:MotionSourceIdentity.gitSubmoduleWorktreeSha256)"
+    )
+}
+$priorCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
+$priorSummaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
+$priorRunStateExists = (
+    (Test-Path -LiteralPath $priorCheckpointPath) -or
+    (Test-Path -LiteralPath $priorSummaryPath) -or
+    (Test-Path -LiteralPath $script:MotionSourceIdentityPath)
+)
+if ($priorRunStateExists -and -not $script:MotionSourceIdentityMatchesPriorRun) {
+    $DisableStageResume = $true
+    Write-Warning "Motion source identity changed or was not recorded for this workspace; disabling all wrapper stage-resume reuse."
+}
+$identityPayload = [ordered]@{
+    capturedAt = (Get-Date).ToUniversalTime().ToString("o")
+    identity = $script:MotionSourceIdentity
+}
+$identityTemporaryPath = "$($script:MotionSourceIdentityPath).tmp"
+$identityPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $identityTemporaryPath -Encoding UTF8
+Move-Item -Force -LiteralPath $identityTemporaryPath -Destination $script:MotionSourceIdentityPath
 $preparedCandidatesBySlug = @{}
 if (-not [string]::IsNullOrWhiteSpace($PreparedCandidatesManifest)) {
     $preparedCandidatesBySlug = Import-PreparedCandidatesManifest -ManifestPath (Resolve-StrictPath $PreparedCandidatesManifest)
@@ -4561,6 +6132,10 @@ $effectiveMaxConcurrentStagedWaves = if ($MaxConcurrentStagedWaves -gt 1 -and -n
     1
 } else {
     [int]$MaxConcurrentStagedWaves
+}
+if ($stagedWavesEnabled -and $effectiveMaxConcurrentStagedWaves -gt 1) {
+    Write-Warning "The persistent staged-wave service processes one wave at a time; MaxConcurrentStagedWaves is reduced to 1 for this run."
+    $effectiveMaxConcurrentStagedWaves = 1
 }
 $resolvedSharedLlamaServerSessionDir = $null
 if ($effectiveSharedLlamaServer) {
@@ -4732,6 +6307,7 @@ if ($PosePrefilter -or -not $SkipPosePrefilter) {
 
 $workItems = @()
 $movementRunId = [guid]::NewGuid().ToString("N")
+$script:StagedWaveServiceQueueRoot = Join-Path (Join-Path $resolvedWorkspaceRoot "staged-wave-services") "v1"
 $usedSlugs = @{}
 $exerciseIndex = 0
 foreach ($exercise in $exerciseList.exercises) {
@@ -5224,6 +6800,7 @@ function Write-ProgressCheckpoint {
         updatedAt = (Get-Date).ToUniversalTime().ToString("o")
         sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
         workspaceRoot = $resolvedWorkspaceRoot
+        motionSourceIdentity = $script:MotionSourceIdentity
         totalExerciseCount = $workItems.Count
         terminalExerciseCount = $checkpointItems.Count
         successfulExerciseCount = $successfulItems.Count
@@ -5313,7 +6890,9 @@ foreach ($workItem in $workItems) {
     }
     # Incomplete fits keep discovery advancement disabled, but skip cold
     # rediscovery so retained WHAM/bake can finish this pass.
-    if (Test-MotionProcessingResumeReady -WorkItem $workItem) {
+    if ($script:MotionSourceIdentityMatchesPriorRun -and
+        -not $DisableStageResume -and
+        (Test-MotionProcessingResumeReady -WorkItem $workItem)) {
         $workItem.motionProcessingResumed = $true
         $workItem.primarySourceDownloadReused = $true
         "[$(Get-Date -Format o)] resumed incomplete motion processing; skipping rediscovery" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
@@ -5391,6 +6970,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
     $lastProgressSlot = -1
     $warmWhamWorkerInstance = $null
     $script:WhamWorkerStartedOnce = $false
+    $schedulerCompleted = $false
     $reusedCount = $completedCount
     if ($reusedCount -gt 0) {
         Write-Host "Generating movements for $($workItems.Count) exercises. $reusedCount already have a selected movement, $($workItems.Count - $reusedCount) remaining."
@@ -5429,15 +7009,18 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 if ($null -ne $sharedLlamaServerInstance) {
                     # A quiescing client stops the server process itself; the
                     # supervisor just tends the heartbeat and notices death.
-                    $serverProcess = Get-Process -Id $sharedLlamaServerInstance.processId -ErrorAction SilentlyContinue
-                    if ($null -eq $serverProcess) {
+                    $serverRuntimeState = Get-MotionServiceRuntimeState `
+                        -RuntimeOwner $sharedLlamaServerInstance.runtimeOwner
+                    if ($serverRuntimeState -eq "stopped") {
                         $restartRequested = Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")
                         if ($bakeRunningJobs.Count -gt 0 -and -not $restartRequested) {
                             Write-Host "Shared llama.cpp server stopped for an exclusive GPU phase; it will restart when a client requests it."
                         }
                         $sharedLlamaServerInstance = $null
-                    } else {
+                    } elseif ($serverRuntimeState -eq "running") {
                         Update-SharedLlamaServerHeartbeat -SessionDir $resolvedSharedLlamaServerSessionDir
+                    } else {
+                        throw "Shared llama.cpp server process identity is unverified; refusing to restart or assume it is healthy: $resolvedSharedLlamaServerSessionDir"
                     }
                 }
                 if (
@@ -5463,8 +7046,12 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 Write-ProgressCheckpoint
             }
 
+            # Keep the extractor resident while a staged batch is still filling
+            # from the ready queue; stopping here forced a cold model reload
+            # during the admission wait even though reconstruction work remained.
             if (
                 $null -ne $warmWhamWorkerInstance -and
+                $pendingBakeItems.Count -eq 0 -and
                 $pendingLegacyBakeItems.Count -eq 0 -and
                 $bakeRunningJobs.Count -eq 0
             ) {
@@ -5575,7 +7162,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             $lazyWorkerRequested = $lazyWarmWorkerEffective -and $bakeRunningJobs.Count -gt 0 -and (
                 Test-Path -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json')
             )
-            if ($canLaunchBake -and ($lazyWorkerRequested -or $pendingLegacyBakeItems.Count -gt 0) -and $null -eq $warmWhamWorkerInstance -and $lazyWarmWorkerEffective) {
+            # A warm CUDA worker may load models during startup. Only start it
+            # after its requesting Python stage has acquired the shared GPU
+            # lease; speculative starts from the pending queue bypass that
+            # admission boundary.
+            if ($canLaunchBake -and $lazyWorkerRequested -and $null -eq $warmWhamWorkerInstance -and $lazyWarmWorkerEffective) {
                 $warmWhamWorkerInstance = Start-WhamWarmWorker `
                     -SessionDir $lazyWarmWorkerSessionDir `
                     -MountRoot $resolvedWorkspaceRoot `
@@ -5864,7 +7455,14 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             exit 75
                         }
                         $waveStates = @{}
-                        if ($waveResult -and $waveResult.report -and $waveResult.report.items) {
+                        if ($waveResult -and (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus) {
+                            foreach ($waveItem in @($job.WorkItems)) {
+                                $waveStates["$($waveItem.exerciseId)"] = @{
+                                    retryDisposition = "operator_inspection"
+                                    recoveryError = $waveResult.error
+                                }
+                            }
+                        } elseif ($waveResult -and $waveResult.report -and $waveResult.report.items) {
                             foreach ($waveState in @($waveResult.report.items)) {
                                 $waveStates["$($waveState.exerciseId)"] = $waveState
                             }
@@ -5877,8 +7475,21 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $waveState -and
                                 "$($waveState.status)" -eq "completed"
                             )
-                            if ($reuseStagedResult) {
-                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -MarkAccepted -FinalStatus "accepted"
+                            if ($waveState -and $waveState.retryDisposition -eq "operator_inspection") {
+                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
+                                $workspaceForInspection = if ($job.WaveWorkspace) { $job.WaveWorkspace } else { $waveItem.bakeWorkspace }
+                                $inspectionMessage = "Staged-wave completion is ambiguous after service recovery. Inspect retained workspace '$workspaceForInspection' before resuming; this exercise was not retried automatically. $($waveState.recoveryError)"
+                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary `
+                                    -WorkItem $waveItem `
+                                    -Status "needs_operator_inspection" `
+                                    -ErrorMessage $inspectionMessage `
+                                    -Stage "staged_wave_recovery" `
+                                    -ExitCode $StagedWaveAmbiguousRecoveryExitCode
+                                $completedCount += 1
+                                $bakeCompletedCount += 1
+                                Write-Host ("Needs inspection: {0}. {1}" -f $waveItem.exerciseName, $inspectionMessage)
+                            } elseif ($reuseStagedResult) {
+                                Add-StagedWaveTimelineOutcome -WorkItem $waveItem -WaveState $waveState
                                 $pendingCompletionItems.Enqueue($waveItem)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'retry_processing') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
@@ -5915,7 +7526,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $pendingLegacyBakeItems.Enqueue($waveItem)
                             }
                         }
-                        if (-not $waveResult -or $waveResult.exitCode -ne 0) {
+                        if ($waveResult -and (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus) {
+                            Write-Warning "Staged-wave completion is ambiguous; affected exercises were routed for operator inspection without retry. Inspect the retained wave workspace: $($job.WaveWorkspace)"
+                        } elseif (-not $waveResult -or $waveResult.exitCode -ne 0) {
                             $waveLog = if ($waveResult) { $waveResult.logPath } else { "the staged-wave log" }
                             $waveExitCode = if ($waveResult) { "$($waveResult.exitCode)" } else { "unavailable" }
                             Write-Warning "Staged movement wave did not finish cleanly (exit code $waveExitCode); retrying its exercises individually. Details: $waveLog"
@@ -5947,8 +7560,13 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             $summaryByIndex[$job.WorkItem.index] = $bakeSummary
                             $completedCount += 1
                             $bakeCompletedCount += 1
-                            $bakeTimelineStatus = if ("$($bakeSummary.status)" -eq "completed") { "materialized" } else { "failed" }
-                            Add-SchedulerTimelineItemEvent -WorkItem $job.WorkItem -MarkAccepted -FinalStatus $bakeTimelineStatus
+                            if ("$($bakeSummary.status)" -eq "completed") {
+                                Add-SchedulerTimelineItemEvent -WorkItem $job.WorkItem -MarkAccepted -FinalStatus "materialized"
+                            } elseif ("$($bakeSummary.status)" -eq "needs_manual_review") {
+                                Add-SchedulerTimelineItemEvent -WorkItem $job.WorkItem -FinalStatus "needs_manual_review"
+                            } else {
+                                Add-SchedulerTimelineItemEvent -WorkItem $job.WorkItem -FinalStatus "failed"
+                            }
                         }
                         Write-ProgressCheckpoint
                     }
@@ -5961,7 +7579,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             $bakeRunningJobs = @($bakeRunningJobs | Where-Object { $_.Id -notin $finishedJobIds })
             Write-ProgressCheckpoint
         }
+        if (-not (Test-MotionRunCancelRequested)) {
+            $schedulerCompleted = $true
+        }
     } finally {
+        $stagedWaveShutdownConfirmed = $true
         if (Test-MotionRunCancelRequested) {
             Write-Host "Stopping background jobs and the motion extractor..." -ForegroundColor Yellow
             foreach ($job in @($prefetchRunningJobs + $discoveryRunningJobs + $sourceDownloadRunningJobs + $bakeRunningJobs)) {
@@ -5970,9 +7592,42 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
                 }
             }
+            $stagedWaveShutdownConfirmed = [bool](Stop-StagedBakeQueueService -Cancel)
+        } elseif (-not $schedulerCompleted) {
+            # Fatal errors and `exit` paths both run this finally. Cancel any
+            # active wave before releasing the model services it may depend on.
+            $stagedWaveShutdownConfirmed = [bool](Stop-StagedBakeQueueService -RunFailure)
         }
-        Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
-        Stop-SharedLlamaServer -Server $sharedLlamaServerInstance
+        if ($stagedWaveShutdownConfirmed) {
+            Stop-MotionModelServicesAfterStagedWorker `
+                -StagedWaveShutdownConfirmed $stagedWaveShutdownConfirmed `
+                -WarmWhamWorker $warmWhamWorkerInstance `
+                -SharedLlamaServer $sharedLlamaServerInstance
+        } else {
+            $script:MotionServiceShutdownUnconfirmed = $true
+            $remainingService = Get-StagedBakeQueueServiceState -QueueRoot $script:StagedWaveServiceQueueRoot
+            if ($remainingService.matchingProcess) {
+                $runtimeOwner = [ordered]@{
+                    kind = "process"
+                    pid = [int]$remainingService.state.pid
+                    processIdentity = [int64]$remainingService.state.processIdentity
+                    service = "staged_wave_service"
+                }
+            } else {
+                # Preserve same-workspace exclusion even when the worker's
+                # process identity cannot be read; a later owner must fail
+                # closed until it can resolve the retained service state.
+                $runtimeOwner = [ordered]@{
+                    kind = "unknown"
+                    service = "staged_wave_service"
+                }
+            }
+            Write-MotionWorkspaceLeaseOwner `
+                -Lease $script:MotionWorkspaceLease `
+                -RuntimeOwner $runtimeOwner `
+                -ServiceState "staged_wave_shutdown_unconfirmed"
+            Write-Warning "The staged-wave worker did not stop; keeping shared model services alive and preserving workspace ownership evidence."
+        }
     }
 }
 
@@ -5989,6 +7644,8 @@ for ($index = 0; $index -lt $workItems.Count; $index += 1) {
 $summary = [ordered]@{
     schemaVersion = 1
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    motionSourceIdentity = $script:MotionSourceIdentity
+    stageResumeDisabledForSourceIdentityMismatch = ($priorRunStateExists -and -not $script:MotionSourceIdentityMatchesPriorRun)
     sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
     equipmentJsonPath = if ([string]::IsNullOrWhiteSpace($EquipmentJson)) { $null } else { $EquipmentJson }
     workspaceRoot = $resolvedWorkspaceRoot
@@ -5999,6 +7656,7 @@ $summary = [ordered]@{
     excludeYoutubeUrls = @($ExcludeYoutubeUrl | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     exerciseListJsonPath = $exerciseListPath
     processingOrder = "pipelined_discovery_source_download_and_bake"
+    stagedWaveWorkerMode = if ($stagedWavesEnabled) { "workspace_scoped_persistent_serial_queue" } else { "disabled" }
     speedProfile = $SpeedProfile
     exerciseWorkers = $ExerciseWorkers
     discoveryWorkers = $resolvedDiscoveryWorkers
@@ -6104,4 +7762,14 @@ if (-not [string]::IsNullOrWhiteSpace($MobilePackageOutputJson)) {
     }
     $resolvedMobilePackageOutputJson = (Resolve-Path -LiteralPath $resolvedRequestedMobilePackageOutputJson).Path
     Write-Host "Mobile workout-plan package: $resolvedMobilePackageOutputJson"
+}
+} finally {
+    if (-not $script:MotionServiceShutdownUnconfirmed) {
+        Stop-StagedBakeQueueService -Cancel
+    }
+    foreach ($sessionDirectory in @($script:MotionServiceSessionLeases.Keys)) {
+        Release-MotionServiceSessionLease -SessionDirectory $sessionDirectory
+    }
+    Release-MotionWorkspaceLease -Lease $script:MotionWorkspaceLease
+    $script:MotionWorkspaceLease = $null
 }

@@ -123,6 +123,7 @@ def selected_artifact_identity(
                 "loopIndex", "loopStartSeconds", "loopEndSeconds", "durationSec",
                 "selectedSectionStartSeconds", "selectedSectionEndSeconds", "settingsOptions",
                 "llmTimeRangeCutApplied", "sourceReviewStartSeconds", "sourceReviewEndSeconds",
+                "artifactClass", "artifactState",
             )}),
             "policies": policies,
         }

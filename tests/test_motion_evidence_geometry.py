@@ -264,6 +264,30 @@ def test_retained_source_window_uses_explicit_time_origin_without_mutation():
     assert source == original
 
 
+def test_fit_boundary_evidence_does_not_bridge_a_source_sampling_gap():
+    source = {
+        'frames': [
+            {'sourceTimeSec': t, 'joints': {'wrist': [t, 0.]}}
+            for t in (0., 4. / 30., 16. / 30., 20. / 30.)
+        ],
+    }
+    motion = {
+        'frames': [
+            {'sourceTimeSec': t, 'timeSec': t - 10. / 30.}
+            for t in (10. / 30., 13. / 30., 16. / 30.)
+        ],
+    }
+
+    selected = fidelity.source_pose_reference_for_motion(
+        source,
+        motion,
+        include_adjacent_boundary_evidence=True,
+    )
+
+    assert [frame['sourceTimeSec'] for frame in selected['frames']] == [16. / 30.]
+    assert selected['boundaryEvidenceSourceTimesSec'] == []
+
+
 @pytest.mark.parametrize('offset', [0, math.pi/4, math.pi/2, math.pi, 1.7*math.pi])
 def test_complete_cycle_is_independent_of_start_phase(offset):
     values = [math.sin(offset + i*2*math.pi/120) for i in range(121)]

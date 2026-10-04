@@ -208,6 +208,8 @@ def test_sibling_variant_timeout_does_not_mask_applied_controlled_motion():
 
     assert classify(only_timeout) is True
     assert classify(mixed) is False
+    assert bake.incomplete_controlled_fit_diagnostics(only_timeout) is not None
+    assert bake.incomplete_controlled_fit_diagnostics(mixed) is None
 
 
 def test_bounded_processing_retry_refits_after_incomplete_prefetch(monkeypatch):
@@ -284,6 +286,50 @@ def test_bounded_processing_retry_skips_exhausted_candidate_session(monkeypatch)
     assert stage_cache.PROCESSING_ATTEMPT_ID == initial_attempt
     assert len(manifest["processingAttempts"]) == 1
     assert manifest["processingAttempts"][0]["candidateResults"][0]["controlledMotionFit"]["reason"] == "no_validated_loop_cycle"
+
+
+def test_exhausted_fit_budget_flows_through_candidate_summary_and_skips_retry():
+    from exercise_motion_pkg import controlled_motion, fit_runtime
+    from exercise_motion_pkg.wave_pipeline import finalize_with_bounded_processing_retry
+
+    session = fit_runtime.CandidateFitSession(budget_seconds=0.0)
+    token = fit_runtime._CURRENT.set(session)
+    try:
+        _result, fit_report = controlled_motion._fit_candidate_motion(
+            {"frames": [], "jointNames": [], "loop": {"enabled": False}}
+        )
+    finally:
+        fit_runtime._CURRENT.reset(token)
+
+    assert fit_report["reason"] == "fit_timeout"
+    assert fit_report["candidateFitBudget"]["remainingSeconds"] == 0.0
+    artifact = bake.BakedLoopArtifact(
+        0,
+        Path("candidate.json"),
+        Path("candidate.webm"),
+        {"controlledMotionFit": fit_report},
+    )
+    candidate_fit_diagnostics = bake.incomplete_controlled_fit_diagnostics([artifact])
+    assert candidate_fit_diagnostics["candidateFitBudget"]["remainingSeconds"] == 0.0
+    assert candidate_fit_diagnostics["controlledMotionFit"]["candidateFitBudget"]["fitCalls"] == 0
+
+    attempts = []
+
+    def operation():
+        attempts.append(True)
+        return {
+            "selected": None,
+            "candidateResults": [{
+                "status": "needs_motion_processing",
+                "failures": [{"reason": "controlled_motion_processing_incomplete"}],
+                **candidate_fit_diagnostics,
+            }],
+        }
+
+    manifest = finalize_with_bounded_processing_retry(operation)
+    assert manifest["processingAttemptCount"] == 1
+    assert manifest["processingRetrySkippedReason"] == "candidate_fit_session_exhausted"
+    assert len(attempts) == 1
 
 
 def test_bounded_processing_retry_skips_near_exhausted_candidate_session(monkeypatch):

@@ -9,6 +9,7 @@ from pathlib import Path
 from time import monotonic
 
 from .resource_budget import cpu_fit_slot_limit
+from .motion_scheduler import cpu_resource_slot
 from .stage_cache import stage_lock
 
 
@@ -35,6 +36,17 @@ PRIORITY_BLOCK_GRACE_SECONDS = 120.0
 
 class SpeculativePrefetchAbandoned(Exception):
     """Speculative prefetch yielded because final validation owns the workspace."""
+
+
+class FitSlotTimeout(TimeoutError):
+    """A fit could not acquire a CPU lane within its available budget."""
+
+    def __init__(self, waited_seconds: float) -> None:
+        self.waited_seconds = max(0.0, float(waited_seconds))
+        super().__init__(
+            "Timed out waiting for a CPU fit lane after "
+            f"{self.waited_seconds:.1f}s"
+        )
 
 
 # Default covers multi-cycle observed fits for longer clips without unbounded waits.
@@ -142,61 +154,106 @@ def prioritize_fit_workspaces(workspaces):
 
 
 @contextmanager
-def cpu_fit_slot():
-    """Bound concurrent Python-heavy solvers; queueing consumes no fit budget."""
+def cpu_fit_slot(*, timeout_seconds=None):
+    """Bound concurrent solvers and stop waiting when the candidate budget expires."""
     global _FIT_IN_USE
     queued = monotonic()
     session = current_fit_session()
     workspace = _workspace_key(session.path.parent) if session is not None and session.path else None
     slot_limit = max(1, int(cpu_fit_slot_limit()))
-    with _FIT_GUARD:
+    wait_budget = timeout_seconds
+    if wait_budget is None:
+        wait_budget = (
+            session.remaining()
+            if session is not None
+            else DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS
+        )
+    deadline = queued + max(0.0, float(wait_budget))
+
+    def fit_admission_locked():
         speculative = bool(_SPECULATIVE_FIT.get())
-        # Limited concurrent fits (coding headroom). Speculative work yields the
-        # whole fit pool while any final validation is prioritized. Abandoned
-        # speculative workspaces must not reacquire. A fit running inside its
-        # own prioritize_fit_workspaces context is exempt: two concurrent
-        # finalizations would otherwise deadlock (one holds the WHAM-exclusive
-        # section and waits for a slot, the other holds priority open and waits
-        # for that section).
         own_priority = _PRIORITY_DEPTH.get() > 0
-        wait_started = monotonic()
-        while True:
-            if (
-                speculative
-                and workspace is not None
-                and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
-            ):
-                raise SpeculativePrefetchAbandoned()
-            priority_blocked = (
-                not own_priority
-                and (
-                    (speculative and bool(_PRIORITY_WORKSPACES))
-                    or (
-                        not speculative
-                        and _PRIORITY_WORKSPACES
-                        and workspace is not None
-                        and workspace not in _PRIORITY_WORKSPACES
-                    )
+        priority = own_priority or (
+            workspace is not None and workspace in _PRIORITY_WORKSPACES
+        )
+        abandoned = (
+            speculative
+            and workspace is not None
+            and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
+        )
+        priority_blocked = (
+            not own_priority
+            and (
+                (speculative and bool(_PRIORITY_WORKSPACES))
+                or (
+                    not speculative
+                    and _PRIORITY_WORKSPACES
+                    and workspace is not None
+                    and workspace not in _PRIORITY_WORKSPACES
                 )
             )
-            if priority_blocked and monotonic() - wait_started > PRIORITY_BLOCK_GRACE_SECONDS:
-                # Priority preemption is an ordering optimization; a stale
-                # registration must never wedge the pipeline permanently.
-                print(f"[fit-runtime] priority block exceeded {PRIORITY_BLOCK_GRACE_SECONDS:.0f}s; proceeding", flush=True)
-                priority_blocked = False
-            if _FIT_IN_USE < slot_limit and not priority_blocked:
-                break
-            _FIT_GUARD.wait(timeout=0.25)
-        _FIT_IN_USE += 1
-        waited = monotonic() - queued
-        if session is not None and session.started is not None:
-            session.started += waited
-    try:
-        yield waited
-    finally:
+        )
+        return priority, abandoned, priority_blocked
+
+    while True:
         with _FIT_GUARD:
-            _FIT_IN_USE = max(0, _FIT_IN_USE - 1)
-            _FIT_GUARD.notify_all()
+            wait_started = monotonic()
+            while True:
+                priority, abandoned, priority_blocked = fit_admission_locked()
+                if abandoned:
+                    raise SpeculativePrefetchAbandoned()
+                if priority_blocked and monotonic() - wait_started > PRIORITY_BLOCK_GRACE_SECONDS:
+                    # Priority preemption is an ordering optimization; a stale
+                    # registration must never wedge the pipeline permanently.
+                    print(
+                        f"[fit-runtime] priority block exceeded "
+                        f"{PRIORITY_BLOCK_GRACE_SECONDS:.0f}s; proceeding",
+                        flush=True,
+                    )
+                    priority_blocked = False
+                if _FIT_IN_USE < slot_limit and not priority_blocked:
+                    break
+                remaining = deadline - monotonic()
+                if remaining <= 0.0:
+                    waited = monotonic() - queued
+                    if session is not None and session.started is not None:
+                        session.started += waited
+                    raise FitSlotTimeout(waited)
+                _FIT_GUARD.wait(timeout=min(0.25, remaining))
+
+        # Do not reserve a fit lane while waiting for shared CPU admission. A
+        # final-validation request can then pass queued speculative fits.
+        machine_slot = cpu_resource_slot(
+            priority=priority,
+            timeout_seconds=max(0.0, deadline - monotonic()),
+        )
+        try:
+            machine_slot.__enter__()
+        except TimeoutError as exc:
+            waited = monotonic() - queued
+            if session is not None and session.started is not None:
+                session.started += waited
+            raise FitSlotTimeout(waited) from exc
+        try:
+            with _FIT_GUARD:
+                priority, abandoned, priority_blocked = fit_admission_locked()
+                if abandoned:
+                    raise SpeculativePrefetchAbandoned()
+                if _FIT_IN_USE >= slot_limit or priority_blocked:
+                    continue
+                _FIT_IN_USE += 1
+            try:
+                waited = monotonic() - queued
+                if session is not None and session.started is not None:
+                    session.started += waited
+                yield waited
+                return
+            finally:
+                with _FIT_GUARD:
+                    _FIT_IN_USE = max(0, _FIT_IN_USE - 1)
+                    _FIT_GUARD.notify_all()
+        finally:
+            machine_slot.__exit__(None, None, None)
 
 
 class CandidateFitSession:

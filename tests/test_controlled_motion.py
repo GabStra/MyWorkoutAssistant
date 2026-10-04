@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from exercise_motion_pkg.controlled_motion import FixedRig, body_relative_points, controlled_target, fit_controlled_motion
@@ -345,6 +346,7 @@ def test_persistent_source_spine_fold_skips_only_retained_fallback(monkeypatch):
     assert skipped['selection'] == {'kind': 'retained_interval'}
     assert skipped['reason'] == 'retained_interval_skipped_after_persistent_source_spine_fold'
     assert skipped['fitReport']['sourceSpineFoldFrameRatio'] == 0.32
+    assert report['reason'] == 'retained_interval_skipped_after_persistent_source_spine_fold'
     assert report['cycleRetryStopReason'] == (
         'persistent_source_spine_fold_after_cycle_anatomy_failure'
     )
@@ -702,6 +704,738 @@ def test_cyclic_fit_evaluates_all_seam_residuals_with_matching_dependencies(monk
     monkeypatch.setattr(motion, 'solve_trajectory', solve)
     motion.fit_controlled_motion(current, timeout_seconds=10.)
     assert calls
+
+
+def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, source_points = stance(12)
+    points = source_points.copy()
+    points[4, names.index('left_wrist'), 0] += .035
+    current = payload(names, points)
+    source_origin = 21.0
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(points),
+        'sourceStartTimeSec': source_origin,
+        'sourceStopTimeSec': source_origin + len(points) / current['fps'],
+    }
+    source_frames = []
+    for frame_index, source_frame in enumerate(current['frames']):
+        source_timestamp = source_origin + source_frame['timeSec']
+        source_frame['cycleSourceFrameIndex'] = frame_index
+        source_frame['cycleSourceTimeSec'] = source_timestamp
+        source_joints = {
+            name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+            for name, point in zip(names, source_points[frame_index])
+        }
+        source_joints['left_wrist'][0] += frame_index * .01
+        source_frames.append({
+            'sourceTimeSec': source_timestamp,
+            'joints': source_joints,
+            'jointConfidence': {name: .64 for name in names},
+        })
+        source_frame['sourceTimeSec'] = source_timestamp
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'sourceTimeOriginSec': source_origin,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+
+    captured = []
+
+    def capture_solver(residual, initial, pattern, max_evaluations, *, local_jacobian=None):
+        errors = residual(initial)
+        jacobian = local_jacobian(initial)
+        assert pattern.shape == jacobian.shape == (len(errors), len(initial))
+        captured.append((residual, errors, jacobian, initial.copy()))
+        return SimpleNamespace(x=initial, nfev=1, status=0)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', capture_solver)
+    _, report = motion.fit_controlled_motion(current, max_evaluations=1, timeout_seconds=10.)
+
+    constraint = report['sourceProjectionConstraint']
+    assert constraint['available'] is True
+    assert constraint['observationCount'] >= 6
+    assert constraint['endpointPostureObservationCount'] >= 6
+    assert constraint['endpointPostureCoverage']['start']['available'] is True
+    assert constraint['endpointPostureCoverage']['end']['available'] is True
+    assert np.isclose(constraint['endpointPostureCoverage']['start']['meanConfidenceWeight'], .8)
+    constrained_joint_count = sum(
+        constraint['endpointPostureCoverage'][role]['constrainedJointCount']
+        for role in ('start', 'end')
+    )
+    assert constraint['endpointPostureObservationCount'] > constrained_joint_count
+    assert captured
+    residual, errors, jacobian, initial = captured[0]
+    source_row_count = constraint['observationCount'] * 2
+    endpoint_row_count = constraint['endpointPostureObservationCount'] * 2
+    # Source projection and endpoint posture constraints follow the other fit
+    # rows. Check their production residual/Jacobian ordering independently.
+    epsilon = 1e-6
+    moved = initial.copy()
+    moved[0] += epsilon
+    numeric = (residual(moved) - errors) / epsilon
+    source_start = len(errors) - endpoint_row_count - source_row_count
+    np.testing.assert_allclose(
+        jacobian[source_start:source_start + source_row_count, 0].toarray().ravel(),
+        numeric[source_start:source_start + source_row_count],
+        rtol=1e-3,
+        atol=1e-4,
+    )
+    endpoint_start = len(errors) - endpoint_row_count
+    endpoint_jacobian = jacobian[endpoint_start:]
+    endpoint_jacobian_coo = endpoint_jacobian.tocoo()
+    largest = int(np.argmax(np.abs(endpoint_jacobian_coo.data)))
+    endpoint_column = int(endpoint_jacobian_coo.col[largest])
+    moved = initial.copy()
+    moved[endpoint_column] += epsilon
+    endpoint_numeric = (residual(moved) - errors)[endpoint_start:] / epsilon
+    np.testing.assert_allclose(
+        endpoint_jacobian[:, endpoint_column].toarray().ravel(),
+        endpoint_numeric,
+        rtol=2e-3,
+        atol=2e-4,
+    )
+
+
+def test_selected_cycle_boundaries_get_stronger_source_projection_fit_rows():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    source_origin = 3.0
+    source_frames = []
+    for frame_index, frame in enumerate(current['frames']):
+        cycle_time = source_origin + frame['timeSec']
+        frame['cycleSourceFrameIndex'] = frame_index
+        frame['cycleSourceTimeSec'] = cycle_time
+        source_frames.append({
+            'sourceTimeSec': cycle_time,
+            'joints': {
+                name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+                for name, point in zip(names, points[frame_index])
+            },
+        })
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(points),
+        'sourceStartTimeSec': source_origin,
+        'sourceStopTimeSec': source_origin + len(points) / current['fps'],
+    }
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['available']
+    assert constraint['cycleBoundaryCoverage']['selectedCycle']
+    assert constraint['cycleBoundaryCoverage']['start']['available']
+    assert constraint['cycleBoundaryCoverage']['end']['available']
+    observations = constraint['observations']
+    start_index = next(
+        index for index, row in enumerate(observations)
+        if 'start' in row['cycleBoundaryRoles'] and row['jointIndex'] == names.index('pelvis')
+    )
+    middle_index = next(
+        index for index, row in enumerate(observations)
+        if not row['cycleBoundaryRoles'] and row['jointIndex'] == names.index('pelvis')
+        and abs((row['leftFrame'] + row['alpha']
+                 * (row['rightFrame'] - row['leftFrame'])) - len(points) / 2) < 1.0
+    )
+    assert np.isclose(
+        observations[start_index]['fitConfidenceWeight'],
+        2.0 * observations[start_index]['confidenceWeight'],
+    )
+    assert np.isclose(
+        observations[middle_index]['fitConfidenceWeight'],
+        observations[middle_index]['confidenceWeight'],
+    )
+
+    baseline = motion._source_projection_fit_rows(points, constraint)
+    moved_start = points.copy()
+    moved_start[0, names.index('pelvis'), 0] += .01
+    moved_middle = points.copy()
+    middle_observation = observations[middle_index]
+    moved_middle[middle_observation['leftFrame'], names.index('pelvis'), 0] += .01
+    moved_middle[middle_observation['rightFrame'], names.index('pelvis'), 0] += .01
+    start_rows = slice(start_index * 2, start_index * 2 + 2)
+    middle_rows = slice(middle_index * 2, middle_index * 2 + 2)
+    start_delta = motion._source_projection_fit_rows(moved_start, constraint)[start_rows] - baseline[start_rows]
+    middle_delta = motion._source_projection_fit_rows(moved_middle, constraint)[middle_rows] - baseline[middle_rows]
+    assert np.isclose(np.linalg.norm(start_delta) / np.linalg.norm(middle_delta), 2.0)
+
+
+def _artifact_state_source_fit_payload(selection_class):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    source_origin = 3.0
+    source_start_frame = 10
+    source_end_frame = source_start_frame + len(points) - 1
+    source_start_time = source_origin
+    source_end_time = source_origin + current['frames'][-1]['timeSec']
+    source_frames = []
+    for frame_index, frame in enumerate(current['frames']):
+        timestamp = source_origin + frame['timeSec']
+        frame['sourceFrameIndex'] = source_start_frame + frame_index
+        frame['sourceTimeSec'] = timestamp
+        source_frames.append({
+            'sourceTimeSec': timestamp,
+            'joints': {
+                name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+                for name, point in zip(names, points[frame_index])
+            },
+            'jointConfidence': {name: .81 for name in names},
+        })
+    interval = {
+        'type': 'observed_cycle' if selection_class == 'cycleSelection'
+        else 'exact_source_movement_instance',
+        'startFrame': source_start_frame,
+        'endFrame': source_end_frame,
+        'startTimeSec': source_start_time,
+        'endTimeSec': source_end_time,
+        'durationSec': source_end_time - source_start_time,
+    }
+    current['loop'] = {
+        'enabled': True,
+        'sourceStartFrame': source_start_frame,
+        'sourceEndFrame': source_end_frame,
+        'sourceStartTimeSec': source_start_time,
+        'sourceEndTimeSec': source_end_time,
+    }
+    current['artifactState'] = {
+        'selectionEvidence': {selection_class: {'interval': interval}},
+    }
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'sourceTimeOriginSec': source_origin,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+    return current, names, points
+
+
+def test_artifact_state_selected_intervals_feed_endpoint_fit_rows_and_cycle_only_boundary_weight():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    for selection_key, expected_kind in (
+        ('cycleSelection', 'cycle'),
+        ('boundedMovementSelection', 'bounded_movement'),
+    ):
+        current, names, points = _artifact_state_source_fit_payload(selection_key)
+        constraint = motion._prepare_source_projection_fit_constraints(
+            current,
+            current['frames'],
+            names,
+            points,
+            np.zeros((len(points), len(names)), dtype=bool),
+            motion.body_scale(points, names),
+        )
+
+        assert constraint['available'] is True
+        assert constraint['selectedIntervalKind'] == expected_kind
+        assert constraint['selectedIntervalEvidenceSource'] == f'artifactState.{selection_key}'
+        assert constraint['endpointPostureCoverage']['selectedMovement'] is True
+        assert constraint['endpointPostureCoverage']['start']['available'] is True
+        assert constraint['endpointPostureCoverage']['end']['available'] is True
+        assert constraint['endpointPostureObservationCount'] > 0
+
+        endpoint_rows = motion._source_endpoint_posture_fit_rows(points, constraint)
+        assert endpoint_rows.size == constraint['endpointPostureObservationCount'] * 2
+        rig = FixedRig(points, names)
+        endpoint_jacobian = motion._source_endpoint_posture_fit_jacobian(
+            constraint,
+            frame_count=len(points),
+            joint_count=len(names),
+            rig=rig,
+            coordinates=rig.initial,
+        )
+        assert endpoint_jacobian.shape[0] == endpoint_rows.size
+        assert endpoint_jacobian.nnz > 0
+
+        observations = constraint['observations']
+        start_rows = [row for row in observations if 'start' in row['cycleBoundaryRoles']]
+        end_rows = [row for row in observations if 'end' in row['cycleBoundaryRoles']]
+        if expected_kind == 'cycle':
+            assert constraint['cycleBoundaryCoverage']['selectedCycle'] is True
+            assert constraint['cycleBoundaryCoverage']['start']['available'] is True
+            assert constraint['cycleBoundaryCoverage']['end']['available'] is True
+            assert start_rows and end_rows
+            assert np.isclose(
+                start_rows[0]['fitConfidenceWeight'],
+                constraint['cycleBoundaryFitMultiplier'] * start_rows[0]['confidenceWeight'],
+            )
+        else:
+            assert constraint['cycleBoundaryCoverage']['selectedCycle'] is False
+            assert constraint['cycleBoundaryCoverage']['selectedMovement'] is True
+            assert not start_rows and not end_rows
+            assert all(np.isclose(
+                row['fitConfidenceWeight'], row['confidenceWeight'],
+            ) for row in observations)
+
+
+def test_artifact_state_selected_interval_fails_closed_when_loop_source_bounds_disagree():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('cycleSelection')
+    current['loop']['sourceEndTimeSec'] += .1
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['available'] is True
+    assert constraint['selectedIntervalKind'] is None
+    assert constraint['selectedIntervalReason'] == 'selected_source_interval_loop_bounds_mismatch'
+    assert constraint['endpointPostureObservationCount'] == 0
+    assert not any(row['cycleBoundaryRoles'] for row in constraint['observations'])
+
+
+def test_legacy_cycle_selection_requires_matching_crop_frame_and_time_provenance():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    source_origin = 7.5
+    source_times = []
+    for frame_index, frame in enumerate(current['frames']):
+        source_time = source_origin + frame['timeSec']
+        frame['cycleSourceFrameIndex'] = frame_index
+        frame['cycleSourceTimeSec'] = source_time
+        source_times.append(source_time)
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(points),
+        'inputFrameCount': len(points),
+        'sourceStartTimeSec': source_times[0],
+        'sourceStopTimeSec': source_times[-1] + 1. / current['fps'],
+    }
+
+    assert motion._fit_source_interval_selection(current)['available'] is True
+
+    current['frames'][4]['cycleSourceFrameIndex'] += 1
+    selection = motion._fit_source_interval_selection(current)
+    assert selection['available'] is False
+    assert selection['reason'] == 'selected_source_interval_legacy_frame_bounds_mismatch'
+
+    current['frames'][4]['cycleSourceFrameIndex'] -= 1
+    current['frames'][-1]['cycleSourceTimeSec'] += .01
+    selection = motion._fit_source_interval_selection(current)
+    assert selection['available'] is False
+    assert selection['reason'] == 'selected_source_interval_legacy_time_bounds_mismatch'
+
+
+def test_endpoint_posture_uses_the_same_pelvis_center_for_source_and_fit():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('boundedMovementSelection')
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['endpointPostureCoverage']['start']['available'] is True
+    assert constraint['endpointPostureCoverage']['end']['available'] is True
+    pelvis_index = names.index('pelvis')
+    hip_midpoint = (points[0, names.index('left_hip')]
+                    + points[0, names.index('right_hip')]) * .5
+    assert np.linalg.norm(points[0, pelvis_index] - hip_midpoint) > .05
+    assert all(
+        observation['centerJointIndices'] == (pelvis_index,)
+        for observation in constraint['endpointPostureObservations']
+    )
+    endpoint_rows = motion._source_endpoint_posture_fit_rows(points, constraint)
+    assert np.max(np.abs(endpoint_rows), initial=0.) < 1e-6
+
+
+def test_endpoint_posture_coverage_requires_distinct_source_timestamps():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('cycleSelection')
+    source_frames = current['sourcePoseCameraReference']['sourcePose']['frames']
+    start_time = source_frames[0]['sourceTimeSec']
+    source_frames[1]['sourceTimeSec'] = start_time
+    source_frames[2]['sourceTimeSec'] = start_time
+    source_frames[1]['joints'] = dict(source_frames[0]['joints'])
+    source_frames[2]['joints'] = dict(source_frames[0]['joints'])
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['available'] is True
+    assert constraint['endpointPostureCoverage']['start']['available'] is False
+    assert constraint['endpointPostureCoverage']['start']['sourceSampleCount'] == 1
+    assert constraint['endpointPostureCoverage']['end']['available'] is True
+
+
+def test_selected_cycle_uses_adjacent_parent_pose_within_boundary_tolerance_only():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(36)
+    current = payload(names, points)
+    source_start = 1. / 30.
+    for frame_index, frame in enumerate(current['frames']):
+        source_time = source_start + frame['timeSec']
+        frame['sourceFrameIndex'] = frame_index
+        frame['sourceTimeSec'] = source_time
+        frame['cycleSourceFrameIndex'] = frame_index
+        frame['cycleSourceTimeSec'] = source_time
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(points),
+        'inputFrameCount': len(points),
+        'sourceStartTimeSec': source_start,
+        'sourceStopTimeSec': current['frames'][-1]['sourceTimeSec'] + 1. / current['fps'],
+    }
+    source_frames = []
+    for source_time in np.arange(0., 1.6, 4. / 30.):
+        frame_index = min(
+            len(points) - 1,
+            max(0, round((float(source_time) - source_start) * current['fps'])),
+        )
+        source_frames.append({
+            'sourceTimeSec': float(source_time),
+            'joints': {
+                name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+                for name, point in zip(names, points[frame_index])
+            },
+            'jointConfidence': {name: .81 for name in names},
+        })
+    # Duplicate pose observations can occur when retained source chunks overlap.
+    # They must not collapse the cadence used to decide whether the nearest
+    # parent observation is close enough to cover the cycle boundary.
+    source_frames = [dict(frame) for frame in source_frames for _ in range(4)]
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'sourceTimeOriginSec': 0.,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['available'] is True
+    assert constraint['cycleBoundaryCoverage']['start']['available'] is True
+    assert np.isclose(
+        constraint['cycleBoundaryCoverage']['start']['offsetSeconds'], 1. / 30.,
+    )
+    assert np.isclose(
+        constraint['cycleBoundaryCoverage']['start']['toleranceSeconds'], 2. / 30.,
+    )
+    assert constraint['endpointPostureCoverage']['start']['available'] is True
+    assert constraint['boundaryEvidenceFrameCount'] == 1
+    np.testing.assert_allclose(constraint['boundaryEvidenceSourceTimesSec'], [0.])
+    outside_rows = [row for row in constraint['observations'] if row['outsideSelectedInterval']]
+    assert outside_rows
+    assert all(np.isclose(row['sourceTime'], -1. / 30.) for row in outside_rows)
+    assert all('start' in row['cycleBoundaryRoles'] for row in outside_rows)
+
+
+def test_selected_cycle_fit_stops_when_source_endpoint_coverage_is_incomplete(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, _, _ = _artifact_state_source_fit_payload('cycleSelection')
+    source_frames = current['sourcePoseCameraReference']['sourcePose']['frames']
+    current['sourcePoseCameraReference']['sourcePose']['frames'] = source_frames[3:]
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(current['frames']),
+        'inputFrameCount': len(current['frames']),
+        'sourceStartTimeSec': current['frames'][0]['sourceTimeSec'],
+        'sourceStopTimeSec': current['frames'][-1]['sourceTimeSec'] + 1. / current['fps'],
+    }
+    for frame_index, frame in enumerate(current['frames']):
+        frame['cycleSourceFrameIndex'] = frame_index
+        frame['cycleSourceTimeSec'] = frame['sourceTimeSec']
+
+    def unexpected_solver_call(*args, **kwargs):
+        raise AssertionError('fit solver must not run without selected-cycle endpoint evidence')
+
+    monkeypatch.setattr(motion, 'solve_trajectory', unexpected_solver_call)
+    result, report = motion.fit_controlled_motion(
+        current,
+        max_evaluations=1,
+        timeout_seconds=10.,
+    )
+
+    assert result is current
+    assert report['applied'] is False
+    assert report['reason'] == 'selected_source_interval_source_evidence_incomplete'
+    assert report['sourceProjectionConstraint']['available'] is True
+    assert report['sourceProjectionConstraint']['endpointPostureCoverage']['start']['available'] is False
+    assert report['sourceProjectionConstraint']['endpointPostureCoverage']['end']['available'] is True
+    assert report['sourceIntervalFitCoverageGaps'] == [
+        'source_endpoint_posture_start_unavailable',
+        'source_cycle_boundary_start_unavailable',
+    ]
+    assert not motion.controlled_fit_processing_incomplete(report)
+
+
+def test_pinned_source_confirmed_foot_anchor_projects_with_low_trust_for_unknown_confidence():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    source_origin = 21.0
+    source_frames = []
+    for frame_index, source_frame in enumerate(current['frames']):
+        source_timestamp = source_origin + source_frame['timeSec']
+        joints = {}
+        for name, point in zip(names, points[frame_index]):
+            image_x = float(point[0] * .4 + .5)
+            if name == 'left_foot':
+                image_x += .02
+            joints[name] = [image_x, float(point[1] * .4 + .5)]
+        source_frames.append({
+            'sourceTimeSec': source_timestamp,
+            'joints': joints,
+            # The ankle entry is deliberately absent: missing confidence must
+            # stay low-trust while an explicit source confidence remains usable.
+            'jointConfidence': {'left_foot': 1.0},
+        })
+        source_frame['sourceTimeSec'] = source_timestamp
+    current['sourceFootSupportEvidence'] = {'contacts': [{
+        'jointName': 'left_foot',
+        'contactState': 'full_sole',
+        'contactMotion': 'stationary',
+        'startRatio': 0.,
+        'endRatio': 1.,
+        'confidence': .8,
+        'anchorGroupId': 'left:toe:1',
+        'ankleAnchorGroupId': 'left:ankle:1',
+    }]}
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'sourceTimeOriginSec': source_origin,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+
+    pinned = motion.contact_mask(current, names, len(points))
+    assert pinned[:, names.index('left_foot')].all()
+    assert pinned[:, names.index('left_ankle')].all()
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current, current['frames'], names, points, pinned, motion.body_scale(points, names),
+    )
+    assert constraint['available']
+    anchor_rows = [row for row in constraint['observations']
+                   if row['sharedAnchorGroup'] is not None]
+    foot = next(row for row in anchor_rows
+                if row['jointIndex'] == names.index('left_foot'))
+    ankle = next(row for row in anchor_rows
+                 if row['jointIndex'] == names.index('left_ankle'))
+    assert len(anchor_rows) >= 2 * len(points)
+    assert foot['confidenceWeight'] > ankle['confidenceWeight']
+    assert np.isclose(ankle['confidenceWeight'], np.sqrt(.1))
+    rig = FixedRig(points, names)
+    fit_jacobian = motion._source_projection_fit_jacobian(
+        constraint,
+        frame_count=len(points),
+        joint_count=len(names),
+        rig=rig,
+        coordinates=rig.initial,
+    )
+    foot_observation_index = next(
+        index for index, row in enumerate(constraint['observations']) if row is foot)
+    assert fit_jacobian[foot_observation_index * 2:(foot_observation_index + 1) * 2].nnz > 0
+
+    corrected, adjustment = motion._align_shared_contact_anchors_to_source_projection(
+        constraint, pinned, points.copy(),
+    )
+    assert adjustment['adjustedGroupCount'] == 1
+    assert adjustment['maximumShiftMeters'] > 0.
+    assert adjustment['maximumShiftMeters'] < .05
+    foot_delta = corrected[:, names.index('left_foot')] - points[:, names.index('left_foot')]
+    ankle_delta = corrected[:, names.index('left_ankle')] - points[:, names.index('left_ankle')]
+    np.testing.assert_allclose(foot_delta, ankle_delta, atol=1e-10)
+    np.testing.assert_allclose(foot_delta, np.broadcast_to(foot_delta[0], foot_delta.shape), atol=1e-10)
+    camera_depth = np.linalg.svd(constraint['projection'])[2][-1]
+    assert abs(float(np.dot(foot_delta[0], camera_depth))) < 1e-10
+
+
+@pytest.mark.parametrize('joint_name', ['left_wrist', 'left_foot'])
+@pytest.mark.parametrize('explicit_surface_geometry', [False, True])
+def test_confirmed_pinned_body_support_source_camera_rows_follow_support_authority(
+    joint_name, explicit_surface_geometry,
+):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    source_origin = 21.0
+    source_frames = []
+    for frame_index, frame in enumerate(current['frames']):
+        source_timestamp = source_origin + frame['timeSec']
+        frame['sourceTimeSec'] = source_timestamp
+        frame['cycleSourceFrameIndex'] = frame_index
+        frame['cycleSourceTimeSec'] = source_timestamp
+        source_frames.append({
+            'sourceTimeSec': source_timestamp,
+            'joints': {
+                name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+                for name, point in zip(names, points[frame_index])
+            },
+            'jointConfidence': {name: .81 for name in names},
+        })
+    current['loopCycleSelection'] = {
+        'startFrame': 0,
+        'stopFrameExclusive': len(points),
+        'sourceStartTimeSec': source_origin,
+        'sourceStopTimeSec': source_origin + len(points) / current['fps'],
+    }
+    current['sourceFootSupportEvidence'] = {
+        'bodySupport': {
+            'required': True,
+            'status': 'confirmed',
+            'stationaryJoints': [joint_name],
+            'coplanarGroups': (
+                [{
+                    'joints': [joint_name],
+                    'normal': [0., 1., 0.],
+                    'planeOffsetMeters': float(points[0, names.index(joint_name), 1]),
+                }]
+                if explicit_surface_geometry else []
+            ),
+        },
+    }
+    current['sourcePoseCameraReference'] = {
+        'sourcePose': {
+            'coordinateSpace': 'normalized_image_xy',
+            'imageWidth': 1000,
+            'imageHeight': 1000,
+            'sourceTimeOriginSec': source_origin,
+            'frames': source_frames,
+        },
+        'camera': {
+            'cameraRotation': np.eye(3).tolist(),
+            'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
+            'bilateralAssignment': 'identity',
+        },
+    }
+
+    pinned = np.zeros((len(points), len(names)), dtype=bool)
+    support_joint_index = names.index(joint_name)
+    pinned[:, support_joint_index] = True
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current, current['frames'], names, points, pinned, motion.body_scale(points, names),
+    )
+    support_observations = [
+        row for row in constraint['observations'] if row['jointIndex'] == support_joint_index
+    ]
+    assert constraint['available']
+    if explicit_surface_geometry:
+        assert constraint['supportAnchorObservationCount'] == 0
+        assert constraint['supportAnchorProjectionOmittedCount'] == len(points)
+        assert support_observations == []
+    else:
+        assert constraint['supportAnchorObservationCount'] == len(points)
+        assert constraint['supportAnchorProjectionOmittedCount'] == 0
+        assert len(support_observations) == len(points)
+        assert all(row['sharedAnchorGroup'] is None for row in support_observations)
+
+    if not explicit_surface_geometry:
+        baseline = motion._source_projection_fit_rows(points, constraint)
+        shifted = points.copy()
+        shifted[:, support_joint_index, 0] += .01
+        moved_rows = motion._source_projection_fit_rows(shifted, constraint)
+        row_indexes = [
+            index for index, row in enumerate(constraint['observations'])
+            if row['jointIndex'] == support_joint_index
+        ]
+        selected_rows = np.ravel([[index * 2, index * 2 + 1] for index in row_indexes])
+        assert np.linalg.norm(moved_rows[selected_rows] - baseline[selected_rows]) > 0.
+
+        rig = FixedRig(points, names)
+        jacobian = motion._source_projection_fit_jacobian(
+            constraint,
+            frame_count=len(points),
+            joint_count=len(names),
+            rig=rig,
+            coordinates=rig.initial,
+        )
+        assert jacobian[selected_rows].nnz > 0
+
+    current['sourceFootSupportEvidence']['bodySupport']['status'] = 'unknown'
+    unconfirmed = motion._prepare_source_projection_fit_constraints(
+        current, current['frames'], names, points, pinned, motion.body_scale(points, names),
+    )
+    assert unconfirmed['supportAnchorObservationCount'] == 0
+    assert unconfirmed['supportAnchorProjectionOmittedCount'] == 0
+    assert not any(row['jointIndex'] == support_joint_index for row in unconfirmed['observations'])
 
 
 def test_slow_solver_block_hands_unused_budget_to_polish(monkeypatch):
@@ -1435,6 +2169,58 @@ def test_open_seam_can_reuse_and_passes_physical_gate():
     assert physical['passed'], physical.get('reasons')
     assert 'unsafe_loop_transition' not in physical.get('reasons', [])
     assert (physical.get('rigPlayback') or {}).get('openLoopSeam') is True
+
+
+def test_attaching_selected_source_bounds_keeps_valid_fit_reusable():
+    from copy import deepcopy
+    from exercise_motion_pkg.artifact_state import CYCLE_SELECTION
+    from exercise_motion_pkg.bake_and_rank import attach_materialized_source_interval
+    from exercise_motion_pkg.controlled_motion import can_reuse_controlled_motion
+    from test_controlled_motion_pipeline import accepted_payload
+
+    payload = accepted_payload()
+    for index, frame in enumerate(payload['frames']):
+        frame['sourceFrameIndex'] = index + 10
+        frame['sourceTimeSec'] = (index + 10) / 10.0
+    payload['loop'] = {'enabled': True, 'startFrame': 0, 'endFrame': 6}
+    payload['controlledMotionFit']['checks']['loopSeam'] = True
+    payload['controlledMotionFit']['outputPoseDigest'] = __import__(
+        'exercise_motion_pkg.sequence_stabilization', fromlist=['pose_digest']
+    ).pose_digest(payload)
+    selection = {
+        'cycleSelection': {
+            'interval': {
+                'startFrame': 10,
+                'endFrame': 16,
+                'startTimeSec': 1.0,
+                'endTimeSec': 1.6,
+            }
+        }
+    }
+
+    assert can_reuse_controlled_motion(payload)
+    assert attach_materialized_source_interval(
+        payload,
+        selection,
+        selection_class=CYCLE_SELECTION,
+    )
+    assert payload['loop']['sourceStartFrame'] == 10
+    assert can_reuse_controlled_motion(payload)
+
+    stale_fit = deepcopy(payload)
+    stale_fit['controlledMotionFit']['outputPoseDigest'] = __import__(
+        'exercise_motion_pkg.sequence_stabilization', fromlist=['pose_digest']
+    ).pose_digest(stale_fit)
+    stale_fit['frames'][0]['joints']['pelvis'][0] += 0.01
+    stale_digest = stale_fit['controlledMotionFit']['outputPoseDigest']
+    assert not can_reuse_controlled_motion(stale_fit)
+    assert attach_materialized_source_interval(
+        stale_fit,
+        selection,
+        selection_class=CYCLE_SELECTION,
+    )
+    assert stale_fit['controlledMotionFit']['outputPoseDigest'] == stale_digest
+    assert not can_reuse_controlled_motion(stale_fit)
 
 
 def test_open_seam_requires_body_playback_without_wrap():

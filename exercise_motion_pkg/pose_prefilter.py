@@ -15,6 +15,7 @@ from urllib.request import urlretrieve
 
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.kinematic_cut import contract_completion_mode
+from exercise_motion_pkg.process_lock import InterProcessFileLock
 from exercise_motion_pkg.target_motion import (
     TARGET_MOTION_PREFILTER_BLOCKING_ISSUE,
     observable_motion_spec_for_contract,
@@ -889,38 +890,30 @@ def ensure_cached_pose_model(
         return target_path
 
     lock_path = target_path.with_suffix(target_path.suffix + ".lock")
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
-            break
-        except FileExistsError:
-            if target_path.exists() and target_path.stat().st_size > 0:
-                return target_path
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Timed out waiting for cached pose model: {target_path}")
-            time.sleep(0.5)
-
     partial_path = target_path.with_suffix(target_path.suffix + ".part")
     try:
-        if target_path.exists() and target_path.stat().st_size > 0:
+        with InterProcessFileLock(
+            lock_path,
+            stage="pose_model_cache_population",
+            timeout_seconds=timeout_seconds,
+            stale_after_seconds=timeout_seconds,
+        ):
+            if target_path.exists() and target_path.stat().st_size > 0:
+                return target_path
+            if partial_path.exists():
+                partial_path.unlink()
+            if seed_path is not None and seed_path.exists() and seed_path.stat().st_size > 0:
+                shutil.copy2(seed_path, target_path)
+                return target_path
+            urlretrieve(url, partial_path)
+            if not partial_path.exists() or partial_path.stat().st_size <= 0:
+                raise RuntimeError(f"Downloaded empty pose model file: {partial_path}")
+            partial_path.replace(target_path)
             return target_path
-        if seed_path is not None and seed_path.exists() and seed_path.stat().st_size > 0:
-            shutil.copy2(seed_path, target_path)
-            return target_path
-        if partial_path.exists():
-            partial_path.unlink()
-        urlretrieve(url, partial_path)
-        if not partial_path.exists() or partial_path.stat().st_size <= 0:
-            raise RuntimeError(f"Downloaded empty pose model file: {partial_path}")
-        partial_path.replace(target_path)
-        return target_path
-    finally:
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+    except TimeoutError as exc:
+        if str(exc).startswith("Timed out waiting for process lock:"):
+            raise TimeoutError(f"Timed out waiting for cached pose model: {target_path}") from exc
+        raise
 
 
 def build_pose_windows(

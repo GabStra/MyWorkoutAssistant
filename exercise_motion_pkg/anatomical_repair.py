@@ -145,13 +145,13 @@ def enforce_rigid_bone_lengths(points, names):
 
     The SMPL joint regressor is not exactly rigid: joint centers drift with
     pose (measured up to 43mm of spine2 drift during deep sumo flexion), and
-    the bone-variation gate rejects exactly that drift. Each bone vector is
-    rescaled along its own current direction to the bone's temporal median
-    length, parents first — every inter-bone angle is preserved (each vector
-    is only scaled), so no other gate can be affected, and the skeleton
-    comes out exactly rigid.
+    the bone-variation gate rejects exactly that drift. Preserve each bone's
+    input direction while using the corrected parent position to place the
+    child. Recomputing a child's direction from an already moved parent can
+    rotate downstream joints and undo earlier anatomical corrections.
     """
-    corrected = points.copy()
+    source_points = np.asarray(points, dtype=float)
+    corrected = source_points.copy()
     parent_of = {
         name: SMPL_JOINT_NAMES[parent]
         for name, parent in zip(SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS)
@@ -167,7 +167,7 @@ def enforce_rigid_bone_lengths(points, names):
     median_lengths = {}
     for child, parent in bones:
         lengths = np.linalg.norm(
-            corrected[:, index[child]] - corrected[:, index[parent]], axis=-1)
+            source_points[:, index[child]] - source_points[:, index[parent]], axis=-1)
         median_lengths[(child, parent)] = float(np.median(lengths))
     # Left/right bone pairs share one length so bilateral proportions hold.
     for child, parent in list(median_lengths):
@@ -179,7 +179,7 @@ def enforce_rigid_bone_lengths(points, names):
             median_lengths[(other, parent)] = shared
     for child, parent in bones:
         target = median_lengths[(child, parent)]
-        delta = corrected[:, index[child]] - corrected[:, index[parent]]
+        delta = source_points[:, index[child]] - source_points[:, index[parent]]
         norm = np.linalg.norm(delta, axis=1, keepdims=True)
         usable = norm > 1e-9
         corrected[:, index[child]] = np.where(
@@ -205,7 +205,8 @@ def enforce_spine_axis_alignment(points, names):
     bone-variation gate rejects exactly that). Joints are processed parents
     first; the neck stays fixed as the axis anchor.
     """
-    corrected = points.copy()
+    source_points = np.asarray(points, dtype=float)
+    corrected = source_points.copy()
     report = {}
     if not all(name in names for name in ('pelvis', 'neck', *SPINE_AXIS_JOINTS)):
         return corrected, {'applied': False, 'reason': 'spine_joints_unavailable'}
@@ -221,7 +222,6 @@ def enforce_spine_axis_alignment(points, names):
     direction = axis / np.maximum(height, 1e-9)[:, None]
     clamp_ratio = SPINE_AXIS_MAX_DEVIATION_RATIO * SPINE_AXIS_CLAMP_MARGIN
     changed = 0
-    previous_joint = corrected[:, pi].copy()
     for name in SPINE_AXIS_JOINTS:
         if name not in names:
             continue
@@ -230,29 +230,51 @@ def enforce_spine_axis_alignment(points, names):
         if parent is None or parent not in names:
             continue
         pj = names.index(parent)
-        bone_length = np.linalg.norm(corrected[:, j] - previous_joint, axis=-1)
+        parent_points = corrected[:, pj]
+        original_segment = source_points[:, j] - source_points[:, pj]
+        bone_length = np.linalg.norm(original_segment, axis=-1)
         limit = clamp_ratio * height
         clamped_total = 0
-        for _ in range(3):
-            delta = corrected[:, j] - previous_joint
-            # Axis-relative deviation of this joint (the gate measures from
-            # the pelvis-neck line; the moved parent stays near it, so the
-            # parent-relative off-axis clamp is second-order equivalent).
-            v = corrected[:, j] - corrected[:, pi]
-            progress_axis = np.sum(v * direction, axis=-1)
-            off = v - progress_axis[:, None] * direction
-            deviation = np.linalg.norm(off, axis=-1)
-            over = usable & (deviation > limit) & (bone_length > limit)
-            if not over.any():
-                break
-            off_clamped = off * np.where(
-                over, limit / np.maximum(deviation, 1e-9), 1.0)[:, None]
-            along = np.sign(progress_axis) * np.sqrt(
-                np.maximum(bone_length ** 2 - np.sum(off_clamped ** 2, axis=-1), 0.0))
-            corrected[:, j] = (
-                previous_joint + along[:, None] * direction + off_clamped
+        from_pelvis = corrected[:, j] - corrected[:, pi]
+        progress_axis = np.sum(from_pelvis * direction, axis=-1)
+        off_axis = from_pelvis - progress_axis[:, None] * direction
+        deviation = np.linalg.norm(off_axis, axis=-1)
+        over = usable & (deviation > limit) & (bone_length > 1e-9)
+        if over.any():
+            parent_from_pelvis = parent_points - corrected[:, pi]
+            parent_progress = np.sum(parent_from_pelvis * direction, axis=-1)
+            parent_off_axis = parent_from_pelvis - parent_progress[:, None] * direction
+            clamped_off_axis = off_axis * np.minimum(
+                1., limit / np.maximum(deviation, 1e-9))[:, None]
+            perpendicular_segment = clamped_off_axis - parent_off_axis
+            perpendicular_length = np.linalg.norm(perpendicular_segment, axis=-1)
+            # Keep the projected point inside both the axis-radius limit and
+            # the sphere reachable from this joint's actual parent.
+            reachable = perpendicular_length > bone_length
+            reachable_scale = np.minimum(
+                1., bone_length / np.maximum(perpendicular_length, 1e-9))
+            clamped_off_axis = np.where(
+                reachable[:, None],
+                parent_off_axis + perpendicular_segment * reachable_scale[:, None],
+                clamped_off_axis,
             )
-            clamped_total += int(np.sum(over))
+            perpendicular_segment = clamped_off_axis - parent_off_axis
+            perpendicular_length = np.linalg.norm(perpendicular_segment, axis=-1)
+            along_magnitude = np.sqrt(np.maximum(
+                bone_length ** 2 - perpendicular_length ** 2, 0.))
+            original_along = np.sum(original_segment * direction, axis=-1)
+            along_sign = np.where(
+                np.abs(original_along) > 1e-9,
+                np.sign(original_along),
+                np.where(progress_axis >= 0., 1., -1.),
+            )
+            candidate = (
+                corrected[:, pi]
+                + (parent_progress + along_sign * along_magnitude)[:, None] * direction
+                + clamped_off_axis
+            )
+            corrected[:, j] = np.where(over[:, None], candidate, corrected[:, j])
+            clamped_total = int(np.sum(over))
         if clamped_total:
             changed = 1
         # Fold pass: the deviation bound alone cannot see a segment that stays
@@ -278,7 +300,11 @@ def enforce_spine_axis_alignment(points, names):
             lateral = off_length > 1e-9
             perpendicular[lateral] = (
                 off_vector[lateral] / off_length[lateral, None])
-            helper = np.eye(3)[np.argmin(np.abs(direction.mean(axis=0)))]
+            # Choose a nonparallel fallback separately for each frame. A
+            # helper chosen from the sequence-average axis can be parallel to
+            # a legitimately tilted frame, leaving an exactly collinear fold
+            # unrepaired in that frame.
+            helper = np.eye(3)[np.argmin(np.abs(direction), axis=1)]
             fallback = np.cross(direction, helper)
             fallback_norm = np.linalg.norm(fallback, axis=-1)
             usable_fallback = fallback_norm > 1e-9
@@ -299,8 +325,7 @@ def enforce_spine_axis_alignment(points, names):
                 **report.get(name, {}),
                 'clampedFrameCount': clamped_total,
                 'boneLengthVariationMeters': round(float(np.ptp(
-                    np.linalg.norm(
-                        corrected[:, j] - corrected[:, pj], axis=-1))), 6),
+                    np.linalg.norm(corrected[:, j] - parent_points, axis=-1))), 6),
             }
     for name in SPINE_AXIS_JOINTS:
         report.setdefault(name, {'clampedFrameCount': 0})

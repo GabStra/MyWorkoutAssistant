@@ -86,6 +86,86 @@ def test_valid_forward_lean_and_world_tilt_are_preserved():
     np.testing.assert_allclose(corrected, points, atol=1e-12)
 
 
+def test_spine_alignment_preserves_each_parent_bone_length():
+    from exercise_motion_pkg.anatomical_repair import enforce_spine_axis_alignment
+
+    names = ['pelvis', 'spine1', 'spine2', 'spine3', 'neck']
+    points = np.zeros((2, len(names), 3), dtype=float)
+    points[0, :, 1] = [0., .2, .4, .6, 1.]
+    points[1, 1] = [.20, .20, 0.]
+    points[1, 2] = [.28, .45, 0.]
+    points[1, 3] = [.25, .38, 0.]
+    points[1, 4] = [0., 1., 0.]
+
+    corrected, report = enforce_spine_axis_alignment(points, names)
+
+    assert report['applied'] is True
+    parents = {'spine1': 'pelvis', 'spine2': 'spine1', 'spine3': 'spine2'}
+    for child, parent in parents.items():
+        before = np.linalg.norm(
+            points[:, names.index(child)] - points[:, names.index(parent)], axis=-1)
+        after = np.linalg.norm(
+            corrected[:, names.index(child)] - corrected[:, names.index(parent)], axis=-1)
+        np.testing.assert_allclose(after, before, atol=1e-9)
+
+
+def test_rigid_bone_length_repair_preserves_input_directions():
+    from exercise_motion_pkg.anatomical_repair import enforce_rigid_bone_lengths
+
+    names = ['pelvis', 'spine1', 'spine2', 'spine3', 'neck']
+    points = np.zeros((2, len(names), 3), dtype=float)
+    points[0, :, 1] = [0., .2, .4, .6, .8]
+    points[1, 1] = [.12, .24, 0.]
+    points[1, 2] = [.24, .51, .02]
+    points[1, 3] = [.36, .58, .08]
+    points[1, 4] = [.42, .81, .1]
+
+    corrected = enforce_rigid_bone_lengths(points, names)
+
+    parents = {'spine1': 'pelvis', 'spine2': 'spine1', 'spine3': 'spine2', 'neck': 'spine3'}
+    for child, parent in parents.items():
+        before = points[:, names.index(child)] - points[:, names.index(parent)]
+        after = corrected[:, names.index(child)] - corrected[:, names.index(parent)]
+        before_direction = before / np.linalg.norm(before, axis=-1, keepdims=True)
+        after_direction = after / np.linalg.norm(after, axis=-1, keepdims=True)
+        np.testing.assert_allclose(after_direction, before_direction, atol=1e-9)
+        np.testing.assert_allclose(
+            np.linalg.norm(after, axis=-1), np.median(np.linalg.norm(before, axis=-1)), atol=1e-9)
+
+
+def test_spine_fold_repair_handles_framewise_world_axis_changes():
+    from exercise_motion_pkg.anatomical_repair import (
+        enforce_rigid_bone_lengths,
+        enforce_spine_axis_alignment,
+    )
+    from exercise_motion_pkg.physical_validation import anatomical_structure_residuals
+
+    names = ['pelvis', 'spine1', 'spine2', 'spine3', 'neck']
+    axes = np.asarray([
+        [1., 0., 0.],
+        [-.9, .3, .3],
+        [-.1, .6, .8],
+    ])
+    axes /= np.linalg.norm(axes, axis=1, keepdims=True)
+    points = np.zeros((len(axes), len(names), 3), dtype=float)
+    points[:, names.index('neck')] = axes
+    points[:, names.index('spine1')] = .25 * axes
+    points[:, names.index('spine2')] = .50 * axes
+    points[:, names.index('spine3')] = .75 * axes
+    # The first frame has an exactly collinear backward segment. Its axis is
+    # parallel to the old sequence-average fallback helper.
+    points[0, names.index('spine3')] = .41 * axes[0]
+
+    aligned, report = enforce_spine_axis_alignment(points, names)
+    corrected = enforce_rigid_bone_lengths(aligned, names)
+    residuals, labels = anatomical_structure_residuals(corrected, names, pose_only=True)
+    spine_fold_columns = [i for i, label in enumerate(labels) if label.startswith('anatomy_spine_fold:')]
+
+    assert report['joints']['spine3']['foldClampedFrameCount'] == 1
+    assert spine_fold_columns
+    assert not np.any(residuals[:, spine_fold_columns] > 1e-9)
+
+
 def test_back_curve_repair_preserves_overall_torso_lean():
     names, points = stance()
     points = points @ Rotation.from_euler('xyz', [.6, .2, .5]).as_matrix()

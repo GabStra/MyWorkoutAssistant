@@ -1002,8 +1002,6 @@ def build_wear_skeleton_payload(
             "activeEndFrame": active_end_frame,
         },
         "fps": preview_clip.fps,
-        "frameCount": len(centered_frames),
-        "durationSec": active_duration,
         "jointNames": preview_clip.joint_names,
         "rootJoint": root_joint,
         "groundContactMode": _clip_ground_contact_mode(clip),
@@ -1022,25 +1020,11 @@ def build_wear_skeleton_payload(
         },
         "loop": {
             "enabled": selected_loop is not None,
-            "startFrame": 0,
-            "endFrame": max(0, len(centered_frames) - 1),
             "sourceStartFrame": active_start_frame,
             "sourceEndFrame": active_end_frame,
             "durationSec": active_duration,
-            "label": selected_loop.get("label") if selected_loop is not None else "Full clip",
-        },
-        "transforms": {
-            "autoAlignment": _serialize_preview_rotations(auto_alignment),
-            "rootAnchor": _point_to_list(active_root_anchor) if active_root_anchor is not None else None,
-            "sceneOriginOffset": _point_to_list(scene_origin),
-            "bakedSagittalPlaneAlignment": baked_sagittal_plane_alignment,
         },
         "bounds": _serialize_bounds(centered_bounds),
-        "topology": {
-            "skeletonChains": PREVIEW_SKELETON_CHAINS,
-            "capsules": _build_capsules(preview_clip),
-        },
-        "geometry": _wear_humanoid_geometry(),
         "frames": centered_frames,
     }
 
@@ -4696,6 +4680,8 @@ def _build_html(
     let lockPlantedFeet = false;
     let lockPlantedHands = false;
     let sourceFootSupportEvidence = null;
+    let motionSpaceSupportEvidence = null;
+    let activeSourceFootSupportEvidence = null;
     let activeRenderFrame = null;
     let activeHandSupportAnchor = null;
     let activeVerticalMovementAnchor = null;
@@ -6168,6 +6154,42 @@ def _build_html(
       }};
     }}
 
+    function selectCustomFrameRange(startFrame, endFrame) {{
+      const frames = Array.isArray(payload.frames) ? payload.frames : [];
+      const first = Number(startFrame);
+      const last = Number(endFrame);
+      if (!Number.isInteger(first) || !Number.isInteger(last)
+          || first < 0 || last <= first || last >= frames.length) {{
+        throw new Error(`Invalid preview frame range: ${{startFrame}} -> ${{endFrame}}`);
+      }}
+      const startTimeSec = Number(frames[first]?.timeSec);
+      const endTimeSec = Number(frames[last]?.timeSec);
+      if (!Number.isFinite(startTimeSec) || !Number.isFinite(endTimeSec)
+          || endTimeSec <= startTimeSec) {{
+        throw new Error(`Preview frame range has invalid timestamps: ${{first}} -> ${{last}}`);
+      }}
+      customTimeRange = {{
+        type: "exact_source_movement_instance",
+        startFrame: first,
+        endFrame: last,
+        startTimeSec,
+        endTimeSec,
+        durationSec: endTimeSec - startTimeSec,
+        label: `Exact source frames: ${{first}} -> ${{last}}`,
+      }};
+      selectedLoopIndex = -1;
+      currentLoop = customTimeRange;
+      loopSelect.value = "-1";
+      applyActiveRange();
+      return {{
+        startSeconds: startTimeSec,
+        endSeconds: endTimeSec,
+        startFrame: first,
+        endFrame: last,
+        durationSec: customTimeRange.durationSec,
+      }};
+    }}
+
     function buildCustomTimeRange(startSeconds, endSeconds) {{
       const frames = Array.isArray(payload.frames) ? payload.frames : [];
       if (frames.length < 2) {{
@@ -6200,9 +6222,125 @@ def _build_html(
       }};
     }}
 
+    function rebaseSourceFootSupportEvidence(
+      startFrame,
+      endFrame,
+      fullFrameCount,
+      evidenceSource = sourceFootSupportEvidence
+    ) {{
+      if (!evidenceSource || typeof evidenceSource !== "object") {{
+        return null;
+      }}
+      const count = Math.max(0, Math.trunc(Number(fullFrameCount) || 0));
+      const evidence = JSON.parse(JSON.stringify(evidenceSource));
+      if (count === 0) {{
+        return evidence;
+      }}
+      const first = Math.max(0, Math.min(count - 1, Math.trunc(Number(startFrame) || 0)));
+      const last = Math.max(first, Math.min(
+        count - 1,
+        Number.isFinite(Number(endFrame)) ? Math.trunc(Number(endFrame)) : count - 1
+      ));
+      const activeCount = last - first + 1;
+      const denominator = Math.max(1, count - 1);
+      const localDenominator = Math.max(1, activeCount - 1);
+      const rebaseContacts = (records) => {{
+        if (!Array.isArray(records)) {{
+          return records;
+        }}
+        return records.flatMap((contact) => {{
+          if (!contact || typeof contact !== "object") {{
+            return [];
+          }}
+          const startValue = Number(contact.startRatio);
+          const endValue = Number(contact.endRatio);
+          const originalStart = Number.isFinite(startValue)
+            ? Math.round(startValue * denominator)
+            : Math.trunc(Number(contact.startFrame) || 0);
+          const originalEnd = Number.isFinite(endValue)
+            ? Math.round(endValue * denominator)
+            : (Number.isFinite(Number(contact.endFrame))
+              ? Math.trunc(Number(contact.endFrame)) : count - 1);
+          const boundedStart = Math.max(0, Math.min(count - 1, originalStart));
+          const boundedEnd = Math.max(0, Math.min(count - 1, originalEnd));
+          const clippedStart = Math.max(first, boundedStart);
+          const clippedEnd = Math.min(last, boundedEnd);
+          if (clippedEnd < clippedStart) {{
+            return [];
+          }}
+          const localStart = clippedStart - first;
+          const localEnd = clippedEnd - first;
+          const rebased = {{
+            ...contact,
+            startFrame: localStart,
+            endFrame: localEnd,
+            startRatio: localStart / localDenominator,
+            endRatio: localEnd / localDenominator,
+          }};
+          if (contact.continuousSupport === true) {{
+            rebased.continuousSupport = clippedStart <= first && clippedEnd >= last;
+          }}
+          return [rebased];
+        }});
+      }};
+
+      for (const key of ["contacts", "supportContacts", "footContactCandidates"]) {{
+        if (Array.isArray(evidence[key])) {{
+          evidence[key] = rebaseContacts(evidence[key]);
+        }}
+      }}
+      if (evidence.footPatchEvidence && typeof evidence.footPatchEvidence === "object") {{
+        const patches = evidence.footPatchEvidence;
+        if (Array.isArray(patches.contacts)) {{
+          patches.contacts = rebaseContacts(patches.contacts);
+        }}
+        for (const foot of Object.values(patches.feet ?? {{}})) {{
+          const states = foot?.states;
+          if (!Array.isArray(states) || states.length === 0) {{
+            continue;
+          }}
+          const stateDenominator = Math.max(1, states.length - 1);
+          const stateFirst = Math.max(0, Math.floor(first * stateDenominator / denominator));
+          const stateLast = Math.min(
+            states.length - 1,
+            Math.ceil(last * stateDenominator / denominator)
+          );
+          foot.states = states.slice(stateFirst, stateLast + 1);
+        }}
+      }}
+      evidence.previewCrop = {{
+        sourceStartFrame: first,
+        sourceEndFrame: last,
+        sourceFrameCount: count,
+      }};
+      return evidence;
+    }}
+
+    function activeSupportEvidenceForRange(
+      startFrame,
+      endFrame,
+      fullFrameCount,
+      sourceEvidence = sourceFootSupportEvidence,
+      motionEvidence = motionSpaceSupportEvidence
+    ) {{
+      return rebaseSourceFootSupportEvidence(
+        startFrame,
+        endFrame,
+        fullFrameCount,
+        motionEvidence || sourceEvidence
+      );
+    }}
+
     function applyActiveRange() {{
       currentAutoAlignment = currentLoop?.autoAlignment ?? defaultAutoAlignment;
       playbackState = buildPlaybackState(payload.frames, currentLoop);
+      activeSourceFootSupportEvidence = activeSupportEvidenceForRange(
+        currentLoop?.startFrame ?? 0,
+        currentLoop?.endFrame ?? Math.max(0, payload.frames.length - 1),
+        payload.frames.length,
+        sourceFootSupportEvidence,
+        motionSpaceSupportEvidence
+      );
       comparisonPlaybackState = buildPlaybackState(comparisonFrames, currentLoop);
       rawComparisonPlaybackState = buildPlaybackState(rawComparisonFrames, currentLoop);
       activeRootAnchor = computeActiveRootAnchor(playbackState.boundsFrames);
@@ -7032,8 +7170,8 @@ def _build_html(
     }}
 
     function availableGenericSupportJoints() {{
-      const contacts = Array.isArray(sourceFootSupportEvidence?.supportContacts)
-        ? sourceFootSupportEvidence.supportContacts
+      const contacts = Array.isArray(activeSourceFootSupportEvidence?.supportContacts)
+        ? activeSourceFootSupportEvidence.supportContacts
         : [];
       return [...new Set(contacts
         .filter((contact) => contact?.surfaceKind !== "contract_inferred_support_surface"
@@ -7143,18 +7281,18 @@ def _build_html(
     }}
 
     function sourceConfirmsContinuousFootSupport(jointName) {{
-      if (!sourceFootSupportEvidence || typeof sourceFootSupportEvidence !== "object") {{
+      if (!activeSourceFootSupportEvidence || typeof activeSourceFootSupportEvidence !== "object") {{
         return false;
       }}
       const side = String(jointName).startsWith("left_")
         ? "left"
         : (String(jointName).startsWith("right_") ? "right" : null);
-      const evidence = side ? sourceFootSupportEvidence?.feet?.[side] : null;
+      const evidence = side ? activeSourceFootSupportEvidence?.feet?.[side] : null;
       if (evidence?.continuousSupport) {{
         return true;
       }}
-      const contacts = Array.isArray(sourceFootSupportEvidence?.supportContacts)
-        ? sourceFootSupportEvidence.supportContacts
+      const contacts = Array.isArray(activeSourceFootSupportEvidence?.supportContacts)
+        ? activeSourceFootSupportEvidence.supportContacts
         : [];
       return contacts.some((contact) =>
         contact?.continuousSupport && String(contact.jointName || "") === String(jointName)
@@ -7162,15 +7300,15 @@ def _build_html(
     }}
 
     function sourceConfirmedContactFrameIndexes(jointName, frameCount) {{
-      if (!sourceFootSupportEvidence || typeof sourceFootSupportEvidence !== "object" || frameCount <= 0) {{
+      if (!activeSourceFootSupportEvidence || typeof activeSourceFootSupportEvidence !== "object" || frameCount <= 0) {{
         return new Set();
       }}
       const requestedSide = String(jointName).startsWith("left_")
         ? "left"
         : (String(jointName).startsWith("right_") ? "right" : null);
       const records = [
-        ...(Array.isArray(sourceFootSupportEvidence.contacts) ? sourceFootSupportEvidence.contacts : []),
-        ...(Array.isArray(sourceFootSupportEvidence.supportContacts) ? sourceFootSupportEvidence.supportContacts : []),
+        ...(Array.isArray(activeSourceFootSupportEvidence.contacts) ? activeSourceFootSupportEvidence.contacts : []),
+        ...(Array.isArray(activeSourceFootSupportEvidence.supportContacts) ? activeSourceFootSupportEvidence.supportContacts : []),
       ];
       const indexes = new Set();
       for (const contact of records) {{
@@ -7207,8 +7345,8 @@ def _build_html(
     function sourceConfirmedVerticalContactFrameIndexes(jointName, frameCount) {{
       const indexes = new Set();
       const records = [
-        ...(Array.isArray(sourceFootSupportEvidence?.contacts) ? sourceFootSupportEvidence.contacts : []),
-        ...(Array.isArray(sourceFootSupportEvidence?.supportContacts) ? sourceFootSupportEvidence.supportContacts : []),
+        ...(Array.isArray(activeSourceFootSupportEvidence?.contacts) ? activeSourceFootSupportEvidence.contacts : []),
+        ...(Array.isArray(activeSourceFootSupportEvidence?.supportContacts) ? activeSourceFootSupportEvidence.supportContacts : []),
       ];
       for (const contact of records) {{
         if (contact?.contactState === "heel_only" || !contact?.verticalOnly || String(contact.jointName || "") !== String(jointName)) {{
@@ -7267,7 +7405,7 @@ def _build_html(
         if (sourceConfirmedContactIndexes.has(index)) {{
           return true;
         }}
-        if (sourceFootSupportEvidence?.footPatchEvidence?.available && /_(?:ankle|foot)$/.test(jointName)) {{
+        if (activeSourceFootSupportEvidence?.footPatchEvidence?.available && /_(?:ankle|foot)$/.test(jointName)) {{
           return false;
         }}
         const localSpeeds = edgeSpeeds
@@ -7288,7 +7426,7 @@ def _build_html(
         - Math.min(...validSamples.map((sample) => sample.point.z));
       const fullRangeRatio = Math.hypot(xRange, yRange, zRange)
         / Math.max(estimateAlignmentSkeletonScale(frames), 1e-6);
-      const observedFootPatches = sourceFootSupportEvidence?.footPatchEvidence?.available
+      const observedFootPatches = activeSourceFootSupportEvidence?.footPatchEvidence?.available
         && /_(?:ankle|foot)$/.test(jointName);
       const continuousSupport = sourceConfirmedContinuousSupport
         || (!observedFootPatches && (plantedSamples.length / validSamples.length >= 0.8
@@ -8952,7 +9090,13 @@ def _build_html(
         lockYDrift,
         lockPlantedFeet,
         lockPlantedHands,
-        sourceFootSupportEvidence,
+        sourceFootSupportEvidence: rebaseSourceFootSupportEvidence(
+          currentLoop?.startFrame ?? 0,
+          currentLoop?.endFrame ?? Math.max(0, payload.frames.length - 1),
+          payload.frames.length,
+          sourceFootSupportEvidence
+        ),
+        motionSpaceSupportEvidence: activeSourceFootSupportEvidence,
         sceneInverted,
         manualModelRotationDegrees: manualModelRotationPayload(),
         manualModelRotationAxisSemantics: manualModelRotationAxisSemanticsPayload(),
@@ -9007,7 +9151,6 @@ def _build_html(
           }}
         }}
         return {{
-          frameIndex: index,
           sourceFrameIndex,
           timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
           sourceTimeSec: frame.timeSec ?? 0,
@@ -9104,9 +9247,7 @@ def _build_html(
           activeEndFrame: sourceEndFrame,
         }},
         fps: exportFps,
-        playbackSpeed: exportPlaybackSpeed,
         frameCount: frames.length,
-        durationSec,
         jointNames: payload.jointNames,
         rootJoint: payload.rootJoint,
         selectedPreviewSettings,
@@ -9117,6 +9258,7 @@ def _build_html(
           lockPlantedFeet: selectedPreviewSettings.lockPlantedFeet,
           lockPlantedHands: selectedPreviewSettings.lockPlantedHands,
           sourceFootSupportEvidence: selectedPreviewSettings.sourceFootSupportEvidence,
+          motionSpaceSupportEvidence: selectedPreviewSettings.motionSpaceSupportEvidence,
           invertScene: selectedPreviewSettings.sceneInverted,
           manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
           manualModelRotationAxisSemantics: selectedPreviewSettings.manualModelRotationAxisSemantics,
@@ -9139,49 +9281,13 @@ def _build_html(
         }},
         loop: {{
           enabled: currentLoop != null,
-          startFrame: 0,
-          endFrame: Math.max(0, frames.length - 1),
           sourceStartFrame,
           sourceEndFrame,
           sourceStartTimeSec,
           sourceEndTimeSec,
-          sourceDurationSec,
           durationSec,
-          label: currentLoop?.label ?? "Full clip",
-        }},
-        transforms: {{
-          autoAlignment: autoWorldAlignmentEnabled ? currentAutoAlignment : [],
-          manualModelRotationDegrees: selectedPreviewSettings.manualModelRotationDegrees,
-          manualModelRotationAxisSemantics: selectedPreviewSettings.manualModelRotationAxisSemantics,
-          rootAnchor: activeRootAnchor ? [activeRootAnchor.x, activeRootAnchor.y, activeRootAnchor.z] : null,
-          sceneOriginOffset: [sceneOriginOffset.x, sceneOriginOffset.y, sceneOriginOffset.z],
-          previewSagittalPlaneAlignment: previewSagittalPlaneAlignmentForExport,
-          bakedSagittalPlaneAlignment: bakedSagittalPlaneAlignment.alignment,
         }},
         bounds: bakedBounds,
-        topology: {{
-          skeletonChains,
-          capsules: payload.capsules,
-        }},
-        geometry: {{
-          style: "low_poly_block_humanoid",
-          limb: {{
-            legWidth: 0.105,
-            legDepth: 0.075,
-            armWidth: 0.086,
-            armDepth: 0.061,
-          }},
-          chainProfiles: [
-            {{ match: "leg_bridge", minJointCount: 8, width: 0.14, depth: 0.09 }},
-            {{ match: "spine_head", includesJoint: "head", width: 0.1, depth: 0.08 }},
-            {{ match: "default", width: 0.08, depth: 0.055 }},
-          ],
-          head: {{
-            minScale: 0.086,
-            maxScale: 0.116,
-            scale: [0.88, 1.08, 0.86],
-          }},
-        }},
         frames,
       }};
     }}
@@ -9240,6 +9346,30 @@ def _build_html(
           && typeof options.sourceFootSupportEvidence === "object"
           ? options.sourceFootSupportEvidence
           : null;
+        if (!Object.prototype.hasOwnProperty.call(options, "motionSpaceSupportEvidence")) {{
+          motionSpaceSupportEvidence = null;
+        }}
+      }}
+      if (Object.prototype.hasOwnProperty.call(options, "motionSpaceSupportEvidence")) {{
+        motionSpaceSupportEvidence = options.motionSpaceSupportEvidence
+          && typeof options.motionSpaceSupportEvidence === "object"
+          ? options.motionSpaceSupportEvidence
+          : null;
+      }}
+      if (
+        Object.prototype.hasOwnProperty.call(options, "sourceFootSupportEvidence")
+        || Object.prototype.hasOwnProperty.call(options, "motionSpaceSupportEvidence")
+      ) {{
+        activeSourceFootSupportEvidence = options.motionSpaceEvidenceCurrentRange === true
+          && motionSpaceSupportEvidence
+          ? JSON.parse(JSON.stringify(motionSpaceSupportEvidence))
+          : activeSupportEvidenceForRange(
+              currentLoop?.startFrame ?? 0,
+              currentLoop?.endFrame ?? Math.max(0, payload.frames.length - 1),
+              payload.frames.length,
+              sourceFootSupportEvidence,
+              motionSpaceSupportEvidence
+            );
       }}
       const manualRotation = options.manualModelRotationDegrees;
       if (manualRotation && typeof manualRotation === "object") {{
@@ -9604,6 +9734,10 @@ def _build_html(
       }},
       bakeTimeRange(startSeconds, endSeconds, options = {{}}) {{
         selectCustomTimeRange(startSeconds, endSeconds);
+        return this.exportWearSkeleton(options);
+      }},
+      bakeFrameRange(startFrame, endFrame, options = {{}}) {{
+        selectCustomFrameRange(startFrame, endFrame);
         return this.exportWearSkeleton(options);
       }},
       inspectFixedRigFrame(cursor) {{

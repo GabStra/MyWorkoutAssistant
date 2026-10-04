@@ -31,6 +31,14 @@ def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
     skeleton.write_text("{}")
     assert identity(contract={"carryPosition": "overhead"}) != original
     assert identity(policies={"visual": 2}) != original
+    manifest["selected"]["artifactClass"] = "cyclic_rebake"
+    manifest["selected"]["artifactState"] = {
+        "artifactClass": "cyclic_rebake",
+        "terminal": True,
+    }
+    assert identity() != original
+    manifest["selected"].pop("artifactClass")
+    manifest["selected"].pop("artifactState")
     assert identity() == original
     (tmp_path / "other_selected_input.mp4").write_bytes(b"ambiguous")
     assert identity() is None

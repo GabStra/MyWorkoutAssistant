@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,9 +32,14 @@ from exercise_motion_pkg.bake_and_rank import (
     prioritize_ranked_candidates_for_reconstruction,
     run_bake_and_rank_pipeline,
     apply_artifact_retention_policy,
+    callable_accepts_keyword,
 )
 from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
-from exercise_motion_pkg.wham_runner import WhamTrackingPreflightRejected
+from exercise_motion_pkg.wham_runner import (
+    WarmWorkerInterruptedAmbiguous,
+    WhamTrackingPreflightRejected,
+)
+from exercise_motion_pkg.gvhmr_runner import GvhmrWarmWorkerInterruptedAmbiguous
 from exercise_motion_pkg.shared_llama_server import (
     clear_generation_holder_marker,
     live_foreign_generation_holders,
@@ -44,11 +49,28 @@ from exercise_motion_pkg.shared_llama_server import (
 from exercise_motion_pkg.source_outcomes import update_source_outcome_index
 from exercise_motion_pkg.source_review_preflight import SourceReviewIncomplete, review_prepared_source
 from exercise_motion_pkg.source_review_authority import retained_source_attempt_keys
+from exercise_motion_pkg.process_lock import exclusive_workspace_lease
 from exercise_motion_pkg.storage import is_storage_failure, require_storage_reserve
 
 
 STAGED_SOURCE_PORTFOLIO_MAX_SIZE = 3
 STAGED_SOURCE_VALIDATION_MAX_WORKERS = 6
+ARTIFACT_LIFECYCLE_TRANSITIONS = {
+    "awaiting_final_validation": {
+        "accepted", "manual_review", "processing_incomplete", "rejected", "retryable",
+    },
+    # A retry is a nonterminal result. The next validation attempt may resolve
+    # to any terminal outcome, including a completed acceptance.
+    "retryable": {
+        "accepted", "manual_review", "processing_incomplete", "rejected", "retryable",
+    },
+    "processing_incomplete": {
+        "accepted", "manual_review", "processing_incomplete", "rejected", "retryable",
+    },
+    "accepted": {"accepted"},
+    "manual_review": {"manual_review"},
+    "rejected": {"rejected"},
+}
 
 
 def staged_source_portfolio_size(request: BakeAndRankRequest, readiness: dict[str, Any]) -> int:
@@ -86,6 +108,7 @@ class StagedWaveItem:
     exercise_id: str
     exercise_name: str
     request: BakeAndRankRequest
+    run_id: str | None = None
 
 
 def generation_failure_status(error: Exception) -> str:
@@ -95,7 +118,52 @@ def generation_failure_status(error: Exception) -> str:
         return "rejected_raw_wham_validation"
     if isinstance(error, WhamTrackingPreflightRejected):
         return "rejected_tracking_preflight"
+    if isinstance(error, WarmWorkerInterruptedAmbiguous):
+        return WarmWorkerInterruptedAmbiguous.status
+    if isinstance(error, GvhmrWarmWorkerInterruptedAmbiguous):
+        return GvhmrWarmWorkerInterruptedAmbiguous.status
     return "failed"
+
+
+def candidate_generation_failure_details(error: Exception) -> dict[str, Any] | None:
+    if isinstance(error, WarmWorkerInterruptedAmbiguous):
+        return error.diagnostic_payload()
+    if isinstance(error, GvhmrWarmWorkerInterruptedAmbiguous):
+        return error.diagnostic_payload()
+    return None
+
+
+def initial_artifact_lifecycle() -> dict[str, Any]:
+    timestamp = _utc_now()
+    return {
+        "schemaVersion": 1,
+        "state": "awaiting_final_validation",
+        "terminal": False,
+        "history": [{"state": "awaiting_final_validation", "at": timestamp}],
+    }
+
+
+def transition_artifact_lifecycle(
+    current: dict[str, Any], target: str, *, at: str | None = None,
+) -> dict[str, Any]:
+    """Record one allowed artifact outcome transition in the durable wave state."""
+    previous = str(current.get("state") or "")
+    if target not in ARTIFACT_LIFECYCLE_TRANSITIONS.get(previous, set()):
+        raise ValueError(f"Invalid artifact lifecycle transition: {previous!r} -> {target!r}")
+    history = list(current.get("history") or [])
+    timestamp = at or _utc_now()
+    history.append({"state": target, "at": timestamp})
+    return {
+        "schemaVersion": 1,
+        "state": target,
+        "terminal": target in {"accepted", "manual_review", "rejected"},
+        "history": history,
+    }
+
+
+def _item_artifact_state(state: dict[str, Any]) -> str:
+    lifecycle = state.get("artifactLifecycle")
+    return str(lifecycle.get("state") or "") if isinstance(lifecycle, dict) else ""
 
 
 def wave_manifest_is_exportable(manifest: dict[str, Any]) -> bool:
@@ -104,27 +172,44 @@ def wave_manifest_is_exportable(manifest: dict[str, Any]) -> bool:
     Automatic selection and a safe manual-review fallback are both exportable.
     The latter is still labeled needs_manual_review by the workout-plan wrapper.
     """
+    return artifact_disposition(manifest) in {"accepted", "manual_review"}
+
+
+def artifact_disposition(manifest: dict[str, Any]) -> str:
+    """Classify the terminal artifact outcome separately from pipeline completion."""
     if manifest.get("selected"):
-        return True
-    return (
+        return "accepted"
+    if (
         manifest.get("selectionStatus") == "needs_manual_review"
         and isinstance(manifest.get("manualReviewFallback"), dict)
-    )
+    ):
+        return "manual_review"
+    diagnostics = final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
+    if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
+        return "processing_incomplete"
+    if any(
+        item.get("status") in {"failed", "needs_source_review", "needs_manual_review"}
+        for item in diagnostics
+    ):
+        return "retryable"
+    return "rejected"
 
 
 def final_validation_outcome_status(manifest: dict[str, Any]) -> str:
     """Separate unfinished fits from finished quality rejects for Progress/logs."""
-    if manifest.get("selected"):
+    disposition = artifact_disposition(manifest)
+    if disposition == "accepted":
         return "selected"
-    diagnostics = final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
-    if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
+    if disposition == "manual_review":
+        return "needs_manual_review"
+    if disposition == "processing_incomplete":
         return "incomplete_processing"
     return "no_selection"
 
 
 def wave_retry_disposition(state: dict[str, Any]) -> str:
     if state.get("status") == "completed":
-        return "export_selected"
+        return "export_manual_review" if _item_artifact_state(state) == "manual_review" else "export_selected"
     if state.get("source", {}).get("failureReason") == "exercise_contract_invalid":
         return "repair_contract"
     if state.get("source", {}).get("failureReason") == "source_review_incomplete":
@@ -200,7 +285,6 @@ def _controlled_motion_report_from_result(result: dict[str, Any]) -> dict[str, A
 # Leftover below a real support-init / solve floor cannot finish another fit.
 MIN_USEFUL_CANDIDATE_FIT_REMAINING_SECONDS = 30.0
 # Final bake may run two processing attempts, each with fit + browser + review.
-DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS = 7200.0
 
 
 def exhausted_candidate_fit_session(manifest: dict[str, Any]) -> bool:
@@ -745,22 +829,28 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
             "elapsedSeconds": round(time.perf_counter() - started, 3)}
 
 
+@exclusive_workspace_lease(lambda _items, **kwargs: kwargs["workspace"])
 def run_staged_bake_wave(
     items: list[StagedWaveItem],
     *,
     workspace: Path,
     wave_id: str,
     progress: Callable[[str], None] | None = None,
+    render_executor: ThreadPoolExecutor | None = None,
 ) -> dict[str, Any]:
     # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
     from .resource_budget import render_prefetch_worker_limit
     prefetch_workers = render_prefetch_worker_limit(len(items))
+    if render_executor is not None:
+        return _run_staged_bake_wave(items, workspace=workspace, wave_id=wave_id,
+            progress=progress, render_executor=render_executor,
+            render_prefetch_workers=prefetch_workers)
     with ThreadPoolExecutor(
         max_workers=prefetch_workers,
         thread_name_prefix="motion-render-prefetch",
-    ) as render_executor:
+    ) as owned_render_executor:
         return _run_staged_bake_wave(items, workspace=workspace, wave_id=wave_id,
-            progress=progress, render_executor=render_executor,
+            progress=progress, render_executor=owned_render_executor,
             render_prefetch_workers=prefetch_workers)
 
 
@@ -823,6 +913,7 @@ def _run_staged_bake_wave(
             "candidatesJson": str(item.request.candidates_json),
             "workspace": str(item.request.workspace),
             "status": "pending",
+            "artifactLifecycle": initial_artifact_lifecycle(),
             "source": {"status": "pending", "attempts": []},
             "wham": {"status": "pending"},
             "finalValidation": {"status": "pending"},
@@ -1220,12 +1311,21 @@ def _run_staged_bake_wave(
     ) -> tuple[str, StagedWaveItem, Any, float]:
         wham_started = time.perf_counter()
         generation_start_times[_candidate_key(candidate)] = wham_started
-        result = generate_candidate_motion(
-            candidate,
-            request=replace(item.request, wham_tracking_preflight=True),
-            source_cut_caption_images=cached_source_only,
-            prepared_video_path=selected_video_path,
-        )
+        generate_kwargs: dict[str, Any] = {
+            "request": replace(item.request, wham_tracking_preflight=True),
+            "source_cut_caption_images": cached_source_only,
+            "prepared_video_path": selected_video_path,
+        }
+        stage_identity = {
+            "schemaVersion": 1,
+            "runId": str(item.run_id or str(wave_id).partition("-wave-")[0] or wave_id),
+            "waveId": str(wave_id),
+            "exerciseId": str(exercise_id),
+            "candidateId": str(_candidate_key(candidate)),
+        }
+        if callable_accepts_keyword(generate_candidate_motion, "stage_identity"):
+            generate_kwargs["stage_identity"] = stage_identity
+        result = generate_candidate_motion(candidate, **generate_kwargs)
         return exercise_id, item, result, time.perf_counter() - wham_started
 
     prepared_candidates = [
@@ -1293,6 +1393,9 @@ def _run_staged_bake_wave(
                     "elapsedSeconds": round(time.perf_counter() - wham_started, 3),
                     "error": f"{type(exc).__name__}: {exc}",
                 }
+                failure_details = candidate_generation_failure_details(exc)
+                if failure_details is not None:
+                    attempt["reconstructionFailure"] = failure_details
                 if isinstance(exc, WhamTrackingPreflightRejected):
                     attempt["trackingPreflight"] = exc.report
                 if isinstance(exc, RawMotionRejected):
@@ -1523,12 +1626,19 @@ def _run_staged_bake_wave(
             future = final_executor.submit(finalize_item, exercise_id, item, ready_sources)
             final_futures[future] = (exercise_id, item, ready_sources)
         checkpoint("final_validation")
+        # as_completed yields only finished futures; deadlines must be enforced
+        # by the bounded leaf operation, not future.result(timeout=...).
         for future in as_completed(final_futures):
             exercise_id, item, ready_sources = final_futures[future]
             state = item_states[exercise_id]
             validation_started = validation_start_times[exercise_id]
             try:
-                manifest = future.result(timeout=DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS)
+                manifest = future.result()
+                disposition = artifact_disposition(manifest)
+                lifecycle = transition_artifact_lifecycle(
+                    state["artifactLifecycle"], disposition,
+                )
+                manifest["artifactLifecycle"] = lifecycle
                 # Each wave may be resumed, and fallback rewrites the exercise's
                 # selection manifest. Keep the decision itself in a unique file.
                 decision_path = workspace / "final-decisions" / (
@@ -1565,6 +1675,7 @@ def _run_staged_bake_wave(
                     **final_processing_diagnostics(manifest),
                     "reviewAttemptCount": manifest.get("reviewAttemptCount", 1),
                     "status": final_validation_outcome_status(manifest),
+                    "artifactDisposition": disposition,
                     "candidateKeys": [
                         _candidate_key(candidate) for candidate, _path in ready_sources
                     ],
@@ -1574,20 +1685,14 @@ def _run_staged_bake_wave(
                     "currentSelectionManifestPath": str(item.request.workspace / "selection_manifest.json"),
                     "selectedWearSkeletonPath": exported_skeleton,
                 }
+                state["artifactLifecycle"] = lifecycle
                 state["status"] = "completed" if exportable else "retry_required"
-            except FutureTimeoutError:
-                state["finalValidation"] = {
-                    "status": "failed",
-                    "elapsedSeconds": round(time.perf_counter() - validation_started, 3),
-                    "error": (
-                        f"TimeoutError: final validation exceeded "
-                        f"{DEFAULT_FINAL_VALIDATION_TIMEOUT_SECONDS:.0f}s"
-                    ),
-                }
-                state["status"] = "retry_required"
             except Exception as exc:
                 if is_storage_failure(exc):
                     raise
+                state["artifactLifecycle"] = transition_artifact_lifecycle(
+                    state["artifactLifecycle"], "retryable",
+                )
                 state["finalValidation"] = {
                     "status": "failed",
                     "elapsedSeconds": round(time.perf_counter() - validation_started, 3),
@@ -1664,7 +1769,9 @@ def _run_staged_bake_wave(
         except Exception:
             pass
 
-    completed = [state for state in item_states.values() if state["status"] == "completed"]
+    exportable = [state for state in item_states.values() if state["status"] == "completed"]
+    accepted = [state for state in exportable if _item_artifact_state(state) == "accepted"]
+    manual_review = [state for state in exportable if _item_artifact_state(state) == "manual_review"]
     from exercise_motion_pkg.browser_workers import browser_worker_metrics
     from exercise_motion_pkg.resource_budget import (
         CODING_HEADROOM_LOGICAL_CORES,
@@ -1705,7 +1812,9 @@ def _run_staged_bake_wave(
     report.update(
         {
             "checkpointPath": str(checkpoint_path),
-            "completedExerciseCount": len(completed),
+            "completedExerciseCount": len(accepted),
+            "exportableExerciseCount": len(exportable),
+            "manualReviewExerciseCount": len(manual_review),
             "retryExerciseCount": len(retry),
             "retryExerciseIds": [state["exerciseId"] for state in retry],
         }
@@ -1714,12 +1823,14 @@ def _run_staged_bake_wave(
                 for attempt in state.get("wham", {}).get("attempts", [])]
     elapsed_minutes = float(report.get("elapsedSeconds") or 0.) / 60.
     report["generationEfficiency"] = {
-        "acceptedMovementCount": len(completed),
+        "acceptedMovementCount": len(accepted),
+        "manualReviewArtifactCount": len(manual_review),
+        "exportableArtifactCount": len(exportable),
         "candidateReconstructionAttempts": len(attempts),
         "reportedReconstructionCacheHits": sum(
             str(attempt.get("cacheStatus") or "").startswith("reused") for attempt in attempts),
-        "acceptedPerElapsedMinute": len(completed) / elapsed_minutes if elapsed_minutes > 0 else None,
-        "candidateAttemptsPerAcceptedMovement": len(attempts) / len(completed) if completed else None,
+        "acceptedPerElapsedMinute": len(accepted) / elapsed_minutes if elapsed_minutes > 0 else None,
+        "candidateAttemptsPerAcceptedMovement": len(attempts) / len(accepted) if accepted else None,
         "timingBasis": "wave_wall_clock_including_queue_and_validation",
     }
     heartbeat_stop.set()
@@ -1727,6 +1838,7 @@ def _run_staged_bake_wave(
     _write_json_atomic(report_path, report)
     _write_json_atomic(checkpoint_path, report)
     announce(
-        f"Batch finished: {len(completed)} kept, {len(retry)} need another try."
+        f"Batch finished: {len(accepted)} accepted, {len(manual_review)} need manual review, "
+        f"{len(retry)} need another try."
     )
     return report

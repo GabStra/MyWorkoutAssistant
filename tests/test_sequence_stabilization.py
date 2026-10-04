@@ -69,6 +69,74 @@ def test_contact_mask_skips_unrepresented_heel_without_dropping_other_plants():
     assert mask[:, 2:].all()
 
 
+def test_swapped_source_camera_maps_support_pins_and_anchor_identity_to_rig_side():
+    from exercise_motion_pkg.controlled_motion import _stationary_source_anchor_groups
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+    from exercise_motion_pkg.sequence_stabilization import pose_digest
+
+    names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
+    source_contacts = [{
+        'jointName': 'left_foot',
+        'contactState': 'full_sole',
+        'contactMotion': 'stationary',
+        'anchorGroupId': 'source-left-toe',
+        'ankleAnchorGroupId': 'source-left-ankle',
+        'startFrame': 0,
+        'endFrame': 9,
+    }]
+    payload = {
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'swapped'}},
+        'sourceFootSupportEvidence': {'contacts': source_contacts},
+    }
+
+    pinned = contact_mask(payload, names, 10)
+    groups, _ = _stationary_source_anchor_groups(payload, names, 10)
+
+    assert not pinned[:, :2].any()
+    assert pinned[:, 2:].all()
+    assert groups[0, names.index('right_foot')][1] == 'right'
+    assert groups[0, names.index('right_ankle')][1] == 'right'
+    assert groups[0, names.index('left_foot')] is None
+    assert payload['sourceFootSupportEvidence']['contacts'] == source_contacts
+    identity_payload = {
+        **payload,
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'identity'}},
+    }
+    assert pose_digest(payload) != pose_digest(identity_payload)
+    cached_motion_evidence = payload['motionSpaceSupportEvidence']
+    payload['sourceFootSupportEvidence']['contacts'][0]['endFrame'] = 4
+    updated_motion_evidence = motion_space_support_evidence(payload)
+    assert updated_motion_evidence is not cached_motion_evidence
+    assert updated_motion_evidence['contacts'][0]['endFrame'] == 4
+    assert updated_motion_evidence['contacts'][0]['jointName'] == 'right_foot'
+
+
+def test_mapped_support_override_follows_current_camera_and_rejects_stale_labels():
+    from copy import deepcopy
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+
+    source_evidence = {'contacts': [{'jointName': 'left_foot', 'contactMotion': 'stationary'}]}
+    swapped_payload = {
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'swapped'}},
+        'sourceFootSupportEvidence': source_evidence,
+    }
+    mapped = motion_space_support_evidence(swapped_payload)
+    assert mapped['contacts'][0]['jointName'] == 'right_foot'
+
+    identity_payload = {
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'identity'}},
+        'sourceFootSupportEvidence': source_evidence,
+    }
+    restored = motion_space_support_evidence(identity_payload, evidence_override=mapped)
+    assert restored['contacts'][0]['jointName'] == 'left_foot'
+    assert 'motionSpaceMapping' not in restored
+
+    stale_mapped = deepcopy(mapped)
+    stale_mapped['contacts'][0]['jointName'] = 'left_foot'
+    remapped = motion_space_support_evidence(swapped_payload, evidence_override=stale_mapped)
+    assert remapped['contacts'][0]['jointName'] == 'right_foot'
+
+
 def test_contact_mask_preserves_release_and_unilateral_support():
     names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot', 'left_hand']
     payload = {'sourceFootSupportEvidence': {'contacts': [

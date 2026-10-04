@@ -5,6 +5,7 @@ import pytest
 
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import wave_pipeline as wave
+from exercise_motion_pkg.contact_pinning import pin_stationary_contact_chains
 
 
 def test_yaw_translation_track_fills_unconstrained_frame_translations():
@@ -30,12 +31,155 @@ def test_yaw_translation_track_fills_unconstrained_frame_translations():
     assert all(len(translation) == 3 for translation in translations)
 
 
-@pytest.mark.parametrize("rigid_passes", [True, False])
-@pytest.mark.parametrize("loop_required", [True, False])
-def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, monkeypatch, rigid_passes, loop_required):
-    baseline = {"frames": [{"joints": {"left_ankle": [0, 0, 0]}}] * 10,
+def test_contact_pinning_fully_pins_confirmed_interval_at_clip_boundaries():
+    frames = []
+    for index in range(15):
+        shift = index / 14 * 0.1
+        frames.append({
+            "timeSec": index / 30,
+            "joints": {
+                "left_hip": [shift, 1.0, 0.0],
+                "left_knee": [shift + 0.1, 0.55, 0.0],
+                "left_ankle": [shift, 0.2, 0.0],
+                "left_foot": [shift, 0.1, 0.0],
+            },
+        })
+
+    anchor = [0.05, 0.1, 0.0]
+    report = pin_stationary_contact_chains(
+        frames,
+        [{
+            "jointName": "left_foot",
+            "evaluatedJointName": "left_foot",
+            "startFrame": 0,
+            "endFrame": len(frames) - 1,
+            "anchor": anchor,
+            "isObservedGroundContact": True,
+        }],
+        body_span=1.0,
+        slide_threshold_ratio=0.0,
+        joint_names=["left_hip", "left_knee", "left_ankle", "left_foot"],
+        support_plane_y=anchor[1],
+    )
+
+    assert report["joints"]["left_foot"][0]["applied"]
+    assert all(frame["joints"]["left_foot"] == pytest.approx(anchor) for frame in frames)
+
+
+def test_confirmed_body_support_replaces_sparse_foot_contacts_with_full_clip_intervals():
+    evidence = {
+        "sharedSupportPlaneY": 0.0,
+        "contacts": [{
+            "jointName": "left_foot",
+            "startRatio": 0.25,
+            "endRatio": 0.5,
+            "contactMotion": "stationary",
+        }],
+        "bodySupport": {
+            "required": True,
+            "status": "confirmed",
+            "stationaryJoints": ["left_foot", "right_ankle"],
+        },
+    }
+
+    intervals = bake.source_contact_intervals_from_evidence(
+        evidence,
+        frame_count=20,
+    )
+
+    by_joint = {row["jointName"]: row for row in intervals}
+    assert set(by_joint) == {"left_foot", "right_ankle"}
+    assert (by_joint["left_foot"]["startFrame"], by_joint["left_foot"]["endFrame"]) == (0, 19)
+    assert (by_joint["right_ankle"]["startFrame"], by_joint["right_ankle"]["endFrame"]) == (0, 19)
+    assert by_joint["left_foot"]["supportKind"] == "observed_foot_patch"
+
+
+def test_ground_plane_uses_confirmed_support_geometry_before_drifting_reconstruction():
+    frames = [
+        {"joints": {"left_foot": [0.0, 0.3, 0.0], "right_foot": [0.2, 0.4, 0.0]}}
+        for _ in range(3)
+    ]
+    intervals = [
+        {"jointName": name, "startFrame": 0, "endFrame": 2,
+         "supportKind": "observed_foot_patch", "surfaceKind": "ground"}
+        for name in ("left_foot", "right_foot")
+    ]
+    evidence = {
+        "bodySupport": {
+            "required": True,
+            "status": "confirmed",
+            "stationaryJoints": ["left_foot", "right_foot"],
+            "coplanarGroups": [{
+                "joints": ["left_foot", "right_foot"],
+                "normal": [0.0, 2.0, 0.0],
+                "planeOffsetMeters": 0.05,
+            }],
+        },
+    }
+
+    plane_y, source = bake.observed_ground_support_plane_y(
+        frames,
+        intervals,
+        evidence,
+        render_floor_y=0.2,
+    )
+
+    assert plane_y == pytest.approx(0.05)
+    assert source == "confirmed_body_support_geometry"
+
+
+def test_swapped_source_support_is_mapped_for_correction_and_final_gate(monkeypatch):
+    evidence = {
+        "supportContacts": [{
+            "jointName": "left_foot",
+            "startRatio": 0.0,
+            "endRatio": 1.0,
+            "continuousSupport": True,
+        }],
+    }
+    payload = {
+        "frames": [],
+        "sourceFootSupportEvidence": evidence,
+        "sourcePoseCameraReference": {
+            "camera": {"bilateralAssignment": "swapped"},
+        },
+    }
+    observed = {}
+
+    def record_intervals(value, **kwargs):
+        observed.setdefault("intervalEvidence", value)
+        return []
+
+    monkeypatch.setattr(bake, "source_contact_intervals_from_evidence", record_intervals)
+    corrected, report = bake.apply_source_contact_sequence_correction(payload, evidence)
+    assert [row["jointName"] for row in observed["intervalEvidence"]["supportContacts"]] == [
+        "right_foot"
+    ]
+    assert report["contactIntervals"] == []
+    assert corrected["sourceFootSupportEvidence"] == evidence
+
+    observed.clear()
+    metrics = bake.source_confirmed_support_stationarity_metrics(payload, evidence)
+    assert [row["jointName"] for row in observed["intervalEvidence"]["supportContacts"]] == [
+        "right_foot"
+    ]
+    assert metrics["required"] is False
+    assert payload["sourceFootSupportEvidence"] == evidence
+
+
+@pytest.mark.parametrize("rigid_passes,loop_required,selection_class", [
+    (True, True, bake.FULL_CLIP_BAKE),
+    (True, False, bake.FULL_CLIP_BAKE),
+    (False, True, bake.FULL_CLIP_BAKE),
+    (False, False, bake.FULL_CLIP_BAKE),
+    (False, True, bake.BOUNDED_MOVEMENT_SELECTION),
+])
+def test_source_contact_correction_preserves_artifact_interval_and_baseline(
+        tmp_path, monkeypatch, rigid_passes, loop_required, selection_class):
+    baseline = {"frames": [{"joints": {"left_ankle": [0, 0, 0]}} for _ in range(10)],
                 "jointNames": ["left_ankle"], "frameCount": 10, "fps": 30}
     calls = []
+    fit_payload_states = []
 
     class Page:
         def goto(self, *args, **kwargs): pass
@@ -43,12 +187,27 @@ def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, 
         def evaluate(self, script, args=None):
             if args is None:
                 return {"motionTuningEnabled": True}
-            # Synthetic exact-source clips have no corresponding detected loop.
-            assert args["explicitTimeRange"] is True
-            assert "? window.exerciseMotionAutomation.bakeTimeRange" in script
+            if selection_class == bake.FULL_CLIP_BAKE:
+                # Synthetic exact-source clips have no corresponding detected loop.
+                assert args["explicitTimeRange"] is True
+                assert "? window.exerciseMotionAutomation.bakeTimeRange" in script
+            else:
+                assert args["explicitTimeRange"] is False
+                assert args["explicitFrameRange"] is False
             assert (args["startSeconds"], args["endSeconds"]) == (2.0, 5.0)
             calls.append(args["options"])
             result = copy.deepcopy(baseline)
+            if selection_class == bake.BOUNDED_MOVEMENT_SELECTION:
+                result["loop"] = {
+                    "enabled": False,
+                    "sourceStartFrame": 10,
+                    "sourceEndFrame": 19,
+                    "sourceStartTimeSec": 2.0,
+                    "sourceEndTimeSec": 5.0,
+                }
+                for frame_index, frame in enumerate(result["frames"]):
+                    frame["sourceFrameIndex"] = 10 + frame_index
+                    frame["sourceTimeSec"] = 2.0 + frame_index / 3.0
             if args["options"].get("contactSequenceCorrection"):
                 result["corrected"] = True
             return result
@@ -65,8 +224,17 @@ def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, 
                         lambda payload, options: (options, {}, False))
     monkeypatch.setattr(bake, "deterministic_post_bake_scene_orientation_correction",
                         lambda payload, options: (options, {}, False))
-    monkeypatch.setattr(bake, "constrain_baked_payload_to_source_articulation",
-                        lambda payload, **kwargs: (payload, {}))
+    monkeypatch.setattr(
+        bake,
+        "load_baked_source_camera_reference",
+        lambda *args: {"camera": {"bilateralAssignment": "swapped"}},
+    )
+    def record_fit_payload(payload, **kwargs):
+        if payload.get("corrected"):
+            fit_payload_states.append(copy.deepcopy(payload.get("artifactState")))
+        return payload, {}
+
+    monkeypatch.setattr(bake, "constrain_baked_payload_to_source_articulation", record_fit_payload)
     monkeypatch.setattr(bake, "render_baked_wear_frames_with_playwright", lambda *args, **kwargs: ["frame"])
     monkeypatch.setattr(bake, "write_validated_review_video_from_data_urls",
                         lambda frames, path, **kwargs: (path, {"passed": True}))
@@ -75,19 +243,57 @@ def test_exact_source_contact_correction_preserves_range_and_baseline(tmp_path, 
     monkeypatch.setattr(bake, "source_contact_intervals_from_evidence",
                         lambda evidence, **kwargs: [{"jointName": "left_ankle"}])
     monkeypatch.setattr(bake, "apply_source_contact_sequence_correction",
-                        lambda payload, evidence: ({**copy.deepcopy(payload), "corrected": True}, {"applied": True}))
+                        lambda payload, evidence, **kwargs: (
+                            {**copy.deepcopy(payload), "corrected": True}, {"applied": True}))
     monkeypatch.setattr(bake, "source_confirmed_support_stationarity_metrics",
                         lambda *args: {"passed": rigid_passes})
     monkeypatch.setattr(bake, "payload_loop_seam_joint_rms", lambda payload: 2 if payload.get("corrected") else 1)
-    monkeypatch.setattr(bake, "exercise_requires_loop_continuity", lambda *args: loop_required)
+    monkeypatch.setattr(bake, "exercise_requires_loop_continuity",
+                        lambda *args, **kwargs: loop_required)
+    selected_loop = (
+        {"type": "exact_source_movement_instance"}
+        if selection_class == bake.FULL_CLIP_BAKE
+        else {
+            "type": "bounded_movement_selection",
+            "startFrame": 10,
+            "endFrame": 19,
+            "startTimeSec": 2.0,
+            "endTimeSec": 5.0,
+            "durationSec": 3.0,
+        }
+    )
     artifacts = bake.bake_preview_loops_with_playwright(
-        tmp_path / "preview.html", [bake.EligibleLoop(0, {"type": "exact_source_movement_instance"}, 3, 2, 5)],
-        tmp_path / "candidate", 6, adaptive_preview_settings=True, source_foot_support_evidence={})
+        tmp_path / "preview.html", [bake.EligibleLoop(
+            0, selected_loop, 3, 2, 5, artifact_class=selection_class)],
+        tmp_path / "candidate", 6, adaptive_preview_settings=True,
+        source_foot_support_evidence={"supportContacts": [{
+            "jointName": "left_foot",
+            "startRatio": 0.0,
+            "endRatio": 1.0,
+            "continuousSupport": True,
+        }]})
+    assert calls[0]["sourceFootSupportEvidence"]["supportContacts"][0]["jointName"] == (
+        "left_foot"
+    )
+    assert calls[0]["motionSpaceSupportEvidence"]["supportContacts"][0]["jointName"] == (
+        "right_foot"
+    )
     assert len(calls) == (1 if rigid_passes else 2)
     assert artifacts[0].settings_variant_id == "adaptive-baseline"
     assert len(artifacts) == (1 if loop_required else 2)
     if not rigid_passes:
         assert calls[-1]["contactSequenceCorrection"] is True
+        if selection_class == bake.BOUNDED_MOVEMENT_SELECTION:
+            assert len(fit_payload_states) == 1
+            selected = fit_payload_states[0]["selectionEvidence"]["boundedMovementSelection"]
+            assert selected["interval"] == {
+                "type": "bounded_movement_selection",
+                "startFrame": 10,
+                "endFrame": 19,
+                "startTimeSec": 2.0,
+                "endTimeSec": 5.0,
+                "durationSec": 3.0,
+            }
 
 
 @pytest.mark.parametrize("status,failure_stage,expected", [

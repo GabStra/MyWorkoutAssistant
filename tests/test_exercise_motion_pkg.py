@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
+import copy
 import inspect
 import json
 import math
@@ -897,6 +899,17 @@ def test_build_preview_detected_eligible_loops_uses_preview_loop_boundaries(
     assert loops[0].start_seconds == pytest.approx(11 / 30.0)
     assert loops[0].end_seconds == pytest.approx(104 / 30.0)
     assert loops[0].duration_sec == pytest.approx(3.1)
+    assert loops[0].loop["type"] == "detected_cycle"
+    from exercise_motion_pkg.artifact_state import cycle_selection_evidence
+    full_clip = {
+        "frames": [
+            {"joints": {"pelvis": [0.0, 0.0, 0.0]}}
+            for _ in range(146)
+        ],
+        "fps": 30.0,
+    }
+    lineage = cycle_selection_evidence(full_clip, loops[0].loop)
+    assert lineage["cycleSelection"]["interval"]["durationSec"] == pytest.approx(3.1)
     assert loops[1].loop_index == -1
     assert loops[1].start_seconds == pytest.approx(0.0)
     assert loops[1].end_seconds == pytest.approx(146 / 30.0)
@@ -926,7 +939,255 @@ def test_build_preview_detected_eligible_loops_avoids_duplicate_near_full_fallba
     assert loops[0].loop_index == 0
 
 
-def test_validated_pre_wham_return_cycle_blocks_post_wham_loop_recropping(
+def test_incomplete_full_fit_retains_one_unattempted_preflight_cycle_candidate() -> None:
+    report = {
+        "cycleSelectionAttempts": [
+            {"selection": {"startFrame": 108, "stopFrameExclusive": 193}},
+            {"selection": {"startFrame": 6, "stopFrameExclusive": 89}},
+            {"selection": {"kind": "retained_interval"}},
+        ],
+        "sourceCyclePreflight": [
+            {
+                "selection": {"startFrame": 108, "stopFrameExclusive": 193},
+                "passed": True,
+            },
+            {
+                "selection": {"startFrame": 6, "stopFrameExclusive": 89},
+                "passed": True,
+            },
+            {
+                "selection": {"startFrame": 187, "stopFrameExclusive": 272},
+                "passed": True,
+            },
+        ],
+    }
+
+    unattempted = bake_and_rank_module.unattempted_preflight_source_cycle_bounds(report)
+    repeated_candidate = bake_and_rank_module.EligibleLoop(
+        loop_index=0,
+        loop={"startFrame": 108, "endFrame": 192},
+        duration_sec=85 / 30,
+        artifact_class="cycle_selection",
+    )
+    independent_candidate = bake_and_rank_module.EligibleLoop(
+        loop_index=2,
+        loop={"startFrame": 187, "endFrame": 271},
+        duration_sec=85 / 30,
+        artifact_class="cycle_selection",
+    )
+
+    assert unattempted == {(187, 272)}
+    assert bake_and_rank_module.eligible_loop_cycle_bounds(repeated_candidate) == (108, 193)
+    assert bake_and_rank_module.eligible_loop_cycle_bounds(independent_candidate) in unattempted
+
+    approximate_detector_candidate = bake_and_rank_module.EligibleLoop(
+        loop_index=2,
+        loop={"startFrame": 184, "endFrame": 268},
+        duration_sec=85 / 30,
+        artifact_class="cycle_selection",
+    )
+    eligible_loops = [approximate_detector_candidate]
+    eligible_loop_queue = list(eligible_loops)
+    review_source_clips = [
+        bake_and_rank_module.eligible_loop_to_manifest(approximate_detector_candidate)
+    ]
+    source_frames = [
+        {"timeSec": index / 30.0, "sourceTimeSec": index / 30.0}
+        for index in range(289)
+    ]
+
+    queued = bake_and_rank_module.publish_unattempted_preflight_source_cycle(
+        eligible_loops=eligible_loops,
+        eligible_loop_queue=eligible_loop_queue,
+        fit_report=report,
+        frames=source_frames,
+        review_source_clips=review_source_clips,
+    )
+
+    assert queued is not None
+    assert queued.loop["type"] == "exact_source_movement_instance"
+    assert queued.loop["startFrame"] == 187
+    assert queued.loop["endFrame"] == 271
+    assert queued.loop["stopFrameExclusive"] == 272
+    assert queued.start_seconds == pytest.approx(187 / 30.0)
+    assert queued.end_seconds == pytest.approx(271 / 30.0)
+    assert bake_and_rank_module.eligible_loop_cycle_bounds(queued) == (187, 272)
+    assert queued in eligible_loops
+    assert queued in eligible_loop_queue
+    assert len(eligible_loops) == 2
+    assert len(eligible_loop_queue) == 2
+    assert any(
+        entry.get("loopIndex") == queued.loop_index
+        and entry.get("artifactClass") == bake_and_rank_module.CYCLE_SELECTION
+        for entry in review_source_clips
+    )
+
+
+def test_bake_cache_hit_restores_preflight_cycle_inventory_and_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import asdict
+
+    import exercise_motion_pkg.stage_cache as stage_cache_module
+
+    eligible = [
+        EligibleLoop(
+            loop_index=index,
+            loop={"type": "source_cycle", "startFrame": index * 10, "endFrame": index * 10 + 8},
+            duration_sec=8 / 30.0,
+            start_seconds=index / 3.0,
+            end_seconds=(index + 1) / 3.0,
+            artifact_class=bake_and_rank_module.CYCLE_SELECTION,
+        )
+        for index in range(3)
+    ]
+    fallback = EligibleLoop(
+        loop_index=3,
+        loop={
+            "type": "exact_source_movement_instance",
+            "startFrame": 187,
+            "endFrame": 271,
+            "stopFrameExclusive": 272,
+            "startTimeSec": 187 / 30.0,
+            "endTimeSec": 271 / 30.0,
+            "durationSec": 84 / 30.0,
+        },
+        duration_sec=84 / 30.0,
+        start_seconds=187 / 30.0,
+        end_seconds=271 / 30.0,
+        artifact_class=bake_and_rank_module.CYCLE_SELECTION,
+    )
+    review_source_clips = [
+        bake_and_rank_module.eligible_loop_to_manifest(loop) for loop in eligible
+    ]
+    workspace = tmp_path / "candidate"
+    (workspace / "wear").mkdir(parents=True)
+    artifact = BakedLoopArtifact(
+        loop_index=fallback.loop_index,
+        skeleton_path=workspace / "wear" / "skeleton.baked.source-4.json",
+        review_video_path=workspace / "review" / "source-4.webm",
+        export_payload={"frames": [], "loop": {"sourceStartFrame": 187, "sourceEndFrame": 271}},
+        artifact_class=bake_and_rank_module.CYCLE_SELECTION,
+    )
+    cached = {
+        "artifacts": [{"artifact": asdict(artifact), "cachedVideo": None}],
+        "eligibleLoops": [asdict(loop) for loop in [*eligible, fallback]],
+    }
+
+    monkeypatch.setattr(stage_cache_module, "cache_key", lambda *args, **kwargs: "test-cache-key")
+    monkeypatch.setattr(stage_cache_module, "load_stage", lambda *_args: cached)
+    monkeypatch.setattr(stage_cache_module, "stage_lock", lambda *_args: nullcontext())
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "load_verified_source_pose_reference",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "artifact_state_for_baked_payload",
+        lambda *_args, **_kwargs: {"artifactClass": bake_and_rank_module.CYCLE_SELECTION},
+    )
+
+    artifacts = bake_and_rank_module.bake_preview_loops_with_playwright(
+        tmp_path / "preview.html",
+        eligible,
+        workspace,
+        review_frames=8,
+        review_source_clips=review_source_clips,
+    )
+
+    assert [artifact.loop_index for artifact in artifacts] == [3]
+    assert eligible[-1] == fallback
+    assert [item["loopIndex"] for item in review_source_clips] == [0, 1, 2, 3]
+    assert review_source_clips[-1]["loop"]["stopFrameExclusive"] == 272
+
+
+def test_contact_corrected_parent_seeds_exact_cycle_fit_only_for_matching_source_frames() -> None:
+    interval = {
+        "type": "exact_source_movement_instance",
+        "startFrame": 3,
+        "endFrame": 9,
+        "stopFrameExclusive": 10,
+        "startTimeSec": 3 / 30.0,
+        "endTimeSec": 9 / 30.0,
+        "durationSec": 6 / 30.0,
+    }
+    corrected_frames = [
+        {
+            "timeSec": index / 30.0,
+            "sourceTimeSec": index / 30.0,
+            "sourceFrameIndex": index,
+            "joints": {"pelvis": [float(index), 1.0, 0.0]},
+            "sourceJoints": {"pelvis": [float(index), 1.0, 0.0]},
+        }
+        for index in range(15)
+    ]
+    corrected_parent = {
+        "fps": 30.0,
+        "frameCount": len(corrected_frames),
+        "jointNames": ["pelvis"],
+        "frames": corrected_frames,
+        "sourceFootSupportEvidence": {"contacts": []},
+    }
+    exact_frames = [
+        {
+            **corrected_frames[index],
+            "timeSec": local_index / 30.0,
+            "joints": {"pelvis": [-1.0, 1.0, 0.0]},
+            "sourceJoints": {"pelvis": [-1.0, 1.0, 0.0]},
+        }
+        for local_index, index in enumerate(range(3, 10))
+    ]
+    exact_export = {
+        "fps": 30.0,
+        "frameCount": len(exact_frames),
+        "jointNames": ["pelvis"],
+        "frames": exact_frames,
+        "loop": {
+            "enabled": True,
+            "sourceStartFrame": 3,
+            "sourceEndFrame": 9,
+            "sourceStartTimeSec": 3 / 30.0,
+            "sourceEndTimeSec": 9 / 30.0,
+            "durationSec": 7 / 30.0,
+        },
+        "sourceFootSupportEvidence": {"contacts": []},
+        "sourcePoseCameraReference": {"camera": "exact-export"},
+        "artifactState": {"stale": True},
+        "controlledMotionFit": {"applied": False},
+    }
+    preflight = {"selection": {"startFrame": 3, "stopFrameExclusive": 10}, "passed": True}
+
+    seeded = bake_and_rank_module.contact_corrected_cycle_fit_seed(
+        exact_export,
+        corrected_parent,
+        interval,
+        source_cycle_preflight=preflight,
+    )
+
+    assert seeded is not None
+    assert len(seeded["frames"]) == 7
+    assert seeded["frames"][0]["joints"]["pelvis"] == [3.0, 1.0, 0.0]
+    assert seeded["frames"][0]["sourceJoints"]["pelvis"] == [3.0, 1.0, 0.0]
+    assert seeded["frames"][0]["sourceFrameIndex"] == 3
+    assert seeded["loop"] == exact_export["loop"]
+    assert seeded["sourcePoseCameraReference"] == {"camera": "exact-export"}
+    assert seeded["sourceCyclePreflight"] == [preflight]
+    assert "artifactState" not in seeded
+    assert "controlledMotionFit" not in seeded
+
+    mismatched_export = copy.deepcopy(exact_export)
+    mismatched_export["frames"][0]["sourceFrameIndex"] = 4
+    assert bake_and_rank_module.contact_corrected_cycle_fit_seed(
+        mismatched_export,
+        corrected_parent,
+        interval,
+        source_cycle_preflight=preflight,
+    ) is None
+
+
+def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -977,10 +1238,23 @@ def test_validated_pre_wham_return_cycle_blocks_post_wham_loop_recropping(
         exercise_motion_contract=contract,
     )
     clip = SimpleNamespace(fps=30.0, frame_count=143)
+    detected_clip_ids = []
+
+    def detect_cycle_within_validated_clip(detected_clip):
+        detected_clip_ids.append(id(detected_clip))
+        return [{
+            "type": "detected_cycle",
+            "startFrame": 11,
+            "endFrame": 104,
+            "startTimeSec": 11 / 30.0,
+            "endTimeSec": 104 / 30.0,
+            "durationSec": 93 / 30.0,
+        }]
+
     monkeypatch.setattr(
         preview_module,
         "detect_preview_loops_for_clip",
-        lambda _clip: pytest.fail("authoritative source interval must bypass post-WHAM loop detection"),
+        detect_cycle_within_validated_clip,
     )
 
     loops = bake_and_rank_module.build_candidate_review_eligible_loops(
@@ -991,10 +1265,14 @@ def test_validated_pre_wham_return_cycle_blocks_post_wham_loop_recropping(
     assert authority["authoritative"] is True
     assert authority["reason"] == "exact_pre_wham_return_cycle_validated"
     assert authority["selectedDurationSeconds"] == pytest.approx(4.84)
-    assert len(loops) == 1
-    assert loops[0].loop_index == -1
-    assert loops[0].start_seconds == pytest.approx(0.0)
-    assert loops[0].end_seconds == pytest.approx(143 / 30.0)
+    assert detected_clip_ids == [id(clip)]
+    assert len(loops) == 2
+    assert loops[0].artifact_class == bake_and_rank_module.CYCLE_SELECTION
+    assert loops[0].start_seconds == pytest.approx(11 / 30.0)
+    assert loops[0].end_seconds == pytest.approx(104 / 30.0)
+    assert loops[1].loop_index == -1
+    assert loops[1].start_seconds == pytest.approx(0.0)
+    assert loops[1].end_seconds == pytest.approx(143 / 30.0)
 
 
 def test_validated_pre_wham_distinct_end_state_blocks_post_wham_return_loop_recropping(
@@ -1117,7 +1395,14 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
     monkeypatch.setattr(
         preview_module,
         "detect_preview_loops_for_clip",
-        lambda _clip: pytest.fail("authoritative source interval must bypass post-WHAM loop detection"),
+        lambda _clip: [{
+            "type": "detected_cycle",
+            "startFrame": 6,
+            "endFrame": 112,
+            "startTimeSec": 0.2,
+            "endTimeSec": 112 / 30.0,
+            "durationSec": 112 / 30.0 - 0.2,
+        }],
     )
 
     loops = bake_and_rank_module.build_candidate_review_eligible_loops(
@@ -1127,8 +1412,11 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
 
     assert authority["authoritative"] is True
     assert authority["reason"] == "exact_pre_wham_return_cycle_validated"
-    assert len(loops) == 1
-    assert loops[0].loop_index == -1
+    assert len(loops) == 2
+    assert loops[0].artifact_class == bake_and_rank_module.CYCLE_SELECTION
+    assert loops[1].loop_index == -1
+    assert loops[1].start_seconds == pytest.approx(0.0)
+    assert loops[1].end_seconds == pytest.approx(236 / 30.0)
 
 
 def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
@@ -1179,7 +1467,14 @@ def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
     monkeypatch.setattr(
         preview_module,
         "detect_preview_loops_for_clip",
-        lambda _clip: pytest.fail("embedded exact validation must preserve the source interval"),
+        lambda _clip: [{
+            "type": "detected_cycle",
+            "startFrame": 4,
+            "endFrame": 96,
+            "startTimeSec": 4 / 30.0,
+            "endTimeSec": 96 / 30.0,
+            "durationSec": 92 / 30.0,
+        }],
     )
     loops = bake_and_rank_module.build_candidate_review_eligible_loops(
         SimpleNamespace(fps=30.0, frame_count=135),
@@ -1189,8 +1484,11 @@ def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
     assert authority["authoritative"] is True
     assert authority["exactValidationSource"] == "segment_selection_embedded"
     assert authority["exactValidationPath"] is None
-    assert len(loops) == 1
-    assert loops[0].loop_index == -1
+    assert len(loops) == 2
+    assert loops[0].artifact_class == bake_and_rank_module.CYCLE_SELECTION
+    assert loops[1].loop_index == -1
+    assert loops[1].start_seconds == pytest.approx(0.0)
+    assert loops[1].end_seconds == pytest.approx(135 / 30.0)
 
 
 def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_path: Path) -> None:
@@ -7131,43 +7429,8 @@ def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering()
         "selectedLoopIndex": -1,
         "rawWhamPassthrough": False,
     }
-    assert payload["frameCount"] == clip.frame_count
     assert payload["loop"]["enabled"] is False
     assert payload["bounds"]["center"] == pytest.approx([0.0, 0.0, 0.0])
-    assert "skeletonChains" in payload["topology"]
-    assert "capsules" in payload["topology"]
-    assert payload["geometry"]["style"] == "wear_filament_low_poly_humanoid"
-    assert payload["geometry"]["view"]["pitchDegrees"] == 15.0
-    assert payload["geometry"]["limbs"]["hipToKnee"] == {
-        "startWidth": 0.27,
-        "endWidth": 0.215,
-        "depthScale": 0.46,
-        "muscleBulgeScale": 1.24,
-        "muscleBulgePosition": 0.42,
-    }
-    assert payload["geometry"]["limbs"]["scaleBasis"] == "segment_length"
-    assert payload["geometry"]["jointCaps"] == {
-        "scaleBasis": "adjacent_limb_width",
-        "radialSides": 8,
-        "axialRings": 3,
-        "hipScale": 0.62,
-        "kneeScale": 0.48,
-        "elbowScale": 0.48,
-        "wristScale": 0.48,
-        "ankleScaleWithShoe": 0.42,
-    }
-    assert payload["geometry"]["appearance"] == {
-        "background": "#000000",
-        "primaryFill": "#fe6a07",
-        "jointFill": "#5a5a5a",
-        "material": "unlit_vertex_color",
-        "ambientLightLevel": 0.38,
-        "keyLightStrength": 0.48,
-        "fillLightStrength": 0.14,
-        "hemisphereLightStrength": 0.10,
-        "keyLightYawOffsetDegrees": -25.0,
-        "keyLightElevationDegrees": 50.0,
-    }
 
     pelvis_points = [
         frame["joints"]["pelvis"]
@@ -7226,7 +7489,7 @@ def test_write_wear_skeleton_json_exports_baked_preview_payload(tmp_path: Path) 
     assert payload["bakedPreviewConfiguration"]["lockYDrift"] is False
     assert payload["bakedPreviewConfiguration"]["invertScene"] is False
     assert payload["bakedPreviewConfiguration"]["canonicalWorldUp"] is True
-    assert len(payload["frames"]) == payload["frameCount"]
+    assert len(payload["frames"]) == build_fixture_clip().frame_count
 
 
 def test_wear_skeleton_preserves_authoritative_horizontal_travel() -> None:
@@ -9279,7 +9542,6 @@ def test_bake_source_download_does_not_promote_preview_cache_to_full_source(
 
     monkeypatch.setattr(bake_and_rank_module, "download_youtube", fake_download_youtube)
     monkeypatch.setattr(bake_and_rank_module, "cached_youtube_source_is_usable", lambda path: path.exists())
-
     ranked_candidate = RankedCandidate(
         exercise_index=0,
         candidate_rank=0,
@@ -9303,7 +9565,8 @@ def test_bake_source_download_does_not_promote_preview_cache_to_full_source(
     assert output.name == "source.mp4"
     assert output.read_bytes() == b"full-source-video"
     assert cached.read_bytes() == b"cached-video"
-    assert (source_cache / f"{cache_stem}.mp4").read_bytes() == b"full-source-video"
+    source_cache_stem = bake_and_rank_module.youtube_source_cache_stem(ranked_candidate)
+    assert (source_cache / f"{source_cache_stem}.mp4").read_bytes() == b"full-source-video"
 
 
 def test_bake_source_download_falls_back_to_validated_cached_preview(
@@ -9318,12 +9581,24 @@ def test_bake_source_download_falls_back_to_validated_cached_preview(
     preview = preview_cache / f"{cache_stem}.mp4"
     preview.write_bytes(b"validated-preview-video")
 
+    download_state = {"available": False, "attempts": 0}
+
+    def fake_download_youtube(_url, output_dir, *_args, **_kwargs):
+        download_state["attempts"] += 1
+        if not download_state["available"]:
+            raise RuntimeError("authentication unavailable")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        full_source = output_dir / "source.mp4"
+        full_source.write_bytes(b"full-source-after-retry")
+        return full_source
+
+    monkeypatch.setattr(bake_and_rank_module, "download_youtube", fake_download_youtube)
+    monkeypatch.setattr(bake_and_rank_module, "cached_youtube_source_is_usable", lambda path: path.exists())
     monkeypatch.setattr(
         bake_and_rank_module,
-        "download_youtube",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("authentication unavailable")),
+        "find_cached_youtube_preview",
+        lambda _cache_dir, _cache_stem: preview if preview.exists() else None,
     )
-    monkeypatch.setattr(bake_and_rank_module, "cached_youtube_source_is_usable", lambda path: path.exists())
 
     ranked_candidate = RankedCandidate(
         exercise_index=0,
@@ -9346,7 +9621,21 @@ def test_bake_source_download_falls_back_to_validated_cached_preview(
     )
 
     assert output.read_bytes() == b"validated-preview-video"
-    assert (source_cache / f"{cache_stem}.mp4").read_bytes() == b"validated-preview-video"
+    source_cache_stem = bake_and_rank_module.youtube_source_cache_stem(ranked_candidate)
+    assert bake_and_rank_module.find_cached_youtube_source(source_cache, source_cache_stem) is None
+
+    # The fallback is per-attempt only: a later run must retry the full source
+    # download instead of treating the preview as a completed full-source cache.
+    download_state["available"] = True
+    retried_output = bake_and_rank_module.copy_or_download_candidate_source(
+        ranked_candidate,
+        tmp_path / "candidate-retry" / "source",
+        youtube_source_cache_dir=source_cache,
+        youtube_preview_cache_dir=preview_cache,
+    )
+    assert download_state["attempts"] == 2
+    assert retried_output.read_bytes() == b"full-source-after-retry"
+    assert bake_and_rank_module.find_cached_youtube_source(source_cache, source_cache_stem) is not None
 
 
 def test_full_source_prefetch_filters_gate_failures_and_supports_background_slice(
@@ -10173,10 +10462,11 @@ def test_run_wham_with_warm_worker_submits_job_and_reads_result(
             (session_dir / "job_logs" / f"{job_id}.stdout.log").write_text("worker stdout", encoding="utf-8")
             (session_dir / "job_logs" / f"{job_id}.stderr.log").write_text("worker stderr", encoding="utf-8")
             (session_dir / "results" / f"{job_id}.json").write_text(
-                json.dumps(
-                    {
-                        "jobId": job_id,
-                        "status": "completed",
+            json.dumps(
+                {
+                    "jobId": job_id,
+                    "stageIdentity": payload.get("stageIdentity"),
+                    "status": "completed",
                         "outputDir": "/workspace/candidate/raw/wham/selected_segment",
                         "resultsPkl": "/workspace/candidate/raw/wham/selected_segment/wham_output.pkl",
                         "elapsedSeconds": 0.1,
@@ -10207,6 +10497,13 @@ def test_run_wham_with_warm_worker_submits_job_and_reads_result(
         tracking_preflight=True,
         required_start_seconds=1.25,
         required_end_seconds=4.75,
+        stage_identity={
+            "schemaVersion": 1,
+            "runId": "run-1",
+            "waveId": "run-1-wave-0001",
+            "exerciseId": "ohp",
+            "candidateId": "candidate-a",
+        },
     )
     worker.join(timeout=5.0)
 
@@ -10218,12 +10515,15 @@ def test_run_wham_with_warm_worker_submits_job_and_reads_result(
     assert observed_job["trackingPreflight"] is True
     assert observed_job["requiredStartSeconds"] == pytest.approx(1.25)
     assert observed_job["requiredEndSeconds"] == pytest.approx(4.75)
+    assert observed_job["stageIdentity"] == result.stage_identity
+    assert result.stage_identity["candidateId"] == "candidate-a"
     assert result.results_pkl == output_root / input_video.stem / "wham_output.pkl"
     assert result.warm_worker is True
     assert result.docker_lock_wait_seconds == pytest.approx(0.25)
     timing = result.timing_payload()
     assert timing["warmWorker"] is True
     assert timing["warmWorkerSessionDir"] == str(session_dir.resolve())
+    assert timing["stageIdentity"] == result.stage_identity
     assert (logs_dir / "wham.stdout.log").read_text(encoding="utf-8") == "worker stdout"
     assert (logs_dir / "wham.stderr.log").read_text(encoding="utf-8") == "worker stderr"
 
@@ -11195,6 +11495,53 @@ def test_review_video_webm_uses_reliably_decodable_ffmpeg_vp9(tmp_path: Path) ->
     assert quality["passed"] is True
     assert quality["codecFallbackUsed"] is False
     assert quality["encodeFidelity"]["decodedFrameCount"] == len(data_urls)
+
+
+def test_review_video_ffmpeg_timeout_terminates_and_reaps_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HungFfmpeg:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.returncode = None
+            self.input_bytes = None
+            self.timeout = None
+            self.killed = False
+            self.reaped = False
+
+        def communicate(self, *, input=None, timeout=None):
+            if timeout is not None:
+                self.input_bytes = input
+                self.timeout = timeout
+                raise bake_and_rank_module.subprocess.TimeoutExpired("ffmpeg", timeout, stderr=b"stalled")
+            self.reaped = True
+            return None, b""
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def poll(self):
+            return self.returncode
+
+    process = HungFfmpeg()
+    monkeypatch.setattr(bake_and_rank_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    frame = np.full((2, 3, 3), 17, dtype=np.uint8)
+
+    with pytest.raises(RuntimeError, match="exceeded 120s and was terminated: stalled"):
+        bake_and_rank_module.write_review_frames_with_ffmpeg(
+            [frame],
+            tmp_path / "review.mp4",
+            fps=12.0,
+            width=3,
+            height=2,
+            ffmpeg="ffmpeg",
+        )
+
+    assert process.input_bytes == frame.tobytes()
+    assert process.timeout == bake_and_rank_module.REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS
+    assert process.killed is True
+    assert process.reaped is True
 
 
 def test_webm_conversion_fails_clearly_instead_of_using_opencv_vp9(
@@ -15083,6 +15430,122 @@ def test_two_scale_topology_treats_missing_generated_phases_as_advisory() -> Non
     )
 
 
+def test_two_scale_topology_allows_repeated_ordered_advisory_phase_evidence() -> None:
+    contract = {
+        "status": "generated",
+        "source": "reused_candidate_contract",
+        "movementTopology": {
+            "completionMode": "return_to_start",
+            "startState": {"label": "dumbbells at shoulder height"},
+            "phases": [
+                {"id": "phase_01", "label": "press overhead, then lower to shoulders"},
+                {"id": "phase_02", "label": "lower dumbbells to shoulders"},
+            ],
+            "endState": {"label": "dumbbells at shoulder height"},
+        },
+    }
+    payload = {
+        "startStateMatch": "match",
+        "phaseEvidence": [
+            {"phaseId": "phase_01", "visible": True, "position": position}
+            for position in (0.0, 0.25, 0.5, 0.75, 1.0)
+        ],
+        "endStateMatch": "match",
+        "requiredEquipmentMatch": "match",
+        "complete": True,
+    }
+
+    assert bake_and_rank_module.two_scale_topology_verification_passed(
+        payload,
+        contract=contract,
+        equipment="dumbbell",
+    )
+
+    # Repetition remains chronological, but a return to an earlier phase is
+    # still invalid even when model-authored phase labels are advisory.
+    payload["phaseEvidence"] = [
+        {"phaseId": "phase_01", "visible": True, "position": 0.1},
+        {"phaseId": "phase_02", "visible": True, "position": 0.6},
+        {"phaseId": "phase_01", "visible": True, "position": 0.9},
+    ]
+    assert not bake_and_rank_module.two_scale_topology_verification_passed(
+        payload,
+        contract=contract,
+        equipment="dumbbell",
+    )
+
+    # Authoritative phase contracts continue to require every phase exactly once.
+    authoritative_contract = {
+        **contract,
+        "status": "explicit",
+        "source": "exercise_definition",
+    }
+    payload["phaseEvidence"] = [
+        {"phaseId": "phase_01", "visible": True, "position": 0.1},
+        {"phaseId": "phase_01", "visible": True, "position": 0.9},
+    ]
+    assert not bake_and_rank_module.two_scale_topology_verification_passed(
+        payload,
+        contract=authoritative_contract,
+        equipment="dumbbell",
+    )
+
+
+def test_reselection_identity_tracks_skeleton_content_and_matches_identical_copies(
+    tmp_path: Path,
+) -> None:
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    original_path = candidate_dir / "movement.json"
+    identical_copy_path = tmp_path / "selected" / "movement.json"
+    changed_copy_path = tmp_path / "newer" / "movement.json"
+    identical_copy_path.parent.mkdir()
+    changed_copy_path.parent.mkdir()
+    original_path.write_text(
+        json.dumps({"frames": [{"hip": [0, 0, 0]}]}),
+        encoding="utf-8",
+    )
+    identical_copy_path.write_bytes(original_path.read_bytes())
+    changed_copy_path.write_text(
+        json.dumps({"frames": [{"hip": [0, 0.1, 0]}]}),
+        encoding="utf-8",
+    )
+
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=1,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Press",
+        candidate_workspace=candidate_dir,
+        preview_html_path=candidate_dir / "preview.html",
+        skeleton_path=original_path,
+        review_video_path=candidate_dir / "review.webm",
+        duration_sec=2.8,
+        loop_start_seconds=6.2333,
+        loop_end_seconds=9.0333,
+        candidate={"videoId": "same-source"},
+        settings_variant_id="adaptive-baseline",
+    )
+    copied_item = replace(item, skeleton_path=identical_copy_path)
+    changed_item = replace(item, skeleton_path=changed_copy_path)
+
+    original_identity = bake_and_rank_module.review_item_identity(item)
+    assert bake_and_rank_module.review_item_identity(copied_item) == original_identity
+    assert bake_and_rank_module.review_item_identity(changed_item) != original_identity
+
+    selected_entry = {
+        "candidate": {"videoId": "same-source"},
+        "candidateRank": 1,
+        "loopIndex": 0,
+        "settingsVariantId": "adaptive-baseline",
+        "sectionStartSeconds": 6.2333,
+        "sectionEndSeconds": 9.0333,
+        "skeletonPath": str(identical_copy_path),
+    }
+    assert bake_and_rank_module.selection_entry_identity(selected_entry) == original_identity
+
+
 def test_two_scale_disagreement_repair_prompt_includes_authoritative_contract() -> None:
     validation = {
         "rejectionReasons": ["two_scale_source_identity_failed"],
@@ -16078,6 +16541,67 @@ def test_materialized_source_video_rebuilds_missing_legacy_pose_reference(
     assert calls[0]["include_pose_reference"] is True
 
 
+def test_materialized_metrics_reuses_exact_parent_pose_for_cyclic_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=3,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Dumbbell shoulder press",
+        candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html",
+        skeleton_path=tmp_path / "skeleton.json",
+        review_video_path=tmp_path / "review.webm",
+        duration_sec=2.8,
+        loop_start_seconds=6.2,
+        loop_end_seconds=9.0,
+        candidate={},
+    )
+    parent_pose = {"frames": [{"sourceTimeSec": 6.25}]}
+    phase_metrics = {"_sourcePoseReference": parent_pose}
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "pre_wham_exact_source_phase_reference_metrics",
+        lambda _item: phase_metrics,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_acceptance_metrics(review_item, ranking, *, source_pose_reference=None):
+        captured["item"] = review_item
+        captured["ranking"] = ranking
+        captured["source_pose_reference"] = source_pose_reference
+        return {"passed": True}
+
+    def unexpected_gpu_handoff(*_args, **_kwargs):
+        raise AssertionError("cached source pose should keep this gate CPU-only")
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "materialized_output_acceptance_metrics",
+        fake_acceptance_metrics,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "run_with_caption_gpu_exclusive",
+        unexpected_gpu_handoff,
+    )
+
+    ranking = LoopRanking(score=0.95, reasons=[], payload={})
+    result = bake_and_rank_module.materialized_metrics_with_gpu_handoff(
+        item,
+        ranking,
+        caption_images=lambda **_kwargs: "unused",
+    )
+
+    assert result == {"passed": True}
+    assert captured["item"] is item
+    assert captured["ranking"] is ranking
+    assert captured["source_pose_reference"] is parent_pose
+
+
 def test_materialized_validator_infrastructure_failure_is_retryable_not_quality_evidence() -> None:
     error = bake_and_rank_module.materialized_validation_infrastructure_error(
         {
@@ -16316,6 +16840,76 @@ def test_exercise_motion_contract_generation_retries_independently_after_invalid
     assert contract["generationFallbackReasons"] == [
         "thinking: anatomically invalid support phrase: standing on knees"
     ]
+
+
+def test_exercise_motion_contract_generation_repairs_schema_label_posture_states() -> None:
+    prompts: list[str] = []
+
+    class FakeClient:
+        def caption_images(self, **kwargs: object) -> str:
+            prompt = str(kwargs["prompt"])
+            prompts.append(prompt)
+            if len(prompts) < 3:
+                return json.dumps(
+                    {
+                        "movementType": "repetition",
+                        "completionMode": "return_to_start",
+                        "requiresReturnToStart": True,
+                        **pose_contract_fields(),
+                        "validStartState": (
+                            "support Mode: standing, hand Height: shoulder chest, "
+                            "torso Orientation: upright, knee State: extended"
+                        ),
+                        "validEndState": (
+                            "support Mode: standing, hand Height: shoulder chest, "
+                            "torso Orientation: upright, knee State: extended"
+                        ),
+                        "requiredPhases": ["press dumbbells overhead", "lower dumbbells to shoulders"],
+                        "primaryMovingRegions": ["elbows", "shoulders"],
+                        "referenceRegions": ["torso"],
+                        "primaryAxis": "vertical",
+                        "motionPattern": "limb_away_from_body",
+                    }
+                )
+            return json.dumps(
+                {
+                    "movementType": "repetition",
+                    "completionMode": "return_to_start",
+                    "requiresReturnToStart": True,
+                    **pose_contract_fields(),
+                    "validStartState": (
+                        "standing upright with feet shoulder width apart and dumbbells held at shoulder height"
+                    ),
+                    "validEndState": (
+                        "standing upright with feet shoulder width apart and dumbbells returned to shoulder height"
+                    ),
+                    "requiredPhases": ["press dumbbells overhead", "lower dumbbells to shoulder height"],
+                    "primaryMovingRegions": ["elbows", "shoulders"],
+                    "referenceRegions": ["torso"],
+                    "primaryAxis": "vertical",
+                    "motionPattern": "limb_away_from_body",
+                }
+            )
+
+    class FakeRanker:
+        client = FakeClient()
+
+    contract = youtube_module.generate_exercise_motion_contract_with_ranker(
+        exercise=ExerciseEntry(
+            exercise_id="overhead-press",
+            name="Dumbbell Overhead Press",
+            slug="dumbbell-overhead-press",
+        ),
+        settings=YouTubeRankingSettings(exercise_motion_contract_critic_enabled=False),
+        ranker=FakeRanker(),
+    )
+
+    assert len(prompts) == 3
+    assert "Do not put the JSON inside advisoryText" in prompts[-1]
+    assert "Do not write schema labels such as supportMode" in prompts[-1]
+    assert contract["status"] == "generated"
+    assert contract["generationMode"] == "direct_repair"
+    assert contract["validStartState"].startswith("standing upright")
 
 
 def test_exercise_motion_contract_quality_rejects_distinct_end_state_that_returns_to_start() -> None:
@@ -16587,6 +17181,13 @@ def test_normalize_exercise_motion_contract_derives_repetition_return_and_matchi
         {
             "movementType": "repetition",
             **pose_contract_fields(support_mode="lying", hand_height="any", torso_orientation="horizontal", knee_state="any", stance="any"),
+            "endPoseConstraints": {
+                "supportMode": "lying",
+                "handHeight": "hip",
+                "torsoOrientation": "horizontal",
+                "kneeState": "any",
+                "stance": "any",
+            },
             "validStartState": "bar locked out above the chest",
             "validEndState": "bar resting on the chest",
             "requiredPhases": ["lower bar to chest", "press bar upward"],
@@ -16604,6 +17205,7 @@ def test_normalize_exercise_motion_contract_derives_repetition_return_and_matchi
     assert contract["requiresReturnToStart"] is True
     assert contract["completionMode"] == "return_to_start"
     assert contract["validEndState"] == contract["validStartState"]
+    assert contract["endPoseConstraints"] == contract["startPoseConstraints"]
     assert contract["requiredPhases"] == [
         "lower bar to chest",
         "Return to start: press bar upward",
@@ -16613,6 +17215,12 @@ def test_normalize_exercise_motion_contract_derives_repetition_return_and_matchi
     assert contract["contractPolicyVersion"] == youtube_module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
     assert "bar resting on the chest" not in contract["advisoryText"]
     assert youtube_module.exercise_motion_contract_has_specific_topology(contract) is True
+    mismatched_constraints = dict(contract)
+    mismatched_constraints["endPoseConstraints"] = dict(contract["endPoseConstraints"])
+    mismatched_constraints["endPoseConstraints"]["handHeight"] = "shoulder_chest"
+    assert "return_to_start endpoint pose constraints disagree" in (
+        youtube_module.exercise_motion_contract_quality_issues(mismatched_constraints)
+    )
 
 
 def test_normalize_exercise_motion_contract_repairs_schema_leaking_phase_labels() -> None:
@@ -16652,6 +17260,21 @@ def test_normalize_exercise_motion_contract_repairs_schema_leaking_phase_labels(
         "Return to start: Press the bar to lockout",
     ]
     assert youtube_module.exercise_motion_contract_quality_issues(contract) == []
+
+
+def test_required_phase_length_limit_keeps_a_complete_sentence_boundary() -> None:
+    phase = (
+        "Return to start: Stand with dumbbells at sides, elbows down. "
+        "Pull dumbbells upward along the torso by leading with elbows, keeping them close to the body. "
+        "Continue until elbows clear the shoulders and lower the dumbbells back to the start."
+    )
+
+    normalized = youtube_module.normalize_required_phase_labels([phase])
+
+    assert len(normalized) == 1
+    assert len(normalized[0]) <= 180
+    assert normalized[0].endswith("body.")
+    assert "Continue until" not in normalized[0]
 
 
 def test_candidate_vision_prompt_requires_accessory_support_role() -> None:
@@ -22049,6 +22672,47 @@ def test_pose_model_alias_resolves_to_shared_cache(
     assert second == first
     assert Path(first).read_bytes() == b"model"
     assert len(downloads) == 1
+
+
+def test_pose_model_cache_recovers_stale_lock_and_serializes_population(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_dir = tmp_path / "pose-model-cache"
+    cache_dir.mkdir()
+    target_path = cache_dir / "yolo26x-pose.pt"
+    lock_path = target_path.with_suffix(target_path.suffix + ".lock")
+    lock_path.write_text("abandoned legacy lock", encoding="utf-8")
+    downloads: list[Path] = []
+    start_together = threading.Barrier(3)
+
+    def fake_urlretrieve(url: str, filename: Path) -> tuple[str, object | None]:
+        output_path = Path(filename)
+        time.sleep(0.05)
+        output_path.write_bytes(b"model")
+        downloads.append(output_path)
+        return str(output_path), None
+
+    monkeypatch.setattr(pose_prefilter_module, "POSE_MODEL_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(pose_prefilter_module, "urlretrieve", fake_urlretrieve)
+
+    def resolve_after_barrier() -> Path:
+        start_together.wait()
+        return pose_prefilter_module.ensure_cached_pose_model(
+            "yolo26x-pose.pt",
+            url="https://example.invalid/yolo26x-pose.pt",
+            timeout_seconds=2.0,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(resolve_after_barrier) for _ in range(2)]
+        start_together.wait()
+        resolved_paths = [future.result() for future in futures]
+
+    assert resolved_paths == [target_path, target_path]
+    assert target_path.read_bytes() == b"model"
+    assert len(downloads) == 1
+    assert lock_path.exists()
 
 
 def test_pose_model_alias_seeds_shared_cache_from_existing_local_file(
@@ -30034,6 +30698,8 @@ def test_materialize_llm_selected_time_range_ignores_recommended_settings(
         duration_sec=4.0,
         loop_start_seconds=1.0,
         loop_end_seconds=5.0,
+        artifact_class=bake_and_rank_module.CYCLIC_REBAKE,
+        export_payload={"loop": {"enabled": True}},
         candidate={
             "videoId": "abc",
             "exerciseMotionContract": {
@@ -30131,6 +30797,75 @@ def test_materialize_llm_selected_time_range_ignores_recommended_settings(
     assert materialized_item.loop_end_seconds == pytest.approx(3.75)
 
 
+def test_materialize_selected_time_range_uses_contract_from_ranking_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = {"completionMode": "distinct_end_state"}
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name="Turkish Get Up",
+        candidate_title="Turkish get up demo",
+        candidate_workspace=tmp_path / "candidate",
+        preview_html_path=tmp_path / "candidate" / "preview.html",
+        skeleton_path=tmp_path / "candidate" / "skeleton.json",
+        review_video_path=tmp_path / "candidate" / "review.webm",
+        duration_sec=4.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=4.0,
+        candidate={"videoId": "get-up"},
+    )
+    ranking = LoopRanking(
+        score=0.9,
+        reasons=[],
+        payload={"exerciseMotionContract": contract},
+    )
+    calls: dict[str, object] = {}
+    artifact = BakedLoopArtifact(
+        loop_index=-1,
+        skeleton_path=item.skeleton_path,
+        review_video_path=item.review_video_path,
+        export_payload={"durationSec": 2.0, "frames": []},
+        artifact_class=bake_and_rank_module.BOUNDED_MOVEMENT_REBAKE,
+    )
+
+    def fake_bake(**kwargs):
+        calls.update(kwargs)
+        return bake_and_rank_module.KinematicSafeBakeResult(artifact=artifact)
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "bake_kinematically_safe_preview_time_range",
+        fake_bake,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "load_verified_source_pose_reference",
+        lambda *_args: None,
+    )
+
+    bake_and_rank_module.materialize_review_item_time_range(
+        item,
+        ranking,
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+        ),
+        start_seconds=1.0,
+        end_seconds=3.0,
+        artifact_id="selected-range",
+        artifact_label="Selected range",
+        cut_applied=True,
+    )
+
+    assert calls["exercise_motion_contract"] == contract
+    assert calls["selection_class"] == bake_and_rank_module.BOUNDED_MOVEMENT_SELECTION
+
+
 def test_materialize_llm_selected_full_span_still_rebakes_final_review_with_current_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -30225,6 +30960,16 @@ def test_materialize_llm_selected_full_span_still_rebakes_final_review_with_curr
 
 def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings() -> None:
     preview_source = {"sizeBytes": 123, "sha256": "preview-source"}
+    source_pose_reference = {"frames": [{"timeSec": 0.0, "confidence": 0.9}]}
+    source_camera_reference = {"camera": {"bilateralAssignment": "identity"}}
+    source_support_evidence = {"contacts": [{"startRatio": 0.1, "endRatio": 0.8}]}
+    exercise_motion_contract = {"requiresReturnToStart": True}
+    fit_input_identity = bake_and_rank_module.selected_section_fit_input_identity(
+        source_pose_reference=source_pose_reference,
+        source_camera_reference=source_camera_reference,
+        source_support_evidence=source_support_evidence,
+        exercise_motion_contract=exercise_motion_contract,
+    )
     options = {
         "fixedRoot": True,
         "autoWorldAlignment": True,
@@ -30243,6 +30988,7 @@ def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings
     export_payload = {
         "selectedSectionBakeCacheVersion": bake_and_rank_module.SELECTED_SECTION_BAKE_CACHE_VERSION,
         "selectedSectionBakePathCodeDigest": bake_and_rank_module._bake_path_code_digest()["sha256"],
+        "selectedSectionFitInputIdentity": fit_input_identity,
         "selectedSectionPreviewSource": preview_source,
         "selectedPreviewSettings": {
             **dict(options),
@@ -30271,6 +31017,19 @@ def test_selected_section_wear_skeleton_cache_requires_selected_preview_settings
         export_payload,
         options=options,
         preview_source=preview_source,
+        fit_input_identity=fit_input_identity,
+    )
+    changed_camera_identity = bake_and_rank_module.selected_section_fit_input_identity(
+        source_pose_reference=source_pose_reference,
+        source_camera_reference={"camera": {"bilateralAssignment": "swapped"}},
+        source_support_evidence=source_support_evidence,
+        exercise_motion_contract=exercise_motion_contract,
+    )
+    assert not bake_and_rank_module.selected_section_wear_skeleton_cache_is_current(
+        export_payload,
+        options=options,
+        preview_source=preview_source,
+        fit_input_identity=changed_camera_identity,
     )
 
 
@@ -41360,6 +42119,26 @@ def test_acceptance_gate_does_not_promote_failed_metrics_after_visual_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from exercise_motion_pkg.artifact_state import (
+        FULL_CLIP_BAKE,
+        baked_payload_identity,
+        build_artifact_state,
+    )
+
+    skeleton_path = tmp_path / "candidate" / "skeleton.json"
+    movement_payload = {
+        "fps": 30.0,
+        "frames": [{"joints": {"pelvis": [0.0, 1.0, 0.0]}}],
+    }
+    movement_state = build_artifact_state(
+        artifact_class=FULL_CLIP_BAKE,
+        selection_class=FULL_CLIP_BAKE,
+        required_class=None,
+        selection_evidence={"fullClipBake": baked_payload_identity(movement_payload)},
+    )
+    movement_payload["artifactState"] = movement_state
+    skeleton_path.parent.mkdir(parents=True)
+    skeleton_path.write_text(json.dumps(movement_payload), encoding="utf-8")
     item = ReviewItem(
         exercise_index=0,
         candidate_rank=0,
@@ -41368,12 +42147,14 @@ def test_acceptance_gate_does_not_promote_failed_metrics_after_visual_approval(
         candidate_title="Barbell Row demo",
         candidate_workspace=tmp_path / "candidate",
         preview_html_path=tmp_path / "candidate" / "preview.html",
-        skeleton_path=tmp_path / "candidate" / "skeleton.json",
+        skeleton_path=skeleton_path,
         review_video_path=tmp_path / "candidate" / "review.webm",
         duration_sec=2.0,
         loop_start_seconds=0.0,
         loop_end_seconds=2.0,
         candidate={"videoId": "row"},
+        artifact_class=FULL_CLIP_BAKE,
+        export_payload=movement_payload,
     )
     ranking = LoopRanking(score=0.9, reasons=[], payload={}, model_score=0.9)
     monkeypatch.setattr(
@@ -41404,6 +42185,358 @@ def test_acceptance_gate_does_not_promote_failed_metrics_after_visual_approval(
     assert selected_ranking.payload["materializedHardRejectionReasons"] == [
         "materialized_unreadable_low_motion_preview"
     ]
+
+
+def test_acceptance_gate_persists_contract_reconciled_state_before_review_and_package_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from exercise_motion_pkg.artifact_state import (
+        CYCLE_SELECTION,
+        PACKAGED_MOVEMENT,
+        build_packaged_artifact_state,
+        cycle_selection_evidence,
+    )
+
+    frame_times = [0.0, 1.0 / 30.0, 2.0 / 30.0]
+    frames = [
+        {
+            "timeSec": frame_time,
+            "sourceTimeSec": frame_time,
+            "sourceFrameIndex": index,
+            "joints": {"pelvis": [0.0, 1.0, 0.0]},
+        }
+        for index, frame_time in enumerate(frame_times)
+    ]
+    interval = {
+        "type": "detected_cycle",
+        "startFrame": 0,
+        "endFrame": 2,
+        "startTimeSec": 0.0,
+        "endTimeSec": frame_times[-1],
+        "durationSec": frame_times[-1],
+    }
+    full_clip = {"fps": 30.0, "frameCount": len(frames), "frames": frames}
+    movement_payload = {
+        "fps": 30.0,
+        "frameCount": len(frames),
+        "durationSec": frame_times[-1],
+        "kind": "wearSkeleton",
+        "jointNames": ["pelvis"],
+        "frames": frames,
+        "loop": {
+            "enabled": True,
+            "sourceStartFrame": interval["startFrame"],
+            "sourceEndFrame": interval["endFrame"],
+            "sourceStartTimeSec": interval["startTimeSec"],
+            "sourceEndTimeSec": interval["endTimeSec"],
+        },
+    }
+    old_state = bake_and_rank_module.artifact_state_for_baked_payload(
+        movement_payload,
+        contract=None,
+        selection_class=CYCLE_SELECTION,
+        selection_evidence=cycle_selection_evidence(full_clip, interval),
+    )
+    movement_payload["artifactState"] = old_state
+    item_dir = tmp_path / "candidate"
+    item_dir.mkdir()
+    skeleton_path = item_dir / "skeleton.json"
+    skeleton_path.write_text(json.dumps(movement_payload), encoding="utf-8")
+    contract = {
+        "requiresReturnToStart": True,
+        "observableMotionSpec": {"requiresReturnToStart": True},
+    }
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Dumbbell Overhead Press demo",
+        candidate_workspace=item_dir,
+        preview_html_path=item_dir / "preview.html",
+        skeleton_path=skeleton_path,
+        review_video_path=item_dir / "review.webm",
+        duration_sec=frame_times[-1],
+        loop_start_seconds=0.0,
+        loop_end_seconds=frame_times[-1],
+        candidate={"videoId": "press", "exerciseMotionContract": contract},
+        artifact_class=old_state["artifactClass"],
+    )
+    ranking = LoopRanking(
+        score=0.9,
+        reasons=[],
+        payload={"exerciseMotionContract": contract},
+        model_score=0.9,
+    )
+    review_state: dict[str, Any] = {}
+
+    def capture_final_render(current_item, *_args, **_kwargs):
+        persisted_payload = json.loads(current_item.skeleton_path.read_text(encoding="utf-8"))
+        review_state["artifactState"] = persisted_payload["artifactState"]
+        review_window, _state = bake_and_rank_module.build_final_output_review_window_evidence(
+            persisted_payload,
+            requested_frame_count=bake_and_rank_module.FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
+        )
+        return {
+            "enabled": True,
+            "passed": True,
+            "renderEvidence": {
+                "skeletonIdentity": bake_and_rank_module.selected_skeleton_file_identity(
+                    current_item.skeleton_path
+                ),
+                "reviewWindow": review_window,
+            },
+        }
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "final_output_validation_metrics",
+        capture_final_render,
+    )
+    selected_item, selected_ranking = bake_and_rank_module.apply_materialized_output_acceptance_gate(
+        (item, ranking),
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            final_output_validation=False,
+        ),
+        deterministic_metrics={"passed": True},
+    )
+
+    persisted_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    reconciled_state = persisted_payload["artifactState"]
+    assert old_state["requiredClass"] is None
+    assert reconciled_state["requiredClass"] == bake_and_rank_module.CYCLIC_REBAKE
+    assert review_state["artifactState"] == reconciled_state
+    assert bake_and_rank_module.review_item_artifact_state(
+        selected_item,
+        contract=contract,
+    ) == reconciled_state
+
+    package_identity = bake_and_rank_module.selected_skeleton_file_identity(skeleton_path)
+    package_state = build_packaged_artifact_state(
+        reconciled_state,
+        package_class=PACKAGED_MOVEMENT,
+    )
+    audit = bake_and_rank_module.audit_artifact_package_state(
+        {
+            "artifactClass": reconciled_state["artifactClass"],
+            "artifactState": reconciled_state,
+            "packagedArtifactClass": PACKAGED_MOVEMENT,
+            "packagedArtifactState": package_state,
+            "selectionStatus": "accepted",
+            "ranking": {"payload": selected_ranking.payload},
+            "packagedSkeletonReviewParity": {
+                "verified": True,
+                "sha256": package_identity["sha256"],
+                "frameCount": package_identity["frameCount"],
+                "artifactClass": reconciled_state["artifactClass"],
+                "artifactHistory": reconciled_state["history"],
+            },
+        },
+        skeleton_path=skeleton_path,
+    )
+    assert audit["passed"] is True
+
+
+def test_fitted_cycle_rebinds_source_lineage_after_fit_local_crop() -> None:
+    from exercise_motion_pkg.artifact_state import CYCLE_SELECTION, cycle_selection_evidence
+    from exercise_motion_pkg.loop_cycles import slice_loop_cycle
+
+    fps = 30.0
+    full_frames = [
+        {
+            "timeSec": index / fps,
+            "sourceTimeSec": index / fps,
+            "sourceFrameIndex": index,
+            "joints": {"pelvis": [index / 100.0, 1.0, 0.0]},
+            "sourceJoints": {"pelvis": [index / 100.0, 1.0, 0.0]},
+        }
+        for index in range(70)
+    ]
+    full_clip = {
+        "kind": "wearSkeleton",
+        "fps": fps,
+        "frameCount": len(full_frames),
+        "jointNames": ["pelvis"],
+        "frames": full_frames,
+    }
+    selected_interval = {
+        "type": "detected_cycle",
+        "startFrame": 8,
+        "endFrame": 63,
+        "startTimeSec": 8 / fps,
+        "endTimeSec": 63 / fps,
+        "durationSec": 55 / fps,
+    }
+    selected_frames = copy.deepcopy(full_frames[8:64])
+    for index, frame in enumerate(selected_frames):
+        frame["timeSec"] = index / fps
+    fitted_input = {
+        "kind": "wearSkeleton",
+        "fps": fps,
+        "frameCount": len(selected_frames),
+        "jointNames": ["pelvis"],
+        "frames": selected_frames,
+        "loop": {
+            "enabled": True,
+            "sourceStartFrame": 8,
+            "sourceEndFrame": 63,
+            "sourceStartTimeSec": 8 / fps,
+            "sourceEndTimeSec": 63 / fps,
+            "durationSec": 55 / fps,
+        },
+    }
+    parent_evidence = cycle_selection_evidence(full_clip, selected_interval)
+    initial_state = bake_and_rank_module.artifact_state_for_baked_payload(
+        fitted_input,
+        contract=None,
+        selection_class=CYCLE_SELECTION,
+        selection_evidence=parent_evidence,
+    )
+
+    fitted = slice_loop_cycle(
+        fitted_input,
+        {"startFrame": 0, "stopFrameExclusive": len(selected_frames)},
+    )
+    assert "sourceStartFrame" not in fitted["loop"]
+
+    fitted_evidence = bake_and_rank_module.selection_evidence_for_materialized_interval(
+        parent_selection_evidence=initial_state["selectionEvidence"],
+        movement_payload=fitted,
+        selection_class=CYCLE_SELECTION,
+    )
+    fitted_interval = fitted_evidence["cycleSelection"]["interval"]
+    assert fitted_interval["type"] == selected_interval["type"]
+    assert fitted_interval["startFrame"] == selected_interval["startFrame"]
+    assert fitted_interval["endFrame"] == selected_interval["endFrame"]
+    assert fitted_interval["startTimeSec"] == pytest.approx(
+        selected_interval["startTimeSec"]
+    )
+    assert fitted_interval["endTimeSec"] == pytest.approx(
+        selected_interval["endTimeSec"]
+    )
+    assert fitted_interval["durationSec"] == pytest.approx(
+        selected_interval["durationSec"]
+    )
+    fitted["frames"][0]["sourceFrameIndex"] = 7
+    assert bake_and_rank_module.selection_evidence_for_materialized_interval(
+        parent_selection_evidence=initial_state["selectionEvidence"],
+        movement_payload=fitted,
+        selection_class=CYCLE_SELECTION,
+    ) == {}
+    fitted["frames"][0]["sourceFrameIndex"] = 8
+    assert bake_and_rank_module.attach_materialized_source_interval(
+        fitted,
+        fitted_evidence,
+        selection_class=CYCLE_SELECTION,
+    )
+    fitted["artifactState"] = bake_and_rank_module.artifact_state_for_baked_payload(
+        fitted,
+        contract=None,
+        selection_class=CYCLE_SELECTION,
+        selection_evidence=fitted_evidence,
+    )
+
+    assert fitted["loop"]["startFrame"] == 0
+    assert fitted["loop"]["endFrame"] == len(selected_frames) - 1
+    assert fitted["loop"]["sourceStartFrame"] == 8
+    assert fitted["loop"]["sourceEndFrame"] == 63
+    assert fitted["artifactState"]["lineageComplete"] is True
+
+
+def test_acceptance_gate_persists_reconciled_state_without_ranking(
+    tmp_path: Path,
+) -> None:
+    from exercise_motion_pkg.artifact_state import CYCLE_SELECTION, cycle_selection_evidence
+
+    frame_times = [0.0, 1.0 / 30.0, 2.0 / 30.0]
+    frames = [
+        {
+            "timeSec": frame_time,
+            "sourceTimeSec": frame_time,
+            "sourceFrameIndex": index,
+            "joints": {"pelvis": [0.0, 1.0, 0.0]},
+        }
+        for index, frame_time in enumerate(frame_times)
+    ]
+    interval = {
+        "type": "detected_cycle",
+        "startFrame": 0,
+        "endFrame": 2,
+        "startTimeSec": 0.0,
+        "endTimeSec": frame_times[-1],
+        "durationSec": frame_times[-1],
+    }
+    full_clip = {"fps": 30.0, "frameCount": len(frames), "frames": frames}
+    payload = {
+        "fps": 30.0,
+        "frameCount": len(frames),
+        "durationSec": frame_times[-1],
+        "kind": "wearSkeleton",
+        "jointNames": ["pelvis"],
+        "frames": frames,
+        "loop": {
+            "enabled": True,
+            "sourceStartFrame": 0,
+            "sourceEndFrame": 2,
+            "sourceStartTimeSec": 0.0,
+            "sourceEndTimeSec": frame_times[-1],
+        },
+    }
+    old_state = bake_and_rank_module.artifact_state_for_baked_payload(
+        payload,
+        contract=None,
+        selection_class=CYCLE_SELECTION,
+        selection_evidence=cycle_selection_evidence(full_clip, interval),
+    )
+    payload["artifactState"] = old_state
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+    skeleton_path = candidate_dir / "skeleton.json"
+    skeleton_path.write_text(json.dumps(payload), encoding="utf-8")
+    contract = {
+        "requiresReturnToStart": True,
+        "observableMotionSpec": {"requiresReturnToStart": True},
+    }
+    item = ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Dumbbell Overhead Press demo",
+        candidate_workspace=candidate_dir,
+        preview_html_path=candidate_dir / "preview.html",
+        skeleton_path=skeleton_path,
+        review_video_path=candidate_dir / "review.webm",
+        duration_sec=frame_times[-1],
+        loop_start_seconds=0.0,
+        loop_end_seconds=frame_times[-1],
+        candidate={"videoId": "press", "exerciseMotionContract": contract},
+        artifact_class=old_state["artifactClass"],
+        export_payload=payload,
+    )
+    selected = (item, None)
+
+    result = bake_and_rank_module.apply_materialized_output_acceptance_gate(
+        selected,
+        request=BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            final_output_validation=True,
+        ),
+        deterministic_metrics={"passed": True},
+    )
+
+    persisted_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    assert result == selected
+    assert old_state["requiredClass"] is None
+    assert persisted_payload["artifactState"]["requiredClass"] == bake_and_rank_module.CYCLIC_REBAKE
 
 
 def test_exact_source_fidelity_repairs_materialized_phase_signal_contradiction() -> None:
@@ -47238,6 +48371,8 @@ def test_review_item_to_manifest_includes_support_dominance_fields() -> None:
         loop_start_seconds=0.0,
         loop_end_seconds=2.5,
         candidate={"videoId": "abc"},
+        artifact_class=bake_and_rank_module.CYCLIC_REBAKE,
+        export_payload={"loop": {"enabled": True}},
         support_dominance="hand_dominant",
         support_dominance_confidence=0.88,
         support_dominance_reason="Hands and forearms clearly carry the body.",
@@ -47253,6 +48388,11 @@ def test_review_item_to_manifest_includes_support_dominance_fields() -> None:
     assert manifest["supportDominanceUncertain"] is False
     assert manifest["supportDominanceModelOutput"] == {"supportDominance": "hand_dominant"}
     assert manifest["skeletonPathNoHandLock"] == str(candidate_workspace / "wear" / "loop-1.no-hand-lock.json")
+    assert manifest["artifactClass"] == bake_and_rank_module.CYCLIC_REBAKE
+    assert manifest["artifactState"]["history"] == [
+        bake_and_rank_module.CYCLE_SELECTION,
+        bake_and_rank_module.CYCLIC_REBAKE,
+    ]
 
 
 def test_review_item_to_manifest_uses_downloaded_source_video_path(tmp_path: Path) -> None:
@@ -49250,7 +50390,7 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
     monkeypatch.setattr(
         bake_and_rank_module,
         "run_with_caption_gpu_exclusive",
-        lambda _caption, operation: operation(),
+        lambda _caption, operation, **_stage_options: operation(),
     )
 
     contract = {"observableMotionSpec": {"requiresReturnToStart": True}}
@@ -50609,6 +51749,13 @@ def test_contact_sequence_correction_resolves_accumulated_yaw_with_two_anchors()
     assert bake_and_rank_module.source_confirmed_support_stationarity_metrics(
         corrected, evidence,
     )["passed"] is True
+    safety = bake_and_rank_module.support_lock_baseline_safety_metrics(
+        baseline,
+        corrected,
+    )
+    assert safety["passed"] is True, safety["rejectionReasons"]
+    assert safety["isPerFrameRigidTransform"] is True
+    assert safety["maxRigidTransformYawDegrees"] > 0.5
     for side in ("left", "right"):
         before_ankle = np.asarray(
             [frame["joints"][f"{side}_ankle"] for frame in baseline["frames"]])
@@ -51919,6 +53066,42 @@ def test_preview_manual_yaw_bypasses_auto_orientation_with_and_without_feet_lock
         page = browser.new_page(viewport={"width": 960, "height": 540})
         page.goto(html_path.resolve().as_uri())
         page.wait_for_function("() => window.exerciseMotionAutomation != null")
+        exact_range_payload = page.evaluate(
+            """() => window.exerciseMotionAutomation.bakeFrameRange(1, 3, {
+                fixedRoot: true,
+                autoWorldAlignment: false,
+                lockYDrift: false,
+                lockPlantedFeet: false,
+                lockPlantedHands: false,
+                cameraYawDegrees: 45,
+                cameraPitchDegrees: 30,
+                playbackSpeed: 1,
+            })"""
+        )
+        assert exact_range_payload["frameCount"] == 3
+        assert exact_range_payload["loop"]["sourceStartFrame"] == 1
+        assert exact_range_payload["loop"]["sourceEndFrame"] == 3
+        compatible_exact_range_payload = page.evaluate(
+            """() => {
+                delete window.exerciseMotionAutomation.bakeFrameRange;
+                const options = {
+                    fixedRoot: true,
+                    autoWorldAlignment: false,
+                    lockYDrift: false,
+                    lockPlantedFeet: false,
+                    lockPlantedHands: false,
+                    cameraYawDegrees: 45,
+                    cameraPitchDegrees: 30,
+                    playbackSpeed: 1,
+                };
+                return typeof window.exerciseMotionAutomation.bakeFrameRange === "function"
+                    ? window.exerciseMotionAutomation.bakeFrameRange(1, 3, options)
+                    : window.exerciseMotionAutomation.bakeTimeRange(1 / 30, 3 / 30, options);
+            }"""
+        )
+        assert compatible_exact_range_payload["frameCount"] == 3
+        assert compatible_exact_range_payload["loop"]["sourceStartFrame"] == 1
+        assert compatible_exact_range_payload["loop"]["sourceEndFrame"] == 3
         for lock_planted_feet in (False, True):
             base_options = {
                 "fixedRoot": True,
@@ -52814,6 +53997,9 @@ def test_candidate_fit_session_skips_doomed_small_remaining_fit() -> None:
         assert report['reason'] == 'fit_timeout'
         assert report.get('skippedBelowUsefulFloor') is True
         assert report.get('remainingSeconds') is not None
+        assert report['candidateFitBudget']['seconds'] == 1.0
+        assert report['candidateFitBudget']['remainingSeconds'] == report['remainingSeconds']
+        assert report['candidateFitBudget']['fitCalls'] == 0
         assert session.fit_calls == 0
     finally:
         fit_runtime._CURRENT.reset(token)

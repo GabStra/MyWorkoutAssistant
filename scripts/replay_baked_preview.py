@@ -16,6 +16,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
+from exercise_motion_pkg.artifact_state import FULL_CLIP_BAKE
 from exercise_motion_pkg.bake_and_rank import EligibleLoop, bake_preview_loops_with_playwright
 
 
@@ -36,18 +37,26 @@ def _exercise_contract(candidates_json: Path, exercise_id: str) -> dict[str, Any
     raise ValueError(f"No exercise-motion contract for exercise id {exercise_id} in {candidates_json}")
 
 
-def _eligible_loops(manifest: dict[str, Any]) -> list[EligibleLoop]:
+def _eligible_loops(
+    manifest: dict[str, Any],
+    *,
+    loop_indices: set[int] | None = None,
+) -> list[EligibleLoop]:
     loops = []
     for item in manifest.get("reviewSourceClips", []):
         if not isinstance(item, dict) or not isinstance(item.get("loop"), dict):
             continue
+        loop_index = int(item.get("loopIndex", -1))
+        if loop_indices is not None and loop_index not in loop_indices:
+            continue
         loops.append(
             EligibleLoop(
-                loop_index=int(item.get("loopIndex", -1)),
+                loop_index=loop_index,
                 loop=item["loop"],
                 duration_sec=float(item.get("durationSec", 0.0)),
                 start_seconds=float(item.get("startSeconds", 0.0)),
                 end_seconds=float(item.get("endSeconds", 0.0)),
+                artifact_class=str(item.get("artifactClass") or FULL_CLIP_BAKE),
             )
         )
     if not loops:
@@ -125,6 +134,12 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, required=True, help="New isolated replay output workspace")
     parser.add_argument("--review-frames", type=int, default=12)
     parser.add_argument("--timeout-seconds", type=float, default=360.0)
+    parser.add_argument(
+        "--loop-index",
+        type=int,
+        action="append",
+        help="Replay only this retained loop index; may be provided more than once",
+    )
     args = parser.parse_args()
 
     manifest_path = args.bake_manifest.expanduser().resolve()
@@ -147,7 +162,10 @@ def main() -> int:
     deadline = started + args.timeout_seconds
     artifacts = bake_preview_loops_with_playwright(
         preview_html,
-        _eligible_loops(manifest),
+        _eligible_loops(
+            manifest,
+            loop_indices=set(args.loop_index) if args.loop_index else None,
+        ),
         output_workspace,
         args.review_frames,
         adaptive_preview_settings=True,

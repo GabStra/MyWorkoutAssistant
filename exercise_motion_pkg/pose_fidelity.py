@@ -237,8 +237,19 @@ def _recenter_constant_image_offset(source, transformed, swap, image_transform):
     return tuple(transform)
 
 
-def source_pose_reference_for_motion(source_payload: dict[str, Any], motion_payload: dict[str, Any]) -> dict[str, Any]:
-    """Select parent-video observations using explicit retained source timestamps."""
+def source_pose_reference_for_motion(
+    source_payload: dict[str, Any],
+    motion_payload: dict[str, Any],
+    *,
+    include_adjacent_boundary_evidence: bool = False,
+) -> dict[str, Any]:
+    """Select parent-video observations using explicit retained source timestamps.
+
+    Fit callers may retain the immediately adjacent source-pose sample when it
+    falls within the existing half-sample boundary tolerance. That evidence is
+    useful for checking a cropped movement's exact boundary, but remains opt-in
+    so general playback and fidelity comparisons stay clipped to the movement.
+    """
     frames = motion_payload.get("frames") or []
     if not frames:
         return {**source_payload, "frames": []}
@@ -261,9 +272,51 @@ def source_pose_reference_for_motion(source_payload: dict[str, Any], motion_payl
             return {**source_payload, "frames": []}
         source_times = [source_origin + value for value in source_times]
     start, end = source_times[0], source_times[-1]
-    return {**source_payload, "sourceTimeOriginSec": start - float(frames[0].get("timeSec", 0.0)),
-            "frames": [frame for frame in source_payload.get("frames", [])
-                       if start <= float(frame.get("sourceTimeSec", -math.inf)) <= end]}
+    source_frames = source_payload.get("frames", [])
+    timestamped_frames = []
+    for index, frame in enumerate(source_frames):
+        if not isinstance(frame, dict):
+            continue
+        try:
+            source_time = float(frame.get("sourceTimeSec", -math.inf))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(source_time):
+            timestamped_frames.append((source_time, index, frame))
+    selected = [row for row in timestamped_frames if start <= row[0] <= end]
+    boundary_evidence = []
+    if include_adjacent_boundary_evidence and timestamped_frames:
+        ordered = sorted(timestamped_frames, key=lambda row: (row[0], row[1]))
+        source_deltas = [right[0] - left[0] for left, right in zip(ordered, ordered[1:])
+                         if right[0] > left[0]]
+        source_step = statistics.median(source_deltas) if source_deltas else 0.0
+        motion_deltas = []
+        for left, right in zip(frames, frames[1:]):
+            try:
+                delta = float(right.get("timeSec")) - float(left.get("timeSec"))
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(delta) and delta > 0.0:
+                motion_deltas.append(delta)
+        fit_step = statistics.median(motion_deltas) if motion_deltas else 0.0
+        tolerance = max(0.5 * source_step, 0.5 * fit_step, 1e-6)
+        before = [row for row in ordered if row[0] < start]
+        after = [row for row in ordered if row[0] > end]
+        if before and start - before[-1][0] <= tolerance:
+            boundary_evidence.append(before[-1])
+        if after and after[0][0] - end <= tolerance:
+            boundary_evidence.append(after[0])
+    combined = sorted(selected + boundary_evidence, key=lambda row: row[1])
+    selected_reference = {
+        **source_payload,
+        "sourceTimeOriginSec": start - float(frames[0].get("timeSec", 0.0)),
+        "frames": [row[2] for row in combined],
+    }
+    if include_adjacent_boundary_evidence:
+        selected_reference["boundaryEvidenceSourceTimesSec"] = [
+            row[0] for row in boundary_evidence
+        ]
+    return selected_reference
 
 
 def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):

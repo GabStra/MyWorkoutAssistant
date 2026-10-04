@@ -338,8 +338,11 @@ def corroborated_stationary_sole(evidence, side):
 
 def materialize_stationary_sole_support(payload):
     """Materialize full-cycle ground contacts after selecting/slicing a cycle."""
-    from .contact_constraints import contact_frame_bounds
-    evidence = payload.get('sourceFootSupportEvidence') or {}
+    from .contact_constraints import (
+        contact_frame_bounds,
+        motion_space_support_evidence,
+    )
+    evidence = motion_space_support_evidence(payload)
     existing = evidence.get('bodySupport') or {}
     if existing.get('required') and existing.get('status') != 'confirmed':
         return  # New foot evidence cannot resolve missing torso observations.

@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from exercise_motion_pkg.gpu_lock import (gpu_stage_lock, open_lock_lease, close_lock_lease,
-                                        read_lock_text, lock_open_is_contention)
+                                        read_lock_text, lock_open_is_contention, process_identity)
+from exercise_motion_pkg.motion_scheduler import gpu_stage_task, timeout_with_candidate_deadline
 
 
 DEFAULT_WHAM_DOCKER_IMAGE = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1"
@@ -49,6 +50,51 @@ class WhamTrackingPreflightRejected(RuntimeError):
         self.report = report
 
 
+class WarmWorkerInterruptedAmbiguous(RuntimeError):
+    """A claimed warm-worker request stopped without trustworthy completion."""
+
+    failure_code = "wham_worker_interrupted_ambiguous"
+    status = "interrupted_ambiguous"
+
+    def __init__(
+        self,
+        *,
+        job_id: str,
+        session_dir: Path,
+        result_path: Path,
+        result_payload: dict[str, Any],
+        expected_stage_identity: dict[str, Any] | None,
+    ) -> None:
+        self.job_id = job_id
+        self.session_dir = Path(session_dir).expanduser().resolve()
+        self.result_path = Path(result_path).expanduser().resolve()
+        self.result_payload = dict(result_payload)
+        self.stage_identity = expected_stage_identity
+        recovery = result_payload.get("recovery")
+        self.recovery = dict(recovery) if isinstance(recovery, dict) else {}
+        archive_name = Path(str(self.recovery.get("archivedRequestPath") or "")).name
+        self.archive_path = (
+            self.session_dir / "ambiguous" / archive_name if archive_name else None
+        )
+        detail = str(result_payload.get("error") or "output completeness is unknown")
+        super().__init__(
+            f"WHAM warm-worker job {job_id} was interrupted after claim and was not replayed: {detail}"
+        )
+
+    def diagnostic_payload(self) -> dict[str, Any]:
+        return {
+            "failureCode": self.failure_code,
+            "status": self.status,
+            "jobId": self.job_id,
+            "stageIdentity": self.stage_identity,
+            "resultPath": str(self.result_path),
+            "ambiguousArchivePath": str(self.archive_path) if self.archive_path else None,
+            "partialOutputPossible": bool(self.recovery.get("partialOutputPossible", True)),
+            "automaticReplay": bool(self.recovery.get("automaticReplay", False)),
+            "error": str(self.result_payload.get("error") or ""),
+        }
+
+
 def wham_preprocessing_environment() -> dict[str, str]:
     return {
         "WHAM_POSE_BACKEND": DEFAULT_WHAM_POSE_BACKEND,
@@ -78,6 +124,7 @@ class WhamRunResult:
     warm_worker_job_id: str | None = None
     warm_worker_session_dir: Path | None = None
     stage_timings: dict[str, float | bool] = field(default_factory=dict)
+    stage_identity: dict[str, Any] | None = None
 
     def timing_payload(self) -> dict[str, Any]:
         return {
@@ -91,6 +138,7 @@ class WhamRunResult:
             "warmWorker": self.warm_worker,
             "warmWorkerJobId": self.warm_worker_job_id,
             "warmWorkerSessionDir": str(self.warm_worker_session_dir) if self.warm_worker_session_dir is not None else None,
+            "stageIdentity": self.stage_identity,
             "stdoutLog": str(self.stdout_log),
             "stderrLog": str(self.stderr_log),
             "command": self.command,
@@ -112,6 +160,7 @@ class WhamRunResult:
 
 
 
+@gpu_stage_task("wham_reconstruction")
 def run_wham_locally(
     *,
     wham_repo_path: Path,
@@ -133,6 +182,8 @@ def run_wham_locally(
     tracking_preflight: bool = False,
     required_start_seconds: float | None = None,
     required_end_seconds: float | None = None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None,
 ) -> WhamRunResult:
     validate_wham_repo_layout(
         wham_repo_path,
@@ -145,6 +196,13 @@ def run_wham_locally(
     stdout_log = logs_dir / "wham.stdout.log"
     stderr_log = logs_dir / "wham.stderr.log"
     if use_warm_worker:
+        warm_timeout = timeout_with_candidate_deadline(
+            warm_worker_timeout_seconds
+            if warm_worker_timeout_seconds is not None
+            else timeout_seconds,
+            candidate_deadline,
+            stage_name="WHAM warm-worker reconstruction",
+        )
         return run_wham_with_warm_worker(
             input_video=input_video,
             output_root=output_root,
@@ -157,12 +215,19 @@ def run_wham_locally(
             docker_image=docker_image,
             warm_worker_session_dir=warm_worker_session_dir,
             warm_worker_mount_root=warm_worker_mount_root,
-            timeout_seconds=warm_worker_timeout_seconds if warm_worker_timeout_seconds is not None else timeout_seconds,
+            timeout_seconds=warm_timeout,
             tracking_preflight=tracking_preflight,
             required_start_seconds=required_start_seconds,
             required_end_seconds=required_end_seconds,
+            stage_identity=stage_identity,
+            candidate_deadline=candidate_deadline,
         )
     timeout = resolve_wham_timeout_seconds(timeout_seconds)
+    timeout = timeout_with_candidate_deadline(
+        timeout,
+        candidate_deadline,
+        stage_name="WHAM reconstruction",
+    )
     docker_container_name = f"mwa-wham-job-{uuid.uuid4().hex}" if use_docker else None
     command = build_wham_command(
         wham_repo_path=wham_repo_path,
@@ -210,7 +275,11 @@ def run_wham_locally(
                         cwd=str(wham_repo_path),
                         stdout=stdout_handle,
                         stderr=stderr_handle,
-                        timeout_seconds=timeout,
+                        timeout_seconds=timeout_with_candidate_deadline(
+                            timeout,
+                            candidate_deadline,
+                            stage_name="WHAM tracking preflight",
+                        ),
                     )
                     if preflight_returncode == WHAM_TRACKING_PREFLIGHT_REJECTED_EXIT_CODE:
                         try:
@@ -228,7 +297,11 @@ def run_wham_locally(
                     cwd=str(wham_repo_path),
                     stdout=stdout_handle,
                     stderr=stderr_handle,
-                    timeout_seconds=timeout,
+                    timeout_seconds=timeout_with_candidate_deadline(
+                        timeout,
+                        candidate_deadline,
+                        stage_name="WHAM reconstruction",
+                    ),
                     docker_container_name=docker_container_name,
                 )
     elapsed = time.perf_counter() - started
@@ -297,6 +370,7 @@ def ensure_warm_worker_ready(
         request_path.unlink(missing_ok=True)
 
 
+@gpu_stage_task("wham_warm_worker_reconstruction")
 def run_wham_with_warm_worker(
     *,
     input_video: Path,
@@ -314,19 +388,25 @@ def run_wham_with_warm_worker(
     tracking_preflight: bool = False,
     required_start_seconds: float | None = None,
     required_end_seconds: float | None = None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None,
 ) -> WhamRunResult:
     if not use_docker:
         raise ValueError("Warm WHAM worker mode currently requires Docker WHAM execution.")
     session_dir = resolve_warm_worker_session_dir(warm_worker_session_dir)
     mount_root = resolve_warm_worker_mount_root(warm_worker_mount_root)
-    timeout = resolve_warm_worker_timeout_seconds(timeout_seconds)
+    worker_timeout = resolve_warm_worker_timeout_seconds(timeout_seconds)
+    timeout = worker_timeout
+    timeout = timeout_with_candidate_deadline(
+        timeout,
+        candidate_deadline,
+        stage_name="WHAM warm-worker reconstruction",
+    )
     jobs_dir = session_dir / "jobs"
     results_dir = session_dir / "results"
     job_logs_dir = session_dir / "job_logs"
     for path in (jobs_dir, results_dir, job_logs_dir):
         path.mkdir(parents=True, exist_ok=True)
-    ensure_warm_worker_ready(session_dir, timeout_seconds=timeout)
-
     job_id = uuid.uuid4().hex
     container_input_video = path_inside_worker_mount(input_video, mount_root=mount_root)
     container_output_root = path_inside_worker_mount(output_root, mount_root=mount_root)
@@ -339,6 +419,7 @@ def run_wham_with_warm_worker(
         "trackingPreflight": tracking_preflight,
         "requiredStartSeconds": required_start_seconds,
         "requiredEndSeconds": required_end_seconds,
+        "stageIdentity": stage_identity,
     }
     job_path = jobs_dir / f"{job_id}.json"
     tmp_job_path = jobs_dir / f"{job_id}.json.tmp"
@@ -348,11 +429,32 @@ def run_wham_with_warm_worker(
     gpu_lock_wait_seconds = 0.0
     with gpu_stage_lock(stage="wham_warm_worker_job") as gpu_lock_wait_seconds:
         with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
+            # Lazy startup loads the model onto CUDA. Keep the same global GPU
+            # and Docker leases across startup, readiness, and job admission so
+            # startup cannot race another GPU owner and a stopped worker never
+            # receives a newly queued request.
+            # Startup must finish (or the supervising wrapper must stop the
+            # container) before this process can release the GPU lease. A
+            # candidate deadline may expire while startup is in progress, but
+            # it cannot detach a CUDA-loading service from ownership.
+            ensure_warm_worker_ready(session_dir, timeout_seconds=worker_timeout)
+            timeout = timeout_with_candidate_deadline(
+                worker_timeout,
+                candidate_deadline,
+                stage_name="WHAM warm-worker reconstruction",
+            )
+            assert_warm_worker_available(session_dir, label="WHAM")
+            timeout = timeout_with_candidate_deadline(
+                timeout,
+                candidate_deadline,
+                stage_name="WHAM warm-worker request",
+            )
             tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
             tmp_job_path.replace(job_path)
             result_payload = wait_for_warm_worker_result(
                 result_path,
                 timeout_seconds=timeout,
+                candidate_deadline=candidate_deadline,
                 heartbeat_path=session_dir / "heartbeat.json",
                 stopped_path=session_dir / "stopped.json",
             )
@@ -361,6 +463,22 @@ def run_wham_with_warm_worker(
     worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
     copy_worker_log(worker_stdout_log, stdout_log)
     copy_worker_log(worker_stderr_log, stderr_log)
+    if str(result_payload.get("jobId") or "") != job_id:
+        raise RuntimeError(
+            "Warm WHAM worker result job ID does not match the submitted request."
+        )
+    if result_payload.get("status") == WarmWorkerInterruptedAmbiguous.status:
+        raise WarmWorkerInterruptedAmbiguous(
+            job_id=job_id,
+            session_dir=session_dir,
+            result_path=result_path,
+            result_payload=result_payload,
+            expected_stage_identity=stage_identity,
+        )
+    if result_payload.get("stageIdentity") != stage_identity:
+        raise RuntimeError(
+            "Warm WHAM worker result stage identity does not match the submitted candidate."
+        )
     if result_payload.get("status") == "rejected_tracking_preflight":
         raise WhamTrackingPreflightRejected(
             dict(result_payload.get("trackingPreflight") or {"passed": False})
@@ -401,6 +519,7 @@ def run_wham_with_warm_worker(
         warm_worker_job_id=job_id,
         warm_worker_session_dir=session_dir,
         stage_timings=dict(result_payload.get("timings") or {}),
+        stage_identity=stage_identity,
     )
 
 
@@ -522,27 +641,122 @@ def assert_warm_worker_heartbeat(path: Path) -> None:
         )
 
 
+def assert_warm_worker_available(session_dir: Path, *, label: str = "WHAM") -> None:
+    """Reject stale readiness after admission locks have been acquired."""
+    if any((session_dir / name).exists() for name in ("stop", "stopped.json")):
+        raise RuntimeError(f"Warm {label} worker is stopping: {session_dir}")
+    ready_path = session_dir / "ready.json"
+    if not ready_path.is_file():
+        raise RuntimeError(f"Warm {label} worker is not ready: {ready_path}")
+    assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
+
+
 def wait_for_warm_worker_result(
     path: Path,
     *,
     timeout_seconds: float | None,
+    candidate_deadline: float | None = None,
     heartbeat_path: Path | None = None,
     stopped_path: Path | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    deadlines: list[float] = []
+    if timeout_seconds is not None:
+        deadlines.append(started + max(0.0, float(timeout_seconds)))
+    if candidate_deadline is not None:
+        deadlines.append(float(candidate_deadline))
+    deadline = min(deadlines) if deadlines else None
+    deadline_clock = time.perf_counter()
+    deadline_wall_time = (
+        time.time() + (deadline - deadline_clock)
+        if deadline is not None
+        else None
+    )
+    shutdown_requested = False
+    shutdown_reason: BaseException | None = None
+    stop_path = stopped_path.parent / "stop" if stopped_path is not None else None
+
+    def result_was_published_before_deadline() -> bool:
+        if deadline_wall_time is None:
+            return True
+        try:
+            return path.stat().st_mtime <= deadline_wall_time
+        except OSError:
+            return time.perf_counter() < deadline
+
+    def timeout_error() -> TimeoutError:
+        return TimeoutError(
+            f"Timed out waiting for warm WHAM worker result: {path}; "
+            "waiting for terminal worker shutdown before releasing GPU ownership"
+        )
+
+    def archive_unclaimed_request() -> None:
+        queued_path = path.parent.parent / "jobs" / path.name
+        if not queued_path.is_file():
+            return
+        cancelled_dir = path.parent.parent / "cancelled_runs"
+        cancelled_dir.mkdir(parents=True, exist_ok=True)
+        cancelled_path = cancelled_dir / path.name
+        if cancelled_path.exists():
+            cancelled_path = cancelled_dir / f"{path.stem}-{time.time_ns()}{path.suffix}"
+        try:
+            # Atomic rename arbitrates with the worker's jobs -> running claim.
+            # If this wins, restart recovery cannot replay an expired request.
+            os.replace(queued_path, cancelled_path)
+        except FileNotFoundError:
+            pass
+
+    def request_worker_shutdown(reason: BaseException) -> None:
+        nonlocal shutdown_requested, shutdown_reason
+        shutdown_requested = True
+        shutdown_reason = reason
+        if stop_path is not None:
+            try:
+                archive_unclaimed_request()
+            except OSError:
+                # If claim/cancellation state cannot be read or moved, keep
+                # the worker leased and request its normal between-job stop.
+                pass
+            try:
+                stop_path.write_text(
+                    "caller is waiting for terminal worker shutdown\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                # Keep the leases held until the worker itself confirms stop.
+                pass
+
     while True:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+        if path.exists() and not shutdown_requested:
+            if result_was_published_before_deadline():
+                return json.loads(path.read_text(encoding="utf-8"))
+            late_result_error = timeout_error()
+            if stopped_path is None:
+                raise late_result_error
+            request_worker_shutdown(late_result_error)
         if stopped_path is not None and stopped_path.exists():
+            if shutdown_reason is not None:
+                raise shutdown_reason
             raise RuntimeError(
                 "Warm WHAM worker stopped before producing the requested result: "
                 f"{path}"
             )
-        if heartbeat_path is not None:
-            assert_warm_worker_heartbeat(heartbeat_path)
-        if timeout_seconds is not None and time.perf_counter() - started >= timeout_seconds:
-            raise TimeoutError(f"Timed out waiting for warm WHAM worker result: {path}")
-        time.sleep(0.5)
+        if not shutdown_requested and heartbeat_path is not None:
+            try:
+                assert_warm_worker_heartbeat(heartbeat_path)
+            except RuntimeError as exc:
+                if stopped_path is None:
+                    raise
+                request_worker_shutdown(exc)
+        if not shutdown_requested and deadline is not None and time.perf_counter() >= deadline:
+            expired_error = timeout_error()
+            if stopped_path is None:
+                raise expired_error
+            request_worker_shutdown(expired_error)
+        sleep_seconds = 0.5
+        if not shutdown_requested and deadline is not None:
+            sleep_seconds = min(sleep_seconds, max(0.0, deadline - time.perf_counter()))
+        time.sleep(sleep_seconds)
 
 
 def copy_worker_log(source: Path, destination: Path) -> None:
@@ -553,10 +767,15 @@ def copy_worker_log(source: Path, destination: Path) -> None:
 
 
 @contextmanager
-def wham_docker_run_lock(*, enabled: bool):
+def wham_docker_run_lock(*, enabled: bool, deadline: float | None = None):
     if not enabled:
         yield 0.0
         return
+
+    if deadline is None:
+        from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+        deadline = current_gpu_stage_deadline()
 
     lock_path = wham_docker_lock_path()
     timeout_seconds = wham_docker_lock_timeout_seconds()
@@ -564,10 +783,13 @@ def wham_docker_run_lock(*, enabled: bool):
     started = time.perf_counter()
     lock_handle: int | None = None
     while True:
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise TimeoutError(f"Candidate deadline expired waiting for WHAM Docker lock: {lock_path}")
         try:
             lock_handle = open_lock_lease(lock_path)
             payload = {
                 "pid": os.getpid(),
+                "processIdentity": process_identity(os.getpid()),
                 "createdAt": time.time(),
             }
             os.write(lock_handle, json.dumps(payload).encode("utf-8"))
@@ -586,9 +808,13 @@ def wham_docker_run_lock(*, enabled: bool):
                 except OSError:
                     pass
             elapsed = time.perf_counter() - started
-            if elapsed >= timeout_seconds:
+            effective_timeout = timeout_seconds
+            if deadline is not None:
+                effective_timeout = min(effective_timeout, max(0.0, deadline - started))
+            if elapsed >= effective_timeout:
                 raise TimeoutError(f"Timed out waiting for WHAM Docker lock: {lock_path}")
-            time.sleep(2.0)
+            sleep_seconds = min(2.0, effective_timeout - elapsed)
+            time.sleep(max(0.01, sleep_seconds))
         except BaseException:
             if lock_handle is not None:
                 close_lock_lease(lock_handle, lock_path)
@@ -622,11 +848,21 @@ def wham_docker_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> boo
     try:
         payload = json.loads(read_lock_text(lock_path))
     except (OSError, json.JSONDecodeError):
-        return lock_age_seconds(lock_path) > timeout_seconds
+        # Unknown ownership cannot be safely revoked based on age alone.
+        return False
     pid = payload.get("pid") if isinstance(payload, dict) else None
-    if isinstance(pid, int) and pid > 0 and not process_is_running(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if not process_is_running(pid):
         return True
-    return lock_age_seconds(lock_path) > timeout_seconds
+    expected_identity = payload.get("processIdentity")
+    if isinstance(expected_identity, int):
+        active_identity = process_identity(pid)
+        if active_identity is not None and active_identity != expected_identity:
+            return True
+    # A live or unqueryable owner is never evicted by age. The timeout bounds
+    # waiters; it does not take ownership away from active work.
+    return False
 
 
 def lock_age_seconds(lock_path: Path) -> float:

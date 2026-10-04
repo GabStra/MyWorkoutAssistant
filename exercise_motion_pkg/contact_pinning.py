@@ -215,11 +215,15 @@ def pin_stationary_contact_chains(
                 and all(name in frame["joints"] for name in chain)
             ):
                 continue
-            weight = min(
-                (frame_index - window_start + 1) / (blend_frames + 1),
-                (window_end - frame_index + 1) / (blend_frames + 1),
-                1.0,
-            )
+            if start <= frame_index <= end:
+                # Give confirmed samples the full target correction. The IK
+                # solver still clamps targets beyond the leg's reach, which
+                # the final support gate reports as residual movement.
+                weight = 1.0
+            elif frame_index < start:
+                weight = (frame_index - window_start + 1) / (start - window_start)
+            else:
+                weight = (window_end - frame_index + 1) / (window_end - end)
             joints = frame["joints"]
             hip = [float(value) for value in joints[chain[0]]]
             knee = [float(value) for value in joints[chain[1]]]

@@ -11,6 +11,7 @@ CODING_HEADROOM_LOGICAL_CORES = 4
 # accept/reject decisions (scripts/bench_refine_concurrency.py). The previous
 # value of 2 left the dominant stage half idle.
 DEFAULT_CPU_FIT_SLOTS = 4
+MACHINE_FIT_LANES_ENV_VAR = "EXERCISE_MOTION_MACHINE_FIT_LANES"
 DEFAULT_BROWSER_WORKER_CAP = 4
 # Overlap WHAM CPU prep while the GPU lock still serializes extraction. Four
 # workers match the measured 4-lane fit pool: with three, one fit slot idles
@@ -40,6 +41,27 @@ def cpu_fit_slot_limit() -> int:
         if value >= 1:
             return value
     return max(1, min(DEFAULT_CPU_FIT_SLOTS, usable_logical_cores() // 3))
+
+
+def machinewide_cpu_fit_slot_limit() -> int:
+    """Return the shared per-user fit capacity across generator processes.
+
+    The host-derived default is stable across separate workspaces. Existing
+    per-process overrides may lower it, and the machine-wide override can only
+    lower it further; neither setting can create more global lanes than the
+    measured host default.
+    """
+    host_default = max(1, min(DEFAULT_CPU_FIT_SLOTS, usable_logical_cores() // 3))
+    configured_process_limit = max(1, int(cpu_fit_slot_limit()))
+    override = os.environ.get(MACHINE_FIT_LANES_ENV_VAR)
+    if override:
+        try:
+            configured_machine_limit = int(override)
+        except ValueError:
+            configured_machine_limit = 0
+        if configured_machine_limit >= 1:
+            return max(1, min(host_default, configured_process_limit, configured_machine_limit))
+    return max(1, min(host_default, configured_process_limit))
 
 
 def final_validation_worker_limit(configured_parallelism: int, ready_count: int) -> int:

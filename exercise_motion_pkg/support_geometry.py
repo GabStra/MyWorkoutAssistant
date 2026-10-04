@@ -23,7 +23,8 @@ def declare_support_requirements(payload, contract):
 
 
 def support_evidence(payload):
-    return (payload.get('sourceFootSupportEvidence') or {}).get('bodySupport', {})
+    from .contact_constraints import motion_space_support_evidence
+    return motion_space_support_evidence(payload).get('bodySupport', {})
 
 
 # Distal plants owned by contact pins / plant projection. Torso/back support still

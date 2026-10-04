@@ -14,13 +14,28 @@ def write_ready(path):
     (path / "heartbeat.json").write_text(json.dumps({"updatedAtUnixSeconds": time.time()}))
 
 
-def test_lazy_worker_waits_for_supervisor_acknowledgment(tmp_path, monkeypatch):
-    monkeypatch.setenv("EXERCISE_MOTION_WHAM_LAZY_START", "1")
+@pytest.mark.parametrize(
+    ("lazy_start_env_var", "label"),
+    [
+        ("EXERCISE_MOTION_WHAM_LAZY_START", "WHAM"),
+        ("EXERCISE_MOTION_GVHMR_LAZY_START", "GVHMR"),
+    ],
+)
+def test_lazy_worker_waits_for_supervisor_acknowledgment(
+    tmp_path, monkeypatch, lazy_start_env_var, label
+):
+    monkeypatch.setenv(lazy_start_env_var, "1")
     # Leftovers from a terminated worker must not satisfy a new startup.
     write_ready(tmp_path)
     (tmp_path / "stopped.json").write_text("{}")
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(wham_runner.ensure_warm_worker_ready, tmp_path, timeout_seconds=3)
+        future = executor.submit(
+            wham_runner.ensure_warm_worker_ready,
+            tmp_path,
+            timeout_seconds=3,
+            lazy_start_env_var=lazy_start_env_var,
+            label=label,
+        )
         request = tmp_path / "start_requested.json"
         deadline = time.monotonic() + 2
         while not request.exists() and time.monotonic() < deadline:
@@ -31,6 +46,22 @@ def test_lazy_worker_waits_for_supervisor_acknowledgment(tmp_path, monkeypatch):
         write_ready(tmp_path)
         request.unlink()
         future.result(timeout=2)
+
+
+def test_stopped_gvhmr_worker_without_lazy_start_reports_not_ready(tmp_path, monkeypatch):
+    monkeypatch.delenv("EXERCISE_MOTION_GVHMR_LAZY_START", raising=False)
+    write_ready(tmp_path)
+    (tmp_path / "stopped.json").write_text("{}")
+
+    with pytest.raises(RuntimeError, match="Warm GVHMR worker is not ready"):
+        wham_runner.ensure_warm_worker_ready(
+            tmp_path,
+            timeout_seconds=0,
+            lazy_start_env_var="EXERCISE_MOTION_GVHMR_LAZY_START",
+            label="GVHMR",
+        )
+
+    assert not (tmp_path / "start_requested.json").exists()
 
 
 def test_lazy_worker_timeout_cleans_request(tmp_path, monkeypatch):
@@ -59,7 +90,7 @@ def test_shared_vision_deadlines_are_independent(tmp_path):
     def set_deadline(value):
         session.set_candidate_deadline(value)
         barrier.wait(timeout=2)
-        return session._candidate_deadlines.value
+        return session._candidate_deadlines.get()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         assert list(executor.map(set_deadline, [1.0, 2.0])) == [1.0, 2.0]

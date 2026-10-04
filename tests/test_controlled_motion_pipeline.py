@@ -8,7 +8,7 @@ import numpy as np
 from exercise_motion_pkg import bake_and_rank
 from exercise_motion_pkg.controlled_motion import (
     CONTROLLED_MOTION_STRATEGY, REQUIRED_FIT_CHECKS, FixedRig,
-    can_reuse_controlled_motion,
+    can_reuse_controlled_motion, controlled_motion_fit_source_evidence_digest,
 )
 from exercise_motion_pkg.sequence_stabilization import pose_digest
 
@@ -30,12 +30,19 @@ def accepted_payload():
     payload['controlledMotionFit']={'applied':True,'strategy':CONTROLLED_MOTION_STRATEGY,
                                     'checks':dict.fromkeys(REQUIRED_FIT_CHECKS,True),
                                     'outputPoseDigest':pose_digest(payload)}
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload)
+    )
     return payload
 
 
 def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     from exercise_motion_pkg.scene_placement import normalize_scene_placement
     payload=normalize_scene_placement(accepted_payload())
+    payload['controlledMotionFit']['outputPoseDigest'] = pose_digest(payload)
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload)
+    )
     before=pose_digest(payload)
 
     def unexpected_repair(*args,**kwargs):
@@ -59,6 +66,99 @@ def test_modified_contact_evidence_and_incomplete_reports_cannot_reuse():
     payload=accepted_payload()
     payload['controlledMotionFit']['strategy']='fixed_rig_controlled_motion_v51_contact_boundary_consistency'
     assert not can_reuse_controlled_motion(payload)
+
+
+def test_fit_from_before_selected_interval_constraints_cannot_be_reused():
+    payload = accepted_payload()
+    payload['controlledMotionFit']['strategy'] = (
+        'fixed_rig_controlled_motion_v57_source_projection_constraint'
+    )
+    assert not can_reuse_controlled_motion(payload)
+
+
+def test_fit_reuse_is_invalidated_when_source_fit_evidence_changes():
+    from exercise_motion_pkg.controlled_motion import controlled_motion_fit_source_evidence_digest
+
+    payload = accepted_payload()
+    payload['artifactState'] = {
+        'selectionEvidence': {
+            'cycleSelection': {
+                'interval': {'startFrame': 12, 'endFrame': 48, 'startTimeSec': 0.4, 'endTimeSec': 1.6}
+            }
+        }
+    }
+    payload['sourcePoseCameraReference'] = {
+        'camera': {'cameraRotation': [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+        'sourcePose': {'frames': [{'timeSec': 0.4, 'joints': {'pelvis': [0, 0, 0]}}]},
+    }
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload)
+    )
+    assert can_reuse_controlled_motion(payload)
+
+    payload['artifactState']['selectionEvidence']['cycleSelection']['interval']['startFrame'] = 15
+    assert not can_reuse_controlled_motion(payload)
+
+    camera_payload = accepted_payload()
+    camera_payload['sourcePoseCameraReference'] = {
+        'camera': {'cameraRotation': [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+        'sourcePose': {'frames': [{'sourceTimeSec': 0.0, 'joints': {'pelvis': [0, 0, 0]}}]},
+    }
+    camera_payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(camera_payload)
+    )
+    assert can_reuse_controlled_motion(camera_payload)
+    camera_payload['sourcePoseCameraReference']['camera']['cameraRotation'][0][0] = 0.99
+    assert not can_reuse_controlled_motion(camera_payload)
+
+
+def test_fit_source_identity_binds_support_and_articulation_inputs():
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+    from exercise_motion_pkg.controlled_motion import controlled_motion_fit_source_evidence_digest
+
+    payload = accepted_payload()
+    payload['sourcePoseCameraReference'] = {
+        'camera': {'bilateralAssignment': 'swapped'},
+    }
+    payload['sourceFootSupportEvidence'] = {
+        'contacts': [{
+            'jointName': 'left_ankle',
+            'startFrame': 0,
+            'endFrame': 6,
+            'contactMotion': 'stationary',
+        }],
+    }
+    source_digest = controlled_motion_fit_source_evidence_digest(payload)
+    mapped_support = motion_space_support_evidence(payload)
+    assert payload['sourceFootSupportEvidence']['contacts'][0]['jointName'] == 'left_ankle'
+    assert mapped_support['contacts'][0]['jointName'] == 'right_ankle'
+    assert controlled_motion_fit_source_evidence_digest(payload) == source_digest
+
+    changed_support = copy.deepcopy(payload)
+    changed_support['sourceFootSupportEvidence']['contacts'][0]['startFrame'] = 1
+    assert controlled_motion_fit_source_evidence_digest(changed_support) != source_digest
+
+    changed_source_pose = copy.deepcopy(payload)
+    changed_source_pose['frames'][0]['sourceJoints']['pelvis'][0] += 0.01
+    assert controlled_motion_fit_source_evidence_digest(changed_source_pose) != source_digest
+
+    changed_articulation_reference = copy.deepcopy(payload)
+    changed_articulation_reference['frames'][0]['controlledArticulationReferenceJoints'] = copy.deepcopy(
+        changed_articulation_reference['frames'][0]['joints']
+    )
+    changed_articulation_reference['frames'][0]['controlledArticulationReferenceJoints']['pelvis'][0] += 0.01
+    assert controlled_motion_fit_source_evidence_digest(changed_articulation_reference) != source_digest
+
+    changed_support_surface = copy.deepcopy(payload)
+    changed_support_surface['elevatedSupportSurfaces'] = [{'kind': 'bench', 'heightMeters': 0.4}]
+    assert controlled_motion_fit_source_evidence_digest(changed_support_surface) != source_digest
+
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = source_digest
+    payload['controlledMotionFit']['outputPoseDigest'] = pose_digest(payload)
+    assert can_reuse_controlled_motion(payload)
+    changed_fit_gate = copy.deepcopy(payload)
+    changed_fit_gate['postBakeForefootContactConstraint'] = {'requiresReconstruction': True}
+    assert not can_reuse_controlled_motion(changed_fit_gate)
 
 
 def test_loop_reuse_requires_a_positive_seam_result():
@@ -177,7 +277,8 @@ def test_controlled_fit_queue_wait_uses_exercise_timeout(monkeypatch):
     captured = {}
 
     @contextmanager
-    def delayed_slot():
+    def delayed_slot(*, timeout_seconds=None):
+        captured['slotTimeoutSeconds'] = timeout_seconds
         yield 4.0
 
     def fit(payload, **kwargs):
@@ -187,7 +288,11 @@ def test_controlled_fit_queue_wait_uses_exercise_timeout(monkeypatch):
     monkeypatch.setattr(fit_runtime, 'cpu_fit_slot', delayed_slot)
     monkeypatch.setattr(controlled_motion, '_fit_candidate_motion', fit)
     controlled_motion.fit_controlled_motion({}, timeout_seconds=10.0)
-    assert captured == {'max_evaluations': None, 'timeout_seconds': 6.0}
+    assert captured == {
+        'slotTimeoutSeconds': 10.0,
+        'max_evaluations': None,
+        'timeout_seconds': 6.0,
+    }
 
 
 def test_global_translation_jitter_cannot_mask_an_introduced_limb_spike():
@@ -236,6 +341,55 @@ def test_final_acceptance_requires_the_complete_current_fit_contract():
     payload['controlledMotionFit']['checks'].pop('relativeJointShake')
     metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
     assert 'controlled_motion_fit_rejected' in metrics['artifactReasons']
+
+
+def test_terminal_fit_rejection_falls_back_only_for_unchanged_raw_wham_pose():
+    from exercise_motion_pkg.controlled_motion import REQUIRED_FIT_CHECKS, controlled_motion_fit_raw_fallback
+    from exercise_motion_pkg.sequence_stabilization import pose_digest
+
+    payload = accepted_payload()
+    fit_input_digest = pose_digest(payload)
+    failed_checks = dict.fromkeys(REQUIRED_FIT_CHECKS, True)
+    failed_checks.update(anatomy=False, contacts=False, trajectoryFit=False)
+    payload['controlledMotionFit'] = {
+        'applied': False,
+        'reason': 'retained_interval_skipped_after_unreachable_core_cycle_failure',
+        'cycleSelectionAttempts': [{
+            'reason': 'fit_validation_failed',
+            'fitReport': {
+                'applied': False,
+                'reason': 'fit_validation_failed',
+                'termination': 'unreachable_conflict',
+                'checks': failed_checks,
+            },
+        }, {
+            'reason': 'retained_interval_skipped_after_unreachable_core_cycle_failure',
+            'fitReport': {
+                'applied': False,
+                'reason': 'retained_interval_skipped_after_unreachable_core_cycle_failure',
+                'checks': {},
+            },
+        }],
+        'fitInputPoseDigest': fit_input_digest,
+    }
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload)
+    )
+    assert controlled_motion_fit_raw_fallback(payload) is None
+
+    payload['rawMotionFallbackEvidence'] = {
+        'schemaVersion': 1,
+        'rawWhamMotionGatePassed': True,
+        'rawWhamMotionGateFingerprint': 'a' * 64,
+    }
+    metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
+    assert 'controlled_motion_fit_rejected' not in metrics['artifactReasons']
+    assert metrics['controlledMotionFitFallback']['used'] is True
+
+    payload['frames'][1]['joints']['left_wrist'][0] += 0.01
+    metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
+    assert 'controlled_motion_fit_rejected' in metrics['artifactReasons']
+    assert controlled_motion_fit_raw_fallback(payload) is None
 
 
 def test_final_validation_catches_whole_body_jump_independently_of_fit_report():

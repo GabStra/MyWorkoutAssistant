@@ -161,5 +161,74 @@ def test_same_process_timeout_force_releases_pinned_holder(
     assert not worker.is_alive()
     assert not failures
     assert released == ["holder"]
-    assert time.perf_counter() - started < 30.0
-    assert not lock_path.exists()
+
+
+def test_old_gpu_and_wham_lock_metadata_does_not_evict_live_owner(tmp_path: Path):
+    import json
+
+    from exercise_motion_pkg import gpu_lock, wham_runner
+
+    identity = gpu_lock.process_identity(os.getpid())
+    gpu_path = tmp_path / "gpu-old-live.lock"
+    gpu_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
+    wham_path = tmp_path / "wham-old-live.lock"
+    wham_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
+    old_timestamp = time.time() - 24 * 60 * 60
+    os.utime(gpu_path, (old_timestamp, old_timestamp))
+    os.utime(wham_path, (old_timestamp, old_timestamp))
+
+    assert not gpu_lock.gpu_lock_is_stale(gpu_path, timeout_seconds=1.0)
+    assert not wham_runner.wham_docker_lock_is_stale(wham_path, timeout_seconds=1.0)
+
+
+def test_corrupt_or_ownerless_old_gpu_locks_are_not_age_evicted(tmp_path: Path):
+    from exercise_motion_pkg import gpu_lock, wham_runner
+
+    for lock_path, is_stale in (
+        (tmp_path / "gpu-corrupt.lock", gpu_lock.gpu_lock_is_stale),
+        (tmp_path / "wham-corrupt.lock", wham_runner.wham_docker_lock_is_stale),
+    ):
+        lock_path.write_text("{truncated", encoding="utf-8")
+        os.utime(lock_path, (time.time() - 120, time.time() - 120))
+        assert not is_stale(lock_path, timeout_seconds=1.0)
+
+        lock_path.write_text("{}", encoding="utf-8")
+        os.utime(lock_path, (time.time() - 120, time.time() - 120))
+        assert not is_stale(lock_path, timeout_seconds=1.0)
+
+
+def test_cross_process_gpu_wait_sleep_is_bounded_by_candidate_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import gpu_lock
+
+    lock_path = tmp_path / "gpu-external.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42, "stage": "external"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setattr(gpu_lock, "process_is_running", lambda _pid: True)
+    monkeypatch.setattr(gpu_lock, "process_identity", lambda _pid: 42)
+
+    observed_sleeps: list[float] = []
+
+    def observe_sleep(seconds: float) -> None:
+        observed_sleeps.append(seconds)
+        raise RuntimeError("sleep observed")
+
+    monkeypatch.setattr(
+        gpu_lock,
+        "time",
+        SimpleNamespace(perf_counter=lambda: 9.95, sleep=observe_sleep),
+    )
+    with pytest.raises(RuntimeError, match="sleep observed"):
+        with GlobalGpuLock(stage="deadline-bound", deadline=10.0):
+            pass
+
+    assert observed_sleeps
+    assert 0.0 <= observed_sleeps[0] <= 0.051

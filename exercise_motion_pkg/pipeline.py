@@ -12,7 +12,6 @@ import time
 import uuid
 from dataclasses import asdict, fields, replace
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -65,8 +64,17 @@ SPINEPOSE_CONDA_ENV_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_CONDA_ENV"
 DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
-WHAM_GLOBAL_CACHE_VERSION = 4
+WHAM_GLOBAL_CACHE_VERSION = 5
 WHAM_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
+RUNTIME_SOURCE_SUFFIXES = frozenset({
+    ".py", ".pyi", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini",
+    ".sh", ".bat", ".ps1", ".c", ".cc", ".cpp", ".h", ".hpp", ".txt",
+})
+RUNTIME_SOURCE_EXCLUDED_DIRS = frozenset({
+    ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".venv", "venv", "checkpoints", "dataset", "datasets",
+    "output", "outputs", "results", "logs",
+})
 SPINEPOSE_NO_DISPLAY_BOOTSTRAP = (
     "import ctypes, os, pathlib, site; "
     "_dll_dirs=[str(_p) for _root in site.getsitepackages() "
@@ -210,10 +218,12 @@ class GenerateRequest:
     output_crop_start_seconds: float | None = None
     output_crop_end_seconds: float | None = None
     allow_incomplete_wham_boundary_crop: bool = False
+    stage_identity: dict[str, Any] | None = None
     wham_output_rotation_degrees: float = 0.0
     youtube_cookies: Path | None = None
     source_pose_reference_path: Path | None = None
     video_world_alignment_enabled: bool = True
+    candidate_deadline: float | None = None
     # Attach to the supervisor-owned shared llama.cpp server for any vision
     # inference (SHARED_LLAMA_SERVER.md); default off keeps per-session servers.
     shared_llama_server: bool = False
@@ -264,7 +274,206 @@ def default_wham_global_cache_dir(workspace: Path) -> Path:
     return resolved / "wham-cache"
 
 
-def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> str:
+def _sha256_file(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    digest = hashlib.sha256()
+    with resolved.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    result = digest.hexdigest()
+    return result
+
+
+def _runtime_source_tree_identity(source_root: Path) -> str | None:
+    """Hash runtime source/config content, independent of size or mtime."""
+    source_root = source_root.expanduser().resolve()
+    if not source_root.is_dir():
+        return None
+    digest = hashlib.sha256()
+    file_count = 0
+    try:
+        for current_root, directory_names, file_names in os.walk(source_root):
+            directory_names[:] = sorted(
+                name for name in directory_names
+                if name not in RUNTIME_SOURCE_EXCLUDED_DIRS
+            )
+            for file_name in sorted(file_names):
+                path = Path(current_root) / file_name
+                if (
+                    (path.suffix.lower() not in RUNTIME_SOURCE_SUFFIXES and path.suffix)
+                    or not path.is_file()
+                ):
+                    continue
+                relative = path.relative_to(source_root).as_posix().encode("utf-8")
+                digest.update(len(relative).to_bytes(8, "big"))
+                digest.update(relative)
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                file_count += 1
+    except OSError:
+        return None
+    return f"source-tree-v1:{file_count}:{digest.hexdigest()}"
+
+
+def _git_worktree_content_identity(repository_root: Path) -> str | None:
+    """Identify a repository's commit plus tracked and untracked worktree bytes."""
+    repository_root = repository_root.expanduser().resolve()
+    try:
+        revision = subprocess.run(
+            ["git", "-C", str(repository_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=False, timeout=5.0,
+        )
+        if revision.returncode != 0 or not revision.stdout.strip():
+            return None
+        diff = subprocess.run(
+            ["git", "-C", str(repository_root), "diff", "--binary", "--submodule=diff", "HEAD"],
+            capture_output=True, check=False, timeout=15.0,
+        )
+        untracked = subprocess.run(
+            ["git", "-C", str(repository_root), "ls-files", "--others", "--exclude-standard", "-z"],
+            capture_output=True, check=False, timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if diff.returncode != 0 or untracked.returncode != 0:
+        return None
+    digest = hashlib.sha256()
+    revision_bytes = revision.stdout.strip().encode("ascii", errors="replace")
+    digest.update(revision_bytes)
+    digest.update(diff.stdout)
+    try:
+        for encoded_path in untracked.stdout.split(b"\0"):
+            if not encoded_path:
+                continue
+            relative = os.fsdecode(encoded_path)
+            path = repository_root / relative
+            relative_bytes = encoded_path
+            digest.update(len(relative_bytes).to_bytes(8, "big"))
+            digest.update(relative_bytes)
+            if path.is_symlink():
+                target = os.fsencode(os.readlink(path))
+                digest.update(b"symlink\0")
+                digest.update(target)
+            elif path.is_file():
+                digest.update(b"file\0")
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+            else:
+                return None
+    except OSError:
+        return None
+    return f"git-worktree-v1:{revision_bytes.decode('ascii', errors='replace')}:{digest.hexdigest()}"
+
+
+def _repository_runtime_identity(
+    repository_root: Path,
+    *,
+    runtime_files: tuple[Path, ...] = (),
+) -> str | None:
+    """Combine repository state with byte hashes for runtime assets outside Git."""
+    source_identity = _runtime_source_tree_identity(repository_root)
+    if source_identity is None:
+        return None
+    git_identity = _git_worktree_content_identity(repository_root)
+    digest = hashlib.sha256()
+    digest.update(source_identity.encode("utf-8"))
+    digest.update((git_identity or "git-identity-unavailable").encode("utf-8"))
+    for path in sorted((p.expanduser().resolve() for p in runtime_files), key=str):
+        digest.update(str(path).encode("utf-8"))
+        if not path.is_file():
+            digest.update(b"missing")
+            continue
+        try:
+            digest.update(_sha256_file(path).encode("ascii"))
+        except OSError:
+            return None
+    return f"repository-runtime-v1:{digest.hexdigest()}"
+
+
+def docker_image_identity(image: str) -> str | None:
+    """Resolve a tag to Docker's immutable image config ID."""
+    try:
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    identity = inspected.stdout.strip()
+    if inspected.returncode != 0 or not identity.startswith("sha256:"):
+        return None
+    return identity
+
+
+def reconstruction_runtime_identity(request: GenerateRequest) -> dict[str, Any]:
+    """Return content identity for the reconstruction runtime and cache safety."""
+    identity: dict[str, Any] = {
+        "backend": request.motion_reconstruction_backend,
+        "dockerImageTag": request.wham_docker_image if request.use_wham_docker else None,
+        "dockerImageId": None,
+        "repositoryIdentity": None,
+        "cacheable": True,
+    }
+    if request.normalized_motion_json is not None:
+        identity["backend"] = "normalized_motion"
+        return identity
+    if request.wham_results_pkl is not None:
+        identity["backend"] = "explicit_wham_results"
+        return identity
+    if request.use_wham_docker:
+        image_id = docker_image_identity(request.wham_docker_image)
+        identity["dockerImageId"] = image_id
+        if image_id is None:
+            identity["cacheable"] = False
+            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
+    if request.motion_reconstruction_backend == "wham" and request.wham_repo_path is not None:
+        repository_root = request.wham_repo_path.expanduser().resolve()
+        runtime_files = tuple(
+            repository_root / "checkpoints" / name
+            for name in (
+                WHAM_DEMO_CHECKPOINT_NAME,
+                WHAM_EVAL_CHECKPOINT_NAME,
+                "hmr2a.ckpt",
+                "vitpose-h-multi-coco.pth",
+                "yolo26x.pt",
+            )
+        ) + (() if request.wham_estimate_local_only else (
+            repository_root / "checkpoints" / "dpvo.pth",
+        ))
+        identity["repositoryIdentity"] = _repository_runtime_identity(
+            repository_root,
+            runtime_files=runtime_files,
+        )
+        if identity["repositoryIdentity"] is None:
+            identity["cacheable"] = False
+            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
+    if request.motion_reconstruction_backend == "wham" and request.use_warm_wham_worker:
+        worker_entrypoint = Path(__file__).resolve().with_name("wham_warm_worker.py")
+        try:
+            identity["warmWorkerEntryPointSha256"] = _sha256_file(worker_entrypoint)
+        except OSError:
+            identity["cacheable"] = False
+            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
+    if request.motion_reconstruction_backend == "gvhmr":
+        identity["gvhmrSourceTreeIdentity"] = gvhmr_source_tree_identity()
+        if identity["gvhmrSourceTreeIdentity"] in (None, "unavailable"):
+            identity["cacheable"] = False
+            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
+    return identity
+
+
+def wham_content_cache_key(
+    request: GenerateRequest,
+    input_video_path: Path,
+    *,
+    runtime_identity: dict[str, Any] | None = None,
+) -> str:
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     digest = hashlib.sha256()
     digest.update(f"wham-global-cache-v{WHAM_GLOBAL_CACHE_VERSION}\n".encode("utf-8"))
     digest.update(
@@ -273,34 +482,18 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
                 "estimateLocalOnly": request.wham_estimate_local_only,
                 "runSmplify": request.wham_run_smplify,
                 "motionReconstructionBackend": request.motion_reconstruction_backend,
+                "runtimeIdentity": runtime_identity,
                 "gvhmrBetasExport": (
                     "neutral_smpl_v2"
                     if request.motion_reconstruction_backend == "gvhmr"
                     else None
                 ),
-                "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
                 "outputRotationDegrees": request.wham_output_rotation_degrees,
                 "preprocessingEnvironment": wham_preprocessing_environment(),
             },
             sort_keys=True,
         ).encode("utf-8")
     )
-    if request.wham_repo_path is not None:
-        wham_repo = request.wham_repo_path.expanduser().resolve()
-        repository_inputs = (
-            wham_repo / "demo.py",
-            wham_repo / "configs" / "yamls" / "demo.yaml",
-            wham_repo / "lib" / "models" / "preproc" / "detector.py",
-            wham_repo / "checkpoints" / WHAM_DEMO_CHECKPOINT_NAME,
-            wham_repo / "checkpoints" / WHAM_EVAL_CHECKPOINT_NAME,
-            wham_repo / "checkpoints" / "hmr2a.ckpt",
-        )
-        for path in repository_inputs:
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            digest.update(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}\n".encode("utf-8"))
     if request.motion_reconstruction_backend == "gvhmr":
         for path in gvhmr_runtime_dependency_paths():
             digest.update(str(path).encode("utf-8"))
@@ -308,7 +501,7 @@ def wham_content_cache_key(request: GenerateRequest, input_video_path: Path) -> 
                 with path.open("rb") as handle:
                     while chunk := handle.read(1024 * 1024):
                         digest.update(chunk)
-        digest.update(gvhmr_source_tree_identity().encode("utf-8"))
+        digest.update(str(runtime_identity.get("gvhmrSourceTreeIdentity")).encode("utf-8"))
     with input_video_path.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
@@ -320,41 +513,27 @@ def gvhmr_runtime_dependency_paths() -> tuple[Path, ...]:
     return (
         repository_root / "exercise_motion_pkg" / "gvhmr_runner.py",
         repository_root / "exercise_motion_pkg" / "gvhmr_inference.py",
+        repository_root / "exercise_motion_pkg" / "gvhmr_warm_worker.py",
         repository_root / "exercise_motion_pkg" / "gvhmr_pkl_export.py",
         repository_root / "docker" / "gvhmr" / "Dockerfile",
     )
 
 
-@lru_cache(maxsize=1)
 def gvhmr_source_tree_identity() -> str:
     source_root = Path(__file__).resolve().parents[1] / "third_party" / "GVHMR"
-    try:
-        revision = subprocess.run(
-            ["git", "-C", str(source_root), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5.0,
-        )
-        if revision.returncode != 0:
-            return "unavailable"
-        status = subprocess.run(
-            ["git", "-C", str(source_root), "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5.0,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return "unavailable"
-    if status.returncode != 0:
-        return revision.stdout.strip()
-    return f"{revision.stdout.strip()}\n{status.stdout.strip()}"
+    return _repository_runtime_identity(source_root) or "unavailable"
 
 
-def global_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path:
+def global_wham_results_pkl(
+    request: GenerateRequest,
+    input_video_path: Path,
+    *,
+    runtime_identity: dict[str, Any] | None = None,
+) -> Path:
     cache_dir = request.wham_global_cache_dir or default_wham_global_cache_dir(request.workspace)
-    return cache_dir.expanduser().resolve() / wham_content_cache_key(request, input_video_path) / "wham_output.pkl"
+    return cache_dir.expanduser().resolve() / wham_content_cache_key(
+        request, input_video_path, runtime_identity=runtime_identity
+    ) / "wham_output.pkl"
 
 
 def local_wham_cache_matches_input(
@@ -362,13 +541,19 @@ def local_wham_cache_matches_input(
     *,
     input_video_path: Path,
     results_pkl: Path,
+    runtime_identity: dict[str, Any] | None = None,
 ) -> bool:
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
+    if not runtime_identity.get("cacheable", False):
+        return False
     manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return False
-    return payload.get("cacheKey") == wham_content_cache_key(request, input_video_path)
+    return payload.get("cacheKey") == wham_content_cache_key(
+        request, input_video_path, runtime_identity=runtime_identity
+    )
 
 
 def write_local_wham_cache_manifest(
@@ -376,11 +561,15 @@ def write_local_wham_cache_manifest(
     *,
     input_video_path: Path,
     results_pkl: Path,
+    runtime_identity: dict[str, Any] | None = None,
 ) -> Path:
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
     payload = {
         "schemaVersion": 1,
-        "cacheKey": wham_content_cache_key(request, input_video_path),
+        "cacheKey": wham_content_cache_key(
+            request, input_video_path, runtime_identity=runtime_identity
+        ),
         "sourceInputVideo": str(input_video_path),
         "resultsPkl": str(results_pkl),
     }
@@ -388,16 +577,28 @@ def write_local_wham_cache_manifest(
     return manifest_path
 
 
-def reusable_wham_results_pkl(request: GenerateRequest, input_video_path: Path) -> Path | None:
+def reusable_wham_results_pkl(
+    request: GenerateRequest,
+    input_video_path: Path,
+    *,
+    runtime_identity: dict[str, Any] | None = None,
+) -> Path | None:
     if not request.reuse_wham_cache:
         return None
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
+    if not runtime_identity.get("cacheable", False):
+        return None
+    cache_key = wham_content_cache_key(request, input_video_path, runtime_identity=runtime_identity)
     output_root = PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham"
-    for root in (output_root / wham_content_cache_key(request, input_video_path), output_root):
+    for root in (output_root / cache_key, output_root):
         local = default_wham_results_pkl(root, input_video_path)
         if (local.is_file() and local.stat().st_size > 0
-                and local_wham_cache_matches_input(request, input_video_path=input_video_path, results_pkl=local)):
+                and local_wham_cache_matches_input(
+                    request, input_video_path=input_video_path, results_pkl=local,
+                    runtime_identity=runtime_identity,
+                )):
             return local
-    shared = global_wham_results_pkl(request, input_video_path)
+    shared = global_wham_results_pkl(request, input_video_path, runtime_identity=runtime_identity)
     if shared.is_file() and shared.stat().st_size > 0:
         return shared
     return None
@@ -408,8 +609,14 @@ def publish_global_wham_results(
     *,
     input_video_path: Path,
     results_pkl: Path,
+    runtime_identity: dict[str, Any] | None = None,
 ) -> Path:
-    destination = global_wham_results_pkl(request, input_video_path)
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
+    if not runtime_identity.get("cacheable", False):
+        return results_pkl
+    destination = global_wham_results_pkl(
+        request, input_video_path, runtime_identity=runtime_identity
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(f".tmp-{os.getpid()}-{uuid.uuid4().hex}.pkl")
     shutil.copy2(results_pkl, temporary)
@@ -470,10 +677,10 @@ def run_generation_pipeline(
     """Reuse finished processing independently of later rendering/review policy."""
     checkpoint = request.workspace / request.exercise_slug / "generation_checkpoint.json"
     settings = asdict(request)
-    if request.motion_reconstruction_backend == "gvhmr":
-        settings["gvhmrSourceTreeIdentity"] = gvhmr_source_tree_identity()
-    for name in ("require_wham_cache", "reuse_wham_cache", "wham_tracking_preflight",
-                 "wham_timeout_seconds", "wham_worker_timeout_seconds"):
+    runtime_identity = reconstruction_runtime_identity(request)
+    settings["reconstructionRuntimeIdentity"] = runtime_identity
+    for name in ("require_wham_cache", "reuse_wham_cache", "wham_tracking_preflight", "stage_identity",
+                 "wham_timeout_seconds", "wham_worker_timeout_seconds", "candidate_deadline"):
         settings.pop(name, None)
     inputs = [value for value in settings.values() if isinstance(value, Path) and value.is_file()]
     inputs.extend(Path(__file__).with_name(name) for name in (
@@ -486,9 +693,21 @@ def run_generation_pipeline(
     ))
     if request.motion_reconstruction_backend == "gvhmr":
         inputs.extend(gvhmr_runtime_dependency_paths())
+    if request.motion_reconstruction_backend == "wham" and request.use_warm_wham_worker:
+        inputs.append(Path(__file__).with_name("wham_warm_worker.py"))
+    if request.body_model_root is not None:
+        # smplx.create(..., gender="neutral") reads this asset from the
+        # configured model directory. Hash the file itself because the request
+        # setting contains a directory path, which cache_key intentionally does
+        # not treat as a file input.
+        inputs.append(request.body_model_root.expanduser().resolve() / "SMPL_NEUTRAL.pkl")
     key = cache_key(settings, inputs)
     with stage_lock(checkpoint):
-        cached = load_stage(checkpoint, key) if request.reuse_wham_cache else None
+        cached = (
+            load_stage(checkpoint, key)
+            if request.reuse_wham_cache and runtime_identity.get("cacheable", False)
+            else None
+        )
         if cached is not None:
             path_fields = {field.name for field in fields(GenerateResult)
                            if "Path" in str(field.type)}
@@ -504,12 +723,15 @@ def run_generation_pipeline(
             from .storage import require_storage_reserve
             require_storage_reserve(request.workspace)
             return _run_generation_pipeline_uncached(
-                request, run_wham_exclusive=run_wham_exclusive, raw_motion_validator=raw_motion_validator,
+                request, run_wham_exclusive=run_wham_exclusive,
+                raw_motion_validator=raw_motion_validator,
+                runtime_identity=runtime_identity,
             )
         result = run_processing_exclusive(generate) if run_processing_exclusive is not None else generate()
         outputs = [getattr(result, field.name) for field in fields(result)
                    if isinstance(getattr(result, field.name), Path)]
-        save_stage(checkpoint, key, asdict(result), outputs)
+        if runtime_identity.get("cacheable", False):
+            save_stage(checkpoint, key, asdict(result), outputs)
         return result
 
 
@@ -518,7 +740,9 @@ def _run_generation_pipeline_uncached(
     *,
     run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
     raw_motion_validator: Callable[[Path], None] | None = None,
+    runtime_identity: dict[str, Any] | None = None,
 ) -> GenerateResult:
+    runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     pipeline_started = time.perf_counter()
     timings: dict[str, Any] = {}
     if request.spinepose_merge_mode not in {"motion", "legacy_pkl"}:
@@ -569,12 +793,16 @@ def _run_generation_pipeline_uncached(
             raise ValueError("body_model_root is required when using WHAM output.")
         wham_output_dir = paths.raw_dir / "wham"
         wham_output_dir.mkdir(parents=True, exist_ok=True)
-        reusable_results_pkl = reusable_wham_results_pkl(request, input_video_path)
+        reusable_results_pkl = reusable_wham_results_pkl(
+            request, input_video_path, runtime_identity=runtime_identity
+        )
         # WHAM also caches detections/features under its output directory.
         # Isolate a fresh run by input content so those cannot survive a changed
         # source window merely because the MP4 basename stayed the same.
         if reusable_results_pkl is None and request.wham_results_pkl is None:
-            wham_output_dir = wham_output_dir / wham_content_cache_key(request, input_video_path)
+            wham_output_dir = wham_output_dir / wham_content_cache_key(
+                request, input_video_path, runtime_identity=runtime_identity
+            )
         wham_source = resolve_wham_results_source(
             explicit_results_pkl=request.wham_results_pkl or reusable_results_pkl,
             wham_output_dir=wham_output_dir,
@@ -628,6 +856,8 @@ def _run_generation_pipeline_uncached(
                         warm_worker_session_dir=request.gvhmr_worker_session_dir,
                         warm_worker_mount_root=request.gvhmr_worker_mount_root,
                         warm_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
+                        candidate_deadline=request.candidate_deadline,
+                        **({"stage_identity": request.stage_identity} if request.stage_identity else {}),
                     )
             elif request.wham_repo_path is None:
                 raise ValueError(
@@ -653,9 +883,11 @@ def _run_generation_pipeline_uncached(
                         warm_worker_mount_root=request.wham_worker_mount_root,
                         warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
                         timeout_seconds=request.wham_timeout_seconds,
+                        candidate_deadline=request.candidate_deadline,
                         tracking_preflight=request.wham_tracking_preflight,
                         required_start_seconds=request.output_crop_start_seconds,
                         required_end_seconds=request.output_crop_end_seconds,
+                        **({"stage_identity": request.stage_identity} if request.stage_identity else {}),
                     )
 
             wham_result = (
@@ -670,12 +902,14 @@ def _run_generation_pipeline_uncached(
                 request,
                 input_video_path=input_video_path,
                 results_pkl=wham_results_pkl,
+                runtime_identity=runtime_identity,
             )
             timings["wham"]["localCacheManifestPath"] = str(local_cache_manifest_path)
             global_cache_path = publish_global_wham_results(
                 request,
                 input_video_path=input_video_path,
                 results_pkl=wham_results_pkl,
+                runtime_identity=runtime_identity,
             )
             timings["wham"]["globalCachePath"] = str(global_cache_path)
         else:

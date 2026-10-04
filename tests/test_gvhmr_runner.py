@@ -176,9 +176,17 @@ def test_run_gvhmr_locally_dispatches_to_warm_worker(monkeypatch, tmp_path: Path
         warm_worker_session_dir=tmp_path / "session",
         warm_worker_mount_root=tmp_path / "mount",
         warm_worker_timeout_seconds=1200.0,
+        stage_identity={
+            "schemaVersion": 1,
+            "runId": "run-2",
+            "waveId": "run-2-wave-0001",
+            "exerciseId": "squat",
+            "candidateId": "candidate-b",
+        },
     )
 
     assert result.warm_worker is True
     assert captured["static_camera"] is True
     assert captured["warm_worker_timeout_seconds"] == 1200.0
     assert captured["docker_image"] == "myworkoutassistant/gvhmr:torch2.3-cu121"
+    assert captured["stage_identity"]["candidateId"] == "candidate-b"

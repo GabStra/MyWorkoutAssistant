@@ -1,6 +1,9 @@
 from dataclasses import fields, replace
 import json
+import os
 from pathlib import Path
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -101,6 +104,169 @@ def test_generation_checkpoint_and_reconstruction_cache_track_gvhmr_runtime_code
     assert pipeline.wham_content_cache_key(wham_request, source) == first_wham_cache_key
 
 
+def test_generation_checkpoint_tracks_neutral_body_model_bytes(tmp_path, monkeypatch):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    body_model_root = tmp_path / "body-models"
+    body_model_root.mkdir()
+    neutral_model = body_model_root / "SMPL_NEUTRAL.pkl"
+    neutral_model.write_bytes(b"neutral weights A")
+    request = pipeline.GenerateRequest(
+        "exercise", tmp_path / "work", video_path=source,
+        body_model_root=body_model_root,
+    )
+    calls = []
+
+    def generate(_request, **_kwargs):
+        calls.append("generate")
+        values = {}
+        for field in fields(pipeline.GenerateResult):
+            if "Path" in str(field.type):
+                path = tmp_path / (field.name + ".json")
+                path.write_text("{}")
+                values[field.name] = path
+        values.update(cleanup_stats=CleanupStats(10, 10, 0, 0, 1, 1), motion_tuning_enabled=True)
+        return pipeline.GenerateResult(**values)
+
+    monkeypatch.setattr(pipeline, "_run_generation_pipeline_uncached", generate)
+    pipeline.run_generation_pipeline(request)
+    original_stat = neutral_model.stat()
+    neutral_model.write_bytes(b"neutral weights B")
+    os.utime(neutral_model, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    assert neutral_model.stat().st_size == original_stat.st_size
+    assert neutral_model.stat().st_mtime_ns == original_stat.st_mtime_ns
+
+    pipeline.run_generation_pipeline(request)
+
+    assert calls == ["generate", "generate"]
+
+
+def test_local_wham_runtime_identity_tracks_all_model_weights(tmp_path):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    repository = tmp_path / "wham"
+    checkpoints = repository / "checkpoints"
+    checkpoints.mkdir(parents=True)
+    (repository / "demo.py").write_text("# runtime\n", encoding="utf-8")
+    (repository / "requirements.txt").write_text("numpy\n", encoding="utf-8")
+    names = (
+        pipeline.WHAM_DEMO_CHECKPOINT_NAME,
+        pipeline.WHAM_EVAL_CHECKPOINT_NAME,
+        "hmr2a.ckpt",
+        "vitpose-h-multi-coco.pth",
+        "yolo26x.pt",
+        "dpvo.pth",
+    )
+    for name in names:
+        (checkpoints / name).write_bytes((name + " weights A").encode("utf-8"))
+    request = pipeline.GenerateRequest(
+        "exercise", tmp_path / "work", video_path=source,
+        wham_repo_path=repository, wham_estimate_local_only=False,
+    )
+
+    first_key = pipeline.wham_content_cache_key(request, source)
+    vitpose_path = checkpoints / "vitpose-h-multi-coco.pth"
+    original_stat = vitpose_path.stat()
+    vitpose_path.write_bytes(b"vitpose model B")
+    os.utime(vitpose_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert pipeline.wham_content_cache_key(request, source) != first_key
+
+
+def test_gvhmr_runtime_dependencies_include_the_container_worker_entrypoint():
+    expected = Path(pipeline.__file__).resolve().with_name("gvhmr_warm_worker.py")
+    assert expected in pipeline.gvhmr_runtime_dependency_paths()
+
+
+def test_wham_cache_key_hashes_runtime_source_bytes_even_when_stat_is_preserved(tmp_path):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    repo = tmp_path / "wham"
+    runtime_source = repo / "lib" / "runtime.py"
+    runtime_source.parent.mkdir(parents=True)
+    runtime_source.write_text("VERSION = 'one'\n", encoding="utf-8")
+    request = pipeline.GenerateRequest(
+        "exercise", tmp_path / "work", video_path=source, wham_repo_path=repo,
+    )
+
+    first_key = pipeline.wham_content_cache_key(request, source)
+    original_stat = runtime_source.stat()
+    runtime_source.write_text("VERSION = 'two'\n", encoding="utf-8")
+    os.utime(runtime_source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert runtime_source.stat().st_size == original_stat.st_size
+    assert runtime_source.stat().st_mtime_ns == original_stat.st_mtime_ns
+    assert pipeline.wham_content_cache_key(request, source) != first_key
+
+
+def test_gvhmr_identity_hashes_dirty_source_bytes_without_lru_staleness(tmp_path, monkeypatch):
+    repository = tmp_path / "repository"
+    pipeline_file = repository / "exercise_motion_pkg" / "pipeline.py"
+    pipeline_file.parent.mkdir(parents=True)
+    pipeline_file.touch()
+    runtime_source = repository / "third_party" / "GVHMR" / "hmr4d" / "configs" / "runtime.py"
+    runtime_source.parent.mkdir(parents=True)
+    runtime_source.write_text("VERSION = 'one'\n", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "__file__", str(pipeline_file))
+
+    first_identity = pipeline.gvhmr_source_tree_identity()
+    original_stat = runtime_source.stat()
+    runtime_source.write_text("VERSION = 'two'\n", encoding="utf-8")
+    os.utime(runtime_source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert runtime_source.stat().st_size == original_stat.st_size
+    assert runtime_source.stat().st_mtime_ns == original_stat.st_mtime_ns
+    assert pipeline.gvhmr_source_tree_identity() != first_identity
+
+
+def test_wham_cache_key_tracks_resolved_docker_image_id_and_fails_closed(tmp_path, monkeypatch):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    request = pipeline.GenerateRequest(
+        "exercise", tmp_path / "work", video_path=source,
+        use_wham_docker=True, wham_docker_image="wham:test",
+    )
+    monkeypatch.setattr(pipeline, "docker_image_identity", lambda _image: "sha256:" + "a" * 64)
+    first_key = pipeline.wham_content_cache_key(request, source)
+    monkeypatch.setattr(pipeline, "docker_image_identity", lambda _image: "sha256:" + "b" * 64)
+    assert pipeline.wham_content_cache_key(request, source) != first_key
+
+    monkeypatch.setattr(pipeline, "docker_image_identity", lambda _image: None)
+    unresolved_identity = pipeline.reconstruction_runtime_identity(request)
+    assert unresolved_identity["cacheable"] is False
+    old_global_cache = pipeline.global_wham_results_pkl(
+        request, source, runtime_identity=unresolved_identity,
+    )
+    old_global_cache.parent.mkdir(parents=True)
+    old_global_cache.write_bytes(b"stale result")
+    assert pipeline.reusable_wham_results_pkl(
+        replace(request, reuse_wham_cache=True), source,
+        runtime_identity=unresolved_identity,
+    ) is None
+
+
+def test_gvhmr_cache_fails_closed_when_source_identity_is_unavailable(tmp_path, monkeypatch):
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    request = pipeline.GenerateRequest(
+        "exercise", tmp_path / "work", video_path=source,
+        motion_reconstruction_backend="gvhmr",
+    )
+    monkeypatch.setattr(pipeline, "gvhmr_source_tree_identity", lambda: "unavailable")
+
+    first_identity = pipeline.reconstruction_runtime_identity(request)
+    second_identity = pipeline.reconstruction_runtime_identity(request)
+
+    assert first_identity["cacheable"] is False
+    assert second_identity["cacheable"] is False
+    assert first_identity["unresolvedIdentityNonce"] != second_identity["unresolvedIdentityNonce"]
+    assert pipeline.wham_content_cache_key(
+        request, source, runtime_identity=first_identity,
+    ) != pipeline.wham_content_cache_key(
+        request, source, runtime_identity=second_identity,
+    )
+
+
 @pytest.mark.parametrize("state,expected", [
     ({"status": "completed"}, "export_selected"),
     ({"finalValidation": {"status": "no_selection", "candidateDiagnostics": [{"status": "ready_for_selection"}]}}, "next_source"),
@@ -132,6 +298,89 @@ def test_review_cache_changes_with_model(tmp_path):
     image.write_bytes(b"image")
     kwargs = {"prompt": "review", "frame_paths": [image], "min_score": .5}
     assert bake.final_output_validation_cache_key(**kwargs, model_settings={"model": "A"}) != bake.final_output_validation_cache_key(**kwargs, model_settings={"model": "B"})
+
+
+def test_vlm_model_identity_detects_atomic_same_size_replacement_with_restored_mtime(tmp_path):
+    model_path = tmp_path / "vision.gguf"
+    replacement_path = tmp_path / "replacement.gguf"
+    stable_mtime_ns = 1_700_000_000_000_000_000
+    model_path.write_bytes(b"model-version-one")
+    os.utime(model_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    first = bake.vlm_model_file_identity(model_path)
+
+    replacement_path.write_bytes(b"model-version-two")
+    os.utime(replacement_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    os.replace(replacement_path, model_path)
+    os.utime(model_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    second = bake.vlm_model_file_identity(model_path)
+
+    assert first["sizeBytes"] == second["sizeBytes"]
+    assert first["mtimeNs"] == second["mtimeNs"]
+    assert first["fileId"] != second["fileId"]
+    assert first["sha256"] != second["sha256"]
+    assert bake.vlm_model_file_identity(model_path) == second
+
+
+def test_vlm_cache_identities_include_file_backed_server_executable(tmp_path):
+    model_path = tmp_path / "vision.gguf"
+    mmproj_path = tmp_path / "vision-mmproj.gguf"
+    server_path = tmp_path / "llama-server.exe"
+    frame_path = tmp_path / "frame.jpg"
+    model_path.write_bytes(b"model")
+    mmproj_path.write_bytes(b"projector")
+    server_path.write_bytes(b"server-one")
+    frame_path.write_bytes(b"frame")
+    stable_mtime_ns = 1_700_000_000_000_000_000
+    os.utime(server_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    settings = {
+        "llama_cpp_model": str(model_path),
+        "llama_cpp_mmproj": str(mmproj_path),
+        "llama_cpp_server_command": str(server_path),
+        "llama_cpp_base_url": "http://127.0.0.1:8080",
+        "llama_cpp_temperature": 0,
+    }
+
+    first_identity = bake.vlm_settings_with_file_identities(settings)
+    assert first_identity["llama_cpp_server_command"] == bake.vlm_model_file_identity(server_path)
+    assert bake.source_review_model_identity(SimpleNamespace(**settings)) == first_identity
+    kwargs = {"prompt": "review", "frame_paths": [frame_path], "min_score": .5}
+    first_validation_key = bake.final_output_validation_cache_key(**kwargs, model_settings=settings)
+    session = object.__new__(bake.LazyLlamaCppVisionSession)
+    session.settings = SimpleNamespace(**settings)
+    session._condition = threading.Condition()
+    session._closed = False
+    session._candidate_deadlines = threading.local()
+    session._endpoint_observations = bake.ObservationCache()
+    observations = []
+    session.caption_images = lambda **_kwargs: observations.append("computed") or json.dumps({
+        "supportMode": "standing",
+        "kneeState": "extended",
+        "torsoOrientation": "upright",
+        "handHeight": "hip",
+        "stance": "neutral",
+    })
+    endpoint_kwargs = {"frame_paths": [frame_path], "prompt": "endpoint", "temperature": 0}
+    session.caption_endpoint_images(**endpoint_kwargs)
+    session.caption_endpoint_images(**endpoint_kwargs)
+    assert observations == ["computed"]
+
+    replacement_path = tmp_path / "llama-server-replacement.exe"
+    replacement_path.write_bytes(b"server-two")
+    os.utime(replacement_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    os.replace(replacement_path, server_path)
+    os.utime(server_path, ns=(stable_mtime_ns, stable_mtime_ns))
+    second_identity = bake.vlm_settings_with_file_identities(settings)
+    second_validation_key = bake.final_output_validation_cache_key(**kwargs, model_settings=settings)
+    session.caption_endpoint_images(**endpoint_kwargs)
+
+    first_server = first_identity["llama_cpp_server_command"]
+    second_server = second_identity["llama_cpp_server_command"]
+    assert first_server["sizeBytes"] == second_server["sizeBytes"]
+    assert first_server["mtimeNs"] == second_server["mtimeNs"]
+    assert first_server["sha256"] != second_server["sha256"]
+    assert bake.source_review_model_identity(SimpleNamespace(**settings)) == second_identity
+    assert first_validation_key != second_validation_key
+    assert observations == ["computed", "computed"]
 
 
 def test_early_raw_gate_stops_before_preview_and_cleanup(tmp_path, monkeypatch):
@@ -173,9 +422,12 @@ def test_bake_checkpoint_restores_payload_and_video_without_browser(tmp_path, mo
     video.unlink()
     result = bake.bake_preview_loops_with_playwright(*args)
     assert calls == ["browser"]
-    assert json.loads(skeleton.read_text()) == {"frames": []}
+    restored_payload = json.loads(skeleton.read_text())
+    assert restored_payload["frames"] == []
+    assert restored_payload["artifactState"]["artifactClass"] == "full_clip_bake"
     assert video.read_bytes() == b"video"
-    assert result[0].export_payload == {"frames": []}
+    assert result[0].export_payload["frames"] == []
+    assert result[0].export_payload["artifactState"]["artifactClass"] == "full_clip_bake"
     preview.write_text("changed preview")
     bake.bake_preview_loops_with_playwright(*args)
     assert len(calls) == 2

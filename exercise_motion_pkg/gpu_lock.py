@@ -26,7 +26,6 @@ GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR = (
 # wait must fail (and repair) long before the cross-process timeout.
 DEFAULT_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS = 15 * 60
 GPU_LOCK_WAIT_LOG_SECONDS = 60.0
-LEGACY_GPU_LOCK_GRACE_SECONDS = 60.0
 _LOCAL_GPU_LOCK_RELEASED = threading.Condition()
 _LOCAL_GPU_LOCK_WAIT_SECONDS = 0.25
 
@@ -162,6 +161,7 @@ class GlobalGpuLock:
         stage: str,
         enabled: bool = True,
         on_force_release: Callable[[], None] | None = None,
+        deadline: float | None = None,
     ) -> None:
         self.stage = stage
         self.enabled = enabled and gpu_lock_enabled()
@@ -172,6 +172,7 @@ class GlobalGpuLock:
         self._handle: int | None = None
         self._force_released = False
         self.on_force_release = on_force_release
+        self.deadline = deadline
 
     def _acquired(self) -> float:
         with _REGISTRY_LOCK:
@@ -219,6 +220,10 @@ class GlobalGpuLock:
         started = time.perf_counter()
         last_wait_log = 0.0
         while True:
+            if self.deadline is not None and time.perf_counter() >= self.deadline:
+                raise TimeoutError(
+                    f"Candidate deadline expired waiting for global GPU lock: {self.path}"
+                )
             try:
                 self._handle = open_lock_lease(self.path)
                 payload = {
@@ -261,6 +266,10 @@ class GlobalGpuLock:
                     except OSError:
                         pass
                 elapsed = time.perf_counter() - started
+                if self.deadline is not None and time.perf_counter() >= self.deadline:
+                    raise TimeoutError(
+                        f"Candidate deadline expired waiting for global GPU lock: {self.path}"
+                    )
                 if elapsed - last_wait_log >= GPU_LOCK_WAIT_LOG_SECONDS:
                     last_wait_log = elapsed
                     holder_stage = active_payload.get("stage") if isinstance(active_payload, dict) else None
@@ -275,7 +284,16 @@ class GlobalGpuLock:
                     if same_process
                     else self.timeout_seconds
                 )
+                if self.deadline is not None:
+                    effective_timeout = min(
+                        effective_timeout,
+                        max(0.0, self.deadline - started),
+                    )
                 if elapsed >= effective_timeout:
+                    if self.deadline is not None and time.perf_counter() >= self.deadline:
+                        raise TimeoutError(
+                            f"Candidate deadline expired waiting for global GPU lock: {self.path}"
+                        )
                     if same_process and force_release_gpu_lock_holders(
                         self.path,
                         reason=(
@@ -291,7 +309,13 @@ class GlobalGpuLock:
                             timeout=min(_LOCAL_GPU_LOCK_WAIT_SECONDS, remaining_seconds)
                         )
                 else:
-                    time.sleep(2.0)
+                    sleep_seconds = 2.0
+                    if self.deadline is not None:
+                        sleep_seconds = min(
+                            sleep_seconds,
+                            max(0.0, self.deadline - time.perf_counter()),
+                        )
+                    time.sleep(sleep_seconds)
             except BaseException:
                 if self._handle is not None:
                     handle, self._handle = self._handle, None
@@ -324,8 +348,20 @@ def force_release_gpu_lock_holders(lock_path: Path, *, reason: str) -> bool:
     return released
 
 
-def gpu_stage_lock(*, stage: str, enabled: bool = True) -> GlobalGpuLock:
-    return GlobalGpuLock(stage=stage, enabled=enabled)
+def gpu_stage_lock(
+    *,
+    stage: str,
+    enabled: bool = True,
+    deadline: float | None = None,
+) -> GlobalGpuLock:
+    if deadline is None:
+        try:
+            from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+            deadline = current_gpu_stage_deadline()
+        except ImportError:
+            pass
+    return GlobalGpuLock(stage=stage, enabled=enabled, deadline=deadline)
 
 
 def gpu_lock_enabled() -> bool:
@@ -366,20 +402,22 @@ def gpu_lock_is_stale(lock_path: Path, *, timeout_seconds: float) -> bool:
     try:
         payload = json.loads(read_lock_text(lock_path))
     except (OSError, json.JSONDecodeError):
-        return lock_age_seconds(lock_path) > timeout_seconds
+        # Unknown ownership cannot be revoked safely by age. The waiter will
+        # time out while retaining the evidence for an explicit repair.
+        return False
     pid = payload.get("pid") if isinstance(payload, dict) else None
-    if isinstance(pid, int) and pid > 0 and not process_is_running(pid):
-        return True
     expected_identity = payload.get("processIdentity") if isinstance(payload, dict) else None
-    if isinstance(pid, int) and isinstance(expected_identity, int):
-        active_identity = process_identity(pid)
-        if active_identity is None or active_identity != expected_identity:
-            return True
-    elif isinstance(pid, int) and lock_age_seconds(lock_path) > LEGACY_GPU_LOCK_GRACE_SECONDS:
-        # Locks created before process identities were recorded cannot distinguish
-        # their owner from an unrelated process that later reused the same PID.
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if not process_is_running(pid):
         return True
-    return lock_age_seconds(lock_path) > timeout_seconds
+    if isinstance(expected_identity, int):
+        active_identity = process_identity(pid)
+        if active_identity is not None and active_identity != expected_identity:
+            return True
+    # A live owner keeps the lease regardless of age. Age is a wait bound,
+    # never authority to evict an owner whose identity cannot be confirmed.
+    return False
 
 
 def process_identity(pid: int) -> int | None:

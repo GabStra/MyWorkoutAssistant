@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation
 
 from .physical_validation import angles, body_scale, validate_physical_motion
 from .sequence_stabilization import contact_mask
-from .contact_constraints import (stationary_target_track, stationary_contact_anchor_ids,
+from .contact_constraints import (motion_space_support_evidence, stationary_target_track, stationary_contact_anchor_ids,
                                   observed_ground_contact_mask, calibrate_shared_contact_pair,
                                   InfeasibleContactCorrection)
 
@@ -165,6 +165,7 @@ def free_joint_floor_clearance_lift(rig, floor, pinned, *, cyclic, subdivisions=
 
 def validate_rig_playback(payload, *, subdivisions=4):
     rig=payload['fixedRig'];names=rig['jointNames'];count=len(rig['coordinates']);fps=float(payload['fps'])
+    support_evidence = motion_space_support_evidence(payload)
     cyclic=bool((payload.get("loop") or {}).get("enabled"))
     cursors=np.arange(count*subdivisions if cyclic else (count-1)*subdivisions+1)/subdivisions
     points=sample_rig(rig,cursors,wrap=cyclic);scale=body_scale(points,names)
@@ -185,7 +186,7 @@ def validate_rig_playback(payload, *, subdivisions=4):
         unplaced = rotation.inv().apply((source + origin).reshape(-1, 3)).reshape(source.shape)
         fitting_floor = None if (payload.get('renderFloorY') is None or placement.get('floorInferred')) else float(payload['renderFloorY'])+float(origin[1])
     try:
-        anchors,_=rig_contact_targets(unplaced,names,pinned,rig['offsets'], evidence=payload.get('sourceFootSupportEvidence'), floor=fitting_floor)
+        anchors,_=rig_contact_targets(unplaced,names,pinned,rig['offsets'], evidence=support_evidence, floor=fitting_floor)
     except InfeasibleContactCorrection as error:
         return {'passed': False, 'reason': 'incompatible_stationary_contact_anchors',
                 'physicalReasons': ['incompatible_stationary_contact_anchors'],
@@ -198,7 +199,7 @@ def validate_rig_playback(payload, *, subdivisions=4):
     frame_contact_error=float(np.max(np.linalg.norm((originals-anchors)[pinned],axis=-1),initial=0.))
     from .heel_contacts import heel_contact_tracks
     heel_contacts = heel_contact_tracks(
-        unplaced, names, payload.get('sourceFootSupportEvidence'), floor=fitting_floor, fps=fps)
+        unplaced, names, support_evidence, floor=fitting_floor, fps=fps)
     if placement.get('version') == 1 and heel_contacts.pairs:
         shape = heel_contacts.targets.shape
         heel_contacts.targets = rotation.apply(heel_contacts.targets.reshape(-1, 3)).reshape(shape) - origin

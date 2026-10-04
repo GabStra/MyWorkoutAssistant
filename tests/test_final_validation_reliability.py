@@ -1,5 +1,6 @@
 import copy
 import json
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -170,6 +171,7 @@ def test_visual_observer_ignores_verdict_fields_and_reuses_exact_artifact_cache(
         preview_html_path=tmp_path / "preview.html", skeleton_path=skeleton,
         review_video_path=tmp_path / "preview.webm", duration_sec=19/30,
         loop_start_seconds=0., loop_end_seconds=19/30, candidate={})
+    item.settings_options["reviewFrameIndices"] = [1, 7, 19]
     monkeypatch.setattr(bake, "exercise_motion_contract_for_review_item", lambda *a: {})
     monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **kw: pytest.fail("Unused source render"))
     monkeypatch.setattr(bake, "final_output_preview_contact_sheets", lambda *a, **kw: [sheet])
@@ -193,6 +195,7 @@ def test_visual_observer_ignores_verdict_fields_and_reuses_exact_artifact_cache(
     assert len(calls) == 1
     assert result["advisoryOnly"] and result["status"] == "observed"
     assert "passed" not in result and "reject" not in result and not diagnostic
+    assert 'Cell-to-frame manifest (same in both views): {"1": 1, "2": 7, "3": 19}' in calls[0]["prompt"]
     cached = bake.validate_final_output_with_caption_images(item, bake.LoopRanking(.9, [], {}),
         request=request, caption_images=caption, deterministic_metrics={"passed": True})
     assert cached["cacheStatus"] == "reused"
@@ -203,3 +206,198 @@ def test_visual_observer_ignores_verdict_fields_and_reuses_exact_artifact_cache(
     bake.validate_final_output_with_caption_images(item, bake.LoopRanking(.9, [], {}),
         request=request, caption_images=caption, deterministic_metrics={"passed": True})
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("chooser_name", ["choose_best_materialized_review_item", "choose_top_materialized_review_items"])
+def test_materialized_gate_results_are_retained_for_every_review_item(tmp_path, monkeypatch, chooser_name):
+    items = [
+        bake.ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=3,
+            exercise_name="Press",
+            candidate_title="Press demo",
+            candidate_workspace=tmp_path,
+            preview_html_path=tmp_path / "preview.html",
+            skeleton_path=tmp_path / "cyclic.json",
+            review_video_path=tmp_path / "cyclic.webm",
+            duration_sec=2.,
+            loop_start_seconds=0.,
+            loop_end_seconds=2.,
+            candidate={},
+            artifact_class="cyclic_rebake",
+        ),
+        bake.ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=-1,
+            exercise_name="Press",
+            candidate_title="Press demo",
+            candidate_workspace=tmp_path,
+            preview_html_path=tmp_path / "preview.html",
+            skeleton_path=tmp_path / "full.json",
+            review_video_path=tmp_path / "full.webm",
+            duration_sec=9.,
+            loop_start_seconds=0.,
+            loop_end_seconds=9.,
+            candidate={},
+            artifact_class="full_clip_bake",
+        ),
+    ]
+    rankings = [
+        bake.LoopRanking(.923, [], model_score=.923, payload={"item": "cyclic"}),
+        bake.LoopRanking(.49, [], model_score=.49, payload={"item": "full"}),
+    ]
+
+    def reject_with_persistable_evidence(original, **_kwargs):
+        item, ranking = original
+        reason = "final_render_evidence_unavailable" if item.loop_index == 3 else "artifact_class_not_accepted"
+        updated = bake.LoopRanking(
+            score=.49,
+            reasons=ranking.reasons,
+            payload={
+                **(ranking.payload or {}),
+                "finalOutputValidation": {"passed": False, "rejectionReasons": [reason]},
+            },
+            model_score=ranking.model_score,
+        )
+        return None, (item, updated)
+
+    monkeypatch.setattr(bake, "materialize_selection_candidate", reject_with_persistable_evidence)
+    request = SimpleNamespace(min_selected_score=.5, max_selected_results=1)
+    chooser = getattr(bake, chooser_name)
+    if chooser_name == "choose_best_materialized_review_item":
+        chooser(items, rankings, request=request)
+    else:
+        chooser(items, rankings, request=request, max_results=1)
+
+    assert rankings[0].payload["finalOutputValidation"]["rejectionReasons"] == [
+        "final_render_evidence_unavailable"
+    ]
+    assert rankings[1].payload["finalOutputValidation"]["rejectionReasons"] == [
+        "artifact_class_not_accepted"
+    ]
+
+
+def test_final_review_preview_uses_short_content_keyed_runtime_path(tmp_path, monkeypatch):
+    from exercise_motion_pkg import preview as preview_module
+
+    candidate_workspace = tmp_path / ("nested-" * 10) / "candidate"
+    preview_dir = candidate_workspace / "preview"
+    wear_dir = candidate_workspace / "wear"
+    preview_dir.mkdir(parents=True)
+    wear_dir.mkdir(parents=True)
+    original_preview = preview_dir / "original.html"
+    original_preview.write_text("<html></html>", encoding="utf-8")
+    module = preview_dir / "three.module.0.169.0.js"
+    module.write_text("export {};", encoding="utf-8")
+    skeleton = wear_dir / "skeleton.json"
+    skeleton.write_text(json.dumps({
+        "fps": 30,
+        "jointNames": ["pelvis"],
+        "frames": [{"timeSec": 0., "joints": {"pelvis": [0., 0., 0.]}}],
+    }), encoding="utf-8")
+    item = bake.ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Test movement",
+        candidate_title="Unused title",
+        candidate_workspace=candidate_workspace,
+        preview_html_path=original_preview,
+        skeleton_path=skeleton,
+        review_video_path=preview_dir / "review.webm",
+        duration_sec=1.,
+        loop_start_seconds=0.,
+        loop_end_seconds=1.,
+        candidate={},
+    )
+    temp_root = tmp_path / "short-temp"
+    monkeypatch.setattr(bake.tempfile, "gettempdir", lambda: str(temp_root))
+    writes = []
+
+    def write_runtime(path, payload, *, three_module_path=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<html>current skeleton</html>", encoding="utf-8")
+        if three_module_path is not None:
+            shutil.copy2(three_module_path, path.parent / three_module_path.name)
+        writes.append(path)
+
+    rendered_previews = []
+
+    def render_preview_window(*, item, **_kwargs):
+        rendered_previews.append(item.preview_html_path)
+        return [tmp_path / "sheet.jpg"]
+
+    monkeypatch.setattr(preview_module, "write_baked_preview_html", write_runtime)
+    monkeypatch.setattr(bake, "render_review_window_contact_sheet", render_preview_window)
+    bake.final_output_vlm_preview_contact_sheets(item, output_dir=tmp_path / "review-output")
+
+    current_preview = rendered_previews[0]
+    assert current_preview.is_file()
+    assert current_preview.parent.parent == temp_root / "mwa-motion-preview"
+    assert len(str(current_preview.resolve())) < len(str(skeleton.resolve()))
+    assert (current_preview.parent / module.name).is_file()
+    assert rendered_previews == [current_preview, current_preview]
+    assert writes == [current_preview]
+
+
+def test_baked_reselection_persists_materialized_validation_evidence(tmp_path, monkeypatch):
+    item = bake.ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=3,
+        exercise_name="Press",
+        candidate_title="Press demo",
+        candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html",
+        skeleton_path=tmp_path / "skeleton.json",
+        review_video_path=tmp_path / "review.webm",
+        duration_sec=2.,
+        loop_start_seconds=0.,
+        loop_end_seconds=2.,
+        candidate={},
+        artifact_class="cyclic_rebake",
+    )
+    item.skeleton_path.write_text("{}", encoding="utf-8")
+    original = bake.LoopRanking(.923, [], payload={"origin": "saved-ranking"})
+    entry = bake.review_item_to_manifest(item)
+    entry["ranking"] = bake.ranking_to_manifest(original)
+    selection_path = tmp_path / "selection_manifest.json"
+    selection_path.write_text(json.dumps({"reviewItems": [entry], "candidateResults": []}), encoding="utf-8")
+    request = SimpleNamespace(min_selected_score=.5, max_selected_results=1, final_output_validation=True)
+
+    monkeypatch.setattr(bake, "bake_and_rank_request_from_selection_manifest", lambda *args, **kwargs: request)
+    monkeypatch.setattr(bake, "apply_loop_continuity_adjustment", lambda item, ranking: (item, ranking))
+
+    def validate(artifact, **_kwargs):
+        artifact_item, _ranking = artifact
+        return artifact_item, bake.LoopRanking(
+            .49,
+            ["materialized_output_rejected"],
+            payload={"finalOutputValidation": {
+                "passed": False,
+                "failureOwner": "rendering",
+                "rejectionReasons": ["final_render_evidence_unavailable"],
+            }},
+            model_score=.923,
+        )
+
+    monkeypatch.setattr(bake, "apply_materialized_output_acceptance_gate", validate)
+    monkeypatch.setattr(bake, "choose_top_review_items", lambda *args, **kwargs: [])
+    monkeypatch.setattr(bake, "choose_best_review_item", lambda items, rankings, **kwargs: (items[0], rankings[0]))
+    monkeypatch.setattr(bake, "write_candidate_ranking_manifests", lambda _entries: None)
+    monkeypatch.setattr(bake, "write_selected_result_preview_htmls", lambda *_args: [])
+    monkeypatch.setattr(
+        bake,
+        "build_selection_manifest",
+        lambda **kwargs: {"reviewItems": kwargs["review_entries"], "candidateResults": []},
+    )
+    monkeypatch.setattr(bake, "attach_selected_preview_paths_to_manifest", lambda *_args: None)
+
+    bake.run_bake_and_rank_reselection(workspace=tmp_path)
+
+    saved = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert saved["reviewItems"][0]["ranking"]["payload"]["finalOutputValidation"]["rejectionReasons"] == [
+        "final_render_evidence_unavailable"
+    ]

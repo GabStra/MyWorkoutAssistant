@@ -371,6 +371,8 @@ def test_controlled_fit_unusable_for_more_preview_work():
         {'applied': False, 'reason': 'other', 'checks': {'trajectoryFit': False, 'rootTravel': False}})
     assert motion.controlled_fit_unusable_for_more_preview_work(
         {'applied': False, 'reason': 'loop_requires_cycle_repair', 'checks': {'loopSeam': False}})
+    assert motion.controlled_fit_unusable_for_more_preview_work(
+        {'applied': False, 'reason': 'retained_interval_skipped_after_persistent_source_spine_fold'})
     assert not motion.controlled_fit_unusable_for_more_preview_work(
         {'applied': True, 'reason': 'validated_controlled_motion'})
 
@@ -721,9 +723,11 @@ def test_cpu_queue_wait_preserves_remaining_candidate_budget(monkeypatch):
     from contextlib import contextmanager
     now = [0.]
     monkeypatch.setattr(fit_runtime, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(motion, "MIN_USEFUL_FIT_SECONDS", 0.)
 
     @contextmanager
-    def delayed_slot():
+    def delayed_slot(*, timeout_seconds=None):
+        assert timeout_seconds is None
         now[0] += 20.
         # Match production: queue wait does not consume candidate budget.
         session = fit_runtime.current_fit_session()
@@ -744,6 +748,23 @@ def test_cpu_queue_wait_preserves_remaining_candidate_budget(monkeypatch):
         assert session.remaining() == 7.
     assert received == [7.]
     assert report['cpuFitQueueWaitSeconds'] == 20.
+
+
+def test_fit_fails_within_budget_when_local_cpu_fit_lanes_remain_occupied(monkeypatch):
+    monkeypatch.setattr(fit_runtime, "cpu_fit_slot_limit", lambda: 1)
+    monkeypatch.setattr(fit_runtime, "_FIT_IN_USE", 1)
+    monkeypatch.setattr(
+        motion,
+        "_fit_candidate_motion",
+        lambda *_args, **_kwargs: pytest.fail("Fit must not start without a CPU slot"),
+    )
+
+    _, report = motion.fit_controlled_motion({"frames": []}, timeout_seconds=0.05)
+
+    assert report["applied"] is False
+    assert report["reason"] == "fit_timeout"
+    assert report["failureStage"] == "cpu_fit_slot_admission"
+    assert 0.0 <= report["cpuFitQueueWaitSeconds"] < 0.5
 
 
 def test_anatomy_resume_reuses_completed_frames_and_invalidates_changed_input(tmp_path, monkeypatch):

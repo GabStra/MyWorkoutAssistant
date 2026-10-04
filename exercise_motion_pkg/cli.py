@@ -1340,6 +1340,52 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
     return BakeAndRankRequest(**_request_kwargs(args, BakeAndRankRequest, overrides))
 
 
+def run_staged_bake_wave_manifest(
+    args,
+    *,
+    request=None,
+    progress=None,
+    render_executor=None,
+):
+    """Execute one serialized staged-wave manifest using shared CLI settings."""
+    if args.staged_wave_manifest is None:
+        raise ValueError("A staged wave manifest is required")
+    request = request or build_bake_and_rank_request(args)
+    wave_manifest_path = args.staged_wave_manifest.expanduser().resolve()
+    wave_payload = json.loads(wave_manifest_path.read_text(encoding="utf-8"))
+    wave_id = str(wave_payload.get("waveId") or wave_manifest_path.stem)
+    wave_workspace = Path(
+        wave_payload.get("workspace") or wave_manifest_path.parent / wave_id
+    )
+    wave_items: list[StagedWaveItem] = []
+    for index, item_payload in enumerate(wave_payload.get("items") or []):
+        if not isinstance(item_payload, dict):
+            continue
+        candidates_json = Path(str(item_payload["candidatesJson"])).expanduser().resolve()
+        item_workspace = Path(str(item_payload["workspace"])).expanduser().resolve()
+        exercise_id = str(item_payload.get("exerciseId") or f"exercise-{index + 1}")
+        exercise_name = str(item_payload.get("exerciseName") or exercise_id)
+        wave_items.append(
+            StagedWaveItem(
+                exercise_id=exercise_id,
+                exercise_name=exercise_name,
+                run_id=str(wave_payload.get("runId") or "") or None,
+                request=replace(
+                    request,
+                    candidates_json=candidates_json,
+                    workspace=item_workspace,
+                ),
+            )
+        )
+    return run_staged_bake_wave(
+        wave_items,
+        workspace=wave_workspace,
+        wave_id=wave_id,
+        progress=progress,
+        render_executor=render_executor,
+    )
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -1673,39 +1719,14 @@ def main() -> None:
     if args.command == "bake-and-rank":
         request = build_bake_and_rank_request(args)
         if args.staged_wave_manifest is not None:
-            wave_manifest_path = args.staged_wave_manifest.expanduser().resolve()
-            wave_payload = json.loads(wave_manifest_path.read_text(encoding="utf-8"))
-            wave_id = str(wave_payload.get("waveId") or wave_manifest_path.stem)
-            wave_workspace = Path(
-                wave_payload.get("workspace") or wave_manifest_path.parent / wave_id
-            )
-            wave_items: list[StagedWaveItem] = []
-            for index, item_payload in enumerate(wave_payload.get("items") or []):
-                if not isinstance(item_payload, dict):
-                    continue
-                candidates_json = Path(str(item_payload["candidatesJson"])).expanduser().resolve()
-                item_workspace = Path(str(item_payload["workspace"])).expanduser().resolve()
-                exercise_id = str(item_payload.get("exerciseId") or f"exercise-{index + 1}")
-                exercise_name = str(item_payload.get("exerciseName") or exercise_id)
-                wave_items.append(
-                    StagedWaveItem(
-                        exercise_id=exercise_id,
-                        exercise_name=exercise_name,
-                        request=replace(
-                            request,
-                            candidates_json=candidates_json,
-                            workspace=item_workspace,
-                        ),
-                    )
-                )
-            report = run_staged_bake_wave(
-                wave_items,
-                workspace=wave_workspace,
-                wave_id=wave_id,
+            report = run_staged_bake_wave_manifest(
+                args,
+                request=request,
                 progress=lambda message: print(message, flush=True),
             )
             print(
-                f"Batch finished: {report['completedExerciseCount']} kept, "
+                f"Batch finished: {report['completedExerciseCount']} accepted, "
+                f"{report.get('manualReviewExerciseCount', 0)} need manual review, "
                 f"{report['retryExerciseCount']} need another try."
             )
             return

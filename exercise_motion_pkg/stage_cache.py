@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import threading
 import uuid
@@ -48,10 +49,25 @@ def load_stage(path: Path, key: str) -> dict[str, Any] | None:
         record = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(record, dict) or record.get("key") != key or not record.get("outputs") or not isinstance(record.get("payload"), dict):
             return None
+        verified_output_paths = set()
         for identity in record["outputs"]:
-            if not identity.get("sha256") or file_identity(Path(identity["path"])) != identity:
+            if not isinstance(identity, dict):
                 return None
-        return record["payload"]
+            identity_path = identity.get("path")
+            if not isinstance(identity_path, str) or not identity.get("sha256"):
+                return None
+            if file_identity(Path(identity_path)) != identity:
+                return None
+            verified_output_paths.add(Path(identity_path).resolve())
+        payload = record["payload"]
+        cached_paths = payload.get("paths")
+        if cached_paths is not None:
+            if not isinstance(cached_paths, list) or not cached_paths:
+                return None
+            for cached_path in cached_paths:
+                if not isinstance(cached_path, str) or Path(cached_path).resolve() not in verified_output_paths:
+                    return None
+        return payload
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
@@ -63,9 +79,17 @@ def save_stage(path: Path, key: str, payload: dict[str, Any], outputs: list[Path
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
-        temporary.write_text(json.dumps({"key": key, "outputs": identities, "payload": payload},
-                                        default=str), encoding="utf-8")
-        temporary.replace(path)
+        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump(
+                {"key": key, "outputs": identities, "payload": payload},
+                stream,
+                default=str,
+                sort_keys=True,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -74,8 +98,9 @@ def cached_paths(checkpoint: Path, key: str, compute: Any, *, supporting_outputs
     """Reuse returned paths only while all consumer-required outputs are intact."""
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
-        if cached is not None:
-            return [Path(value) for value in cached["paths"]]
+        path_values = cached.get("paths") if cached is not None else None
+        if isinstance(path_values, list) and path_values and all(isinstance(value, str) for value in path_values):
+            return [Path(value) for value in path_values]
         paths = compute()
         if paths:
             outputs = [*paths, *(supporting_outputs() if supporting_outputs is not None else [])]
@@ -84,7 +109,7 @@ def cached_paths(checkpoint: Path, key: str, compute: Any, *, supporting_outputs
         return paths
 
 
-def render_with_cpu_slot(compute: Any) -> Any:
+def render_with_cpu_slot(compute: Any, *, task_name: str | None = None) -> Any:
     """Bound browser CPU pressure while other workers can submit GPU reviews."""
     from exercise_motion_pkg.browser_workers import run_browser_work
-    return run_browser_work(compute)
+    return run_browser_work(compute, task_name=task_name)

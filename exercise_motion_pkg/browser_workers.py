@@ -22,11 +22,13 @@ class BrowserWorkers:
         self._closed = False
         self._metrics = {"completedJobs": 0, "failedJobs": 0, "browserLaunchCount": 0,
                          "browserReuseCount": 0, "cleanupFailures": 0,
-                         "queueWaitSeconds": 0.0, "jobSeconds": 0.0}
+                         "queueWaitSeconds": 0.0, "jobSeconds": 0.0, "byTask": {}}
 
-    def run(self, operation: Callable[[], Any]) -> Any:
+    def run(self, operation: Callable[[], Any], *, task_name: str | None = None) -> Any:
         if getattr(self._local, "active", False):
             return operation()
+        task_name = (task_name or getattr(operation, "__qualname__", None) or
+                     getattr(operation, "__name__", None) or type(operation).__name__)
         future = Future()
         with self._lock:
             if self._closed:
@@ -38,7 +40,7 @@ class BrowserWorkers:
                     thread.start()
             # Fit ownership and cancellation belong to the submitting task,
             # not to the reusable browser thread or its workspace.
-            self._queue.put((future, copy_context(), operation, time.perf_counter()))
+            self._queue.put((future, copy_context(), operation, time.perf_counter(), task_name))
         try:
             while True:
                 try:
@@ -57,13 +59,17 @@ class BrowserWorkers:
                 job = self._queue.get()
                 if job is None:
                     break
-                future, context, operation, submitted = job
+                future, context, operation, submitted, task_name = job
                 if not future.set_running_or_notify_cancel():
                     continue
                 started = time.perf_counter()
                 error = None
+                previous_task_name = getattr(self._local, "task_name", None)
+                self._local.task_name = task_name
                 try:
-                    result = context.run(operation)
+                    from .motion_scheduler import run_cpu_task
+
+                    result = context.run(run_cpu_task, operation)
                 except BaseException as exc:
                     error = exc
                     with self._lock:
@@ -72,7 +78,15 @@ class BrowserWorkers:
                     with self._lock:
                         self._metrics["completedJobs"] += 1
                         self._metrics["queueWaitSeconds"] += started - submitted
-                        self._metrics["jobSeconds"] += time.perf_counter() - started
+                        job_seconds = time.perf_counter() - started
+                        self._metrics["jobSeconds"] += job_seconds
+                        task_metrics = self._task_metrics_locked(task_name)
+                        task_metrics["jobCount"] += 1
+                        if error is not None:
+                            task_metrics["failedJobs"] += 1
+                        task_metrics["queueWaitSeconds"] += started - submitted
+                        task_metrics["jobSeconds"] += job_seconds
+                    self._local.task_name = previous_task_name
                 if error is not None:
                     future.set_exception(error)
                 else:
@@ -104,12 +118,14 @@ class BrowserWorkers:
                 self._local.browser = launch(self._local.runtime)
                 with self._lock:
                     self._metrics["browserLaunchCount"] += 1
+                    self._record_task_browser_metric_locked("browserLaunchCount")
             except BaseException:
                 self._discard_browser()
                 raise
         else:
             with self._lock:
                 self._metrics["browserReuseCount"] += 1
+                self._record_task_browser_metric_locked("browserReuseCount")
         browser = self._local.browser
         initial_contexts = set(browser.contexts)
         try:
@@ -139,7 +155,28 @@ class BrowserWorkers:
 
     def metrics(self) -> dict[str, Any]:
         with self._lock:
-            return {"workerLimit": self._workers, **self._metrics}
+            metrics = dict(self._metrics)
+            metrics["byTask"] = {
+                task_name: dict(task_metrics)
+                for task_name, task_metrics in self._metrics["byTask"].items()
+            }
+            return {"scope": "python_process", "workerLimit": self._workers, **metrics}
+
+    def _record_task_browser_metric_locked(self, name: str) -> None:
+        task_name = getattr(self._local, "task_name", None)
+        if not task_name:
+            return
+        self._task_metrics_locked(task_name)[name] += 1
+
+    def _task_metrics_locked(self, task_name: str) -> dict[str, Any]:
+        return self._metrics["byTask"].setdefault(task_name, {
+            "jobCount": 0,
+            "failedJobs": 0,
+            "browserLaunchCount": 0,
+            "browserReuseCount": 0,
+            "queueWaitSeconds": 0.0,
+            "jobSeconds": 0.0,
+        })
 
 
 from exercise_motion_pkg.resource_budget import browser_worker_limit
@@ -148,19 +185,29 @@ _workers = BrowserWorkers(browser_worker_limit())
 atexit.register(_workers.close)
 
 
-def browser_worker(function: Callable[..., Any]) -> Callable[..., Any]:
-    @wraps(function)
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        return _workers.run(lambda: function(*args, **kwargs))
-    return wrapped
+def browser_worker(
+    function: Callable[..., Any] | None = None,
+    *,
+    task_name: str | None = None,
+) -> Any:
+    def decorate(target: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(target)
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            return _workers.run(
+                lambda: target(*args, **kwargs),
+                task_name=task_name or target.__qualname__,
+            )
+        return wrapped
+
+    return decorate(function) if function is not None else decorate
 
 
 def browser_session(launch: Callable[..., Any]) -> Any:
     return _workers.session(launch)
 
 
-def run_browser_work(operation: Callable[[], Any]) -> Any:
-    return _workers.run(operation)
+def run_browser_work(operation: Callable[[], Any], *, task_name: str | None = None) -> Any:
+    return _workers.run(operation, task_name=task_name)
 
 
 def browser_worker_metrics() -> dict[str, Any]:

@@ -27,6 +27,12 @@ from typing import Any
 
 RESULT_PREFIX = "__GVHMR_WARM_WORKER__"
 HEARTBEAT_INTERVAL_SECONDS = 2.0
+INTERRUPTED_AMBIGUOUS_STATUS = "interrupted_ambiguous"
+TERMINAL_JOB_STATUSES = {
+    "completed",
+    "failed",
+    INTERRUPTED_AMBIGUOUS_STATUS,
+}
 GVHMR_ROOT = Path("/opt/gvhmr")
 
 
@@ -41,6 +47,99 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def recover_interrupted_running_jobs(state_dir: Path) -> list[dict[str, Any]]:
+    """Archive claimed requests after a restart without replaying partial work."""
+    state_dir = Path(state_dir)
+    running_dir = state_dir / "running"
+    results_dir = state_dir / "results"
+    ambiguous_dir = state_dir / "ambiguous"
+    for directory in (running_dir, results_dir, ambiguous_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    recovered: list[dict[str, Any]] = []
+    for claimed_path in sorted(running_dir.glob("*.json")):
+        job_id = claimed_path.stem
+        result_path = results_dir / f"{job_id}.json"
+        try:
+            request_payload = json.loads(claimed_path.read_text(encoding="utf-8"))
+            if not isinstance(request_payload, dict):
+                request_payload = {}
+                request_error = "Claimed request was not a JSON object."
+            else:
+                request_error = None
+        except (OSError, ValueError) as exc:
+            request_payload = {}
+            request_error = f"Claimed request could not be read: {type(exc).__name__}: {exc}"
+
+        stage_identity = request_payload.get("stageIdentity")
+        if not isinstance(stage_identity, dict):
+            stage_identity = None
+        recorded_job_id = str(request_payload.get("jobId") or "")
+        archive_path = ambiguous_dir / claimed_path.name
+        if archive_path.exists():
+            archive_path = ambiguous_dir / f"{job_id}-{time.time_ns()}.json"
+
+        existing_result: dict[str, Any] | None = None
+        try:
+            decoded_result = json.loads(result_path.read_text(encoding="utf-8"))
+            if isinstance(decoded_result, dict):
+                existing_result = decoded_result
+        except (OSError, ValueError):
+            pass
+        existing_result_matches = (
+            existing_result is not None
+            and str(existing_result.get("jobId") or "") == job_id
+            and existing_result.get("stageIdentity") == stage_identity
+            and existing_result.get("status") in TERMINAL_JOB_STATUSES
+        )
+
+        if not existing_result_matches:
+            recovery_error = (
+                "The GVHMR worker stopped after claiming this request. Output completeness is "
+                "unknown, so the request was archived and will not be replayed."
+            )
+            if request_error:
+                recovery_error += f" {request_error}"
+            elif recorded_job_id and recorded_job_id != job_id:
+                recovery_error += (
+                    f" The request payload jobId {recorded_job_id!r} did not match its queue filename."
+                )
+            write_json(
+                result_path,
+                {
+                    "jobId": job_id,
+                    "stageIdentity": stage_identity,
+                    "status": INTERRUPTED_AMBIGUOUS_STATUS,
+                    "terminal": True,
+                    "retryable": False,
+                    "error": recovery_error,
+                    "recovery": {
+                        "classification": INTERRUPTED_AMBIGUOUS_STATUS,
+                        "partialOutputPossible": True,
+                        "automaticReplay": False,
+                        "claimedRequestPath": f"running/{claimed_path.name}",
+                        "archivedRequestPath": f"ambiguous/{archive_path.name}",
+                        "requestPayloadJobId": recorded_job_id or None,
+                    },
+                },
+            )
+
+        claimed_path.replace(archive_path)
+        recovered.append(
+            {
+                "jobId": job_id,
+                "status": (
+                    existing_result.get("status")
+                    if existing_result_matches and existing_result is not None
+                    else INTERRUPTED_AMBIGUOUS_STATUS
+                ),
+                "resultPath": str(result_path),
+                "archivePath": str(archive_path),
+            }
+        )
+    return recovered
 
 
 def load_gvhmr_once() -> dict[str, Any]:
@@ -195,6 +294,7 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, state: dic
     started = time.perf_counter()
     payload: dict[str, Any] = {
         "jobId": job_id,
+        "stageIdentity": job.get("stageIdentity"),
         "status": "failed",
         "stdoutLog": str(stdout_log),
         "stderrLog": str(stderr_log),
@@ -315,8 +415,16 @@ def main() -> int:
     running_dir = state_dir / "running"
     result_dir = state_dir / "results"
     job_logs_dir = state_dir / "job_logs"
-    for path in (jobs_dir, running_dir, result_dir, job_logs_dir):
+    ambiguous_dir = state_dir / "ambiguous"
+    for path in (jobs_dir, running_dir, result_dir, job_logs_dir, ambiguous_dir):
         path.mkdir(parents=True, exist_ok=True)
+
+    recovered_jobs = recover_interrupted_running_jobs(state_dir)
+    if recovered_jobs:
+        print(
+            f"Recovered {len(recovered_jobs)} interrupted GVHMR job(s) as terminal ambiguous results.",
+            flush=True,
+        )
 
     try:
         state = load_gvhmr_once()

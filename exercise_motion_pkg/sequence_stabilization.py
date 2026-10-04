@@ -16,7 +16,12 @@ from scipy.optimize import least_squares
 from scipy.signal import butter, sosfiltfilt
 from scipy.sparse import csr_matrix, diags, eye, kron, vstack
 
-from .contact_constraints import contact_frame_bounds, is_stationary_contact, motion_support_contacts
+from .contact_constraints import (
+    contact_frame_bounds,
+    is_stationary_contact,
+    motion_space_support_evidence,
+    motion_support_contacts,
+)
 from .physical_validation import ARTICULATIONS, angles, body_bones, body_scale, validate_physical_motion
 from .temporal_quality import body_orientation_axes, refresh_motion_bounds, transport_corrected_bone_sides
 
@@ -115,7 +120,7 @@ def denoise_features(features, fps):
 
 def contact_mask(payload, names, count):
     pinned = np.zeros((count, len(names)), dtype=bool)
-    for contact in motion_support_contacts(payload.get('sourceFootSupportEvidence')):
+    for contact in motion_support_contacts(motion_space_support_evidence(payload)):
         if contact.get('contactState') == 'heel_only':
             # Heel-only is not a pin in this shoe model. Skip it so other
             # observed plants can still constrain the retained interval.
@@ -138,7 +143,7 @@ def contact_mask(payload, names, count):
 def pose_digest(payload):
     contents = {'fps': payload.get('fps'), 'jointNames': payload.get('jointNames'),
                 'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints')} for f in payload.get('frames', [])],
-                'supports': payload.get('sourceFootSupportEvidence'), 'floor': payload.get('renderFloorY'),
+                'supports': motion_space_support_evidence(payload), 'floor': payload.get('renderFloorY'),
                 'fixedRig': payload.get('fixedRig'), 'loop': payload.get('loop')}
     if 'anatomicalSourceRepair' in payload:
         contents['anatomicalSourceRepair'] = payload['anatomicalSourceRepair']
@@ -274,13 +279,31 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     # before judging the result.
     from .anatomical_repair import enforce_rigid_bone_lengths
     result = enforce_rigid_bone_lengths(result, names)
+    # The optimizer treats observed support coordinates as hard pins. The
+    # parent-first length projection can otherwise move an ankle or foot by a
+    # fraction of a millimetre after the solve and silently break that promise.
+    result[pinned] = points[pinned]
     physical = validate_physical_motion(result, names, reference=reference_smooth, fps=fps)
     input_reasons = set(report.get('inputPhysicalReasons') or [])
     output_reasons = {str(event.get('reason')) for event in (physical.get('events') or [])}
     introduced_defects = sorted(output_reasons - input_reasons)
+    rigid_parents, rigid_children = np.asarray(coordinates.edges, dtype=int).T
+    corrected_lengths = np.linalg.norm(
+        result[:, rigid_parents]-result[:, rigid_children], axis=-1)
+    corrected_medians = np.median(corrected_lengths, axis=0, keepdims=True)
+    # The repair above deliberately replaces frame-varying reconstructed bone
+    # lengths with each bone's stable temporal median. Comparing against the
+    # original per-frame lengths would count that intended correction as an
+    # error and reject otherwise valid stabilization.
+    length_error = float(np.max(abs(corrected_lengths-corrected_medians)))
+    expected_rigidity_correction = (
+        'anatomy_bone_length_variation' in input_reasons
+        and introduced_defects
+        and set(introduced_defects) == {'repair_bone_length_distortion'}
+        and length_error <= .002
+    )
     physical_ok = bool(physical['passed']) or (
-        bool(input_reasons) and not introduced_defects)
-    length_error = float(np.max(abs(np.linalg.norm(result[:, first]-result[:, last], axis=-1)-lengths)))
+        bool(input_reasons) and not introduced_defects) or expected_rigidity_correction
     # Preserve the cleaned trajectory range, not raw single-frame extrema.
     # Rapid motion is deliberately removed by the animation bandwidth policy.
     observed = coordinates.features

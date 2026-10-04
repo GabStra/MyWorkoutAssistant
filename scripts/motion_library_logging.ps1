@@ -293,14 +293,14 @@ function Format-MotionLibraryProgress {
         $State.LastWaiting = $null
         $State.Snapshot = $null
     }
-    if ($Message -match '^(SUCCESS:|Saved:|Reused:|Source (?:window rejected|uncertain|processing failed|rejected|deferred):|No usable source:|Movement validated:|Movement incomplete:|Movement rejected:|Movement processing failed:|Source review:|Source attempt:|Discovery yield requested:|Movement result:|Starting |Restarting |Deferred:|Failed:|Needs review:|No suitable movement:)') {
+    if ($Message -match '^(SUCCESS:|Saved:|Reused:|Source (?:window rejected|uncertain|processing failed|rejected|deferred):|No usable source:|Movement validated:|Movement incomplete:|Movement rejected:|Movement processing failed:|Source review:|Source attempt:|Discovery yield requested:|Movement result:|Starting |Restarting |Deferred:|Failed:|Needs review:|Needs inspection:|No suitable movement:)') {
         $State.LastChange = $Now
         $State.LastWaiting = $null
         # Allow the next Progress snapshot to print once after an outcome event.
         $State.Snapshot = $null
     }
     # Never suppress warnings, failures, or per-exercise outcomes.
-    if ($Message -match '^(SUCCESS:|Starting batch|Starting motion extractor|Restarting motion extractor|Deferred:|Failed:|WARNING:|ERROR:|Saved:|Needs review:|No suitable movement:)') {
+    if ($Message -match '^(SUCCESS:|Starting batch|Starting motion extractor|Restarting motion extractor|Deferred:|Failed:|WARNING:|ERROR:|Saved:|Needs review:|Needs inspection:|No suitable movement:)') {
         ''
     }
     if ($Message -match '^(Movement rejected:|Movement incomplete:|Movement processing failed:|Source window rejected:).+ \| Reasons: ') {
@@ -348,6 +348,7 @@ function Write-MotionLibraryOutcomeSummary {
         $label = switch ($item.status) {
             'needs_manual_review' { 'Needs review' }
             'needs_source_review' { 'Needs review' }
+            'needs_operator_inspection' { 'Needs inspection' }
             'no_selection' { 'No suitable movement' }
             'failed' { 'Failed' }
             default { 'Unresolved' }

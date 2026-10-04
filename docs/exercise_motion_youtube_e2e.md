@@ -173,7 +173,7 @@ definitions.
 
 Candidate preparation is pipelined automatically. Two CPU/network prefetch workers
 keep up to six upcoming exercises ready and each uses twelve parallel preview
-downloads. The library runner groups ready exercises into resumable 20-exercise
+downloads. The library runner groups ready exercises into resumable 8-exercise
 waves by default. Each wave keeps one VLM session for source-cut validation,
 releases it, runs the prepared candidates through one warm WHAM worker, releases
 WHAM, and then keeps one VLM session for the unchanged final validators. Only

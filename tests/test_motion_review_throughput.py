@@ -1,5 +1,6 @@
 import json
 import threading
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,29 @@ def test_questions_run_concurrently_with_candidate_deadline():
     result = review_questions.run_questions({str(i): lambda i=i: question(i) for i in range(6)}, session.caption_images)
     assert result == {str(i): i for i in range(6)}
     assert session._candidate_deadlines.value == 12345
+
+
+def test_questions_propagate_contextvar_candidate_deadline():
+    class Session:
+        _max_active_calls = 6
+        _candidate_deadlines = ContextVar("test_contextvar_candidate_deadline", default=None)
+        def caption_images(self): pass
+
+    session = Session()
+    session._candidate_deadlines.set(12345)
+    barrier = threading.Barrier(6, timeout=5)
+
+    def question(index):
+        assert session._candidate_deadlines.get() == 12345
+        barrier.wait()
+        return index
+
+    result = review_questions.run_questions(
+        {str(index): lambda index=index: question(index) for index in range(6)},
+        session.caption_images,
+    )
+    assert result == {str(index): index for index in range(6)}
+    assert session._candidate_deadlines.get() == 12345
 
 
 def test_question_pool_grows_to_vlm_parallel_slots():
@@ -217,7 +241,9 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
     monkeypatch.setattr(wave, "run_bake_and_rank_pipeline", finalize)
     result = wave.run_staged_bake_wave(items, workspace=tmp_path / "wave", wave_id="test")
     assert result["completedExerciseCount"] == 2
-    assert len(result["metrics"]["cpuRenderPrefetch"]) == 2
+    # Only the first completed candidate gets speculative rendering while
+    # another extraction is still active; later work belongs to finalization.
+    assert len(result["metrics"]["cpuRenderPrefetch"]) == 1
     for state in result["items"]:
         final = state["finalValidation"]
         timing = final["schedulingTimings"]
@@ -243,25 +269,35 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
     monkeypatch.setattr(wave, "build_exercise_motion_contract_resolver", lambda **kwargs: None)
     monkeypatch.setattr(wave, "evaluate_source_candidate_gate", lambda *args, **kwargs: {"passed": True})
     monkeypatch.setattr(wave, "first_attempt_readiness_assessment", lambda *args, **kwargs: {"eligible": True})
-    item = wave.StagedWaveItem(
-        "slow", "Slow",
-        bake.BakeAndRankRequest(
-            candidates_json=tmp_path / "candidates.json",
-            workspace=tmp_path / "slow",
-            wham_repo_path=None,
-            body_model_root=None,
-            fallback_candidates=0,
-            max_final_output_rejections=0,
-            llama_cpp_parallel=1,
-        ),
-    )
-    monkeypatch.setattr(wave, "_wave_candidates_for_item", lambda _item: [bake.RankedCandidate(
-        0, 1, "slow", "Slow", "slow", {"videoId": "slow"})])
+    items = [
+        wave.StagedWaveItem(
+            exercise_id,
+            exercise_name,
+            bake.BakeAndRankRequest(
+                candidates_json=tmp_path / "candidates.json",
+                workspace=tmp_path / exercise_id,
+                wham_repo_path=None,
+                body_model_root=None,
+                fallback_candidates=0,
+                max_final_output_rejections=0,
+                llama_cpp_parallel=1,
+            ),
+        )
+        for exercise_id, exercise_name in (("slow", "Slow"), ("other", "Other"))
+    ]
+    monkeypatch.setattr(wave, "_wave_candidates_for_item", lambda item: [bake.RankedCandidate(
+        0, 1, item.exercise_id, item.exercise_name, item.exercise_id, {"videoId": item.exercise_id})])
     monkeypatch.setattr(wave, "prepare_candidate_input_video", lambda candidate, **kwargs: tmp_path / "video.mp4")
+
+    def generate(candidate, **kwargs):
+        if candidate.exercise_id == "other":
+            assert render_started.wait(5), "The overlapping render was not started."
+        return SimpleNamespace(wham_cache_status="reused", wham_results_pkl=None)
+
     monkeypatch.setattr(
         wave,
         "generate_candidate_motion",
-        lambda candidate, **kwargs: SimpleNamespace(wham_cache_status="reused", wham_results_pkl=None),
+        generate,
     )
 
     def render(_item, candidate, result, contract):
@@ -279,22 +315,23 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
         # Give the abandon path a moment; must not block on the stuck prefetch.
         time_module.sleep(0.05)
         release_render.set()
-        return {"selected": {"candidate": {"videoId": "slow"}}, "candidateResults": []}
+        return {"selected": {"candidate": {"videoId": request.workspace.name}}, "candidateResults": []}
 
     monkeypatch.setattr(wave, "run_bake_and_rank_pipeline", finalize)
     started = time_module.perf_counter()
-    result = wave.run_staged_bake_wave([item], workspace=tmp_path / "wave", wave_id="abandon")
+    result = wave.run_staged_bake_wave(items, workspace=tmp_path / "wave", wave_id="abandon")
     elapsed = time_module.perf_counter() - started
     assert elapsed < 2.0
-    assert result["completedExerciseCount"] == 1
+    assert result["completedExerciseCount"] == 2
     prefetch = result["metrics"]["cpuRenderPrefetch"]
     assert len(prefetch) == 1
     status = next(iter(prefetch.values()))["status"]
     assert status in {"abandoned_for_finalization", "prepared"}
     if status == "abandoned_for_finalization":
         assert render_started.is_set()
-    timing = result["items"][0]["finalValidation"]["schedulingTimings"]
-    assert timing["renderPrefetchWaitSeconds"] < 0.5
+    for state in result["items"]:
+        timing = state["finalValidation"]["schedulingTimings"]
+        assert timing["renderPrefetchWaitSeconds"] < 0.5
 
 
 def test_abandoned_speculative_prefetch_releases_bake_checkpoint_lock(tmp_path, monkeypatch):

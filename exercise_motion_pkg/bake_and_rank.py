@@ -1,6 +1,26 @@
 from __future__ import annotations
 
-from exercise_motion_pkg.acceptance import decide_acceptance, selected_artifact_identity
+from exercise_motion_pkg.acceptance import AcceptanceDecision, decide_acceptance, selected_artifact_identity
+from exercise_motion_pkg.artifact_state import (
+    BOUNDED_MOVEMENT_REBAKE,
+    BOUNDED_MOVEMENT_SELECTION,
+    CYCLE_SELECTION,
+    CYCLIC_REBAKE,
+    FULL_CLIP_BAKE,
+    MANUAL_REVIEW_PACKAGE,
+    PACKAGED_MOVEMENT,
+    TERMINAL_ARTIFACT_CLASSES,
+    artifact_class_gate,
+    baked_payload_identity,
+    bounded_movement_selection_evidence,
+    build_packaged_artifact_state,
+    build_artifact_state,
+    classify_baked_artifact,
+    cycle_selection_evidence,
+    expected_artifact_terminal,
+    validate_artifact_state,
+    validate_packaged_artifact_state,
+)
 
 from exercise_motion_pkg.browser_workers import browser_session, browser_worker
 
@@ -19,6 +39,7 @@ from exercise_motion_pkg.boundary_evidence import (
 )
 from exercise_motion_pkg.observation_cache import ObservationCache
 from exercise_motion_pkg.gpu_lock import query_free_gpu_memory_mib, small_gpu_stage_lock
+from exercise_motion_pkg.process_lock import InterProcessFileLock, exclusive_workspace_lease
 import inspect
 import json
 import math
@@ -36,11 +57,15 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from dataclasses import replace as dataclass_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlencode
+
+
+REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS = 120.0
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.bilateral_evidence import exported_arm_symmetry_metrics, source_arm_symmetry_evidence
@@ -247,7 +272,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 35
+SELECTED_SECTION_BAKE_CACHE_VERSION = 38
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -574,9 +599,14 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 121
-FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 81
-RETAINED_SELECTED_REVALIDATION_VERSION = 14
+SELECTION_VALIDATION_POLICY_VERSION = 127
+FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
+RETAINED_SELECTED_REVALIDATION_VERSION = 18
+# These policy versions isolate source-review caches from unrelated edits to
+# this large pipeline module. Prompt text and image bytes are already part of
+# each question key; bump the aggregate version when verdict semantics change.
+SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 1
+SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 1
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
 )
@@ -1305,6 +1335,7 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
         Path(__file__).with_name("whole_body_repair.py"),
         Path(__file__).with_name("sequence_stabilization.py"),
         Path(__file__).with_name("controlled_motion.py"),
+        Path(__file__).with_name("artifact_state.py"),
         Path(__file__).with_name("motion_placement.py"),
         Path(__file__).with_name("scene_placement.py"),
         Path(__file__).with_name("rig_playback.py"),
@@ -2429,6 +2460,7 @@ class EligibleLoop:
     duration_sec: float
     start_seconds: float = 0.0
     end_seconds: float = 0.0
+    artifact_class: str = FULL_CLIP_BAKE
 
 
 @dataclass(frozen=True)
@@ -2452,6 +2484,8 @@ class BakedLoopArtifact:
     settings_options: dict[str, Any] = field(default_factory=dict)
     cleanup_interpretation: str = "support_lock"
     adaptive_preview_settings: dict[str, Any] | None = None
+    preview_bake_diagnostics: dict[str, Any] = field(default_factory=dict)
+    artifact_class: str = ""
 
 
 @dataclass(frozen=True)
@@ -2512,6 +2546,273 @@ class ReviewItem:
     source_review_start_seconds: float | None = None
     source_review_end_seconds: float | None = None
     export_payload: dict[str, Any] | None = None
+    artifact_class: str = ""
+
+
+def required_final_artifact_class(contract: dict[str, Any] | None) -> str | None:
+    if not isinstance(contract, dict):
+        return None
+    if exercise_requires_loop_continuity("", ranking_payload={"exerciseMotionContract": contract}):
+        return CYCLIC_REBAKE
+    if kinematic_contract_completion_mode(contract) == "distinct_end_state":
+        return BOUNDED_MOVEMENT_REBAKE
+    return None
+
+
+def review_item_contract_for_artifact_state(
+    item: ReviewItem,
+    ranking: LoopRanking | None,
+) -> dict[str, Any] | None:
+    contract = exercise_motion_contract_for_review_item(item, ranking)
+    if contract is not None:
+        return contract
+    ranking_payload = ranking.payload if ranking is not None and isinstance(ranking.payload, dict) else {}
+    candidates = [
+        ranking_payload.get("exerciseMotionContract"),
+        item.candidate.get("exerciseMotionContract") if isinstance(item.candidate, dict) else None,
+        (
+            item.candidate.get("visionPayload", {}).get("exerciseMotionContract")
+            if isinstance(item.candidate, dict)
+            and isinstance(item.candidate.get("visionPayload"), dict)
+            else None
+        ),
+    ]
+    return next((candidate for candidate in candidates if isinstance(candidate, dict)), None)
+
+
+def artifact_state_for_baked_payload(
+    payload: dict[str, Any],
+    *,
+    contract: dict[str, Any] | None,
+    selection_class: str,
+    selection_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    loop = payload.get("loop")
+    loop_enabled = isinstance(loop, dict) and loop.get("enabled") is True
+    requires_cycle = required_final_artifact_class(contract) == CYCLIC_REBAKE
+    completion_mode = kinematic_contract_completion_mode(contract)
+    artifact_class = classify_baked_artifact(
+        loop_enabled=loop_enabled,
+        requires_cycle=requires_cycle,
+        completion_mode=completion_mode,
+        selection_class=selection_class,
+    )
+    evidence = {
+        "loopEnabled": loop_enabled,
+        "completionMode": completion_mode or None,
+        "sourceCyclePreflight": payload.get("sourceCyclePreflight"),
+        "observedCycleProposalCount": len(payload.get("observedCycleProposals") or []),
+        **(selection_evidence or {}),
+    }
+    if artifact_class == CYCLIC_REBAKE and isinstance(payload.get("frames"), list):
+        evidence["cyclicRebake"] = baked_payload_identity(payload)
+    elif artifact_class == BOUNDED_MOVEMENT_REBAKE and isinstance(payload.get("frames"), list):
+        evidence["boundedMovementRebake"] = baked_payload_identity(payload)
+    elif artifact_class == FULL_CLIP_BAKE and isinstance(payload.get("frames"), list):
+        evidence["fullClipBake"] = baked_payload_identity(payload)
+    state = build_artifact_state(
+        artifact_class=artifact_class,
+        selection_class=selection_class,
+        required_class=required_final_artifact_class(contract),
+        selection_evidence=evidence,
+    )
+    validate_artifact_state(state, movement_payload=payload)
+    payload["artifactState"] = state
+    return state
+
+
+def movement_artifact_class_gate(
+    state: dict[str, Any],
+    *,
+    accepted_classes: set[str] | frozenset[str],
+    gate_name: str,
+    require_terminal: bool = False,
+) -> dict[str, Any]:
+    gate = artifact_class_gate(
+        artifact_class=str(state.get("artifactClass") or ""),
+        accepted_classes=accepted_classes,
+        gate_name=gate_name,
+    )
+    lineage_complete = state.get("lineageComplete") is True
+    gate["lineageComplete"] = lineage_complete
+    if state.get("artifactClass") in {
+        FULL_CLIP_BAKE,
+        CYCLIC_REBAKE,
+        BOUNDED_MOVEMENT_REBAKE,
+    } and not lineage_complete:
+        gate["passed"] = False
+        gate["rejectionReasons"] = dedupe_text(
+            [*gate["rejectionReasons"], "artifact_lineage_incomplete"]
+        )
+    if require_terminal and state.get("terminal") is not True:
+        gate["passed"] = False
+        gate["rejectionReasons"] = dedupe_text(
+            [*gate["rejectionReasons"], "artifact_state_not_terminal"]
+        )
+    return gate
+
+
+def terminal_cycle_rebake_superseding_full_clip(
+    full_clip_payload: Any,
+    sibling_payloads: Iterable[Any],
+) -> dict[str, Any] | None:
+    """Find a fit- and pre-render-valid cycle that makes its parent unselectable."""
+    if not isinstance(full_clip_payload, dict):
+        return None
+    parent_state = full_clip_payload.get("artifactState")
+    if (
+        not isinstance(parent_state, dict)
+        or parent_state.get("artifactClass") != FULL_CLIP_BAKE
+        or parent_state.get("terminal") is True
+        or parent_state.get("requiredClass") != CYCLIC_REBAKE
+    ):
+        return None
+    parent_evidence = parent_state.get("selectionEvidence")
+    parent_identity = (
+        parent_evidence.get("fullClipBake")
+        if isinstance(parent_evidence, dict)
+        else None
+    )
+    if not isinstance(parent_identity, dict):
+        return None
+    try:
+        validate_artifact_state(parent_state, movement_payload=full_clip_payload)
+    except (TypeError, ValueError):
+        return None
+
+    for sibling in sibling_payloads:
+        if not isinstance(sibling, dict):
+            continue
+        sibling_state = sibling.get("artifactState")
+        evidence = (
+            sibling_state.get("selectionEvidence")
+            if isinstance(sibling_state, dict)
+            else None
+        )
+        fit = sibling.get("controlledMotionFit")
+        pre_render_gate = sibling.get("preRenderDeterministicGate")
+        if (
+            isinstance(sibling_state, dict)
+            and sibling_state.get("artifactClass") == CYCLIC_REBAKE
+            and sibling_state.get("requiredClass") == CYCLIC_REBAKE
+            and sibling_state.get("terminal") is True
+            and sibling_state.get("lineageComplete") is True
+            and isinstance(evidence, dict)
+            and evidence.get("fullClipBake") == parent_identity
+            and isinstance(fit, dict)
+            and fit.get("applied") is True
+            and isinstance(pre_render_gate, dict)
+            and pre_render_gate.get("passed") is True
+        ):
+            try:
+                validate_artifact_state(sibling_state, movement_payload=sibling)
+            except (TypeError, ValueError):
+                continue
+            cycle_identity = evidence.get("cyclicRebake")
+            return {
+                "artifactClass": CYCLIC_REBAKE,
+                "selectionEvidence": evidence.get("cycleSelection"),
+                "frameCount": (
+                    cycle_identity.get("frameCount")
+                    if isinstance(cycle_identity, dict)
+                    else None
+                ),
+            }
+    return None
+
+
+def persisted_review_item_artifact_state(
+    item: ReviewItem,
+) -> tuple[bool, Any, dict[str, Any]]:
+    if isinstance(item.export_payload, dict):
+        payload = item.export_payload
+        if "artifactState" in payload:
+            return True, payload["artifactState"], payload
+    try:
+        payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, None, {}
+    if not isinstance(payload, dict):
+        return False, None, {}
+    if "artifactState" in payload:
+        return True, payload["artifactState"], payload
+    return False, None, payload
+
+
+def review_item_artifact_class(item: ReviewItem) -> str:
+    has_persisted_state, persisted_state, payload = persisted_review_item_artifact_state(item)
+    if has_persisted_state:
+        artifact_class = str(
+            validate_artifact_state(
+                persisted_state,
+                movement_payload=payload,
+            )["artifactClass"]
+        )
+        if item.artifact_class and item.artifact_class != artifact_class:
+            raise ValueError("Review item artifact class differs from its persisted artifact state")
+        return artifact_class
+    if item.artifact_class:
+        if item.artifact_class not in TERMINAL_ARTIFACT_CLASSES:
+            raise ValueError(f"Unknown review item artifact class: {item.artifact_class}")
+        return item.artifact_class
+    loop = payload.get("loop") if isinstance(payload, dict) else None
+    if isinstance(loop, dict) and loop.get("enabled") is True:
+        return CYCLIC_REBAKE
+    return FULL_CLIP_BAKE
+
+
+def review_item_artifact_state(
+    item: ReviewItem,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    has_persisted_state, persisted_state, _payload = persisted_review_item_artifact_state(item)
+    required_class = required_final_artifact_class(contract)
+    if has_persisted_state:
+        state = dict(
+            validate_artifact_state(
+                persisted_state,
+                movement_payload=_payload,
+            )
+        )
+        if item.artifact_class and item.artifact_class != state["artifactClass"]:
+            raise ValueError("Review item artifact class differs from its persisted artifact state")
+        if contract is not None and state.get("requiredClass") != required_class:
+            state["requiredClass"] = required_class
+            state["terminal"] = expected_artifact_terminal(
+                str(state["artifactClass"]),
+                required_class,
+            )
+            validate_artifact_state(state, movement_payload=_payload)
+        return state
+    artifact_class = review_item_artifact_class(item)
+    return build_artifact_state(
+        artifact_class=artifact_class,
+        selection_class=(
+            BOUNDED_MOVEMENT_SELECTION
+            if artifact_class == BOUNDED_MOVEMENT_REBAKE
+            else CYCLE_SELECTION
+            if artifact_class == CYCLIC_REBAKE
+            else FULL_CLIP_BAKE
+        ),
+        required_class=required_class,
+    )
+
+
+def persist_reconciled_review_item_artifact_state(
+    item: ReviewItem,
+    artifact_state: dict[str, Any],
+) -> None:
+    """Write a contract-reconciled state before final render evidence binds file identity."""
+    has_persisted_state, persisted_state, payload = persisted_review_item_artifact_state(item)
+    if not has_persisted_state or persisted_state == artifact_state:
+        return
+    updated_payload = copy.deepcopy(payload)
+    updated_payload["artifactState"] = copy.deepcopy(artifact_state)
+    validate_artifact_state(artifact_state, movement_payload=updated_payload)
+    write_json_atomic(item.skeleton_path, updated_payload)
+    if isinstance(item.export_payload, dict):
+        item.export_payload["artifactState"] = copy.deepcopy(artifact_state)
 
 
 @dataclass(frozen=True)
@@ -2766,10 +3067,90 @@ class CandidateWallTimeBudgetExpired(TimeoutError):
 
 
 VISION_LIFECYCLE_EVENT_LIMIT = 512
+_VLM_FILE_IDENTITY_CACHE_LIMIT = 32
+_VLM_FILE_IDENTITY_CACHE: dict[tuple[str, tuple[int, int, int, int]], dict[str, Any]] = {}
+_VLM_FILE_IDENTITY_CACHE_ORDER: list[tuple[str, tuple[int, int, int, int]]] = []
+_VLM_FILE_IDENTITY_CACHE_LOCK = threading.Lock()
 
 # Sentinel distinguishing "co-residency was declined / OOM-fell-back" from any
 # legitimate operation result (including None).
 _CO_RESIDENT_FALLBACK = object()
+
+
+def _file_identity_metadata(stat_result: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        int(stat_result.st_dev),
+        int(stat_result.st_ino),
+        int(stat_result.st_size),
+        int(stat_result.st_mtime_ns),
+    )
+
+
+def vlm_model_file_identity(path: str | Path) -> dict[str, Any]:
+    """Content identify one stable model-file version, hashing it once per process."""
+    resolved = Path(path).expanduser().resolve()
+    for _attempt in range(3):
+        try:
+            path_stat = resolved.stat()
+        except OSError as exc:
+            raise RuntimeError(f"Could not identify VLM model file: {resolved}") from exc
+        token = _file_identity_metadata(path_stat)
+        cache_key = (str(resolved), token)
+        with _VLM_FILE_IDENTITY_CACHE_LOCK:
+            cached = _VLM_FILE_IDENTITY_CACHE.get(cache_key)
+            if cached is not None:
+                try:
+                    if _file_identity_metadata(resolved.stat()) == token:
+                        return dict(cached)
+                except OSError:
+                    continue
+                _VLM_FILE_IDENTITY_CACHE.pop(cache_key, None)
+                try:
+                    _VLM_FILE_IDENTITY_CACHE_ORDER.remove(cache_key)
+                except ValueError:
+                    pass
+
+            digest = hashlib.sha256()
+            try:
+                with resolved.open("rb") as stream:
+                    opened_token = _file_identity_metadata(os.fstat(stream.fileno()))
+                    if opened_token != token:
+                        continue
+                    for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                        digest.update(block)
+                    if (
+                        _file_identity_metadata(os.fstat(stream.fileno())) != token
+                        or _file_identity_metadata(resolved.stat()) != token
+                    ):
+                        continue
+            except OSError as exc:
+                raise RuntimeError(f"Could not hash VLM model file: {resolved}") from exc
+
+            identity = {
+                "path": str(resolved),
+                "device": token[0],
+                "fileId": token[1],
+                "sizeBytes": token[2],
+                "mtimeNs": token[3],
+                "sha256": digest.hexdigest(),
+            }
+            _VLM_FILE_IDENTITY_CACHE[cache_key] = identity
+            _VLM_FILE_IDENTITY_CACHE_ORDER.append(cache_key)
+            while len(_VLM_FILE_IDENTITY_CACHE_ORDER) > _VLM_FILE_IDENTITY_CACHE_LIMIT:
+                expired_key = _VLM_FILE_IDENTITY_CACHE_ORDER.pop(0)
+                _VLM_FILE_IDENTITY_CACHE.pop(expired_key, None)
+            return dict(identity)
+    raise RuntimeError(f"VLM model file changed while its identity was being computed: {resolved}")
+
+
+def vlm_settings_with_file_identities(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace configured VLM files with stable content identities for cache keys."""
+    identity = dict(settings)
+    for name in ("llama_cpp_model", "llama_cpp_mmproj", "llama_cpp_server_command"):
+        value = identity.get(name)
+        if value and isinstance(value, (str, Path)) and Path(value).is_file():
+            identity[name] = vlm_model_file_identity(value)
+    return identity
 
 
 def _is_cuda_out_of_memory_error(exc: BaseException) -> bool:
@@ -2834,7 +3215,10 @@ class LazyLlamaCppVisionSession:
         self.co_resident_declined_count = 0
         self.co_resident_oom_fallback_count = 0
         self._exclusive_batch_open = False
-        self._candidate_deadlines = threading.local()
+        self._candidate_deadlines: ContextVar[float | None] = ContextVar(
+            f"vision_candidate_deadline_{id(self)}",
+            default=None,
+        )
         self._endpoint_observations = ObservationCache()
         self._session_started_at = time.perf_counter()
         self._lifecycle_events: list[dict[str, Any]] = []
@@ -2855,26 +3239,23 @@ class LazyLlamaCppVisionSession:
 
     def set_candidate_deadline(self, deadline: float | None) -> None:
         with self._condition:
-            self._candidate_deadlines.value = deadline
+            self._candidate_deadlines.set(deadline)
 
     def caption_endpoint_images(self, *, frame_paths: list[Path], prompt: str, **kwargs: Any) -> str:
         """Reuse exact, deterministic observations across overlapping windows and GPU swaps."""
         with self._condition:
             if self._closed:
                 raise RuntimeError("llama.cpp vision session was already closed.")
-            deadline = getattr(self._candidate_deadlines, "value", None)
+            deadline = self._candidate_deadlines.get()
             remaining = deadline - time.perf_counter() if deadline is not None else None
         if remaining is not None and remaining <= 0:
             raise CandidateWallTimeBudgetExpired("Candidate budget expired before endpoint observation.")
         temperature = kwargs.get("temperature", self.settings.llama_cpp_temperature)
         if temperature != 0:
             return self.caption_images(frame_paths=frame_paths, prompt=prompt, **kwargs)
-        settings = {key: value for key, value in vars(self.settings).items() if key.startswith("llama_cpp_")}
-        for key in ("llama_cpp_model", "llama_cpp_mmproj", "llama_cpp_server_command"):
-            value = settings.get(key)
-            if value and Path(value).is_file():
-                stat = Path(value).stat()
-                settings[key] = (str(value), stat.st_size, stat.st_mtime_ns)
+        settings = vlm_settings_with_file_identities({
+            key: value for key, value in vars(self.settings).items() if key.startswith("llama_cpp_")
+        })
         settings["request"] = {key: value for key, value in kwargs.items() if key != "request_timeout_seconds"}
         requested_timeout = float(kwargs.get("request_timeout_seconds") or 0)
         timeout = requested_timeout if requested_timeout > 0 else None
@@ -2929,7 +3310,7 @@ class LazyLlamaCppVisionSession:
             ):
                 if self._closed:
                     raise RuntimeError("llama.cpp vision session was already closed.")
-                deadline = getattr(self._candidate_deadlines, "value", None)
+                deadline = self._candidate_deadlines.get()
                 if deadline is not None and time.perf_counter() >= deadline:
                     raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for a VLM slot.")
                 self._condition.wait(timeout=0.25)
@@ -2967,7 +3348,7 @@ class LazyLlamaCppVisionSession:
             self._active_calls += 1
             self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
             self._shared_request_admitted_locked()
-            candidate_deadline = getattr(self._candidate_deadlines, "value", None)
+            candidate_deadline = self._candidate_deadlines.get()
         candidate_budget_limited_request = False
         if candidate_deadline is not None:
             remaining_seconds = candidate_deadline - time.perf_counter()
@@ -3348,9 +3729,13 @@ def materialized_metrics_with_gpu_handoff(
     caption_images: Callable[..., str] | None,
     source_pose_reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if source_pose_reference is None and item.loop_index < 0:
+    if source_pose_reference is None:
         source_pose_reference = source_pose_reference_from_phase_metrics(
             pre_wham_exact_source_phase_reference_metrics(item))
+    # Cyclic artifacts retain sourceTimeSec on every frame, so pose fidelity
+    # can select their exact parent-video interval from this verified reference.
+    # Reusing the pre-WHAM evidence avoids rerunning CUDA YOLO during final fit
+    # validation, which may execute in a Python worker without CUDA available.
 
     def operation() -> dict[str, Any]:
         return materialized_output_acceptance_metrics(
@@ -3886,6 +4271,7 @@ def split_loops_by_duration(
                     duration_sec=duration_sec,
                     start_seconds=start_seconds,
                     end_seconds=end_seconds,
+                    artifact_class=CYCLE_SELECTION,
                 )
             )
         else:
@@ -4469,14 +4855,14 @@ def choose_best_materialized_review_item(
     final_output_caption_images: Callable[..., str] | None = None,
 ) -> tuple[SelectedArtifact | None, SelectedArtifact | None]:
     paired = sorted(
-        zip(items, rankings),
-        key=lambda pair: (
-            selected_artifact_score(pair),
-            source_confirmed_support_lock_selection_priority(pair[0]),
-            1 if pair[0].settings_variant_id == "adaptive-baseline" else 0,
-            -pair[0].exercise_index,
-            -pair[0].candidate_rank,
-            -pair[0].loop_index,
+        enumerate(zip(items, rankings)),
+        key=lambda indexed_pair: (
+            selected_artifact_score(indexed_pair[1]),
+            source_confirmed_support_lock_selection_priority(indexed_pair[1][0]),
+            1 if indexed_pair[1][0].settings_variant_id == "adaptive-baseline" else 0,
+            -indexed_pair[1][0].exercise_index,
+            -indexed_pair[1][0].candidate_rank,
+            -indexed_pair[1][0].loop_index,
         ),
         reverse=True,
     )
@@ -4486,21 +4872,26 @@ def choose_best_materialized_review_item(
     accepted_best: SelectedArtifact | None = None
     rejected_best: SelectedArtifact | None = None
     materialized_quality_rescore_enabled = (
-        len({(item.exercise_index, item.candidate_rank) for item, _ranking in paired}) > 1
+        len({(item.exercise_index, item.candidate_rank) for _index, (item, _ranking) in paired}) > 1
     )
-    for pair_index, (item, ranking) in enumerate(paired):
+    for pair_index, (ranking_index, pair) in enumerate(paired):
         materialize_kwargs: dict[str, Any] = {
             "request": request,
             "materialized_quality_rescore_enabled": materialized_quality_rescore_enabled,
         }
         if final_output_caption_images is not None:
             materialize_kwargs["final_output_caption_images"] = final_output_caption_images
-        accepted, rejected = materialize_selection_candidate((item, ranking), **materialize_kwargs)
+        accepted, rejected = materialize_selection_candidate(pair, **materialize_kwargs)
+        materialized = accepted or rejected
+        if materialized is not None and materialized[1] is not None:
+            # Persist each visited candidate's gate result, not only the winning
+            # rejection, so the manifest records why materialization stopped.
+            rankings[ranking_index] = materialized[1]
         if accepted is not None:
             if accepted_best is None or selected_artifact_sort_key(accepted) > selected_artifact_sort_key(accepted_best):
                 accepted_best = accepted
             remaining_score_upper_bound = max(
-                (selected_artifact_score(pair) for pair in paired[pair_index + 1 :]),
+                (selected_artifact_score(remaining_pair) for _index, remaining_pair in paired[pair_index + 1 :]),
                 default=0.0,
             )
             if selected_artifact_score(accepted_best) >= remaining_score_upper_bound:
@@ -4525,8 +4916,8 @@ def choose_top_materialized_review_items(
     final_output_caption_images: Callable[..., str] | None = None,
 ) -> tuple[list[SelectedArtifact], SelectedArtifact | None]:
     paired = sorted(
-        zip(items, rankings),
-        key=selected_artifact_sort_key,
+        enumerate(zip(items, rankings)),
+        key=lambda indexed_pair: selected_artifact_sort_key(indexed_pair[1]),
         reverse=True,
     )
     if not paired:
@@ -4534,18 +4925,21 @@ def choose_top_materialized_review_items(
 
     limit = max(1, int(max_results or max_selected_results_for_request(request)))
     materialized_quality_rescore_enabled = (
-        len({(item.exercise_index, item.candidate_rank) for item, _ranking in paired}) > 1
+        len({(item.exercise_index, item.candidate_rank) for _index, (item, _ranking) in paired}) > 1
     )
     accepted_by_source_window: dict[str, SelectedArtifact] = {}
     rejected_best: SelectedArtifact | None = None
-    for item, ranking in paired:
+    for ranking_index, pair in paired:
         materialize_kwargs: dict[str, Any] = {
             "request": request,
             "materialized_quality_rescore_enabled": materialized_quality_rescore_enabled,
         }
         if final_output_caption_images is not None:
             materialize_kwargs["final_output_caption_images"] = final_output_caption_images
-        accepted, rejected = materialize_selection_candidate((item, ranking), **materialize_kwargs)
+        accepted, rejected = materialize_selection_candidate(pair, **materialize_kwargs)
+        materialized = accepted or rejected
+        if materialized is not None and materialized[1] is not None:
+            rankings[ranking_index] = materialized[1]
         if accepted is not None:
             attempt_key = review_item_attempt_key(accepted[0])
             existing = accepted_by_source_window.get(attempt_key)
@@ -4565,24 +4959,6 @@ def choose_top_materialized_review_items(
     if accepted:
         return accepted[:limit], None
     return [], rejected_best
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def selected_artifact_score(selected: SelectedArtifact) -> float:
@@ -4833,7 +5209,51 @@ def apply_materialized_output_acceptance_gate(
     deterministic_metrics: dict[str, Any] | None = None,
 ) -> SelectedArtifact:
     item, ranking = selected
+    contract = review_item_contract_for_artifact_state(item, ranking)
+    required_class = required_final_artifact_class(contract)
+    artifact_class = review_item_artifact_class(item)
+    artifact_state = review_item_artifact_state(item, contract=contract)
+    class_gate = movement_artifact_class_gate(
+        artifact_state,
+        accepted_classes=(
+            {required_class}
+            if required_class is not None
+            else TERMINAL_ARTIFACT_CLASSES
+        ),
+        gate_name="final_output_acceptance",
+    )
     if ranking is None:
+        ranking = LoopRanking(score=0.0, reasons=["artifact_class_gate_required"], payload={})
+    if not class_gate["passed"]:
+        payload = dict(ranking.payload or {})
+        rejection_reasons = dedupe_text(
+            list(class_gate.get("rejectionReasons") or [])
+            + ([f"required_artifact_class_{required_class}"] if required_class is not None else [])
+        )
+        if not rejection_reasons:
+            rejection_reasons = ["artifact_class_not_terminal"]
+        class_gate["rejectionReasons"] = rejection_reasons
+        payload["artifactClassGate"] = class_gate
+        payload["materializedOutputAcceptanceGate"] = {
+            "artifactClassGate": class_gate,
+            "skippedReasons": ["final_validation_skipped_for_artifact_class_mismatch"],
+        }
+        payload["finalOutputValidation"] = {
+            "passed": False,
+            "failureOwner": "motion_output",
+            "rejectionReasons": rejection_reasons,
+            "artifactClassGate": class_gate,
+        }
+        payload["acceptanceDecision"] = AcceptanceDecision(
+            "invalid", "motion_output", tuple(rejection_reasons), True
+        ).to_dict()
+        payload["materializedValidationStatus"] = "rejected"
+        payload["materializedHardRejectionReasons"] = rejection_reasons
+        payload["materializedWarnings"] = []
+        payload["manualBoundaryReviewRequired"] = False
+        return item, replace(ranking, payload=payload)
+    persist_reconciled_review_item_artifact_state(item, artifact_state)
+    if selected[1] is None:
         return selected
     metrics = deterministic_metrics or materialized_metrics_with_gpu_handoff(
         item, ranking, caption_images=final_output_caption_images)
@@ -4857,6 +5277,8 @@ def apply_materialized_output_acceptance_gate(
     payload = dict(ranking.payload or {})
     payload["materializedOutputAcceptanceGate"] = public_metrics
     payload["finalOutputValidation"] = final_validation
+    payload["artifactClassGate"] = class_gate
+    final_validation["artifactClassGate"] = class_gate
     hard_rejection_reasons = materialized_hard_rejection_reasons(
         metrics=metrics,
         final_validation=final_validation,
@@ -5020,6 +5442,164 @@ def materialized_weighted_selection_score(
     }
 
 
+def selected_skeleton_file_identity(path: Path) -> dict[str, Any]:
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
+    frames = payload.get("frames") if isinstance(payload, dict) else None
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "frameCount": len(frames) if isinstance(frames, list) else None,
+    }
+
+
+def _artifact_review_selection(
+    artifact_state: dict[str, Any],
+    movement_payload: dict[str, Any],
+) -> dict[str, Any]:
+    artifact_class = artifact_state["artifactClass"]
+    evidence = artifact_state.get("selectionEvidence") or {}
+    if artifact_class == CYCLIC_REBAKE:
+        selected = evidence["cycleSelection"]
+        return {
+            "artifactClass": artifact_class,
+            "selectionId": selected["selectionId"],
+            "interval": selected["interval"],
+        }
+    if artifact_class == BOUNDED_MOVEMENT_REBAKE:
+        selected = evidence["boundedMovementSelection"]
+        return {
+            "artifactClass": artifact_class,
+            "selectionId": selected["selectionId"],
+            "interval": selected["interval"],
+        }
+
+    loop = movement_payload.get("loop")
+    frames = movement_payload.get("frames")
+    if not isinstance(loop, dict) or not isinstance(frames, list) or not frames:
+        raise ValueError("Full-clip review is missing its materialized source interval")
+    first = frames[0] if isinstance(frames[0], dict) else {}
+    last = frames[-1] if isinstance(frames[-1], dict) else {}
+    start_frame = loop.get("sourceStartFrame", first.get("sourceFrameIndex", 0))
+    end_frame = loop.get("sourceEndFrame", last.get("sourceFrameIndex", len(frames) - 1))
+    start_time = loop.get("sourceStartTimeSec", first.get("sourceTimeSec", 0.0))
+    end_time = loop.get("sourceEndTimeSec", last.get("sourceTimeSec"))
+    if end_time is None:
+        end_time = max(0, len(frames) - 1) / parse_export_fps(movement_payload)
+    interval = {
+        "type": "full_clip_bake",
+        "startFrame": start_frame,
+        "endFrame": end_frame,
+        "startTimeSec": start_time,
+        "endTimeSec": end_time,
+        "durationSec": max(0.0, float(end_time) - float(start_time)),
+    }
+    return {"artifactClass": artifact_class, "selectionId": None, "interval": interval}
+
+
+def build_final_output_review_window_evidence(
+    movement_payload: dict[str, Any],
+    *,
+    requested_frame_count: int,
+    explicit_frame_indices: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Describe the exact selected artifact and frame subset sent to final rendering."""
+    frames = movement_payload.get("frames")
+    declared_frame_count = movement_payload.get("frameCount")
+    if not isinstance(frames, list) or not frames:
+        raise ReviewFrameCaptureError("Final review skeleton has inconsistent frame counts")
+    if declared_frame_count is not None and (
+        type(declared_frame_count) is not int or declared_frame_count != len(frames)
+    ):
+        raise ReviewFrameCaptureError("Final review skeleton has inconsistent frame counts")
+    artifact_state = validate_artifact_state(
+        movement_payload.get("artifactState"),
+        movement_payload=movement_payload,
+    )
+    if explicit_frame_indices is None:
+        frame_indices = final_output_review_frame_indices(
+            movement_payload,
+            requested_frame_count=requested_frame_count,
+        )
+        sampling = {
+            "policy": "evenly_spaced_v1",
+            "requestedFrameCount": requested_frame_count,
+        }
+    else:
+        frame_indices = final_output_review_frame_indices(
+            movement_payload,
+            requested_frame_count=requested_frame_count,
+            explicit_frame_indices=explicit_frame_indices,
+        )
+        sampling = {
+            "policy": "explicit_indices_v1",
+            "requestedFrameIndices": list(explicit_frame_indices),
+        }
+    evidence = {
+        "schemaVersion": 1,
+        "frameCount": len(frames),
+        "frameIndices": frame_indices,
+        "frameTimesSec": frame_timestamps_for_indices(movement_payload, frame_indices),
+        "sampling": sampling,
+        "selection": _artifact_review_selection(artifact_state, movement_payload),
+    }
+    return evidence, artifact_state
+
+
+def validate_final_output_review_window(
+    review_window: Any,
+    *,
+    artifact_state: dict[str, Any],
+    movement_payload: dict[str, Any],
+) -> None:
+    """Verify persisted review frames and selected interval against the packaged payload."""
+    if not isinstance(review_window, dict) or review_window.get("schemaVersion") != 1:
+        raise ValueError("Final render evidence is missing its review window")
+    frames = movement_payload.get("frames")
+    if (
+        not isinstance(frames, list)
+        or review_window.get("frameCount") != len(frames)
+        or type(review_window.get("frameCount")) is not int
+    ):
+        raise ValueError("Final review window frame count differs from the selected artifact")
+    frame_indices = review_window.get("frameIndices")
+    if (
+        not isinstance(frame_indices, list)
+        or not frame_indices
+        or any(type(index) is not int or not 0 <= index < len(frames) for index in frame_indices)
+    ):
+        raise ValueError("Final review window contains invalid frame indices")
+    sampling = review_window.get("sampling")
+    if not isinstance(sampling, dict):
+        raise ValueError("Final review window is missing its sampling policy")
+    if sampling.get("policy") == "evenly_spaced_v1":
+        requested_count = sampling.get("requestedFrameCount")
+        if type(requested_count) is not int or requested_count < 1:
+            raise ValueError("Final review window has an invalid requested frame count")
+        if sample_review_frame_indices(movement_payload, requested_count) != frame_indices:
+            raise ValueError("Final review frame indices differ from their sampling policy")
+    elif sampling.get("policy") == "explicit_indices_v1":
+        if sampling.get("requestedFrameIndices") != frame_indices:
+            raise ValueError("Final review frame indices differ from the explicit request")
+    else:
+        raise ValueError("Final review window has an unknown sampling policy")
+    expected_times = frame_timestamps_for_indices(movement_payload, frame_indices)
+    actual_times = review_window.get("frameTimesSec")
+    if (
+        not isinstance(actual_times, list)
+        or len(actual_times) != len(expected_times)
+        or any(
+            not isinstance(actual, (int, float))
+            or isinstance(actual, bool)
+            or not math.isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-6)
+            for actual, expected in zip(actual_times, expected_times)
+        )
+    ):
+        raise ValueError("Final review timestamps differ from the selected artifact frames")
+    expected_selection = _artifact_review_selection(artifact_state, movement_payload)
+    if review_window.get("selection") != expected_selection:
+        raise ValueError("Final review interval differs from the selected artifact lineage")
+
+
 def final_output_validation_metrics(
     item: ReviewItem, ranking: LoopRanking, *, request: BakeAndRankRequest,
     deterministic_metrics: dict[str, Any], caption_images: Callable[..., str] | None,
@@ -5042,12 +5622,35 @@ def final_output_validation_metrics(
             result.update(reviewStatus="needs_manual_review", failureOwner="evidence")
         return result
     try:
+        movement_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        review_window, reviewed_state = build_final_output_review_window_evidence(
+            movement_payload,
+            requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
+            explicit_frame_indices=item.settings_options.get("reviewFrameIndices"),
+        )
+        reviewed_skeleton = selected_skeleton_file_identity(item.skeleton_path)
         paths = final_output_preview_contact_sheets(item, output_dir=item.candidate_workspace / "review" /
                     f"{final_output_validation_artifact_slug(item)}-final-output-validation" / "preview")
         if not paths or any(not path.is_file() for path in paths):
             raise ReviewFrameCaptureError("Required final render evidence is missing")
-        result["renderEvidence"] = {"required": True, "available": True, "passed": True,
-                                    "contactSheetPaths": [str(path) for path in paths]}
+        if selected_skeleton_file_identity(item.skeleton_path) != reviewed_skeleton:
+            raise ReviewFrameCaptureError("Selected skeleton changed while final render evidence was being captured")
+        current_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        current_window, current_state = build_final_output_review_window_evidence(
+            current_payload,
+            requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
+            explicit_frame_indices=item.settings_options.get("reviewFrameIndices"),
+        )
+        if current_window != review_window or current_state != reviewed_state:
+            raise ReviewFrameCaptureError("Selected artifact or review window changed during final rendering")
+        result["renderEvidence"] = {
+            "required": True,
+            "available": True,
+            "passed": True,
+            "contactSheetPaths": [str(path) for path in paths],
+            "skeletonIdentity": reviewed_skeleton,
+            "reviewWindow": review_window,
+        }
     except Exception as exc:
         result.update(passed=False, failureOwner="rendering", reviewStatus="needs_manual_review",
                       renderEvidence={"required": True, "available": False, "passed": None},
@@ -5994,7 +6597,11 @@ def validate_final_output_with_caption_images(
     )
     from .visual_evidence import parse_visual_observations
     export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
-    sampled_indices = sample_review_frame_indices(export, FINAL_OUTPUT_VALIDATION_FRAME_COUNT)
+    sampled_indices = final_output_review_frame_indices(
+        export,
+        requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
+        explicit_frame_indices=item.settings_options.get("reviewFrameIndices"),
+    )
     prompt += "\nCell-to-frame manifest (same in both views): " + json.dumps(
         {str(cell): index for cell, index in enumerate(sampled_indices, 1)})
     prompt_path = output_dir / "final_output_validation_prompt.txt"
@@ -6009,11 +6616,6 @@ def validate_final_output_with_caption_images(
         "validators": {name: file_sha256(Path(__file__).with_name(name)) for name in (
             "bake_and_rank.py", "visual_evidence.py", "review_consensus.py", "acceptance.py", "pose_fidelity.py")},
     }
-    for name in ("llama_cpp_model", "llama_cpp_mmproj"):
-        value = model_settings.get(name)
-        if value and Path(value).is_file():
-            stat = Path(value).stat()
-            model_settings[name] = (str(value), stat.st_size, stat.st_mtime_ns)
     cache_key = final_output_validation_cache_key(
         prompt=prompt,
         frame_paths=frame_paths,
@@ -6128,7 +6730,8 @@ def final_output_validation_cache_key(
     model_settings: dict[str, Any] | None = None,
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(json.dumps(model_settings or {}, sort_keys=True, default=str).encode("utf-8"))
+    model_identity = vlm_settings_with_file_identities(model_settings or {})
+    digest.update(json.dumps(model_identity, sort_keys=True, default=str).encode("utf-8"))
     digest.update(prompt.encode("utf-8"))
     digest.update(f"\nmin_score={min_score:.6f}\n".encode("ascii"))
     for path in frame_paths:
@@ -6946,12 +7549,21 @@ def two_scale_topology_verification_passed(
         positions.append(position)
     if not phase_evidence_hard_gate:
         required_index = 0
+        last_observed_id = None
         for observed_id in observed_ids:
+            # Model-authored phase IDs are advisory. Some generated contracts
+            # collapse multiple visible actions into one phase and repeat that
+            # ID in their ordered observations. Keep time strictly increasing,
+            # and allow the current advisory phase to repeat without consuming
+            # the next expected phase.
+            if observed_id == last_observed_id:
+                continue
             while required_index < len(expected_phase_ids) and expected_phase_ids[required_index] != observed_id:
                 required_index += 1
             if required_index >= len(expected_phase_ids):
                 return False
             required_index += 1
+            last_observed_id = observed_id
     equipment_match = str(payload.get("requiredEquipmentMatch") or "").strip().casefold()
     equipment_passed = (
         equipment_match == "not_applicable"
@@ -6989,12 +7601,7 @@ def source_review_model_identity(settings: Any) -> dict[str, Any] | None:
         return None
     identity = {key: value for key, value in vars(settings).items()
                 if key.startswith("llama_cpp_")}
-    for name in ("llama_cpp_model", "llama_cpp_mmproj"):
-        value = identity.get(name)
-        if value and Path(value).is_file():
-            stat = Path(value).stat()
-            identity[name] = (str(value), stat.st_size, stat.st_mtime_ns)
-    return identity
+    return vlm_settings_with_file_identities(identity)
 
 
 def validate_two_scale_source_with_caption_images(
@@ -7029,11 +7636,11 @@ def validate_two_scale_source_with_caption_images(
     effective_contract = exercise_motion_contract or candidate_contract
     key = cache_key({"exercise": item.exercise_name, "contract": effective_contract,
         "model": model_settings, "window": [window.start_seconds, window.end_seconds],
+        "reviewPolicyVersion": SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION,
         "endpoints": source_pose_endpoint_features,
         "phase": {k: v for k, v in (source_phase_metrics or {}).items()
                   if k in {"required", "passed", "hasSingleMajorCycle", "hasCompleteMajorCycle"}}},
-        [video, *uniform_sheet_paths, *source_equipment_detail_frames(uniform_sheet_paths),
-         Path(__file__), Path(__file__).with_name("review_questions.py"), Path(__file__).with_name("youtube.py")])
+        [video, *uniform_sheet_paths, *source_equipment_detail_frames(uniform_sheet_paths)])
     directory = item.candidate_workspace / "source-review-cache" / key
     checkpoint = directory / "checkpoint.json"
     with stage_lock(checkpoint):
@@ -7196,9 +7803,9 @@ def _validate_two_scale_source_uncached(
         # Keep parser/prompt policy and contract changes isolated even if a
         # particular target-blind question happens to have an unchanged prompt.
         question_identity = cache_key({"model": question_model,
+            "reviewPolicyVersion": SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION,
             "contract": candidate_contract, "resolvedContract": specific_contract},
-            [Path(__file__), Path(__file__).with_name("review_questions.py"),
-             Path(__file__).with_name("youtube.py")])
+            [])
 
     def question(name: str, frames: list[Path], prompt: str, *, max_tokens: int = 256,
                  reusable: Callable[[Any], bool]) -> tuple[str, Any]:
@@ -7538,6 +8145,9 @@ def _validate_two_scale_source_uncached(
     return result
 
 
+_FINAL_OUTPUT_PREVIEW_RUNTIME_LOCK = threading.Lock()
+
+
 def final_output_preview_contact_sheets(item: ReviewItem, *, output_dir: Path) -> list[Path]:
     # A single cached video can hide a corrupted far-side limb. Require both
     # views of the actual exported skeleton; renderer failures are not approval.
@@ -7560,18 +8170,29 @@ def final_output_vlm_preview_contact_sheets(item: ReviewItem, *, output_dir: Pat
         export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
         if export.get("frames") and export.get("jointNames"):
             output_dir.mkdir(parents=True, exist_ok=True)
-            signature = cache_key({"runtime": preview_runtime_signature()}, [item.skeleton_path])
-            # Chromium file navigation can fail on Windows for deeply nested
-            # variant review paths even when Python can create the HTML.
-            runtime_dir = item.skeleton_path.parent / "review_runtime"
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            current_preview = runtime_dir / f"current-{signature[:16]}.html"
-            if not current_preview.is_file():
-                module = next((directory / "three.module.0.169.0.js" for directory in (
-                    item.preview_html_path.parent, item.skeleton_path.parent,
-                    item.candidate_workspace / "preview",
-                ) if (directory / "three.module.0.169.0.js").is_file()), None)
-                write_baked_preview_html(current_preview, export, three_module_path=module)
+            module = next((directory / "three.module.0.169.0.js" for directory in (
+                item.preview_html_path.parent, item.skeleton_path.parent,
+                item.candidate_workspace / "preview",
+            ) if (directory / "three.module.0.169.0.js").is_file()), None)
+            runtime_inputs = [item.skeleton_path]
+            if module is not None:
+                runtime_inputs.append(module)
+            signature = cache_key(
+                {"runtime": preview_runtime_signature()},
+                runtime_inputs,
+            )
+            # Run workspaces can be too deep for Chromium's Windows file URL
+            # handling even when Python can read the HTML. Keep the exact
+            # skeleton preview in a short, content-keyed temp location.
+            runtime_dir = Path(tempfile.gettempdir()) / "mwa-motion-preview" / signature[:24]
+            current_preview = runtime_dir / "current.html"
+            with _FINAL_OUTPUT_PREVIEW_RUNTIME_LOCK:
+                if not current_preview.is_file() or (
+                    module is not None
+                    and not (runtime_dir / "three.module.0.169.0.js").is_file()
+                ):
+                    runtime_dir.mkdir(parents=True, exist_ok=True)
+                    write_baked_preview_html(current_preview, export, three_module_path=module)
             item = replace(item, preview_html_path=current_preview)
     if not item.preview_html_path.exists() or not item.skeleton_path.exists():
         raise ReviewFrameCaptureError(f"Missing review inputs: preview={item.preview_html_path}, skeleton={item.skeleton_path}")
@@ -11069,6 +11690,8 @@ def support_lock_baseline_safety_metrics(
     material_tolerance = body_span * 0.005
     rejection_reasons: list[str] = []
     rigid_translation_residuals: list[float] = []
+    rigid_transform_residuals: list[float] = []
+    rigid_transform_yaws: list[float] = []
     for baseline_frame, corrected_frame in zip(baseline_frames, corrected_frames):
         baseline_joints = baseline_frame.get("joints")
         corrected_joints = corrected_frame.get("joints")
@@ -11094,11 +11717,23 @@ def support_lock_baseline_safety_metrics(
                 default=0.0,
             )
         )
+        transform_residual, transform_yaw_degrees = frame_yaw_translation_residual(
+            baseline_joints,
+            corrected_joints,
+        )
+        rigid_transform_residuals.append(transform_residual)
+        rigid_transform_yaws.append(transform_yaw_degrees)
     max_rigid_translation_residual = max(rigid_translation_residuals, default=math.inf)
     is_per_frame_rigid_translation = (
         bool(rigid_translation_residuals)
         and max_rigid_translation_residual <= numerical_tolerance
     )
+    max_rigid_transform_residual = max(rigid_transform_residuals, default=math.inf)
+    is_per_frame_rigid_transform = (
+        bool(rigid_transform_residuals)
+        and max_rigid_transform_residual <= numerical_tolerance
+    )
+    max_rigid_transform_yaw_degrees = max(rigid_transform_yaws, default=math.inf)
     side_metrics: dict[str, Any] = {}
     for side in ("left", "right"):
         baseline_deviations = knee_line_lateral_deviations(
@@ -11205,7 +11840,7 @@ def support_lock_baseline_safety_metrics(
     max_allowed_pelvis_deviation = body_span * 0.01
     if (
         max_pelvis_deviation > max_allowed_pelvis_deviation
-        and not is_per_frame_rigid_translation
+        and not is_per_frame_rigid_transform
     ):
         rejection_reasons.append("support_lock_pelvis_trajectory_changed")
     source_waiver: dict[str, Any] = {"applied": False}
@@ -11260,8 +11895,76 @@ def support_lock_baseline_safety_metrics(
         "maxAllowedPelvisDeviation": max_allowed_pelvis_deviation,
         "maxRigidTranslationResidual": max_rigid_translation_residual,
         "isPerFrameRigidTranslation": is_per_frame_rigid_translation,
+        "maxRigidTransformResidual": max_rigid_transform_residual,
+        "maxRigidTransformYawDegrees": max_rigid_transform_yaw_degrees,
+        "isPerFrameRigidTransform": is_per_frame_rigid_transform,
         "sourceAgreementWaiver": source_waiver,
     }
+
+
+def frame_yaw_translation_residual(
+    baseline_joints: dict[str, Any],
+    corrected_joints: dict[str, Any],
+) -> tuple[float, float]:
+    """Measure how closely one frame pair differs by vertical-axis yaw + translation."""
+    pairs = [
+        (
+            [float(value) for value in baseline_point[:3]],
+            [float(value) for value in corrected_joints[joint_name][:3]],
+        )
+        for joint_name, baseline_point in baseline_joints.items()
+        if is_point3(baseline_point)
+        and is_point3(corrected_joints.get(joint_name))
+    ]
+    if len(pairs) < 3:
+        return math.inf, math.inf
+
+    baseline_center = [
+        statistics.mean(pair[0][axis] for pair in pairs)
+        for axis in range(3)
+    ]
+    corrected_center = [
+        statistics.mean(pair[1][axis] for pair in pairs)
+        for axis in range(3)
+    ]
+    yaw_dot = 0.0
+    yaw_cross = 0.0
+    horizontal_spread = 0.0
+    for baseline_point, corrected_point in pairs:
+        baseline_x = baseline_point[0] - baseline_center[0]
+        baseline_z = baseline_point[2] - baseline_center[2]
+        corrected_x = corrected_point[0] - corrected_center[0]
+        corrected_z = corrected_point[2] - corrected_center[2]
+        yaw_dot += baseline_x * corrected_x + baseline_z * corrected_z
+        yaw_cross += baseline_z * corrected_x - baseline_x * corrected_z
+        horizontal_spread += baseline_x * baseline_x + baseline_z * baseline_z
+    if horizontal_spread <= 1e-12 or (abs(yaw_dot) + abs(yaw_cross)) <= 1e-12:
+        return math.inf, math.inf
+
+    yaw = math.atan2(yaw_cross, yaw_dot)
+    cosine = math.cos(yaw)
+    sine = math.sin(yaw)
+    translation = [
+        corrected_center[0] - (cosine * baseline_center[0] + sine * baseline_center[2]),
+        corrected_center[1] - baseline_center[1],
+        corrected_center[2] - (-sine * baseline_center[0] + cosine * baseline_center[2]),
+    ]
+    residual = max(
+        math.dist(
+            [
+                cosine * baseline_point[0]
+                + sine * baseline_point[2]
+                + translation[0],
+                baseline_point[1] + translation[1],
+                -sine * baseline_point[0]
+                + cosine * baseline_point[2]
+                + translation[2],
+            ],
+            corrected_point,
+        )
+        for baseline_point, corrected_point in pairs
+    )
+    return residual, abs(math.degrees(yaw))
 
 
 def joint_angle_track_degrees(
@@ -11446,6 +12149,43 @@ def observed_ground_support_plane_y(
         if len(points) < 3:
             continue
         by_side.setdefault(side, []).extend(float(point[1]) for point in points)
+    if len(by_side) >= 2 and isinstance(source_foot_support_evidence, dict):
+        body_support = source_foot_support_evidence.get("bodySupport") or {}
+        grounded_names = {
+            str(interval.get("jointName") or "")
+            for interval in foot_contact_intervals
+            if is_observed_ground_contact(interval, source_foot_support_evidence)
+        }
+        if (
+            isinstance(body_support, dict)
+            and body_support.get("required")
+            and body_support.get("status") == "confirmed"
+        ):
+            for group in body_support.get("coplanarGroups", []):
+                if not isinstance(group, dict):
+                    continue
+                joints = set(group.get("joints") or [])
+                normal = group.get("normal") or []
+                try:
+                    normal_y = float(normal[1])
+                    normal_length = math.sqrt(sum(float(value) ** 2 for value in normal))
+                    plane_offset = float(group["planeOffsetMeters"])
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                if (
+                    normal_length <= 1e-8
+                    or abs(normal_y / normal_length) < 1.0 - 1e-6
+                    or len(joints.intersection(grounded_names)) < 2
+                    or not math.isfinite(plane_offset)
+                ):
+                    continue
+                # The explicit body-support plane is the acceptance target.
+                # Re-estimating it from the already-drifting reconstructed
+                # feet simply preserves their vertical error.
+                return (
+                    plane_offset / (normal_y / normal_length),
+                    "confirmed_body_support_geometry",
+                )
     if len(by_side) >= 2:
         samples = [value for values in by_side.values() for value in values]
         return statistics.median(samples), "observed_ground_contacts"
@@ -11468,9 +12208,34 @@ def source_confirmed_support_stationarity_metrics(
     # Cycle selection rebases contact intervals onto the exported frames.
     # The caller may still hold evidence for the full source clip; applying
     # those ratios to a cropped repetition tests swing frames as planted feet.
+    already_motion_space = (
+        isinstance(source_foot_support_evidence, dict)
+        and isinstance(source_foot_support_evidence.get("motionSpaceMapping"), dict)
+    )
     local_support_evidence = baked_source_support_evidence(motion_payload)
+    if local_support_evidence is None:
+        local_support_evidence = (
+            source_foot_support_evidence
+            if already_motion_space
+            else baked_source_support_evidence(
+                motion_payload,
+                evidence_override=source_foot_support_evidence,
+            )
+        )
     if local_support_evidence is not None:
-        source_foot_support_evidence = local_support_evidence
+        from .contact_constraints import motion_space_support_evidence
+
+        source_foot_support_evidence = motion_space_support_evidence(
+            motion_payload,
+            evidence_override=local_support_evidence,
+        )
+    elif isinstance(source_foot_support_evidence, dict):
+        from .contact_constraints import motion_space_support_evidence
+
+        source_foot_support_evidence = motion_space_support_evidence(
+            motion_payload,
+            evidence_override=source_foot_support_evidence,
+        )
     contact_intervals = source_contact_intervals_from_evidence(
         source_foot_support_evidence,
         frame_count=len(frames),
@@ -11746,10 +12511,7 @@ def prefer_baseline_safe_support_lock_artifacts(
     baseline.export_payload["sourceConfirmedBaselineSupportGate"] = (
         baseline_support_metrics
     )
-    baseline.skeleton_path.write_text(
-        json.dumps(baseline.export_payload, indent=2),
-        encoding="utf-8",
-    )
+    write_json_atomic(baseline.skeleton_path, baseline.export_payload)
     non_foot_lock_artifacts: list[BakedLoopArtifact] = []
     safe_foot_lock_artifacts: list[BakedLoopArtifact] = []
     for artifact in artifacts:
@@ -11783,10 +12545,7 @@ def prefer_baseline_safe_support_lock_artifacts(
         artifact.export_payload["sourceConfirmedSupportRepairGate"] = (
             support_repair_metrics
         )
-        artifact.skeleton_path.write_text(
-            json.dumps(artifact.export_payload, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(artifact.skeleton_path, artifact.export_payload)
         if bool(metrics.get("passed")) and bool(support_repair_metrics.get("passed")):
             safe_foot_lock_artifacts.append(artifact)
     if not bool(baseline_support_metrics.get("passed")):
@@ -14462,14 +15221,21 @@ def compute_kinematic_plausibility_metrics_from_payload(
         reasons.append("root_translation_discontinuity")
     controlled_report = payload.get("controlledMotionFit")
     processing_reasons: list[str] = []
+    controlled_fit_fallback = None
     if controlled_report is not None:
-        from .controlled_motion import can_reuse_controlled_motion, controlled_fit_processing_incomplete
+        from .controlled_motion import (
+            can_reuse_controlled_motion,
+            controlled_fit_processing_incomplete,
+            controlled_motion_fit_raw_fallback,
+        )
         if controlled_fit_processing_incomplete(controlled_report):
             processing_reasons.append("controlled_motion_processing_incomplete")
         elif controlled_report.get('reason') == 'source_cycle_preflight_rejected':
             processing_reasons.append("controlled_motion_cycle_proposal_unavailable")
         elif not can_reuse_controlled_motion(payload):
-            reasons.append("controlled_motion_fit_rejected")
+            controlled_fit_fallback = controlled_motion_fit_raw_fallback(payload)
+            if controlled_fit_fallback is None:
+                reasons.append("controlled_motion_fit_rejected")
     if not physical["passed"]:
         reasons.append("physical_pose_constraint_violation")
     repair_report = payload.get("postBakeForefootContactConstraint") or {}
@@ -14506,6 +15272,7 @@ def compute_kinematic_plausibility_metrics_from_payload(
         "severeArtifact": bool(reasons),
         "artifactReasons": reasons,
         "processingIncompleteReasons": processing_reasons,
+        "controlledMotionFitFallback": controlled_fit_fallback,
         "bodyHeight": body_height,
         "rootJoint": root_joint or None,
         "frameCount": len(frames),
@@ -16344,6 +17111,7 @@ def generate_exercise_motion_contract_for_bake(
         )
 
 
+@exclusive_workspace_lease(lambda request, **_kwargs: request.workspace)
 def run_bake_and_rank_pipeline(
     request: BakeAndRankRequest,
     *,
@@ -16462,7 +17230,7 @@ def run_bake_and_rank_pipeline(
                 caption_images=caption_images,
             )
         if preview_baker is None:
-            preview_baker = lambda preview_html_path, eligible_loops, candidate_workspace, review_frames, exercise_name=None, exercise_motion_contract=None, source_foot_support_evidence=None, deadline=None: bake_preview_loops_with_playwright(
+            preview_baker = lambda preview_html_path, eligible_loops, candidate_workspace, review_frames, exercise_name=None, exercise_motion_contract=None, source_foot_support_evidence=None, review_source_clips=None, deadline=None: bake_preview_loops_with_playwright(
                 preview_html_path,
                 eligible_loops,
                 candidate_workspace,
@@ -16474,6 +17242,7 @@ def run_bake_and_rank_pipeline(
                 exercise_name=exercise_name,
                 exercise_motion_contract=exercise_motion_contract,
                 source_foot_support_evidence=source_foot_support_evidence,
+                review_source_clips=review_source_clips,
                 deadline=deadline,
             )
         rankings: list[LoopRanking] = []
@@ -16662,7 +17431,7 @@ def run_bake_and_rank_pipeline(
         }
     pipeline_timings["sourceOutcomeIndexUpdate"] = source_outcome_update
     selection_path = request.workspace / "selection_manifest.json"
-    selection_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
+    write_json_atomic(selection_path, selection_manifest)
     retention_started = time.perf_counter()
     if selected_results or candidate_results:
         try:
@@ -16686,7 +17455,7 @@ def run_bake_and_rank_pipeline(
     pipeline_timings["artifactRetentionSeconds"] = elapsed_seconds(retention_started)
     selection_manifest["timings"] = pipeline_timings
     selection_manifest["artifactRetention"] = retention_summary
-    selection_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
+    write_json_atomic(selection_path, selection_manifest)
     return selection_manifest
 
 
@@ -17206,6 +17975,16 @@ def run_bake_and_rank_reselection(
             validated_rankings,
             min_score=0.0,
         )
+    validated_by_identity = {
+        review_item_identity(item): ranking
+        for item, ranking in validated_artifacts
+    }
+    for entry in ranked_review_entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("ranking"), dict):
+            continue
+        ranking = validated_by_identity.get(review_item_identity(review_item_from_manifest(entry)))
+        if ranking is not None:
+            entry["ranking"] = ranking_to_manifest(ranking)
     write_candidate_ranking_manifests(ranked_review_entries)
     selected_preview_paths = write_selected_result_preview_htmls(workspace, selected_results)
     reselection_manifest = build_selection_manifest(
@@ -17268,7 +18047,7 @@ def run_bake_and_rank_reselection(
             "rejectionReasons": ["previous_selection_not_found_in_ranked_review_items"],
         }
     attach_selected_preview_paths_to_manifest(reselection_manifest, selected_preview_paths)
-    selection_path.write_text(json.dumps(reselection_manifest, indent=2), encoding="utf-8")
+    write_json_atomic(selection_path, reselection_manifest)
     return reselection_manifest
 
 
@@ -17985,10 +18764,76 @@ def revalidate_library_workspace(
     return report
 
 
+@lru_cache(maxsize=4096)
+def _cached_file_content_sha256(
+    path_text: str,
+    device: int,
+    inode: int,
+    size: int,
+    modified_ns: int,
+    changed_ns: int,
+) -> str | None:
+    """Hash one stable skeleton file version, shared across identity lookups."""
+    path = Path(path_text)
+    try:
+        before = path.stat()
+        before_signature = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if before_signature != (device, inode, size, modified_ns, changed_ns):
+            return None
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        after = path.stat()
+        after_signature = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if after_signature != before_signature:
+            return None
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _skeleton_content_identity(path_value: Any) -> tuple[str, str]:
+    """Identify the exact skeleton bytes used by rendering and selection."""
+    try:
+        path = Path(str(path_value)).resolve()
+        stat = path.stat()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return ("unavailable", str(path_value))
+    digest = _cached_file_content_sha256(
+        str(path),
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
+    if digest is None:
+        return ("unavailable", str(path))
+    return ("sha256", digest)
+
+
 def selection_entry_identity(entry: Any) -> tuple[Any, ...] | None:
     if not isinstance(entry, dict):
         return None
     candidate = entry.get("candidate") if isinstance(entry.get("candidate"), dict) else {}
+    skeleton_path = (
+        entry.get("skeletonPath")
+        or entry.get("selectedWearSkeletonPath")
+        or entry.get("wearSkeletonPath")
+    )
     return (
         candidate.get("videoId") or candidate.get("url"),
         entry.get("candidateRank"),
@@ -17996,6 +18841,7 @@ def selection_entry_identity(entry: Any) -> tuple[Any, ...] | None:
         entry.get("settingsVariantId"),
         entry.get("sectionStartSeconds"),
         entry.get("sectionEndSeconds"),
+        _skeleton_content_identity(skeleton_path),
     )
 
 
@@ -18007,6 +18853,7 @@ def review_item_identity(item: ReviewItem) -> tuple[Any, ...]:
         item.settings_variant_id,
         item.loop_start_seconds,
         item.loop_end_seconds,
+        _skeleton_content_identity(item.skeleton_path),
     )
 
 
@@ -18530,7 +19377,11 @@ def selected_output_manifest_paths(workspace: Path, *, exercise_slug: str | None
     selected = workspace / "selected" / "selection_manifest.json"
     if selected.exists():
         candidates.append(selected)
+    manual_review = workspace / "manual-review" / "selection_manifest.json"
+    if manual_review.exists():
+        candidates.append(manual_review)
     candidates.extend(workspace.rglob("selected/selection_manifest.json"))
+    candidates.extend(workspace.rglob("manual-review/selection_manifest.json"))
     resolved_seen: set[Path] = set()
     unique: list[Path] = []
     for path in candidates:
@@ -18583,6 +19434,35 @@ def audit_selected_output_manifest(selection_manifest_path: Path) -> dict[str, A
         for reason in option.get("rejectionReasons", [])
         if str(reason)
     )
+    manual_review_report = None
+    manual_fallback = manifest.get("manualReviewFallback")
+    is_manual_review_directory = selected_dir.name.casefold() == "manual-review"
+    has_packaged_manual_state = (
+        isinstance(manual_fallback, dict)
+        and (
+            "packagedArtifactState" in manual_fallback
+            or "packagedArtifactClass" in manual_fallback
+        )
+    )
+    if isinstance(manual_fallback, dict) and (
+        is_manual_review_directory or has_packaged_manual_state
+    ):
+        manual_skeleton_value = manual_fallback.get("packagedWearSkeletonPath")
+        manual_skeleton_path = (
+            Path(str(manual_skeleton_value))
+            if manual_skeleton_value
+            else None
+        )
+        manual_review_report = audit_artifact_package_state(
+            manual_fallback,
+            skeleton_path=manual_skeleton_path,
+            manual_review=True,
+        )
+        manual_review_report["selectionStatus"] = manual_fallback.get("selectionStatus")
+        if not manual_review_report["passed"]:
+            rejection_reasons = dedupe_text(
+                [*rejection_reasons, "manual_review_artifact_state_invalid"]
+            )
     return {
         "exerciseName": (
             str((selected_entries[0] or {}).get("exerciseName"))
@@ -18595,6 +19475,7 @@ def audit_selected_output_manifest(selection_manifest_path: Path) -> dict[str, A
         "rejectionReasons": rejection_reasons,
         "optionCount": len(option_reports),
         "options": option_reports,
+        "manualReviewPackage": manual_review_report,
     }
 
 
@@ -18613,11 +19494,13 @@ def selected_output_option_file(
     local_files: dict[str, list[Path]],
     option_index: int,
 ) -> Path | None:
+    if key == "skeleton" and entry.get("packagedWearSkeletonPath"):
+        return Path(str(entry["packagedWearSkeletonPath"]))
     manifest_keys = {
         "input": ("selectedInputVideoPath", "selectedSourceVideoPath", "copiedInputVideoPath"),
         "preview": ("selectedReviewVideoPath", "selectedPreviewVideoPath"),
         "html": ("selectedPreviewHtmlPath",),
-        "skeleton": ("selectedWearSkeletonPath",),
+        "skeleton": ("packagedWearSkeletonPath", "selectedWearSkeletonPath"),
     }
     for manifest_key in manifest_keys.get(key, ()):
         value = entry.get(manifest_key)
@@ -18629,6 +19512,191 @@ def selected_output_option_file(
     if option_index < len(files):
         return files[option_index]
     return files[0] if files else None
+
+
+def audit_artifact_package_state(
+    entry: dict[str, Any],
+    *,
+    skeleton_path: Path | None,
+    manual_review: bool = False,
+) -> dict[str, Any]:
+    rejection_reasons: list[str] = []
+    artifact_class = str(entry.get("artifactClass") or "")
+    try:
+        persisted_payload = None
+        if skeleton_path is not None and skeleton_path.is_file():
+            persisted_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+        artifact_state = validate_artifact_state(
+            entry.get("artifactState"),
+            movement_payload=persisted_payload,
+        )
+        if not isinstance(persisted_payload, dict):
+            raise ValueError("Selected skeleton payload is missing or is not an object")
+        embedded_state = persisted_payload.get("artifactState")
+        if not isinstance(embedded_state, dict):
+            raise ValueError("Selected skeleton payload has no embedded artifact state")
+        embedded_state = validate_artifact_state(
+            embedded_state,
+            movement_payload=persisted_payload,
+        )
+        if embedded_state != artifact_state:
+            raise ValueError(
+                "Selected skeleton artifact state differs from its selection manifest"
+            )
+        if artifact_state["artifactClass"] != artifact_class:
+            raise ValueError("Artifact class differs from persisted movement state")
+    except (TypeError, ValueError) as exc:
+        artifact_state = None
+        rejection_reasons.append("selected_artifact_state_invalid")
+        state_error = str(exc)
+    else:
+        state_error = None
+
+    package_class = str(entry.get("packagedArtifactClass") or "")
+    try:
+        packaged_state = validate_packaged_artifact_state(
+            entry.get("packagedArtifactState"),
+            movement_state=artifact_state,
+        )
+        if packaged_state["artifactClass"] != package_class:
+            raise ValueError("Packaged artifact class differs from persisted package state")
+        expected_package_class = (
+            MANUAL_REVIEW_PACKAGE if manual_review else PACKAGED_MOVEMENT
+        )
+        if package_class != expected_package_class:
+            raise ValueError("Package class does not match the selected-output status")
+        if artifact_state is not None and (
+            packaged_state["parentArtifactClass"] != artifact_class
+            or packaged_state["history"][:-1] != artifact_state["history"]
+        ):
+            raise ValueError("Package state does not extend the selected movement state")
+        if manual_review:
+            if entry.get("selectionStatus") != "needs_manual_review":
+                raise ValueError("Manual-review package lost its needs_manual_review status")
+            if packaged_state["approvedMovement"] is not False:
+                raise ValueError("Manual-review package cannot be an approved movement")
+        elif artifact_state is not None and artifact_state["terminal"] is not True:
+            raise ValueError("An unaccepted movement cannot be packaged as approved")
+    except (TypeError, ValueError) as exc:
+        packaged_state = None
+        rejection_reasons.append("packaged_artifact_state_invalid")
+        package_error = str(exc)
+    else:
+        package_error = None
+
+    parity = entry.get("packagedSkeletonReviewParity")
+    packaged_identity: dict[str, Any] | None = None
+    if not isinstance(parity, dict):
+        rejection_reasons.append("packaged_skeleton_review_parity_missing")
+    else:
+        if artifact_state is not None and (
+            parity.get("artifactClass") != artifact_state["artifactClass"]
+            or parity.get("artifactHistory") != artifact_state["history"]
+        ):
+            rejection_reasons.append("packaged_skeleton_review_parity_state_mismatch")
+        if skeleton_path is None or not skeleton_path.is_file():
+            rejection_reasons.append("packaged_skeleton_missing")
+        else:
+            try:
+                packaged_identity = selected_skeleton_file_identity(skeleton_path)
+            except (OSError, ValueError, TypeError):
+                packaged_identity = None
+                rejection_reasons.append("packaged_skeleton_identity_unavailable")
+            if packaged_identity is not None:
+                parity_verified = parity.get("verified") is True
+                if parity_verified:
+                    if (
+                        parity.get("sha256") != packaged_identity["sha256"]
+                        or parity.get("frameCount") != packaged_identity["frameCount"]
+                    ):
+                        rejection_reasons.append("packaged_skeleton_review_identity_mismatch")
+                elif not manual_review:
+                    rejection_reasons.append("packaged_skeleton_review_identity_unverified")
+                else:
+                    source_path_value = entry.get("selectedWearSkeletonPath")
+                    source_path = Path(str(source_path_value)) if source_path_value else None
+                    try:
+                        source_identity = (
+                            selected_skeleton_file_identity(source_path)
+                            if source_path is not None and source_path.is_file()
+                            else None
+                        )
+                    except (OSError, ValueError, TypeError):
+                        source_identity = None
+                    if source_identity is None or (
+                        source_identity["sha256"] != packaged_identity["sha256"]
+                        or source_identity["frameCount"] != packaged_identity["frameCount"]
+                    ):
+                        rejection_reasons.append("manual_review_package_copy_identity_mismatch")
+
+    if not manual_review:
+        ranking = entry.get("ranking")
+        ranking_payload = (
+            ranking.get("payload")
+            if isinstance(ranking, dict) and isinstance(ranking.get("payload"), dict)
+            else None
+        )
+        final_validation = (
+            ranking_payload.get("finalOutputValidation")
+            if isinstance(ranking_payload, dict)
+            else None
+        )
+        class_gate = (
+            final_validation.get("artifactClassGate")
+            if isinstance(final_validation, dict)
+            else None
+        )
+        render_identity = (
+            final_validation.get("renderEvidence", {}).get("skeletonIdentity")
+            if isinstance(final_validation, dict)
+            and isinstance(final_validation.get("renderEvidence"), dict)
+            else None
+        )
+        render_window = (
+            final_validation.get("renderEvidence", {}).get("reviewWindow")
+            if isinstance(final_validation, dict)
+            and isinstance(final_validation.get("renderEvidence"), dict)
+            else None
+        )
+        if not isinstance(class_gate, dict) or (
+            class_gate.get("passed") is not True
+            or class_gate.get("artifactClass") != artifact_class
+        ):
+            rejection_reasons.append("selected_artifact_class_gate_missing_or_failed")
+        if not isinstance(render_identity, dict) or skeleton_path is None or not skeleton_path.is_file():
+            rejection_reasons.append("selected_review_identity_missing")
+        elif packaged_identity is not None and (
+            render_identity.get("sha256") != packaged_identity["sha256"]
+            or render_identity.get("frameCount") != packaged_identity["frameCount"]
+        ):
+            rejection_reasons.append("selected_review_identity_mismatch")
+        if (
+            artifact_state is None
+            or not isinstance(persisted_payload, dict)
+            or not isinstance(render_window, dict)
+        ):
+            rejection_reasons.append("selected_review_window_missing_or_mismatched")
+        else:
+            try:
+                validate_final_output_review_window(
+                    render_window,
+                    artifact_state=artifact_state,
+                    movement_payload=persisted_payload,
+                )
+            except (TypeError, ValueError, KeyError):
+                rejection_reasons.append("selected_review_window_missing_or_mismatched")
+
+    return {
+        "passed": not rejection_reasons,
+        "approvedMovement": (
+            bool(packaged_state and packaged_state.get("approvedMovement") is True)
+        ),
+        "artifactClass": artifact_class,
+        "packagedArtifactClass": package_class,
+        "rejectionReasons": dedupe_text(rejection_reasons),
+        "artifactStateError": state_error,
+        "packagedArtifactStateError": package_error,
+    }
 
 
 def audit_selected_output_option(
@@ -18643,6 +19711,11 @@ def audit_selected_output_option(
     html_path = selected_output_option_file(entry, "html", local_files, option_index)
     skeleton_path = selected_output_option_file(entry, "skeleton", local_files, option_index)
     rejection_reasons: list[str] = []
+    artifact_package_audit = audit_artifact_package_state(
+        entry,
+        skeleton_path=skeleton_path,
+    )
+    rejection_reasons.extend(artifact_package_audit["rejectionReasons"])
     source_metrics = video_visual_jump_metrics(input_path) if input_path is not None else None
     if input_path is None:
         rejection_reasons.append("selected_input_missing")
@@ -18698,6 +19771,7 @@ def audit_selected_output_option(
         "selectionScore": entry.get("selectionScore"),
         "passed": not rejection_reasons,
         "rejectionReasons": dedupe_text(rejection_reasons),
+        "artifactPackageState": artifact_package_audit,
         "selectedInputVideoPath": str(input_path) if input_path is not None else None,
         "selectedPreviewVideoPath": str(preview_path) if preview_path is not None else None,
         "selectedPreviewHtmlPath": str(html_path) if html_path is not None else None,
@@ -19400,6 +20474,11 @@ def process_ranked_candidates_until_final_selection(
                 **choose_kwargs,
             )
             local_selected_results = [selected] if selected is not None else []
+        if local_rankings:
+            # The per-candidate chooser records materialized acceptance data
+            # back into its list; mirror those replacements into the ordered
+            # ranking list that is serialized into rankedReviewItems.
+            rankings[-len(local_rankings) :] = local_rankings
         timings["selectionMaterializationSeconds"] = round(
             float(timings["selectionMaterializationSeconds"]) + elapsed_seconds(stage_started),
             3,
@@ -19979,6 +21058,43 @@ def process_ranked_candidate_isolated(
     return result, review_items, review_item_entries
 
 
+def incomplete_controlled_fit_diagnostics(baked_artifacts):
+    """Summarize the candidate fit whose incomplete result blocked review."""
+    from .controlled_motion import controlled_fit_processing_incomplete
+
+    has_applied_controlled_motion = any(
+        isinstance(artifact.export_payload.get("controlledMotionFit"), dict)
+        and artifact.export_payload["controlledMotionFit"].get("applied")
+        for artifact in baked_artifacts
+    )
+    if has_applied_controlled_motion:
+        return None
+
+    for artifact in baked_artifacts:
+        controlled = artifact.export_payload.get("controlledMotionFit")
+        if not isinstance(controlled, dict) or not controlled_fit_processing_incomplete(controlled):
+            continue
+        diagnostics = {
+            "controlledMotionFit": {
+                key: controlled.get(key)
+                for key in (
+                    "applied",
+                    "reason",
+                    "candidateFitBudget",
+                    "cycleSelectionAttempts",
+                    "elapsedSeconds",
+                    "budgetOwner",
+                )
+                if key in controlled
+            }
+        }
+        budget = controlled.get("candidateFitBudget")
+        if isinstance(budget, dict):
+            diagnostics["candidateFitBudget"] = budget
+        return diagnostics
+    return None
+
+
 def process_ranked_candidate(
     ranked_candidate: RankedCandidate,
     *,
@@ -20002,7 +21118,8 @@ def process_ranked_candidate(
         "exerciseName": ranked_candidate.exercise_name,
         "candidate": ranked_candidate.candidate,
         "candidateWorkspace": str(candidate_workspace),
-        "status": "pending",
+        "status": "processing",
+        "activeStage": "source_gate",
         "reviewSourceClips": [],
         "rejectedSourceClips": [],
         "failures": [],
@@ -20010,6 +21127,37 @@ def process_ranked_candidate(
     }
     result_payload.update(source_window_attempt_manifest(ranked_candidate))
     active_stage = "source_gate"
+    result_payload["artifactLifecycle"] = {
+        "schemaVersion": 1,
+        "state": "processing",
+        "stage": active_stage,
+        "terminal": False,
+        "history": [{
+            "state": "processing",
+            "stage": active_stage,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }],
+    }
+
+    def checkpoint_candidate_stage(stage: str) -> None:
+        nonlocal active_stage
+        active_stage = stage
+        result_payload["activeStage"] = stage
+        lifecycle = dict(result_payload.get("artifactLifecycle") or {})
+        history = list(lifecycle.get("history") or [])
+        if not history or history[-1].get("stage") != stage:
+            history.append({
+                "state": "processing",
+                "stage": stage,
+                "at": datetime.now(timezone.utc).isoformat(),
+            })
+        lifecycle["stage"] = stage
+        lifecycle["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        lifecycle["history"] = history
+        result_payload["artifactLifecycle"] = lifecycle
+        write_candidate_bake_manifest(candidate_workspace, result_payload)
+
+    checkpoint_candidate_stage(active_stage)
     stage_started = time.perf_counter()
     try:
         stage_started = time.perf_counter()
@@ -20022,11 +21170,13 @@ def process_ranked_candidate(
             write_candidate_bake_manifest(candidate_workspace, result_payload)
             return result_payload
         stage_started = time.perf_counter()
-        active_stage = "reconstruction"
+        checkpoint_candidate_stage("reconstruction")
         generate_kwargs: dict[str, Any] = {
             "request": request,
             "source_cut_caption_images": source_cut_caption_images,
         }
+        if callable_accepts_keyword(generate_candidate_motion, "candidate_deadline"):
+            generate_kwargs["candidate_deadline"] = deadline
         if run_wham_exclusive is not None:
             # Some unit tests monkeypatch `generate_candidate_motion` with a
             # simplified signature. Only pass `run_wham_exclusive` when the
@@ -20059,7 +21209,7 @@ def process_ranked_candidate(
             / "segment_detection"
             / "exact_source_pose_reference.json"
         )
-        active_stage = "raw_reconstruction_validation"
+        checkpoint_candidate_stage("raw_reconstruction_validation")
         raw_wham_gate = evaluate_generated_motion_recovery_gate(
             raw_motion_path=generate_result.raw_motion_json_path,
             cleaned_motion_path=generate_result.cleaned_motion_json_path,
@@ -20080,6 +21230,18 @@ def process_ranked_candidate(
             record_timing_seconds(result_payload, "totalSeconds", candidate_started)
             write_candidate_bake_manifest(candidate_workspace, result_payload)
             return result_payload
+        raw_motion_fallback_evidence = {
+            "schemaVersion": 1,
+            "rawWhamMotionGatePassed": True,
+            "rawWhamMotionGateFingerprint": hashlib.sha256(
+                json.dumps(
+                    raw_wham_gate,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
         stage_started = time.perf_counter()
         cleaned_clip = load_motion_json(generate_result.cleaned_motion_json_path)
         record_timing_seconds(result_payload, "loadCleanedMotionSeconds", stage_started)
@@ -20108,9 +21270,13 @@ def process_ranked_candidate(
             preview_baker_kwargs["exercise_motion_contract"] = preview_exercise_motion_contract
         if callable_accepts_keyword(preview_baker, "source_foot_support_evidence"):
             preview_baker_kwargs["source_foot_support_evidence"] = source_foot_support_evidence
+        if callable_accepts_keyword(preview_baker, "raw_motion_fallback_evidence"):
+            preview_baker_kwargs["raw_motion_fallback_evidence"] = raw_motion_fallback_evidence
+        if callable_accepts_keyword(preview_baker, "review_source_clips"):
+            preview_baker_kwargs["review_source_clips"] = result_payload["reviewSourceClips"]
         if deadline is not None and callable_accepts_keyword(preview_baker, "deadline"):
             preview_baker_kwargs["deadline"] = deadline
-        active_stage = "browser_bake"
+        checkpoint_candidate_stage("browser_bake")
         baked_artifacts = preview_baker(
             generate_result.preview_html_path,
             eligible,
@@ -20118,40 +21284,24 @@ def process_ranked_candidate(
             request.review_frames,
             **preview_baker_kwargs,
         )
-        from .controlled_motion import controlled_fit_processing_incomplete
+        preview_bake_diagnostics = [
+            artifact.preview_bake_diagnostics
+            for artifact in baked_artifacts
+            if artifact.preview_bake_diagnostics
+        ]
+        if preview_bake_diagnostics:
+            result_payload["previewBakeDiagnostics"] = preview_bake_diagnostics
         # A failed fit deliberately retains its input, which can still violate
         # support/kinematic gates. Preserve the processing owner's status even
         # when those downstream filters remove every artifact from review.
         # Sibling variants that exhaust the shared candidate budget after a
         # validated fit must not reopen an incomplete-processing disposition.
-        has_applied_controlled_motion = any(
-            isinstance(artifact.export_payload.get("controlledMotionFit"), dict)
-            and artifact.export_payload["controlledMotionFit"].get("applied")
-            for artifact in baked_artifacts
-        )
-        processing_incomplete = (not has_applied_controlled_motion) and any(
-            controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
-            for artifact in baked_artifacts
-        )
-        if processing_incomplete:
-            for artifact in baked_artifacts:
-                controlled = artifact.export_payload.get("controlledMotionFit")
-                if not isinstance(controlled, dict):
-                    continue
-                if not controlled_fit_processing_incomplete(controlled):
-                    continue
-                budget = controlled.get("candidateFitBudget")
-                if isinstance(budget, dict):
-                    result_payload["candidateFitBudget"] = budget
-                result_payload["controlledMotionFit"] = {
-                    key: controlled.get(key)
-                    for key in ("applied", "reason", "candidateFitBudget", "cycleSelectionAttempts",
-                                "elapsedSeconds", "budgetOwner")
-                    if key in controlled
-                }
-                break
+        incomplete_fit = incomplete_controlled_fit_diagnostics(baked_artifacts)
+        processing_incomplete = incomplete_fit is not None
+        if incomplete_fit is not None:
+            result_payload.update(incomplete_fit)
         record_timing_seconds(result_payload, "previewBakeSeconds", stage_started)
-        active_stage = "baked_motion_validation"
+        checkpoint_candidate_stage("baked_motion_validation")
         # The support-repair safety waiver judges repairs against the source,
         # so the retained reference must be available to the gate.
         source_pose_reference = load_verified_source_pose_reference(
@@ -20254,6 +21404,16 @@ def process_ranked_candidate(
                         "preRenderDeterministicGate": pre_render_gate,
                     })
                     continue
+                artifact_state = artifact.export_payload.get("artifactState")
+                if not isinstance(artifact_state, dict):
+                    artifact_state = artifact_state_for_baked_payload(
+                        artifact.export_payload,
+                        contract=preview_exercise_motion_contract,
+                        selection_class=eligible_loop.artifact_class,
+                    )
+                artifact_class = artifact.artifact_class or str(
+                    artifact_state.get("artifactClass") or FULL_CLIP_BAKE
+                )
                 artifact_started = time.perf_counter()
                 loop_start_seconds, loop_end_seconds = loop_time_bounds_from_export(
                     artifact.export_payload,
@@ -20261,6 +21421,18 @@ def process_ranked_candidate(
                 )
                 gate_started = time.perf_counter()
                 baked_motion_gate = evaluate_baked_motion_gate(artifact.skeleton_path)
+                baked_class_gate = movement_artifact_class_gate(
+                    artifact_state,
+                    accepted_classes=TERMINAL_ARTIFACT_CLASSES,
+                    gate_name="baked_motion",
+                )
+                baked_motion_gate["artifactClassGate"] = baked_class_gate
+                if not baked_class_gate["passed"]:
+                    baked_motion_gate["passed"] = False
+                    baked_motion_gate["rejectionReasons"] = dedupe_text(
+                        list(baked_motion_gate.get("rejectionReasons") or [])
+                        + list(baked_class_gate.get("rejectionReasons") or [])
+                    )
                 result_payload.setdefault("bakedMotionGateSeconds", 0.0)
                 result_payload["bakedMotionGateSeconds"] = round(
                     float(result_payload["bakedMotionGateSeconds"]) + elapsed_seconds(gate_started),
@@ -20316,6 +21488,7 @@ def process_ranked_candidate(
                         support_dominance_result.model_output if support_dominance_result else None
                     ),
                     export_payload=artifact.export_payload,
+                    artifact_class=artifact_class,
                 )
                 if support_dominance_result is None:
                     support_started = time.perf_counter()
@@ -20600,11 +21773,17 @@ def generate_candidate_motion(
     ranked_candidate: RankedCandidate,
     *,
     request: BakeAndRankRequest,
+    stage_identity: dict[str, Any] | None = None,
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
     run_wham_exclusive: WhamExclusiveRunner | None = None,
     prepared_video_path: Path | None = None,
+    candidate_deadline: float | None = None,
 ) -> GenerateResult:
+    if candidate_deadline is not None and time.perf_counter() >= candidate_deadline:
+        raise CandidateWallTimeBudgetExpired(
+            "Candidate budget expired before reconstruction could start."
+        )
     source_started = time.perf_counter()
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
     if prepared_video_path is None:
@@ -20704,6 +21883,7 @@ def generate_candidate_motion(
         export_wham_smpl_preview=request.export_wham_smpl_preview,
         output_crop_start_seconds=output_crop_start_seconds,
         output_crop_end_seconds=output_crop_end_seconds,
+        stage_identity=stage_identity,
         # A materially boundary-truncated WHAM track no longer represents the
         # source interval which passed segment validation.  Reject it here so
         # bake-and-rank can try another source/window instead of asking later
@@ -20713,6 +21893,7 @@ def generate_candidate_motion(
         source_pose_reference_path=(
             candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
         ),
+        candidate_deadline=candidate_deadline,
     )
     def validate_raw_motion(path: Path) -> None:
         gate = evaluate_raw_wham_motion_gate(
@@ -21123,17 +22304,30 @@ def build_preview_detected_eligible_loops(cleaned_clip: Any) -> list[EligibleLoo
         end_frame = max(start_frame, int(loop.get("endFrame", start_frame) or start_frame))
         start_seconds = float(loop.get("startTimeSec", start_frame / fps) or 0.0)
         end_seconds = float(loop.get("endTimeSec", end_frame / fps) or 0.0)
-        duration_seconds = max(
-            0.0,
-            float(loop.get("durationSec", end_seconds - start_seconds) or 0.0),
-        )
+        # _detect_preview_loops supplies frame/time bounds but no artifact
+        # interval type. Normalize the proposal before it reaches lineage
+        # validation, which requires a complete, self-consistent interval.
+        interval_type = loop.get("type")
+        if not isinstance(interval_type, str) or not interval_type.strip():
+            interval_type = "detected_cycle"
+        duration_seconds = max(0.0, end_seconds - start_seconds)
+        normalized_loop = {
+            **loop,
+            "type": interval_type,
+            "startFrame": start_frame,
+            "endFrame": end_frame,
+            "startTimeSec": start_seconds,
+            "endTimeSec": end_seconds,
+            "durationSec": duration_seconds,
+        }
         eligible.append(
             EligibleLoop(
                 loop_index=loop_index,
-                loop=dict(loop),
+                loop=normalized_loop,
                 duration_sec=duration_seconds,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
+                artifact_class=CYCLE_SELECTION,
             )
         )
     full_clip = build_full_clip_eligible_loop(cleaned_clip)
@@ -21157,14 +22351,11 @@ def pre_wham_source_interval_authority(
     candidate_workspace: Path,
     exercise_motion_contract: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Decide whether the pre-WHAM cut owns final temporal selection.
+    """Validate whether a pre-WHAM source cut may bound final temporal selection.
 
-    Return-cycle and distinct-end-state sources are authoritative only after
-    the exact materialized source video itself passed phase validation. This
-    prevents endpoint-based post-WHAM loop detection from shortening a
-    validated repetition or replacing a directional start-to-finish action
-    with a detected return loop, while retaining the old behavior when source
-    evidence is missing or incomplete.
+    Return-cycle detection may select a repetition inside the validated cut;
+    distinct-end-state actions preserve the complete bounded interval. Missing
+    or stale source evidence leaves the prior post-WHAM behavior available.
     """
     requires_return = observable_motion_spec_requires_return(exercise_motion_contract)
     distinct_end_state = contract_completion_mode(exercise_motion_contract) == "distinct_end_state"
@@ -21431,7 +22622,7 @@ def annotate_exact_source_pose_movement_instance(
         pose["authoritativeMovementInstance"] = movement_instance
     else:
         pose.pop("authoritativeMovementInstance", None)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def build_candidate_review_eligible_loops(
@@ -21441,25 +22632,43 @@ def build_candidate_review_eligible_loops(
 ) -> list[EligibleLoop]:
     if bool(source_interval_authority.get("authoritative")):
         movement_instance = source_interval_authority.get("movementInstance")
-        if isinstance(movement_instance, dict) and movement_instance.get("trimmed") is True:
+        if (
+            isinstance(movement_instance, dict)
+            and movement_instance.get("completionMode") == "distinct_end_state"
+        ):
             end_ratio = parse_optional_float(movement_instance.get("endRatio"))
-            if end_ratio is not None and 0.0 < end_ratio < 1.0:
-                end_frame = max(1, min(cleaned_clip.frame_count - 1, round(end_ratio * (cleaned_clip.frame_count - 1))))
-                end_seconds = end_frame / max(float(cleaned_clip.fps), 1e-9)
-                return [EligibleLoop(
-                    loop_index=0,
-                    loop={
-                        "type": "exact_source_movement_instance",
-                        "startFrame": 0,
-                        "endFrame": end_frame,
-                        "startTimeSec": 0.0,
-                        "endTimeSec": end_seconds,
-                        "durationSec": end_seconds,
-                    },
-                    duration_sec=end_seconds,
-                    start_seconds=0.0,
-                    end_seconds=end_seconds,
-                )]
+            frame_count = int(getattr(cleaned_clip, "frame_count", 0) or 0)
+            fps = max(float(getattr(cleaned_clip, "fps", 30.0) or 30.0), 1e-9)
+            end_frame = (
+                max(1, min(frame_count - 1, round(end_ratio * (frame_count - 1))))
+                if movement_instance.get("trimmed") is True
+                and end_ratio is not None
+                and 0.0 < end_ratio < 1.0
+                else max(1, frame_count - 1)
+            )
+            end_seconds = end_frame / fps
+            return [EligibleLoop(
+                loop_index=0,
+                loop={
+                    "type": "exact_source_movement_instance",
+                    "startFrame": 0,
+                    "endFrame": end_frame,
+                    "startTimeSec": 0.0,
+                    "endTimeSec": end_seconds,
+                    "durationSec": end_seconds,
+                },
+                duration_sec=end_seconds,
+                start_seconds=0.0,
+                end_seconds=end_seconds,
+                artifact_class=BOUNDED_MOVEMENT_SELECTION,
+            )]
+        if source_interval_authority.get("reason") == "exact_pre_wham_return_cycle_validated":
+            # WHAM reconstructed the already validated pre-WHAM source cut, so
+            # detect cycles only inside that bounded clip. Keep the complete
+            # clip candidate when a detected cycle would drop meaningful
+            # setup or teardown; cycle rebakes still carry the exact source
+            # bounds that detection returns.
+            return build_preview_detected_eligible_loops(cleaned_clip)
         return [build_full_clip_eligible_loop(cleaned_clip)]
     return build_preview_detected_eligible_loops(cleaned_clip)
 
@@ -23975,17 +25184,14 @@ def validate_exact_pre_wham_source_video(
         # subdirectory that may not exist yet; the reference write precedes
         # the cache write (which creates the parent) and must not fail.
         source_pose_reference_path.parent.mkdir(parents=True, exist_ok=True)
-        source_pose_reference_path.write_text(
-            json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "validationPolicyVersion": EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
-                    "sourceVideoSha256": cache_key_payload["videoSha256"],
-                    "pose": source_pose_reference,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_json_atomic(
+            source_pose_reference_path,
+            {
+                "schemaVersion": 1,
+                "validationPolicyVersion": EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+                "sourceVideoSha256": cache_key_payload["videoSha256"],
+                "pose": source_pose_reference,
+            },
         )
         metrics["sourcePoseReferencePath"] = str(source_pose_reference_path.resolve())
     metrics = {
@@ -23994,10 +25200,9 @@ def validate_exact_pre_wham_source_video(
         "cacheStatus": "computed",
         "sourceVideoPath": str(source_video_path.resolve()),
     }
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(
-        json.dumps({"schemaVersion": 6, "cacheKey": cache_key, "metrics": metrics}, indent=2),
-        encoding="utf-8",
+    write_json_atomic(
+        cache_path,
+        {"schemaVersion": 6, "cacheKey": cache_key, "metrics": metrics},
     )
     return metrics
 
@@ -24167,7 +25372,7 @@ def persist_shared_exact_source_phase_cache(
             shared_reference = cache_path.with_name("exact_source_pose_reference.json")
             if reference_path.resolve() != shared_reference.resolve():
                 shared_reference.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(reference_path, shared_reference)
+                copy_file_atomic(reference_path, shared_reference)
             shared_metrics["sourcePoseReferencePath"] = str(shared_reference.resolve())
     write_exact_source_phase_validation_cache(
         cache_path=cache_path,
@@ -24183,21 +25388,10 @@ def write_exact_source_phase_validation_cache(
     cache_key: str,
     metrics: dict[str, Any],
 ) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = cache_path.with_name(
-        f"{cache_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    write_json_atomic(
+        cache_path,
+        {"schemaVersion": 6, "cacheKey": cache_key, "metrics": metrics},
     )
-    try:
-        temporary_path.write_text(
-            json.dumps(
-                {"schemaVersion": 6, "cacheKey": cache_key, "metrics": metrics},
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        temporary_path.replace(cache_path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
 
 
 def promote_exact_source_pose_reference(
@@ -24223,7 +25417,7 @@ def promote_exact_source_pose_reference(
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source_path.resolve() != destination.resolve():
-        shutil.copy2(source_path, destination)
+        copy_file_atomic(source_path, destination)
     return {
         **validation,
         "sourcePoseReferencePath": str(destination.resolve()),
@@ -24247,8 +25441,7 @@ def update_pre_wham_exact_phase_validation_manifest(
         validation
     )
     payload["exactSourcePhaseValidation"] = validation
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json_atomic(manifest_path, payload)
 
 
 def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bool:
@@ -24700,13 +25893,19 @@ def baked_leg_articulation_preservation_metrics(payload: dict[str, Any]) -> dict
     return {"available": True, "referenceField": source_field, **metrics}
 
 
-def baked_source_support_evidence(payload: dict[str, Any]) -> dict[str, Any] | None:
+def baked_source_support_evidence(
+    payload: dict[str, Any],
+    *,
+    evidence_override: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Retain contact evidence across baking and map intervals onto a cut."""
-    evidence = payload.get("sourceFootSupportEvidence")
-    if isinstance(evidence, dict):
-        return evidence
-    settings = payload.get("selectedPreviewSettings") or payload.get("bakedPreviewConfiguration") or {}
-    evidence = settings.get("sourceFootSupportEvidence")
+    evidence = evidence_override
+    if not isinstance(evidence, dict):
+        evidence = payload.get("sourceFootSupportEvidence")
+        if isinstance(evidence, dict):
+            return evidence
+        settings = payload.get("selectedPreviewSettings") or payload.get("bakedPreviewConfiguration") or {}
+        evidence = settings.get("sourceFootSupportEvidence")
     if not isinstance(evidence, dict):
         return None
     evidence = copy.deepcopy(evidence)
@@ -24716,23 +25915,59 @@ def baked_source_support_evidence(payload: dict[str, Any]) -> dict[str, Any] | N
         start = parse_optional_float(frames[0].get("sourceFrameIndex"))
         end = parse_optional_float(frames[-1].get("sourceFrameIndex"))
         if start is not None and end is not None and end > start:
+            first_frame = max(0, min(int(count) - 1, round(start)))
+            last_frame = max(first_frame, min(int(count) - 1, round(end)))
             low, high = start / (count - 1), end / (count - 1)
+
+            def rebase_contacts(records: list[Any]) -> list[dict[str, Any]]:
+                clipped: list[dict[str, Any]] = []
+                for row in records:
+                    if not isinstance(row, dict):
+                        continue
+                    contact_start = parse_optional_float(row.get("startRatio"))
+                    contact_end = parse_optional_float(row.get("endRatio"))
+                    if contact_start is None:
+                        frame_start = parse_optional_float(row.get("startFrame"))
+                        contact_start = 0.0 if frame_start is None else frame_start / (count - 1)
+                    if contact_end is None:
+                        frame_end = parse_optional_float(row.get("endFrame"))
+                        contact_end = 1.0 if frame_end is None else frame_end / (count - 1)
+                    if contact_end < low or contact_start > high:
+                        continue
+                    contact_start = max(low, min(high, contact_start))
+                    contact_end = max(low, min(high, contact_end))
+                    if contact_end < contact_start:
+                        continue
+                    local_start = (contact_start - low) / (high - low)
+                    local_end = (contact_end - low) / (high - low)
+                    clipped.append({
+                        **row,
+                        "startFrame": round(local_start * (last_frame - first_frame)),
+                        "endFrame": round(local_end * (last_frame - first_frame)),
+                        "startRatio": local_start,
+                        "endRatio": local_end,
+                    })
+                return clipped
+
             def rebase(node: dict[str, Any]) -> None:
                 for key, value in list(node.items()):
-                    if key in {"contacts", "supportContacts", "contactIntervals"} and isinstance(value, list):
-                        clipped = []
-                        for row in value:
-                            if not isinstance(row, dict):
-                                continue
-                            a = max(low, float(row.get("startRatio", 0.)))
-                            z = min(high, float(row.get("endRatio", 1.)))
-                            if z >= a:
-                                clipped.append({**row, "startRatio": (a - low) / (high - low),
-                                                "endRatio": (z - low) / (high - low)})
-                        node[key] = clipped
+                    if key in {"contacts", "supportContacts", "contactIntervals", "footContactCandidates"} and isinstance(value, list):
+                        node[key] = rebase_contacts(value)
                     elif isinstance(value, dict):
                         rebase(value)
             rebase(evidence)
+            patch_feet = (evidence.get("footPatchEvidence") or {}).get("feet") or {}
+            for foot in patch_feet.values():
+                states = foot.get("states") if isinstance(foot, dict) else None
+                if not isinstance(states, list) or not states:
+                    continue
+                state_denominator = max(1, len(states) - 1)
+                first_state = max(0, math.floor(first_frame * state_denominator / (int(count) - 1)))
+                last_state = min(
+                    len(states) - 1,
+                    math.ceil(last_frame * state_denominator / (int(count) - 1)),
+                )
+                foot["states"] = states[first_state:last_state + 1]
     return evidence
 
 
@@ -24931,10 +26166,19 @@ def constrain_baked_payload_to_source_articulation(
         fit_kwargs = {}
         if timeout_seconds is not None:
             fit_kwargs["timeout_seconds"] = max(0.0, float(timeout_seconds))
+        from .sequence_stabilization import pose_digest
+        from .controlled_motion import controlled_motion_fit_source_evidence_digest
+        fit_input_pose_digest = pose_digest(payload)
+        fit_input_source_evidence_digest = controlled_motion_fit_source_evidence_digest(payload)
         fitted, fit_report = fit_controlled_motion(working, **fit_kwargs)
         # An unsuccessful initialization/fit must not replace the caller's pose.
         result = fitted if fit_report.get("applied") else copy.deepcopy(payload)
-        result["controlledMotionFit"] = fit_report
+        result["controlledMotionFit"] = {
+            **fit_report,
+            "fitInputPoseDigest": fit_input_pose_digest,
+            "fitSourceEvidenceDigest": fit_report.get("fitSourceEvidenceDigest")
+            or fit_input_source_evidence_digest,
+        }
         if fit_report.get("applied"):
             # The fit path returns here, so the animation-bandwidth smoothing
             # that the no-fit path applies below must run before this return:
@@ -25179,6 +26423,8 @@ def bake_preview_loops_with_playwright(
     exercise_name: str | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
     source_foot_support_evidence: dict[str, Any] | None = None,
+    review_source_clips: list[dict[str, Any]] | None = None,
+    raw_motion_fallback_evidence: dict[str, Any] | None = None,
     speculative_prefetch: bool = False,
     deadline: float | None = None,
 ) -> list[BakedLoopArtifact]:
@@ -25204,6 +26450,7 @@ def bake_preview_loops_with_playwright(
         "rankVariants": rank_preview_variants, "adaptive": adaptive_preview_settings,
         "maxVariants": max_adaptive_preview_settings, "exercise": exercise_name,
         "contract": exercise_motion_contract, "support": source_foot_support_evidence,
+        "rawMotionFallbackEvidence": raw_motion_fallback_evidence,
         "bakePathCodeDigest": _bake_path_code_digest(),
     }
     key = cache_key(settings, [preview_html_path,
@@ -25234,14 +26481,83 @@ def bake_preview_loops_with_playwright(
                               Path(__file__).with_name("loop_cycles.py"),
                               Path(__file__).with_name("loop_seam.py"),
                               Path(__file__).with_name("repetition_phase.py"),
-                              Path(__file__).with_name("pose_fidelity.py")])
+                              Path(__file__).with_name("pose_fidelity.py"),
+                              Path(__file__).with_name("artifact_state.py")])
+    def cached_eligible_inventory(
+        cached: dict[str, Any],
+    ) -> list[EligibleLoop] | None:
+        current_by_index = {loop.loop_index: loop for loop in eligible_loops}
+        cached_inventory = cached.get("eligibleLoops")
+        if cached_inventory is None:
+            # Older entries can still be used when they contain no artifact
+            # for an eligible loop that the current caller cannot select.
+            inventory = list(eligible_loops)
+        elif isinstance(cached_inventory, list):
+            try:
+                inventory = [
+                    EligibleLoop(**entry)
+                    for entry in cached_inventory
+                    if isinstance(entry, dict)
+                ]
+            except (TypeError, ValueError):
+                return None
+            if len(inventory) != len(cached_inventory):
+                return None
+        else:
+            return None
+
+        inventory_by_index = {loop.loop_index: loop for loop in inventory}
+        if len(inventory_by_index) != len(inventory):
+            return None
+        for loop_index, current_loop in current_by_index.items():
+            if inventory_by_index.get(loop_index) != current_loop:
+                return None
+        cached_artifacts = cached.get("artifacts")
+        if not isinstance(cached_artifacts, list):
+            return None
+        artifact_indices: set[int] = set()
+        for entry in cached_artifacts:
+            artifact = entry.get("artifact") if isinstance(entry, dict) else None
+            loop_index = artifact.get("loop_index") if isinstance(artifact, dict) else None
+            if type(loop_index) is not int:
+                return None
+            artifact_indices.add(loop_index)
+        if not artifact_indices.issubset(inventory_by_index):
+            return None
+        return inventory
+
     def artifacts_from_cached(cached: dict[str, Any]) -> list[BakedLoopArtifact]:
         artifacts = []
+        eligible_by_index = {loop.loop_index: loop for loop in eligible_loops}
         for entry in cached["artifacts"]:
             values = dict(entry["artifact"])
+            export_payload = values.get("export_payload")
+            if not isinstance(export_payload, dict):
+                raise ValueError("Cached bake artifact has no export payload")
+            if "artifactState" not in export_payload:
+                eligible_loop = eligible_by_index.get(int(values.get("loop_index", -1)))
+                export_payload["artifactState"] = artifact_state_for_baked_payload(
+                    export_payload,
+                    contract=exercise_motion_contract,
+                    selection_class=(
+                        eligible_loop.artifact_class
+                        if eligible_loop is not None
+                        else FULL_CLIP_BAKE
+                    ),
+                )
+                values["artifact_class"] = export_payload["artifactState"]["artifactClass"]
+            else:
+                validated_state = validate_artifact_state(
+                    export_payload["artifactState"],
+                    movement_payload=export_payload,
+                )
+                persisted_class = str(validated_state["artifactClass"])
+                if values.get("artifact_class") and values["artifact_class"] != persisted_class:
+                    raise ValueError("Cached bake artifact class differs from its persisted state")
+                values["artifact_class"] = persisted_class
             values["skeleton_path"] = Path(values["skeleton_path"])
             values["review_video_path"] = Path(values["review_video_path"])
-            values["skeleton_path"].write_text(json.dumps(values["export_payload"]), encoding="utf-8")
+            write_json_atomic(values["skeleton_path"], export_payload)
             if entry.get("cachedVideo"):
                 shutil.copy2(entry["cachedVideo"], values["review_video_path"])
             artifacts.append(BakedLoopArtifact(**values))
@@ -25265,7 +26581,19 @@ def bake_preview_loops_with_playwright(
             cached = None
         if cached is None:
             return None
-        return artifacts_from_cached(cached)
+        restored_inventory = cached_eligible_inventory(cached)
+        if restored_inventory is None:
+            return None
+        try:
+            artifacts = artifacts_from_cached(cached)
+        except (TypeError, ValueError, KeyError):
+            return None
+        eligible_loops[:] = restored_inventory
+        if isinstance(review_source_clips, list):
+            review_source_clips[:] = [
+                eligible_loop_to_manifest(loop) for loop in eligible_loops
+            ]
+        return artifacts
 
     with stage_lock(checkpoint):
         cached_artifacts = load_cached_artifacts()
@@ -25294,10 +26622,15 @@ def bake_preview_loops_with_playwright(
                 max_adaptive_preview_settings=max_adaptive_preview_settings, caption_images=caption_images,
                 exercise_name=exercise_name, exercise_motion_contract=exercise_motion_contract,
                 source_foot_support_evidence=source_foot_support_evidence,
+                review_source_clips=review_source_clips,
+                raw_motion_fallback_evidence=raw_motion_fallback_evidence,
                 deadline=deadline,
             )
 
-    artifacts = render_with_cpu_slot(bake_candidate)
+    artifacts = render_with_cpu_slot(
+        bake_candidate,
+        task_name="preview_loop_bake_and_fit",
+    )
     entries = []
     outputs = []
     for index, artifact in enumerate(artifacts):
@@ -25313,7 +26646,10 @@ def bake_preview_loops_with_playwright(
         entries.append({"artifact": asdict(artifact), "cachedVideo": str(cached_video)})
         outputs.append(cached_video)
     from .controlled_motion import controlled_fit_processing_incomplete
-    cache_payload = {"artifacts": entries}
+    cache_payload = {
+        "artifacts": entries,
+        "eligibleLoops": [asdict(loop) for loop in eligible_loops],
+    }
     if any(controlled_fit_processing_incomplete(artifact.export_payload.get("controlledMotionFit"))
            for artifact in artifacts):
         # Prefetch and final processing share this attempt. Reuse its
@@ -25329,7 +26665,227 @@ def bake_preview_loops_with_playwright(
     return artifacts
 
 
-@browser_worker
+def _fit_cycle_selection_bounds(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, dict):
+        return None
+    start = value.get("startFrame")
+    stop = value.get("stopFrameExclusive")
+    if (type(start) is not int or type(stop) is not int
+            or start < 0 or stop <= start):
+        return None
+    return start, stop
+
+
+def unattempted_preflight_source_cycle_bounds(fit_report: Any) -> set[tuple[int, int]]:
+    """Return at most one phase-approved cycle the parent fit never attempted.
+
+    The full-clip fit may stop after repeated core failures. Preserve the
+    normal retry cap, but let one distinct source-preflight-passed window reach
+    the ordinary per-candidate fit and artifact gates.
+    """
+    if not isinstance(fit_report, dict):
+        return set()
+    attempted = {
+        bounds
+        for attempt in fit_report.get("cycleSelectionAttempts", [])
+        if isinstance(attempt, dict)
+        and (bounds := _fit_cycle_selection_bounds(attempt.get("selection"))) is not None
+    }
+    for preflight in fit_report.get("sourceCyclePreflight", []):
+        if not isinstance(preflight, dict) or preflight.get("passed") is not True:
+            continue
+        bounds = _fit_cycle_selection_bounds(preflight.get("selection"))
+        if bounds is not None and bounds not in attempted:
+            return {bounds}
+    return set()
+
+
+def eligible_loop_cycle_bounds(eligible_loop: EligibleLoop) -> tuple[int, int] | None:
+    if eligible_loop.artifact_class != CYCLE_SELECTION or eligible_loop.loop_index < 0:
+        return None
+    loop = eligible_loop.loop
+    start = loop.get("startFrame") if isinstance(loop, dict) else None
+    exclusive_stop = loop.get("stopFrameExclusive") if isinstance(loop, dict) else None
+    end = loop.get("endFrame") if isinstance(loop, dict) else None
+    if type(exclusive_stop) is int:
+        return _fit_cycle_selection_bounds({
+            "startFrame": start,
+            "stopFrameExclusive": exclusive_stop,
+        })
+    if type(end) is not int:
+        return None
+    return _fit_cycle_selection_bounds({
+        "startFrame": start,
+        "stopFrameExclusive": end + 1,
+    })
+
+
+def enqueue_unattempted_preflight_source_cycle(
+    eligible_loops: list[EligibleLoop],
+    fit_report: Any,
+    frames: Any,
+) -> EligibleLoop | None:
+    """Queue the exact frame interval of one approved cycle the parent fit skipped."""
+    bounds_set = unattempted_preflight_source_cycle_bounds(fit_report)
+    if not bounds_set or not isinstance(frames, list):
+        return None
+    start_frame, stop_frame_exclusive = next(iter(bounds_set))
+    if stop_frame_exclusive > len(frames) or stop_frame_exclusive - start_frame < 2:
+        return None
+    for eligible_loop in eligible_loops:
+        if eligible_loop_cycle_bounds(eligible_loop) == (start_frame, stop_frame_exclusive):
+            return eligible_loop
+
+    def source_time(frame: Any) -> float | None:
+        if not isinstance(frame, dict):
+            return None
+        for key in ("sourceTimeSec", "timeSec"):
+            value = frame.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            numeric = float(value)
+            if math.isfinite(numeric):
+                return numeric
+        return None
+
+    start_seconds = source_time(frames[start_frame])
+    end_frame = stop_frame_exclusive - 1
+    end_seconds = source_time(frames[end_frame])
+    if start_seconds is None or end_seconds is None or end_seconds <= start_seconds:
+        return None
+    duration_seconds = end_seconds - start_seconds
+    loop_index = max((loop.loop_index for loop in eligible_loops), default=-1) + 1
+    loop = {
+        "type": "exact_source_movement_instance",
+        "startFrame": start_frame,
+        "endFrame": end_frame,
+        "stopFrameExclusive": stop_frame_exclusive,
+        "startTimeSec": start_seconds,
+        "endTimeSec": end_seconds,
+        "durationSec": duration_seconds,
+        "label": f"Source-preflight cycle: {start_seconds:.2f}s -> {end_seconds:.2f}s",
+    }
+    candidate = EligibleLoop(
+        loop_index=loop_index,
+        loop=loop,
+        duration_sec=duration_seconds,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        artifact_class=CYCLE_SELECTION,
+    )
+    eligible_loops.append(candidate)
+    return candidate
+
+
+def publish_unattempted_preflight_source_cycle(
+    *,
+    eligible_loops: list[EligibleLoop],
+    eligible_loop_queue: list[EligibleLoop],
+    fit_report: Any,
+    frames: Any,
+    review_source_clips: Any,
+) -> EligibleLoop | None:
+    """Make one approved fallback visible to baking, selection, and manifest output."""
+    candidate = enqueue_unattempted_preflight_source_cycle(
+        eligible_loops,
+        fit_report,
+        frames,
+    )
+    if candidate is None:
+        return None
+    if candidate not in eligible_loop_queue:
+        eligible_loop_queue.append(candidate)
+    if isinstance(review_source_clips, list) and not any(
+        isinstance(entry, dict) and entry.get("loopIndex") == candidate.loop_index
+        for entry in review_source_clips
+    ):
+        review_source_clips.append(eligible_loop_to_manifest(candidate))
+    return candidate
+
+
+def source_cycle_preflight_for_bounds(
+    fit_report: Any,
+    bounds: tuple[int, int],
+) -> dict[str, Any] | None:
+    if not isinstance(fit_report, dict):
+        return None
+    for preflight in fit_report.get("sourceCyclePreflight", []):
+        if not isinstance(preflight, dict) or preflight.get("passed") is not True:
+            continue
+        if _fit_cycle_selection_bounds(preflight.get("selection")) == bounds:
+            return copy.deepcopy(preflight)
+    return None
+
+
+def contact_corrected_cycle_fit_seed(
+    exact_export_payload: dict[str, Any],
+    corrected_full_clip_payload: dict[str, Any],
+    selected_interval: dict[str, Any],
+    *,
+    source_cycle_preflight: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Seed an exact source crop from its validated, support-corrected parent."""
+    bounds = _fit_cycle_selection_bounds(selected_interval)
+    if (
+        bounds is None
+        or source_cycle_preflight.get("passed") is not True
+        or _fit_cycle_selection_bounds(source_cycle_preflight.get("selection")) != bounds
+    ):
+        return None
+    try:
+        from .loop_cycles import slice_loop_cycle
+
+        corrected_cycle = slice_loop_cycle(corrected_full_clip_payload, selected_interval)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    exact_frames = exact_export_payload.get("frames")
+    corrected_frames = corrected_cycle.get("frames")
+    if (
+        not isinstance(exact_frames, list)
+        or not isinstance(corrected_frames, list)
+        or len(exact_frames) != len(corrected_frames)
+        or not exact_frames
+    ):
+        return None
+    for exact_frame, corrected_frame in zip(exact_frames, corrected_frames):
+        if not isinstance(exact_frame, dict) or not isinstance(corrected_frame, dict):
+            return None
+        if exact_frame.get("sourceFrameIndex") != corrected_frame.get("sourceFrameIndex"):
+            return None
+        try:
+            exact_time = float(exact_frame["sourceTimeSec"])
+            corrected_time = float(corrected_frame["sourceTimeSec"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(exact_time) or not math.isfinite(corrected_time):
+            return None
+        if not math.isclose(exact_time, corrected_time, rel_tol=0.0, abs_tol=1e-6):
+            return None
+
+    exact_loop = exact_export_payload.get("loop")
+    start_frame, stop_frame_exclusive = bounds
+    if (
+        not isinstance(exact_loop, dict)
+        or exact_loop.get("sourceStartFrame") != start_frame
+        or exact_loop.get("sourceEndFrame") != stop_frame_exclusive - 1
+    ):
+        return None
+
+    seeded = copy.deepcopy(exact_export_payload)
+    seeded["frames"] = corrected_frames
+    seeded["loop"] = copy.deepcopy(exact_loop)
+    seeded["loopCycleSelection"] = copy.deepcopy(corrected_cycle.get("loopCycleSelection"))
+    seeded["sourceFootSupportEvidence"] = copy.deepcopy(
+        corrected_cycle.get("sourceFootSupportEvidence")
+    )
+    seeded["sourceCyclePreflight"] = [copy.deepcopy(source_cycle_preflight)]
+    for stale_key in ("artifactState", "controlledMotionFit", "preRenderDeterministicGate"):
+        seeded.pop(stale_key, None)
+    return seeded
+
+
+@browser_worker(task_name="preview_loop_bake_and_fit")
 def _bake_preview_loops_with_playwright_uncached(
     preview_html_path: Path,
     eligible_loops: list[EligibleLoop],
@@ -25343,6 +26899,8 @@ def _bake_preview_loops_with_playwright_uncached(
     exercise_name: str | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
     source_foot_support_evidence: dict[str, Any] | None = None,
+    review_source_clips: list[dict[str, Any]] | None = None,
+    raw_motion_fallback_evidence: dict[str, Any] | None = None,
     deadline: float | None = None,
 ) -> list[BakedLoopArtifact]:
     try:
@@ -25355,32 +26913,70 @@ def _bake_preview_loops_with_playwright_uncached(
     wear_dir.mkdir(parents=True, exist_ok=True)
     review_dir.mkdir(parents=True, exist_ok=True)
     artifacts: list[BakedLoopArtifact] = []
+    preview_bake_diagnostics: dict[str, Any] = {
+        "schemaVersion": 1,
+        "browserStartupAndPageReadySeconds": 0.0,
+        "bakeExportSeconds": 0.0,
+        "sourceArticulationFitSeconds": 0.0,
+        "contactSequenceCorrectionSeconds": 0.0,
+        "artifactReviewRenderSeconds": 0.0,
+        "artifacts": [],
+    }
     source_pose_reference = load_verified_source_pose_reference(
         candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
         candidate_workspace / "input" / "selected_segment.mp4")
     source_camera_reference = load_baked_source_camera_reference(candidate_workspace, source_pose_reference)
+    preview_support_options = preview_source_support_evidence_options(
+        source_foot_support_evidence,
+        source_camera_reference,
+    )
     browser_preview_html_path, staged_preview_temp = stage_preview_for_browser_if_needed(
         preview_html_path
     )
+    browser_started = time.perf_counter()
     with browser_session(launch_chromium_browser) as browser:
         page = browser.new_page(viewport={"width": 960, "height": 720}, device_scale_factor=1)
         page.goto(browser_preview_html_path.resolve().as_uri(), wait_until="networkidle")
         page.wait_for_function("() => window.exerciseMotionAutomation != null")
         payload_summary = page.evaluate("() => window.exerciseMotionAutomation.getPayloadSummary()")
+        preview_bake_diagnostics["browserStartupAndPageReadySeconds"] = (
+            time.perf_counter() - browser_started
+        )
         motion_tuning_enabled = bool(
             payload_summary.get("motionTuningEnabled", True)
             if isinstance(payload_summary, dict)
             else True
         )
+        full_clip_bake_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        corrected_cycle_fit_seed_cache: dict[tuple[int, str], dict[str, Any]] = {}
+        fallback_cycle_bounds: set[tuple[int, int]] | None = None
+        eligible_loop_queue = sorted(eligible_loops, key=lambda loop: loop.loop_index >= 0)
         # The retained full source is the baseline. Speculative cycle repairs
         # must not consume its shared fit budget before it has been evaluated.
-        for eligible_loop in sorted(eligible_loops, key=lambda loop: loop.loop_index >= 0):
+        for eligible_loop in eligible_loop_queue:
+            if fallback_cycle_bounds is not None and eligible_loop.artifact_class == CYCLE_SELECTION:
+                bounds = eligible_loop_cycle_bounds(eligible_loop)
+                if bounds not in fallback_cycle_bounds:
+                    preview_bake_diagnostics["artifacts"].append({
+                        "loopIndex": eligible_loop.loop_index,
+                        "skippedReason": "not_the_unattempted_preflight_source_cycle",
+                        "sourceFrameBounds": list(bounds) if bounds is not None else None,
+                    })
+                    continue
+                fallback_cycle_bounds.remove(bounds)
+            loop_diagnostics: dict[str, Any] = {
+                "loopIndex": eligible_loop.loop_index,
+                "sourceFrameCount": None,
+                "exportCount": 0,
+                "controlledFitReportedSeconds": 0.0,
+                "contactSequenceCorrectionApplied": False,
+                "artifacts": [],
+            }
             base_options = build_preview_bake_base_options(
                 motion_tuning_enabled=motion_tuning_enabled,
                 exercise_motion_contract=exercise_motion_contract,
             )
-            if isinstance(source_foot_support_evidence, dict):
-                base_options["sourceFootSupportEvidence"] = source_foot_support_evidence
+            base_options.update(preview_support_options)
             artifact_base_label = "full-input" if eligible_loop.loop_index < 0 else f"source-{eligible_loop.loop_index + 1}"
             # Controlled-motion fit is authoritative: after the first fitted
             # baseline the variant loop breaks, so adaptive planning's extra
@@ -25417,29 +27013,110 @@ def _bake_preview_loops_with_playwright_uncached(
                 }
                 options = with_fixed_preview_camera_options(options)
                 artifact_label = artifact_base_label if not (rank_preview_variants or adaptive_preview_settings) else f"{artifact_base_label}.{variant_id}"
+                explicit_frame_range = (
+                    isinstance(eligible_loop.loop, dict)
+                    and eligible_loop.loop.get("type") == "exact_source_movement_instance"
+                    and type(eligible_loop.loop.get("startFrame")) is int
+                    and type(eligible_loop.loop.get("endFrame")) is int
+                )
+                exact_frame_bounds = (
+                    (
+                        int(eligible_loop.loop["startFrame"]),
+                        int(eligible_loop.loop["endFrame"]),
+                    )
+                    if explicit_frame_range
+                    else None
+                )
                 explicit_time_range = (
                     isinstance(eligible_loop.loop, dict)
                     and eligible_loop.loop.get("type") == "exact_source_movement_instance"
+                    and not explicit_frame_range
                 )
 
-                def bake_current_range(bake_options: dict[str, Any] | None = None) -> dict[str, Any]:
+                def bake_loop_range(
+                    loop_index: int,
+                    start_seconds: float,
+                    end_seconds: float,
+                    explicit_frame_range: bool,
+                    explicit_time_range: bool,
+                    frame_range: tuple[int, int] | None = None,
+                    bake_options: dict[str, Any] | None = None,
+                ) -> dict[str, Any]:
+                    export_started = time.perf_counter()
                     baked = page.evaluate(
-                        """({ loopIndex, startSeconds, endSeconds, explicitTimeRange, options }) =>
-                            explicitTimeRange
+                        """({ loopIndex, startSeconds, endSeconds, explicitFrameRange,
+                              explicitTimeRange, startFrame, endFrame, options }) =>
+                            explicitFrameRange
+                              ? (typeof window.exerciseMotionAutomation.bakeFrameRange === "function"
+                                  ? window.exerciseMotionAutomation.bakeFrameRange(startFrame, endFrame, options)
+                                  : window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options))
+                              : explicitTimeRange
                               ? window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options)
                               : window.exerciseMotionAutomation.bakeLoop(loopIndex, options)""",
                         {
-                            "loopIndex": eligible_loop.loop_index,
-                            "startSeconds": eligible_loop.start_seconds,
-                            "endSeconds": eligible_loop.end_seconds,
+                            "loopIndex": loop_index,
+                            "startSeconds": start_seconds,
+                            "endSeconds": end_seconds,
+                            "explicitFrameRange": explicit_frame_range,
                             "explicitTimeRange": explicit_time_range,
+                            "startFrame": frame_range[0] if frame_range is not None else None,
+                            "endFrame": frame_range[1] if frame_range is not None else None,
                             "options": options if bake_options is None else bake_options,
                         },
                     )
+                    if frame_range is not None and (
+                        baked.get("loop", {}).get("sourceStartFrame") != frame_range[0]
+                        or baked.get("loop", {}).get("sourceEndFrame") != frame_range[1]
+                    ):
+                        raise ValueError(
+                            "Exact source-frame bake returned bounds different from the selected interval"
+                        )
                     if source_camera_reference is not None:
                         baked['sourcePoseCameraReference'] = source_camera_reference
+                    elapsed = time.perf_counter() - export_started
+                    preview_bake_diagnostics["bakeExportSeconds"] += elapsed
+                    loop_diagnostics["exportCount"] += 1
+                    loop_diagnostics["sourceFrameCount"] = len(baked.get("frames", []))
                     return baked
 
+                def bake_current_range(bake_options: dict[str, Any] | None = None) -> dict[str, Any]:
+                    return bake_loop_range(
+                        eligible_loop.loop_index,
+                        eligible_loop.start_seconds,
+                        eligible_loop.end_seconds,
+                        explicit_frame_range,
+                        explicit_time_range,
+                        exact_frame_bounds,
+                        bake_options,
+                    )
+
+                lineage_evidence: dict[str, Any] = {}
+                if eligible_loop.artifact_class == CYCLE_SELECTION:
+                    full_clip_cache_key = (
+                        variant_id,
+                        json.dumps(options, sort_keys=True, separators=(",", ":"), default=str),
+                    )
+                    full_clip_seed = full_clip_bake_cache.get(full_clip_cache_key)
+                    if full_clip_seed is None:
+                        # Materialize the full-clip parent before selecting and
+                        # rebaking this interval. It is only an export here; the
+                        # candidate fit remains bounded to the selected cycle.
+                        full_clip_seed = bake_loop_range(
+                            -1,
+                            0.0,
+                            0.0,
+                            False,
+                            False,
+                            None,
+                            options,
+                        )
+                        full_clip_bake_cache[full_clip_cache_key] = copy.deepcopy(
+                            full_clip_seed
+                        )
+                    lineage_evidence = cycle_selection_evidence(
+                        full_clip_seed,
+                        eligible_loop.loop,
+                    )
                 export_payload = bake_current_range()
                 options, camera_yaw_selection, camera_rebake_applied = (
                     select_readable_preview_camera_options(
@@ -25459,6 +27136,73 @@ def _bake_preview_loops_with_playwright_uncached(
                     # payload fields, so both decisions can be taken from the
                     # first export and applied together in one rebake.
                     export_payload = bake_current_range()
+                artifact_source_support_evidence = source_foot_support_evidence
+                if eligible_loop.artifact_class == CYCLE_SELECTION:
+                    corrected_seed_entry = corrected_cycle_fit_seed_cache.get(
+                        (eligible_loop.loop_index, variant_id)
+                    )
+                    if corrected_seed_entry is not None:
+                        corrected_parent = corrected_seed_entry["fullClipPayload"]
+                        corrected_cycle_seed = contact_corrected_cycle_fit_seed(
+                            export_payload,
+                            corrected_parent,
+                            eligible_loop.loop,
+                            source_cycle_preflight=corrected_seed_entry["sourceCyclePreflight"],
+                        )
+                        if corrected_cycle_seed is not None:
+                            export_payload = corrected_cycle_seed
+                            lineage_evidence = cycle_selection_evidence(
+                                corrected_parent,
+                                eligible_loop.loop,
+                            )
+                            lineage_evidence["contactCorrectedFitSeed"] = {
+                                "kind": "source_contact_sequence_correction",
+                                "sourceCyclePreflightPassed": True,
+                                "seedFrameCount": len(export_payload.get("frames", [])),
+                            }
+                            artifact_source_support_evidence = export_payload.get(
+                                "sourceFootSupportEvidence"
+                            )
+                            loop_diagnostics["controlledFitSeed"] = (
+                                "source_contact_sequence_corrected_full_clip"
+                            )
+                        else:
+                            loop_diagnostics["controlledFitSeedFallback"] = (
+                                "corrected_parent_source_interval_mismatch"
+                            )
+                if eligible_loop.artifact_class == FULL_CLIP_BAKE:
+                    lineage_evidence = {
+                        "fullClipBake": baked_payload_identity(export_payload),
+                    }
+                    full_clip_cache_key = (
+                        variant_id,
+                        json.dumps(options, sort_keys=True, separators=(",", ":"), default=str),
+                    )
+                    full_clip_bake_cache.setdefault(
+                        full_clip_cache_key,
+                        copy.deepcopy(export_payload),
+                    )
+                elif eligible_loop.artifact_class == BOUNDED_MOVEMENT_SELECTION:
+                    lineage_evidence = {
+                        "boundedMovementSelection": bounded_movement_selection_evidence(
+                            eligible_loop.loop
+                        )
+                    }
+                # Give the first controlled fit the same retained camera/source
+                # evidence that final materialized-output fitting uses. The
+                # preview renderer attaches this later for review, but waiting
+                # until render_prechecked_baked_artifacts would leave the
+                # expensive full-clip fit unconstrained by source observations.
+                if source_camera_reference is not None:
+                    export_payload["sourcePoseCameraReference"] = copy.deepcopy(
+                        source_camera_reference
+                    )
+                export_payload["artifactState"] = artifact_state_for_baked_payload(
+                    export_payload,
+                    contract=exercise_motion_contract,
+                    selection_class=eligible_loop.artifact_class,
+                    selection_evidence=lineage_evidence,
+                )
                 pre_fit_fidelity = pre_fit_source_articulation_fidelity_rejection(
                     export_payload,
                     source_pose_reference,
@@ -25470,7 +27214,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     hard_reasons = list(pre_fit_fidelity.get("rejectionReasons") or [])
                     support_repair_eligible = (
                         variant_id == "adaptive-baseline"
-                        and isinstance(source_foot_support_evidence, dict)
+                        and isinstance(artifact_source_support_evidence, dict)
                         and pre_fit_failure_is_support_repairable(hard_reasons)
                     )
                     if support_repair_eligible:
@@ -25489,18 +27233,38 @@ def _bake_preview_loops_with_playwright_uncached(
                             "rejectionReasons": hard_reasons,
                             "sourcePoseFidelity": pre_fit_fidelity,
                         }
+                        artifact_gate = movement_artifact_class_gate(
+                            export_payload["artifactState"],
+                            accepted_classes=TERMINAL_ARTIFACT_CLASSES,
+                            gate_name="pre_render_deterministic",
+                        )
                         export_payload["preRenderDeterministicGate"] = {
                             "passed": False,
-                            "rejectionReasons": hard_reasons,
+                            "rejectionReasons": dedupe_text(
+                                hard_reasons + list(artifact_gate["rejectionReasons"])
+                            ),
                             "sourcePoseFidelity": pre_fit_fidelity,
                             "preFitSourceArticulationProbe": True,
+                            "artifactClassGate": artifact_gate,
                         }
                         unusable_fit = True
                 else:
                     pre_fit_frames = copy.deepcopy(export_payload.get("frames"))
+                    pre_fit_loop = copy.deepcopy(export_payload.get("loop"))
+                    pre_fit_cycle_selection = copy.deepcopy(
+                        export_payload.get("loopCycleSelection")
+                    )
+                    source_fit_started = time.perf_counter()
                     export_payload, _ = constrain_baked_payload_to_source_articulation(
                         export_payload,
-                        source_foot_support_evidence=source_foot_support_evidence,
+                        source_foot_support_evidence=(
+                            baked_source_support_evidence(
+                                export_payload,
+                                evidence_override=artifact_source_support_evidence,
+                            )
+                            if isinstance(artifact_source_support_evidence, dict)
+                            else baked_source_support_evidence(export_payload)
+                        ),
                         exercise_motion_contract=exercise_motion_contract,
                         source_pose_reference=source_pose_reference,
                         timeout_seconds=(
@@ -25508,21 +27272,101 @@ def _bake_preview_loops_with_playwright_uncached(
                             else max(0.0, deadline - time.perf_counter())
                         ),
                     )
+                    source_fit_elapsed = time.perf_counter() - source_fit_started
+                    preview_bake_diagnostics["sourceArticulationFitSeconds"] += source_fit_elapsed
                     from .controlled_motion import controlled_fit_unusable_for_more_preview_work
                     fit_report = export_payload.get("controlledMotionFit")
+                    if isinstance(fit_report, dict):
+                        loop_diagnostics["controlledFitReportedSeconds"] += float(
+                            fit_report.get("elapsedSeconds") or 0.0
+                        )
                     if isinstance(fit_report, dict) and not fit_report.get("applied"):
                         # A failed fit leaves its half-mutated joints behind;
                         # gating that half-solution double-counts the failure
                         # (its own checks plus anatomy damage). Restore the
                         # pre-fit geometry — the fit report stays for routing.
                         export_payload["frames"] = pre_fit_frames
+                        if pre_fit_loop is None:
+                            export_payload.pop("loop", None)
+                        else:
+                            export_payload["loop"] = pre_fit_loop
+                        if pre_fit_cycle_selection is None:
+                            export_payload.pop("loopCycleSelection", None)
+                        else:
+                            export_payload["loopCycleSelection"] = pre_fit_cycle_selection
+                    elif isinstance(fit_report, dict) and fit_report.get("applied"):
+                        fitted_selection_evidence = (
+                            selection_evidence_for_materialized_interval(
+                                parent_selection_evidence=lineage_evidence,
+                                movement_payload=export_payload,
+                                selection_class=eligible_loop.artifact_class,
+                            )
+                            if eligible_loop.artifact_class in {
+                                CYCLE_SELECTION,
+                                BOUNDED_MOVEMENT_SELECTION,
+                            }
+                            else {}
+                        )
+                        if eligible_loop.artifact_class in {
+                            CYCLE_SELECTION,
+                            BOUNDED_MOVEMENT_SELECTION,
+                        }:
+                            if fitted_selection_evidence:
+                                lineage_evidence = fitted_selection_evidence
+                                attach_materialized_source_interval(
+                                    export_payload,
+                                    lineage_evidence,
+                                    selection_class=eligible_loop.artifact_class,
+                                )
+                            else:
+                                loop_diagnostics["artifacts"].append({
+                                    "variantId": variant_id,
+                                    "rejectedReason": (
+                                        "fitted_source_interval_not_within_selected_movement"
+                                    ),
+                                })
+                                unusable_fit = True
+                                stop_after_incomplete_fit = True
+                                break
                     unusable_fit = controlled_fit_unusable_for_more_preview_work(
                         export_payload.get("controlledMotionFit")
                     )
+                    if eligible_loop.artifact_class == FULL_CLIP_BAKE:
+                        fallback_cycle_bounds = (
+                            unattempted_preflight_source_cycle_bounds(
+                                export_payload.get("controlledMotionFit")
+                            )
+                            if unusable_fit
+                            else None
+                        )
+                        if fallback_cycle_bounds:
+                            fallback_candidate = publish_unattempted_preflight_source_cycle(
+                                eligible_loops=eligible_loops,
+                                eligible_loop_queue=eligible_loop_queue,
+                                fit_report=export_payload.get("controlledMotionFit"),
+                                frames=export_payload.get("frames"),
+                                review_source_clips=review_source_clips,
+                            )
+                            if fallback_candidate is not None:
+                                exact_bounds = eligible_loop_cycle_bounds(fallback_candidate)
+                                if exact_bounds is not None:
+                                    fallback_cycle_bounds = {exact_bounds}
+                                    preview_bake_diagnostics["artifacts"].append({
+                                        "loopIndex": fallback_candidate.loop_index,
+                                        "queuedReason": "unattempted_preflight_source_cycle",
+                                        "sourceFrameBounds": list(exact_bounds),
+                                        "bakeMode": "exact_source_frame_range",
+                                    })
                 annotate_export_payload_post_bake_scene_orientation(
                     export_payload,
                     orientation_hint=post_bake_orientation_hint,
                     applied=post_bake_orientation_applied,
+                )
+                artifact_state = artifact_state_for_baked_payload(
+                    export_payload,
+                    contract=exercise_motion_contract,
+                    selection_class=eligible_loop.artifact_class,
+                    selection_evidence=lineage_evidence,
                 )
                 export_payload["deterministicPreviewCameraSelection"] = camera_yaw_selection
                 adaptive_settings = (
@@ -25537,7 +27381,16 @@ def _bake_preview_loops_with_playwright_uncached(
                         orientation_hint=post_bake_orientation_hint,
                 )
                 skeleton_path = wear_dir / f"skeleton.baked.{artifact_label}.json"
-                skeleton_path.write_text(json.dumps(export_payload, indent=2), encoding="utf-8")
+                artifact_diagnostics = {
+                    "schemaVersion": 1,
+                    "loopIndex": eligible_loop.loop_index,
+                    "variantId": variant_id,
+                    "sourceFrameCount": loop_diagnostics["sourceFrameCount"],
+                    "exportCountSoFar": loop_diagnostics["exportCount"],
+                    "controlledFitReportedSeconds": loop_diagnostics[
+                        "controlledFitReportedSeconds"
+                    ],
+                }
                 review_video_path = review_dir / f"{artifact_label}.webm"
                 artifacts.append(
                     BakedLoopArtifact(
@@ -25554,11 +27407,13 @@ def _bake_preview_loops_with_playwright_uncached(
                             or "support_lock"
                         ),
                         adaptive_preview_settings=adaptive_settings,
+                        preview_bake_diagnostics=artifact_diagnostics,
+                        artifact_class=str(artifact_state["artifactClass"]),
                     )
                 )
                 support_repair_possible = (
                     variant_id == "adaptive-baseline"
-                    and isinstance(source_foot_support_evidence, dict)
+                    and isinstance(artifact_source_support_evidence, dict)
                 )
                 if unusable_fit:
                     # Incomplete or geometrically doomed fits cannot produce a
@@ -25577,10 +27432,20 @@ def _bake_preview_loops_with_playwright_uncached(
                     # the result for final acceptance or source fallback.
                     break
                 if support_repair_possible:
+                    correction_started = time.perf_counter()
+                    raw_support_evidence = baked_source_support_evidence(
+                        export_payload,
+                        evidence_override=artifact_source_support_evidence,
+                    )
+                    from .contact_constraints import motion_space_support_evidence
+
                     fused_support_evidence, reconstructed_contact_inference = (
                         fuse_reconstructed_support_evidence(
                             export_payload,
-                            source_foot_support_evidence,
+                            motion_space_support_evidence(
+                                export_payload,
+                                evidence_override=raw_support_evidence,
+                            ),
                         )
                     )
                     support_joint_names = {
@@ -25602,6 +27467,13 @@ def _bake_preview_loops_with_playwright_uncached(
                         export_payload, fused_support_evidence,
                         source_pose_reference=source_pose_reference,
                     )
+                    if isinstance(raw_support_evidence, dict):
+                        corrected_payload["sourceFootSupportEvidence"] = copy.deepcopy(
+                            raw_support_evidence
+                        )
+                        corrected_payload["motionSpaceSupportEvidence"] = copy.deepcopy(
+                            fused_support_evidence
+                        )
                     # The correction owns these pose changes, not the fit: a
                     # copied fit report is stale by digest and would reject the
                     # repaired variant in gates that never require a fit.
@@ -25626,13 +27498,36 @@ def _bake_preview_loops_with_playwright_uncached(
                                 for name in support_joint_names
                             ),
                             "contactSequenceCorrection": True,
-                            "sourceFootSupportEvidence": fused_support_evidence,
+                            "sourceFootSupportEvidence": artifact_source_support_evidence,
+                            "motionSpaceSupportEvidence": fused_support_evidence,
+                            "motionSpaceEvidenceCurrentRange": True,
                         }
                         corrected_payload = bake_current_range(corrected_options)
+                        if source_camera_reference is not None:
+                            corrected_payload["sourcePoseCameraReference"] = copy.deepcopy(
+                                source_camera_reference
+                            )
+                        corrected_raw_support_evidence = baked_source_support_evidence(
+                            corrected_payload,
+                            evidence_override=artifact_source_support_evidence,
+                        )
+                        if isinstance(corrected_raw_support_evidence, dict):
+                            corrected_payload["sourceFootSupportEvidence"] = (
+                                corrected_raw_support_evidence
+                            )
+                            corrected_payload["motionSpaceSupportEvidence"] = copy.deepcopy(
+                                fused_support_evidence
+                            )
+                        corrected_payload["artifactState"] = artifact_state_for_baked_payload(
+                            corrected_payload,
+                            contract=exercise_motion_contract,
+                            selection_class=eligible_loop.artifact_class,
+                            selection_evidence=lineage_evidence,
+                        )
                         corrected_payload, articulation_constraint = (
                             constrain_baked_payload_to_source_articulation(
                                 corrected_payload,
-                                source_foot_support_evidence=fused_support_evidence,
+                                source_foot_support_evidence=corrected_raw_support_evidence,
                                 exercise_motion_contract=exercise_motion_contract,
                                 source_pose_reference=source_pose_reference,
                                 timeout_seconds=(
@@ -25681,15 +27576,47 @@ def _bake_preview_loops_with_playwright_uncached(
                                 for name in support_joint_names
                             ) if used_renderer_contact_ik else options.get("lockPlantedHands", False),
                             "contactSequenceCorrection": True,
-                            "sourceFootSupportEvidence": fused_support_evidence,
+                            "sourceFootSupportEvidence": artifact_source_support_evidence,
+                            "motionSpaceSupportEvidence": fused_support_evidence,
                         }
                         corrected_skeleton_path = (
                             wear_dir / f"skeleton.baked.{corrected_label}.json"
                         )
-                        corrected_skeleton_path.write_text(
-                            json.dumps(corrected_payload, indent=2),
-                            encoding="utf-8",
+                        corrected_artifact_state = artifact_state_for_baked_payload(
+                            corrected_payload,
+                            contract=exercise_motion_contract,
+                            selection_class=eligible_loop.artifact_class,
+                            selection_evidence=lineage_evidence,
                         )
+                        if (
+                            preserves_loop_continuity
+                            and eligible_loop.artifact_class == FULL_CLIP_BAKE
+                            and corrected_artifact_state.get("artifactClass") == FULL_CLIP_BAKE
+                            and corrected_artifact_state.get("lineageComplete") is True
+                        ):
+                            from .body_support_observation import requires_body_support
+
+                            if not requires_body_support(exercise_motion_contract):
+                                parent_fit_report = export_payload.get("controlledMotionFit")
+                                for queued_cycle in eligible_loop_queue:
+                                    queued_bounds = eligible_loop_cycle_bounds(queued_cycle)
+                                    if (
+                                        queued_cycle.artifact_class != CYCLE_SELECTION
+                                        or queued_bounds not in (fallback_cycle_bounds or set())
+                                    ):
+                                        continue
+                                    preflight = source_cycle_preflight_for_bounds(
+                                        parent_fit_report,
+                                        queued_bounds,
+                                    )
+                                    if preflight is not None:
+                                        corrected_cycle_fit_seed_cache[
+                                            (queued_cycle.loop_index, variant_id)
+                                        ] = {
+                                            "fullClipPayload": copy.deepcopy(corrected_payload),
+                                            "sourceCyclePreflight": preflight,
+                                        }
+                        write_json_atomic(corrected_skeleton_path, corrected_payload)
                         corrected_review_path = review_dir / f"{corrected_label}.webm"
                         if preserves_loop_continuity:
                             # Keep the baseline so the downstream anatomy safety
@@ -25708,18 +27635,55 @@ def _bake_preview_loops_with_playwright_uncached(
                                         "source": "python_post_wham_contact_sequence_correction",
                                         "metrics": correction_metrics,
                                     },
+                                    preview_bake_diagnostics={
+                                        **artifact_diagnostics,
+                                        "variantId": corrected_variant_id,
+                                        "contactSequenceCorrectionSeconds": 0.0,
+                                        "contactSequenceCorrectionApplied": True,
+                                    },
+                                    artifact_class=str(
+                                        corrected_artifact_state["artifactClass"]
+                                    ),
                                 )
                             )
+                    correction_elapsed = time.perf_counter() - correction_started
+                    preview_bake_diagnostics["contactSequenceCorrectionSeconds"] += correction_elapsed
+                    loop_diagnostics["contactSequenceCorrectionApplied"] = bool(
+                        correction_metrics.get("applied")
+                    )
+                    loop_diagnostics["contactSequenceCorrectionSeconds"] = correction_elapsed
+                    for artifact in artifacts:
+                        if artifact.loop_index == eligible_loop.loop_index:
+                            artifact.preview_bake_diagnostics[
+                                "contactSequenceCorrectionSeconds"
+                            ] = correction_elapsed
+                            artifact.preview_bake_diagnostics[
+                                "contactSequenceCorrectionApplied"
+                            ] = bool(correction_metrics.get("applied"))
+            preview_bake_diagnostics["artifacts"].append(loop_diagnostics)
             if stop_after_incomplete_fit:
+                if eligible_loop.artifact_class == FULL_CLIP_BAKE:
+                    # Keep only one source-preflight-passed interval that was
+                    # not already fit by the parent. It receives the normal
+                    # fit, artifact-state, and acceptance gates below.
+                    continue
                 break
-        from .controlled_motion import controlled_fit_unusable_for_more_preview_work
+        if isinstance(raw_motion_fallback_evidence, dict):
+            for artifact in artifacts:
+                artifact.export_payload["rawMotionFallbackEvidence"] = copy.deepcopy(
+                    raw_motion_fallback_evidence
+                )
+        from .controlled_motion import (
+            controlled_motion_fit_raw_fallback,
+            controlled_fit_unusable_for_more_preview_work,
+        )
         if all(
             controlled_fit_unusable_for_more_preview_work(artifact.export_payload.get("controlledMotionFit"))
+            and controlled_motion_fit_raw_fallback(artifact.export_payload) is None
             for artifact in artifacts
         ):
-            # Every variant carries a doomed or incomplete fit, so nothing can
-            # be selected: apply the gate without encoding review videos. A
-            # contact-sequence-repaired sibling renders normally below.
+            # No variant can continue through review. Still persist the final
+            # deterministic rejection gate without spending time on videos.
             reference = load_verified_source_pose_reference(
                 candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
                 candidate_workspace / "input" / "selected_segment.mp4",
@@ -25737,14 +27701,31 @@ def _bake_preview_loops_with_playwright_uncached(
                     skeleton_path=artifact.skeleton_path,
                 )
                 payload["preRenderDeterministicGate"] = gate
-                artifact.skeleton_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                write_json_atomic(artifact.skeleton_path, payload)
         else:
+            render_started = time.perf_counter()
             render_prechecked_baked_artifacts(
                 page,
                 artifacts,
                 candidate_workspace,
                 exercise_motion_contract=exercise_motion_contract,
             )
+            render_elapsed = time.perf_counter() - render_started
+            preview_bake_diagnostics["artifactReviewRenderSeconds"] += render_elapsed
+            preview_bake_diagnostics["renderedArtifactCount"] = sum(
+                1 for artifact in artifacts if artifact.review_video_path.exists()
+            )
+            for artifact in artifacts:
+                diagnostics = artifact.preview_bake_diagnostics
+                diagnostics["artifactReviewRenderSeconds"] = render_elapsed
+                diagnostics["reviewVideoFrameCount"] = (
+                    len(dense_loop_review_video_frame_indices(artifact.export_payload))
+                    if artifact.review_video_path.exists() else 0
+                )
+    for artifact in artifacts:
+        artifact.preview_bake_diagnostics["aggregate"] = {
+            key: value for key, value in preview_bake_diagnostics.items() if key != "artifacts"
+        }
     if staged_preview_temp is not None:
         staged_preview_temp.cleanup()
     return artifacts
@@ -25844,8 +27825,23 @@ def pre_render_deterministic_gate(
     exercise_motion_contract: dict[str, Any] | None = None,
     candidate_workspace: Path | None = None,
     skeleton_path: Path | None = None,
+    require_terminal: bool = False,
 ) -> dict[str, Any]:
     """Use final joint geometry before spending time on review video frames."""
+    artifact_state = payload.get("artifactState")
+    artifact_class = (
+        str(artifact_state.get("artifactClass"))
+        if isinstance(artifact_state, dict) and artifact_state.get("artifactClass")
+        else CYCLIC_REBAKE
+        if isinstance(payload.get("loop"), dict) and payload["loop"].get("enabled") is True
+        else FULL_CLIP_BAKE
+    )
+    class_gate = movement_artifact_class_gate(
+        artifact_state if isinstance(artifact_state, dict) else {"artifactClass": artifact_class},
+        accepted_classes=TERMINAL_ARTIFACT_CLASSES,
+        gate_name="pre_render_deterministic",
+        require_terminal=require_terminal,
+    )
     kinematics = compute_kinematic_plausibility_metrics_from_payload(payload)
     fidelity = materialized_source_pose_fidelity_metrics(
         source_pose_payload=source_pose, output_motion_payload=payload, required=source_pose is not None)
@@ -25875,6 +27871,7 @@ def pre_render_deterministic_gate(
                          + kinematics.get("processingIncompleteReasons", [])
                          + fidelity.get("rejectionReasons", [])
                          + support_geometry.get("rejectionReasons", [])
+                         + class_gate["rejectionReasons"]
                          + (["materialized_support_contact_contradiction"]
                             if cleanup_support.get("supportContactContradiction") else [])
                          + (["materialized_unrendered_elevated_support_surface"]
@@ -25883,6 +27880,7 @@ def pre_render_deterministic_gate(
                             if loop_continuity_applies and loop_bridge.get("severeLoopMismatch")
                             else []))
     return {"passed": not reasons, "rejectionReasons": reasons,
+            "artifactClassGate": class_gate,
             "kinematics": kinematics, "sourcePoseFidelity": fidelity,
             "supportGeometry": support_geometry, "cleanupSupport": cleanup_support,
             "loopBridge": loop_bridge}
@@ -25901,6 +27899,25 @@ def load_baked_source_camera_reference(workspace: Path, source_pose: dict[str, A
     return None
 
 
+def preview_source_support_evidence_options(
+    source_evidence: dict[str, Any] | None,
+    source_camera_reference: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Pass canonical source labels and a separate rig-side view to preview."""
+    if not isinstance(source_evidence, dict):
+        return {}
+    from .contact_constraints import motion_space_support_evidence
+
+    motion_evidence = motion_space_support_evidence({
+        "sourceFootSupportEvidence": source_evidence,
+        "sourcePoseCameraReference": source_camera_reference,
+    })
+    return {
+        "sourceFootSupportEvidence": source_evidence,
+        "motionSpaceSupportEvidence": motion_evidence,
+    }
+
+
 def render_prechecked_baked_artifacts(
     page: Any,
     artifacts: list[BakedLoopArtifact],
@@ -25912,8 +27929,10 @@ def render_prechecked_baked_artifacts(
     source_video = workspace / "input" / "selected_segment.mp4"
     source_pose = load_verified_source_pose_reference(reference_path, source_video)
     camera_reference = load_baked_source_camera_reference(workspace, source_pose)
+    prepared: list[tuple[BakedLoopArtifact, dict[str, Any]]] = []
     for artifact in artifacts:
         payload = artifact.export_payload
+        diagnostics = artifact.preview_bake_diagnostics
         if camera_reference is not None:
             payload['sourcePoseCameraReference'] = camera_reference
         # Compare the parent observations at the actual retained source times.
@@ -25921,6 +27940,7 @@ def render_prechecked_baked_artifacts(
         reference_for_artifact = source_pose
         if source_pose and source_pose.get("frames") and payload.get("frames"):
             reference_for_artifact = source_pose_reference_for_motion(source_pose, payload)
+        gate_started = time.perf_counter()
         gate = pre_render_deterministic_gate(
             payload,
             reference_for_artifact,
@@ -25928,15 +27948,55 @@ def render_prechecked_baked_artifacts(
             candidate_workspace=workspace,
             skeleton_path=artifact.skeleton_path,
         )
+        if isinstance(diagnostics, dict):
+            diagnostics["deterministicGateSeconds"] = time.perf_counter() - gate_started
         payload["preRenderDeterministicGate"] = gate
-        artifact.skeleton_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        if not gate["passed"]:
+        write_json_atomic(artifact.skeleton_path, payload)
+        prepared.append((artifact, gate))
+
+    for artifact, gate in prepared:
+        if gate.get("passed") is not True:
+            continue
+        payload = artifact.export_payload
+        replacement = terminal_cycle_rebake_superseding_full_clip(
+            artifact.export_payload,
+            [sibling.export_payload for sibling, _ in prepared if sibling is not artifact],
+        )
+        if replacement is not None:
+            state = artifact.export_payload.get("artifactState")
+            class_gate = movement_artifact_class_gate(
+                state if isinstance(state, dict) else {},
+                accepted_classes={CYCLIC_REBAKE},
+                gate_name="pre_render_deterministic",
+                require_terminal=True,
+            )
+            gate["passed"] = False
+            gate["rejectionReasons"] = dedupe_text(
+                [
+                    *gate.get("rejectionReasons", []),
+                    *class_gate.get("rejectionReasons", []),
+                    "required_cycle_rebake_available",
+                ]
+            )
+            gate["artifactClassGate"] = class_gate
+            gate["supersededByRequiredArtifact"] = replacement
+            artifact.export_payload["preRenderDeterministicGate"] = gate
+            write_json_atomic(artifact.skeleton_path, artifact.export_payload)
             continue
         indices = dense_loop_review_video_frame_indices(payload)
+        capture_started = time.perf_counter()
         urls = render_baked_wear_frames_with_playwright(
             page, export_payload=payload, frame_indices=indices, options=artifact.settings_options)
+        if isinstance(diagnostics, dict):
+            diagnostics["reviewFrameCaptureSeconds"] = time.perf_counter() - capture_started
         fps = parse_review_video_fps(payload, frame_count=len(urls))
+        video_write_started = time.perf_counter()
         _, quality = write_validated_review_video_from_data_urls(urls, artifact.review_video_path, fps=fps)
+        if isinstance(diagnostics, dict):
+            diagnostics["reviewVideoWriteAndQualityCheckSeconds"] = (
+                time.perf_counter() - video_write_started
+            )
+            diagnostics["reviewVideoFrameCount"] = len(urls)
         if not quality.get("passed"):
             raise RuntimeError(f"Preview review video export failed quality validation: {quality}")
         metadata_path = artifact.review_video_path.with_suffix(".review_video.json")
@@ -27459,6 +29519,47 @@ def source_contact_intervals_from_evidence(
                     "supportKind": "foot",
                 }
             )
+    # Confirmed body-support tracks can provide stronger full-clip foot
+    # stationarity than the sparse per-frame contact detector. Keep these
+    # constraints in the correction path as well as the final geometry gate;
+    # otherwise a foot can be correctly classified as stationary yet never
+    # receive a correction outside its detected contact sub-intervals.
+    body_support = source_support_evidence.get("bodySupport")
+    if (
+        isinstance(body_support, dict)
+        and body_support.get("required")
+        and body_support.get("status") == "confirmed"
+    ):
+        stationary_joints = body_support.get("stationaryJoints")
+        if isinstance(stationary_joints, list):
+            for value in stationary_joints:
+                joint_name = str(value or "").strip()
+                if not joint_name.endswith(("_foot", "_ankle")):
+                    continue
+                continuous_foot_joints.add(joint_name)
+                intervals = [
+                    interval for interval in intervals
+                    if interval["jointName"] != joint_name
+                ]
+                intervals.append({
+                    "jointName": joint_name,
+                    "startFrame": 0,
+                    "endFrame": frame_count - 1,
+                    "confidence": 1.0,
+                    "supportKind": (
+                        "observed_foot_patch"
+                        if source_support_evidence.get("sharedSupportPlaneY") is not None
+                        else "foot"
+                    ),
+                    "surfaceKind": (
+                        "ground"
+                        if source_support_evidence.get("sharedSupportPlaneY") is not None
+                        else None
+                    ),
+                    "contactState": "full_sole",
+                    "contactMotion": "stationary",
+                    "verticalOnly": False,
+                })
     if continuous_foot_joints:
         # One continuously planted foot fully determines the per-frame rigid
         # root correction. Intermittent contacts from another foot must not
@@ -27680,13 +29781,19 @@ def apply_source_contact_sequence_correction(
     *,
     source_pose_reference: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Reduce source-confirmed contact drift using rigid whole-body offsets.
+    """Reduce source-confirmed contact drift using rigid whole-body transforms.
 
-    Every joint in a frame receives the exact same translation. This makes the
-    correction incapable of changing a joint angle, bone length, limb
-    symmetry, or knee trajectory relative to the body. Conflicting contacts
-    are solved by a confidence-weighted compromise rather than independent IK.
+    Every joint in a frame receives the same vertical-axis yaw and translation.
+    This preserves joint angles, bone lengths, limb symmetry, and knee
+    trajectories relative to the body. Conflicting contacts are solved by a
+    confidence-weighted compromise rather than independent IK.
     """
+    from .contact_constraints import motion_space_support_evidence
+
+    source_support_evidence = motion_space_support_evidence(
+        export_payload,
+        evidence_override=source_support_evidence,
+    )
     corrected_payload = copy.deepcopy(export_payload)
     frames_value = corrected_payload.get("frames")
     if not isinstance(frames_value, list):
@@ -28043,7 +30150,7 @@ def apply_source_contact_sequence_correction(
     ):
         import numpy as _np
 
-        from .anatomical_repair import enforce_rigid_bone_lengths, enforce_spine_axis_alignment
+        from .anatomical_repair import enforce_spine_axis_alignment
 
         spine_points = _np.asarray(
             [
@@ -28058,10 +30165,9 @@ def apply_source_contact_sequence_correction(
         spine_points, spine_repair_report = enforce_spine_axis_alignment(
             spine_points, spine_joint_names)
         if bool(spine_repair_report.get("applied")):
-            # Only folded frames move; the rigid pass restores temporal bone
-            # consistency for the neighbors (neck) the clamp did not touch.
-            spine_points = enforce_rigid_bone_lengths(
-                spine_points, spine_joint_names)
+            # Axis alignment preserves each repaired parent-child length.
+            # Temporal normalization after it changes that articulation and
+            # can add neck/head folds, so let physical gates judge this result.
             for frame, row in zip(frames, spine_points):
                 joints = frame["joints"]
                 for name, point in zip(spine_joint_names, row):
@@ -28146,7 +30252,13 @@ def apply_source_contact_sequence_correction(
         "baselineRmsContactError": baseline_rms_contact_error,
         "correctedRmsContactError": corrected_rms_contact_error,
         "translationTrack": translations,
-        "posePreservation": "per_frame_rigid_translation",
+        "posePreservation": (
+            "rigid_transform_with_local_repair"
+            if pinning_report.get("applied") or spine_repair_report.get("applied")
+            else "per_frame_rigid_yaw_translation"
+            if yaws is not None
+            else "per_frame_rigid_translation"
+        ),
         "reconstructedContactInference": reconstructed_contact_inference,
         "loopClosure": loop_closure,
         "spineAxisAlignment": spine_repair_report,
@@ -28579,6 +30691,11 @@ def materialize_llm_selected_time_range(
     request: BakeAndRankRequest,
 ) -> SelectedArtifact:
     item, ranking = selected
+    contract = review_item_contract_for_artifact_state(item, ranking)
+    required_class = required_final_artifact_class(contract)
+    if required_class is not None and review_item_artifact_class(item) != required_class:
+        # A reviewer-selected range cannot relabel a full clip as a source-confirmed movement.
+        return selected
     span = extract_llm_selected_time_range(
         item,
         ranking,
@@ -28613,6 +30730,8 @@ def materialize_llm_selected_time_range(
         artifact_id = "llm-selected-section"
         artifact_label = "LLM selected section"
         cut_applied = True
+    parent_state = review_item_artifact_state(item, contract=contract)
+    _, _, parent_payload = persisted_review_item_artifact_state(item)
     return materialize_review_item_time_range(
         item,
         ranking,
@@ -28622,6 +30741,8 @@ def materialize_llm_selected_time_range(
         artifact_id=artifact_id,
         artifact_label=artifact_label,
         cut_applied=cut_applied,
+        lineage_parent_state=parent_state,
+        lineage_parent_payload=parent_payload,
     )
 
 
@@ -28643,7 +30764,10 @@ def materialize_review_item_time_range(
     artifact_id: str,
     artifact_label: str,
     cut_applied: bool,
+    lineage_parent_state: dict[str, Any] | None = None,
+    lineage_parent_payload: dict[str, Any] | None = None,
 ) -> SelectedArtifact:
+    contract = review_item_contract_for_artifact_state(item, ranking)
     options = extract_llm_recommended_settings(
         item,
         ranking,
@@ -28658,11 +30782,18 @@ def materialize_review_item_time_range(
         review_frames=request.review_frames,
         artifact_id=artifact_id,
         artifact_label=artifact_label,
-        exercise_motion_contract=exercise_motion_contract_from_candidate(item.candidate),
+        selection_class=(
+            BOUNDED_MOVEMENT_SELECTION
+            if required_final_artifact_class(contract) == BOUNDED_MOVEMENT_REBAKE
+            else CYCLE_SELECTION
+        ),
+        exercise_motion_contract=contract,
         source_pose_reference=load_verified_source_pose_reference(
             item.candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
             item.candidate_workspace / "input" / "selected_segment.mp4",
         ),
+        lineage_parent_state=lineage_parent_state,
+        lineage_parent_payload=lineage_parent_payload,
     )
     artifact = bake_result.artifact
     cut_start_seconds, cut_end_seconds = loop_time_bounds_from_export(
@@ -28706,6 +30837,7 @@ def materialize_review_item_time_range(
             source_review_start_seconds=source_review_start_seconds,
             source_review_end_seconds=source_review_end_seconds,
             export_payload=artifact.export_payload,
+            artifact_class=artifact.artifact_class,
         ),
         annotate_ranking_with_kinematic_safe_bake(ranking, bake_result),
     )
@@ -28721,8 +30853,11 @@ def bake_kinematically_safe_preview_time_range(
     review_frames: int,
     artifact_id: str,
     artifact_label: str,
+    selection_class: str = CYCLE_SELECTION,
     exercise_motion_contract: dict[str, Any] | None = None,
     source_pose_reference: dict[str, Any] | None = None,
+    lineage_parent_state: dict[str, Any] | None = None,
+    lineage_parent_payload: dict[str, Any] | None = None,
 ) -> KinematicSafeBakeResult:
     artifact = bake_preview_time_range_with_playwright(
         preview_html_path=preview_html_path,
@@ -28733,8 +30868,11 @@ def bake_kinematically_safe_preview_time_range(
         review_frames=review_frames,
         artifact_id=artifact_id,
         artifact_label=artifact_label,
+        selection_class=selection_class,
         exercise_motion_contract=exercise_motion_contract,
         source_pose_reference=source_pose_reference,
+        lineage_parent_state=lineage_parent_state,
+        lineage_parent_payload=lineage_parent_payload,
     )
     original_metrics = optional_kinematic_plausibility_metrics(artifact.skeleton_path)
     original_loop_bridge_metrics = optional_loop_bridge_quality_metrics(artifact.skeleton_path)
@@ -28757,8 +30895,11 @@ def bake_kinematically_safe_preview_time_range(
         review_frames=review_frames,
         artifact_id=f"{artifact_id}-no-support-lock",
         artifact_label=f"{artifact_label} without support locks",
+        selection_class=selection_class,
         exercise_motion_contract=exercise_motion_contract,
         source_pose_reference=source_pose_reference,
+        lineage_parent_state=lineage_parent_state,
+        lineage_parent_payload=lineage_parent_payload,
     )
     safe_metrics = optional_kinematic_plausibility_metrics(safe_artifact.skeleton_path)
     safe_loop_bridge_metrics = optional_loop_bridge_quality_metrics(safe_artifact.skeleton_path)
@@ -28975,7 +31116,7 @@ def preview_options_changed(
     return any(before.get(option_id) != after.get(option_id) for option_id in option_ids)
 
 
-@browser_worker
+@browser_worker(task_name="selected_time_range_bake")
 def bake_preview_time_range_with_playwright(
     *,
     preview_html_path: Path,
@@ -28986,13 +31127,32 @@ def bake_preview_time_range_with_playwright(
     review_frames: int,
     artifact_id: str = "llm-selected-section",
     artifact_label: str = "LLM selected section",
+    selection_class: str = CYCLE_SELECTION,
     exercise_motion_contract: dict[str, Any] | None = None,
     source_pose_reference: dict[str, Any] | None = None,
+    lineage_parent_state: dict[str, Any] | None = None,
+    lineage_parent_payload: dict[str, Any] | None = None,
 ) -> BakedLoopArtifact:
     wear_dir = candidate_workspace / "wear"
     review_dir = candidate_workspace / "review"
     wear_dir.mkdir(parents=True, exist_ok=True)
     review_dir.mkdir(parents=True, exist_ok=True)
+    source_camera_reference = load_baked_source_camera_reference(
+        candidate_workspace,
+        source_pose_reference,
+    )
+    effective_options = with_fixed_preview_camera_options(options)
+    source_support_evidence = effective_options.get("sourceFootSupportEvidence")
+    effective_options.update(preview_source_support_evidence_options(
+        source_support_evidence,
+        source_camera_reference,
+    ))
+    fit_input_identity = selected_section_fit_input_identity(
+        source_pose_reference=source_pose_reference,
+        source_camera_reference=source_camera_reference,
+        source_support_evidence=source_support_evidence,
+        exercise_motion_contract=exercise_motion_contract,
+    )
     start_ms = int(round(start_seconds * 1000))
     end_ms = int(round(end_seconds * 1000))
     artifact_slug = f"{artifact_id}-{start_ms:06d}-{end_ms:06d}"
@@ -29004,12 +31164,26 @@ def bake_preview_time_range_with_playwright(
         export_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
         if selected_section_wear_skeleton_cache_is_current(
             export_payload,
-            options=options,
+            options=effective_options,
             preview_source=preview_source,
+            fit_input_identity=fit_input_identity,
         ) and selected_section_review_video_cache_is_current(
             review_video_metadata_path,
             export_payload=export_payload,
         ):
+            selection_evidence = rematerialized_selection_evidence(
+                parent_state=lineage_parent_state,
+                parent_payload=lineage_parent_payload,
+                movement_payload=export_payload,
+                selection_class=selection_class,
+            )
+            artifact_state = artifact_state_for_baked_payload(
+                export_payload,
+                contract=exercise_motion_contract,
+                selection_class=selection_class,
+                selection_evidence=selection_evidence,
+            )
+            write_json_atomic(skeleton_path, export_payload)
             return BakedLoopArtifact(
                 loop_index=-1,
                 skeleton_path=skeleton_path,
@@ -29021,6 +31195,7 @@ def bake_preview_time_range_with_playwright(
                 settings_variant_label=artifact_label,
                 settings_options=options,
                 cleanup_interpretation=str(options.get("cleanupInterpretation") or "support_lock"),
+                artifact_class=str(artifact_state["artifactClass"]),
             )
 
     try:
@@ -29032,7 +31207,6 @@ def bake_preview_time_range_with_playwright(
         page = browser.new_page(viewport={"width": 960, "height": 720}, device_scale_factor=1)
         page.goto(preview_html_path.resolve().as_uri(), wait_until="networkidle")
         page.wait_for_function("() => window.exerciseMotionAutomation != null")
-        effective_options = with_fixed_preview_camera_options(options)
         export_payload = page.evaluate(
             """({ startSeconds, endSeconds, options }) => window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options)""",
             {
@@ -29064,10 +31238,54 @@ def bake_preview_time_range_with_playwright(
                     "options": effective_options,
                 },
             )
+        if source_camera_reference is not None:
+            export_payload["sourcePoseCameraReference"] = copy.deepcopy(
+                source_camera_reference
+            )
+        if isinstance(source_support_evidence, dict):
+            local_source_support_evidence = baked_source_support_evidence(
+                export_payload,
+                evidence_override=source_support_evidence,
+            )
+            if isinstance(local_source_support_evidence, dict):
+                export_payload["sourceFootSupportEvidence"] = local_source_support_evidence
+                from .contact_constraints import motion_space_support_evidence
+
+                export_payload["motionSpaceSupportEvidence"] = motion_space_support_evidence(
+                    export_payload,
+                    evidence_override=local_source_support_evidence,
+                )
+        selection_evidence = rematerialized_selection_evidence(
+            parent_state=lineage_parent_state,
+            parent_payload=lineage_parent_payload,
+            movement_payload=export_payload,
+            selection_class=selection_class,
+        )
+        # The fitter needs the selected interval and source camera before it
+        # builds source-projection constraints. Rebuild the state after fitting
+        # below so its baked-payload identity describes the fitted result.
+        artifact_state_for_baked_payload(
+            export_payload,
+            contract=exercise_motion_contract,
+            selection_class=selection_class,
+            selection_evidence=selection_evidence,
+        )
         export_payload, _ = constrain_baked_payload_to_source_articulation(
             export_payload,
             exercise_motion_contract=exercise_motion_contract,
             source_pose_reference=source_pose_reference,
+        )
+        selection_evidence = rematerialized_selection_evidence(
+            parent_state=lineage_parent_state,
+            parent_payload=lineage_parent_payload,
+            movement_payload=export_payload,
+            selection_class=selection_class,
+        )
+        artifact_state = artifact_state_for_baked_payload(
+            export_payload,
+            contract=exercise_motion_contract,
+            selection_class=selection_class,
+            selection_evidence=selection_evidence,
         )
         annotate_export_payload_post_bake_scene_orientation(
             export_payload,
@@ -29078,7 +31296,8 @@ def bake_preview_time_range_with_playwright(
         export_payload["selectedSectionBakeCacheVersion"] = SELECTED_SECTION_BAKE_CACHE_VERSION
         export_payload["selectedSectionBakePathCodeDigest"] = _bake_path_code_digest()["sha256"]
         export_payload["selectedSectionPreviewSource"] = preview_source
-        skeleton_path.write_text(json.dumps(export_payload, indent=2), encoding="utf-8")
+        export_payload["selectedSectionFitInputIdentity"] = fit_input_identity
+        write_json_atomic(skeleton_path, export_payload)
         frame_indices = dense_loop_review_video_frame_indices(export_payload)
         frame_data_urls = render_baked_wear_frames_with_playwright(
             page,
@@ -29154,6 +31373,7 @@ def bake_preview_time_range_with_playwright(
         settings_variant_label=artifact_label,
         settings_options=effective_options,
         cleanup_interpretation=str(effective_options.get("cleanupInterpretation") or "support_lock"),
+        artifact_class=str(artifact_state["artifactClass"]),
     )
 
 
@@ -29328,6 +31548,24 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def selected_section_fit_input_identity(
+    *,
+    source_pose_reference: dict[str, Any] | None,
+    source_camera_reference: dict[str, Any] | None,
+    source_support_evidence: dict[str, Any] | None,
+    exercise_motion_contract: dict[str, Any] | None,
+) -> str:
+    """Identify the current source evidence and contract consumed by selected-range fitting."""
+    payload = {
+        "sourcePoseReference": source_pose_reference,
+        "sourcePoseCameraReference": source_camera_reference,
+        "sourceFootSupportEvidence": source_support_evidence,
+        "exerciseMotionContract": exercise_motion_contract,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def preview_html_source_signature(preview_html_path: Path) -> dict[str, Any]:
     stat = preview_html_path.stat()
     return {
@@ -29352,6 +31590,7 @@ def selected_section_wear_skeleton_cache_is_current(
     *,
     options: dict[str, Any],
     preview_source: dict[str, Any],
+    fit_input_identity: str | None = None,
 ) -> bool:
     if int(export_payload.get("selectedSectionBakeCacheVersion") or 0) != SELECTED_SECTION_BAKE_CACHE_VERSION:
         return False
@@ -29359,6 +31598,11 @@ def selected_section_wear_skeleton_cache_is_current(
     # changes independently of the preview HTML and options; only a current
     # bake-path code digest proves the retained artifact still matches it.
     if export_payload.get("selectedSectionBakePathCodeDigest") != _bake_path_code_digest()["sha256"]:
+        return False
+    if (
+        fit_input_identity is not None
+        and export_payload.get("selectedSectionFitInputIdentity") != fit_input_identity
+    ):
         return False
     if not preview_html_source_signature_matches(
         export_payload.get("selectedSectionPreviewSource"),
@@ -29532,6 +31776,7 @@ def selected_section_export_payload_signature(export_payload: dict[str, Any]) ->
     relevant_payload = {
         "selectedSectionBakeCacheVersion": export_payload.get("selectedSectionBakeCacheVersion"),
         "selectedSectionPreviewSource": export_payload.get("selectedSectionPreviewSource"),
+        "selectedSectionFitInputIdentity": export_payload.get("selectedSectionFitInputIdentity"),
         "fps": export_payload.get("fps"),
         "frameCount": export_payload.get("frameCount"),
         "durationSec": export_payload.get("durationSec"),
@@ -29962,7 +32207,16 @@ def preview_settings_variants(*, motion_tuning_enabled: bool = True) -> list[dic
 
 
 def sample_review_frame_indices(export_payload: dict[str, Any], count: int) -> list[int]:
-    frame_count = int(export_payload.get("frameCount") or 0)
+    frames = export_payload.get("frames")
+    declared_frame_count = export_payload.get("frameCount")
+    frame_count = (
+        int(declared_frame_count)
+        if isinstance(declared_frame_count, (int, float))
+        and not isinstance(declared_frame_count, bool)
+        and math.isfinite(float(declared_frame_count))
+        and float(declared_frame_count) > 0
+        else len(frames) if isinstance(frames, list) else 0
+    )
     if frame_count <= 0:
         return [0]
     sample_count = max(1, min(int(count), frame_count))
@@ -29976,6 +32230,34 @@ def sample_review_frame_indices(export_payload: dict[str, Any], count: int) -> l
             for index in range(sample_count)
         }
     )
+
+
+def final_output_review_frame_indices(
+    export_payload: dict[str, Any],
+    *,
+    requested_frame_count: int,
+    explicit_frame_indices: Any = None,
+) -> list[int]:
+    frames = export_payload.get("frames") if isinstance(export_payload, dict) else None
+    if not isinstance(frames, list) or not frames:
+        raise ReviewFrameCaptureError("Final review skeleton has no materialized frames")
+    declared_count = export_payload.get("frameCount")
+    if declared_count is not None and (
+        type(declared_count) is not int or declared_count != len(frames)
+    ):
+        raise ReviewFrameCaptureError("Final review skeleton has inconsistent frame counts")
+    if explicit_frame_indices is None:
+        return sample_review_frame_indices(export_payload, requested_frame_count)
+    if (
+        not isinstance(explicit_frame_indices, list)
+        or not explicit_frame_indices
+        or any(
+            type(index) is not int or not 0 <= index < len(frames)
+            for index in explicit_frame_indices
+        )
+    ):
+        raise ReviewFrameCaptureError("Invalid diagnostic frame indices")
+    return list(explicit_frame_indices)
 
 
 def adaptive_preview_settings_contact_sheet_frame_count(review_frames: int) -> int:
@@ -30330,17 +32612,35 @@ def write_review_frames_with_ffmpeg(
         stderr=subprocess.PIPE,
     )
     try:
-        if process.stdin is None:
-            raise RuntimeError("FFmpeg review-video encoder did not expose stdin.")
-        for frame in frames:
-            process.stdin.write(frame.tobytes())
-        process.stdin.close()
-        stderr_bytes = process.stderr.read() if process.stderr is not None else b""
-        return_code = process.wait()
+        frame_bytes = b"".join(frame.tobytes() for frame in frames)
+        _, stderr_bytes = process.communicate(
+            input=frame_bytes,
+            timeout=REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS,
+        )
+        stderr_bytes = stderr_bytes or b""
+        return_code = process.returncode
+    except subprocess.TimeoutExpired as exc:
+        try:
+            process.kill()
+        except OSError:
+            if process.poll() is None:
+                raise
+        _, stderr_bytes = process.communicate()
+        stderr_bytes = stderr_bytes or exc.stderr or b""
+        stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+        detail = f": {stderr}" if stderr else ""
+        raise RuntimeError(
+            "FFmpeg review-video encode exceeded "
+            f"{REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS:.0f}s and was terminated{detail}"
+        ) from exc
     except Exception:
         if process.poll() is None:
-            process.kill()
-        process.wait()
+            try:
+                process.kill()
+            except OSError:
+                if process.poll() is None:
+                    raise
+        process.communicate()
         raise
     if return_code != 0:
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
@@ -30662,10 +32962,12 @@ def render_review_window_contact_sheet(
     return cached_paths(output_dir / "render_checkpoint.json", key, lambda:
         render_with_cpu_slot(lambda: _render_review_window_contact_sheet_uncached(
             item=item, window=window, output_dir=output_dir, frame_count=frame_count,
-            vlm_review_style=vlm_review_style, materialized_skeleton=materialized_skeleton)))
+            vlm_review_style=vlm_review_style, materialized_skeleton=materialized_skeleton),
+            task_name="final_validation_contact_sheet",
+        ))
 
 
-@browser_worker
+@browser_worker(task_name="final_validation_contact_sheet")
 def _render_review_window_contact_sheet_uncached(
     *,
     item: ReviewItem,
@@ -30715,11 +33017,14 @@ def _render_review_window_contact_sheet_uncached(
                     },
                 }
         frame_indices = item.settings_options.get("reviewFrameIndices") if materialized_skeleton else None
-        if frame_indices is None:
+        if materialized_skeleton:
+            frame_indices = final_output_review_frame_indices(
+                export_payload,
+                requested_frame_count=frame_count,
+                explicit_frame_indices=frame_indices,
+            )
+        else:
             frame_indices = sample_review_frame_indices(export_payload, frame_count)
-        elif (not isinstance(frame_indices, list) or not frame_indices
-              or any(type(index) is not int or not 0 <= index < len(export_payload.get("frames", [])) for index in frame_indices)):
-            raise ReviewFrameCaptureError("Invalid diagnostic frame indices")
         frame_timestamps = frame_timestamps_for_indices(
             export_payload if isinstance(export_payload, dict) else {},
             frame_indices,
@@ -32924,6 +35229,238 @@ def source_cut_candidate_passes_pose_prefilter(candidate: SourceCutCandidate) ->
     # The YOLO pose overlap is only diagnostic here. It is too brittle as a
     # hard source-cut gate because discovery may validate a different chunk
     # than the source window being refined.
+    return True
+
+
+def _materialized_source_interval(
+    movement_payload: dict[str, Any],
+    *,
+    interval_type: str,
+) -> dict[str, Any] | None:
+    loop = movement_payload.get("loop")
+    frames = movement_payload.get("frames")
+    if not isinstance(loop, dict) or not isinstance(frames, list) or not frames:
+        return None
+    source_frames = [
+        frame
+        for frame in frames
+        if isinstance(frame, dict) and not bool(frame.get("syntheticLoopBridge"))
+    ]
+    if not source_frames:
+        return None
+    first = source_frames[0]
+    last = source_frames[-1]
+    start_frame = loop.get("sourceStartFrame", first.get("sourceFrameIndex"))
+    end_frame = loop.get("sourceEndFrame", last.get("sourceFrameIndex"))
+    start_time = loop.get("sourceStartTimeSec", first.get("sourceTimeSec"))
+    end_time = loop.get("sourceEndTimeSec", last.get("sourceTimeSec"))
+    if (
+        type(start_frame) is not int
+        or type(end_frame) is not int
+        or not isinstance(start_time, (int, float))
+        or isinstance(start_time, bool)
+        or not isinstance(end_time, (int, float))
+        or isinstance(end_time, bool)
+        or not math.isfinite(float(start_time))
+        or not math.isfinite(float(end_time))
+        or end_frame <= start_frame
+        or float(end_time) <= float(start_time)
+    ):
+        return None
+    return {
+        "type": interval_type,
+        "startFrame": start_frame,
+        "endFrame": end_frame,
+        "startTimeSec": float(start_time),
+        "endTimeSec": float(end_time),
+        "durationSec": float(end_time) - float(start_time),
+    }
+
+
+def _interval_is_within_parent(
+    interval: dict[str, Any],
+    parent_interval: dict[str, Any],
+) -> bool:
+    return (
+        type(interval.get("startFrame")) is int
+        and type(interval.get("endFrame")) is int
+        and type(parent_interval.get("startFrame")) is int
+        and type(parent_interval.get("endFrame")) is int
+        and interval["startFrame"] >= parent_interval["startFrame"]
+        and interval["endFrame"] <= parent_interval["endFrame"]
+        and float(interval["startTimeSec"]) >= float(parent_interval["startTimeSec"]) - 1e-6
+        and float(interval["endTimeSec"]) <= float(parent_interval["endTimeSec"]) + 1e-6
+    )
+
+
+def rematerialized_selection_evidence(
+    *,
+    parent_state: dict[str, Any] | None,
+    parent_payload: dict[str, Any] | None,
+    movement_payload: dict[str, Any],
+    selection_class: str,
+) -> dict[str, Any]:
+    """Rebind a rematerialized selection to validated parent lineage and its actual source bounds."""
+    if selection_class not in {CYCLE_SELECTION, BOUNDED_MOVEMENT_SELECTION}:
+        return {}
+    if not isinstance(parent_state, dict) or not isinstance(parent_payload, dict):
+        return {}
+    try:
+        parent_state = validate_artifact_state(
+            parent_state,
+            movement_payload=parent_payload,
+        )
+        if parent_state.get("lineageComplete") is not True:
+            return {}
+        parent_interval = _artifact_review_selection(
+            parent_state,
+            parent_payload,
+        )["interval"]
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+    parent_evidence = parent_state.get("selectionEvidence")
+    return selection_evidence_for_materialized_interval(
+        parent_selection_evidence=(
+            parent_evidence if isinstance(parent_evidence, dict) else {}
+        ),
+        movement_payload=movement_payload,
+        selection_class=selection_class,
+        parent_interval=parent_interval,
+    )
+
+
+def selection_evidence_for_materialized_interval(
+    *,
+    parent_selection_evidence: dict[str, Any],
+    movement_payload: dict[str, Any],
+    selection_class: str,
+    parent_interval: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Rebind fitted frame provenance to its validated source selection."""
+    if selection_class not in {CYCLE_SELECTION, BOUNDED_MOVEMENT_SELECTION}:
+        return {}
+    if selection_class == CYCLE_SELECTION:
+        parent_selection = parent_selection_evidence.get("cycleSelection")
+        full_clip_identity = parent_selection_evidence.get("fullClipBake")
+        if not isinstance(full_clip_identity, dict):
+            return {}
+        parent_interval = parent_interval or (
+            parent_selection.get("interval")
+            if isinstance(parent_selection, dict)
+            else None
+        )
+        loop = movement_payload.get("loop")
+        if not isinstance(loop, dict) or loop.get("enabled") is not True:
+            return {}
+    else:
+        parent_selection = parent_selection_evidence.get("boundedMovementSelection")
+        parent_interval = parent_interval or (
+            parent_selection.get("interval")
+            if isinstance(parent_selection, dict)
+            else None
+        )
+        loop = movement_payload.get("loop")
+        if not isinstance(loop, dict) or loop.get("enabled") is not False:
+            return {}
+
+    if not isinstance(parent_interval, dict):
+        return {}
+    selected_interval = _materialized_source_interval(
+        movement_payload,
+        interval_type=str(parent_interval.get("type") or "selected_source_interval"),
+    )
+    if selected_interval is None or not _interval_is_within_parent(
+        selected_interval,
+        parent_interval,
+    ):
+        return {}
+
+    if selection_class == CYCLE_SELECTION:
+        selection_payload = {
+            "fullClipContentSha256": full_clip_identity.get("contentSha256"),
+            "interval": selected_interval,
+        }
+        selection_id = hashlib.sha256(
+            json.dumps(
+                selection_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        return {
+            "fullClipBake": copy.deepcopy(full_clip_identity),
+            "cycleSelection": {
+                "selectionId": selection_id,
+                "interval": selected_interval,
+            },
+        }
+
+    return {
+        "boundedMovementSelection": bounded_movement_selection_evidence(
+            selected_interval
+        )
+    }
+
+
+def attach_materialized_source_interval(
+    movement_payload: dict[str, Any],
+    selection_evidence: dict[str, Any],
+    *,
+    selection_class: str,
+) -> bool:
+    """Keep source-frame bounds alongside any fit-local loop bounds."""
+    selection_key = (
+        "cycleSelection"
+        if selection_class == CYCLE_SELECTION
+        else "boundedMovementSelection"
+        if selection_class == BOUNDED_MOVEMENT_SELECTION
+        else None
+    )
+    selection = (
+        selection_evidence.get(selection_key)
+        if selection_key is not None
+        else None
+    )
+    interval = selection.get("interval") if isinstance(selection, dict) else None
+    loop = movement_payload.get("loop")
+    if not isinstance(interval, dict) or not isinstance(loop, dict):
+        return False
+    fit_report = movement_payload.get("controlledMotionFit")
+    fit_pose_digest = None
+    fit_source_evidence_digest = None
+    if isinstance(fit_report, dict) and fit_report.get("applied") is True:
+        from .sequence_stabilization import pose_digest
+        from .controlled_motion import controlled_motion_fit_source_evidence_digest
+
+        fit_pose_digest = pose_digest(movement_payload)
+        fit_source_evidence_digest = controlled_motion_fit_source_evidence_digest(movement_payload)
+    loop.update({
+        "sourceStartFrame": interval.get("startFrame"),
+        "sourceEndFrame": interval.get("endFrame"),
+        "sourceStartTimeSec": interval.get("startTimeSec"),
+        "sourceEndTimeSec": interval.get("endTimeSec"),
+    })
+    if (
+        isinstance(fit_report, dict)
+        and fit_report.get("applied") is True
+        and fit_report.get("outputPoseDigest") == fit_pose_digest
+    ):
+        # These source bounds bind the selected lineage; they do not alter the
+        # fitted frames or the fit-local loop. Keep the pose digest current so
+        # valid selected artifacts remain reusable by downstream gates.
+        fit_report["outputPoseDigest"] = pose_digest(movement_payload)
+    if (
+        isinstance(fit_report, dict)
+        and fit_report.get("applied") is True
+        and fit_report.get("fitSourceEvidenceDigest") == fit_source_evidence_digest
+    ):
+        from .controlled_motion import controlled_motion_fit_source_evidence_digest
+
+        fit_report["fitSourceEvidenceDigest"] = controlled_motion_fit_source_evidence_digest(
+            movement_payload
+        )
     return True
 
 
@@ -39903,7 +42440,75 @@ def build_loop_ranking_prompt(
 def write_candidate_bake_manifest(candidate_workspace: Path, payload: dict[str, Any]) -> None:
     review_dir = candidate_workspace / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
-    (review_dir / "bake_manifest.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    manifest = dict(payload)
+    status = str(manifest.get("status") or "processing")
+    lifecycle = dict(manifest.get("artifactLifecycle") or {})
+    history = list(lifecycle.get("history") or [])
+    if status not in {"pending", "processing"} and lifecycle.get("state") != status:
+        history.append({
+            "state": status,
+            "stage": manifest.get("activeStage"),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+    lifecycle.update(
+        schemaVersion=1,
+        state=status,
+        stage=manifest.get("activeStage") or lifecycle.get("stage"),
+        terminal=status not in {"pending", "processing"},
+        updatedAt=datetime.now(timezone.utc).isoformat(),
+        history=history,
+    )
+    manifest["artifactLifecycle"] = lifecycle
+    write_json_atomic(review_dir / "bake_manifest.json", manifest)
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Commit persistent pipeline state by replace, never by truncating in place."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def copy_file_atomic(source: Path, destination: Path) -> None:
+    """Copy persistent evidence without exposing a partially written destination."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as target_stream, source.open("rb") as source_stream:
+            shutil.copyfileobj(source_stream, target_stream)
+            target_stream.flush()
+            os.fsync(target_stream.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(temporary, destination)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def build_selection_manifest(
@@ -39921,7 +42526,7 @@ def build_selection_manifest(
         "selectionStatus": "needs_manual_review",
         "rejectionReason": "automatic_acceptance_gate_failed",
     }
-    return {
+    manifest = {
         "schemaVersion": 1,
         "selectionValidationPolicyVersion": SELECTION_VALIDATION_POLICY_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -39967,6 +42572,21 @@ def build_selection_manifest(
             "rejectionReason": "best_score_below_minimum",
         },
     }
+    lifecycle_state = (
+        "accepted" if selected is not None
+        else "manual_review" if manual_review_fallback is not None
+        else "processing_incomplete" if any(
+            result.get("status") == "needs_motion_processing" for result in candidate_results
+        )
+        else "rejected"
+    )
+    manifest["artifactLifecycle"] = {
+        "schemaVersion": 1,
+        "state": lifecycle_state,
+        "terminal": lifecycle_state in {"accepted", "manual_review", "rejected"},
+        "updatedAt": manifest["generatedAt"],
+    }
+    return manifest
 
 
 UNSAFE_MANUAL_REVIEW_FALLBACK_REASONS = {
@@ -40055,6 +42675,54 @@ def selected_to_manifest(item: ReviewItem, ranking: LoopRanking | None) -> dict[
         payload["ranking"] = ranking_to_manifest(ranking)
         payload["selectionScore"] = selected_artifact_score((item, ranking))
     payload["selectedWearSkeletonPath"] = str(item.skeleton_path)
+    selected_skeleton = (
+        selected_skeleton_file_identity(item.skeleton_path)
+        if item.skeleton_path is not None and item.skeleton_path.is_file()
+        else {"sha256": None, "frameCount": None}
+    )
+    final_validation = (
+        ranking.payload.get("finalOutputValidation")
+        if ranking is not None and isinstance(ranking.payload, dict)
+        else None
+    )
+    render_evidence = (
+        final_validation.get("renderEvidence")
+        if isinstance(final_validation, dict)
+        else None
+    )
+    rendered_skeleton = (
+        render_evidence.get("skeletonIdentity")
+        if isinstance(render_evidence, dict)
+        else None
+    )
+    if isinstance(rendered_skeleton, dict) and rendered_skeleton.get("sha256"):
+        if (
+            rendered_skeleton.get("sha256") != selected_skeleton["sha256"]
+            or rendered_skeleton.get("frameCount") != selected_skeleton["frameCount"]
+        ):
+            raise ValueError("Selected skeleton differs from the artifact rendered for final validation")
+    if (
+        isinstance(render_evidence, dict)
+        and render_evidence.get("available") is True
+        and item.skeleton_path.is_file()
+    ):
+        movement_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        movement_state = validate_artifact_state(
+            movement_payload.get("artifactState"),
+            movement_payload=movement_payload,
+        )
+        validate_final_output_review_window(
+            render_evidence.get("reviewWindow"),
+            artifact_state=movement_state,
+            movement_payload=movement_payload,
+        )
+    payload["selectedSkeletonIdentity"] = selected_skeleton
+    selected_contract = review_item_contract_for_artifact_state(item, ranking)
+    payload["artifactClass"] = review_item_artifact_class(item)
+    payload["artifactState"] = review_item_artifact_state(
+        item,
+        contract=selected_contract,
+    )
     if item.skeleton_path_no_feet_lock is not None:
         payload["selectedWearSkeletonPathNoFeetLock"] = str(item.skeleton_path_no_feet_lock)
     if item.skeleton_path_no_hand_lock is not None:
@@ -40133,6 +42801,7 @@ def eligible_loop_to_manifest(item: EligibleLoop) -> dict[str, Any]:
         "startSeconds": item.start_seconds,
         "endSeconds": item.end_seconds,
         "durationSec": item.duration_sec,
+        "artifactClass": item.artifact_class,
         "loop": item.loop,
     }
 
@@ -40194,6 +42863,11 @@ def review_item_to_manifest(item: ReviewItem) -> dict[str, Any]:
         "loopEndSeconds": item.loop_end_seconds,
         "sectionStartSeconds": item.loop_start_seconds,
         "sectionEndSeconds": item.loop_end_seconds,
+        "artifactClass": review_item_artifact_class(item),
+        "artifactState": review_item_artifact_state(
+            item,
+            contract=exercise_motion_contract_from_candidate(item.candidate),
+        ),
         "llmTimeRangeCutApplied": item.llm_time_range_cut_applied,
         "sourceReviewVideoPath": str(item.source_review_video_path) if item.source_review_video_path is not None else None,
         "sourceSkeletonPath": str(item.source_skeleton_path) if item.source_skeleton_path is not None else None,
@@ -40247,6 +42921,7 @@ def review_item_from_manifest(payload: dict[str, Any]) -> ReviewItem:
         source_skeleton_path=optional_path_from_manifest(payload.get("sourceSkeletonPath")),
         source_review_start_seconds=parse_optional_float(payload.get("sourceReviewStartSeconds")),
         source_review_end_seconds=parse_optional_float(payload.get("sourceReviewEndSeconds")),
+        artifact_class=str(payload.get("artifactClass") or ""),
     ))
 
 
@@ -40308,12 +42983,23 @@ def resolved_youtube_source_cache_dir(request: BakeAndRankRequest) -> Path:
 
 
 def youtube_source_cache_stem(ranked_candidate: RankedCandidate) -> str:
-    if ranked_candidate.url:
-        return youtube_preview_cache_stem(ranked_candidate.url)
-    identity = ranked_candidate.video_id or ranked_candidate.title or ranked_candidate.workspace_slug
-    digest = hashlib.sha1(identity.encode("utf-8", errors="replace")).hexdigest()[:12]
+    identity = (
+        ranked_candidate.url
+        or ranked_candidate.video_id
+        or ranked_candidate.title
+        or ranked_candidate.workspace_slug
+    )
+    profile = "720p" if ranked_candidate_prefers_high_resolution_source(ranked_candidate) else "standard"
+    local_source = ranked_candidate.video_path
+    local_content_hash = (
+        file_sha256(local_source.expanduser().resolve())
+        if local_source is not None and local_source.expanduser().is_file()
+        else ""
+    )
+    identity_payload = f"{identity}\0{profile}\0{local_content_hash}"
+    digest = hashlib.sha256(identity_payload.encode("utf-8", errors="replace")).hexdigest()[:16]
     safe_identity = re.sub(r"[^A-Za-z0-9_.-]+", "-", identity).strip("-")[:64]
-    return f"{safe_identity}-{digest}" if safe_identity else f"source-{digest}"
+    return f"{safe_identity}-{profile}-{digest}" if safe_identity else f"source-{profile}-{digest}"
 
 
 def ranked_candidate_prefers_high_resolution_source(ranked_candidate: RankedCandidate) -> bool:
@@ -40370,20 +43056,62 @@ def cached_youtube_source_is_usable(video_path: Path) -> bool:
 def find_cached_youtube_source(cache_dir: Path, cache_stem: str) -> Path | None:
     for suffix in (".mp4", ".mkv", ".webm", ".mov"):
         candidate = cache_dir / f"{cache_stem}{suffix}"
-        if candidate.is_file():
+        if candidate.is_file() and cached_youtube_source_identity_is_valid(candidate, cache_stem):
             return candidate
     return None
+
+
+def cached_youtube_source_identity_is_valid(video_path: Path, cache_stem: str) -> bool:
+    manifest_path = video_path.with_name(f"{video_path.name}.source.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        stat = video_path.stat()
+        return (
+            isinstance(manifest, dict)
+            and manifest.get("schemaVersion") == 1
+            and manifest.get("cacheKey") == cache_stem
+            and int(manifest.get("sizeBytes") or -1) == stat.st_size
+            and manifest.get("contentSha256") == file_sha256(video_path)
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def write_youtube_source_cache_manifest(video_path: Path, cache_stem: str) -> None:
+    manifest_path = video_path.with_name(f"{video_path.name}.source.json")
+    temporary_path = manifest_path.with_name(
+        f"{manifest_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    payload = {
+        "schemaVersion": 1,
+        "cacheKey": cache_stem,
+        "sizeBytes": video_path.stat().st_size,
+        "contentSha256": file_sha256(video_path),
+    }
+    try:
+        with temporary_path.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, manifest_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def cache_youtube_source(video_path: Path, cache_dir: Path, cache_stem: str) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     suffix = video_path.suffix if video_path.suffix else ".mp4"
     target = cache_dir / f"{cache_stem}{suffix}"
-    if cached_youtube_source_is_usable(target):
+    if (
+        cached_youtube_source_is_usable(target)
+        and cached_youtube_source_identity_is_valid(target, cache_stem)
+    ):
         return target
     temp_target = cache_dir / f"{target.name}.{os.getpid()}.{threading.get_ident()}.part"
     shutil.copy2(video_path, temp_target)
     temp_target.replace(target)
+    write_youtube_source_cache_manifest(target, cache_stem)
     return target
 
 
@@ -40411,34 +43139,19 @@ def download_ranked_candidate_to_source_cache(
     if cached is not None and cached_youtube_source_is_usable(cached):
         return cached, "cached"
 
-    lock_path = resolved_cache_dir / f"{cache_stem}.download.lock"
-    deadline = time.monotonic() + max(1.0, float(lock_timeout_seconds))
-    acquired = False
-    while not acquired:
-        try:
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
-                lock_file.write(f"pid={os.getpid()}\ncreated={datetime.now(timezone.utc).isoformat()}\n")
-            acquired = True
-        except FileExistsError:
+    # Use a new persistent lock path so a process running the previous
+    # unlink-on-release protocol cannot delete this kernel-owned lock.
+    lock_path = resolved_cache_dir / f"{cache_stem}.download.oslock"
+    with InterProcessFileLock(
+        lock_path,
+        stage="youtube_source_download",
+        timeout_seconds=max(1.0, float(lock_timeout_seconds)),
+        stale_after_seconds=max(60.0, float(lock_timeout_seconds)),
+    ) as waited_seconds:
+        if waited_seconds > 0.0:
             cached = find_cached_youtube_source(resolved_cache_dir, cache_stem)
             if cached is not None and cached_youtube_source_is_usable(cached):
                 return cached, "waited_for_cache"
-            try:
-                lock_age = time.time() - lock_path.stat().st_mtime
-            except OSError:
-                continue
-            if lock_age > max(60.0, float(lock_timeout_seconds)):
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
-                continue
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Timed out waiting for source download lock: {lock_path}")
-            time.sleep(0.25)
-
-    try:
         cached = find_cached_youtube_source(resolved_cache_dir, cache_stem)
         if cached is not None and cached_youtube_source_is_usable(cached):
             return cached, "cached_after_lock"
@@ -40460,11 +43173,6 @@ def download_ranked_candidate_to_source_cache(
             )
             cached = cache_youtube_source(downloaded, resolved_cache_dir, cache_stem)
         return cached, "downloaded"
-    finally:
-        try:
-            lock_path.unlink()
-        except OSError:
-            pass
 
 
 def copy_or_download_candidate_source(
@@ -40515,11 +43223,11 @@ def copy_or_download_candidate_source(
                 "[youtube] full source unavailable; using the validated cached preview "
                 f"for {ranked_candidate.video_id or ranked_candidate.title}: {truncate_text(str(exc), 180)}"
             )
-            cached = cache_youtube_source(
-                preview,
-                youtube_source_cache_dir.expanduser().resolve(),
-                cache_stem,
-            )
+            # A preview is a valid per-attempt fallback, but it is not the full
+            # source represented by this cache key. Persisting it here would
+            # make future runs believe a transiently unavailable full source
+            # had been downloaded successfully.
+            cached = preview
         return copy_cached_source_to_destination(cached, destination_dir)
     return download_youtube(
         ranked_candidate.url,

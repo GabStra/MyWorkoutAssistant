@@ -4425,6 +4425,10 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "recognizable; use an empty list only when no body-relative reference is meaningful. primaryAxis is the main anatomical travel "
         "direction, not the camera direction. motionPattern must describe the visible relationship rather than the implement.\n"
         "Return minified JSON only. No markdown table, code fence, timestamps, chain-of-thought, or explanation.\n"
+        "Return one top-level contract object. Do not put the JSON inside advisoryText, guidance, contract, or another string; "
+        "those are not output keys. validStartState and validEndState must describe the actual body posture in ordinary "
+        "anatomical prose. Do not write schema labels such as supportMode, handHeight, torsoOrientation, kneeState, or "
+        "stance into either state description.\n"
         "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, singleExecutionDurationSeconds, "
         "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
         "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
@@ -5040,6 +5044,49 @@ def normalize_exercise_pose_constraints(value: Any) -> dict[str, str] | None:
     return normalized
 
 
+def explicit_torso_orientation_from_state(state: Any) -> str | None:
+    """Read only clear torso-orientation statements from an endpoint description."""
+    text = re.sub(r"\s+", " ", str(state or "").strip().casefold())
+    cues = {
+        "upright": (
+            r"\b(?:torso|trunk|upper body)\s+(?:is\s+)?(?:upright|vertical|erect)\b",
+            r"\bstanding\s+upright\b",
+            r"\bupright\s+(?:standing\s+)?(?:posture|position|stance)\b",
+        ),
+        "hinged": (
+            r"\bhip\s+hinge\b",
+            r"\b(?:torso|trunk)\s+(?:is\s+)?hinged\b",
+            r"\b(?:torso|trunk)\s+(?:is\s+)?(?:angled|leaning|inclined)\s+forward\b",
+        ),
+        "horizontal": (
+            r"\b(?:torso|trunk)\s+(?:is\s+)?horizontal\b",
+            r"\b(?:torso|trunk)\s+(?:is\s+)?parallel\s+to\s+(?:the\s+)?(?:floor|ground)\b",
+            r"\blying\s+(?:flat|horizontally)\b",
+            r"\b(?:prone|supine)\s+(?:position|posture)?\b",
+        ),
+    }
+    matches = {
+        orientation
+        for orientation, patterns in cues.items()
+        if any(re.search(pattern, text) for pattern in patterns)
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def reconcile_pose_constraints_with_endpoint_state(fields: dict[str, Any]) -> None:
+    """Keep an explicit endpoint description authoritative over a conflicting torso enum."""
+    for endpoint, state_key in (
+        ("startPoseConstraints", "validStartState"),
+        ("endPoseConstraints", "validEndState"),
+    ):
+        constraints = fields.get(endpoint)
+        if not isinstance(constraints, dict):
+            continue
+        orientation = explicit_torso_orientation_from_state(fields.get(state_key))
+        if orientation is not None:
+            constraints["torsoOrientation"] = orientation
+
+
 def infer_exercise_completion_mode(
     *,
     movement_type: str | None,
@@ -5257,6 +5304,15 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         # this invariant in code instead of asking a small model to restate it.
         fields["validEndState"] = fields["validStartState"]
 
+    reconcile_pose_constraints_with_endpoint_state(fields)
+    if completion_mode == "return_to_start":
+        start_constraints = fields.get("startPoseConstraints")
+        if isinstance(start_constraints, dict):
+            # A completed return repetition has the same endpoint posture.
+            # Keep this invariant in the normalized contract instead of
+            # trusting two independently generated enum objects.
+            fields["endPoseConstraints"] = dict(start_constraints)
+
     list_fields = {
         "allowedExerciseTransitions": ("allowedExerciseTransitions", "allowedTransitions"),
         "excludedSetupOrCleanup": ("excludedSetupOrCleanup", "excludedSetupCleanup", "rejectSetupCleanup"),
@@ -5287,7 +5343,9 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     ):
         # The final observable phase already ends at validStartState; label that
         # existing phase explicitly instead of inventing an additional action.
-        required_phases[-1] = f"Return to start: {required_phases[-1]}"[:180].rstrip()
+        required_phases[-1] = truncate_contract_phase_label(
+            f"Return to start: {required_phases[-1]}", 180,
+        )
     if required_phases:
         fields["requiredPhases"] = required_phases
 
@@ -5357,8 +5415,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 28
-EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 13
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 29
+EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 14
 
 
 def exercise_motion_contract_cache_key_payload(
@@ -5480,7 +5538,11 @@ def load_cached_exercise_motion_contract(
     if int(payload.get("schemaVersion") or 0) != EXERCISE_MOTION_CONTRACT_CACHE_VERSION:
         return None
     contract = payload.get("contract")
-    if not isinstance(contract, dict) or not exercise_motion_contract_is_usable(contract, exercise=exercise):
+    if not isinstance(contract, dict):
+        return None
+    contract = dict(contract)
+    reconcile_pose_constraints_with_endpoint_state(contract)
+    if not exercise_motion_contract_is_usable(contract, exercise=exercise):
         return None
     return {
         **contract,
@@ -5802,6 +5864,23 @@ def cleaned_contract_string_list(value: Any, *, limit: int, item_limit: int) -> 
     return cleaned
 
 
+def truncate_contract_phase_label(value: str, limit: int) -> str:
+    """Bound phase text without cutting through a word or complete sentence."""
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    if len(text) <= limit:
+        return text
+    prefix = text[:limit + 1]
+    sentence_ends = [
+        match.end()
+        for match in re.finditer(r"[.!?](?=\s|$)|;(?=\s|$)", prefix)
+        if match.end() >= limit // 2
+    ]
+    if sentence_ends:
+        return text[:max(sentence_ends)].rstrip()
+    word_boundary = text.rfind(" ", 0, limit + 1)
+    return text[:word_boundary].rstrip() if word_boundary > 0 else text[:limit].rstrip()
+
+
 def normalize_required_phase_labels(value: Any) -> list[str]:
     """Recover concise phase labels from common small-model schema leakage."""
     normalized: list[str] = []
@@ -5819,7 +5898,7 @@ def normalize_required_phase_labels(value: Any) -> list[str]:
         if not phase or "..." in phase or "\u2026" in phase:
             continue
         if phase.casefold() not in {item.casefold() for item in normalized}:
-            normalized.append(phase[:180].rstrip())
+            normalized.append(truncate_contract_phase_label(phase, 180))
     return normalized
 
 
@@ -5959,6 +6038,15 @@ def exercise_motion_contract_quality_issues(
     ):
         issues.append("hip hinge contradicts a straight shoulder-to-knee body line")
     completion_mode = normalize_exercise_completion_mode(contract.get("completionMode"))
+    if completion_mode == "return_to_start":
+        start_constraints = contract.get("startPoseConstraints")
+        end_constraints = contract.get("endPoseConstraints")
+        if (isinstance(start_constraints, dict) and isinstance(end_constraints, dict)
+                and any(
+                    start_constraints.get(key) != end_constraints.get(key)
+                    for key in EXERCISE_POSE_CONSTRAINT_VALUES
+                )):
+            issues.append("return_to_start endpoint pose constraints disagree")
     phase_labels = cleaned_contract_string_list(
         contract.get("requiredPhases"),
         limit=8,

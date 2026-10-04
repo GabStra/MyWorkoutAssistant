@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.motion_scheduler import gpu_stage_task, timeout_with_candidate_deadline
 from exercise_motion_pkg.wham_runner import (
+    assert_warm_worker_available,
     copy_worker_log,
     ensure_warm_worker_ready,
     path_inside_worker_mount,
@@ -34,6 +36,51 @@ GVHMR_WARM_WORKER_SESSION_DIR_ENV_VAR = "EXERCISE_MOTION_GVHMR_WARM_WORKER_SESSI
 GVHMR_WARM_WORKER_MOUNT_ROOT_ENV_VAR = "EXERCISE_MOTION_GVHMR_WARM_WORKER_MOUNT_ROOT"
 GVHMR_WARM_WORKER_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_GVHMR_WARM_WORKER_TIMEOUT_SECONDS"
 GVHMR_WARM_WORKER_LAZY_START_ENV_VAR = "EXERCISE_MOTION_GVHMR_LAZY_START"
+
+
+class GvhmrWarmWorkerInterruptedAmbiguous(RuntimeError):
+    """A claimed GVHMR warm-worker request stopped without trustworthy completion."""
+
+    failure_code = "gvhmr_worker_interrupted_ambiguous"
+    status = "interrupted_ambiguous"
+
+    def __init__(
+        self,
+        *,
+        job_id: str,
+        session_dir: Path,
+        result_path: Path,
+        result_payload: dict[str, Any],
+        expected_stage_identity: dict[str, Any] | None,
+    ) -> None:
+        self.job_id = job_id
+        self.session_dir = Path(session_dir).expanduser().resolve()
+        self.result_path = Path(result_path).expanduser().resolve()
+        self.result_payload = dict(result_payload)
+        self.stage_identity = expected_stage_identity
+        recovery = result_payload.get("recovery")
+        self.recovery = dict(recovery) if isinstance(recovery, dict) else {}
+        archive_name = Path(str(self.recovery.get("archivedRequestPath") or "")).name
+        self.archive_path = (
+            self.session_dir / "ambiguous" / archive_name if archive_name else None
+        )
+        detail = str(result_payload.get("error") or "output completeness is unknown")
+        super().__init__(
+            f"GVHMR warm-worker job {job_id} was interrupted after claim and was not replayed: {detail}"
+        )
+
+    def diagnostic_payload(self) -> dict[str, Any]:
+        return {
+            "failureCode": self.failure_code,
+            "status": self.status,
+            "jobId": self.job_id,
+            "stageIdentity": self.stage_identity,
+            "resultPath": str(self.result_path),
+            "ambiguousArchivePath": str(self.archive_path) if self.archive_path else None,
+            "partialOutputPossible": bool(self.recovery.get("partialOutputPossible", True)),
+            "automaticReplay": bool(self.recovery.get("automaticReplay", False)),
+            "error": str(self.result_payload.get("error") or ""),
+        }
 
 
 @dataclass(frozen=True)
@@ -55,6 +102,7 @@ class GvhmrRunResult:
     warm_worker: bool = False
     warm_worker_job_id: str | None = None
     warm_worker_session_dir: Path | None = None
+    stage_identity: dict[str, Any] | None = None
 
     def timing_payload(self) -> dict[str, Any]:
         return {
@@ -67,6 +115,7 @@ class GvhmrRunResult:
             "warmWorker": self.warm_worker,
             "warmWorkerJobId": self.warm_worker_job_id,
             "warmWorkerSessionDir": str(self.warm_worker_session_dir) if self.warm_worker_session_dir is not None else None,
+            "stageIdentity": self.stage_identity,
             "stdoutLog": str(self.stdout_log),
             "stderrLog": str(self.stderr_log),
             "command": self.command,
@@ -150,6 +199,7 @@ def resolve_gvhmr_warm_worker_timeout_seconds(configured: float | None) -> float
     )
 
 
+@gpu_stage_task("gvhmr_warm_worker_reconstruction")
 def run_gvhmr_with_warm_worker(
     *,
     input_video: Path,
@@ -162,22 +212,23 @@ def run_gvhmr_with_warm_worker(
     warm_worker_session_dir: Path | None,
     warm_worker_mount_root: Path | None,
     warm_worker_timeout_seconds: float | None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None,
 ) -> GvhmrRunResult:
     session_dir = resolve_gvhmr_warm_worker_session_dir(warm_worker_session_dir)
     mount_root = resolve_gvhmr_warm_worker_mount_root(warm_worker_mount_root)
-    timeout = resolve_gvhmr_warm_worker_timeout_seconds(warm_worker_timeout_seconds)
+    worker_timeout = resolve_gvhmr_warm_worker_timeout_seconds(warm_worker_timeout_seconds)
+    timeout = worker_timeout
+    timeout = timeout_with_candidate_deadline(
+        timeout,
+        candidate_deadline,
+        stage_name="GVHMR warm-worker reconstruction",
+    )
     jobs_dir = session_dir / "jobs"
     results_dir = session_dir / "results"
     job_logs_dir = session_dir / "job_logs"
     for path in (jobs_dir, results_dir, job_logs_dir):
         path.mkdir(parents=True, exist_ok=True)
-    ensure_warm_worker_ready(
-        session_dir,
-        timeout_seconds=timeout if timeout is not None else DEFAULT_GVHMR_WARM_WORKER_TIMEOUT_SECONDS,
-        lazy_start_env_var=GVHMR_WARM_WORKER_LAZY_START_ENV_VAR,
-        label="GVHMR",
-    )
-
     job_id = uuid.uuid4().hex
     container_input_video = path_inside_worker_mount(input_video, mount_root=mount_root)
     container_output_root = path_inside_worker_mount(output_root, mount_root=mount_root)
@@ -187,6 +238,7 @@ def run_gvhmr_with_warm_worker(
         "outputRoot": container_output_root,
         "staticCam": static_camera,
         "keepSourceBetas": False,
+        "stageIdentity": stage_identity,
     }
     job_path = jobs_dir / f"{job_id}.json"
     tmp_job_path = jobs_dir / f"{job_id}.json.tmp"
@@ -196,11 +248,36 @@ def run_gvhmr_with_warm_worker(
     gpu_lock_wait_seconds = 0.0
     with gpu_stage_lock(stage="gvhmr_warm_worker_job") as gpu_lock_wait_seconds:
         with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
+            # Model loading during lazy startup uses CUDA too. Keep GPU and
+            # Docker admission through startup, then verify readiness again
+            # immediately before publishing a request.
+            ensure_warm_worker_ready(
+                session_dir,
+                timeout_seconds=(
+                    worker_timeout
+                    if worker_timeout is not None
+                    else DEFAULT_GVHMR_WARM_WORKER_TIMEOUT_SECONDS
+                ),
+                lazy_start_env_var=GVHMR_WARM_WORKER_LAZY_START_ENV_VAR,
+                label="GVHMR",
+            )
+            timeout = timeout_with_candidate_deadline(
+                worker_timeout,
+                candidate_deadline,
+                stage_name="GVHMR warm-worker reconstruction",
+            )
+            assert_warm_worker_available(session_dir, label="GVHMR")
+            timeout = timeout_with_candidate_deadline(
+                timeout,
+                candidate_deadline,
+                stage_name="GVHMR warm-worker request",
+            )
             tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
             tmp_job_path.replace(job_path)
             result_payload = wait_for_warm_worker_result(
                 result_path,
                 timeout_seconds=timeout,
+                candidate_deadline=candidate_deadline,
                 heartbeat_path=session_dir / "heartbeat.json",
                 stopped_path=session_dir / "stopped.json",
             )
@@ -209,6 +286,22 @@ def run_gvhmr_with_warm_worker(
     worker_stderr_log = job_logs_dir / f"{job_id}.stderr.log"
     copy_worker_log(worker_stdout_log, stdout_log)
     copy_worker_log(worker_stderr_log, stderr_log)
+    if str(result_payload.get("jobId") or "") != job_id:
+        raise RuntimeError(
+            "Warm GVHMR worker result job ID does not match the submitted request."
+        )
+    if result_payload.get("status") == GvhmrWarmWorkerInterruptedAmbiguous.status:
+        raise GvhmrWarmWorkerInterruptedAmbiguous(
+            job_id=job_id,
+            session_dir=session_dir,
+            result_path=result_path,
+            result_payload=result_payload,
+            expected_stage_identity=stage_identity,
+        )
+    if result_payload.get("stageIdentity") != stage_identity:
+        raise RuntimeError(
+            "Warm GVHMR worker result stage identity does not match the submitted candidate."
+        )
     if result_payload.get("status") != "completed":
         error = result_payload.get("error") or "unknown warm worker failure"
         raise RuntimeError(
@@ -252,6 +345,7 @@ def run_gvhmr_with_warm_worker(
         warm_worker=True,
         warm_worker_job_id=job_id,
         warm_worker_session_dir=session_dir,
+        stage_identity=stage_identity,
     )
 
 
@@ -313,6 +407,7 @@ def build_gvhmr_command(
     return command
 
 
+@gpu_stage_task("gvhmr_reconstruction")
 def run_gvhmr_locally(
     *,
     input_video: Path,
@@ -327,12 +422,19 @@ def run_gvhmr_locally(
     warm_worker_session_dir: Path | None = None,
     warm_worker_mount_root: Path | None = None,
     warm_worker_timeout_seconds: float | None = None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None,
 ) -> GvhmrRunResult:
     """Run GVHMR in Docker and return a WHAM-schema results pkl path."""
     timeout = (
         DEFAULT_GVHMR_TIMEOUT_SECONDS
         if timeout_seconds is None or float(timeout_seconds) <= 0.0
         else max(1.0, float(timeout_seconds))
+    )
+    timeout = timeout_with_candidate_deadline(
+        timeout,
+        candidate_deadline,
+        stage_name="GVHMR reconstruction",
     )
     output_root.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -354,6 +456,8 @@ def run_gvhmr_locally(
                 if warm_worker_timeout_seconds is not None
                 else timeout
             ),
+            stage_identity=stage_identity,
+            candidate_deadline=candidate_deadline,
         )
     docker_container_name = f"mwa-gvhmr-job-{uuid.uuid4().hex}"
     command = build_gvhmr_command(
@@ -379,7 +483,11 @@ def run_gvhmr_locally(
                     cwd=str(Path(__file__).resolve().parent),
                     stdout=stdout_handle,
                     stderr=stderr_handle,
-                    timeout_seconds=timeout,
+                    timeout_seconds=timeout_with_candidate_deadline(
+                        timeout,
+                        candidate_deadline,
+                        stage_name="GVHMR reconstruction",
+                    ),
                     docker_container_name=docker_container_name,
                 )
     elapsed = time.perf_counter() - started
