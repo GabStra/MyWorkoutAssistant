@@ -279,3 +279,80 @@ def test_process_tree_termination_waits_and_aborts_later_arms(tmp_path, monkeypa
     results = json.loads((run_root / "results.json").read_text(encoding="utf-8"))
     assert len(results) == 1
     assert results[0]["shutdownStatus"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "statuses", "expected_error"),
+    [
+        (1, {"completed": 1}, "runner exited with code 1"),
+        (
+            0,
+            {"no_selection": 1},
+            "only 0 of 1 exercises completed; statuses={'no_selection': 1}",
+        ),
+        (0, {}, "runner summary has no terminal exercise statuses"),
+    ],
+)
+def test_unqualified_arm_aborts_remaining_arms_and_keeps_artifacts(
+    tmp_path, monkeypatch, exit_code, statuses, expected_error
+):
+    monkeypatch.setattr(motion_speed_harness, "HARNESS_ROOT", tmp_path / "runs")
+    monkeypatch.setattr(motion_speed_harness, "capture_run_identity", lambda: {})
+
+    def build_library(_library, _slugs, destination):
+        destination.write_text("{}", encoding="utf-8")
+        return ["test-exercise"]
+
+    monkeypatch.setattr(motion_speed_harness, "build_mini_library", build_library)
+    monkeypatch.setattr(motion_speed_harness, "assemble_workspace", lambda *_args: 0)
+    monkeypatch.setattr(
+        motion_speed_harness,
+        "extract_metrics",
+        lambda _result: {"statuses": statuses},
+    )
+    monkeypatch.setattr(motion_speed_harness, "effective_configuration_error", lambda *_args: None)
+    monkeypatch.setattr(motion_speed_harness, "load_scheduler_timeline", lambda _result: [])
+    monkeypatch.setattr(motion_speed_harness, "_log_tail", lambda _path: "failed arm")
+
+    arm_calls = []
+    workspaces = []
+
+    def failed_arm(arm, arm_dir, *_args, **_kwargs):
+        arm_calls.append(arm)
+        workspace = arm_dir / "isolated" / "exercise_motion" / "workspace"
+        retained = workspace / "test-exercise" / "diagnostic.json"
+        retained.parent.mkdir(parents=True)
+        retained.write_text("{}", encoding="utf-8")
+        workspaces.append(retained)
+        return {
+            "arm": arm,
+            "exitCode": exit_code,
+            "terminationStatus": "exited",
+            "shutdownConfirmed": True,
+            "shutdownStatus": "confirmed",
+            "wallSeconds": 300,
+            "workspace": str(workspace),
+            "log": str(arm_dir / "run.log"),
+            "runnerArgs": [],
+        }
+
+    monkeypatch.setattr(motion_speed_harness, "run_arm", failed_arm)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "motion_speed_harness.py",
+            "--arms", "baseline,shared",
+            "--exercises", "test-exercise",
+            "--skip-prewarm",
+        ],
+    )
+
+    motion_speed_harness.main()
+
+    assert arm_calls == ["baseline"]
+    assert workspaces[0].is_file()
+    run_root = next((tmp_path / "runs").iterdir())
+    results = json.loads((run_root / "results.json").read_text(encoding="utf-8"))
+    assert len(results) == 1
+    assert results[0]["qualificationError"] == expected_error

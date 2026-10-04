@@ -795,6 +795,37 @@ def browser_task_summary(metrics: dict) -> str:
     return ",".join(summaries) if summaries else "unavailable"
 
 
+def arm_qualification_error(
+    arm_result: dict, metrics: dict, expected_exercise_count: int
+) -> str | None:
+    """Reject an arm that cannot support a later comparison arm."""
+    if arm_result.get("exitCode") != 0:
+        return f"runner exited with code {arm_result.get('exitCode')!r}"
+
+    statuses = metrics.get("statuses")
+    if not isinstance(statuses, dict) or not statuses:
+        return "runner summary has no terminal exercise statuses"
+    if any(
+        not isinstance(count, int) or isinstance(count, bool) or count < 0
+        for count in statuses.values()
+    ):
+        return "runner summary has invalid terminal exercise status counts"
+
+    completed = statuses.get("completed", 0)
+    terminal_count = sum(statuses.values())
+    if set(statuses) != {"completed"} or completed != expected_exercise_count:
+        return (
+            f"only {completed} of {expected_exercise_count} exercises completed; "
+            f"statuses={statuses}"
+        )
+    if terminal_count != expected_exercise_count:
+        return (
+            f"runner reported {terminal_count} terminal exercises; "
+            f"expected {expected_exercise_count}"
+        )
+    return None
+
+
 def extract_metrics(arm_result: dict) -> dict:
     workspace = Path(arm_result["workspace"])
     metrics: dict = {
@@ -1168,12 +1199,6 @@ def main() -> None:
             break
         if isinstance(arm_result.get("exitCode"), int) and arm_result["exitCode"] != 0:
             print(f"[harness] {arm}: FAILED (exit {arm_result['exitCode']}). Tail:\n{_log_tail(Path(arm_result['log']))}", flush=True)
-            if arm_result["wallSeconds"] < 120:
-                # A config error fails every arm identically; abort instead of
-                # burning the remaining arms on it.
-                results.append(arm_result)
-                print("[harness] aborting remaining arms (early failure = config error).", flush=True)
-                break
         arm_result["metrics"] = extract_metrics(arm_result)
         config_error = effective_configuration_error(
             arm, arm_result["metrics"], args.staged_wave_size
@@ -1183,9 +1208,20 @@ def main() -> None:
             arm_result["effectiveConfigurationError"] = config_error
             print(f"[harness] {arm}: INVALID MEASUREMENT CONFIGURATION: {config_error}", flush=True)
         arm_result["schedulerTimeline"] = load_scheduler_timeline(arm_result)
+        qualification_error = arm_qualification_error(
+            arm_result, arm_result["metrics"], expected_exercise_count=len(matched)
+        )
+        arm_result["qualificationError"] = qualification_error
         results.append(arm_result)
         if config_error:
             print("[harness] aborting remaining arms; this run cannot support a comparison.", flush=True)
+            break
+        if qualification_error:
+            print(
+                f"[harness] aborting remaining arms after unqualified {arm}: "
+                f"{qualification_error}; failed workspace artifacts are retained",
+                flush=True,
+            )
             break
         m = arm_result["metrics"]
         print(
@@ -1203,7 +1239,7 @@ def main() -> None:
             flush=True,
         )
         statuses = m.get("statuses") or {}
-        all_completed = bool(statuses) and set(statuses) == {"completed"}
+        all_completed = qualification_error is None
         if not args.keep_workspaces and arm_result.get("exitCode") == 0 and all_completed:
             # Failed or rejected runs need their per-exercise discovery and
             # selection artifacts for diagnosis. Only discard inputs after a
