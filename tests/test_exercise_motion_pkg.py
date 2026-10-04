@@ -6,7 +6,10 @@ import copy
 import inspect
 import json
 import math
+import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -54180,19 +54183,19 @@ def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
         )
 
 
-def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
+@pytest.mark.skipif(
+    os.name != "nt" or shutil.which("pwsh") is None,
+    reason="The production workout-plan process path requires Windows PowerShell.",
+)
+def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Trace one coherent cached pose through the staged CLI and package gate."""
+    """Trace one fixture pose through the wrapper, queue service, CLI, and package gate."""
     import gzip
     import hashlib
-    import importlib.util
 
     import cv2
 
-    from exercise_motion_pkg import cli as cli_module
-    from exercise_motion_pkg import wave_pipeline
     from exercise_motion_pkg.bake_and_rank import (
         EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
         SOURCE_SELECTION_POLICY_VERSION,
@@ -54340,7 +54343,8 @@ def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
         writer.release()
     assert source_video.is_file() and source_video.stat().st_size > 0
 
-    item_workspace = tmp_path / "wave" / "squat"
+    workspace_root = tmp_path / "workout-plan-workspace"
+    item_workspace = workspace_root / "squat" / "bake"
     candidate_workspace = item_workspace / "squat-001-synthetic-squat"
     selected_video = candidate_workspace / "input" / "selected_segment.mp4"
     selected_video.parent.mkdir(parents=True, exist_ok=True)
@@ -54395,43 +54399,6 @@ def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
         encoding="utf-8",
     )
 
-    def cached_pose_validation(**kwargs: object) -> dict[str, object]:
-        assert Path(kwargs["source_video_path"]).resolve() == selected_video.resolve()
-        return dict(seeded_source_metrics)
-
-    monkeypatch.setattr(
-        bake_and_rank_module,
-        "validate_exact_source_with_cached_gpu_handoff",
-        cached_pose_validation,
-    )
-    body_support_module = __import__(
-        "exercise_motion_pkg.body_support_observation", fromlist=["observe_body_support"]
-    )
-    monkeypatch.setattr(
-        body_support_module,
-        "observe_body_support",
-        lambda *_args, **_kwargs: {
-            "status": "observed",
-            "source": "synthetic_fixture_model_boundary",
-            "policyVersion": body_support_module.POLICY_VERSION,
-            "observation": {
-                "torsoSurface": "vertical",
-                "pelvisAndUpperBackSameSurface": False,
-                "pelvis": "moving",
-                "upperBack": "moving",
-                "head": "moving",
-                "leftFoot": "stationary_full_sole",
-                "rightFoot": "stationary_full_sole",
-                "leftFootSurface": "ground",
-                "rightFootSurface": "ground",
-                "leftHand": "moving",
-                "rightHand": "moving",
-                "handsSameHorizontalSurface": False,
-                "observations": "Synthetic squat with both feet planted.",
-            },
-        },
-    )
-
     candidates_path = tmp_path / "candidates.json"
     candidates_path.write_text(
         json.dumps(
@@ -54467,116 +54434,217 @@ def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
         ),
         encoding="utf-8",
     )
-    wave_manifest_path = tmp_path / "wave_manifest.json"
-    wave_manifest_path.write_text(
+    source_validation_path = tmp_path / "source_validation.json"
+    source_validation_path.write_text(json.dumps(seeded_source_metrics), encoding="utf-8")
+    prepared_manifest_path = tmp_path / "prepared_candidates_manifest.json"
+    prepared_manifest_path.write_text(
         json.dumps(
             {
                 "schemaVersion": 1,
-                "runId": "fixture-run",
-                "waveId": "fixture-wave-001",
-                "workspace": str((tmp_path / "wave").resolve()),
+                "kind": "prepared_exercise_candidates",
                 "items": [
                     {
                         "exerciseId": "squat",
-                        "exerciseName": "Squat",
+                        "exerciseSlug": "squat",
                         "candidatesJson": str(candidates_path.resolve()),
-                        "workspace": str(item_workspace.resolve()),
+                        "expectedVideoId": "synthetic-squat",
                     }
                 ],
             }
         ),
         encoding="utf-8",
     )
+    workout_plan_path = tmp_path / "workout_plan.json"
+    workout_plan_path.write_text(
+        json.dumps(
+            {
+                "name": "Synthetic movement process E2E",
+                "workouts": [
+                    {
+                        "workoutComponents": [
+                            {"type": "Exercise", "id": "squat", "name": "Squat", "sets": []}
+                        ]
+                    }
+                ],
+                "equipments": [],
+                "accessoryEquipments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    generated_results: dict[str, GenerateResult] = {}
+    calls_path = tmp_path / "model_boundary_calls.jsonl"
+    config_path = tmp_path / "process_e2e_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "normalizedMotionPath": str(normalized_motion_path.resolve()),
+                "sourcePoseReferencePath": str(reference_path.resolve()),
+                "sourceValidationPath": str(source_validation_path.resolve()),
+                "callsPath": str(calls_path.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    startup_dir = tmp_path / "python_startup"
+    startup_dir.mkdir()
+    test_support_dir = Path(__file__).resolve().parent
+    (startup_dir / "sitecustomize.py").write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(test_support_dir)!r})\n"
+        "from motion_process_e2e_bootstrap import install_import_patches\n"
+        "install_import_patches()\n",
+        encoding="utf-8",
+    )
 
-    def generate_from_normalized_fixture(
-        candidate,
-        *,
-        request,
-        prepared_video_path,
-        **_kwargs,
-    ) -> GenerateResult:
-        cached = generated_results.get(candidate.workspace_slug)
-        if cached is not None:
-            return cached
-        result = run_generation_pipeline(
-            GenerateRequest(
-                exercise_slug=candidate.workspace_slug,
-                workspace=request.workspace,
-                video_path=prepared_video_path,
-                normalized_motion_json=normalized_motion_path,
-                motion_reconstruction_backend="wham",
-                ground_contact_mode="intermittent",
-                support_mode_hint="standing",
-                source_pose_reference_path=reference_path,
-                reuse_wham_cache=False,
-                structural_refinement_enabled=True,
-            )
+    wham_repo_path = tmp_path / "WHAM"
+    body_model_root = wham_repo_path / "dataset" / "body_models"
+    body_model_root.mkdir(parents=True)
+    output_path = tmp_path / "workout_plan_with_movements.json"
+    source_outcome_path = tmp_path / "source_outcome_index.json"
+    repo_root = Path(__file__).resolve().parents[1]
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    process_env = os.environ.copy()
+    process_env["EXERCISE_MOTION_PROCESS_E2E_CONFIG"] = str(config_path.resolve())
+    existing_pythonpath = process_env.get("PYTHONPATH", "")
+    process_env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (str(startup_dir.resolve()), existing_pythonpath) if path
+    )
+    python_directory = str(Path(sys.executable).resolve().parent)
+    process_env["PATH"] = os.pathsep.join((python_directory, process_env.get("PATH", "")))
+    command = [
+            pwsh,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-AllowDirtyWorktree",
+            "-WorkoutPlanJson",
+            str(workout_plan_path),
+            "-WorkspaceRoot",
+            str(workspace_root),
+            "-MobilePackageOutputJson",
+            str(output_path),
+            "-PreparedCandidatesManifest",
+            str(prepared_manifest_path),
+            "-PythonCommand",
+            sys.executable,
+            "-WhamRepoPath",
+            str(wham_repo_path),
+            "-BodyModelRoot",
+            str(body_model_root),
+            "-SourceOutcomeIndexJson",
+            str(source_outcome_path),
+            "-YouTubePreviewCacheDir",
+            str(tmp_path / "preview_cache"),
+            "-YouTubeSourceCacheDir",
+            str(tmp_path / "source_cache"),
+            "-SkipLlamaCppQueryPlanner",
+            "-SkipVisionRanking",
+            "-SkipSemanticGate",
+            "-SkipPosePrefilter",
+            "-SkipExerciseMotionContractPrefetch",
+            "-SkipSourceSegmentDetection",
+            "-SkipTwoScaleSourceValidation",
+            "-SkipAdaptivePreviewSettings",
+            "-NoWhamDocker",
+            "-MotionReconstructor",
+            "wham",
+            "-MaxCandidates",
+            "1",
+            "-MaxSourceWindowAttempts",
+            "1",
+            "-MaxReconstructionCandidateAttempts",
+            "1",
+            "-MaxSelectedResults",
+            "1",
+            "-OnlyExerciseSlug",
+            "squat",
+            "-StagedWaveSize",
+            "1",
+            "-ProgressIntervalSeconds",
+            "1",
+            "-ArtifactRetention",
+            "full",
+        ]
+    stdout_path = tmp_path / "workout_plan.stdout.log"
+    stderr_path = tmp_path / "workout_plan.stderr.log"
+    queue_root = workspace_root / "staged-wave-services" / "v1"
+    wrapper_timed_out = False
+    with stdout_path.open("w", encoding="utf-8", newline="") as stdout_stream, stderr_path.open(
+        "w", encoding="utf-8", newline=""
+    ) as stderr_stream:
+        process = subprocess.Popen(
+            command,
+            cwd=repo_root,
+            env=process_env,
+            stdout=stdout_stream,
+            stderr=stderr_stream,
+            text=True,
         )
-        generated_results[candidate.workspace_slug] = result
-        return result
+        try:
+            return_code = process.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            wrapper_timed_out = True
+            process.kill()
+            return_code = process.wait(timeout=10)
 
-    monkeypatch.setattr(wave_pipeline, "generate_candidate_motion", generate_from_normalized_fixture)
-    monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", generate_from_normalized_fixture)
+        worker_state_path = queue_root / "worker_state.json"
+        if worker_state_path.is_file():
+            worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
+            if worker_state.get("status") != "stopped":
+                # The long-lived queue worker can retain inherited handles after
+                # the PowerShell wrapper exits. Stop it before reading output so
+                # process-level verification cannot hang while draining pipes.
+                (queue_root / "stop.request").write_text(
+                    "process E2E cleanup after wrapper exit\n", encoding="utf-8"
+                )
+                shutdown_deadline = time.monotonic() + 20
+                while time.monotonic() < shutdown_deadline:
+                    worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
+                    if worker_state.get("status") == "stopped":
+                        break
+                    time.sleep(0.1)
+    run_stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+    run_stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+    assert not wrapper_timed_out, f"workout-plan wrapper timed out\n{run_stdout}\n{run_stderr}"
+    assert return_code == 0, run_stdout + run_stderr
+    assert worker_state_path.is_file(), "the staged-wave worker did not publish its lifecycle state"
+    final_worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
+    assert final_worker_state.get("status") == "stopped", final_worker_state
 
-    final_vlm_calls: list[Path] = []
-
-    def approve_rendered_fixture_with_stubbed_vlm(
-        item: ReviewItem,
-        *_args: object,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        final_vlm_calls.append(item.skeleton_path)
-        return {
-            "advisoryOnly": True,
-            "status": "observed",
-            "findings": [],
-        }
-
-    monkeypatch.setattr(
-        bake_and_rank_module,
-        "validate_final_output_with_caption_images",
-        approve_rendered_fixture_with_stubbed_vlm,
+    boundary_calls = [
+        json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()
+    ]
+    generation_calls = [call for call in boundary_calls if call["event"] == "generation"]
+    generation_completions = [
+        call for call in boundary_calls if call["event"] == "generation_complete"
+    ]
+    generation_cache_hits = [
+        call for call in boundary_calls if call["event"] == "generation_cache_hit"
+    ]
+    assert generation_calls
+    assert all(
+        call.get("owner", "").startswith("exercise_motion_pkg.")
+        for call in generation_calls
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "exercise-motion",
-            "bake-and-rank",
-            "--candidates-json",
-            str(candidates_path),
-            "--staged-wave-manifest",
-            str(wave_manifest_path),
-            "--workspace",
-            str(tmp_path / "cli-workspace"),
-            "--wham-repo-path",
-            str(tmp_path / "wham-repo"),
-            "--body-model-root",
-            str(tmp_path / "body-models"),
-            "--skip-source-segment-detection",
-            "--no-classify-support-dominance",
-            "--no-llama-cpp-auto-start-server",
-            "--review-frames",
-            "8",
-            "--candidate-timeout-seconds",
-            "90",
-            "--exercise-timeout-seconds",
-            "120",
-            "--max-reconstruction-candidate-attempts",
-            "1",
-            "--final-output-validation",
-            "--max-final-output-rejections",
-            "1",
-        ],
+    assert len(generation_calls) == len(generation_completions) + len(generation_cache_hits)
+    generation_completion = next(
+        call for call in generation_completions
     )
+    assert [call["event"] for call in boundary_calls].count("source_validation") >= 1
+    final_review_calls = [
+        call for call in boundary_calls if call["event"] == "final_visual_review"
+    ]
+    assert final_review_calls, "the production child process did not reach the final VLM boundary"
+    assert "Starting batch" in run_stdout
+    service_log = workspace_root / "staged-wave-services" / "v1" / "service.log"
+    assert service_log.is_file(), "the persistent staged-wave service was not launched"
 
-    cli_module.main()
-
-    assert len(generated_results) == 1
-    generated_result = next(iter(generated_results.values()))
-    assert generated_result.manifest_path.is_file()
+    generated_manifest_path = Path(generation_completion["manifestPath"])
+    assert generated_manifest_path.is_file()
     assert bake_and_rank_module.load_verified_source_pose_reference(
         reference_path, selected_video
     ) is not None
@@ -54592,7 +54660,7 @@ def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
     assert shoulder_attachment_violation not in anatomy["sourceViolations"]
     assert shoulder_attachment_violation not in anatomy["remainingViolations"]
     assert list(candidate_workspace.rglob("*.webm")), "the production browser bake did not render a review video"
-    assert final_vlm_calls, "the final visual-review boundary was not exercised"
+    assert final_review_calls, "the final visual-review boundary was not exercised"
 
     selection_path = item_workspace / "selection_manifest.json"
     selection_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -54610,49 +54678,17 @@ def test_cli_staged_wave_fits_renders_and_packages_reviewed_movement(
     assert review_identity["frameCount"] == len(skeleton_payload["frames"])
     assert all(Path(path).is_file() for path in final_validation["renderEvidence"]["contactSheetPaths"])
 
-    package_input = tmp_path / "plan.json"
-    package_input.write_text(
-        json.dumps({"exerciseDefinitions": [{"id": "squat", "name": "Squat"}]}),
-        encoding="utf-8",
-    )
-    summary_path = tmp_path / "motion_summary.json"
-    summary_path.write_text(
-        json.dumps(
-            {
-                "exercises": [
-                    {
-                        "exerciseId": "squat",
-                        "exerciseName": "Squat",
-                        "status": "completed",
-                        "selectedWearSkeletonPath": str(skeleton_path.resolve()),
-                        "selectionManifestPath": str(selection_path.resolve()),
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    builder_path = Path(__file__).resolve().parents[1] / "scripts" / "build_workout_plan_movement_package.py"
-    builder_spec = importlib.util.spec_from_file_location("motion_e2e_package_builder", builder_path)
-    assert builder_spec and builder_spec.loader
-    builder_module = importlib.util.module_from_spec(builder_spec)
-    builder_spec.loader.exec_module(builder_module)
-    output_path = tmp_path / "plan_with_movements.json"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            str(builder_path),
-            "--workout-plan-package-json",
-            str(package_input),
-            "--motion-summary-json",
-            str(summary_path),
-            "--output-json",
-            str(output_path),
-            "--strict-id-match",
-        ],
-    )
-    assert builder_module.main() == 0
+    summary_path = workspace_root / "workout_motion_generation_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
+    completed_exercises = [
+        exercise for exercise in summary["exercises"] if exercise["exerciseId"] == "squat"
+    ]
+    assert len(completed_exercises) == 1
+    assert completed_exercises[0]["status"] == "completed"
+    packaged_skeleton_path = Path(completed_exercises[0]["selectedWearSkeletonPath"])
+    assert packaged_skeleton_path.is_file()
+    assert packaged_skeleton_path.read_bytes() == skeleton_path.read_bytes()
+    assert output_path.is_file(), "the production workout-plan wrapper did not create its package"
     package_output = json.loads(output_path.read_text(encoding="utf-8"))
     packaged_movement = package_output["exerciseMovements"][0]
     packaged_json = gzip.decompress(
