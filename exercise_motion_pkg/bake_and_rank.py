@@ -12154,22 +12154,46 @@ def observed_ground_support_plane_y(
         if len(points) < 3:
             continue
         by_side.setdefault(side, []).extend(float(point[1]) for point in points)
-    if len(by_side) >= 2 and isinstance(source_foot_support_evidence, dict):
+    if isinstance(source_foot_support_evidence, dict):
         body_support = source_foot_support_evidence.get("bodySupport") or {}
-        grounded_names = {
-            str(interval.get("jointName") or "")
-            for interval in foot_contact_intervals
-            if is_observed_ground_contact(interval, source_foot_support_evidence)
+        observation = source_foot_support_evidence.get("bodySupportObservation") or {}
+        if not isinstance(body_support, dict):
+            body_support = {}
+        if not isinstance(observation, dict):
+            observation = {}
+        observation_answer = observation.get("observation") or {}
+        if not isinstance(observation_answer, dict):
+            observation_answer = {}
+        confirmed_ground_feet = {
+            f"{side}_foot"
+            for side in ("left", "right")
+            if observation.get("status") == "observed"
+            and observation_answer.get(f"{side}Foot")
+            in {"stationary_full_sole", "stationary_forefoot"}
+            and observation_answer.get(f"{side}FootSurface") == "ground"
         }
+        stationary_joints = set(body_support.get("stationaryJoints") or [])
+        support_evidence_hash = observation.get("sourceVideoSha256")
         if (
             isinstance(body_support, dict)
             and body_support.get("required")
             and body_support.get("status") == "confirmed"
+            and support_evidence_hash
+            and body_support.get("sourceVideoSha256") == support_evidence_hash
         ):
             for group in body_support.get("coplanarGroups", []):
                 if not isinstance(group, dict):
                     continue
                 joints = set(group.get("joints") or [])
+                # Exact-source support review plus stationary source pose
+                # tracks can confirm bilateral ground contact even when the
+                # foot-patch detector has no interval for one obscured foot.
+                # Use the explicit plane in that case instead of silently
+                # falling back to a possibly unrelated renderFloorY.
+                if not {"left_foot", "right_foot"}.issubset(
+                    joints & stationary_joints & confirmed_ground_feet
+                ):
+                    continue
                 normal = group.get("normal") or []
                 try:
                     normal_y = float(normal[1])
@@ -12180,7 +12204,6 @@ def observed_ground_support_plane_y(
                 if (
                     normal_length <= 1e-8
                     or abs(normal_y / normal_length) < 1.0 - 1e-6
-                    or len(joints.intersection(grounded_names)) < 2
                     or not math.isfinite(plane_offset)
                 ):
                     continue

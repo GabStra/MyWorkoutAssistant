@@ -285,6 +285,56 @@ def test_support_gate_uses_cropped_contact_timing_and_still_rejects_sliding():
     assert not bake.source_confirmed_support_stationarity_metrics(drifting, evidence)['passed']
 
 
+def test_bilateral_source_body_support_plane_survives_one_missing_foot_patch_track():
+    from exercise_motion_pkg import bake_and_rank as bake
+
+    frames = [
+        {"joints": {"left_foot": [0.0, 0.2, 0.0], "right_foot": [0.3, 0.2, 0.0]}}
+        for _ in range(3)
+    ]
+    evidence = {
+        "bodySupportObservation": {
+            "status": "observed",
+            "sourceVideoSha256": "source-hash",
+            "observation": {
+                "leftFoot": "stationary_full_sole",
+                "leftFootSurface": "ground",
+                "rightFoot": "stationary_full_sole",
+                "rightFootSurface": "ground",
+            },
+        },
+        "bodySupport": {
+            "required": True,
+            "status": "confirmed",
+            "sourceVideoSha256": "source-hash",
+            "stationaryJoints": ["left_foot", "right_foot"],
+            "coplanarGroups": [{
+                "joints": ["left_foot", "right_foot"],
+                "normal": [0.0, 1.0, 0.0],
+                "planeOffsetMeters": 0.2,
+            }],
+        },
+    }
+    interval = {
+        "jointName": "left_foot",
+        "startFrame": 0,
+        "endFrame": 2,
+        "supportKind": "observed_foot_patch",
+        "surfaceKind": "ground",
+    }
+
+    plane, source = bake.observed_ground_support_plane_y(
+        frames, [interval], evidence, render_floor_y=-1.0
+    )
+
+    assert (plane, source) == (0.2, "confirmed_body_support_geometry")
+    evidence["bodySupport"]["sourceVideoSha256"] = "stale-source-hash"
+    stale_plane, stale_source = bake.observed_ground_support_plane_y(
+        frames, [interval], evidence, render_floor_y=-1.0
+    )
+    assert (stale_plane, stale_source) == (-1.0, "render_floor")
+
+
 def test_retained_source_window_uses_explicit_time_origin_without_mutation():
     source = {'frames': [{'sourceTimeSec': t, 'joints': {'wrist': [t, 0]}}
                          for t in [0., 10., 10.5, 11., 12.]]}
