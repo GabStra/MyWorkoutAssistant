@@ -272,7 +272,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 39
+SELECTED_SECTION_BAKE_CACHE_VERSION = 40
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -26410,28 +26410,6 @@ def _bake_path_code_digest() -> dict[str, Any]:
         }
 
 
-SELECTED_SECTION_BAKE_DEPENDENCY_MODULES: tuple[str, ...] = (
-    "anatomical_repair.py",
-    "articulation_trajectory.py",
-    "body_support_observation.py",
-    "contact_constraints.py",
-    "contact_pinning.py",
-    "contact_trajectory.py",
-    "controlled_motion.py",
-    "equipment_constraints.py",
-    "physical_validation.py",
-    "pose_fidelity.py",
-    "rig_interpolation.py",
-    "rig_playback.py",
-    "scene_placement.py",
-    "sequence_stabilization.py",
-    "support_alignment.py",
-    "support_geometry.py",
-    "temporal_contact_solver.py",
-    "whole_body_repair.py",
-)
-
-
 def _selected_section_bake_code_digest_source(
     local_bake_path_digest: str,
     dependency_digests: dict[str, str],
@@ -26454,16 +26432,19 @@ def _selected_section_bake_code_digest_source(
     }
 
 
-_SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE: dict[tuple[tuple[str, int, int], ...], dict[str, Any]] = {}
+_SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE: dict[
+    tuple[tuple[str, int, int, int], ...], dict[str, Any]
+] = {}
 
 
 def _selected_section_bake_code_digest() -> dict[str, Any]:
+    from .fit_runtime import fit_cache_source_paths
+
     dependency_paths = tuple(
-        (name, Path(__file__).with_name(name))
-        for name in SELECTED_SECTION_BAKE_DEPENDENCY_MODULES
+        (path.name, path) for path in fit_cache_source_paths()
     )
     stats = tuple(
-        (name, path.stat().st_size, path.stat().st_mtime_ns)
+        (name, path.stat().st_size, path.stat().st_mtime_ns, path.stat().st_ctime_ns)
         for name, path in dependency_paths
     )
     cached = _SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE.get(stats)

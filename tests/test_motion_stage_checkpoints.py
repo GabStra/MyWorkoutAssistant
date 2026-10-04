@@ -472,7 +472,29 @@ def test_selected_section_code_digest_tracks_external_fit_dependencies():
 
     assert base["dependencyCount"] == 2
     assert changed["sha256"] != base["sha256"]
-    assert "contact_constraints.py" in bake.SELECTED_SECTION_BAKE_DEPENDENCY_MODULES
+    from exercise_motion_pkg.fit_runtime import fit_cache_source_paths
+
+    dependency_names = {path.name for path in fit_cache_source_paths()}
+    assert "contact_constraints.py" in dependency_names
+    assert "temporal_quality.py" in dependency_names
+
+
+def test_selected_section_cache_digest_changes_when_transitive_fit_dependency_changes(
+    tmp_path,
+    monkeypatch,
+):
+    from exercise_motion_pkg import fit_runtime
+
+    dependency = tmp_path / "temporal_quality.py"
+    dependency.write_text("quality_policy = 'before'\n", encoding="utf-8")
+    monkeypatch.setattr(fit_runtime, "fit_cache_source_paths", lambda: (dependency,))
+    bake._SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE.clear()
+
+    before = bake._selected_section_bake_code_digest()
+    dependency.write_text("quality_policy = 'after'\n", encoding="utf-8")
+    after = bake._selected_section_bake_code_digest()
+
+    assert after["sha256"] != before["sha256"]
 
 
 def test_bake_checkpoint_key_scopes_code_hash_to_bake_path(tmp_path, monkeypatch):

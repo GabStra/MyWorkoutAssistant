@@ -311,35 +311,68 @@ def fit_input_key(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+# Persisted fitter results depend on this local import closure. Keep local
+# imports covered; bake_and_rank.py has its own scoped selected-bake digest.
 FIT_CACHE_SOURCE_MODULES = (
     'anatomical_repair.py',
     'articulation_trajectory.py',
     'body_support_observation.py',
+    'bilateral_evidence.py',
+    'browser_workers.py',
+    'cleanup.py',
     'contact_constraints.py',
     'contact_pinning.py',
     'contact_trajectory.py',
     'controlled_motion.py',
     'equipment_constraints.py',
+    'fit_runtime.py',
+    'foot_contact_observation.py',
+    'foot_kinematics.py',
+    'ground.py',
+    'heel_contacts.py',
+    'kinematic_policy.py',
+    'limb_bend_repair.py',
+    'loop_cycles.py',
+    'loop_seam.py',
+    'models.py',
+    'motion_io.py',
+    'motion_placement.py',
+    'motion_scheduler.py',
     'physical_validation.py',
     'pose_fidelity.py',
+    'preview.py',
+    'process_lock.py',
+    'repetition_phase.py',
+    'render_geometry.py',
+    'resource_budget.py',
     'rig_interpolation.py',
     'rig_playback.py',
     'scene_placement.py',
     'sequence_stabilization.py',
+    'smpl_joint_names.py',
+    'source_pose_evidence.py',
+    'stage_cache.py',
+    'structural_refinement.py',
     'support_alignment.py',
     'support_geometry.py',
     'temporal_contact_solver.py',
+    'temporal_quality.py',
     'whole_body_repair.py',
 )
 
 
 def fit_cache_source_paths():
+    """Return source files whose changes invalidate persisted fitter results."""
     return tuple(Path(__file__).with_name(name) for name in FIT_CACHE_SOURCE_MODULES)
 
 
 def fit_cache_source_namespace(source_paths=None):
-    """Bind persisted fit reuse to the fitter and its direct repair dependencies."""
-    paths = fit_cache_source_paths() if source_paths is None else tuple(Path(path) for path in source_paths)
+    """Bind persisted fit reuse to the fitter and its motion constraint code."""
+    paths = (
+        fit_cache_source_paths()
+        if source_paths is None
+        else tuple(Path(path) for path in source_paths)
+    )
     digest = hashlib.sha256()
     for path in paths:
         name = path.name.encode('utf-8')

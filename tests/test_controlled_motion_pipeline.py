@@ -1,9 +1,11 @@
 """Ensure accepted rigs are not sent through positional repairs on reuse."""
+import ast
 import json
 import copy
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from exercise_motion_pkg import bake_and_rank
 from exercise_motion_pkg.controlled_motion import (
@@ -55,10 +57,18 @@ def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     assert pose_digest(result)==before
 
 
-def test_persisted_fit_cache_is_rejected_after_constraint_code_changes(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    'dependency_name',
+    ('contact_constraints.py', 'temporal_quality.py'),
+)
+def test_persisted_fit_cache_is_rejected_after_constraint_code_changes(
+    tmp_path,
+    monkeypatch,
+    dependency_name,
+):
     from exercise_motion_pkg import fit_runtime
 
-    source = tmp_path / 'contact_constraints.py'
+    source = tmp_path / dependency_name
     source.write_text("constraint_policy = 'before'", encoding='utf-8')
     monkeypatch.setattr(fit_runtime, 'fit_cache_source_paths', lambda: (source,))
     first = fit_runtime.CandidateFitSession(tmp_path)
@@ -75,6 +85,60 @@ def test_persisted_fit_cache_is_rejected_after_constraint_code_changes(tmp_path,
 
     assert refreshed.cache_namespace != first.cache_namespace
     assert refreshed.repairs == {}
+
+
+def test_fit_cache_identity_includes_transitive_motion_constraint_dependencies():
+    from exercise_motion_pkg import fit_runtime
+
+    dependency_names = {path.name for path in fit_runtime.fit_cache_source_paths()}
+
+    assert {
+        'fit_runtime.py',
+        'foot_kinematics.py',
+        'motion_placement.py',
+        'smpl_joint_names.py',
+        'structural_refinement.py',
+        'temporal_quality.py',
+    } <= dependency_names
+
+
+def test_fit_cache_identity_covers_local_imports_of_tracked_modules():
+    from exercise_motion_pkg import fit_runtime
+
+    package_dir = Path(fit_runtime.__file__).parent
+    tracked_names = {Path(name).stem for name in fit_runtime.FIT_CACHE_SOURCE_MODULES}
+    uncovered = set()
+    for module_name in tracked_names:
+        source_path = package_dir / f'{module_name}.py'
+        syntax_tree = ast.parse(source_path.read_text(encoding='utf-8'))
+        imported_names = set()
+        for node in ast.walk(syntax_tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.level == 1:
+                    if node.module:
+                        imported_names.add(node.module.split('.')[0])
+                    else:
+                        imported_names.update(alias.name.split('.')[0] for alias in node.names)
+                elif (
+                    node.level == 0
+                    and node.module
+                    and node.module.startswith('exercise_motion_pkg.')
+                ):
+                    imported_names.add(node.module.split('.')[1])
+            elif isinstance(node, ast.Import):
+                imported_names.update(
+                    alias.name.split('.')[1]
+                    for alias in node.names
+                    if alias.name.startswith('exercise_motion_pkg.')
+                )
+        uncovered.update(
+            name for name in imported_names
+            if (package_dir / f'{name}.py').is_file()
+            and name not in tracked_names
+            and name != 'bake_and_rank'
+        )
+
+    assert uncovered == set()
 
 
 def test_modified_contact_evidence_and_incomplete_reports_cannot_reuse():
