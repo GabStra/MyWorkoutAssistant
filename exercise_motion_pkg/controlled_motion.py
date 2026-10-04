@@ -318,6 +318,19 @@ def support_reference_contacts_pass(maximum_error_meters):
     return float(maximum_error_meters or 0.) < SUPPORT_REFERENCE_CONTACT_LIMIT_METERS
 
 
+def support_reference_can_be_polished(report):
+    """Return whether support geometry provides a sound frame for local repair.
+
+    Equipment spacing is repaired independently after root continuity. Letting
+    an initial grip miss suppress anatomy/contact polish can make the subsequent
+    root-continuity gate reject before the grip projector gets a chance to run.
+    """
+    return all(
+        isinstance(report.get(key), dict) and report[key].get('passed') is True
+        for key in ('supportReferenceGeometry', 'supportReferenceAlignment')
+    )
+
+
 POLISH_STAGE_A = frozenset({'contacts', 'equipment', 'bodySupport', 'supportAlignment'})
 POLISH_STAGE_B = frozenset({'playback', 'loopSeam'})
 POLISH_STAGE_C = frozenset({
@@ -4921,14 +4934,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         support_gates = (
             'supportReferenceGeometry', 'supportReferenceAlignment', 'supportReferenceAnatomy',
             'supportReferenceEquipment', 'supportReferenceContacts')
-        # Geometry/alignment/equipment already describe a usable support frame.
-        # Anatomy-only polish used to require contacts to pass first, so near-miss
-        # plant error blocked repair of solvable ankle/torso violations (and the
-        # reverse). Recover both with the dedicated projectors before rejecting.
-        support_frame_ok = all(
-            report[key]['passed']
-            for key in ('supportReferenceGeometry', 'supportReferenceAlignment',
-                        'supportReferenceEquipment'))
+        # Geometry/alignment describe whether local support projection is safe.
+        # Equipment has a separate grip projector later; it must not prevent
+        # anatomy/contact repair and thereby cause root-continuity rejection.
+        support_frame_ok = support_reference_can_be_polished(report)
         needs_anatomy = not report['supportReferenceAnatomy']['passed']
         needs_contacts = not report['supportReferenceContacts']['passed']
         if (support_frame_ok and (needs_anatomy or needs_contacts)

@@ -2837,6 +2837,20 @@ def test_support_reference_gross_failure_is_only_early_rejected_beyond_margin():
     assert motion.support_reference_grossly_invalid(reference)
 
 
+def test_support_anatomy_polish_does_not_require_rigid_grip_to_pass_first():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    report = {
+        'supportReferenceGeometry': {'passed': True},
+        'supportReferenceAlignment': {'passed': True},
+        'supportReferenceEquipment': {'passed': False},
+    }
+    assert motion.support_reference_can_be_polished(report)
+
+    report['supportReferenceGeometry']['passed'] = False
+    assert not motion.support_reference_can_be_polished(report)
+
+
 def test_support_reference_near_miss_reaches_fit_but_stays_below_playback_limit():
     from exercise_motion_pkg import controlled_motion as motion
 
