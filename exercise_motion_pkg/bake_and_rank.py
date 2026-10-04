@@ -42537,7 +42537,9 @@ def write_candidate_bake_manifest(candidate_workspace: Path, payload: dict[str, 
         schemaVersion=1,
         state=status,
         stage=payload.get("activeStage") or lifecycle.get("stage"),
-        terminal=status not in {"pending", "processing"},
+        # A fit-incomplete candidate is resumable and is not a terminal
+        # quality decision, even though this processing attempt has ended.
+        terminal=status not in {"pending", "processing", "needs_motion_processing"},
         updatedAt=datetime.now(timezone.utc).isoformat(),
         history=history,
     )

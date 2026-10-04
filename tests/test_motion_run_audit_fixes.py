@@ -1426,6 +1426,13 @@ def test_candidate_bake_manifest_commits_processing_and_terminal_lifecycle_atomi
     path = workspace / "review" / "bake_manifest.json"
     assert json.loads(path.read_text())["artifactLifecycle"]["stage"] == "browser_bake"
 
+    incomplete = {**processing, "status": "needs_motion_processing"}
+    bake.write_candidate_bake_manifest(workspace, incomplete)
+    incomplete_manifest = json.loads(path.read_text())
+    assert incomplete_manifest["artifactLifecycle"]["state"] == "needs_motion_processing"
+    assert incomplete_manifest["artifactLifecycle"]["terminal"] is False
+    assert not bake.candidate_result_has_terminal_quality_decision(incomplete_manifest)
+
     terminal = {**processing, "status": "ready_for_selection"}
     bake.write_candidate_bake_manifest(workspace, terminal)
     lifecycle = json.loads(path.read_text())["artifactLifecycle"]
