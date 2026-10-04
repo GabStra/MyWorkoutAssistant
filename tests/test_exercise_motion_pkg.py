@@ -54625,15 +54625,25 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     generation_cache_hits = [
         call for call in boundary_calls if call["event"] == "generation_cache_hit"
     ]
-    assert generation_calls
+    assert [call["owner"] for call in generation_calls] == [
+        "exercise_motion_pkg.wave_pipeline",
+        "exercise_motion_pkg.bake_and_rank",
+    ]
+    assert len({call["candidateSlug"] for call in generation_calls}) == 1
+    assert len(
+        {Path(call["preparedVideoPath"]).resolve() for call in generation_calls}
+    ) == 1
     assert all(
         call.get("owner", "").startswith("exercise_motion_pkg.")
         for call in generation_calls
     )
-    assert len(generation_calls) == len(generation_completions) + len(generation_cache_hits)
-    generation_completion = next(
-        call for call in generation_completions
-    )
+    assert len(generation_completions) == len(generation_calls)
+    assert len(generation_cache_hits) == 1
+    assert generation_completions[-1]["cacheStatus"] == "reused_processed", boundary_calls
+    assert generation_cache_hits[0]["owner"] == "exercise_motion_pkg.bake_and_rank"
+    assert generation_cache_hits[0]["cacheStatus"] == "reused_processed"
+    assert generation_completions[0]["cacheStatus"] != "reused_processed"
+    generation_completion = generation_completions[-1]
     assert [call["event"] for call in boundary_calls].count("source_validation") >= 1
     final_review_calls = [
         call for call in boundary_calls if call["event"] == "final_visual_review"

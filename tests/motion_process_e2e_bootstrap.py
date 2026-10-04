@@ -12,7 +12,6 @@ from typing import Any
 
 
 CONFIG_ENV = "EXERCISE_MOTION_PROCESS_E2E_CONFIG"
-_GENERATED_RESULTS: dict[tuple[str, str], Any] = {}
 
 
 def _config() -> dict[str, Any]:
@@ -46,20 +45,6 @@ def _patch_module(fullname: str, module: Any) -> None:
             candidateSlug=candidate.workspace_slug,
             preparedVideoPath=str(prepared_video_path),
         )
-        cache_key = (
-            str(candidate.workspace_slug),
-            str(Path(request.workspace).resolve()),
-        )
-        cached_result = _GENERATED_RESULTS.get(cache_key)
-        if cached_result is not None:
-            _record(
-                config,
-                "generation_cache_hit",
-                owner=fullname,
-                candidateSlug=candidate.workspace_slug,
-                workspace=cache_key[1],
-            )
-            return cached_result
         result = run_generation_pipeline(
             GenerateRequest(
                 exercise_slug=candidate.workspace_slug,
@@ -70,17 +55,28 @@ def _patch_module(fullname: str, module: Any) -> None:
                 ground_contact_mode="intermittent",
                 support_mode_hint="standing",
                 source_pose_reference_path=Path(config["sourcePoseReferencePath"]),
-                reuse_wham_cache=False,
+                reuse_wham_cache=True,
                 structural_refinement_enabled=True,
             )
         )
+        result_cache_status = str(result.wham_cache_status)
         _record(
             config,
             "generation_complete",
             owner=fullname,
             manifestPath=str(result.manifest_path),
+            cacheStatus=result_cache_status,
+            generationCheckpoint=(result.timings or {}).get("generationCheckpoint"),
         )
-        _GENERATED_RESULTS[cache_key] = result
+        if result_cache_status == "reused_processed":
+            _record(
+                config,
+                "generation_cache_hit",
+                owner=fullname,
+                candidateSlug=candidate.workspace_slug,
+                workspace=str(Path(request.workspace).resolve()),
+                cacheStatus=result_cache_status,
+            )
         return result
 
     if fullname == "exercise_motion_pkg.bake_and_rank":
