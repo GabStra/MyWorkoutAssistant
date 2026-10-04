@@ -246,6 +246,11 @@ def validate_selected_movement(
         selection_manifest = load_json_file(manifest_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"Could not load selected movement manifest: {manifest_path}") from exc
+    if (
+        not isinstance(selection_manifest, dict)
+        or selection_manifest.get("selectionStatus") != "selected"
+    ):
+        raise ValueError(f"Selection manifest does not approve a selected movement: {manifest_path}")
     selected = selection_manifest.get("selected") if isinstance(selection_manifest, dict) else None
     if not isinstance(selected, dict):
         raise ValueError(f"Selected movement manifest has no selected artifact: {manifest_path}")

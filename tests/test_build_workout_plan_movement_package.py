@@ -47,6 +47,7 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
     manifest_path.write_text(
         json.dumps(
             {
+                "selectionStatus": "selected",
                 "selected": {
                     "artifactState": payload["artifactState"],
                     "selectedSkeletonIdentity": review_identity,
@@ -326,3 +327,20 @@ def test_packager_rejects_skeleton_that_differs_from_reviewed_bytes(tmp_path, mo
 
     with pytest.raises(ValueError, match="differs from the final reviewed artifact"):
         BUILDER.main()
+
+
+def test_packager_rejects_manifest_without_selected_disposition(tmp_path):
+    movement_path = tmp_path / "movement.json"
+    manifest_path = tmp_path / "selection_manifest.json"
+    write_reviewed_movement(movement_path, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["selectionStatus"] = "needs_manual_review"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not approve a selected movement"):
+        BUILDER.validate_selected_movement(
+            movement_path,
+            {"selectionManifestPath": str(manifest_path)},
+            summary_path=tmp_path / "summary.json",
+            summary={},
+        )
