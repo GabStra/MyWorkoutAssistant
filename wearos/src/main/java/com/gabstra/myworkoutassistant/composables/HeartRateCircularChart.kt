@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -50,15 +49,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
@@ -304,8 +299,7 @@ private fun HeartRateDisplay(
     bpm: Int,
     textToDisplay: String,
     currentZone: Int,
-    colorsByZone: Array<Color>,
-    displayMode: Int
+    colorsByZone: Array<Color>
 ) {
     // Zone chip with black background, colored border, and colored text
     val chipBorderColor = colorsByZone[currentZone]
@@ -318,84 +312,73 @@ private fun HeartRateDisplay(
     else
         colorsByZone[currentZone]
 
+    val labelStyle = MaterialTheme.typography.labelMedium
 
+    // The chip is always laid out (zone 0 renders in its gray palette color) so the
+    // centered ensemble keeps the same width and nothing shifts as zones change.
     Row(
         modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Spacer(modifier = Modifier.weight(1f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ){
-            PulsingHeartWithBpm(
-                bpm = bpm,
-                tint = heartColor
-            )
 
+        PulsingHeartWithBpm(
+            bpm = bpm,
+            tint = heartColor
+        )
+
+        BasicText(
+            text = textToDisplay,
+            // Fixed-width, centered box: fits "100%" up to large font scales (autosize
+            // absorbs the rest), so digit growth never re-centers the ensemble.
+            modifier = Modifier.width(45.dp),
+            style = labelStyle.copy(
+                textAlign = TextAlign.Center,
+                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                ),
+            ),
+            maxLines = 1,
+            softWrap = false,
+            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize),
+        )
+
+        Box(
+            modifier = Modifier.width(27.5.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Box(
-                modifier = Modifier.width(55.dp).fillMaxHeight(),
-                contentAlignment = Alignment.Center,
-            ) {
-                val labelStyle = MaterialTheme.typography.labelMedium
-                val valueLabel = buildAnnotatedString {
-                    append(textToDisplay)
-                    if (bpm != 0 && displayMode == 0) {
-                        // Relative sizing keeps the unit on the value's baseline as both shrink.
-                        withStyle(SpanStyle(fontSize = 0.7.em)) { append(" bpm") }
-                    }
-                }
-                BasicText(
-                    text = valueLabel,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = labelStyle.copy(
-                        textAlign = if (displayMode == 0) TextAlign.End else TextAlign.Center,
-                        color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
-                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                        lineHeightStyle = LineHeightStyle(
-                            alignment = LineHeightStyle.Alignment.Center,
-                            trim = LineHeightStyle.Trim.Both,
-                        ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, chipBorderColor), shape)
+                    .background(
+                        color = MaterialTheme.colorScheme.background,
+                        shape = shape
                     ),
+                contentAlignment = Alignment.Center
+            ) {
+                BasicText(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(2.5.dp),
+                    text = zoneText,
+                    style = MaterialTheme.typography.bodySmall
+                        .copy(
+                            textAlign = TextAlign.Center,
+                            color = chipBorderColor,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        ),
                     maxLines = 1,
                     softWrap = false,
-                    autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize),
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = 8.sp,
+                        maxFontSize = MaterialTheme.typography.bodySmall.fontSize,
+                    ),
                 )
-            }
-            if (bpm != 0 && currentZone != 0) {
-                Box(
-                    modifier = Modifier.width(27.5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(BorderStroke(1.dp, chipBorderColor), shape)
-                            .background(
-                                color = MaterialTheme.colorScheme.background,
-                                shape = shape
-                        ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        BasicText(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(2.5.dp),
-                            text = zoneText,
-                            style = MaterialTheme.typography.bodySmall
-                                .copy(
-                                    textAlign = TextAlign.Center,
-                                    color = chipBorderColor,
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                ),
-                            maxLines = 1,
-                            softWrap = false,
-                            autoSize = TextAutoSize.StepBased(
-                                minFontSize = 8.sp,
-                                maxFontSize = MaterialTheme.typography.bodySmall.fontSize,
-                            ),
-                        )
-                    }
-                }
             }
         }
 
@@ -751,8 +734,7 @@ private fun HeartRateView(
                     bpm = hr,
                     textToDisplay = textToDisplay,
                     currentZone = currentZone,
-                    colorsByZone = colorsByZone,
-                    displayMode = displayMode
+                    colorsByZone = colorsByZone
                 )
             }
 

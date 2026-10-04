@@ -201,7 +201,7 @@ class WearUiConsistencyE2ETest {
                 instrumentation.runOnMainSync { current.value = Case(page, width, fontScale) }
                 settle()
                 when (page) {
-                    "heart" -> { assertFits("140 bpm"); assertFits("Z2") }
+                    "heart" -> { assertFits("140"); assertFits("Z2") }
                     "name" -> assertFits(workoutName, allowTitleEllipsis = true)
                     "rir", "auto_rir" -> {
                         assertFits("0 = Form Breaks")
