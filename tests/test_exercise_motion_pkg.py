@@ -54304,6 +54304,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
         SOURCE_SELECTION_POLICY_VERSION,
     )
+    from exercise_motion_pkg.controlled_motion import (
+        controlled_motion_fit_source_evidence,
+        controlled_motion_fit_source_evidence_digest,
+    )
     from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES
 
     exercise = ExerciseEntry(exercise_id="squat", name="Squat", slug="squat")
@@ -54768,6 +54772,11 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     export_payload = checkpoint["payload"]["artifacts"][0]["artifact"]["export_payload"]
     fit_report = export_payload["controlledMotionFit"]
     assert fit_report["applied"] is True
+    fit_source_evidence = controlled_motion_fit_source_evidence(export_payload)
+    assert isinstance(fit_source_evidence.get("sourcePoseCameraReference"), dict)
+    assert fit_report["fitSourceEvidenceDigest"] == (
+        controlled_motion_fit_source_evidence_digest(export_payload)
+    )
     anatomy = fit_report["anatomicalInitialization"]
     assert anatomy["passed"] is True
     shoulder_attachment_violation = "anatomy_chest_attachment:shoulders"
