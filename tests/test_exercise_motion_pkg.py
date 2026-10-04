@@ -54777,6 +54777,15 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert fit_report["fitSourceEvidenceDigest"] == (
         controlled_motion_fit_source_evidence_digest(export_payload)
     )
+    artifact_state = export_payload["artifactState"]
+    assert artifact_state["artifactClass"] == "cyclic_rebake"
+    assert artifact_state["terminal"] is True
+    assert artifact_state["lineageComplete"] is True
+    assert artifact_state["history"] == [
+        "full_clip_bake",
+        "cycle_selection",
+        "cyclic_rebake",
+    ]
     anatomy = fit_report["anatomicalInitialization"]
     assert anatomy["passed"] is True
     shoulder_attachment_violation = "anatomy_chest_attachment:shoulders"
@@ -54785,20 +54794,36 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert list(candidate_workspace.rglob("*.webm")), "the production browser bake did not render a review video"
     assert final_review_calls, "the final visual-review boundary was not exercised"
 
-    selection_path = item_workspace / "selection_manifest.json"
+    selection_path = workspace_root / "squat" / "selected" / "selection_manifest.json"
     selection_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
     assert selection_manifest.get("finalOutputValidationEnabled") is True
     assert selection_manifest.get("selectionStatus") == "selected"
     selected = selection_manifest.get("selected")
     assert isinstance(selected, dict)
+    selected_state = selected["artifactState"]
+    assert selected_state["lineageComplete"] is True
+    packaged_state = selected["packagedArtifactState"]
+    assert packaged_state["artifactClass"] == "packaged_movement"
+    assert packaged_state["lineageComplete"] is True
+    assert packaged_state["history"] == [
+        "full_clip_bake",
+        "cycle_selection",
+        "cyclic_rebake",
+        "packaged_movement",
+    ]
+    package_parity = selected["packagedSkeletonReviewParity"]
+    assert package_parity["verified"] is True
     final_validation = selected["ranking"]["payload"]["finalOutputValidation"]
     assert final_validation.get("passed") is True
     assert final_validation.get("renderEvidence", {}).get("passed") is True
     review_identity = final_validation["renderEvidence"]["skeletonIdentity"]
     skeleton_path = Path(selected["selectedWearSkeletonPath"])
     skeleton_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
-    assert review_identity["sha256"] == hashlib.sha256(skeleton_path.read_bytes()).hexdigest()
+    skeleton_sha256 = hashlib.sha256(skeleton_path.read_bytes()).hexdigest()
+    assert review_identity["sha256"] == skeleton_sha256
     assert review_identity["frameCount"] == len(skeleton_payload["frames"])
+    assert package_parity["sha256"] == skeleton_sha256
+    assert package_parity["frameCount"] == len(skeleton_payload["frames"])
     assert all(Path(path).is_file() for path in final_validation["renderEvidence"]["contactSheetPaths"])
 
     summary_path = workspace_root / "workout_motion_generation_summary.json"
