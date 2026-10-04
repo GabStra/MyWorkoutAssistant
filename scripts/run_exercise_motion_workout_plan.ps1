@@ -200,8 +200,8 @@ param(
     [bool]$KeepLlamaCppServer = $false,
     [double]$LlamaCppServerStartupTimeoutSeconds = 180.0,
     [double]$LlamaCppRequestTimeoutSeconds = 180.0,
-    # Shared llama.cpp server (SHARED_LLAMA_SERVER.md). Increment 1 ships the
-    # supervisor functions only; run-loop wiring is deliberately deferred.
+    # Shared llama.cpp server (SHARED_LLAMA_SERVER.md). The run loop starts it
+    # before contract prefetch and passes its session to each wave.
     [switch]$SharedLlamaServer,
     [string]$SharedLlamaServerSessionDir,
     [double]$SharedLlamaServerStopDrainTimeoutSeconds = 120.0,
