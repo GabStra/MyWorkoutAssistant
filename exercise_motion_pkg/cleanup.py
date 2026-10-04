@@ -1154,15 +1154,25 @@ def cleanup_motion_clip(
         )
     )
     # `ground_to_floor` is one clip-wide translation, so it cannot change
-    # contact timing. Re-detecting here used an absolute-zero height test in
-    # the translated coordinate space and silently erased elevated contacts
-    # (for example, landing on a box). Preserve the states inferred in the
-    # original motion space instead.
+    # contact timing. Continuous ground support can be re-detected after the
+    # shift because raw world coordinates may not use the floor as Y=0. Keep
+    # the original states for intermittent and unknown support, where
+    # re-detection could mistake an elevated surface for the floor.
     support_states = (
         raw_support_states
         if floor_support_enabled
         else [{} for _ in grounded.frames]
     )
+    if (
+        floor_support_enabled
+        and not preserve_horizontal_orientation
+        and str(ground_contact_mode or "unknown").strip().casefold() == "continuous"
+    ):
+        support_states = detect_support_contact_states(
+            grounded,
+            support_mode=support_mode,
+            ground_contact_mode=ground_contact_mode,
+        )
     support_ground_y = estimate_support_ground_height(grounded, support_states)
     intermittent_support = (
         str(ground_contact_mode or "unknown").strip().casefold() == "intermittent"
