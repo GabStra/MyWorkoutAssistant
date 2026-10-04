@@ -271,6 +271,10 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                 raise SystemExit(0)
             append_log(command or "unknown")
             if command == "bake-and-rank":
+                argument_log = os.environ.get("FAKE_MOTION_CLI_ARGS_LOG")
+                if argument_log:
+                    with open(argument_log, "a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(args) + "\n")
                 direct_bake_log = os.environ.get("FAKE_MOTION_DIRECT_BAKE_LOG")
                 if direct_bake_log:
                     with open(direct_bake_log, "a", encoding="utf-8") as handle:
@@ -528,12 +532,14 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     "ranking": {
                         "payload": {
                             "finalOutputValidation": {
+                                "passed": True,
                                 "artifactClassGate": {
                                     "passed": True,
                                     "artifactClass": "full_clip_bake",
                                 },
                                 "renderEvidence": {
                                     "available": True,
+                                    "passed": True,
                                     "skeletonIdentity": skeleton_identity,
                                     "reviewWindow": full_clip_review_window,
                                 },
@@ -1305,6 +1311,8 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
     env = os.environ.copy()
     env["FAKE_MOTION_ARTIFACT_STATE_CASE"] = "embedded_state_reordered"
+    command_arguments_log = tmp_path / "motion_cli_arguments.jsonl"
+    env["FAKE_MOTION_CLI_ARGS_LOG"] = str(command_arguments_log)
 
     result = subprocess.run(
         [
@@ -1335,7 +1343,6 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
             "-SkipPreWhamSourceValidation",
-            "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
         env=env,
@@ -1346,6 +1353,12 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    command_arguments = [
+        json.loads(line)
+        for line in command_arguments_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert any("--final-output-validation" in args for args in command_arguments)
+    assert all("--skip-final-output-validation" not in args for args in command_arguments)
     assert f"Mobile package updated: 1 approved movement(s) at {incremental_mobile_package}" in result.stdout
     assert f"Mobile workout-plan package: {mobile_package}" in result.stdout
     package = json.loads(mobile_package.read_text(encoding="utf-8"))
