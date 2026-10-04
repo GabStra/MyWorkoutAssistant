@@ -394,3 +394,44 @@ directory has a condensed version of this state; update it after the arms land.
   fixture had a start-state mismatch; the retained bake already had a matching
   upright start and only an advisory end-state mismatch, so this correction is
   not claimed as the cause or fix for the RDL fit rejection.
+
+### Generator architecture and support fixes — 2026-10-04
+
+- The artifact-state path remains wired through staged production generation,
+  final review, selection, and packaging. The process E2E verifies reviewed versus
+  packaged skeleton identity and frame-count parity.
+- The production process E2E now exercises exact-source validation and body-support
+  observation through their production cache readers, then runs the production
+  final-output validator and response parser with a deterministic response. It
+  continues through the real staged-wave worker, fit, render, artifact lineage,
+  and package path. Candidate discovery/source acquisition and WHAM inference
+  remain prepared-fixture boundaries.
+- Fitting no longer lets swapped-side sole materialization mutate canonical
+  source evidence and invalidate its mapped-evidence digest. A fit-scoped
+  rig-side evidence view now reaches contact constraints and the fit-source
+  digest; a focused regression verifies both the constraint and unchanged cache.
+- RDL replay isolated a cleanup coordinate bug: support detection used an
+  absolute floor-height band before `ground_to_floor` shifted the clip. For
+  continuous-ground motions, cleanup now detects contacts again after this
+  clip-wide shift. Intermittent and unknown support keep the original contact
+  timing so elevated surfaces are not reclassified as the floor. Root smoothing
+  now runs before support anchoring, allowing support constraints to own the
+  final planted-foot positions.
+- A CPU-only replay of the retained 98-frame RDL raw motion now detects both
+  feet in all 98 frames after normalization; each foot's maximum horizontal
+  displacement from its first frame is 11.3 mm. This establishes the cleanup
+  support fix only. The retained fit and final review have not been rerun, so
+  successful RDL selection is not yet established.
+- The queued staged-wave service is a real production vertical slice and keeps
+  its worker/model services within the workspace-owned run. A host-level service
+  supervisor spanning separate runs and a common queue for discovery through
+  packaging remain separate architecture phases. Unacknowledged staged results
+  are retained because there is no waiter-liveness record proving they are safe
+  to delete.
+- Focused verification passed for the swapped-support regression, the cleanup
+  support regressions (3 tests), Python compilation, and diff checks. The process
+  E2E passed once in 165.86s after the root-smoothing order fix and before the
+  continuous-only post-normalization detection change; that final branch was
+  separately covered by the cleanup regression and retained RDL replay. No GPU
+  campaign was run. The baseline remains stopped, so no maximum-throughput claim
+  is made.
