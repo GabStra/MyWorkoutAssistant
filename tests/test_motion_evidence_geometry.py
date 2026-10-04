@@ -232,6 +232,37 @@ def test_support_invariant_uses_verified_fit_ownership(tmp_path, monkeypatch, ve
     assert bool(checks) == (not verified_fit)
 
 
+def test_support_review_metadata_does_not_invalidate_bake_checkpoint(tmp_path, monkeypatch):
+    import json
+
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.stage_cache import load_stage, save_stage
+
+    skeleton_path = tmp_path / 'baseline.json'
+    original_payload = {'frames': []}
+    skeleton_path.write_text(json.dumps(original_payload), encoding='utf-8')
+    artifact = bake.BakedLoopArtifact(
+        loop_index=0,
+        skeleton_path=skeleton_path,
+        review_video_path=tmp_path / 'baseline.webm',
+        export_payload=copy.deepcopy(original_payload),
+        settings_variant_id='adaptive-baseline',
+    )
+    checkpoint = tmp_path / 'baked_stage_checkpoint.json'
+    save_stage(checkpoint, 'bake-key', {'paths': [str(skeleton_path)]}, [skeleton_path])
+    monkeypatch.setattr(
+        bake,
+        'source_confirmed_support_stationarity_metrics',
+        lambda *_args, **_kwargs: {'required': True, 'passed': True},
+    )
+
+    bake.prefer_baseline_safe_support_lock_artifacts([artifact])
+
+    assert artifact.export_payload['sourceConfirmedBaselineSupportGate']['passed']
+    assert json.loads(skeleton_path.read_text(encoding='utf-8')) == original_payload
+    assert load_stage(checkpoint, 'bake-key') == {'paths': [str(skeleton_path)]}
+
+
 def test_support_gate_uses_cropped_contact_timing_and_still_rejects_sliding():
     from exercise_motion_pkg import bake_and_rank as bake
     from exercise_motion_pkg.loop_cycles import slice_loop_cycle

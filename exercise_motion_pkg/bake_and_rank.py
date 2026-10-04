@@ -12513,10 +12513,12 @@ def prefer_baseline_safe_support_lock_artifacts(
             "passed": True,
             "reason": "knee_floor_support_does_not_require_ankle_stationarity",
         }
+    # These gates are review decisions layered on top of the baked artifact.
+    # Keep them in memory for selection/reporting; rewriting the skeleton here
+    # would invalidate the byte-identity checkpoint written by the bake stage.
     baseline.export_payload["sourceConfirmedBaselineSupportGate"] = (
         baseline_support_metrics
     )
-    write_json_atomic(baseline.skeleton_path, baseline.export_payload)
     non_foot_lock_artifacts: list[BakedLoopArtifact] = []
     safe_foot_lock_artifacts: list[BakedLoopArtifact] = []
     for artifact in artifacts:
@@ -12550,7 +12552,6 @@ def prefer_baseline_safe_support_lock_artifacts(
         artifact.export_payload["sourceConfirmedSupportRepairGate"] = (
             support_repair_metrics
         )
-        write_json_atomic(artifact.skeleton_path, artifact.export_payload)
         if bool(metrics.get("passed")) and bool(support_repair_metrics.get("passed")):
             safe_foot_lock_artifacts.append(artifact)
     if not bool(baseline_support_metrics.get("passed")):
