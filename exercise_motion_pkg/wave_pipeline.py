@@ -841,17 +841,81 @@ def run_staged_bake_wave(
     # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
     from .resource_budget import render_prefetch_worker_limit
     prefetch_workers = render_prefetch_worker_limit(len(items))
-    if render_executor is not None:
-        return _run_staged_bake_wave(items, workspace=workspace, wave_id=wave_id,
-            progress=progress, render_executor=render_executor,
-            render_prefetch_workers=prefetch_workers)
-    with ThreadPoolExecutor(
-        max_workers=prefetch_workers,
-        thread_name_prefix="motion-render-prefetch",
-    ) as owned_render_executor:
-        return _run_staged_bake_wave(items, workspace=workspace, wave_id=wave_id,
-            progress=progress, render_executor=owned_render_executor,
-            render_prefetch_workers=prefetch_workers)
+    render_futures: dict[str, Any] = {}
+    render_workspaces: dict[str, Path] = {}
+    try:
+        if render_executor is not None:
+            report = _run_staged_bake_wave(
+                items,
+                workspace=workspace,
+                wave_id=wave_id,
+                progress=progress,
+                render_executor=render_executor,
+                render_prefetch_workers=prefetch_workers,
+                render_futures=render_futures,
+                render_workspaces=render_workspaces,
+            )
+        else:
+            with ThreadPoolExecutor(
+                max_workers=prefetch_workers,
+                thread_name_prefix="motion-render-prefetch",
+            ) as owned_render_executor:
+                report = _run_staged_bake_wave(
+                    items,
+                    workspace=workspace,
+                    wave_id=wave_id,
+                    progress=progress,
+                    render_executor=owned_render_executor,
+                    render_prefetch_workers=prefetch_workers,
+                    render_futures=render_futures,
+                    render_workspaces=render_workspaces,
+                )
+    except BaseException:
+        _drain_render_prefetch_futures(
+            render_futures,
+            render_workspaces,
+            preserve_active_exception=True,
+        )
+        raise
+    _drain_render_prefetch_futures(
+        render_futures,
+        render_workspaces,
+        preserve_active_exception=False,
+    )
+    return report
+
+
+def _drain_render_prefetch_futures(
+    render_futures: dict[str, Any],
+    render_workspaces: dict[str, Path],
+    *,
+    preserve_active_exception: bool,
+) -> None:
+    """Stop and join this request's speculative work before its lease ends."""
+    if not render_futures:
+        return
+    from concurrent.futures import CancelledError
+    from .fit_runtime import (
+        abandon_speculative_workspace,
+        clear_speculative_workspace_state,
+    )
+
+    storage_failure: BaseException | None = None
+    for key, future in render_futures.items():
+        candidate_workspace = render_workspaces.get(key)
+        if not future.done() and not future.cancel() and candidate_workspace is not None:
+            abandon_speculative_workspace(candidate_workspace)
+        try:
+            future.result()
+        except CancelledError:
+            pass
+        except BaseException as exc:
+            if not preserve_active_exception and is_storage_failure(exc):
+                storage_failure = storage_failure or exc
+        finally:
+            clear_speculative_workspace_state(candidate_workspace)
+    if storage_failure is not None:
+        raise storage_failure
 
 
 def _run_staged_bake_wave(
@@ -861,6 +925,8 @@ def _run_staged_bake_wave(
     wave_id: str,
     progress: Callable[[str], None] | None = None,
     render_executor: ThreadPoolExecutor,
+    render_futures: dict[str, Any],
+    render_workspaces: dict[str, Path],
     render_prefetch_workers: int | None = None,
 ) -> dict[str, Any]:
     """Run one cache-first VLM -> WHAM -> VLM wave.
@@ -975,7 +1041,6 @@ def _run_staged_bake_wave(
     ] = {}
     ready_source_ids: set[str] = set()
     prepared_contracts: dict[str, dict[str, Any] | None] = {}
-    render_futures: dict[str, Any] = {}
     metrics["cpuRenderPrefetch"] = {}
     unavailable_source_ids: set[str] = set()
     source_session = LazyLlamaCppVisionSession(items[0].request)
@@ -1379,9 +1444,13 @@ def _run_staged_bake_wave(
                 if len(ready_sources) == 1 and any(
                     not pending.done() for pending in future_items
                 ):
-                    render_futures[_candidate_key(candidate)] = render_executor.submit(
+                    candidate_key = _candidate_key(candidate)
+                    render_futures[candidate_key] = render_executor.submit(
                         prepare_cpu_render_cache, item, candidate, result,
                         prepared_contracts.get(_candidate_key(candidate)))
+                    render_workspaces[candidate_key] = (
+                        item.request.workspace / candidate.workspace_slug
+                    )
             except Exception as exc:
                 if is_storage_failure(exc):
                     raise

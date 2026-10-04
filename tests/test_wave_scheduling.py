@@ -88,6 +88,86 @@ def test_render_prefetch_only_overlaps_unfinished_generation(tmp_path, monkeypat
     assert report['completedExerciseCount'] == candidate_count
 
 
+def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg import resource_budget
+
+    class Session:
+        def __init__(self, request): pass
+        def caption_images(self, **kwargs): return '{}'
+        def close(self, **kwargs): pass
+        def run_without_llama_overlap(self, operation): return operation()
+
+    monkeypatch.setattr(wave, 'LazyLlamaCppVisionSession', Session)
+    monkeypatch.setattr(wave, 'build_exercise_motion_contract_resolver', lambda **k: None)
+    monkeypatch.setattr(wave, 'evaluate_source_candidate_gate', lambda *a, **k: {'passed': True})
+    monkeypatch.setattr(wave, 'first_attempt_readiness_assessment',
+        lambda *a, **k: {'eligible': True, 'portfolioSize': 1})
+    monkeypatch.setattr(resource_budget, 'staged_generation_cpu_workers', lambda: 2)
+    items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
+        candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
+        wham_repo_path=None, body_model_root=None, fallback_candidates=0,
+        max_final_output_rejections=0)) for name in ['first', 'last']]
+    candidates = {item.exercise_id: bake.RankedCandidate(
+        exercise_index=index, candidate_rank=0, exercise_id=item.exercise_id,
+        exercise_name=item.exercise_name, exercise_slug=item.exercise_id,
+        candidate={'videoId': item.exercise_id}) for index, item in enumerate(items)}
+    monkeypatch.setattr(wave, '_wave_candidates', lambda request: [candidates[request.workspace.name]])
+    monkeypatch.setattr(wave, 'prepare_candidate_input_video',
+        lambda candidate, **k: tmp_path / f'{candidate.video_id}.mp4')
+
+    prefetch_started = threading.Event()
+    allow_prefetch_to_finish = threading.Event()
+    prefetch_finished = threading.Event()
+    finalization_finished = threading.Event()
+
+    def generate(candidate, **kwargs):
+        if candidate.exercise_id == 'last':
+            assert prefetch_started.wait(3), 'earlier render did not overlap generation'
+        return SimpleNamespace(wham_cache_status='generated', wham_results_pkl=None)
+
+    def prefetch(item, candidate, result, contract):
+        prefetch_started.set()
+        assert allow_prefetch_to_finish.wait(3), 'request did not drain speculative render'
+        prefetch_finished.set()
+        return {'status': 'prepared'}
+
+    def finalize(request, **kwargs):
+        finalization_finished.set()
+        return {'selected': {'selectedWearSkeletonPath': str(tmp_path / 'wear.json')}}
+
+    monkeypatch.setattr(wave, 'generate_candidate_motion', generate)
+    monkeypatch.setattr(wave, 'prepare_cpu_render_cache', prefetch)
+    monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline', finalize)
+
+    shared_render_executor = ThreadPoolExecutor(max_workers=1)
+    wave_executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = wave_executor.submit(
+            wave.run_staged_bake_wave,
+            items,
+            workspace=tmp_path / 'wave',
+            wave_id='persistent-prefetch',
+            render_executor=shared_render_executor,
+        )
+        assert prefetch_started.wait(3)
+        assert finalization_finished.wait(3)
+        assert not future.done(), 'wave returned while its persistent prefetch was still running'
+
+        allow_prefetch_to_finish.set()
+        report = future.result(timeout=3)
+        assert prefetch_finished.is_set()
+        assert report['completedExerciseCount'] == 2
+        from exercise_motion_pkg import fit_runtime
+        speculative_workspace = items[0].request.workspace / candidates['first'].workspace_slug
+        assert not fit_runtime.active_speculative_workspace(speculative_workspace)
+        assert not fit_runtime.speculative_prefetch_abandoned(speculative_workspace)
+    finally:
+        allow_prefetch_to_finish.set()
+        wave_executor.shutdown(wait=True)
+        shared_render_executor.shutdown(wait=True)
+
+
 @pytest.mark.parametrize('unavailable_count', [0, 5])
 @pytest.mark.parametrize('remaining_source_passes', [True, False])
 def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, monkeypatch, remaining_source_passes, unavailable_count):

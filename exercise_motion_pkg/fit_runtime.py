@@ -84,6 +84,7 @@ def speculative_workspace(workspace):
     finally:
         with _FIT_GUARD:
             _ACTIVE_SPECULATIVE_WORKSPACES.discard(key)
+            _ABANDONED_SPECULATIVE_WORKSPACES.discard(key)
             _FIT_GUARD.notify_all()
 
 
@@ -102,6 +103,17 @@ def abandon_speculative_workspace(workspace) -> None:
         return
     with _FIT_GUARD:
         _ABANDONED_SPECULATIVE_WORKSPACES.add(key)
+        _FIT_GUARD.notify_all()
+
+
+def clear_speculative_workspace_state(workspace) -> None:
+    """Remove request-local speculative state after its worker has stopped."""
+    key = _workspace_key(workspace)
+    if key is None:
+        return
+    with _FIT_GUARD:
+        _ACTIVE_SPECULATIVE_WORKSPACES.discard(key)
+        _ABANDONED_SPECULATIVE_WORKSPACES.discard(key)
         _FIT_GUARD.notify_all()
 
 
