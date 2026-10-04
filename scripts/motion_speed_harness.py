@@ -507,6 +507,7 @@ def prewarm_gvhmr_worker(timeout_seconds: float = 600.0) -> dict:
         "-v", str(workspace_dir) + ":/workspace",
         "-v", str(state_dir) + ":/worker_state",
         "-v", str(pkg_dir / "gvhmr_warm_worker.py") + ":/worker/gvhmr_warm_worker.py:ro",
+        "-v", str(pkg_dir / "warm_worker_retention.py") + ":/worker/warm_worker_retention.py:ro",
         "-w", "/opt/gvhmr",
         GVHMR_DOCKER_IMAGE,
         "python", "-u", "/worker/gvhmr_warm_worker.py",

@@ -797,24 +797,85 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
                 $node.Name -in @(
                     'Get-StagedBakeQueueServiceState',
+                    'Invoke-WithStagedWaveAdmissionLock',
+                    'Start-StagedBakeQueueServiceGeneration',
+                    'Stop-StagedBakeQueueServiceProcessTree',
                     'Stop-StagedBakeQueueService',
                     'Stop-MotionModelServicesAfterStagedWorker'
                 )
         }, $true)
-        if ($functionAsts.Count -ne 3) { throw 'A staged-wave shutdown function was not found.' }
+        if ($functionAsts.Count -ne 6) { throw 'A staged-wave service function was not found.' }
         foreach ($functionAst in $functionAsts) { Invoke-Expression $functionAst.Extent.Text }
 
         function Test-MotionRunCancelRequested { return $false }
+        function ConvertTo-StagedServiceArgument {
+            param([string]$Value)
+            return '"' + $Value.Replace('"', '\"') + '"'
+        }
         function Get-Process {
             [CmdletBinding()]
             param([int]$Id)
+            return $script:mockProcess
+        }
+        function Start-Process {
+            param(
+                [string]$FilePath,
+                [string[]]$ArgumentList,
+                [switch]$PassThru,
+                [string]$WindowStyle,
+                [string]$WorkingDirectory,
+                [string]$RedirectStandardOutput,
+                [string]$RedirectStandardError,
+                [string]$ErrorAction
+            )
+            if ($FilePath.EndsWith('taskkill.exe', [StringComparison]::OrdinalIgnoreCase)) {
+                $script:treeTerminationCommands += [pscustomobject]@{
+                    filePath = $FilePath
+                    arguments = @($ArgumentList)
+                    windowStyle = $WindowStyle
+                }
+                if ($script:confirmTreeStop) { $script:mockProcess.HasExited = $true }
+                $exitCode = if ($script:confirmTreeStop) { 0 } else { 1 }
+                $terminator = [pscustomobject]@{
+                    Id = 9001
+                    HasExited = $true
+                    ExitCode = $exitCode
+                }
+                $terminator | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {
+                    param([int]$TimeoutMilliseconds)
+                    $script:terminatorWaitTimeouts += $TimeoutMilliseconds
+                    return $this.HasExited
+                }
+                $terminator | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
+                return $terminator
+            }
+            $stopRequestPath = Join-Path $script:StagedWaveServiceQueueRoot 'stop.request'
+            if (Test-Path -LiteralPath $stopRequestPath) {
+                throw 'A fresh staged-wave worker was launched while the old stop.request marker remained.'
+            }
+            $script:serviceLaunchCommands += [pscustomobject]@{
+                filePath = $FilePath
+                arguments = [string]$ArgumentList
+                workingDirectory = $WorkingDirectory
+                windowStyle = $WindowStyle
+                stdout = $RedirectStandardOutput
+                stderr = $RedirectStandardError
+            }
+            $script:mockProcess = [pscustomobject]@{
+                Id = 5432
+                HasExited = $false
+                StartTime = [DateTime]::UtcNow
+            }
+            Write-TestWorkerState -WaveId $null `
+                -Identity ([long]$script:mockProcess.StartTime.ToUniversalTime().ToFileTimeUtc()) `
+                -Status 'idle'
             return $script:mockProcess
         }
         function Stop-Process {
             [CmdletBinding()]
             param([int]$Id, [switch]$Force)
             $script:stoppedProcessIds += $Id
-            if ($script:confirmStop) { $script:mockProcess.HasExited = $true }
+            throw 'Parent-only Stop-Process must not terminate the staged-wave service.'
         }
         function Stop-WhamWarmWorker {
             param([object]$Worker)
@@ -828,7 +889,12 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         $script:StagedWaveServiceQueueRoot = Join-Path $env:TEMP ('motion-cancel-test-' + [guid]::NewGuid().ToString('N'))
         $script:stoppedProcessIds = @()
         $script:stoppedModelServices = @()
-        $script:confirmStop = $true
+        $script:treeTerminationCommands = @()
+        $script:serviceLaunchCommands = @()
+        $script:terminatorWaitTimeouts = @()
+        $script:workerWaitTimeouts = @()
+        $script:gracefulExitOnStopRequest = $false
+        $script:confirmTreeStop = $true
         $movementRunId = 'run-under-test'
         New-Item -ItemType Directory -Force -Path $script:StagedWaveServiceQueueRoot | Out-Null
         $statePath = Join-Path $script:StagedWaveServiceQueueRoot 'worker_state.json'
@@ -840,16 +906,23 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         $processIdentity = [long]$script:mockProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
         $script:mockProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {
             param([int]$TimeoutMilliseconds)
+            $script:workerWaitTimeouts += $TimeoutMilliseconds
+            $stopRequestPath = Join-Path $script:StagedWaveServiceQueueRoot 'stop.request'
+            if ($script:gracefulExitOnStopRequest -and (Test-Path -LiteralPath $stopRequestPath)) {
+                $this.HasExited = $true
+            }
             return $this.HasExited
         }
         function Write-TestWorkerState {
-            param([string]$WaveId, [long]$Identity)
+            param([string]$WaveId, [long]$Identity, [string]$Status = 'running')
             @{
                 schemaVersion = 1
                 queueRoot = $script:StagedWaveServiceQueueRoot
-                pid = 4321
+                pid = if ($null -ne $script:mockProcess) { $script:mockProcess.Id } else { 4321 }
                 processIdentity = $Identity
-                status = 'running'
+                sourceIdentityFingerprint = 'test-source-fingerprint'
+                serviceConfigurationFingerprint = 'test-configuration-fingerprint'
+                status = $Status
                 currentWaveId = $WaveId
                 updatedAtEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
             } | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
@@ -884,22 +957,71 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         }
         $script:stoppedModelServices = @()
 
-        # Same-run active work is stopped before model services are released.
+        # Same-run active work receives stop.request first and can exit gracefully.
         $script:mockProcess.HasExited = $false
+        $script:gracefulExitOnStopRequest = $true
         Write-TestWorkerState -WaveId 'run-under-test-wave-0001' -Identity $processIdentity
         $stopped = Stop-StagedBakeQueueService -RunFailure
-        if (-not $stopped -or $script:stoppedProcessIds.Count -ne 1 -or $script:stoppedProcessIds[0] -ne 4321) {
-            throw 'The active staged wave for the failed run was not stopped and confirmed.'
+        if (-not $stopped -or $script:treeTerminationCommands.Count -ne 0 -or
+            3000 -notin $script:workerWaitTimeouts -or
+            -not (Test-Path -LiteralPath (Join-Path $script:StagedWaveServiceQueueRoot 'stop.request'))) {
+            throw 'The active staged wave did not receive a bounded graceful-stop request.'
         }
         $marker = Get-Content (Join-Path (Join-Path $script:StagedWaveServiceQueueRoot 'cancelled_runs') 'run-under-test.json') -Raw | ConvertFrom-Json
         if ($marker.reason -ne 'workout-plan scheduler failed') { throw 'The run failure reason was not persisted.' }
+        [void](Stop-MotionModelServicesAfterStagedWorker `
+            -StagedWaveShutdownConfirmed $stopped `
+            -WarmWhamWorker ([pscustomobject]@{}) `
+            -SharedLlamaServer ([pscustomobject]@{}))
+        if ($script:stoppedModelServices.Count -ne 2) {
+            throw 'Graceful staged-worker exit did not release both model dependencies.'
+        }
+        $script:stoppedModelServices = @()
 
-        # If process termination cannot be confirmed, do not release models.
+        # A fresh generation clears the old stop marker only after the previous
+        # process has exited, while holding the production admission mutex.
+        $restart = Start-StagedBakeQueueServiceGeneration `
+            -QueueRoot $script:StagedWaveServiceQueueRoot `
+            -PythonCommand 'python.exe' `
+            -MaxWaveItems 2 `
+            -SourceIdentityFingerprint 'test-source-fingerprint' `
+            -ConfigurationFingerprint 'test-configuration-fingerprint' `
+            -RepositoryRoot $script:StagedWaveServiceQueueRoot
+        if (-not $restart.launched -or $restart.process.Id -ne 5432 -or
+            $script:serviceLaunchCommands.Count -ne 1 -or
+            $script:serviceLaunchCommands[0].filePath -ne 'python.exe' -or
+            -not $script:serviceLaunchCommands[0].arguments.Contains('--queue-root') -or
+            (Test-Path -LiteralPath (Join-Path $script:StagedWaveServiceQueueRoot 'stop.request'))) {
+            throw 'A confirmed stopped generation did not clear its stop marker before starting the replacement.'
+        }
+        $processIdentity = [long]$script:mockProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+
+        # A still-running synchronous wave falls back to taskkill /T /F.
         $script:mockProcess.HasExited = $false
-        $script:confirmStop = $false
+        $script:gracefulExitOnStopRequest = $false
+        $script:confirmTreeStop = $true
         Write-TestWorkerState -WaveId 'run-under-test-wave-0002' -Identity $processIdentity
         $stopped = Stop-StagedBakeQueueService -RunFailure
-        if ($stopped -or $script:stoppedProcessIds.Count -ne 2) {
+        if (-not $stopped -or $script:treeTerminationCommands.Count -ne 1 -or
+            [string]::Join(' ', @($script:treeTerminationCommands[0].arguments)) -ne '/PID 5432 /T /F' -or
+            5000 -notin $script:terminatorWaitTimeouts -or $script:stoppedProcessIds.Count -ne 0) {
+            throw 'A nonresponsive staged wave did not use bounded process-tree termination.'
+        }
+        [void](Stop-MotionModelServicesAfterStagedWorker `
+            -StagedWaveShutdownConfirmed $stopped `
+            -WarmWhamWorker ([pscustomobject]@{}) `
+            -SharedLlamaServer ([pscustomobject]@{}))
+        if ($script:stoppedModelServices.Count -ne 2) {
+            throw 'Confirmed process-tree shutdown did not release both model dependencies.'
+        }
+        $script:stoppedModelServices = @()
+
+        # If neither graceful nor tree shutdown can be confirmed, keep models.
+        $script:mockProcess.HasExited = $false
+        $script:confirmTreeStop = $false
+        Write-TestWorkerState -WaveId 'run-under-test-wave-0003' -Identity $processIdentity
+        $stopped = Stop-StagedBakeQueueService -RunFailure
+        if ($stopped -or $script:treeTerminationCommands.Count -ne 2) {
             throw 'Failure cleanup did not report an unconfirmed worker shutdown.'
         }
         [void](Stop-MotionModelServicesAfterStagedWorker `
@@ -913,7 +1035,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         # A missing PID and a process start-identity mismatch are both
         # confirmed stopped states, so model shutdown is allowed.
         $script:mockProcess = $null
-        Write-TestWorkerState -WaveId 'run-under-test-wave-0003' -Identity $processIdentity
+        Write-TestWorkerState -WaveId 'run-under-test-wave-0004' -Identity $processIdentity
         $serviceState = Get-StagedBakeQueueServiceState -QueueRoot $script:StagedWaveServiceQueueRoot
         if ($serviceState.processState -ne 'stopped') { throw 'A dead staged worker was not recognized as stopped.' }
         $stopped = Stop-StagedBakeQueueService -RunFailure
@@ -931,7 +1053,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
             StartTime = [DateTime]::UtcNow
         }
         $mismatchedIdentity = [long]$script:mockProcess.StartTime.ToUniversalTime().ToFileTimeUtc() + 1
-        Write-TestWorkerState -WaveId 'run-under-test-wave-0004' -Identity $mismatchedIdentity
+        Write-TestWorkerState -WaveId 'run-under-test-wave-0005' -Identity $mismatchedIdentity
         $serviceState = Get-StagedBakeQueueServiceState -QueueRoot $script:StagedWaveServiceQueueRoot
         if ($serviceState.processState -ne 'stopped') { throw 'A staged worker process identity mismatch was not recognized as stopped.' }
         $stopped = Stop-StagedBakeQueueService -RunFailure

@@ -2006,6 +2006,7 @@ function Start-WhamWarmWorker {
     if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
         $dockerArgs += @("--gpus", $WhamDockerGpus)
     }
+    $warmWorkerRetentionPath = Join-Path (Split-Path -Parent $WorkerScriptPath) "warm_worker_retention.py"
     if ($Backend -eq "gvhmr") {
         $dockerArgs += @("--shm-size", "8g")
         $dockerArgs += @(
@@ -2014,6 +2015,7 @@ function Start-WhamWarmWorker {
             "-v", "$($MountRoot):/workspace",
             "-v", "$($SessionDir):/worker_state",
             "-v", "$($WorkerScriptPath):/worker/gvhmr_warm_worker.py:ro",
+            "-v", "$($warmWorkerRetentionPath):/worker/warm_worker_retention.py:ro",
             "-w", "/opt/gvhmr",
             $GvhmrDockerImage,
             "python", "-u", "/worker/gvhmr_warm_worker.py",
@@ -2035,6 +2037,7 @@ function Start-WhamWarmWorker {
             "-v", "$($MountRoot):/workspace",
             "-v", "$($SessionDir):/worker_state",
             "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
+            "-v", "$($warmWorkerRetentionPath):/worker/warm_worker_retention.py:ro",
             "-w", "/opt/wham-src",
             $WhamDockerImage,
             "python", "-u", "/worker/wham_warm_worker.py",
@@ -4116,6 +4119,106 @@ function Invoke-WithStagedWaveAdmissionLock {
     }
 }
 
+function Start-StagedBakeQueueServiceGeneration {
+    param(
+        [string]$QueueRoot,
+        [string]$PythonCommand,
+        [int]$MaxWaveItems,
+        [string]$SourceIdentityFingerprint,
+        [string]$ConfigurationFingerprint,
+        [string]$RepositoryRoot
+    )
+
+    $serviceLogPath = Join-Path $QueueRoot "service.log"
+    $serviceErrorPath = Join-Path $QueueRoot "service.error.log"
+    $serviceArguments = @(
+        "-m", "exercise_motion_pkg.staged_wave_service",
+        "--queue-root", $QueueRoot,
+        "--max-wave-items", [string]$MaxWaveItems,
+        "--source-identity-fingerprint", $SourceIdentityFingerprint,
+        "--service-configuration-fingerprint", $ConfigurationFingerprint,
+        "--idle-timeout-seconds", "600"
+    )
+
+    return Invoke-WithStagedWaveAdmissionLock -QueueRoot $QueueRoot -Operation {
+        $serviceBeforeLaunch = Get-StagedBakeQueueServiceState -QueueRoot $QueueRoot
+        if ($serviceBeforeLaunch.healthy) {
+            $sourceIdentityMatches = [string]$serviceBeforeLaunch.state.sourceIdentityFingerprint -eq $SourceIdentityFingerprint
+            $configurationMatches = [string]$serviceBeforeLaunch.state.serviceConfigurationFingerprint -eq $ConfigurationFingerprint
+            if ($sourceIdentityMatches -and $configurationMatches) {
+                return [pscustomobject]@{
+                    launched = $false
+                    process = $serviceBeforeLaunch.process
+                }
+            }
+            throw "A live staged-wave service changed before replacement; refusing to start a duplicate worker."
+        }
+        if ($serviceBeforeLaunch.matchingProcess) {
+            throw "Staged-wave service process $($serviceBeforeLaunch.state.pid) is still alive before replacement; refusing to start a duplicate worker."
+        }
+
+        $pythonExtension = [System.IO.Path]::GetExtension($PythonCommand).ToLowerInvariant()
+        $commandArguments = @($serviceArguments | ForEach-Object { ConvertTo-StagedServiceArgument -Value ([string]$_) }) -join " "
+        if ($pythonExtension -in @(".cmd", ".bat")) {
+            $commandLine = '"{0}" {1}' -f $PythonCommand, $commandArguments
+            $startArgument = '/d /s /c "{0}"' -f $commandLine
+            $startFilePath = $env:ComSpec
+            $startArguments = $startArgument
+        } else {
+            $startFilePath = $PythonCommand
+            $startArguments = $commandArguments
+        }
+
+        $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
+        $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
+        $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
+        $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
+        try {
+            $stopRequestPath = Join-Path $QueueRoot "stop.request"
+            if (Test-Path -LiteralPath $stopRequestPath -PathType Leaf) {
+                if ($serviceBeforeLaunch.processState -ne "stopped") {
+                    throw "Cannot clear staged-wave stop.request because the previous worker's exit is not confirmed."
+                }
+                Remove-Item -LiteralPath $stopRequestPath -Force -ErrorAction Stop
+            }
+
+            $process = Start-Process `
+                -FilePath $startFilePath `
+                -ArgumentList $startArguments `
+                -WorkingDirectory $RepositoryRoot `
+                -WindowStyle Hidden `
+                -RedirectStandardOutput $serviceLogPath `
+                -RedirectStandardError $serviceErrorPath `
+                -PassThru `
+                -ErrorAction Stop
+        } finally {
+            if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
+            else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
+            if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
+            else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
+        }
+
+        $startupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+        do {
+            Start-Sleep -Milliseconds 200
+            $startedService = Get-StagedBakeQueueServiceState -QueueRoot $QueueRoot
+            if ($startedService.healthy) {
+                return [pscustomobject]@{
+                    launched = $true
+                    process = $process
+                }
+            }
+            if ($process.HasExited) {
+                break
+            }
+        } while ([DateTimeOffset]::UtcNow -lt $startupDeadline)
+        $errorTail = if (Test-Path -LiteralPath $serviceErrorPath) {
+            (Get-Content -LiteralPath $serviceErrorPath -Tail 20 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+        } else { "" }
+        throw "Staged-wave service failed to publish a valid PID, process-start identity, and heartbeat. Process=$($process.Id). $errorTail"
+    }
+}
+
 function Ensure-StagedBakeQueueService {
     param([int]$MaxWaveItems)
 
@@ -4174,67 +4277,13 @@ function Ensure-StagedBakeQueueService {
         }
     }
 
-    $serviceLogPath = Join-Path $queueRoot "service.log"
-    $serviceErrorPath = Join-Path $queueRoot "service.error.log"
-    $serviceArguments = @(
-        "-m", "exercise_motion_pkg.staged_wave_service",
-        "--queue-root", $queueRoot,
-        "--max-wave-items", [string]$MaxWaveItems,
-        "--source-identity-fingerprint", $script:MotionSourceIdentityFingerprint,
-        "--service-configuration-fingerprint", $configurationFingerprint,
-        "--idle-timeout-seconds", "600"
-    )
-    $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
-    $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
-    $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
-    $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
-    try {
-        $pythonExtension = [System.IO.Path]::GetExtension($PythonCommand).ToLowerInvariant()
-        if ($pythonExtension -in @(".cmd", ".bat")) {
-            $commandArguments = @($serviceArguments | ForEach-Object { ConvertTo-StagedServiceArgument -Value ([string]$_) }) -join " "
-            $commandLine = '"{0}" {1}' -f $PythonCommand, $commandArguments
-            $startArgument = '/d /s /c "{0}"' -f $commandLine
-            $process = Start-Process `
-                -FilePath $env:ComSpec `
-                -ArgumentList $startArgument `
-                -WorkingDirectory $repoRoot `
-                -WindowStyle Hidden `
-                -RedirectStandardOutput $serviceLogPath `
-                -RedirectStandardError $serviceErrorPath `
-                -PassThru
-        } else {
-            $commandArguments = @($serviceArguments | ForEach-Object { ConvertTo-StagedServiceArgument -Value ([string]$_) }) -join " "
-            $process = Start-Process `
-                -FilePath $PythonCommand `
-                -ArgumentList $commandArguments `
-                -WorkingDirectory $repoRoot `
-                -WindowStyle Hidden `
-                -RedirectStandardOutput $serviceLogPath `
-                -RedirectStandardError $serviceErrorPath `
-                -PassThru
-        }
-    } finally {
-        if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
-        else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
-        if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
-        else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
-    }
-
-    $startupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
-    do {
-        Start-Sleep -Milliseconds 200
-        $startedService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
-        if ($startedService.healthy) {
-            return
-        }
-        if ($process.HasExited) {
-            break
-        }
-    } while ([DateTimeOffset]::UtcNow -lt $startupDeadline)
-    $errorTail = if (Test-Path -LiteralPath $serviceErrorPath) {
-        (Get-Content -LiteralPath $serviceErrorPath -Tail 20 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
-    } else { "" }
-    throw "Staged-wave service failed to publish a valid PID, process-start identity, and heartbeat. Process=$($process.Id). $errorTail"
+    [void](Start-StagedBakeQueueServiceGeneration `
+        -QueueRoot $queueRoot `
+        -PythonCommand $PythonCommand `
+        -MaxWaveItems $MaxWaveItems `
+        -SourceIdentityFingerprint $script:MotionSourceIdentityFingerprint `
+        -ConfigurationFingerprint $configurationFingerprint `
+        -RepositoryRoot $repoRoot)
 }
 
 function Publish-StagedBakeQueueRequest {
@@ -4273,6 +4322,43 @@ function Publish-StagedBakeQueueRequest {
         # The worker closed admission between Ensure and mutex acquisition.
         # Ensure waits for its exit and launches a fresh generation before the
         # same still-private request file is published on the next iteration.
+    }
+}
+
+function Stop-StagedBakeQueueServiceProcessTree {
+    param(
+        [int]$TargetPid,
+        [int]$TimeoutMilliseconds = 5000
+    )
+
+    $taskkillPath = Join-Path ([Environment]::SystemDirectory) "taskkill.exe"
+    if (-not (Test-Path -LiteralPath $taskkillPath -PathType Leaf)) {
+        throw "Windows process-tree terminator was not found: $taskkillPath"
+    }
+    $terminator = $null
+    try {
+        $terminator = Start-Process `
+            -FilePath $taskkillPath `
+            -ArgumentList @("/PID", [string]$TargetPid, "/T", "/F") `
+            -PassThru `
+            -WindowStyle Hidden `
+            -ErrorAction Stop
+        if (-not $terminator.WaitForExit($TimeoutMilliseconds)) {
+            Write-Warning "Windows process-tree termination for staged-wave worker $TargetPid exceeded its $TimeoutMilliseconds ms deadline."
+            return $false
+        }
+        if ([int]$terminator.ExitCode -ne 0) {
+            Write-Warning "Windows process-tree termination for staged-wave worker $TargetPid returned exit code $($terminator.ExitCode)."
+            return $false
+        }
+        return $true
+    } finally {
+        if ($null -ne $terminator) {
+            if (-not $terminator.HasExited) {
+                try { $terminator.Kill() } catch {}
+            }
+            $terminator.Dispose()
+        }
     }
 }
 
@@ -4334,19 +4420,70 @@ function Stop-StagedBakeQueueService {
         # as ambiguous on the next start, without replaying model work.
         return $true
     }
+
+    $stopRequestPath = Join-Path $queueRoot "stop.request"
+    $stopRequestTemporaryPath = "$stopRequestPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $serviceStopRequested = $false
     try {
-        Stop-Process -Id $service.process.Id -Force -ErrorAction Stop
+        "motion run '$movementRunId' cancelled" |
+            Set-Content -LiteralPath $stopRequestTemporaryPath -Encoding UTF8 -ErrorAction Stop
+        Move-Item `
+            -LiteralPath $stopRequestTemporaryPath `
+            -Destination $stopRequestPath `
+            -Force `
+            -ErrorAction Stop
+        $serviceStopRequested = $true
     } catch {
-        Write-Warning "Could not terminate staged-wave worker process $($service.process.Id): $($_.Exception.Message)"
+        Write-Warning "Could not request graceful staged-wave service shutdown: $($_.Exception.Message)"
+    } finally {
+        if (Test-Path -LiteralPath $stopRequestTemporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $stopRequestTemporaryPath -Force -ErrorAction SilentlyContinue
+        }
     }
-    try {
-        [void]$service.process.WaitForExit(10000)
-    } catch {
+
+    if ($serviceStopRequested) {
+        # The service observes stop.request after its active synchronous wave
+        # drains. Give that graceful path a short bounded window; a longer wave
+        # may require process-tree termination below.
+        try {
+            [void]$service.process.WaitForExit(3000)
+        } catch {
+        }
     }
-    if ($service.process.HasExited) {
+    $fallbackServiceState = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+    if ($fallbackServiceState.processState -eq "stopped") {
         return $true
     }
-    Write-Warning "Cancellation was requested, but staged-wave worker process $($service.process.Id) has not confirmed exit."
+    if (-not $fallbackServiceState.matchingProcess) {
+        Write-Warning "Could not reconfirm staged-wave worker ownership after its graceful-stop window; preserving its model dependencies."
+        return $false
+    }
+    if ([int]$fallbackServiceState.state.pid -ne [int]$service.state.pid -or
+        [int64]$fallbackServiceState.state.processIdentity -ne [int64]$service.state.processIdentity) {
+        Write-Warning "Staged-wave worker identity changed during its graceful-stop window; preserving its model dependencies."
+        return $false
+    }
+
+    # The active executor is synchronous and cannot observe cancellation while
+    # blocked in model/render work, so it may outlast the graceful window.
+    # Terminate its entire Windows process tree only after the owned generation
+    # has had that chance to stop itself.
+    try {
+        [void](Stop-StagedBakeQueueServiceProcessTree `
+            -TargetPid ([int]$service.state.pid) `
+            -TimeoutMilliseconds 5000)
+    } catch {
+        Write-Warning "Could not terminate staged-wave worker process tree $($service.state.pid): $($_.Exception.Message)"
+    }
+    try {
+        [void]$fallbackServiceState.process.WaitForExit(1000)
+    } catch {
+    }
+    $terminatedState = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+    if ($terminatedState.processState -eq "stopped") {
+        return $true
+    }
+    Write-Warning "Cancellation was requested, but staged-wave worker process tree $($fallbackServiceState.process.Id) has not confirmed exit."
     return $false
 }
 

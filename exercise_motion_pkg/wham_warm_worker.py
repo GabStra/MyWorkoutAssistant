@@ -14,6 +14,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+if __package__:
+    from .warm_worker_retention import prune_terminal_warm_worker_artifacts
+else:
+    from warm_worker_retention import prune_terminal_warm_worker_artifacts
+
 
 RESULT_PREFIX = "__WHAM_WARM_WORKER__"
 HEARTBEAT_INTERVAL_SECONDS = 2.0
@@ -411,6 +416,9 @@ def main() -> int:
             f"Recovered {len(recovered_jobs)} interrupted WHAM job(s) as terminal ambiguous results.",
             flush=True,
         )
+    pruned_jobs = prune_terminal_warm_worker_artifacts(state_dir)
+    if pruned_jobs:
+        print(f"Pruned {pruned_jobs} retained terminal WHAM job record(s).", flush=True)
 
     try:
         wham_state = load_wham_once()
