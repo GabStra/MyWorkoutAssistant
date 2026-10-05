@@ -4623,7 +4623,10 @@ def generate_exercise_motion_contract_with_ranker(
             continue
         prompt = build_exercise_motion_contract_prompt(exercise)
         if use_repair_draft and repair_draft is not None:
-            repair_issues = exercise_motion_contract_quality_issues(repair_draft, exercise=exercise)
+            repair_issues = _exercise_motion_contract_generation_validation_issues(
+                repair_draft,
+                exercise=exercise,
+            )
             if critic_issues:
                 repair_issues = [*repair_issues, *critic_issue_validation_texts(critic_issues)]
             prompt += (
@@ -4700,7 +4703,10 @@ def generate_exercise_motion_contract_with_ranker(
             rejected_drafts.append(
                 {
                     "generationMode": attempt_mode,
-                    "validationIssues": exercise_motion_contract_quality_issues(contract, exercise=exercise),
+                    "validationIssues": _exercise_motion_contract_generation_validation_issues(
+                        contract,
+                        exercise=exercise,
+                    ),
                     "contract": exercise_motion_contract_for_prompt(contract),
                 }
             )
@@ -6170,6 +6176,18 @@ def exercise_motion_contract_unusable_reason(
     if not exercise_motion_contract_has_specific_topology(contract) and not contract.get("youtubeQueryAliases"):
         return "generated exercise motion contract had no specific movement topology"
     return "generated exercise motion contract was not cacheable"
+
+
+def _exercise_motion_contract_generation_validation_issues(
+    contract: dict[str, Any] | None,
+    *,
+    exercise: ExerciseEntry,
+) -> list[str]:
+    issues = exercise_motion_contract_quality_issues(contract, exercise=exercise)
+    if issues or exercise_motion_contract_is_usable(contract, exercise=exercise):
+        return issues
+    reason = exercise_motion_contract_unusable_reason(contract, exercise=exercise)
+    return [reason] if reason else []
 
 
 def exercise_motion_contract_for_prompt(contract: dict[str, Any] | None) -> dict[str, Any] | None:

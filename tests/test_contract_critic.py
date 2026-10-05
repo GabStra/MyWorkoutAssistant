@@ -404,6 +404,34 @@ def test_failed_patch_repair_can_accept_corrected_contract() -> None:
     assert result["criticIssues"]
 
 
+def test_missing_motion_topology_is_included_in_contract_repair_prompt() -> None:
+    generation_prompts: list[str] = []
+    invalid_payload = _squat_payload()
+    invalid_payload["primaryMovingRegions"] = []
+    invalid_payload["referenceRegions"] = []
+    invalid_payload["primaryAxis"] = "any"
+    invalid_payload["motionPattern"] = "other"
+
+    def caption_images(**kwargs: object) -> str:
+        prompt = str(kwargs.get("prompt") or "")
+        generation_prompts.append(prompt)
+        if len(generation_prompts) < 3:
+            return json.dumps(invalid_payload)
+        return json.dumps(_squat_payload())
+
+    result = youtube.generate_exercise_motion_contract_with_ranker(
+        exercise=_exercise("Barbell Squat"),
+        settings=YouTubeRankingSettings(exercise_motion_contract_critic_enabled=False),
+        ranker=SimpleNamespace(client=SimpleNamespace(caption_images=caption_images)),
+    )
+
+    assert len(generation_prompts) == 3
+    assert "generated exercise motion contract had no specific movement topology" in generation_prompts[2]
+    assert result["status"] == "generated"
+    assert result["generationMode"] == "direct_repair"
+    assert result["generationFallbackReasons"]
+
+
 def test_critic_disabled_skips_critique_call() -> None:
     prompts: list[str] = []
 
