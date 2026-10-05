@@ -54265,8 +54265,26 @@ def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
         'checks': {'anatomy': False, 'contacts': False, 'sourceArticulation': True,
                    'trajectoryFit': True, 'rootTravel': True},
         'maximumArticulationChangeDegrees': 13.1,
+        'optimizerTermination': 'converged',
     }
     assert unreachable_without_polish(conflict_unreachable_anchors) is True
+    # A timeout-limited iterate has not proved the source pose and contact
+    # anchors mutually unreachable. Keep its bounded refinement path available.
+    for optimizer_termination in ('time_budget', 'solve_phase_budget', 'evaluation_limit'):
+        timed_conflict = {
+            **conflict_unreachable_anchors,
+            'optimizerTermination': optimizer_termination,
+        }
+        assert unreachable_without_polish(timed_conflict) is False
+    assert unreachable_without_polish({
+        **conflict_unreachable_anchors,
+        'optimizerTermination': 'converged',
+    }) is True
+    assert unreachable_without_polish({
+        **conflict_unreachable_anchors,
+        'optimizerTermination': 'time_budget',
+        'boundedRefinement': {'stopReason': 'objective_stalled'},
+    }) is True
 
     still_polishable = {
         'checks': {'anatomy': True, 'contacts': True, 'sourceArticulation': True,

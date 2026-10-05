@@ -388,6 +388,9 @@ EVIDENCE_TERMINATIONS = frozenset({
 # reverse lunge 13.1-13.9 deg, bench dips 34.8 deg — polish burned its budget
 # and re-weighed the same conflict).
 UNREACHABLE_ARTICULATION_DEGREES = 12.0
+INCOMPLETE_OPTIMIZER_TERMINATIONS = frozenset({
+    'time_budget', 'solve_phase_budget', 'evaluation_limit',
+})
 
 
 def unreachable_without_polish(report):
@@ -409,11 +412,24 @@ def unreachable_without_polish(report):
     if 'anatomy' in failed and 'contacts' not in failed and 'sourceArticulation' not in failed:
         return True
     # Contacts and anatomy failed together while the articulation is already
-    # displaced past the distortion band: the anchors and the source pose are
-    # mutually unreachable.
+    # displaced past the distortion band: the anchors and the source pose may
+    # conflict. This is only decisive after the optimizer or a refinement block
+    # has actually converged/stalled; a time-limited iterate has not established
+    # that the remaining pose space is unreachable.
+    refinement = report.get('boundedRefinement') or {}
+    refinement_stop = refinement.get('stopReason')
+    optimizer_termination = report.get('optimizerTermination')
+    has_completed_search_evidence = (
+        optimizer_termination in {'converged', 'objective_stalled'}
+        or (
+            optimizer_termination not in INCOMPLETE_OPTIMIZER_TERMINATIONS
+            and report.get('termination') in EVIDENCE_TERMINATIONS
+        )
+        or refinement_stop in EVIDENCE_TERMINATIONS
+    )
     if {'anatomy', 'contacts'} <= failed and 'sourceArticulation' not in failed and (
             float(report.get('maximumArticulationChangeDegrees') or 0.)
-            >= UNREACHABLE_ARTICULATION_DEGREES):
+            >= UNREACHABLE_ARTICULATION_DEGREES) and has_completed_search_evidence:
         return True
     return False
 
