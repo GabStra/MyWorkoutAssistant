@@ -619,9 +619,11 @@ directory has a condensed version of this state; update it after the arms land.
   and package serialization. Search, downloads, WHAM output, and VLM decisions
   use deterministic adapters or seeded evidence; this is a process integration
   check, not a live model campaign or visual-quality proof.
-- The same production process E2E passed on the tree that became `f26d691d`
-  (1 passed in 147.94s). The follow-up linear-time anchor-epoch refactor was
-  checked with its focused regression and Python compilation.
+- The production process E2E passed again on the final committed tree at
+  `5a4e6277` (1 passed in 146.39s), covering both the airborne-anchor fix and
+  synchronous active-wave publication. The anchor refactor also passed its
+  focused regression and Python compilation; the queue change passed its
+  deterministic fake-executor and adjacent lifecycle tests (2 passed).
 - Architecture audit: artifact-state transitions and reviewed-to-packaged
   identity are connected and independently checked by the runner and package
   builder. Source-camera projection and endpoint constraints reach the active
