@@ -609,3 +609,39 @@ directory has a condensed version of this state; update it after the arms land.
   patch intervals. The fitter still lacks a shared per-axis projector for that
   evidence; the retained 93-frame RDL replay remains a fit-quality failure.
   Unknown patch spans are still not promoted to full-sole or floor contacts.
+
+### 2026-10-05 architecture and generator audit follow-up
+
+- The production process E2E passed on the latest generator code:
+  `test_workout_plan_script_fits_renders_and_packages_reviewed_movement`,
+  1 passed in 146.10s at commit `54f2bef4`. It exercises the real workout-plan PowerShell wrapper,
+  staged-wave service, fit, render, review parsing, selection, artifact lineage,
+  and package serialization. Search, downloads, WHAM output, and VLM decisions
+  use deterministic adapters or seeded evidence; this is a process integration
+  check, not a live model campaign or visual-quality proof.
+- Architecture audit: artifact-state transitions and reviewed-to-packaged
+  identity are connected and independently checked by the runner and package
+  builder. Source-camera projection and endpoint constraints reach the active
+  controlled fitter. The staged-wave queue is a workspace-scoped serial worker;
+  discovery and source acquisition remain separate scheduler owners, so the
+  proposed generator-wide service is still a separate phase.
+- A source-evidence gap remains: observed ankle rows survive under
+  `footContactCandidates` after patch classification replaces active foot
+  contacts, but the fit interval builder consumes only active contacts. Ankle
+  tangential evidence can therefore be absent during unknown patch spans unless
+  separately materialized body support supplies it. Unknown spans must remain
+  unknown; they are not full-sole or floor contacts. The retained 93-frame RDL
+  fit remains a failure; the distinct 95-frame RDL in the completed Oct 5 arm
+  was accepted and packaged.
+- Queue retention now expires abandoned unconsumed results after 30 days and
+  ambiguous crash records after 90 days, while retaining newer records for
+  delayed consumers/recovery. Focused pruning regression passed; code is in
+  commit `54f2bef4`.
+- Maximum throughput remains unverified. The accepted 1282s two-exercise Oct 5
+  arm is one serial configuration point, while the overlap arm was slower and
+  broke acceptance parity. Its recorded commit was `8a1ed1d3`; the arm also had
+  a dirty worktree, so it is not a current-revision throughput measurement.
+  The stopped baseline remains stopped. The retained shared arm sampled 99.9%
+  RAM, 100% GPU, and 95.6% VRAM, so no extra-concurrency campaign was started;
+  throughput promotion still needs a bounded, comparable run when GPU/resource
+  budget is available.
