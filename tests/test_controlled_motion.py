@@ -2179,6 +2179,81 @@ def test_velocity_continuity_repair_replants_under_playback_gate(monkeypatch):
         repaired_points, points, names, 30., spike_reference=points)['introducedSpikes']['severe']
 
 
+def test_normal_fit_routes_velocity_only_playback_miss_to_bounded_path_repair():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    report = {
+        'applied': False,
+        'checks': {'jerk': False, 'playback': False},
+        'maximumContactErrorMeters': 0.000072,
+        'playback': {
+            'passed': False,
+            'maximumContactErrorMeters': 0.000186,
+            'velocityContinuous': False,
+            'equipment': {'required': True, 'passed': True},
+            'physicalReasons': [],
+        },
+    }
+    assert motion.playback_path_repair_eligible(report, skip_hard_only=False)
+
+    report['playback']['physicalReasons'] = ['floor_penetration']
+    assert not motion.playback_path_repair_eligible(report, skip_hard_only=False)
+    assert motion.playback_path_repair_eligible(report, skip_hard_only=True)
+
+    report['playback']['physicalReasons'] = []
+    report['maximumContactErrorMeters'] = 0.0006
+    assert not motion.playback_path_repair_eligible(report, skip_hard_only=False)
+
+
+def test_normal_fit_runs_velocity_path_repair_after_soft_solve(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import controlled_motion as motion, rig_playback
+
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+    monkeypatch.setattr(
+        motion, 'supported_geometry_ready_for_skip_soft_solve', lambda **_kwargs: False)
+    monkeypatch.setattr(
+        motion, 'solve_trajectory',
+        lambda residual, initial, pattern, max_evaluations, **_kwargs:
+            SimpleNamespace(x=initial, nfev=1, status=1),
+    )
+    repair_state = {'called': False}
+    real_playback_validation = rig_playback.validate_rig_playback
+
+    def playback_with_velocity_near_miss(candidate):
+        report = real_playback_validation(candidate)
+        if not repair_state['called']:
+            report = dict(report, passed=False, velocityContinuous=False)
+        return report
+
+    def clear_velocity_near_miss(coordinates, *_args, **_kwargs):
+        repair_state['called'] = True
+        return coordinates.copy()
+
+    monkeypatch.setattr(
+        rig_playback, 'validate_rig_playback', playback_with_velocity_near_miss)
+    monkeypatch.setattr(
+        motion, 'repair_playback_velocity_continuity', clear_velocity_near_miss)
+
+    result, report = motion._fit_controlled_motion(
+        current, timeout_seconds=10.)
+
+    assert repair_state['called'], {
+        'failedChecks': motion.failed_check_names(report.get('checks')),
+        'reason': report.get('reason'),
+        'termination': report.get('termination'),
+        'refinement': report.get('boundedRefinement'),
+        'skippedSoftSolve': report.get('skippedSoftSolve'),
+        'playback': report.get('playback'),
+    }
+    assert report['applied'], report
+    assert report['boundedRefinement']['playbackPathRepair'] is True
+    assert result.get('fixedRig')
+
+
 def test_smooth_root_translation_reduces_second_difference():
     from exercise_motion_pkg.controlled_motion import (
         smooth_root_translation_coordinates, project_root_continuity_coordinates)

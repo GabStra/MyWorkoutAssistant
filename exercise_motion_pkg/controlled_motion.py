@@ -36,7 +36,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v65_bounded_reference_anatomy_repair'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v66_normal_velocity_path_repair'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -2960,6 +2960,29 @@ def _playback_nested_failures(playback):
     if playback.get('physicalReasons'):
         fails.add('physical')
     return fails
+
+
+def playback_path_repair_eligible(report, *, skip_hard_only):
+    """Allow bounded path repair for a normal fit's isolated C1 miss.
+
+    Soft-solve skips retain the broader repair path for nested equipment,
+    velocity, and physical playback failures. A completed soft solve may enter
+    it only when velocity continuity is the sole nested playback failure and
+    every fit failure is already in the temporal/playback polish stages.
+    """
+    if not isinstance(report, dict) or report.get('applied'):
+        return False
+    failed = set(failed_check_names(report.get('checks')))
+    if ('playback' not in failed
+            or (report.get('maximumContactErrorMeters') or 0.) >= 0.0005):
+        return False
+    nested = _playback_nested_failures(report.get('playback'))
+    if skip_hard_only:
+        return bool(nested & {'equipment', 'velocity', 'physical'})
+    return (
+        nested == {'velocity'}
+        and failed <= (POLISH_STAGE_C | {'playback'})
+    )
 
 
 def project_root_continuity_coordinates(coordinates, fps, scale, passes=40):
@@ -7170,13 +7193,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             failed_checks = failed_check_names(report.get('checks'))
         # Playback can fail nested equipment / velocity while keyframe checks pass.
         nested = _playback_nested_failures(report.get('playback'))
-        if (skip_hard_only and 'playback' in failed_checks
-                and nested & {'equipment', 'velocity', 'physical'}
-                and (report.get('maximumContactErrorMeters') or 0.) < 0.0005
+        if (playback_path_repair_eligible(report, skip_hard_only=skip_hard_only)
+                and (not skip_hard_only or np.any(pinned))
                 and not refinement.get('playbackPathRepair')):
             previous_coordinates = solved.x.copy()
+            previous_failed = set(failed_checks)
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
             previous_play = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
+            previous_jerk = report.get('jerkAfter')
             previous_nested = set(nested)
             projected = solved.x.reshape(count, rig.width).copy()
             # Grip gets its own slice; velocity budget is refreshed after grip so
@@ -7195,10 +7219,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 contact_after = float(report.get('maximumContactErrorMeters') or 0.)
                 play_after = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
                 nested_after = _playback_nested_failures(report.get('playback'))
+                failed_after = set(failed_check_names(report.get('checks')))
                 # Never keep a trial that reopens the playback plant gate.
                 if (contact_after >= 0.0005
                         or 'contact' in nested_after
-                        or play_after > max(previous_play * 1.5, 0.00075) + 1e-9):
+                        or play_after > max(previous_play * 1.5, 0.00075) + 1e-9
+                        or not failed_after <= previous_failed
+                        or polish_worsened_jerk(report, previous_jerk)):
                     return False
                 cleared_velocity = (
                     'velocity' in (kept_nested | previous_nested)
@@ -7251,8 +7278,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # the last validate rejected a grip trial.
             projected = np.asarray(kept, dtype=float).reshape(count, rig.width)
             nested = set(kept_nested)
-            path_deadline = monotonic() + min(
-                60., max(20., started + timeout_seconds - monotonic() - 5.))
+            path_window = (
+                min(60., max(20., started + timeout_seconds - monotonic() - 5.))
+                if skip_hard_only
+                else min(20., max(4., started + timeout_seconds - monotonic() - 5.))
+            )
+            path_deadline = monotonic() + path_window
             if nested & {'velocity', 'physical', 'equipment'} and monotonic() < path_deadline:
                 trial = repair_playback_velocity_continuity(
                     projected, rig, pinned, contact_targets, cyclic=cyclic, sigma=0.75,

@@ -1,5 +1,31 @@
 # Handoff: exercise-motion throughput campaign — 2026-10-02, ~16:12 local
 
+## Generator architecture and retained-fit update — 2026-10-05
+
+- The artifact-state path is implemented through bake, review, selection, and
+  packaging. Source-evidence constraints reach fitting when selected-interval
+  evidence is present, but remain optional for full-clip fits without a declared
+  interval. The staged bake queue is a real workspace-scoped serial service;
+  discovery, prefetch, and source-download callers still use per-item PowerShell
+  jobs. Persistent ownership was audited in these paths and no ownership gap was
+  demonstrated. These are current boundaries, not a completed queue-wide rewrite.
+- The controlled-motion fit now sends a normal fit with an isolated nested
+  playback-velocity miss through the existing bounded path repair. It preserves
+  the normal strict validator, rejects any trial that adds a failed check or
+  worsens jerk, and caps this normal-fit repair window at 20 seconds. Skipped-
+  soft-solve repairs retain their existing broader path and budget.
+- The retained RDL replay at
+  `build/exercise_motion/replays/20261005-rdl-v66-velocity-path-report.json`
+  ended with playback passing (C1 boundary jump 0.269 mm/s), but its initial
+  failed checks contained only jerk and it did not record `playbackPathRepair`.
+  It therefore does not exercise or validate this fix. The replay still failed
+  the source-relative jerk gate: 0.000859 RMS against a 0.000413 source limit,
+  so it remains a rejected fit and does not establish a successful RDL output.
+- Verification on this working tree: three targeted controlled-motion
+  regressions passed, both cached and fresh-source-evidence production-wrapper
+  cases passed (`2 passed in 309.22s`), and edited Python modules compiled.
+  No live model/GPU campaign or app tests were run.
+
 ## Current-HEAD OHP production-path check — 2026-10-04
 
 A fresh run of `scripts/run_exercise_motion_workout_plan.ps1` at `54ea944b`
