@@ -23,8 +23,11 @@ def declare_support_requirements(payload, contract):
 
 
 def support_evidence(payload):
-    from .contact_constraints import motion_space_support_evidence
-    return motion_space_support_evidence(payload).get('bodySupport', {})
+    from .body_support_observation import materialize_stationary_sole_support
+    # The fitter uses a temporally materialized motion-space view. Rebuild that
+    # same view for downstream geometry checks so cached full-clip foot anchors
+    # cannot outlive contradictory or incomplete contact observations.
+    return materialize_stationary_sole_support(payload).get('bodySupport', {})
 
 
 # Distal plants owned by contact pins / plant projection. Torso/back support still

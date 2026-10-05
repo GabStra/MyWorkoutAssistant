@@ -336,6 +336,18 @@ def test_fit_support_materialization_removes_stale_full_clip_foot_anchors():
     assert materialized['contacts'] == contacts
     assert payload == original
 
+    # Later fit and pre-render geometry gates must use the same filtered view,
+    # rather than re-reading the stale full-clip anchors from the source cache.
+    moving_candidate = deepcopy(payload)
+    for frame_index, frame in enumerate(moving_candidate['frames']):
+        frame['joints']['left_foot'][0] += frame_index * .01
+    from exercise_motion_pkg.support_geometry import validate_support_geometry
+    support = validate_support_geometry(moving_candidate)
+    assert support['required'] is False
+    assert moving_candidate['sourceFootSupportEvidence']['bodySupport'] == (
+        payload['sourceFootSupportEvidence']['bodySupport']
+    )
+
 
 def test_lying_press_does_not_require_moving_shoulder_anchors():
     joints = {
