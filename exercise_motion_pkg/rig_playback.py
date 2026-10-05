@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation
 
 from .physical_validation import angles, body_scale, validate_physical_motion
 from .sequence_stabilization import contact_mask
-from .contact_constraints import (motion_space_support_evidence, stationary_target_track, stationary_contact_anchor_ids,
+from .contact_constraints import (stationary_target_track, stationary_contact_anchor_ids,
                                   observed_ground_contact_mask, calibrate_shared_contact_pair,
                                   InfeasibleContactCorrection)
 
@@ -165,7 +165,8 @@ def free_joint_floor_clearance_lift(rig, floor, pinned, *, cyclic, subdivisions=
 
 def validate_rig_playback(payload, *, subdivisions=4):
     rig=payload['fixedRig'];names=rig['jointNames'];count=len(rig['coordinates']);fps=float(payload['fps'])
-    support_evidence = motion_space_support_evidence(payload)
+    from .body_support_observation import materialize_stationary_sole_support
+    support_evidence = materialize_stationary_sole_support(payload)
     cyclic=bool((payload.get("loop") or {}).get("enabled"))
     cursors=np.arange(count*subdivisions if cyclic else (count-1)*subdivisions+1)/subdivisions
     points=sample_rig(rig,cursors,wrap=cyclic);scale=body_scale(points,names)

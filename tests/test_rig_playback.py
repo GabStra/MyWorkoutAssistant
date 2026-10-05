@@ -136,6 +136,55 @@ def test_incompatible_shared_stance_is_an_explicit_contact_rejection(placed):
     assert report['reason'] == 'incompatible_stationary_contact_anchors'
 
 
+def test_playback_uses_temporally_filtered_support_evidence(monkeypatch):
+    import exercise_motion_pkg.rig_playback as rig_playback
+    from exercise_motion_pkg.contact_constraints import observed_ground_contact_mask
+
+    current = export(rig_payload())
+    current['sourceFootSupportEvidence'] = {
+        'bodySupport': {
+            'required': True,
+            'status': 'confirmed',
+            'source': 'exact_source_contacts_and_stationary_pose_tracks',
+            'stationaryJoints': ['left_ankle', 'left_foot'],
+            'coplanarGroups': [],
+            'soleContacts': [],
+            'nonPenetrationChains': [],
+        },
+        'temporalResolutionSufficient': True,
+        'footPatchEvidence': {
+            'available': True,
+            'feet': {'left': {'states': ['full_sole', 'toe_only', 'unknown']},
+                     'right': {'states': ['unknown']}},
+        },
+        'contacts': [{
+            'jointName': 'left_foot',
+            'supportKind': 'observed_foot_patch',
+            'contactState': 'full_sole',
+            'contactMotion': 'stationary',
+            'surfaceKind': 'ground',
+            'startFrame': 0,
+            'endFrame': 3,
+        }],
+    }
+    original = rig_playback.rig_contact_targets
+    captured = {}
+
+    def capture_evidence(*args, **kwargs):
+        captured['evidence'] = kwargs['evidence']
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rig_playback, 'rig_contact_targets', capture_evidence)
+    rig_playback.validate_rig_playback(current)
+
+    evidence = captured['evidence']
+    assert 'bodySupport' not in evidence
+    grounded = observed_ground_contact_mask(evidence, current['jointNames'], len(current['frames']))
+    foot = current['jointNames'].index('left_foot')
+    assert np.all(grounded[:4, foot])
+    assert not np.any(grounded[4:, foot])
+
+
 def test_joint_anchor_calibration_enforces_displacement_radius_during_solve():
     from exercise_motion_pkg.contact_constraints import calibrate_shared_contact_pair
 
