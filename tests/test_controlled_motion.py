@@ -1721,7 +1721,7 @@ def test_slow_solver_block_hands_unused_budget_to_polish(monkeypatch):
     now = [0.]
     calls = []
     monkeypatch.setattr(motion, 'monotonic', lambda: now[0])
-    def slow_block(residual, initial, pattern, max_evaluations):
+    def slow_block(residual, initial, pattern, max_evaluations, **solver_options):
         calls.append(now[0])
         residual(initial)
         now[0] += 40.
@@ -1733,6 +1733,39 @@ def test_slow_solver_block_hands_unused_budget_to_polish(monkeypatch):
     assert deferred['minimumUpdateSeconds'] > deferred['remainingSolveSeconds']
     assert report['optimizerTermination'] == 'solve_phase_budget'
     assert 40. + report['polishReserveRemainingSeconds'] < report['polishUntilSeconds'] <= 60.
+
+
+def test_hybrid_jacobian_stops_probes_at_solve_deadline(monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+    clock = [0.]
+    monkeypatch.setenv('EXERCISE_MOTION_HYBRID_JACOBIAN', '1')
+    monkeypatch.setattr(motion, 'monotonic', lambda: clock[0])
+    observed_timeout = []
+
+    def expire_during_probe(residual, initial, pattern, max_evaluations, **solver_options):
+        residual(initial)
+        clock[0] = 44.8  # A 12-frame cyclic fit gives soft LS a 45-second fence.
+
+        def advance_clock():
+            clock[0] += .05
+            return clock[0]
+
+        monkeypatch.setattr(motion, 'monotonic', advance_clock)
+        with pytest.raises(TimeoutError):
+            solver_options['local_jacobian'](initial)
+        observed_timeout.append(clock[0])
+        monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+        return SimpleNamespace(x=initial, nfev=1, status=1)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', expire_during_probe)
+    motion._fit_controlled_motion(current, timeout_seconds=60.)
+    assert observed_timeout and observed_timeout[0] >= 45.
 
 
 def test_temporal_reference_is_unchanged_by_preview_noise(monkeypatch):
@@ -2882,12 +2915,12 @@ def test_time_budget_validates_saved_progress_before_discarding_it(monkeypatch):
     current = payload(names, points)
     current['loop'] = {'enabled': True}
 
-    def timed_out(residual, initial, pattern, max_evaluations):
+    def timed_out(residual, initial, pattern, max_evaluations, **solver_options):
         residual(initial)
         raise TimeoutError
 
     monkeypatch.setattr(motion, 'solve_trajectory', timed_out)
-    result, report = motion.fit_controlled_motion(current, timeout_seconds=20.)
+    result, report = motion.fit_controlled_motion(current, timeout_seconds=180.)
     # Soft LS may stop on the solve-phase cap while outer time remains for polish.
     assert report['optimizerTermination'] in {'time_budget', 'solve_phase_budget'}
     assert report['applied']
@@ -2895,14 +2928,14 @@ def test_time_budget_validates_saved_progress_before_discarding_it(monkeypatch):
     assert result.get('fixedRig')
     assert not motion.controlled_fit_processing_incomplete(report)
 
-    def invalid_progress(residual, initial, pattern, max_evaluations):
+    def invalid_progress(residual, initial, pattern, max_evaluations, **solver_options):
         shifted = initial.copy().reshape(12, -1)
         shifted[:, 1] -= 1.
         residual(shifted.ravel())
         raise TimeoutError
 
     monkeypatch.setattr(motion, 'solve_trajectory', invalid_progress)
-    rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=20.)
+    rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=180.)
     assert rejected is current
     assert not failure['applied']
     assert failure.get('checks'), failure

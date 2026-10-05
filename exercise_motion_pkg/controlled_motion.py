@@ -5815,11 +5815,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
 
     last_residual_state = None
 
+    def check_optimizer_budget():
+        """Stop residual and Jacobian work at the same solve-phase fence."""
+        if fit_should_yield_for_priority() or monotonic() >= optimization_deadline:
+            raise TimeoutError
+
     def residual(values):
         nonlocal last_residual_state
         nonlocal best_coordinates, best_cost, best_feasible_coordinates, best_feasible_cost
-        if fit_should_yield_for_priority() or monotonic() > optimization_deadline:
-            raise TimeoutError
+        check_optimizer_budget()
         coordinates = values.reshape(count,rig.width)
         candidate = rig.decode(coordinates)
         # A clipped socket hides its violation from the optimizer and creates
@@ -5914,6 +5918,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         color, component, and frame-shift class so every row reads exactly
         one perturbed column per probe.
         """
+        check_optimizer_budget()
         fd_step = np.sqrt(np.finfo(float).eps)
         cached = last_residual_state
         if (cached is not None
@@ -5938,7 +5943,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             contact_weight = CONTACT_FIT_WEIGHT * contact_polish_weight
             grip_weight = grip_fit_weight * equipment_polish_weight
             cached_rows = None
+        check_optimizer_budget()
         fk = rig.fk_jacobian(coordinates)
+        check_optimizer_budget()
         fk_unc = rig.fk_jacobian(coordinates, project_socket=False)
 
         def sparse_from(entries, rows, columns, shape):
@@ -5980,6 +5987,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             csc = pattern.tocsc()
             masks = np.zeros((len(row_indices), joints), dtype=bool)
             for j in range(joints):
+                check_optimizer_budget()
                 slots = set()
                 ancestor = j
                 while ancestor >= 0:
@@ -6016,6 +6024,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             supports = {}
             for start, end, array_index in ownership:
                 for j in range(joints):
+                    check_optimizer_budget()
                     # Neither source alone is sound: the pattern can
                     # under-declare an anatomy row's endpoint joints (which
                     # breaks the exact translation-invariance cancellations),
@@ -6033,6 +6042,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 for group in joint_colors(sup):
                     for comp in range(3):
                         for c in range(shifts):
+                            check_optimizer_budget()
                             frames = np.arange(c, n_frames, shifts)
                             probes = [base.copy() for base in bases]
                             for j in group:
@@ -6121,6 +6131,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # SO(3) log rows of a joint read only that joint's rotation vector,
         # so one probe per component covers every joint exactly.
         for comp in range(3):
+            check_optimizer_budget()
             probes = coordinates.copy()
             probes[:, 3 + comp::3] += fd_step
             diff = (rotation_prior_rows(probes) - base_rp) / fd_step
@@ -6177,6 +6188,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         so_pattern = pattern_joint_support(so_row0 + np.arange(base_so.size))
         supports_so = []
         for j in range(joints):
+            check_optimizer_budget()
             probes = candidate.copy()
             probes[:, j, :] += fd_step
             directional = (np.r_[settling_rows(probes), orientation_rows(probes)] - base_so) != 0.
@@ -6189,6 +6201,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         for group in joint_colors(supports_so):
             for comp in range(3):
                 for c in range(orientation_color_count):
+                    check_optimizer_budget()
                     frames = np.flatnonzero(orientation_frame_colors == c)
                     probes = candidate.copy()
                     for j in group:
@@ -6247,6 +6260,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                    subframe_anatomy_rows(unconstrained)], axis=1)
         if cached_rows is None:
             base_sub = subframe_composite(subframe, unconstrained_subframe)
+        check_optimizer_budget()
         # residual per-cursor layout: [contacts, floor, collision, anatomy,
         # grip, geometry, alignment, heel] — anatomy sits fourth.
         w_contacts_floor = section_widths[0] + section_widths[1]
@@ -6292,6 +6306,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         for c in range(4):
             frames = np.arange(c, count, 4)
             for comp in range(3):
+                check_optimizer_budget()
                 probes = coordinates.copy()
                 probes[frames, comp] += fd_step
                 diff = (sample_rig_coordinates(
@@ -6302,6 +6317,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # all joints batch per component; each responding output row maps
             # back to its own joint's perturbed column.
             for comp in range(3):
+                check_optimizer_budget()
                 probes = coordinates.copy()
                 probes[frames[:, None], (3 + comp + 3 * np.arange(n_rot))[None, :]] += fd_step
                 diff = (sample_rig_coordinates(
@@ -6331,6 +6347,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             for frame in collision_frames:
                 frame = int(frame)
                 for comp in range(3):
+                    check_optimizer_budget()
                     probes = coordinates.copy()
                     probes[frame, comp] += fd_step
                     diff = (sample_rig_coordinates(
@@ -6342,6 +6359,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         diff, frame, lambda out, comp=comp: np.full(out.shape, comp)
                     )
                 for comp in range(3):
+                    check_optimizer_budget()
                     probes = coordinates.copy()
                     probes[frame, 3 + comp::3] += fd_step
                     diff = (sample_rig_coordinates(
@@ -6358,7 +6376,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     )
         J_hermite = sparse_from(J_hermite_entries, J_hermite_rows, J_hermite_columns,
                                 (subframe_count * rig.width, count * rig.width))
+        check_optimizer_budget()
         fk_sub = rig.fk_jacobian(subframe_coordinates)
+        check_optimizer_budget()
         fk_sub_unc = rig.fk_jacobian(subframe_coordinates, project_socket=False)
         # Same split-and-restore as the keyframe composite: the two row sets
         # partition every composite row, so argsort restores the residual's
@@ -6375,12 +6395,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
 
         parts = [J_pf, J_temporal, J_sub]
         if cyclic:
+            check_optimizer_budget()
             def seam_flat(points):
                 closure, excess, velocity = seam_rows(points)
                 return np.r_[closure.ravel(), excess.ravel(), velocity.ravel()]
             base_seam = seam_flat(candidate)
             seam_rows_idx, seam_cols_idx, seam_entries = [], [], []
             for frame in (0, 1, count - 2, count - 1):
+                check_optimizer_budget()
                 for j in range(joints):
                     for comp in range(3):
                         probes = candidate.copy()
@@ -6396,6 +6418,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                      (base_seam.size, count * joints * 3)) @ fk)
         parts.append(J_world)
         if source_projection_constraint.get('available'):
+            check_optimizer_budget()
             parts.append(_source_projection_fit_jacobian(
                 source_projection_constraint,
                 frame_count=count,
@@ -6410,6 +6433,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 rig=rig,
                 coordinates=coordinates,
             ))
+        check_optimizer_budget()
         return vstack(parts, format='csr')
 
     solver_options = {}
