@@ -14046,6 +14046,32 @@ def exercise_requires_loop_continuity(
     )
 
 
+def contact_correction_loop_continuity_metrics(
+    exercise_name: str,
+    exercise_motion_contract: dict[str, Any] | None,
+    *,
+    baseline_seam_joint_rms: float | None,
+    corrected_seam_joint_rms: float | None,
+) -> dict[str, Any]:
+    """Decide whether a source-contact correction preserves required loop closure."""
+    loop_continuity_required = exercise_requires_loop_continuity(
+        exercise_name,
+        ranking_payload={"exerciseMotionContract": exercise_motion_contract},
+    )
+    preserves_loop_continuity = (
+        not loop_continuity_required
+        or baseline_seam_joint_rms is None
+        or corrected_seam_joint_rms is None
+        or corrected_seam_joint_rms <= baseline_seam_joint_rms
+    )
+    return {
+        "loopContinuityRequired": loop_continuity_required,
+        "baselineLoopSeamJointRms": baseline_seam_joint_rms,
+        "correctedLoopSeamJointRms": corrected_seam_joint_rms,
+        "preservesLoopContinuity": preserves_loop_continuity,
+    }
+
+
 def review_item_loop_continuity_required(item: ReviewItem, ranking: LoopRanking | None) -> bool:
     payload = ranking.payload if ranking is not None and isinstance(ranking.payload, dict) else None
     contract = exercise_motion_contract_for_review_item(item, ranking)
@@ -27698,19 +27724,16 @@ def _bake_preview_loops_with_playwright_uncached(
                     if bool(correction_metrics.get("applied")):
                         baseline_loop_seam = payload_loop_seam_joint_rms(export_payload)
                         corrected_loop_seam = payload_loop_seam_joint_rms(corrected_payload)
-                        loop_continuity_required = (
-                            exercise_requires_loop_continuity(exercise_name or "")
+                        loop_continuity_metrics = contact_correction_loop_continuity_metrics(
+                            exercise_name or "",
+                            exercise_motion_contract,
+                            baseline_seam_joint_rms=baseline_loop_seam,
+                            corrected_seam_joint_rms=corrected_loop_seam,
                         )
-                        correction_metrics["loopContinuityRequired"] = loop_continuity_required
-                        preserves_loop_continuity = (
-                            not loop_continuity_required
-                            or baseline_loop_seam is None
-                            or corrected_loop_seam is None
-                            or corrected_loop_seam <= baseline_loop_seam
-                        )
-                        correction_metrics["baselineLoopSeamJointRms"] = baseline_loop_seam
-                        correction_metrics["correctedLoopSeamJointRms"] = corrected_loop_seam
-                        correction_metrics["preservesLoopContinuity"] = preserves_loop_continuity
+                        correction_metrics.update(loop_continuity_metrics)
+                        preserves_loop_continuity = loop_continuity_metrics[
+                            "preservesLoopContinuity"
+                        ]
                         corrected_variant_id = "adaptive-contact-sequence-correction"
                         corrected_label = f"{artifact_base_label}.contact-sequence-correction"
                         corrected_options = {

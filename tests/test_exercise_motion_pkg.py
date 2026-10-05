@@ -51745,6 +51745,22 @@ def test_pre_wham_source_metrics_fall_back_to_selected_candidate_artifact(
     assert evidence == expected_evidence
 
 
+def test_contact_correction_rejects_worsened_required_loop_seam() -> None:
+    metrics = bake_and_rank_module.contact_correction_loop_continuity_metrics(
+        "Romanian Deadlift",
+        {"requiresReturnToStart": True},
+        baseline_seam_joint_rms=0.03209,
+        corrected_seam_joint_rms=0.06183,
+    )
+
+    assert metrics == {
+        "loopContinuityRequired": True,
+        "baselineLoopSeamJointRms": 0.03209,
+        "correctedLoopSeamJointRms": 0.06183,
+        "preservesLoopContinuity": False,
+    }
+
+
 def test_contact_sequence_correction_preserves_pose_and_elevated_supports() -> None:
     frames = []
     for index in range(15):
