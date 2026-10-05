@@ -666,3 +666,30 @@ directory has a condensed version of this state; update it after the arms land.
   RAM, 100% GPU, and 95.6% VRAM, so no extra-concurrency campaign was started;
   throughput promotion still needs a bounded, comparable run when GPU/resource
   budget is available.
+
+### Oct 5 current-code fixed-source live diagnostic
+
+- The `shared` arm at `build/exercise_motion/speed-harness/20261005-081407-439afbde`
+  ran from HEAD `3734b1dd` with the fixed RDL+OHP inputs, wave size 2, CPU render
+  prefetch enabled, and one serial staged wave. Arm wall time was 1206.6s; phase
+  totals were source 246.0s, generation 388.1s, and final validation 504.3s.
+  The worktree was dirty from unrelated exercise-library changes, and only one
+  of two inputs completed, so the harness marked the arm unqualified.
+- OHP completed and was packaged as an 89-frame movement. Its review render
+  identity, selection parity hash, package content hash, and decompressed
+  package bytes all match SHA-256
+  `ad3c858e9b2388c387489e715db54cb7780007e3b931b2ac252275df353f5c37`.
+  First accepted output was at 1189.7s; it was materialized at 1195.2s.
+- RDL ended `no_selection` after 348.3s of final processing. The confirmed
+  source-left foot maps to rig-right for this camera assignment (`swapped`); its
+  reconstructed contact range ratio was 0.07796 against the 0.055 limit. The
+  source-confirmed support gate rejected drift and the loop bridge also failed.
+  The cyclic fit ended after 154.5s with `unreachable_conflict`; the contact
+  sequence correction still failed `materialized_loop_bridge_pose_mismatch`.
+  This reproduces the fit/support-fidelity failure, not an airborne result from
+  the post-normalization continuous-contact detector. The support gate was not
+  weakened.
+- Although CPU render prefetch was enabled, the wave reported it skipped with
+  `source_contact_observation_unavailable`. This arm cannot compare prefetch
+  on versus off. The completed OHP and failed RDL do not establish maximum
+  throughput; no additional arm was run from this diagnostic.
