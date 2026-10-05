@@ -254,8 +254,8 @@ python scripts/analyze_exercise_motion_source_funnel.py `
 ```
 
 Pass the measured wall duration for the whole invocation with `--wall-seconds`; use
-the harness `results.json.wallSeconds` for an isolated arm. Per-manifest
-`timings.totalSeconds` values are reported separately as
+the arm's `wallSeconds` value in the harness `results.json` array for an isolated
+run. Per-manifest `timings.totalSeconds` values are reported separately as
 `summedCandidateProcessingSeconds` and are never used as whole-run elapsed time. If
 whole-run wall time is omitted, `acceptedOutputsPerWallHour` is null.
 

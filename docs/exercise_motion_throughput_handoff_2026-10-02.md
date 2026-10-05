@@ -551,3 +551,42 @@ directory has a condensed version of this state; update it after the arms land.
   remains a measured regression. Maximum throughput is therefore still
   unproven; this result establishes a successful 1282-second serial reference
   for the two fixed inputs, not a global maximum.
+
+### Oct 5 generator instrumentation and queue follow-up
+
+- The source-funnel analyzer previously divided accepted outputs by summed
+  per-manifest candidate time. On the retained shared arm that gave 9.176
+  outputs/hour from 784.684 summed candidate seconds, even though the full arm
+  wall was 1282.0 seconds. It now requires `--wall-seconds` for the wall rate,
+  reports candidate-processing time separately, and correctly gives 5.616
+  accepted outputs/hour for this arm. The wall duration comes from the shared
+  arm's `wallSeconds` entry in `results.json`.
+- Completed staged waves now retain the result of render-prefetch futures that
+  had been marked abandoned for finalization, including worker status and
+  elapsed time, plus `renderPrefetchDrainSeconds`. The persisted wave wall
+  duration and accepted-per-minute metric include the post-finalization drain.
+  Worker elapsed time may include queue waits; it is not CPU-time attribution.
+  This adds future telemetry and does not retroactively recover the Oct 5
+  worker duration.
+- On Windows, staged-wave startup now uses a mutex derived from the normalized
+  queue-root path, so starting a worker for one workspace no longer holds the
+  same long startup lock as every other workspace. Queue publication and idle
+  shutdown retain the short legacy lock handoff; queues owned by older workers
+  continue using the original global mutex until a new worker advertises lock
+  version 2. This structurally removes cross-workspace startup contention; no
+  multi-workspace timing benchmark has been run.
+- The retained 93-frame RDL fit payload was replayed through the current
+  cleanup contact detector without models. Raw coordinates produced mixed
+  support for all 93 frames; after the current floor normalization, the
+  detector produced 74 double-support frames and 19 right-foot-only frames.
+  This does not reproduce an all-airborne detector result. The separate
+  retained RDL fit still ends in `unreachable_conflict`, so that fit remains a
+  quality failure even though the fixed-source Oct 5 production arm accepted
+  and packaged a different 95-frame RDL artifact.
+- Focused checks passed for the metric calculation (6), render-prefetch overlap
+  and drain accounting (4), and queue admission compatibility/idle handoff (2).
+  The prepared-candidate production process E2E also passed (1 in 152.28s),
+  covering the PowerShell queue, fit, render, final review adapter, selection,
+  and package identity path. It does not exercise live discovery/source
+  acquisition or run a fresh WHAM/GVHMR campaign. The interrupted baseline
+  remains stopped, and maximum throughput remains unproven.
