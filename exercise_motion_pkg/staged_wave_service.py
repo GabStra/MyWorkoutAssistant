@@ -24,6 +24,8 @@ DEFAULT_IDLE_TIMEOUT_SECONDS = 10 * 60
 AMBIGUOUS_RECOVERY_EXIT_CODE = 76
 AMBIGUOUS_RECOVERY_STATUS = "ambiguous_recovery"
 CONSUMED_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
+UNCONSUMED_RESULT_RETENTION_SECONDS = 30 * 24 * 60 * 60
+AMBIGUOUS_REQUEST_RETENTION_SECONDS = 90 * 24 * 60 * 60
 CANCEL_MARKER_RETENTION_SECONDS = 30 * 24 * 60 * 60
 MAX_RETAINED_CONSUMED_RESULTS = 512
 MAX_RETAINED_CANCEL_MARKERS = 512
@@ -229,10 +231,10 @@ def _prune_aged_records(
     *,
     now_epoch: float,
     retention_seconds: int,
-    max_count: int,
+    max_count: int | None,
     protected_stems: set[str] | None = None,
 ) -> int:
-    """Bound old terminal records without removing active or unconsumed work."""
+    """Apply age and optional count limits to records in one terminal directory."""
     protected_stems = protected_stems or set()
     records: list[tuple[float, Path]] = []
     for path in directory.glob("*.json"):
@@ -247,8 +249,9 @@ def _prune_aged_records(
     cutoff = now_epoch - max(0, int(retention_seconds))
     expired = {path for modified_at, path in records if modified_at < cutoff}
     retained = [(modified_at, path) for modified_at, path in records if path not in expired]
-    excess_count = max(0, len(retained) - max(0, int(max_count)))
-    expired.update(path for _, path in retained[:excess_count])
+    if max_count is not None:
+        excess_count = max(0, len(retained) - max(0, int(max_count)))
+        expired.update(path for _, path in retained[:excess_count])
 
     removed = 0
     for path in expired:
@@ -261,21 +264,36 @@ def _prune_aged_records(
 
 
 def _prune_staged_wave_records(queue_root: Path, *, now_epoch: float | None = None) -> dict[str, int]:
-    """Prune acknowledged responses and safe-to-forget cancellation markers.
+    """Prune expired terminal records and safe-to-forget cancellation markers.
 
     Requests and processing records protect their run's cancellation marker.
     If either queue contains an unreadable request, marker pruning is skipped
-    because its run identity cannot be established. Ambiguous requests and
-    reports are intentionally outside the pruned directories.
+    because its run identity cannot be established. Results remain available
+    for 30 days for a delayed waiter; ambiguous crash records remain available
+    for 90 days for recovery inspection.
     """
     now = time.time() if now_epoch is None else float(now_epoch)
     consumed = queue_root / "consumed"
+    results = queue_root / "results"
+    ambiguous = queue_root / "ambiguous"
     cancelled_runs = queue_root / "cancelled_runs"
     consumed_pruned = _prune_aged_records(
         consumed,
         now_epoch=now,
         retention_seconds=CONSUMED_RESULT_RETENTION_SECONDS,
         max_count=MAX_RETAINED_CONSUMED_RESULTS,
+    )
+    unconsumed_pruned = _prune_aged_records(
+        results,
+        now_epoch=now,
+        retention_seconds=UNCONSUMED_RESULT_RETENTION_SECONDS,
+        max_count=None,
+    )
+    ambiguous_pruned = _prune_aged_records(
+        ambiguous,
+        now_epoch=now,
+        retention_seconds=AMBIGUOUS_REQUEST_RETENTION_SECONDS,
+        max_count=None,
     )
 
     protected_run_ids: set[str] = set()
@@ -305,7 +323,12 @@ def _prune_staged_wave_records(queue_root: Path, *, now_epoch: float | None = No
             max_count=MAX_RETAINED_CANCEL_MARKERS,
             protected_stems=protected_run_ids,
         )
-    return {"consumedResults": consumed_pruned, "cancelledRuns": cancelled_pruned}
+    return {
+        "consumedResults": consumed_pruned,
+        "unconsumedResults": unconsumed_pruned,
+        "ambiguousRequests": ambiguous_pruned,
+        "cancelledRuns": cancelled_pruned,
+    }
 
 
 def run_staged_wave_service(

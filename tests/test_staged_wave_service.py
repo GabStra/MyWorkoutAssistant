@@ -556,7 +556,7 @@ def test_queue_service_preserves_success_when_cancel_marker_arrives_at_executor_
     assert result["error"] is None
 
 
-def test_queue_pruning_only_removes_old_consumed_results_and_unreferenced_cancel_markers(
+def test_queue_pruning_expires_old_terminal_records_and_unreferenced_cancel_markers(
     tmp_path: Path,
 ):
     queue_root = tmp_path / "queue"
@@ -570,12 +570,14 @@ def test_queue_pruning_only_removes_old_consumed_results_and_unreferenced_cancel
         directory.mkdir(parents=True)
 
     now = time.time()
-    old_timestamp = now - 90 * 24 * 60 * 60
+    old_timestamp = now - 120 * 24 * 60 * 60
 
     old_consumed_result = consumed / "old-consumed.json"
     old_consumed_result.write_text("{}", encoding="utf-8")
     old_unconsumed_result = results / "old-unconsumed.json"
     old_unconsumed_result.write_text("{}", encoding="utf-8")
+    recent_unconsumed_result = results / "recent-unconsumed.json"
+    recent_unconsumed_result.write_text("{}", encoding="utf-8")
     old_cancel_marker = cancelled_runs / "old-idle-run.json"
     old_cancel_marker.write_text("{}", encoding="utf-8")
     queued_cancel_marker = cancelled_runs / "queued-run.json"
@@ -588,6 +590,8 @@ def test_queue_pruning_only_removes_old_consumed_results_and_unreferenced_cancel
     in_flight_request.write_text(json.dumps({"runId": "processing-run"}), encoding="utf-8")
     ambiguous_request = ambiguous / "ambiguous-request.json"
     ambiguous_request.write_text(json.dumps({"runId": "ambiguous-run"}), encoding="utf-8")
+    recent_ambiguous_request = ambiguous / "recent-ambiguous-request.json"
+    recent_ambiguous_request.write_text(json.dumps({"runId": "recent-ambiguous-run"}), encoding="utf-8")
 
     for path in (
         old_consumed_result,
@@ -600,15 +604,25 @@ def test_queue_pruning_only_removes_old_consumed_results_and_unreferenced_cancel
         ambiguous_request,
     ):
         os.utime(path, (old_timestamp, old_timestamp))
+    recent_timestamp = now - 2 * 24 * 60 * 60
+    for path in (recent_unconsumed_result, recent_ambiguous_request):
+        os.utime(path, (recent_timestamp, recent_timestamp))
 
     pruned = _prune_staged_wave_records(queue_root, now_epoch=now)
 
-    assert pruned == {"consumedResults": 1, "cancelledRuns": 1}
+    assert pruned == {
+        "consumedResults": 1,
+        "unconsumedResults": 1,
+        "ambiguousRequests": 1,
+        "cancelledRuns": 1,
+    }
     assert not old_consumed_result.exists()
-    assert old_unconsumed_result.exists()
+    assert not old_unconsumed_result.exists()
+    assert recent_unconsumed_result.exists()
     assert not old_cancel_marker.exists()
     assert queued_cancel_marker.exists()
     assert processing_cancel_marker.exists()
     assert queued_request.exists()
     assert in_flight_request.exists()
-    assert ambiguous_request.exists()
+    assert not ambiguous_request.exists()
+    assert recent_ambiguous_request.exists()
