@@ -8,9 +8,44 @@ from types import SimpleNamespace
 import pytest
 
 from exercise_motion_pkg.staged_wave_service import (
+    ADMISSION_LOCK_VERSION,
+    ADMISSION_MUTEX_NAME,
+    _queue_admission_mutex_name,
+    _queue_admission_mutex_names,
     _prune_staged_wave_records,
     run_staged_wave_service,
 )
+
+
+def test_windows_admission_mutex_is_queue_scoped_with_legacy_worker_fallback(tmp_path):
+    first_root = tmp_path / "workspace-one" / "staged-wave-services" / "v1"
+    second_root = tmp_path / "workspace-two" / "staged-wave-services" / "v1"
+
+    assert _queue_admission_mutex_name(first_root) != _queue_admission_mutex_name(second_root)
+    assert _queue_admission_mutex_name(first_root) == _queue_admission_mutex_name(
+        Path(str(first_root).swapcase())
+    )
+    assert _queue_admission_mutex_names(
+        first_root,
+        include_legacy_compatibility=False,
+    ) == [_queue_admission_mutex_name(first_root)]
+
+    first_root.mkdir(parents=True)
+    state_path = first_root / "worker_state.json"
+    state_path.write_text(json.dumps({"schemaVersion": 1}), encoding="utf-8")
+    assert _queue_admission_mutex_names(
+        first_root,
+        include_legacy_compatibility=True,
+    ) == [ADMISSION_MUTEX_NAME]
+
+    state_path.write_text(
+        json.dumps({"schemaVersion": 1, "admissionLockVersion": ADMISSION_LOCK_VERSION}),
+        encoding="utf-8",
+    )
+    assert _queue_admission_mutex_names(
+        first_root,
+        include_legacy_compatibility=True,
+    ) == [ADMISSION_MUTEX_NAME, _queue_admission_mutex_name(first_root)]
 
 
 def test_idle_shutdown_rechecks_requests_after_producer_wins_admission_lock(
@@ -84,7 +119,9 @@ def test_idle_shutdown_rechecks_requests_after_producer_wins_admission_lock(
     assert result_path.is_file()
     assert json.loads(result_path.read_text(encoding="utf-8"))["exitCode"] == 0
     assert not (requests / f"{request_id}.json").exists()
-    assert json.loads((queue_root / "worker_state.json").read_text(encoding="utf-8"))["status"] == "stopped"
+    worker_state = json.loads((queue_root / "worker_state.json").read_text(encoding="utf-8"))
+    assert worker_state["status"] == "stopped"
+    assert worker_state["admissionLockVersion"] == ADMISSION_LOCK_VERSION
 
 
 def test_queue_service_processes_wave_request_and_stops_after_drain(tmp_path: Path):

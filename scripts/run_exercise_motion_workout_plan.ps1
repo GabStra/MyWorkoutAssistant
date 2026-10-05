@@ -4173,34 +4173,92 @@ function Get-StagedBakeServiceConfigurationFingerprint {
     }
 }
 
+function Get-StagedWaveAdmissionMutexNames {
+    param(
+        [string]$QueueRoot,
+        [switch]$IncludeLegacyCompatibility
+    )
+
+    $legacyName = "Global\MyWorkoutAssistant.StagedWaveAdmission.v1"
+    $statePath = Join-Path $QueueRoot "worker_state.json"
+    $lockVersion = 2
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        try {
+            $state = Get-Content -LiteralPath $statePath -Raw -ErrorAction Stop |
+                ConvertFrom-Json -ErrorAction Stop
+            if ([int]$state.admissionLockVersion -ne 2) {
+                $lockVersion = 1
+            }
+        } catch {
+            # Keep unidentified existing workers on the legacy lock protocol.
+            $lockVersion = 1
+        }
+    }
+    if ($lockVersion -eq 1) {
+        return @($legacyName)
+    }
+
+    $fullQueueRoot = [System.IO.Path]::GetFullPath($QueueRoot)
+    $rootPath = [System.IO.Path]::GetPathRoot($fullQueueRoot)
+    if ($fullQueueRoot.Length -gt $rootPath.Length) {
+        $fullQueueRoot = $fullQueueRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        )
+    }
+    $normalizedQueueRoot = $fullQueueRoot.ToUpperInvariant()
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($normalizedQueueRoot)
+        $digest = ($hasher.ComputeHash($bytes) | ForEach-Object {
+            $_.ToString("x2")
+        }) -join ""
+    } finally {
+        $hasher.Dispose()
+    }
+    $queueMutexName = "Global\MyWorkoutAssistant.StagedWaveAdmission.v2.$digest"
+    if ($IncludeLegacyCompatibility) {
+        return @($legacyName, $queueMutexName)
+    }
+    return @($queueMutexName)
+}
+
 function Invoke-WithStagedWaveAdmissionLock {
     param(
         [string]$QueueRoot,
-        [scriptblock]$Operation
+        [scriptblock]$Operation,
+        [switch]$IncludeLegacyCompatibility
     )
 
-    # This name matches staged_wave_service.ADMISSION_MUTEX_NAME. A named OS
-    # mutex is released automatically if either process exits unexpectedly.
-    $mutex = [System.Threading.Mutex]::new(
-        $false,
-        "Global\MyWorkoutAssistant.StagedWaveAdmission.v1"
-    )
-    $ownsMutex = $false
+    $mutexNames = Get-StagedWaveAdmissionMutexNames `
+        -QueueRoot $QueueRoot `
+        -IncludeLegacyCompatibility:$IncludeLegacyCompatibility
+    $mutexes = [System.Collections.Generic.List[object]]::new()
+    $owned = [System.Collections.Generic.List[bool]]::new()
     try {
-        try {
-            $ownsMutex = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
-        } catch [System.Threading.AbandonedMutexException] {
-            $ownsMutex = $true
-        }
-        if (-not $ownsMutex) {
-            throw "Timed out waiting for staged-wave admission lock for '$QueueRoot'."
+        foreach ($mutexName in $mutexNames) {
+            # Named OS mutexes are released automatically if either process exits.
+            $mutex = [System.Threading.Mutex]::new($false, [string]$mutexName)
+            [void]$mutexes.Add($mutex)
+            [void]$owned.Add($false)
+            try {
+                $ownsMutex = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
+            } catch [System.Threading.AbandonedMutexException] {
+                $ownsMutex = $true
+            }
+            if (-not $ownsMutex) {
+                throw "Timed out waiting for staged-wave admission lock for '$QueueRoot'."
+            }
+            $owned[$owned.Count - 1] = $true
         }
         return & $Operation
     } finally {
-        if ($ownsMutex) {
-            $mutex.ReleaseMutex()
+        for ($index = $mutexes.Count - 1; $index -ge 0; $index--) {
+            if ($owned[$index]) {
+                $mutexes[$index].ReleaseMutex()
+            }
+            $mutexes[$index].Dispose()
         }
-        $mutex.Dispose()
     }
 }
 
@@ -4381,7 +4439,10 @@ function Publish-StagedBakeQueueRequest {
 
     while ($true) {
         Ensure-StagedBakeQueueService -MaxWaveItems $MaxWaveItems
-        $published = Invoke-WithStagedWaveAdmissionLock -QueueRoot $QueueRoot -Operation {
+        $published = Invoke-WithStagedWaveAdmissionLock `
+            -QueueRoot $QueueRoot `
+            -IncludeLegacyCompatibility `
+            -Operation {
             $service = Get-StagedBakeQueueServiceState -QueueRoot $QueueRoot
             if (
                 $service.healthy -and

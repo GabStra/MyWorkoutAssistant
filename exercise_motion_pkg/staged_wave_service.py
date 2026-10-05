@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import threading
@@ -18,6 +19,7 @@ from exercise_motion_pkg.process_lock import InterProcessFileLock
 
 
 SERVICE_SCHEMA_VERSION = 1
+ADMISSION_LOCK_VERSION = 2
 DEFAULT_IDLE_TIMEOUT_SECONDS = 10 * 60
 AMBIGUOUS_RECOVERY_EXIT_CODE = 76
 AMBIGUOUS_RECOVERY_STATUS = "ambiguous_recovery"
@@ -26,6 +28,44 @@ CANCEL_MARKER_RETENTION_SECONDS = 30 * 24 * 60 * 60
 MAX_RETAINED_CONSUMED_RESULTS = 512
 MAX_RETAINED_CANCEL_MARKERS = 512
 ADMISSION_MUTEX_NAME = r"Global\MyWorkoutAssistant.StagedWaveAdmission.v1"
+ADMISSION_MUTEX_PREFIX = r"Global\MyWorkoutAssistant.StagedWaveAdmission.v2."
+
+
+def _queue_admission_mutex_name(queue_root: Path) -> str:
+    normalized_root = os.path.normpath(
+        os.path.abspath(os.path.expanduser(os.fspath(queue_root)))
+    ).replace("/", "\\").rstrip("\\")
+    normalized_root = normalized_root.upper()
+    digest = hashlib.sha256(normalized_root.encode("utf-8")).hexdigest()
+    return f"{ADMISSION_MUTEX_PREFIX}{digest}"
+
+
+def _queue_admission_lock_version(queue_root: Path) -> int:
+    state_path = Path(queue_root) / "worker_state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ADMISSION_LOCK_VERSION
+    except (OSError, json.JSONDecodeError):
+        # If ownership metadata is malformed, preserve the old shared lock
+        # behavior rather than risking a race with an unidentified old worker.
+        return 1
+    if isinstance(state, dict) and state.get("admissionLockVersion") == ADMISSION_LOCK_VERSION:
+        return ADMISSION_LOCK_VERSION
+    return 1
+
+
+def _queue_admission_mutex_names(
+    queue_root: Path,
+    *,
+    include_legacy_compatibility: bool,
+) -> list[str]:
+    if _queue_admission_lock_version(queue_root) < ADMISSION_LOCK_VERSION:
+        return [ADMISSION_MUTEX_NAME]
+    queue_mutex = _queue_admission_mutex_name(queue_root)
+    if include_legacy_compatibility:
+        return [ADMISSION_MUTEX_NAME, queue_mutex]
+    return [queue_mutex]
 
 
 @contextmanager
@@ -52,23 +92,30 @@ def staged_wave_admission_lock(queue_root: Path):
         close_handle.argtypes = (ctypes.c_void_p,)
         close_handle.restype = ctypes.c_int
 
-        handle = create_mutex(None, 0, ADMISSION_MUTEX_NAME)
-        if not handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        acquired = False
+        mutex_names = _queue_admission_mutex_names(
+            queue_root,
+            include_legacy_compatibility=True,
+        )
+        handles: list[tuple[ctypes.c_void_p, bool]] = []
         try:
-            wait_result = wait_for_single_object(handle, 30_000)
-            if wait_result in (0, 0x80):  # WAIT_OBJECT_0 or WAIT_ABANDONED
-                acquired = True
-            elif wait_result == 0x102:  # WAIT_TIMEOUT
-                raise TimeoutError("Timed out waiting for staged-wave admission lock")
-            else:
-                raise ctypes.WinError(ctypes.get_last_error())
+            for mutex_name in mutex_names:
+                handle = create_mutex(None, 0, mutex_name)
+                if not handle:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                handles.append((handle, False))
+                wait_result = wait_for_single_object(handle, 30_000)
+                if wait_result in (0, 0x80):  # WAIT_OBJECT_0 or WAIT_ABANDONED
+                    handles[-1] = (handle, True)
+                elif wait_result == 0x102:  # WAIT_TIMEOUT
+                    raise TimeoutError("Timed out waiting for staged-wave admission lock")
+                else:
+                    raise ctypes.WinError(ctypes.get_last_error())
             yield
         finally:
-            if acquired:
-                release_mutex(handle)
-            close_handle(handle)
+            for handle, acquired in reversed(handles):
+                if acquired:
+                    release_mutex(handle)
+                close_handle(handle)
         return
 
     import fcntl
@@ -354,6 +401,7 @@ def _run_staged_wave_service_locked(
     state_publish_lock = threading.Lock()
     state: dict[str, Any] = {
         "schemaVersion": SERVICE_SCHEMA_VERSION,
+        "admissionLockVersion": ADMISSION_LOCK_VERSION,
         "queueRoot": str(queue_root),
         "sourceIdentityFingerprint": source_identity_fingerprint,
         "serviceConfigurationFingerprint": service_configuration_fingerprint,
