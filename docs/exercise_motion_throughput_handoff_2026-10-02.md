@@ -750,3 +750,23 @@ directory has a condensed version of this state; update it after the arms land.
   fit comparison; the available evidence does not isolate support observation
   as the reason for their different outcomes. No support-gate relaxation or
   extra fit budget is justified from this data.
+
+### Oct 5 RDL fit stop-classification correction
+
+- The zero-refinement stop above exposed a control-flow bug in
+  `unreachable_without_polish`: its articulation/contact heuristic could call a
+  fit unreachable when the optimizer had ended at `time_budget`. On this RDL
+  iterate, anatomy and contacts failed, source articulation passed, and
+  articulation change was 19.29 degrees, but the optimizer had not completed
+  its search. The heuristic returned before the reserved bounded-refinement
+  path, so `unreachable_conflict` overstated the evidence.
+- Commit `48616adf` requires convergence or explicit refinement-stop evidence
+  before that heuristic is decisive. Budget-limited (`time_budget`,
+  `solve_phase_budget`, and `evaluation_limit`) iterates remain eligible for the
+  existing refinement path. A focused regression passed, edited Python files
+  compiled, and `git diff --check` passed.
+- This is an early-stop classification fix, not an RDL quality repair. The
+  retained fit still fails substantial anatomy, contacts, trajectory, temporal,
+  root-continuity, and playback checks. No fit was rerun after the correction,
+  so successful RDL generation remains unverified; acceptance gates were not
+  weakened.
