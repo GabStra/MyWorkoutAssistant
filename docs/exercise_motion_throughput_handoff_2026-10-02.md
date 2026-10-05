@@ -727,3 +727,26 @@ directory has a condensed version of this state; update it after the arms land.
   exists. The correction regression is verified locally, but the current
   accepted two-exercise artifact remains the earlier 1282-second serial arm;
   throughput and current-revision package parity remain unverified.
+
+### Oct 5 retained RDL source-support fit audit
+
+- The exact rejected 87-frame fit payload includes one observed full-sole
+  contact over frames 10-59 after cycle mapping (source-left mapped to rig
+  `right_foot`). The fit pins that foot and ankle, uses 286 source-camera joint
+  observations across 22 frames, and adjusts the shared source-projected anchor
+  by at most 93.5mm. `supportAnchorObservationCount: 0` counts only confirmed
+  body-support joints; it does not count ordinary foot-patch anchors. The fit
+  therefore did consume the observed support evidence.
+- Its visual body-support observation is `unknown` with
+  `support_observation_unparseable`; all remaining foot-patch states are
+  `unknown`. The evidence does not establish stationary support across those
+  unknown intervals, so the fitter correctly does not promote them to hard
+  contacts. The replay still fails anatomy, contact, trajectory, temporal,
+  root-continuity, and playback checks, including 93.8mm dense playback contact
+  error and 44.3mm floor penetration.
+- The earlier accepted RDL package retains four mapped foot-patch intervals
+  and an observed visual support response, but its original candidate workspace
+  was pruned. The retained successful and failed artifacts are not a controlled
+  fit comparison; the available evidence does not isolate support observation
+  as the reason for their different outcomes. No support-gate relaxation or
+  extra fit budget is justified from this data.
